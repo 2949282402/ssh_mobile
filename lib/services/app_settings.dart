@@ -118,6 +118,8 @@ class TerminalStrings {
   String get currentWindow => _en ? 'Current window' : '当前窗口';
   String get save => _en ? 'Save' : '保存';
   String get windowName => _en ? 'Window name' : '窗口名称';
+  String get duplicateWindowName =>
+      _en ? 'Window name already exists' : '窗口名称已存在';
   String get addShortcut => _en ? 'Add shortcut command' : '添加快捷命令';
   String get complexKeyboard => _en ? 'Advanced keyboard' : '复杂键盘';
   String get multilineHint =>

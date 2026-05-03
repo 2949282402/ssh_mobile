@@ -128,12 +128,16 @@ class SshService extends ChangeNotifier {
     }
   }
 
-  void renameSession(String sessionId, String name) {
+  bool renameSession(String sessionId, String name) {
     final session = _sessions[sessionId];
     final nextName = name.trim();
-    if (session == null || nextName.isEmpty) return;
+    if (session == null || nextName.isEmpty) return false;
+    if (_isSessionNameTaken(nextName, exceptSessionId: sessionId)) {
+      return false;
+    }
     session.displayName = nextName;
     notifyListeners();
+    return true;
   }
 
   void setSessionFontSize(String sessionId, double fontSize) {
@@ -427,9 +431,31 @@ class SshService extends ChangeNotifier {
 
   String _defaultDisplayName(String connectionName, String connectionId) {
     final existingCount = sessionCountForConnection(connectionId);
-    return existingCount == 0
+    final baseName = existingCount == 0
         ? connectionName
         : '$connectionName ${existingCount + 1}';
+    return _uniqueSessionName(baseName);
+  }
+
+  bool _isSessionNameTaken(String name, {String? exceptSessionId}) {
+    final normalizedName = name.trim().toLowerCase();
+    return _sessions.values.any(
+      (session) =>
+          session.id != exceptSessionId &&
+          session.displayName.trim().toLowerCase() == normalizedName,
+    );
+  }
+
+  String _uniqueSessionName(String baseName) {
+    final normalizedBaseName = baseName.trim();
+    if (!_isSessionNameTaken(normalizedBaseName)) return normalizedBaseName;
+
+    var index = 2;
+    while (true) {
+      final candidate = '$normalizedBaseName ($index)';
+      if (!_isSessionNameTaken(candidate)) return candidate;
+      index++;
+    }
   }
 
   Future<void> _stopServiceIfIdle() async {

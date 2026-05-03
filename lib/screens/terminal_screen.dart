@@ -360,7 +360,7 @@ class _TerminalScreenState extends State<TerminalScreen>
         final nextSession = _nextSessionAfterClose(ssh);
         if (nextSession != null) {
           Navigator.of(context).pushReplacement(
-            _animatedTerminalRoute(nextSession),
+            _fadeTerminalRoute(nextSession),
           );
         } else {
           Navigator.pop(context);
@@ -374,13 +374,8 @@ class _TerminalScreenState extends State<TerminalScreen>
     final target = ssh.getSession(action.sessionId);
     if (target == null) return;
 
-    Navigator.pushReplacementNamed(
-      context,
-      '/terminal',
-      arguments: {
-        'id': target.connectionId,
-        'sessionId': target.id,
-      },
+    Navigator.of(context).pushReplacement(
+      _instantTerminalRoute(target),
     );
   }
 
@@ -395,10 +390,21 @@ class _TerminalScreenState extends State<TerminalScreen>
     return otherSessions.isEmpty ? null : otherSessions.first;
   }
 
-  Route<void> _animatedTerminalRoute(SshSession session) {
+  Route<void> _instantTerminalRoute(SshSession session) {
     return PageRouteBuilder<void>(
-      transitionDuration: const Duration(milliseconds: 260),
-      reverseTransitionDuration: const Duration(milliseconds: 180),
+      transitionDuration: Duration.zero,
+      reverseTransitionDuration: Duration.zero,
+      pageBuilder: (_, __, ___) => TerminalScreen(
+        connectionId: session.connectionId,
+        sessionId: session.id,
+      ),
+    );
+  }
+
+  Route<void> _fadeTerminalRoute(SshSession session) {
+    return PageRouteBuilder<void>(
+      transitionDuration: const Duration(milliseconds: 180),
+      reverseTransitionDuration: const Duration(milliseconds: 120),
       pageBuilder: (_, __, ___) => TerminalScreen(
         connectionId: session.connectionId,
         sessionId: session.id,
@@ -410,13 +416,7 @@ class _TerminalScreenState extends State<TerminalScreen>
         );
         return FadeTransition(
           opacity: curved,
-          child: SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(0.08, 0),
-              end: Offset.zero,
-            ).animate(curved),
-            child: child,
-          ),
+          child: child,
         );
       },
     );
@@ -511,7 +511,15 @@ class _TerminalScreenState extends State<TerminalScreen>
     );
 
     if (name == null) return;
-    ssh.renameSession(widget.sessionId, name);
+    final renamed = ssh.renameSession(widget.sessionId, name);
+    if (!renamed && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(strings.duplicateWindowName),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
   }
 
   @override
@@ -1185,7 +1193,7 @@ class _TerminalScreenState extends State<TerminalScreen>
               final nextSession = _nextSessionAfterClose(ssh);
               if (nextSession != null) {
                 Navigator.of(context).pushReplacement(
-                  _animatedTerminalRoute(nextSession),
+                  _fadeTerminalRoute(nextSession),
                 );
               } else {
                 Navigator.pop(context);
