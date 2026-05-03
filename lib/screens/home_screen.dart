@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../services/storage_service.dart';
-import '../services/ssh_service.dart';
+
 import '../models/connection.dart';
+import '../services/app_settings.dart';
+import '../services/ssh_service.dart';
+import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 
 class HomeScreen extends StatelessWidget {
@@ -12,27 +14,45 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final storage = context.watch<StorageService>();
     final ssh = context.watch<SshService>();
+    final settings = context.watch<AppSettings>();
+    final strings = AppStrings(settings.language);
     final connections = storage.connections;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('SSH Mobile'),
         actions: [
-          if (ssh.activeConnectionId != null)
+          TextButton(
+            onPressed: settings.toggleLanguage,
+            child: Text(
+              settings.isEnglish
+                  ? strings.switchToChinese
+                  : strings.switchToEnglish,
+            ),
+          ),
+          IconButton(
+            icon: Icon(
+              settings.isDarkMode ? Icons.light_mode : Icons.dark_mode,
+            ),
+            tooltip: settings.isDarkMode ? strings.lightMode : strings.darkMode,
+            onPressed: settings.toggleTheme,
+          ),
+          if (ssh.sessions.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.close, color: Colors.redAccent),
-              tooltip: '断开连接',
+              tooltip: strings.disconnectAllTooltip,
               onPressed: () => _disconnect(context),
             ),
         ],
       ),
       body: connections.isEmpty
           ? storage.initialized
-              ? _buildEmptyState(context)
+              ? _buildEmptyState(context, strings)
               : _buildLoadingState()
-          : _buildConnectionList(context, connections, ssh),
+          : _buildConnectionList(context, connections, ssh, strings),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _addConnection(context),
+        tooltip: strings.addConnection,
         child: const Icon(Icons.add),
       ),
     );
@@ -48,7 +68,7 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildEmptyState(BuildContext context) {
+  Widget _buildEmptyState(BuildContext context, AppStrings strings) {
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -60,7 +80,7 @@ class HomeScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           Text(
-            '还没有保存的服务器',
+            strings.noConnections,
             style: TextStyle(
               color: Colors.grey[500],
               fontSize: 16,
@@ -68,7 +88,7 @@ class HomeScreen extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            '点击右下角 + 添加连接',
+            strings.addHint,
             style: TextStyle(
               color: Colors.grey[600],
               fontSize: 14,
@@ -83,15 +103,18 @@ class HomeScreen extends StatelessWidget {
     BuildContext context,
     List<ConnectionConfig> connections,
     SshService ssh,
+    AppStrings strings,
   ) {
     return ListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       itemCount: connections.length,
       itemBuilder: (context, index) {
         final conn = connections[index];
-        final isActive = ssh.activeConnectionId == conn.id;
-        final isConnecting =
-            isActive && ssh.state == SshConnectionState.connecting;
+        final isActive = ssh.hasConnectedSession(conn.id);
+        final sessionCount = ssh.sessionCountForConnection(conn.id);
+        final isConnecting = ssh.latestSessionForConnection(conn.id)?.state ==
+            SshConnectionState.connecting;
+        final primary = Theme.of(context).colorScheme.primary;
 
         return Card(
           margin: const EdgeInsets.only(bottom: 8),
@@ -102,27 +125,22 @@ class HomeScreen extends StatelessWidget {
               padding: const EdgeInsets.all(16),
               child: Row(
                 children: [
-                  // 状态图标
                   Container(
                     width: 44,
                     height: 44,
                     decoration: BoxDecoration(
                       color: isActive
                           ? AppTheme.terminalGreen.withValues(alpha: 0.15)
-                          : AppTheme.darkTheme.colorScheme.primary
-                              .withValues(alpha: 0.1),
+                          : primary.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Icon(
                       _getStatusIcon(conn, ssh),
-                      color: isActive
-                          ? AppTheme.terminalGreen
-                          : AppTheme.darkTheme.colorScheme.primary,
+                      color: isActive ? AppTheme.terminalGreen : primary,
                       size: 24,
                     ),
                   ),
                   const SizedBox(width: 14),
-                  // 服务器信息
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -139,13 +157,15 @@ class HomeScreen extends StatelessWidget {
                           '${conn.username}@${conn.host}:${conn.port}',
                           style: TextStyle(
                             fontSize: 13,
-                            color: Colors.grey[400],
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurface
+                                .withValues(alpha: 0.7),
                           ),
                         ),
                       ],
                     ),
                   ),
-                  // 操作按钮
                   if (isConnecting)
                     const SizedBox(
                       width: 24,
@@ -156,33 +176,77 @@ class HomeScreen extends StatelessWidget {
                     PopupMenuButton<String>(
                       icon: Icon(
                         Icons.more_vert,
-                        color: Colors.grey[500],
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.65),
                       ),
                       onSelected: (action) =>
                           _handleAction(context, conn, action),
                       itemBuilder: (_) => [
-                        const PopupMenuItem(
-                          value: 'edit',
+                        PopupMenuItem(
+                          value: 'new_terminal',
                           child: Row(
                             children: [
-                              Icon(Icons.edit, size: 18),
-                              SizedBox(width: 8),
-                              Text('编辑'),
+                              const Icon(Icons.add_to_photos, size: 18),
+                              const SizedBox(width: 8),
+                              Text(strings.newWindow),
                             ],
                           ),
                         ),
-                        const PopupMenuItem(
+                        PopupMenuItem(
+                          value: 'edit',
+                          child: Row(
+                            children: [
+                              const Icon(Icons.edit, size: 18),
+                              const SizedBox(width: 8),
+                              Text(strings.edit),
+                            ],
+                          ),
+                        ),
+                        PopupMenuItem(
                           value: 'delete',
                           child: Row(
                             children: [
-                              Icon(Icons.delete, size: 18, color: Colors.red),
-                              SizedBox(width: 8),
-                              Text('删除', style: TextStyle(color: Colors.red)),
+                              const Icon(
+                                Icons.delete,
+                                size: 18,
+                                color: Colors.red,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                strings.delete,
+                                style: const TextStyle(color: Colors.red),
+                              ),
                             ],
                           ),
                         ),
                       ],
                     ),
+                  if (sessionCount > 0) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppTheme.terminalGreen.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: AppTheme.terminalGreen.withValues(alpha: 0.35),
+                        ),
+                      ),
+                      child: Text(
+                        '$sessionCount',
+                        style: const TextStyle(
+                          color: AppTheme.terminalGreen,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -193,9 +257,10 @@ class HomeScreen extends StatelessWidget {
   }
 
   IconData _getStatusIcon(ConnectionConfig conn, SshService ssh) {
-    if (ssh.activeConnectionId == conn.id) {
-      if (ssh.isConnected) return Icons.link;
-      if (ssh.state == SshConnectionState.connecting) return Icons.sync;
+    final session = ssh.latestSessionForConnection(conn.id);
+    if (session != null) {
+      if (session.state == SshConnectionState.connected) return Icons.link;
+      if (session.state == SshConnectionState.connecting) return Icons.sync;
       return Icons.link_off;
     }
     return Icons.dns_outlined;
@@ -204,18 +269,30 @@ class HomeScreen extends StatelessWidget {
   void _connectToServer(BuildContext context, ConnectionConfig conn) {
     final ssh = context.read<SshService>();
 
-    // 如果已连接同一个服务器，进入终端
-    if (ssh.activeConnectionId == conn.id && ssh.isConnected) {
-      Navigator.pushNamed(context, '/terminal', arguments: {'id': conn.id});
+    final existing = ssh.latestSessionForConnection(conn.id);
+    if (existing?.isConnected == true) {
+      Navigator.pushNamed(
+        context,
+        '/terminal',
+        arguments: {
+          'id': conn.id,
+          'sessionId': existing!.id,
+        },
+      );
       return;
     }
 
-    // 否则先连接再进入终端
+    _openNewTerminal(context, conn);
+  }
+
+  void _openNewTerminal(BuildContext context, ConnectionConfig conn) {
+    final ssh = context.read<SshService>();
+
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: Text('连接中: ${conn.name}'),
+        title: Text('Connecting to ${conn.name}'),
         content: const Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -225,27 +302,30 @@ class HomeScreen extends StatelessWidget {
               child: CircularProgressIndicator(),
             ),
             SizedBox(height: 16),
-            Text('正在建立 SSH 连接...'),
+            Text('Establishing SSH connection...'),
           ],
         ),
       ),
     );
 
-    ssh.connect(conn.id).then((_) {
-      // 弹出等待对话框
+    ssh.openSession(conn.id).then((sessionId) {
       if (!context.mounted) return;
-      Navigator.of(context).pop(); // pop dialog
+      Navigator.of(context).pop();
 
-      if (ssh.isConnected) {
+      if (sessionId != null) {
         Navigator.pushNamed(
           context,
           '/terminal',
-          arguments: {'id': conn.id},
+          arguments: {
+            'id': conn.id,
+            'sessionId': sessionId,
+          },
         );
-      } else if (ssh.state == SshConnectionState.error) {
+      } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('连接失败: ${ssh.errorMessage ?? "未知错误"}'),
+            content:
+                Text('Connection failed: ${ssh.errorMessage ?? "Unknown"}'),
             backgroundColor: Colors.redAccent,
           ),
         );
@@ -254,8 +334,14 @@ class HomeScreen extends StatelessWidget {
   }
 
   void _handleAction(
-      BuildContext context, ConnectionConfig conn, String action) {
+    BuildContext context,
+    ConnectionConfig conn,
+    String action,
+  ) {
     switch (action) {
+      case 'new_terminal':
+        _openNewTerminal(context, conn);
+        break;
       case 'edit':
         Navigator.pushNamed(context, '/edit', arguments: conn.id);
         break;
@@ -266,15 +352,17 @@ class HomeScreen extends StatelessWidget {
   }
 
   void _confirmDelete(BuildContext context, ConnectionConfig conn) {
+    final strings = AppStrings(context.read<AppSettings>().language);
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('删除连接'),
-        content: Text('确定删除 "${conn.name}" 吗？\n密码和私钥也会被一并清除。'),
+        title: Text(strings.deleteConnectionTitle),
+        content: Text(strings.deleteConnectionContent(conn.name)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
+            child: Text(strings.cancel),
           ),
           TextButton(
             onPressed: () {
@@ -282,15 +370,40 @@ class HomeScreen extends StatelessWidget {
               Navigator.pop(ctx);
             },
             style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
-            child: const Text('删除'),
+            child: Text(strings.delete),
           ),
         ],
       ),
     );
   }
 
-  void _disconnect(BuildContext context) {
-    context.read<SshService>().disconnect();
+  Future<void> _disconnect(BuildContext context) async {
+    final ssh = context.read<SshService>();
+    final strings = AppStrings(context.read<AppSettings>().language);
+    final windowCount = ssh.sessions.length;
+    if (windowCount == 0) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(strings.closeAllTitle),
+        content: Text(strings.closeAllContent(windowCount)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(strings.cancel),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+            child: Text(strings.closeAll),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !context.mounted) return;
+    await ssh.disconnect();
   }
 
   void _addConnection(BuildContext context) {

@@ -156,12 +156,7 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
   WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
 
-  SSHClient? client;
-  SSHSession? shell;
-  StreamSubscription<List<int>>? stdoutSub;
-  StreamSubscription<List<int>>? stderrSub;
-  Timer? keepAliveTimer;
-  bool pingInFlight = false;
+  final sessions = <String, _BackgroundSshSession>{};
 
   void setNotification(String content) {
     if (service is AndroidServiceInstance) {
@@ -173,38 +168,69 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
     }
   }
 
-  void emitState(String state, {String? message, String? connectionId}) {
+  void emitState(
+    String state, {
+    required String sessionId,
+    String? message,
+    String? connectionId,
+    String? connectionName,
+  }) {
     service.invoke('sshState', {
+      'sessionId': sessionId,
       'state': state,
       if (message != null) 'message': message,
       if (connectionId != null) 'connectionId': connectionId,
+      if (connectionName != null) 'connectionName': connectionName,
     });
   }
 
-  void closeSsh({bool notify = true}) {
-    keepAliveTimer?.cancel();
-    keepAliveTimer = null;
-    stdoutSub?.cancel();
-    stderrSub?.cancel();
-    stdoutSub = null;
-    stderrSub = null;
-    shell?.close();
-    client?.close();
-    shell = null;
-    client = null;
-    pingInFlight = false;
+  String notificationSummary() {
+    final count = sessions.length;
+    if (count == 0) return 'SSH service is running';
+    if (count == 1) {
+      return 'Connected to ${sessions.values.first.connectionName}';
+    }
+    return '$count SSH sessions running';
+  }
+
+  void closeSsh(String sessionId, {bool notify = true}) {
+    final session = sessions.remove(sessionId);
+    if (session == null) return;
+    session.close();
     if (notify) {
-      emitState('disconnected', message: 'Connection closed');
-      setNotification('SSH service is running');
+      emitState(
+        'disconnected',
+        sessionId: sessionId,
+        message: 'Connection closed',
+        connectionId: session.connectionId,
+        connectionName: session.connectionName,
+      );
+      setNotification(notificationSummary());
     }
   }
 
-  Future<void> connectSsh(Map<String, dynamic> data) async {
-    closeSsh(notify: false);
+  void closeAll({bool notify = true}) {
+    final ids = sessions.keys.toList();
+    for (final sessionId in ids) {
+      closeSsh(sessionId, notify: notify);
+    }
+    setNotification('SSH service is running');
+  }
 
+  Future<void> connectSsh(Map<String, dynamic> data) async {
+    final sessionId = data['sessionId'] as String?;
+    if (sessionId == null || sessionId.isEmpty) {
+      return;
+    }
+    closeSsh(sessionId, notify: false);
     final connectionId = data['id'] as String?;
     final name = data['name'] as String? ?? 'server';
-    emitState('connecting', connectionId: connectionId);
+    emitState(
+      'connecting',
+      sessionId: sessionId,
+      connectionId: connectionId,
+      connectionName: name,
+    );
     setNotification('Connecting to $name...');
 
     try {
@@ -231,7 +257,7 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
           ? SSHKeyPair.fromPem(privateKey, password)
           : null;
 
-      client = SSHClient(
+      final client = SSHClient(
         socket,
         username: username,
         identities: identities,
@@ -241,7 +267,7 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
         },
       );
 
-      shell = await client!.shell(
+      final shell = await client.shell(
         pty: SSHPtyConfig(
           width: width,
           height: height,
@@ -249,61 +275,81 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
         ),
       );
 
-      stdoutSub = shell!.stdout.listen(
+      final runtime = _BackgroundSshSession(
+        sessionId: sessionId,
+        connectionId: connectionId,
+        connectionName: name,
+        client: client,
+        shell: shell,
+      );
+      sessions[sessionId] = runtime;
+
+      runtime.stdoutSub = shell.stdout.listen(
         (bytes) {
           service.invoke('sshOutput', {
+            'sessionId': sessionId,
             'data': utf8.decode(bytes, allowMalformed: true),
           });
         },
         onError: (Object error) {
           service.invoke('sshOutput', {
+            'sessionId': sessionId,
             'data': '\r\n\x1b[31m[Connection error: $error]\x1b[0m\r\n',
           });
-          closeSsh();
+          closeSsh(sessionId);
         },
-        onDone: closeSsh,
+        onDone: () => closeSsh(sessionId),
       );
 
-      stderrSub = shell!.stderr.listen(
+      runtime.stderrSub = shell.stderr.listen(
         (bytes) {
           service.invoke('sshOutput', {
+            'sessionId': sessionId,
             'data': utf8.decode(bytes, allowMalformed: true),
           });
         },
       );
 
-      keepAliveTimer = Timer.periodic(
+      runtime.keepAliveTimer = Timer.periodic(
         Duration(seconds: keepAliveSeconds.clamp(3, 30)),
         (_) async {
-          final activeClient = client;
-          if (activeClient == null || pingInFlight) return;
-          pingInFlight = true;
+          if (runtime.pingInFlight) return;
+          runtime.pingInFlight = true;
           try {
-            await activeClient.ping().timeout(const Duration(seconds: 10));
+            await runtime.client.ping().timeout(const Duration(seconds: 10));
             service.invoke('sshKeepAlive', {
+              'sessionId': sessionId,
               'ok': true,
               'timestamp': DateTime.now().toIso8601String(),
             });
           } catch (e) {
             service.invoke('sshKeepAlive', {
+              'sessionId': sessionId,
               'ok': false,
               'error': e.toString(),
               'timestamp': DateTime.now().toIso8601String(),
             });
           } finally {
-            pingInFlight = false;
+            runtime.pingInFlight = false;
           }
         },
       );
 
-      emitState('connected', connectionId: connectionId);
-      setNotification('Connected to $name - service keep-alive every 3s');
+      emitState(
+        'connected',
+        sessionId: sessionId,
+        connectionId: connectionId,
+        connectionName: name,
+      );
+      setNotification(notificationSummary());
     } catch (e) {
-      closeSsh(notify: false);
+      closeSsh(sessionId, notify: false);
       emitState(
         'error',
+        sessionId: sessionId,
         message: 'Connection failed: $e',
         connectionId: connectionId,
+        connectionName: name,
       );
       setNotification('SSH connection failed');
     }
@@ -318,22 +364,33 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
   });
 
   service.on('sshInput').listen((event) {
+    final sessionId = event?['sessionId'] as String?;
     final data = event?['data'] as String?;
-    if (data != null && shell != null) {
-      shell!.stdin.add(utf8.encode(data));
+    final session = sessionId == null ? null : sessions[sessionId];
+    if (data != null && session != null) {
+      session.shell.stdin.add(utf8.encode(data));
     }
   });
 
   service.on('sshResize').listen((event) {
+    final sessionId = event?['sessionId'] as String?;
     final width = (event?['width'] as num?)?.toInt();
     final height = (event?['height'] as num?)?.toInt();
-    if (width != null && height != null && shell != null) {
-      shell!.resizeTerminal(width, height);
+    final session = sessionId == null ? null : sessions[sessionId];
+    if (width != null && height != null && session != null) {
+      session.shell.resizeTerminal(width, height);
     }
   });
 
   service.on('sshDisconnect').listen((event) {
-    closeSsh();
+    final sessionId = event?['sessionId'] as String?;
+    if (sessionId != null) {
+      closeSsh(sessionId);
+    }
+  });
+
+  service.on('sshDisconnectAll').listen((event) {
+    closeAll();
   });
 
   service.on('update').listen((event) {
@@ -343,7 +400,36 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
   });
 
   service.on('stopService').listen((event) {
-    closeSsh(notify: false);
+    closeAll(notify: false);
     service.stopSelf();
   });
+}
+
+class _BackgroundSshSession {
+  final String sessionId;
+  final String? connectionId;
+  final String connectionName;
+  final SSHClient client;
+  final SSHSession shell;
+  StreamSubscription<List<int>>? stdoutSub;
+  StreamSubscription<List<int>>? stderrSub;
+  Timer? keepAliveTimer;
+  bool pingInFlight = false;
+
+  _BackgroundSshSession({
+    required this.sessionId,
+    required this.connectionId,
+    required this.connectionName,
+    required this.client,
+    required this.shell,
+  });
+
+  void close() {
+    keepAliveTimer?.cancel();
+    stdoutSub?.cancel();
+    stderrSub?.cancel();
+    shell.close();
+    client.close();
+    pingInFlight = false;
+  }
 }

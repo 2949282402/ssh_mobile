@@ -5,6 +5,8 @@ import 'screens/add_edit_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/startup_screen.dart';
 import 'screens/terminal_screen.dart';
+import 'services/app_settings.dart';
+import 'services/shortcut_command_service.dart';
 import 'services/ssh_service.dart';
 import 'services/storage_service.dart';
 import 'theme/app_theme.dart';
@@ -14,10 +16,14 @@ void main() {
 
   final storageService = StorageService();
   final sshService = SshService(storageService);
+  final appSettings = AppSettings();
+  final shortcutCommandService = ShortcutCommandService();
 
   runApp(
     MultiProvider(
       providers: [
+        ChangeNotifierProvider.value(value: appSettings),
+        ChangeNotifierProvider.value(value: shortcutCommandService),
         ChangeNotifierProvider.value(value: storageService),
         ChangeNotifierProvider.value(value: sshService),
       ],
@@ -26,6 +32,8 @@ void main() {
   );
 
   storageService.init();
+  appSettings.init();
+  shortcutCommandService.init();
 }
 
 class SshMobileApp extends StatelessWidget {
@@ -33,12 +41,14 @@ class SshMobileApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final settings = context.watch<AppSettings>();
+
     return MaterialApp(
       title: 'SSH Mobile',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.darkTheme,
+      theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
-      themeMode: ThemeMode.dark,
+      themeMode: settings.themeMode,
       initialRoute: '/',
       onGenerateRoute: (settings) {
         switch (settings.name) {
@@ -51,6 +61,7 @@ class SshMobileApp extends StatelessWidget {
             return MaterialPageRoute(
               builder: (_) => TerminalScreen(
                 connectionId: config['id'] as String,
+                sessionId: config['sessionId'] as String,
               ),
             );
           case '/add':

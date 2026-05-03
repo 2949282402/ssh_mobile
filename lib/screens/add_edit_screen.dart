@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/connection.dart';
+import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 
@@ -355,6 +356,17 @@ class _AddEditScreenState extends State<AddEditScreen> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
 
+    final ssh = context.read<SshService>();
+    final activeWindowCount =
+        isEditing ? ssh.activeSessionCountForConnection(widget.editId!) : 0;
+    if (activeWindowCount > 0) {
+      final confirmed = await _confirmDisconnectActiveWindows(
+        activeWindowCount,
+      );
+      if (!confirmed) return;
+      if (!mounted) return;
+    }
+
     setState(() => _isSaving = true);
 
     try {
@@ -383,12 +395,15 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
       if (isEditing) {
         await storage.updateConnection(config);
+        if (activeWindowCount > 0) {
+          await ssh.disconnectSessionsForConnection(config.id);
+        }
       } else {
         await storage.addConnection(config);
       }
 
       if (mounted) {
-        Navigator.pop(context, true);
+        Navigator.pop(context, config.id);
       }
     } catch (e) {
       if (mounted) {
@@ -399,5 +414,31 @@ class _AddEditScreenState extends State<AddEditScreen> {
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
+  }
+
+  Future<bool> _confirmDisconnectActiveWindows(int windowCount) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Active windows will disconnect'),
+        content: Text(
+          'This server currently has $windowCount active terminal '
+          '${windowCount == 1 ? "window" : "windows"}. Saving changes will '
+          'automatically disconnect all of them.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+            child: const Text('Save and disconnect'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
   }
 }
