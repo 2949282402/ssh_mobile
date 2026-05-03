@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -5,19 +7,22 @@ import 'screens/add_edit_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/startup_screen.dart';
 import 'screens/terminal_screen.dart';
+import 'services/background_service.dart';
 import 'services/app_settings.dart';
 import 'services/shortcut_command_service.dart';
 import 'services/ssh_service.dart';
 import 'services/storage_service.dart';
 import 'theme/app_theme.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   final storageService = StorageService();
   final sshService = SshService(storageService);
   final appSettings = AppSettings();
   final shortcutCommandService = ShortcutCommandService();
+
+  await appSettings.init();
 
   runApp(
     MultiProvider(
@@ -31,9 +36,21 @@ void main() {
     ),
   );
 
-  storageService.init();
-  appSettings.init();
+  unawaited(
+    storageService.init().then((_) => sshService.restoreTmuxSessions()),
+  );
   shortcutCommandService.init();
+
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    Timer(const Duration(milliseconds: 900), () {
+      unawaited(
+        BackgroundServiceManager.prewarm().timeout(
+          const Duration(seconds: 2),
+          onTimeout: () {},
+        ),
+      );
+    });
+  });
 }
 
 class SshMobileApp extends StatelessWidget {

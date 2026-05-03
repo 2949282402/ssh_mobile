@@ -50,10 +50,17 @@ class _PowerGuideScreenState extends State<PowerGuideScreen> {
   }
 
   Future<void> _refreshStatus() async {
-    final exempt =
-        await BackgroundServiceManager.isIgnoringBatteryOptimizations();
-    if (mounted) {
-      setState(() => _isExempt = exempt);
+    try {
+      final exempt =
+          await BackgroundServiceManager.isIgnoringBatteryOptimizations()
+              .timeout(const Duration(seconds: 2));
+      if (mounted) {
+        setState(() => _isExempt = exempt);
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _isExempt = false);
+      }
     }
   }
 
@@ -90,7 +97,8 @@ class _PowerGuideScreenState extends State<PowerGuideScreen> {
             FilledButton.icon(
               onPressed: () async {
                 await BackgroundServiceManager
-                    .requestBatteryOptimizationExemption();
+                        .requestBatteryOptimizationExemption()
+                    .timeout(const Duration(seconds: 2), onTimeout: () {});
                 await _refreshStatus();
               },
               icon: const Icon(Icons.power_settings_new),

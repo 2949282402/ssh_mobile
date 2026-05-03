@@ -6,6 +6,7 @@ import '../services/app_settings.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/connection_progress_dialog.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -20,7 +21,10 @@ class HomeScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('SSH Mobile'),
+        title: const Text(
+          'SSH Mobile',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
         actions: [
           TextButton(
             onPressed: settings.toggleLanguage,
@@ -69,32 +73,52 @@ class HomeScreen extends StatelessWidget {
   }
 
   Widget _buildEmptyState(BuildContext context, AppStrings strings) {
+    final colorScheme = Theme.of(context).colorScheme;
+
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.terminal_rounded,
-            size: 80,
-            color: Colors.grey[700],
-          ),
-          const SizedBox(height: 16),
-          Text(
-            strings.noConnections,
-            style: TextStyle(
-              color: Colors.grey[500],
-              fontSize: 16,
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 84,
+              height: 84,
+              decoration: BoxDecoration(
+                color: colorScheme.primary.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: colorScheme.primary.withValues(alpha: 0.18),
+                ),
+              ),
+              child: Icon(
+                Icons.terminal_rounded,
+                size: 42,
+                color: colorScheme.primary,
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            strings.addHint,
-            style: TextStyle(
-              color: Colors.grey[600],
-              fontSize: 14,
+            const SizedBox(height: 18),
+            Text(
+              strings.noConnections,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: colorScheme.onSurface,
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+              ),
             ),
-          ),
-        ],
+            const SizedBox(height: 8),
+            Text(
+              strings.addHint,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: colorScheme.onSurface.withValues(alpha: 0.62),
+                fontSize: 14,
+                height: 1.35,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -106,23 +130,49 @@ class HomeScreen extends StatelessWidget {
     AppStrings strings,
   ) {
     return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      itemCount: connections.length,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 88),
+      itemCount: connections.length + 1,
       itemBuilder: (context, index) {
-        final conn = connections[index];
+        if (index == 0) {
+          return _buildOverviewHeader(context, connections, ssh);
+        }
+
+        final conn = connections[index - 1];
         final isActive = ssh.hasConnectedSession(conn.id);
         final sessionCount = ssh.sessionCountForConnection(conn.id);
         final isConnecting = ssh.latestSessionForConnection(conn.id)?.state ==
             SshConnectionState.connecting;
         final primary = Theme.of(context).colorScheme.primary;
 
-        return Card(
-          margin: const EdgeInsets.only(bottom: 8),
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
           child: InkWell(
             borderRadius: BorderRadius.circular(8),
             onTap: () => _connectToServer(context, conn),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: isActive
+                      ? AppTheme.terminalGreen.withValues(alpha: 0.42)
+                      : Theme.of(context).dividerColor,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(
+                      alpha: Theme.of(context).brightness == Brightness.dark
+                          ? 0.12
+                          : 0.04,
+                    ),
+                    blurRadius: 14,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
               child: Row(
                 children: [
                   Container(
@@ -153,15 +203,31 @@ class HomeScreen extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 4),
-                        Text(
-                          '${conn.username}@${conn.host}:${conn.port}',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurface
-                                .withValues(alpha: 0.7),
-                          ),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.dns_outlined,
+                              size: 13,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurface
+                                  .withValues(alpha: 0.48),
+                            ),
+                            const SizedBox(width: 5),
+                            Expanded(
+                              child: Text(
+                                '${conn.username}@${conn.host}:${conn.port}',
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withValues(alpha: 0.66),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -256,6 +322,105 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
+  Widget _buildOverviewHeader(
+    BuildContext context,
+    List<ConnectionConfig> connections,
+    SshService ssh,
+  ) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final activeCount =
+        connections.where((conn) => ssh.hasConnectedSession(conn.id)).length;
+    final windowCount = ssh.sessions.length;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: colorScheme.surface,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Theme.of(context).dividerColor),
+        ),
+        child: Row(
+          children: [
+            _summaryItem(
+              context,
+              icon: Icons.storage_rounded,
+              label: 'Servers',
+              value: '${connections.length}',
+            ),
+            const SizedBox(width: 10),
+            _summaryItem(
+              context,
+              icon: Icons.link_rounded,
+              label: 'Active',
+              value: '$activeCount',
+              accent: AppTheme.terminalGreen,
+            ),
+            const SizedBox(width: 10),
+            _summaryItem(
+              context,
+              icon: Icons.tab_rounded,
+              label: 'Windows',
+              value: '$windowCount',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _summaryItem(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    required String value,
+    Color? accent,
+  }) {
+    final color = accent ?? Theme.of(context).colorScheme.primary;
+    return Expanded(
+      child: Row(
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, size: 17, color: color),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.55),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   IconData _getStatusIcon(ConnectionConfig conn, SshService ssh) {
     final session = ssh.latestSessionForConnection(conn.id);
     if (session != null) {
@@ -270,7 +435,8 @@ class HomeScreen extends StatelessWidget {
     final ssh = context.read<SshService>();
 
     final existing = ssh.latestSessionForConnection(conn.id);
-    if (existing?.isConnected == true) {
+    if (existing?.isConnected == true ||
+        (existing != null && conn.launchMode == TerminalLaunchMode.tmux)) {
       Navigator.pushNamed(
         context,
         '/terminal',
@@ -285,52 +451,111 @@ class HomeScreen extends StatelessWidget {
     _openNewTerminal(context, conn);
   }
 
-  void _openNewTerminal(BuildContext context, ConnectionConfig conn) {
+  Future<void> _openNewTerminal(
+    BuildContext context,
+    ConnectionConfig conn,
+  ) async {
+    await _openNewTerminalWithOptions(context, conn);
+  }
+
+  Future<void> _openNewTerminalWithOptions(
+    BuildContext context,
+    ConnectionConfig conn, {
+    bool allowTmuxInstall = false,
+  }) async {
     final ssh = context.read<SshService>();
 
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: Text('Connecting to ${conn.name}'),
-        content: const Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: 40,
-              height: 40,
-              child: CircularProgressIndicator(),
-            ),
-            SizedBox(height: 16),
-            Text('Establishing SSH connection...'),
-          ],
-        ),
+      useSafeArea: false,
+      builder: (ctx) => ConnectionProgressDialog(
+        title: 'Connecting to ${conn.name}',
+        message: 'Establishing SSH connection...',
       ),
     );
 
-    ssh.openSession(conn.id).then((sessionId) {
-      if (!context.mounted) return;
-      Navigator.of(context).pop();
+    await waitForConnectionProgressFrame();
+    if (!context.mounted) return;
 
-      if (sessionId != null) {
-        Navigator.pushNamed(
-          context,
-          '/terminal',
-          arguments: {
-            'id': conn.id,
-            'sessionId': sessionId,
-          },
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content:
-                Text('Connection failed: ${ssh.errorMessage ?? "Unknown"}'),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
+    final sessionId = await ssh.openSession(
+      conn.id,
+      allowTmuxInstall: allowTmuxInstall,
+    );
+    if (!context.mounted) return;
+    Navigator.of(context).pop();
+
+    if (sessionId != null) {
+      Navigator.pushNamed(
+        context,
+        '/terminal',
+        arguments: {
+          'id': conn.id,
+          'sessionId': sessionId,
+        },
+      );
+    } else {
+      if (!allowTmuxInstall &&
+          conn.launchMode == TerminalLaunchMode.tmux &&
+          _isTmuxMissingError(ssh.errorMessage)) {
+        final confirmed = await _confirmInstallTmux(context, conn);
+        if (confirmed == true && context.mounted) {
+          await _openNewTerminalWithOptions(
+            context,
+            conn,
+            allowTmuxInstall: true,
+          );
+        }
+        return;
       }
-    });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_formatConnectionFailure(ssh.errorMessage)),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
+  }
+
+  bool _isTmuxMissingError(String? message) {
+    return message?.toLowerCase().contains('tmux is not installed') == true;
+  }
+
+  String _formatConnectionFailure(String? message) {
+    final text = message ?? 'Unknown';
+    final lower = text.toLowerCase();
+    if (lower.contains('tmux automatic install failed') ||
+        lower.contains('unable to check tmux')) {
+      return 'Connection failed: $text\n请手动登录服务器安装 tmux 后再重试。';
+    }
+    return 'Connection failed: $text';
+  }
+
+  Future<bool?> _confirmInstallTmux(
+    BuildContext context,
+    ConnectionConfig conn,
+  ) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('服务器未安装 tmux'),
+        content: Text(
+          '连接 "${conn.name}" 需要 tmux。是否允许应用在服务器上尝试安装 tmux？\n\n'
+          '安装会使用服务器上的 apt、dnf、yum、pacman、zypper、apk 或 pkg，并且可能需要当前用户拥有免密 sudo 或 root 权限。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('同意安装'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _handleAction(

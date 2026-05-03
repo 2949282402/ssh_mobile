@@ -14,11 +14,33 @@ class BackgroundServiceManager {
   static const int _notificationId = 1001;
   static const MethodChannel _powerChannel = MethodChannel('ssh_mobile/power');
   static bool _configured = false;
+  static bool _notificationPermissionChecked = false;
+  static Future<void>? _prewarmFuture;
 
   static Future<void> initialize() async {
-    if (_configured) return;
-
     await _requestNotificationPermission();
+    await prewarm();
+  }
+
+  static Future<void> prewarm() async {
+    if (_configured) return;
+    final existing = _prewarmFuture;
+    if (existing != null) {
+      await existing;
+      return;
+    }
+
+    final future = _configureService();
+    _prewarmFuture = future;
+    try {
+      await future;
+    } finally {
+      _prewarmFuture = null;
+    }
+  }
+
+  static Future<void> _configureService() async {
+    if (_configured) return;
     await _createNotificationChannel();
 
     final service = FlutterBackgroundService();
@@ -101,6 +123,9 @@ class BackgroundServiceManager {
   }
 
   static Future<void> _requestNotificationPermission() async {
+    if (_notificationPermissionChecked) return;
+    _notificationPermissionChecked = true;
+
     final status = await Permission.notification.status;
     if (status.isDenied || status.isRestricted || status.isLimited) {
       await Permission.notification.request();
@@ -193,7 +218,7 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
     return '$count SSH sessions running';
   }
 
-  void closeSsh(String sessionId, {bool notify = true}) {
+  void closeSsh(String sessionId, {bool notify = true, String? message}) {
     final session = sessions.remove(sessionId);
     if (session == null) return;
     session.close();
@@ -201,7 +226,7 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
       emitState(
         'disconnected',
         sessionId: sessionId,
-        message: 'Connection closed',
+        message: message ?? 'Connection closed',
         connectionId: session.connectionId,
         connectionName: session.connectionName,
       );
@@ -215,6 +240,129 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
       closeSsh(sessionId, notify: notify);
     }
     setNotification('SSH service is running');
+  }
+
+  String sanitizeTmuxSessionName(String name) {
+    final sanitized = name
+        .trim()
+        .replaceAll(RegExp(r'[^A-Za-z0-9_.-]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+    if (sanitized.isEmpty) return 'ssh_mobile';
+    return sanitized.length > 80 ? sanitized.substring(0, 80) : sanitized;
+  }
+
+  String buildTmuxAttachCommand(String sessionName, int autoDeleteSeconds) {
+    final safeName = sanitizeTmuxSessionName(sessionName);
+    final seconds = autoDeleteSeconds.clamp(30, 86400);
+    final hook = 'run-shell "sleep $seconds; tmux list-clients -t $safeName '
+        '2>/dev/null | grep -q . || tmux kill-session -t $safeName '
+        '2>/dev/null"';
+    return 'if command -v tmux >/dev/null 2>&1; then '
+        'tmux has-session -t $safeName 2>/dev/null || '
+        'tmux new-session -d -s $safeName; '
+        "tmux set-hook -t $safeName client-detached '$hook'; "
+        'tmux attach-session -t $safeName; '
+        'else echo "tmux is not installed on this server"; exit 127; fi';
+  }
+
+  String buildTmuxInstallCommand() {
+    return r'''
+if command -v tmux >/dev/null 2>&1; then
+  echo "tmux is already installed"
+  exit 0
+fi
+
+if [ "$(id -u)" -eq 0 ]; then
+  SUDO=""
+elif command -v sudo >/dev/null 2>&1; then
+  SUDO="sudo -n"
+else
+  echo "tmux is missing and sudo is not available"
+  exit 126
+fi
+
+if command -v apt-get >/dev/null 2>&1; then
+  $SUDO apt-get update && $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y tmux
+elif command -v dnf >/dev/null 2>&1; then
+  $SUDO dnf install -y tmux
+elif command -v yum >/dev/null 2>&1; then
+  $SUDO yum install -y tmux
+elif command -v pacman >/dev/null 2>&1; then
+  $SUDO pacman -Sy --noconfirm tmux
+elif command -v zypper >/dev/null 2>&1; then
+  $SUDO zypper --non-interactive install tmux
+elif command -v apk >/dev/null 2>&1; then
+  $SUDO apk add tmux
+elif command -v pkg >/dev/null 2>&1; then
+  $SUDO pkg install -y tmux
+else
+  echo "No supported package manager found for installing tmux"
+  exit 127
+fi
+
+command -v tmux >/dev/null 2>&1
+''';
+  }
+
+  Future<void> installTmuxIfAllowed({
+    required SSHClient client,
+    required bool allowTmuxInstall,
+    required String sessionId,
+    required ServiceInstance service,
+  }) async {
+    late final SSHRunResult tmuxCheck;
+    try {
+      tmuxCheck = await client
+          .runWithResult('command -v tmux >/dev/null 2>&1')
+          .timeout(const Duration(seconds: 8));
+    } catch (e) {
+      throw StateError(
+        'Unable to check tmux on this server. Please install tmux manually '
+        'on the server and try again. Detail: $e',
+      );
+    }
+    if (tmuxCheck.exitCode == 0) return;
+
+    if (!allowTmuxInstall) {
+      throw StateError('tmux is not installed on this server');
+    }
+
+    service.invoke('sshOutput', {
+      'sessionId': sessionId,
+      'data':
+          '\r\n\x1b[33m[tmux is missing, installing on the server...]\x1b[0m\r\n',
+    });
+
+    late final SSHRunResult installResult;
+    try {
+      installResult = await client
+          .runWithResult(buildTmuxInstallCommand(), runInPty: true)
+          .timeout(const Duration(minutes: 5));
+    } catch (e) {
+      throw StateError(
+        'tmux automatic install failed. Please install tmux manually on the '
+        'server and try again. Detail: $e',
+      );
+    }
+    final output = utf8.decode(installResult.output, allowMalformed: true);
+    if (output.trim().isNotEmpty) {
+      service.invoke('sshOutput', {
+        'sessionId': sessionId,
+        'data': '$output\r\n',
+      });
+    }
+
+    if (installResult.exitCode != 0) {
+      final detail = output.trim();
+      final tail =
+          detail.length > 500 ? detail.substring(detail.length - 500) : detail;
+      throw StateError(
+        'tmux automatic install failed with exit code '
+        '${installResult.exitCode}. Please install tmux manually on the '
+        'server and try again${tail.isEmpty ? '' : '. Detail: $tail'}',
+      );
+    }
   }
 
   Future<void> connectSsh(Map<String, dynamic> data) async {
@@ -244,6 +392,13 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
       final height = (data['terminalHeight'] as num?)?.toInt() ?? 24;
       final keepAliveSeconds =
           (data['keepAliveInterval'] as num?)?.toInt() ?? 3;
+      final launchMode = data['launchMode'] as String? ?? 'ssh';
+      final allowTmuxInstall = data['allowTmuxInstall'] as bool? ?? false;
+      final tmuxSessionName =
+          sanitizeTmuxSessionName(data['tmuxSessionName'] as String? ?? name);
+      final tmuxAutoDeleteSeconds =
+          ((data['tmuxAutoDeleteSeconds'] as num?)?.toInt() ?? 600)
+              .clamp(30, 86400);
 
       final socket = await SSHSocket.connect(
         host,
@@ -267,6 +422,20 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
         },
       );
 
+      if (launchMode == 'tmux') {
+        try {
+          await installTmuxIfAllowed(
+            client: client,
+            allowTmuxInstall: allowTmuxInstall,
+            sessionId: sessionId,
+            service: service,
+          );
+        } catch (_) {
+          client.close();
+          rethrow;
+        }
+      }
+
       final shell = await client.shell(
         pty: SSHPtyConfig(
           width: width,
@@ -279,6 +448,10 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
         sessionId: sessionId,
         connectionId: connectionId,
         connectionName: name,
+        tmuxSessionName: launchMode == 'tmux' ? tmuxSessionName : null,
+        tmuxAutoDeleteSeconds: tmuxAutoDeleteSeconds,
+        launchMode: launchMode,
+        reconnectData: Map<String, dynamic>.from(data),
         client: client,
         shell: shell,
       );
@@ -310,6 +483,14 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
         },
       );
 
+      if (launchMode == 'tmux') {
+        final command = buildTmuxAttachCommand(
+          tmuxSessionName,
+          tmuxAutoDeleteSeconds,
+        );
+        shell.stdin.add(utf8.encode('$command\r'));
+      }
+
       runtime.keepAliveTimer = Timer.periodic(
         Duration(seconds: keepAliveSeconds.clamp(3, 30)),
         (_) async {
@@ -317,6 +498,7 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
           runtime.pingInFlight = true;
           try {
             await runtime.client.ping().timeout(const Duration(seconds: 10));
+            runtime.keepAliveFailures = 0;
             service.invoke('sshKeepAlive', {
               'sessionId': sessionId,
               'ok': true,
@@ -329,6 +511,26 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
               'error': e.toString(),
               'timestamp': DateTime.now().toIso8601String(),
             });
+            if (!sessions.containsKey(runtime.sessionId) ||
+                runtime.reconnecting) {
+              return;
+            }
+            runtime.keepAliveFailures++;
+            if (runtime.launchMode == 'tmux') {
+              runtime.reconnecting = true;
+              service.invoke('sshOutput', {
+                'sessionId': runtime.sessionId,
+                'data':
+                    '\r\n\x1b[33m[Connection lost, reconnecting tmux session...]\x1b[0m\r\n',
+              });
+              closeSsh(runtime.sessionId, notify: false);
+              unawaited(connectSsh(runtime.reconnectData));
+            } else {
+              closeSsh(
+                runtime.sessionId,
+                message: 'Connection lost: $e',
+              );
+            }
           } finally {
             runtime.pingInFlight = false;
           }
@@ -409,17 +611,27 @@ class _BackgroundSshSession {
   final String sessionId;
   final String? connectionId;
   final String connectionName;
+  final String? tmuxSessionName;
+  final int tmuxAutoDeleteSeconds;
+  final String launchMode;
+  final Map<String, dynamic> reconnectData;
   final SSHClient client;
   final SSHSession shell;
   StreamSubscription<List<int>>? stdoutSub;
   StreamSubscription<List<int>>? stderrSub;
   Timer? keepAliveTimer;
   bool pingInFlight = false;
+  bool reconnecting = false;
+  int keepAliveFailures = 0;
 
   _BackgroundSshSession({
     required this.sessionId,
     required this.connectionId,
     required this.connectionName,
+    required this.tmuxSessionName,
+    required this.tmuxAutoDeleteSeconds,
+    required this.launchMode,
+    required this.reconnectData,
     required this.client,
     required this.shell,
   });

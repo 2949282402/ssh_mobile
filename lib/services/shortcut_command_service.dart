@@ -46,40 +46,47 @@ class ShortcutCommandService extends ChangeNotifier {
       List.unmodifiable(_customCommands);
 
   Future<void> init() async {
-    final prefs = await SharedPreferences.getInstance();
+    try {
+      final prefs = await SharedPreferences.getInstance().timeout(
+        const Duration(seconds: 3),
+      );
 
-    final usageJson = prefs.getString(_usageKey);
-    if (usageJson != null && usageJson.isNotEmpty) {
-      try {
-        final decoded = jsonDecode(usageJson) as Map<String, dynamic>;
-        _usage
-          ..clear()
-          ..addAll(
-            decoded.map(
-              (key, value) => MapEntry(key, (value as num).toInt()),
-            ),
-          );
-      } catch (_) {}
-    }
-
-    final customJson = prefs.getString(_customKey);
-    if (customJson != null && customJson.isNotEmpty) {
-      try {
-        final decoded = jsonDecode(customJson) as List<dynamic>;
-        _customCommands
-          ..clear()
-          ..addAll(
-            decoded.map(
-              (item) => ShortcutCommand.fromJson(
-                item as Map<String, dynamic>,
+      final usageJson = prefs.getString(_usageKey);
+      if (usageJson != null && usageJson.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(usageJson) as Map<String, dynamic>;
+          _usage
+            ..clear()
+            ..addAll(
+              decoded.map(
+                (key, value) => MapEntry(key, (value as num).toInt()),
               ),
-            ),
-          );
-      } catch (_) {}
-    }
+            );
+        } catch (_) {}
+      }
 
-    _initialized = true;
-    notifyListeners();
+      final customJson = prefs.getString(_customKey);
+      if (customJson != null && customJson.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(customJson) as List<dynamic>;
+          _customCommands
+            ..clear()
+            ..addAll(
+              decoded.map(
+                (item) => ShortcutCommand.fromJson(
+                  item as Map<String, dynamic>,
+                ),
+              ),
+            );
+        } catch (_) {}
+      }
+    } catch (_) {
+      _usage.clear();
+      _customCommands.clear();
+    } finally {
+      _initialized = true;
+      notifyListeners();
+    }
   }
 
   int usageFor(String id) => _usage[id] ?? 0;

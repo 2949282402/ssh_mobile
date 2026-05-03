@@ -11,6 +11,8 @@ class ConnectionConfig {
   int terminalHeight;
   bool keepAlive;
   int keepAliveInterval;
+  TerminalLaunchMode launchMode;
+  int tmuxAutoDeleteSeconds;
   DateTime createdAt;
   DateTime updatedAt;
   String? jumpHost;
@@ -31,6 +33,8 @@ class ConnectionConfig {
     this.terminalHeight = 24,
     this.keepAlive = true,
     this.keepAliveInterval = 3,
+    this.launchMode = TerminalLaunchMode.ssh,
+    this.tmuxAutoDeleteSeconds = 600,
     DateTime? createdAt,
     DateTime? updatedAt,
     this.jumpHost,
@@ -52,6 +56,8 @@ class ConnectionConfig {
       'terminalHeight': terminalHeight,
       'keepAlive': keepAlive,
       'keepAliveInterval': keepAliveInterval,
+      'launchMode': launchMode.name,
+      'tmuxAutoDeleteSeconds': tmuxAutoDeleteSeconds,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       'jumpHost': jumpHost,
@@ -73,6 +79,9 @@ class ConnectionConfig {
       terminalHeight: (json['terminalHeight'] as num?)?.toInt() ?? 24,
       keepAlive: json['keepAlive'] as bool? ?? true,
       keepAliveInterval: (json['keepAliveInterval'] as num?)?.toInt() ?? 3,
+      launchMode: TerminalLaunchMode.fromName(json['launchMode'] as String?),
+      tmuxAutoDeleteSeconds:
+          (json['tmuxAutoDeleteSeconds'] as num?)?.toInt() ?? 600,
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
       updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
@@ -97,6 +106,8 @@ class ConnectionConfig {
     int? terminalHeight,
     bool? keepAlive,
     int? keepAliveInterval,
+    TerminalLaunchMode? launchMode,
+    int? tmuxAutoDeleteSeconds,
     String? jumpHost,
     int? jumpPort,
     String? jumpUsername,
@@ -115,6 +126,9 @@ class ConnectionConfig {
       terminalHeight: terminalHeight ?? this.terminalHeight,
       keepAlive: keepAlive ?? this.keepAlive,
       keepAliveInterval: keepAliveInterval ?? this.keepAliveInterval,
+      launchMode: launchMode ?? this.launchMode,
+      tmuxAutoDeleteSeconds:
+          tmuxAutoDeleteSeconds ?? this.tmuxAutoDeleteSeconds,
       createdAt: createdAt,
       updatedAt: DateTime.now(),
       jumpHost: jumpHost ?? this.jumpHost,
@@ -122,6 +136,38 @@ class ConnectionConfig {
       jumpUsername: jumpUsername ?? this.jumpUsername,
       group: group ?? this.group,
     );
+  }
+}
+
+enum TerminalLaunchMode {
+  ssh,
+  tmux;
+
+  String get name {
+    switch (this) {
+      case TerminalLaunchMode.ssh:
+        return 'ssh';
+      case TerminalLaunchMode.tmux:
+        return 'tmux';
+    }
+  }
+
+  String get displayName {
+    switch (this) {
+      case TerminalLaunchMode.ssh:
+        return 'SSH';
+      case TerminalLaunchMode.tmux:
+        return 'SSH + tmux';
+    }
+  }
+
+  static TerminalLaunchMode fromName(String? name) {
+    switch (name) {
+      case 'tmux':
+        return TerminalLaunchMode.tmux;
+      default:
+        return TerminalLaunchMode.ssh;
+    }
   }
 }
 

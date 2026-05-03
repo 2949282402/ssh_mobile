@@ -8,7 +8,7 @@ import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 
 class AddEditScreen extends StatefulWidget {
-  final String? editId; // null = 新增，非null = 编辑
+  final String? editId;
 
   const AddEditScreen({super.key, this.editId});
 
@@ -27,8 +27,10 @@ class _AddEditScreenState extends State<AddEditScreen> {
   final _jumpHostController = TextEditingController();
   final _jumpPortController = TextEditingController(text: '22');
   final _jumpUsernameController = TextEditingController();
+  final _tmuxAutoDeleteController = TextEditingController(text: '10');
 
   AuthMethod _authMethod = AuthMethod.password;
+  TerminalLaunchMode _launchMode = TerminalLaunchMode.ssh;
   bool _keepAlive = true;
   bool _obscurePassword = true;
   bool _isSaving = false;
@@ -36,12 +38,19 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
   bool get isEditing => widget.editId != null;
 
+  int _secondsToDisplayMinutes(int seconds) {
+    return ((seconds + 59) ~/ 60).clamp(1, 1440);
+  }
+
+  int _tmuxAutoDeleteSecondsFromInput() {
+    final minutes = int.tryParse(_tmuxAutoDeleteController.text.trim()) ?? 10;
+    return minutes.clamp(1, 1440) * 60;
+  }
+
   @override
   void initState() {
     super.initState();
-    if (isEditing) {
-      _loadExistingConfig();
-    }
+    if (isEditing) _loadExistingConfig();
   }
 
   void _loadExistingConfig() {
@@ -54,7 +63,10 @@ class _AddEditScreenState extends State<AddEditScreen> {
     _portController.text = config.port.toString();
     _usernameController.text = config.username;
     _authMethod = config.authMethod;
+    _launchMode = config.launchMode;
     _keepAlive = config.keepAlive;
+    _tmuxAutoDeleteController.text =
+        _secondsToDisplayMinutes(config.tmuxAutoDeleteSeconds).toString();
     _jumpHostController.text = config.jumpHost ?? '';
     _jumpPortController.text = config.jumpPort?.toString() ?? '22';
     _jumpUsernameController.text = config.jumpUsername ?? '';
@@ -70,7 +82,6 @@ class _AddEditScreenState extends State<AddEditScreen> {
     final privateKey = await storage.getPrivateKey(id);
 
     if (!mounted) return;
-
     _passwordController.text = password ?? '';
     _privateKeyController.text = privateKey ?? '';
     setState(() => _isLoadingSecrets = false);
@@ -87,6 +98,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
     _jumpHostController.dispose();
     _jumpPortController.dispose();
     _jumpUsernameController.dispose();
+    _tmuxAutoDeleteController.dispose();
     super.dispose();
   }
 
@@ -112,18 +124,16 @@ class _AddEditScreenState extends State<AddEditScreen> {
       body: Form(
         key: _formKey,
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
           children: [
             if (_isLoadingSecrets) ...[
               const LinearProgressIndicator(minHeight: 2),
               const SizedBox(height: 12),
             ],
-            _buildSectionHeader('基本信息'),
-            const SizedBox(height: 8),
+            _section('基本信息'),
             _buildNameField(),
             const SizedBox(height: 16),
-            _buildSectionHeader('连接信息'),
-            const SizedBox(height: 8),
+            _section('连接信息'),
             _buildHostField(),
             const SizedBox(height: 12),
             Row(
@@ -134,8 +144,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
               ],
             ),
             const SizedBox(height: 20),
-            _buildSectionHeader('认证方式'),
-            const SizedBox(height: 8),
+            _section('认证方式'),
             _buildAuthMethodSelector(),
             const SizedBox(height: 12),
             if (_authMethod == AuthMethod.password ||
@@ -147,8 +156,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
               _buildPrivateKeyField(),
             ],
             const SizedBox(height: 20),
-            _buildSectionHeader('跳板机（可选）'),
-            const SizedBox(height: 8),
+            _section('跳板机（可选）'),
             _buildJumpHostField(),
             const SizedBox(height: 12),
             Row(
@@ -159,8 +167,13 @@ class _AddEditScreenState extends State<AddEditScreen> {
               ],
             ),
             const SizedBox(height: 20),
-            _buildSectionHeader('高级选项'),
-            const SizedBox(height: 8),
+            _section('高级选项'),
+            _buildLaunchModeSelector(),
+            if (_launchMode == TerminalLaunchMode.tmux) ...[
+              const SizedBox(height: 12),
+              _buildTmuxAutoDeleteField(),
+            ],
+            const SizedBox(height: 12),
             _buildKeepAliveSwitch(),
           ],
         ),
@@ -168,14 +181,17 @@ class _AddEditScreenState extends State<AddEditScreen> {
     );
   }
 
-  Widget _buildSectionHeader(String title) {
-    return Text(
-      title,
-      style: TextStyle(
-        fontSize: 12,
-        fontWeight: FontWeight.bold,
-        color: AppTheme.darkTheme.colorScheme.primary,
-        letterSpacing: 1,
+  Widget _section(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+          color: Theme.of(context).colorScheme.primary,
+          letterSpacing: 0.6,
+        ),
       ),
     );
   }
@@ -188,7 +204,8 @@ class _AddEditScreenState extends State<AddEditScreen> {
         hintText: '我的服务器',
         prefixIcon: Icon(Icons.label_outline),
       ),
-      validator: (v) => (v == null || v.trim().isEmpty) ? '请输入名称' : null,
+      validator: (value) =>
+          value == null || value.trim().isEmpty ? '请输入连接名称' : null,
     );
   }
 
@@ -201,7 +218,8 @@ class _AddEditScreenState extends State<AddEditScreen> {
         prefixIcon: Icon(Icons.computer),
       ),
       keyboardType: TextInputType.url,
-      validator: (v) => (v == null || v.trim().isEmpty) ? '请输入主机地址' : null,
+      validator: (value) =>
+          value == null || value.trim().isEmpty ? '请输入主机地址' : null,
     );
   }
 
@@ -214,9 +232,8 @@ class _AddEditScreenState extends State<AddEditScreen> {
         prefixIcon: Icon(Icons.numbers),
       ),
       keyboardType: TextInputType.number,
-      validator: (v) {
-        if (v == null || v.isEmpty) return '必填';
-        final port = int.tryParse(v);
+      validator: (value) {
+        final port = int.tryParse(value ?? '');
         if (port == null || port < 1 || port > 65535) return '无效端口';
         return null;
       },
@@ -231,7 +248,8 @@ class _AddEditScreenState extends State<AddEditScreen> {
         hintText: 'root',
         prefixIcon: Icon(Icons.person_outline),
       ),
-      validator: (v) => (v == null || v.trim().isEmpty) ? '请输入用户名' : null,
+      validator: (value) =>
+          value == null || value.trim().isEmpty ? '请输入用户名' : null,
     );
   }
 
@@ -255,9 +273,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
         ),
       ],
       selected: {_authMethod},
-      onSelectionChanged: (set) {
-        setState(() => _authMethod = set.first);
-      },
+      onSelectionChanged: (set) => setState(() => _authMethod = set.first),
     );
   }
 
@@ -277,9 +293,9 @@ class _AddEditScreenState extends State<AddEditScreen> {
           onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
         ),
       ),
-      validator: (v) {
+      validator: (value) {
         if (_authMethod == AuthMethod.password &&
-            (v == null || v.trim().isEmpty)) {
+            (value == null || value.trim().isEmpty)) {
           return '密码认证需要输入密码';
         }
         return null;
@@ -298,9 +314,9 @@ class _AddEditScreenState extends State<AddEditScreen> {
         prefixIcon: Icon(Icons.key),
         alignLabelWithHint: true,
       ),
-      validator: (v) {
+      validator: (value) {
         if (_authMethod == AuthMethod.privateKey &&
-            (v == null || v.trim().isEmpty)) {
+            (value == null || value.trim().isEmpty)) {
           return '私钥认证需要输入私钥内容';
         }
         return null;
@@ -340,16 +356,72 @@ class _AddEditScreenState extends State<AddEditScreen> {
     );
   }
 
+  Widget _buildLaunchModeSelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SegmentedButton<TerminalLaunchMode>(
+          segments: const [
+            ButtonSegment(
+              value: TerminalLaunchMode.ssh,
+              label: Text('SSH'),
+              icon: Icon(Icons.terminal, size: 18),
+            ),
+            ButtonSegment(
+              value: TerminalLaunchMode.tmux,
+              label: Text('SSH + tmux'),
+              icon: Icon(Icons.tab_rounded, size: 18),
+            ),
+          ],
+          selected: {_launchMode},
+          onSelectionChanged: (set) => setState(() => _launchMode = set.first),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          _launchMode == TerminalLaunchMode.tmux
+              ? '连接 SSH 后自动进入与当前窗口同名的 tmux 会话。'
+              : '打开普通交互式 SSH shell。',
+          style: TextStyle(
+            fontSize: 12,
+            color:
+                Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.62),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTmuxAutoDeleteField() {
+    return TextFormField(
+      controller: _tmuxAutoDeleteController,
+      decoration: const InputDecoration(
+        labelText: 'tmux 无连接自动删除等待时间（分钟）',
+        hintText: '10',
+        helperText: '单位：分钟。断开后无人重新连接，超过该时间自动删除 tmux 会话。',
+        prefixIcon: Icon(Icons.timer_outlined),
+      ),
+      keyboardType: TextInputType.number,
+      validator: (value) {
+        if (_launchMode != TerminalLaunchMode.tmux) return null;
+        final minutes = int.tryParse(value?.trim() ?? '');
+        if (minutes == null || minutes < 1) return '最少 1 分钟';
+        if (minutes > 1440) return '最多 1440 分钟';
+        return null;
+      },
+    );
+  }
+
   Widget _buildKeepAliveSwitch() {
     return SwitchListTile(
+      contentPadding: EdgeInsets.zero,
       title: const Text('后台保持连接'),
       subtitle: const Text(
-        '启用后 App 退到后台时保持 SSH 连接不中断\n（Android 依赖前台服务通知）',
+        'Android 使用前台服务和 keep-alive 尽量维持 SSH 连接。',
         style: TextStyle(fontSize: 12),
       ),
       value: _keepAlive,
       activeThumbColor: AppTheme.terminalGreen,
-      onChanged: (v) => setState(() => _keepAlive = v),
+      onChanged: (value) => setState(() => _keepAlive = value),
     );
   }
 
@@ -357,21 +429,19 @@ class _AddEditScreenState extends State<AddEditScreen> {
     if (!_formKey.currentState!.validate()) return;
 
     final ssh = context.read<SshService>();
-    final activeWindowCount =
-        isEditing ? ssh.activeSessionCountForConnection(widget.editId!) : 0;
-    if (activeWindowCount > 0) {
+    final relatedWindowCount =
+        isEditing ? ssh.sessionCountForConnection(widget.editId!) : 0;
+    if (relatedWindowCount > 0) {
       final confirmed = await _confirmDisconnectActiveWindows(
-        activeWindowCount,
+        relatedWindowCount,
       );
-      if (!confirmed) return;
-      if (!mounted) return;
+      if (!confirmed || !mounted) return;
     }
 
     setState(() => _isSaving = true);
 
     try {
       final storage = context.read<StorageService>();
-
       final config = ConnectionConfig(
         id: isEditing ? widget.editId! : const Uuid().v4(),
         name: _nameController.text.trim(),
@@ -381,6 +451,8 @@ class _AddEditScreenState extends State<AddEditScreen> {
         password: _passwordController.text,
         privateKey: _privateKeyController.text,
         authMethod: _authMethod,
+        launchMode: _launchMode,
+        tmuxAutoDeleteSeconds: _tmuxAutoDeleteSecondsFromInput(),
         keepAlive: _keepAlive,
         jumpHost: _jumpHostController.text.isNotEmpty
             ? _jumpHostController.text.trim()
@@ -395,16 +467,14 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
       if (isEditing) {
         await storage.updateConnection(config);
-        if (activeWindowCount > 0) {
+        if (relatedWindowCount > 0) {
           await ssh.disconnectSessionsForConnection(config.id);
         }
       } else {
         await storage.addConnection(config);
       }
 
-      if (mounted) {
-        Navigator.pop(context, config.id);
-      }
+      if (mounted) Navigator.pop(context, config.id);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -420,21 +490,19 @@ class _AddEditScreenState extends State<AddEditScreen> {
     final result = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Active windows will disconnect'),
+        title: const Text('保存后将关闭相关窗口'),
         content: Text(
-          'This server currently has $windowCount active terminal '
-          '${windowCount == 1 ? "window" : "windows"}. Saving changes will '
-          'automatically disconnect all of them.',
+          '当前配置有关联的 $windowCount 个终端窗口。保存修改后，这些旧窗口会自动关闭，避免继续向旧 SSH 或旧 tmux 会话发送输入。',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
+            child: const Text('取消'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
-            child: const Text('Save and disconnect'),
+            child: const Text('保存并断开'),
           ),
         ],
       ),

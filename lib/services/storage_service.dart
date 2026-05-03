@@ -9,8 +9,9 @@ import '../models/connection.dart';
 class StorageService extends ChangeNotifier {
   static const _connectionsKey = 'ssh_connections';
   static const _powerGuideSeenKey = 'power_guide_seen';
+  static const _restorableTmuxSessionsKey = 'restorable_tmux_sessions';
 
-  late SharedPreferences _prefs;
+  SharedPreferences? _prefs;
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
 
   List<ConnectionConfig> _connections = [];
@@ -22,15 +23,24 @@ class StorageService extends ChangeNotifier {
   bool get powerGuideSeen => _powerGuideSeen;
 
   Future<void> init() async {
-    _prefs = await SharedPreferences.getInstance();
-    _powerGuideSeen = _prefs.getBool(_powerGuideSeenKey) ?? false;
-    await _loadConnections();
-    _initialized = true;
-    notifyListeners();
+    try {
+      _prefs = await SharedPreferences.getInstance().timeout(
+        const Duration(seconds: 3),
+      );
+      _powerGuideSeen = _prefs?.getBool(_powerGuideSeenKey) ?? false;
+      await _loadConnections();
+    } catch (e) {
+      debugPrint('Failed to initialize storage service: $e');
+      _connections = [];
+      _powerGuideSeen = false;
+    } finally {
+      _initialized = true;
+      notifyListeners();
+    }
   }
 
   Future<void> _loadConnections() async {
-    final jsonStr = _prefs.getString(_connectionsKey);
+    final jsonStr = _prefs?.getString(_connectionsKey);
     if (jsonStr == null || jsonStr.isEmpty) {
       _connections = [];
       return;
@@ -49,10 +59,10 @@ class StorageService extends ChangeNotifier {
   }
 
   Future<void> _saveConnections() async {
-    if (!_initialized) return;
+    if (!_initialized || _prefs == null) return;
     final jsonStr =
         jsonEncode(_connections.map((item) => item.toJson()).toList());
-    await _prefs.setString(_connectionsKey, jsonStr);
+    await _prefs!.setString(_connectionsKey, jsonStr);
   }
 
   Future<void> addConnection(ConnectionConfig config) async {
@@ -80,6 +90,9 @@ class StorageService extends ChangeNotifier {
     _connections[index] = config;
     await _saveSecrets(config);
     await _saveConnections();
+    if (config.launchMode != TerminalLaunchMode.tmux) {
+      await removeRestorableTmuxSessionsForConnection(config.id);
+    }
     notifyListeners();
   }
 
@@ -89,6 +102,7 @@ class StorageService extends ChangeNotifier {
     _connections.removeWhere((item) => item.id == id);
     await _secureStorage.delete(key: 'pwd_$id');
     await _secureStorage.delete(key: 'key_$id');
+    await removeRestorableTmuxSessionsForConnection(id);
     await _saveConnections();
     notifyListeners();
   }
@@ -114,8 +128,62 @@ class StorageService extends ChangeNotifier {
   Future<void> markPowerGuideSeen() async {
     if (!_initialized) return;
     _powerGuideSeen = true;
-    await _prefs.setBool(_powerGuideSeenKey, true);
+    await _prefs?.setBool(_powerGuideSeenKey, true);
     notifyListeners();
+  }
+
+  Future<List<RestorableTmuxSession>> loadRestorableTmuxSessions() async {
+    if (!_initialized || _prefs == null) return [];
+    final jsonStr = _prefs?.getString(_restorableTmuxSessionsKey);
+    if (jsonStr == null || jsonStr.isEmpty) return [];
+
+    try {
+      final list = jsonDecode(jsonStr) as List<dynamic>;
+      return list
+          .map((item) =>
+              RestorableTmuxSession.fromJson(item as Map<String, dynamic>))
+          .where((item) => getConnection(item.connectionId) != null)
+          .toList();
+    } catch (e) {
+      debugPrint('Failed to load restorable tmux sessions: $e');
+      return [];
+    }
+  }
+
+  Future<void> saveRestorableTmuxSession(RestorableTmuxSession session) async {
+    if (!_initialized || _prefs == null) return;
+    final sessions = await loadRestorableTmuxSessions();
+    sessions.removeWhere((item) => item.sessionId == session.sessionId);
+    sessions.add(session);
+    await _saveRestorableTmuxSessions(sessions);
+  }
+
+  Future<void> removeRestorableTmuxSession(String sessionId) async {
+    if (!_initialized || _prefs == null) return;
+    final sessions = await loadRestorableTmuxSessions();
+    sessions.removeWhere((item) => item.sessionId == sessionId);
+    await _saveRestorableTmuxSessions(sessions);
+  }
+
+  Future<void> removeRestorableTmuxSessionsForConnection(
+    String connectionId,
+  ) async {
+    if (!_initialized || _prefs == null) return;
+    final sessions = await loadRestorableTmuxSessions();
+    sessions.removeWhere((item) => item.connectionId == connectionId);
+    await _saveRestorableTmuxSessions(sessions);
+  }
+
+  Future<void> clearRestorableTmuxSessions() async {
+    if (!_initialized || _prefs == null) return;
+    await _prefs!.remove(_restorableTmuxSessionsKey);
+  }
+
+  Future<void> _saveRestorableTmuxSessions(
+    List<RestorableTmuxSession> sessions,
+  ) async {
+    final jsonStr = jsonEncode(sessions.map((item) => item.toJson()).toList());
+    await _prefs!.setString(_restorableTmuxSessionsKey, jsonStr);
   }
 
   Future<void> _saveSecrets(ConnectionConfig config) async {
@@ -138,5 +206,46 @@ class StorageService extends ChangeNotifier {
     if (!_initialized) {
       throw StateError('Storage service is not initialized yet.');
     }
+  }
+}
+
+class RestorableTmuxSession {
+  final String sessionId;
+  final String connectionId;
+  final String displayName;
+  final String tmuxSessionName;
+  final double fontSize;
+  final DateTime updatedAt;
+
+  const RestorableTmuxSession({
+    required this.sessionId,
+    required this.connectionId,
+    required this.displayName,
+    required this.tmuxSessionName,
+    required this.fontSize,
+    required this.updatedAt,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'sessionId': sessionId,
+      'connectionId': connectionId,
+      'displayName': displayName,
+      'tmuxSessionName': tmuxSessionName,
+      'fontSize': fontSize,
+      'updatedAt': updatedAt.toIso8601String(),
+    };
+  }
+
+  factory RestorableTmuxSession.fromJson(Map<String, dynamic> json) {
+    return RestorableTmuxSession(
+      sessionId: json['sessionId'] as String,
+      connectionId: json['connectionId'] as String,
+      displayName: json['displayName'] as String? ?? 'SSH',
+      tmuxSessionName: json['tmuxSessionName'] as String? ?? 'ssh_mobile',
+      fontSize: (json['fontSize'] as num?)?.toDouble() ?? 14,
+      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
+          DateTime.now(),
+    );
   }
 }

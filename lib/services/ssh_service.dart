@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 
+import '../models/connection.dart';
 import 'background_service.dart';
 import 'storage_service.dart';
 
@@ -21,6 +22,7 @@ class SshSession {
   final StreamController<String> outputController;
   final StringBuffer _outputBuffer = StringBuffer();
   String displayName;
+  String? tmuxSessionName;
   double fontSize;
   SshConnectionState state;
   String? errorMessage;
@@ -30,6 +32,7 @@ class SshSession {
     required this.connectionId,
     required this.connectionName,
     String? displayName,
+    this.tmuxSessionName,
     this.fontSize = 14,
     required this.outputController,
     this.state = SshConnectionState.connecting,
@@ -64,6 +67,7 @@ class SshService extends ChangeNotifier {
   StreamSubscription<Map<String, dynamic>?>? _keepAliveSub;
   String? _lastSessionId;
   String? _lastErrorMessage;
+  bool _restoredTmuxSessions = false;
 
   SshService(this._storageService) {
     _listenToBackgroundService();
@@ -106,17 +110,6 @@ class SshService extends ChangeNotifier {
         .length;
   }
 
-  int activeSessionCountForConnection(String connectionId) {
-    return _sessions.values
-        .where(
-          (session) =>
-              session.connectionId == connectionId &&
-              (session.state == SshConnectionState.connected ||
-                  session.state == SshConnectionState.connecting),
-        )
-        .length;
-  }
-
   Future<void> disconnectSessionsForConnection(String connectionId) async {
     final sessionIds = _sessions.values
         .where((session) => session.connectionId == connectionId)
@@ -136,6 +129,7 @@ class SshService extends ChangeNotifier {
       return false;
     }
     session.displayName = nextName;
+    unawaited(_saveRestorableTmuxSession(session));
     notifyListeners();
     return true;
   }
@@ -144,12 +138,59 @@ class SshService extends ChangeNotifier {
     final session = _sessions[sessionId];
     if (session == null) return;
     session.fontSize = fontSize.clamp(1.0, 28.0);
+    unawaited(_saveRestorableTmuxSession(session));
     notifyListeners();
   }
 
-  Future<String?> openSession(String connectionId) async {
+  Future<void> restoreTmuxSessions() async {
+    if (_restoredTmuxSessions) return;
+    _restoredTmuxSessions = true;
+    final storedSessions = await _storageService.loadRestorableTmuxSessions();
+    if (storedSessions.isEmpty) return;
+
+    for (final stored in storedSessions) {
+      final config = _storageService.getConnection(stored.connectionId);
+      if (config?.launchMode != TerminalLaunchMode.tmux) {
+        await _storageService.removeRestorableTmuxSession(stored.sessionId);
+        continue;
+      }
+
+      _sessions[stored.sessionId] = SshSession(
+        id: stored.sessionId,
+        connectionId: stored.connectionId,
+        connectionName: config!.name,
+        displayName: _uniqueSessionName(stored.displayName),
+        tmuxSessionName: stored.tmuxSessionName,
+        fontSize: stored.fontSize,
+        outputController: StreamController<String>.broadcast(),
+        state: SshConnectionState.disconnected,
+        errorMessage: 'Waiting to reconnect tmux session',
+      );
+      _lastSessionId = stored.sessionId;
+    }
+
+    notifyListeners();
+
+    for (final session in _sessions.values.toList()) {
+      final config = _storageService.getConnection(session.connectionId);
+      if (config?.launchMode != TerminalLaunchMode.tmux ||
+          session.isConnected) {
+        continue;
+      }
+      unawaited(connect(session.connectionId, sessionId: session.id));
+    }
+  }
+
+  Future<String?> openSession(
+    String connectionId, {
+    bool allowTmuxInstall = false,
+  }) async {
     final sessionId = _createSessionId(connectionId);
-    await connect(connectionId, sessionId: sessionId);
+    await connect(
+      connectionId,
+      sessionId: sessionId,
+      allowTmuxInstall: allowTmuxInstall,
+    );
     final session = _sessions[sessionId];
     if (session?.isConnected == true) return sessionId;
 
@@ -183,7 +224,11 @@ class SshService extends ChangeNotifier {
     return sessionId != null;
   }
 
-  Future<void> connect(String connectionId, {String? sessionId}) async {
+  Future<void> connect(
+    String connectionId, {
+    String? sessionId,
+    bool allowTmuxInstall = false,
+  }) async {
     final config = _storageService.getConnection(connectionId);
     if (config == null) {
       _setSessionError(
@@ -228,6 +273,12 @@ class SshService extends ChangeNotifier {
       await BackgroundServiceManager.start(
         connectionName: _notificationSummary(),
       );
+      session.tmuxSessionName ??= config.launchMode == TerminalLaunchMode.tmux
+          ? _uniqueTmuxSessionName(
+              _sanitizeTmuxSessionName(session.displayName),
+              exceptSessionId: id,
+            )
+          : null;
       _backgroundService.invoke('sshConnect', {
         'sessionId': id,
         'id': config.id,
@@ -241,9 +292,17 @@ class SshService extends ChangeNotifier {
         'terminalWidth': config.terminalWidth,
         'terminalHeight': config.terminalHeight,
         'keepAliveInterval': 3,
+        'launchMode': config.launchMode.name,
+        'tmuxSessionName': session.tmuxSessionName,
+        'tmuxAutoDeleteSeconds': config.tmuxAutoDeleteSeconds,
+        'allowTmuxInstall': allowTmuxInstall,
       });
 
-      await _connectCompleters[id]!.future.timeout(const Duration(seconds: 30));
+      await _connectCompleters[id]!.future.timeout(
+            allowTmuxInstall
+                ? const Duration(minutes: 6)
+                : const Duration(seconds: 30),
+          );
     } on TimeoutException {
       _setSessionError(id, connectionId, config.name, 'Connection timed out');
     } catch (e) {
@@ -256,6 +315,7 @@ class SshService extends ChangeNotifier {
     _backgroundService.invoke('sshDisconnect', {'sessionId': sessionId});
     final session = _sessions.remove(sessionId);
     await session?.close();
+    await _storageService.removeRestorableTmuxSession(sessionId);
     _connectCompleters.remove(sessionId);
     if (_lastSessionId == sessionId) {
       _lastSessionId = _sessions.isEmpty ? null : _sessions.keys.last;
@@ -268,6 +328,7 @@ class SshService extends ChangeNotifier {
     _closingSessionIds.add(sessionId);
     final session = _sessions.remove(sessionId);
     await session?.close();
+    await _storageService.removeRestorableTmuxSession(sessionId);
     _connectCompleters.remove(sessionId);
     if (_lastSessionId == sessionId) {
       _lastSessionId = _sessions.isEmpty ? null : _sessions.keys.last;
@@ -285,6 +346,7 @@ class SshService extends ChangeNotifier {
     _sessions.clear();
     _connectCompleters.clear();
     _lastSessionId = null;
+    await _storageService.clearRestorableTmuxSessions();
     await BackgroundServiceManager.stop();
     notifyListeners();
   }
@@ -318,6 +380,46 @@ class SshService extends ChangeNotifier {
     final millis = DateTime.now().millisecondsSinceEpoch;
     final nonce = _random.nextInt(0x7fffffff).toRadixString(16);
     return '$connectionId-$millis-$nonce';
+  }
+
+  String _sanitizeTmuxSessionName(String name) {
+    final sanitized = name
+        .trim()
+        .replaceAll(RegExp(r'[^A-Za-z0-9_.-]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+    if (sanitized.isEmpty) return 'ssh_mobile';
+    return sanitized.length > 80 ? sanitized.substring(0, 80) : sanitized;
+  }
+
+  bool _isTmuxSessionNameTaken(String name, {String? exceptSessionId}) {
+    return _sessions.values.any(
+      (session) =>
+          session.id != exceptSessionId &&
+          session.tmuxSessionName?.toLowerCase() == name.toLowerCase(),
+    );
+  }
+
+  String _uniqueTmuxSessionName(String baseName, {String? exceptSessionId}) {
+    final normalized = baseName.isEmpty ? 'ssh_mobile' : baseName;
+    if (!_isTmuxSessionNameTaken(normalized,
+        exceptSessionId: exceptSessionId)) {
+      return normalized;
+    }
+
+    var index = 2;
+    while (true) {
+      final suffix = '_$index';
+      final trimmedBase = normalized.length + suffix.length > 80
+          ? normalized.substring(0, 80 - suffix.length)
+          : normalized;
+      final candidate = '$trimmedBase$suffix';
+      if (!_isTmuxSessionNameTaken(candidate,
+          exceptSessionId: exceptSessionId)) {
+        return candidate;
+      }
+      index++;
+    }
   }
 
   void _listenToBackgroundService() {
@@ -358,6 +460,7 @@ class SshService extends ChangeNotifier {
           session.errorMessage = null;
           _lastSessionId = sessionId;
           _completeConnect(sessionId);
+          unawaited(_saveRestorableTmuxSession(session));
           break;
         case 'disconnected':
           session.state = SshConnectionState.disconnected;
@@ -420,6 +523,26 @@ class SshService extends ChangeNotifier {
     _lastSessionId = sessionId;
     _completeConnect(sessionId);
     notifyListeners();
+  }
+
+  Future<void> _saveRestorableTmuxSession(SshSession session) async {
+    final config = _storageService.getConnection(session.connectionId);
+    if (config?.launchMode != TerminalLaunchMode.tmux ||
+        session.tmuxSessionName == null ||
+        session.tmuxSessionName!.isEmpty) {
+      return;
+    }
+
+    await _storageService.saveRestorableTmuxSession(
+      RestorableTmuxSession(
+        sessionId: session.id,
+        connectionId: session.connectionId,
+        displayName: session.displayName,
+        tmuxSessionName: session.tmuxSessionName!,
+        fontSize: session.fontSize,
+        updatedAt: DateTime.now(),
+      ),
+    );
   }
 
   String _notificationSummary() {

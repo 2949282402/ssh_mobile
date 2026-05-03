@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 /// 暗色终端主题 - 模拟经典终端风格
 class AppTheme {
   static final lightTheme = ThemeData(
+    useMaterial3: true,
     brightness: Brightness.light,
     scaffoldBackgroundColor: const Color(0xFFF6F8FA),
     colorScheme: ColorScheme.light(
@@ -20,10 +21,14 @@ class AppTheme {
       foregroundColor: Color(0xFF24292F),
       elevation: 0,
       centerTitle: false,
+      surfaceTintColor: Colors.transparent,
+      shadowColor: Colors.transparent,
     ),
     cardTheme: CardThemeData(
       color: Colors.white,
       elevation: 0,
+      surfaceTintColor: Colors.transparent,
+      margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
         side: const BorderSide(color: Color(0xFFD0D7DE), width: 1),
@@ -32,10 +37,34 @@ class AppTheme {
     floatingActionButtonTheme: const FloatingActionButtonThemeData(
       backgroundColor: Color(0xFF1F883D),
       foregroundColor: Colors.white,
+      elevation: 2,
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    ),
+    iconButtonTheme: IconButtonThemeData(
+      style: IconButton.styleFrom(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    ),
+    chipTheme: ChipThemeData(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+      side: const BorderSide(color: Color(0xFFD0D7DE)),
+      backgroundColor: const Color(0xFFF6F8FA),
+      selectedColor: const Color(0xFFE7F0FA),
+      labelStyle: const TextStyle(color: Color(0xFF24292F)),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: Colors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(6),
         borderSide: const BorderSide(color: Color(0xFFD0D7DE)),
@@ -59,9 +88,15 @@ class AppTheme {
       backgroundColor: Colors.white,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     ),
+    dividerTheme: const DividerThemeData(
+      color: Color(0xFFD8DEE4),
+      thickness: 1,
+      space: 1,
+    ),
   );
 
   static final darkTheme = ThemeData(
+    useMaterial3: true,
     brightness: Brightness.dark,
     scaffoldBackgroundColor: const Color(0xFF0D1117),
     colorScheme: ColorScheme.dark(
@@ -79,10 +114,14 @@ class AppTheme {
       foregroundColor: Color(0xFFC9D1D9),
       elevation: 0,
       centerTitle: false,
+      surfaceTintColor: Colors.transparent,
+      shadowColor: Colors.transparent,
     ),
     cardTheme: CardThemeData(
       color: const Color(0xFF161B22),
       elevation: 0,
+      surfaceTintColor: Colors.transparent,
+      margin: EdgeInsets.zero,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
         side: const BorderSide(color: Color(0xFF30363D), width: 1),
@@ -91,10 +130,34 @@ class AppTheme {
     floatingActionButtonTheme: const FloatingActionButtonThemeData(
       backgroundColor: Color(0xFF238636),
       foregroundColor: Colors.white,
+      elevation: 2,
+    ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    ),
+    iconButtonTheme: IconButtonThemeData(
+      style: IconButton.styleFrom(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    ),
+    chipTheme: ChipThemeData(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(7)),
+      side: const BorderSide(color: Color(0xFF30363D)),
+      backgroundColor: const Color(0xFF21262D),
+      selectedColor: const Color(0xFF26384F),
+      labelStyle: const TextStyle(color: Color(0xFFC9D1D9)),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: const Color(0xFF0D1117),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(6),
         borderSide: const BorderSide(color: Color(0xFF30363D)),
@@ -117,6 +180,11 @@ class AppTheme {
     dialogTheme: DialogThemeData(
       backgroundColor: const Color(0xFF161B22),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ),
+    dividerTheme: const DividerThemeData(
+      color: Color(0xFF30363D),
+      thickness: 1,
+      space: 1,
     ),
   );
 

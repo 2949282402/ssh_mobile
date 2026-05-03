@@ -21,14 +21,23 @@ class AppSettings extends ChangeNotifier {
   bool get isDarkMode => _themeMode == ThemeMode.dark;
 
   Future<void> init() async {
-    final prefs = await SharedPreferences.getInstance();
-    final languageName = prefs.getString(_languageKey);
-    _language =
-        languageName == AppLanguage.en.name ? AppLanguage.en : AppLanguage.zh;
-    _themeMode =
-        prefs.getBool(_darkModeKey) == false ? ThemeMode.light : ThemeMode.dark;
-    _initialized = true;
-    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance().timeout(
+        const Duration(seconds: 3),
+      );
+      final languageName = prefs.getString(_languageKey);
+      _language =
+          languageName == AppLanguage.en.name ? AppLanguage.en : AppLanguage.zh;
+      _themeMode = prefs.getBool(_darkModeKey) == false
+          ? ThemeMode.light
+          : ThemeMode.dark;
+    } catch (_) {
+      _language = AppLanguage.zh;
+      _themeMode = ThemeMode.dark;
+    } finally {
+      _initialized = true;
+      notifyListeners();
+    }
   }
 
   Future<void> toggleLanguage() async {

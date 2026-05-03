@@ -2,7 +2,7 @@
 
 SSH Mobile 是一个基于 Flutter 的移动端 SSH 客户端，重点面向 Android 手机上的长时间 SSH 会话使用场景。它支持多窗口连接、后台前台服务保活、终端快捷键、复制粘贴辅助层、暗色/亮色主题和中英文界面切换。
 
-SSH Mobile is a Flutter-based mobile SSH client designed especially for long-running SSH sessions on Android phones. It supports multiple terminal windows, foreground-service keep-alive, terminal shortcuts, copy/paste helpers, light/dark themes, and Chinese/English UI switching.
+SSH Mobile is a Flutter-based mobile SSH client designed for long-running SSH sessions on Android phones. It supports multiple terminal windows, foreground-service keep-alive, terminal shortcuts, copy/paste helpers, light/dark themes, and Chinese/English UI switching.
 
 > 说明：移动系统对后台网络连接有严格限制。应用会尽量通过前台服务、通知、WakeLock、SSH keep-alive 等方式保持连接，但长期后台不断开仍会受到手机厂商策略、电池优化、网络切换和系统内存回收影响。首次使用建议按照应用引导允许后台耗电无限制。
 
@@ -15,6 +15,9 @@ SSH Mobile is a Flutter-based mobile SSH client designed especially for long-run
 - SSH 连接管理：保存多个服务器配置，支持密码、私钥、私钥加密码三种认证方式。
 - 多终端窗口：同一个服务器可以并行打开多个 SSH 窗口，每个窗口可自定义名称。
 - 后台保活：Android 使用前台服务维持 SSH 会话，后台时发送 keep-alive，尽量减少息屏或切应用后的断连。
+- SSH + tmux 模式：可选择普通 SSH 或 SSH + tmux。tmux 模式会在服务器上绑定当前窗口名的会话，断线或 App 重启后可重新 attach 回原会话。
+- tmux 自动清理：支持配置“无连接自动删除等待时间”，单位为分钟。无人重新连接超过该时间后，服务器端 tmux 会话会自动删除。
+- tmux 安装引导：如果服务器未安装 tmux，应用会先征求用户同意再尝试安装；自动安装失败时会提示用户手动登录服务器安装 tmux 后再重试。
 - 断连处理：断开后终端窗口不会自动刷新清空，保留用户查看输出的时间，并提供手动重连按钮。
 - 终端体验：基于 `xterm` 渲染 ANSI 终端，支持 256 色、光标定位、终端尺寸同步。
 - 字号缩放：终端支持双指缩放，也提供 `+` / `-` 按钮调节字号。
@@ -30,6 +33,9 @@ English:
 - SSH connection management: Save multiple server profiles with password, private key, or private key plus password authentication.
 - Multiple terminal windows: Open several SSH windows for the same server in parallel, with custom names per window.
 - Background keep-alive: Android uses a foreground service and SSH keep-alive to reduce disconnects after the app goes to the background.
+- SSH + tmux mode: Choose normal SSH or SSH + tmux. In tmux mode, the app attaches to a server-side tmux session bound to the current window name, so it can reconnect after disconnects or app restarts.
+- tmux auto cleanup: Configure the no-client auto-delete delay in minutes. If no client reconnects before the delay expires, the server-side tmux session is removed automatically.
+- tmux install guidance: If tmux is missing on the server, the app asks for user approval before trying to install it. If automatic installation fails, the user is told to install tmux manually on the server and retry.
 - Disconnect handling: Disconnected terminal windows stay open, preserving output and offering a manual reconnect button.
 - Terminal experience: ANSI terminal rendering is powered by `xterm`, including 256 colors, cursor positioning, and terminal size sync.
 - Font scaling: Pinch to zoom the terminal font or use the `+` / `-` controls.
@@ -52,6 +58,7 @@ English:
 | 安全存储 / Secure storage | `flutter_secure_storage` | 密码和私钥等敏感信息存储 / Storage for passwords, private keys, and other sensitive data |
 | 本地配置 / Local settings | `shared_preferences` | 主题、语言、快捷命令等轻量配置 / Lightweight settings such as theme, language, and shortcuts |
 | 权限 / Permissions | `permission_handler` | 通知、电池优化等权限处理 / Permission handling for notifications, battery optimization, and related flows |
+| 服务器会话保持 / Server session persistence | `tmux` | 可选依赖。用于服务器端会话保持、断线恢复和 App 重启后重连 / Optional server-side dependency for session persistence, reconnects, and app-restart recovery |
 
 ## 项目结构 / Project Structure
 
@@ -67,10 +74,11 @@ ssh_mobile/
 │   ├── models/
 │   │   └── connection.dart          # SSH 连接配置模型
 │   ├── screens/
+│   │   ├── terminal/                # 终端页拆分组件
 │   │   ├── startup_screen.dart      # 启动页与初始化
 │   │   ├── home_screen.dart         # 连接列表、语言/主题切换
 │   │   ├── add_edit_screen.dart     # 新增/编辑连接配置
-│   │   └── terminal_screen.dart     # 终端窗口、多窗口、快捷键、复制层
+│   │   └── terminal_screen.dart     # 终端窗口状态与生命周期
 │   ├── services/
 │   │   ├── app_settings.dart        # 语言、主题和界面文案
 │   │   ├── background_service.dart  # 后台服务中的 SSH 会话维护
@@ -95,10 +103,11 @@ ssh_mobile/
 │   ├── models/
 │   │   └── connection.dart          # SSH connection model
 │   ├── screens/
+│   │   ├── terminal/                # Split terminal screen components
 │   │   ├── startup_screen.dart      # Startup and initialization screen
 │   │   ├── home_screen.dart         # Connection list, language/theme switches
 │   │   ├── add_edit_screen.dart     # Add/edit connection form
-│   │   └── terminal_screen.dart     # Terminal window, multi-window UI, shortcuts, copy layer
+│   │   └── terminal_screen.dart     # Terminal window state and lifecycle
 │   ├── services/
 │   │   ├── app_settings.dart        # Language, theme, and UI strings
 │   │   ├── background_service.dart  # SSH session maintenance inside the background service
@@ -143,74 +152,45 @@ For better background stability, allow unrestricted battery usage, autostart, ru
 
 中文：
 
-本项目仓库内可以使用本地 Flutter SDK：
-
-```powershell
-.\.tools\flutter\bin\flutter.bat --version
-```
-
-也可以使用系统已安装的 Flutter：
+本项目不提交 Flutter SDK。请先在本机安装 Flutter，并确保 `flutter` 和 `dart` 命令可用：
 
 ```powershell
 flutter --version
+dart --version
 ```
 
-推荐环境：
-
-- Flutter 3.x
-- Dart SDK `>=3.2.0 <4.0.0`
-- Android Studio 或 Android SDK
-- 一台已开启 USB 调试的 Android 手机
+如果你想在项目目录下放一个本地 SDK，例如 `.tools/flutter`，可以自己配置，但该目录属于本地环境文件，不应提交到 Git。
 
 English:
 
-This repository can use the bundled local Flutter SDK:
-
-```powershell
-.\.tools\flutter\bin\flutter.bat --version
-```
-
-You can also use a system-installed Flutter SDK:
+This project does not commit the Flutter SDK. Install Flutter on your machine first, and make sure the `flutter` and `dart` commands are available:
 
 ```powershell
 flutter --version
+dart --version
 ```
 
-Recommended environment:
+If you prefer to keep a local SDK under the project directory, for example `.tools/flutter`, you can configure it yourself. That directory is local environment data and should not be committed to Git.
+
+推荐环境 / Recommended environment:
 
 - Flutter 3.x
 - Dart SDK `>=3.2.0 <4.0.0`
-- Android Studio or Android SDK
-- An Android phone with USB debugging enabled
+- Android Studio 或 Android SDK / Android Studio or Android SDK
+- 一台已开启 USB 调试的 Android 手机 / An Android phone with USB debugging enabled
 
 ## 获取依赖 / Install Dependencies
 
 中文：
 
-使用仓库内 Flutter 获取依赖：
-
 ```powershell
-.\.tools\flutter\bin\flutter.bat pub get
-```
-
-如果遇到 Git safe directory 提示，可以执行：
-
-```powershell
-git config --global --add safe.directory D:/coding/ssh_mobile/.tools/flutter
+flutter pub get
 ```
 
 English:
 
-Install dependencies with the bundled Flutter SDK:
-
 ```powershell
-.\.tools\flutter\bin\flutter.bat pub get
-```
-
-If Git reports a safe-directory warning, run:
-
-```powershell
-git config --global --add safe.directory D:/coding/ssh_mobile/.tools/flutter
+flutter pub get
 ```
 
 ## 运行到手机 / Run on a Phone
@@ -222,19 +202,19 @@ git config --global --add safe.directory D:/coding/ssh_mobile/.tools/flutter
 3. 查看设备：
 
 ```powershell
-.\.tools\flutter\bin\flutter.bat devices
+flutter devices
 ```
 
 4. 运行到指定设备：
 
 ```powershell
-.\.tools\flutter\bin\flutter.bat run -d <device-id>
+flutter run -d <device-id>
 ```
 
 示例：
 
 ```powershell
-.\.tools\flutter\bin\flutter.bat run -d V2309A
+flutter run -d V2309A
 ```
 
 English:
@@ -244,19 +224,19 @@ English:
 3. List available devices:
 
 ```powershell
-.\.tools\flutter\bin\flutter.bat devices
+flutter devices
 ```
 
 4. Run the app on a specific device:
 
 ```powershell
-.\.tools\flutter\bin\flutter.bat run -d <device-id>
+flutter run -d <device-id>
 ```
 
 Example:
 
 ```powershell
-.\.tools\flutter\bin\flutter.bat run -d V2309A
+flutter run -d V2309A
 ```
 
 ## 构建 APK / Build APK
@@ -266,13 +246,13 @@ Example:
 Debug APK：
 
 ```powershell
-.\.tools\flutter\bin\flutter.bat build apk --debug
+flutter build apk --debug
 ```
 
 Release APK：
 
 ```powershell
-.\.tools\flutter\bin\flutter.bat build apk --release
+flutter build apk --release
 ```
 
 构建产物通常位于：
@@ -286,13 +266,13 @@ English:
 Debug APK:
 
 ```powershell
-.\.tools\flutter\bin\flutter.bat build apk --debug
+flutter build apk --debug
 ```
 
 Release APK:
 
 ```powershell
-.\.tools\flutter\bin\flutter.bat build apk --release
+flutter build apk --release
 ```
 
 Build artifacts are usually generated under:
@@ -307,38 +287,38 @@ build/app/outputs/flutter-apk/
 
 ```powershell
 # 格式化代码
-.\.tools\flutter\bin\dart.bat format lib test
+dart format lib test
 
 # 静态检查
-.\.tools\flutter\bin\flutter.bat analyze
+flutter analyze
 
 # 运行测试
-.\.tools\flutter\bin\flutter.bat test
+flutter test
 
 # 清理构建缓存
-.\.tools\flutter\bin\flutter.bat clean
+flutter clean
 
 # 重新获取依赖
-.\.tools\flutter\bin\flutter.bat pub get
+flutter pub get
 ```
 
 English:
 
 ```powershell
 # Format code
-.\.tools\flutter\bin\dart.bat format lib test
+dart format lib test
 
 # Static analysis
-.\.tools\flutter\bin\flutter.bat analyze
+flutter analyze
 
 # Run tests
-.\.tools\flutter\bin\flutter.bat test
+flutter test
 
 # Clean build cache
-.\.tools\flutter\bin\flutter.bat clean
+flutter clean
 
 # Reinstall dependencies
-.\.tools\flutter\bin\flutter.bat pub get
+flutter pub get
 ```
 
 ## 使用说明 / Usage
@@ -377,6 +357,48 @@ After SSH connects, Android starts a foreground service and shows a notification
 
 If the system forcibly kills the app process, the SSH connection may still drop. This is a mobile OS limitation, not something the SSH protocol can fully bypass.
 
+### SSH + tmux 模式 / SSH + tmux Mode
+
+中文：
+
+在连接配置中可以选择普通 SSH 或 SSH + tmux。普通 SSH 会直接打开交互式 shell；SSH + tmux 会先登录服务器，然后 attach 到与当前终端窗口绑定的 tmux 会话。
+
+tmux 模式适合运行 `codex`、编辑器、编译任务、长时间脚本等需要断线后继续保留状态的场景。手机切到后台、网络切换、系统杀后台或 App 重启后，原始 TCP/SSH 连接可能已经断开，但只要服务器端 tmux 会话还在，重新打开 App 后可以重新连接并回到同一个 tmux 会话。
+
+English:
+
+Connection profiles can use normal SSH or SSH + tmux. Normal SSH opens an interactive shell directly. SSH + tmux logs in first and then attaches to a tmux session bound to the current terminal window.
+
+tmux mode is useful for `codex`, editors, build tasks, long-running scripts, and other workflows that should survive disconnects. When the phone goes to the background, the network changes, the system kills the app, or the app restarts, the original TCP/SSH connection may be gone. As long as the server-side tmux session still exists, reopening the app can reconnect and return to the same tmux session.
+
+### tmux 自动删除 / tmux Auto Delete
+
+中文：
+
+SSH + tmux 模式支持“无连接自动删除等待时间”，单位为分钟。客户端断开后，如果没有任何客户端在等待时间内重新连接，服务器上的 tmux 会话会自动删除。
+
+这个时间不是“后台多久后主动断开”的时间，而是“断开后服务器端会话保留多久”的时间。比如设置为 10 分钟，表示断线后 10 分钟内重新连接可以回到原会话；超过 10 分钟无人连接，tmux 会话会被清理。
+
+English:
+
+SSH + tmux mode supports a no-client auto-delete delay, configured in minutes. After the client disconnects, if no client reconnects before the delay expires, the server-side tmux session is deleted automatically.
+
+This is not a "disconnect after N minutes in the background" timer. It is a server-side retention timer after disconnect. For example, a 10-minute value means you can reconnect to the same session within 10 minutes; if nobody reconnects after 10 minutes, the tmux session is cleaned up.
+
+### tmux 安装 / tmux Installation
+
+中文：
+
+如果选择 SSH + tmux，但服务器没有安装 tmux，应用会先提示用户确认。用户同意后，应用会尝试通过服务器上的 `apt-get`、`dnf`、`yum`、`pacman`、`zypper`、`apk` 或 `pkg` 安装 tmux。
+
+自动安装可能因为没有 root 权限、没有免密 `sudo`、包管理器不可用、软件源不可达或下载失败而失败。失败时应用会提示用户手动登录服务器安装 tmux 后再重试。
+
+English:
+
+If SSH + tmux is selected but tmux is missing on the server, the app asks for confirmation first. After approval, it tries to install tmux using `apt-get`, `dnf`, `yum`, `pacman`, `zypper`, `apk`, or `pkg` on the server.
+
+Automatic installation can fail if the user lacks root privileges, passwordless `sudo` is unavailable, no supported package manager exists, package repositories are unreachable, or downloads fail. In that case, the app tells the user to install tmux manually on the server and retry.
+
 ### 复制与粘贴 / Copy and Paste
 
 中文：
@@ -403,6 +425,9 @@ The bottom shortcut bar includes common keys: `TAB`, `ESC`, `ENTER`, `BKSP`, `�
 
 - Android 厂商后台策略可能导致长时间后台后断连，需要用户手动放开后台限制。
 - 网络从 Wi-Fi、数据、VPN 之间切换时，底层 TCP 连接通常会失效，应用只能检测断连并提示或重连，无法保证原 SSH 会话无缝迁移。
+- SSH + tmux 可以保留服务器端会话并支持 App 重启后重连，但前提是服务器上的 tmux 会话尚未被自动删除。
+- App 重启恢复 tmux 窗口时不会恢复本地终端缓冲区的全部显示内容，进入后会回到 tmux 当前画面，历史输出取决于 tmux 自身 scrollback。
+- 自动安装 tmux 需要服务器支持常见包管理器，并且当前用户拥有 root 或免密 sudo 权限；否则需要用户手动安装。
 - iOS 后台长连接限制更严格，当前项目主要优化目标是 Android。
 - 终端复制使用 Flutter 文本选择层辅助实现，不是系统原生 TextView 终端。
 
@@ -410,35 +435,20 @@ English:
 
 - Android vendor background policies may disconnect sessions after a long time in the background. Users need to relax background restrictions manually.
 - When the network switches between Wi-Fi, mobile data, and VPN, the underlying TCP connection usually becomes invalid. The app can detect the disconnect and prompt or reconnect, but it cannot guarantee seamless migration of the original SSH session.
+- SSH + tmux can preserve the server-side session and reconnect after app restarts, but only while the server-side tmux session still exists and has not been auto-deleted.
+- App-restart recovery does not restore the full local terminal buffer. It returns to the current tmux screen, while history depends on tmux scrollback.
+- Automatic tmux installation requires a supported server package manager and root or passwordless sudo privileges. Otherwise, users need to install tmux manually.
 - iOS background long-running connections are more restricted. The current project mainly optimizes Android.
 - Terminal copying is implemented with a Flutter text-selection helper layer, not a native Android TextView terminal.
 
 ## 故障排查 / Troubleshooting
-
-### `detected dubious ownership`
-
-中文：
-
-如果运行仓库内 Flutter 时出现 Git 所有权警告：
-
-```powershell
-git config --global --add safe.directory D:/coding/ssh_mobile/.tools/flutter
-```
-
-English:
-
-If Git reports an ownership warning when running the bundled Flutter SDK:
-
-```powershell
-git config --global --add safe.directory D:/coding/ssh_mobile/.tools/flutter
-```
 
 ### 设备找不到 / Device Not Found
 
 中文：
 
 ```powershell
-.\.tools\flutter\bin\flutter.bat devices
+flutter devices
 ```
 
 如果没有手机，请检查 USB 调试是否开启、手机是否弹出授权确认、USB 连接是否稳定，以及 Android SDK platform-tools 是否可用。
@@ -446,7 +456,7 @@ git config --global --add safe.directory D:/coding/ssh_mobile/.tools/flutter
 English:
 
 ```powershell
-.\.tools\flutter\bin\flutter.bat devices
+flutter devices
 ```
 
 If the phone does not appear, check whether USB debugging is enabled, whether the phone has shown an authorization prompt, whether the USB connection is stable, and whether Android SDK platform-tools are available.
@@ -460,6 +470,54 @@ If the phone does not appear, check whether USB debugging is enabled, whether th
 English:
 
 Make sure notification permission is allowed, battery usage is unrestricted, and no system manager policy is cleaning background apps. Also confirm that server-side SSH settings such as `ClientAliveInterval` and `ClientAliveCountMax` are not actively dropping the connection, and check whether the network is switching, sleeping, or disconnecting in the background.
+
+### tmux 安装失败 / tmux Installation Failed
+
+中文：
+
+如果 SSH + tmux 模式提示自动安装失败，请手动登录服务器安装 tmux，然后回到应用重试。常见命令如下：
+
+```bash
+# Debian / Ubuntu
+sudo apt-get update && sudo apt-get install -y tmux
+
+# Fedora
+sudo dnf install -y tmux
+
+# CentOS / RHEL
+sudo yum install -y tmux
+
+# Arch Linux
+sudo pacman -Sy --noconfirm tmux
+
+# Alpine Linux
+sudo apk add tmux
+```
+
+如果服务器没有 `sudo` 权限，请联系服务器管理员安装，或使用已经安装 tmux 的账号/环境。
+
+English:
+
+If SSH + tmux reports that automatic installation failed, log in to the server manually, install tmux, and then retry in the app. Common commands:
+
+```bash
+# Debian / Ubuntu
+sudo apt-get update && sudo apt-get install -y tmux
+
+# Fedora
+sudo dnf install -y tmux
+
+# CentOS / RHEL
+sudo yum install -y tmux
+
+# Arch Linux
+sudo pacman -Sy --noconfirm tmux
+
+# Alpine Linux
+sudo apk add tmux
+```
+
+If the account does not have `sudo` privileges, ask the server administrator to install tmux or use an account/environment where tmux is already available.
 
 ## 许可证 / License
 
