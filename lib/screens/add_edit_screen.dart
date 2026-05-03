@@ -31,6 +31,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   bool _keepAlive = true;
   bool _obscurePassword = true;
   bool _isSaving = false;
+  bool _isLoadingSecrets = false;
 
   bool get isEditing => widget.editId != null;
 
@@ -51,13 +52,27 @@ class _AddEditScreenState extends State<AddEditScreen> {
     _hostController.text = config.host;
     _portController.text = config.port.toString();
     _usernameController.text = config.username;
-    _passwordController.text = config.password ?? '';
-    _privateKeyController.text = config.privateKey ?? '';
     _authMethod = config.authMethod;
     _keepAlive = config.keepAlive;
     _jumpHostController.text = config.jumpHost ?? '';
     _jumpPortController.text = config.jumpPort?.toString() ?? '22';
     _jumpUsernameController.text = config.jumpUsername ?? '';
+
+    _loadSecrets(config.id);
+  }
+
+  Future<void> _loadSecrets(String id) async {
+    setState(() => _isLoadingSecrets = true);
+
+    final storage = context.read<StorageService>();
+    final password = await storage.getPassword(id);
+    final privateKey = await storage.getPrivateKey(id);
+
+    if (!mounted) return;
+
+    _passwordController.text = password ?? '';
+    _privateKeyController.text = privateKey ?? '';
+    setState(() => _isLoadingSecrets = false);
   }
 
   @override
@@ -81,7 +96,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
         title: Text(isEditing ? '编辑连接' : '添加连接'),
         actions: [
           TextButton.icon(
-            onPressed: _isSaving ? null : _save,
+            onPressed: _isSaving || _isLoadingSecrets ? null : _save,
             icon: _isSaving
                 ? const SizedBox(
                     width: 16,
@@ -98,6 +113,10 @@ class _AddEditScreenState extends State<AddEditScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            if (_isLoadingSecrets) ...[
+              const LinearProgressIndicator(minHeight: 2),
+              const SizedBox(height: 12),
+            ],
             _buildSectionHeader('基本信息'),
             const SizedBox(height: 8),
             _buildNameField(),

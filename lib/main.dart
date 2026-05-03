@@ -3,17 +3,16 @@ import 'package:provider/provider.dart';
 
 import 'screens/add_edit_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/startup_screen.dart';
 import 'screens/terminal_screen.dart';
 import 'services/ssh_service.dart';
 import 'services/storage_service.dart';
 import 'theme/app_theme.dart';
 
-Future<void> main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
 
   final storageService = StorageService();
-  await storageService.init();
-
   final sshService = SshService(storageService);
 
   runApp(
@@ -25,6 +24,8 @@ Future<void> main() async {
       child: const SshMobileApp(),
     ),
   );
+
+  storageService.init();
 }
 
 class SshMobileApp extends StatelessWidget {
@@ -43,7 +44,7 @@ class SshMobileApp extends StatelessWidget {
         switch (settings.name) {
           case '/':
             return MaterialPageRoute(
-              builder: (_) => const HomeScreen(),
+              builder: (_) => const StartupScreen(),
             );
           case '/terminal':
             final config = settings.arguments as Map<String, dynamic>;

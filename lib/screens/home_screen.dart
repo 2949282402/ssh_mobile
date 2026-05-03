@@ -27,11 +27,23 @@ class HomeScreen extends StatelessWidget {
         ],
       ),
       body: connections.isEmpty
-          ? _buildEmptyState(context)
+          ? storage.initialized
+              ? _buildEmptyState(context)
+              : _buildLoadingState()
           : _buildConnectionList(context, connections, ssh),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _addConnection(context),
         child: const Icon(Icons.add),
+      ),
+    );
+  }
+
+  Widget _buildLoadingState() {
+    return const Center(
+      child: SizedBox(
+        width: 28,
+        height: 28,
+        child: CircularProgressIndicator(strokeWidth: 2),
       ),
     );
   }

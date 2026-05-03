@@ -39,6 +39,10 @@ class MainActivity : FlutterActivity() {
                     requestBatteryOptimizationExemption()
                     result.success(true)
                 }
+                "openAppSettings" -> {
+                    openAppSettings()
+                    result.success(true)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -103,5 +107,12 @@ class MainActivity : FlutterActivity() {
         } catch (_: Exception) {
             startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
         }
+    }
+
+    private fun openAppSettings() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.parse("package:$packageName")
+        }
+        startActivity(intent)
     }
 }

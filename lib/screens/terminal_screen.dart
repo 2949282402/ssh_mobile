@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:xterm/xterm.dart';
 
@@ -22,10 +23,19 @@ class _TerminalScreenState extends State<TerminalScreen>
   late final Terminal _terminal;
   late final TerminalController _terminalController;
   late final FocusNode _terminalFocusNode;
+  final GlobalKey<TerminalViewState> _terminalViewKey =
+      GlobalKey<TerminalViewState>();
   VoidCallback? _sshListener;
   StreamSubscription<String>? _outputSubscription;
   SshSession? _subscribedSession;
   bool _reconnectInProgress = false;
+  bool _hasShownDisconnectMessage = false;
+  double _terminalFontSize = 14;
+  double _scaleStartFontSize = 14;
+  Offset _lastLongPressPosition = Offset.zero;
+  Timer? _longPressTimer;
+  int _activePointers = 0;
+  bool _terminalMenuOpen = false;
 
   String? _serverName;
 
@@ -78,8 +88,10 @@ class _TerminalScreenState extends State<TerminalScreen>
     _reconnectInProgress = true;
 
     final ssh = context.read<SshService>();
-    if (fromResume) {
-      _terminal.write('\r\n\x1b[33m[Checking SSH connection...]\x1b[0m\r\n');
+    final needsReconnect =
+        !(ssh.isConnected && ssh.activeConnectionId == widget.connectionId);
+    if (fromResume && needsReconnect) {
+      _terminal.write('\r\n\x1b[33m[Reconnecting SSH session...]\x1b[0m\r\n');
     }
 
     final connected = await ssh.ensureConnected(widget.connectionId);
@@ -87,9 +99,7 @@ class _TerminalScreenState extends State<TerminalScreen>
 
     if (connected) {
       _setupOutputStream(ssh);
-      if (fromResume) {
-        _terminal.write('\r\n\x1b[32m[SSH connection ready]\x1b[0m\r\n');
-      }
+      _hasShownDisconnectMessage = false;
     } else {
       _showDisconnected(ssh.errorMessage);
     }
@@ -119,6 +129,8 @@ class _TerminalScreenState extends State<TerminalScreen>
   }
 
   void _showDisconnected(String? reason) {
+    if (_hasShownDisconnectMessage) return;
+    _hasShownDisconnectMessage = true;
     _terminal.write(
       '\r\n\x1b[31m[Disconnected: ${reason ?? "unknown"}]\x1b[0m\r\n',
     );
@@ -173,38 +185,61 @@ class _TerminalScreenState extends State<TerminalScreen>
         child: Column(
           children: [
             Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(4),
-                child: TerminalView(
-                  _terminal,
-                  controller: _terminalController,
-                  focusNode: _terminalFocusNode,
-                  autofocus: true,
-                  backgroundOpacity: 1,
-                  theme: TerminalTheme(
-                    background: AppTheme.terminalBg,
-                    foreground: const Color(0xFFCCCCCC),
-                    cursor: AppTheme.terminalGreen,
-                    selection: AppTheme.terminalGreen.withValues(alpha: 0.3),
-                    searchHitBackground: const Color(0xFF725C00),
-                    searchHitBackgroundCurrent: const Color(0xFFA88400),
-                    searchHitForeground: const Color(0xFFFFFFFF),
-                    black: const Color(0xFF1A1A2E),
-                    red: const Color(0xFFFF6B6B),
-                    green: const Color(0xFF00FF41),
-                    yellow: const Color(0xFFFFD93D),
-                    blue: const Color(0xFF58A6FF),
-                    magenta: const Color(0xFFB388FF),
-                    cyan: const Color(0xFF00D4FF),
-                    white: const Color(0xFFCCCCCC),
-                    brightBlack: const Color(0xFF4A4A5E),
-                    brightRed: const Color(0xFFFF8E8E),
-                    brightGreen: const Color(0xFF6BFF6B),
-                    brightYellow: const Color(0xFFFFF176),
-                    brightBlue: const Color(0xFF8BC4FF),
-                    brightMagenta: const Color(0xFFD1BFFF),
-                    brightCyan: const Color(0xFF80EBFF),
-                    brightWhite: const Color(0xFFFFFFFF),
+              child: Listener(
+                behavior: HitTestBehavior.translucent,
+                onPointerDown: _handleTerminalPointerDown,
+                onPointerUp: _handleTerminalPointerUp,
+                onPointerCancel: _handleTerminalPointerCancel,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onScaleStart: (details) {
+                    _scaleStartFontSize = _terminalFontSize;
+                  },
+                  onScaleUpdate: (details) {
+                    if (details.pointerCount < 2) return;
+                    final nextSize =
+                        (_scaleStartFontSize * details.scale).clamp(8.0, 28.0);
+                    if ((nextSize - _terminalFontSize).abs() < 0.2) return;
+                    setState(() => _terminalFontSize = nextSize);
+                  },
+                  onScaleEnd: (_) => _syncTerminalSize(),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: TerminalView(
+                      key: _terminalViewKey,
+                      _terminal,
+                      controller: _terminalController,
+                      focusNode: _terminalFocusNode,
+                      autofocus: true,
+                      backgroundOpacity: 1,
+                      textStyle: TerminalStyle(fontSize: _terminalFontSize),
+                      theme: TerminalTheme(
+                        background: AppTheme.terminalBg,
+                        foreground: const Color(0xFFCCCCCC),
+                        cursor: AppTheme.terminalGreen,
+                        selection:
+                            AppTheme.terminalGreen.withValues(alpha: 0.3),
+                        searchHitBackground: const Color(0xFF725C00),
+                        searchHitBackgroundCurrent: const Color(0xFFA88400),
+                        searchHitForeground: const Color(0xFFFFFFFF),
+                        black: const Color(0xFF1A1A2E),
+                        red: const Color(0xFFFF6B6B),
+                        green: const Color(0xFF00FF41),
+                        yellow: const Color(0xFFFFD93D),
+                        blue: const Color(0xFF58A6FF),
+                        magenta: const Color(0xFFB388FF),
+                        cyan: const Color(0xFF00D4FF),
+                        white: const Color(0xFFCCCCCC),
+                        brightBlack: const Color(0xFF4A4A5E),
+                        brightRed: const Color(0xFFFF8E8E),
+                        brightGreen: const Color(0xFF6BFF6B),
+                        brightYellow: const Color(0xFFFFF176),
+                        brightBlue: const Color(0xFF8BC4FF),
+                        brightMagenta: const Color(0xFFD1BFFF),
+                        brightCyan: const Color(0xFF80EBFF),
+                        brightWhite: const Color(0xFFFFFFFF),
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -318,6 +353,136 @@ class _TerminalScreenState extends State<TerminalScreen>
     );
   }
 
+  void _syncTerminalSize() {
+    final width = _terminal.viewWidth;
+    final height = _terminal.viewHeight;
+    if (width > 0 && height > 0) {
+      context.read<SshService>().resizeTerminal(width, height);
+    }
+    _terminalFocusNode.requestFocus();
+  }
+
+  Future<void> _showTerminalEditMenu() async {
+    if (_terminalMenuOpen) return;
+    _terminalMenuOpen = true;
+    _terminalFocusNode.requestFocus();
+
+    final selectedText = _selectedTerminalText();
+    final action = await showMenu<_TerminalEditAction>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        _lastLongPressPosition.dx,
+        _lastLongPressPosition.dy,
+        _lastLongPressPosition.dx,
+        _lastLongPressPosition.dy,
+      ),
+      items: [
+        const PopupMenuItem(
+          value: _TerminalEditAction.selectCopy,
+          child: Text('选择复制'),
+        ),
+        PopupMenuItem(
+          value: _TerminalEditAction.copy,
+          enabled: selectedText.trim().isNotEmpty,
+          child: const Text('复制'),
+        ),
+        const PopupMenuItem(
+          value: _TerminalEditAction.paste,
+          child: Text('粘贴'),
+        ),
+      ],
+    );
+
+    _terminalMenuOpen = false;
+
+    if (!mounted || action == null) return;
+
+    switch (action) {
+      case _TerminalEditAction.selectCopy:
+        _terminalController.clearSelection();
+        await _showSelectableCopyLayer();
+        break;
+      case _TerminalEditAction.copy:
+        if (selectedText.trim().isEmpty) return;
+        await Clipboard.setData(ClipboardData(text: selectedText));
+        _terminalController.clearSelection();
+        break;
+      case _TerminalEditAction.paste:
+        final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
+        final text = clipboard?.text;
+        if (text == null || text.isEmpty) return;
+        if (!mounted) return;
+        context.read<SshService>().sendData(text);
+        break;
+    }
+  }
+
+  void _handleTerminalPointerDown(PointerDownEvent event) {
+    _activePointers += 1;
+    _lastLongPressPosition = event.position;
+
+    _longPressTimer?.cancel();
+    _longPressTimer = Timer(const Duration(milliseconds: 550), () {
+      if (!mounted || _activePointers != 1 || _terminalMenuOpen) return;
+      _selectWordAtLastLongPress();
+      unawaited(_showTerminalEditMenu());
+    });
+  }
+
+  void _handleTerminalPointerUp(PointerUpEvent event) {
+    _activePointers = (_activePointers - 1).clamp(0, 10);
+    _longPressTimer?.cancel();
+  }
+
+  void _handleTerminalPointerCancel(PointerCancelEvent event) {
+    _activePointers = 0;
+    _longPressTimer?.cancel();
+  }
+
+  String _selectedTerminalText() {
+    final selection = _terminalController.selection;
+    if (selection == null) return '';
+    return _terminal.buffer.getText(selection);
+  }
+
+  Future<void> _showSelectableCopyLayer() async {
+    final text = _terminal.buffer.getText().trimRight();
+    if (text.isEmpty) return;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _TerminalCopyScreen(
+          title: _serverName ?? 'Terminal',
+          text: text,
+        ),
+      ),
+    );
+
+    _terminalFocusNode.requestFocus();
+  }
+
+  void _selectWordAtLastLongPress() {
+    final terminalView = _terminalViewKey.currentState;
+    if (terminalView == null) return;
+
+    final renderTerminal = terminalView.renderTerminal;
+    final localToTerminal =
+        renderTerminal.globalToLocal(_lastLongPressPosition);
+    final offset = renderTerminal.getCellOffset(localToTerminal);
+    final boundary = _terminal.buffer.getWordBoundary(offset);
+
+    if (boundary == null) {
+      _terminalController.clearSelection();
+      return;
+    }
+
+    _terminalController.setSelection(
+      _terminal.buffer.createAnchorFromOffset(boundary.begin),
+      _terminal.buffer.createAnchorFromOffset(boundary.end),
+    );
+  }
+
   void _confirmDisconnect(BuildContext context) {
     showDialog(
       context: context,
@@ -346,6 +511,7 @@ class _TerminalScreenState extends State<TerminalScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _longPressTimer?.cancel();
     final listener = _sshListener;
     if (listener != null) {
       context.read<SshService>().removeListener(listener);
@@ -354,5 +520,56 @@ class _TerminalScreenState extends State<TerminalScreen>
     _terminalController.dispose();
     _terminalFocusNode.dispose();
     super.dispose();
+  }
+}
+
+enum _TerminalEditAction {
+  selectCopy,
+  copy,
+  paste,
+}
+
+class _TerminalCopyScreen extends StatelessWidget {
+  final String title;
+  final String text;
+
+  const _TerminalCopyScreen({
+    required this.title,
+    required this.text,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(title),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.copy_all),
+            tooltip: '复制全部',
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: text));
+              Navigator.pop(context);
+            },
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: SelectionArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(12),
+            child: SelectableText(
+              text,
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 13,
+                height: 1.35,
+                color: Color(0xFFCCCCCC),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
