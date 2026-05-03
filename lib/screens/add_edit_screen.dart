@@ -254,8 +254,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
             _obscurePassword ? Icons.visibility_off : Icons.visibility,
             size: 20,
           ),
-          onPressed: () =>
-              setState(() => _obscurePassword = !_obscurePassword),
+          onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
         ),
       ),
       validator: (v) {
@@ -274,7 +273,8 @@ class _AddEditScreenState extends State<AddEditScreen> {
       maxLines: 4,
       decoration: const InputDecoration(
         labelText: 'SSH 私钥',
-        hintText: '-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----',
+        hintText:
+            '-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----',
         prefixIcon: Icon(Icons.key),
         alignLabelWithHint: true,
       ),
@@ -328,7 +328,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
         style: TextStyle(fontSize: 12),
       ),
       value: _keepAlive,
-      activeColor: AppTheme.terminalGreen,
+      activeThumbColor: AppTheme.terminalGreen,
       onChanged: (v) => setState(() => _keepAlive = v),
     );
   }

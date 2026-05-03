@@ -1,25 +1,22 @@
-import 'dart:convert';
-
-/// SSH 连接配置模型
 class ConnectionConfig {
   final String id;
   String name;
   String host;
   int port;
   String username;
-  String? password; // 仅内存中，不持久化明文
-  String? privateKey; // 私钥内容
-  AuthMethod authMethod; // 认证方式
+  String? password;
+  String? privateKey;
+  AuthMethod authMethod;
   int terminalWidth;
   int terminalHeight;
-  bool keepAlive; // 是否保持后台连接
-  int keepAliveInterval; // 心跳间隔（秒）
+  bool keepAlive;
+  int keepAliveInterval;
   DateTime createdAt;
   DateTime updatedAt;
-  String? jumpHost; // 跳板机
+  String? jumpHost;
   int? jumpPort;
   String? jumpUsername;
-  String? group; // 分组
+  String? group;
 
   ConnectionConfig({
     required this.id,
@@ -33,7 +30,7 @@ class ConnectionConfig {
     this.terminalWidth = 80,
     this.terminalHeight = 24,
     this.keepAlive = true,
-    this.keepAliveInterval = 30,
+    this.keepAliveInterval = 3,
     DateTime? createdAt,
     DateTime? updatedAt,
     this.jumpHost,
@@ -50,7 +47,6 @@ class ConnectionConfig {
       'host': host,
       'port': port,
       'username': username,
-      // 密码不序列化到普通 JSON，单独存安全存储
       'authMethod': authMethod.name,
       'terminalWidth': terminalWidth,
       'terminalHeight': terminalHeight,
@@ -76,8 +72,7 @@ class ConnectionConfig {
       terminalWidth: (json['terminalWidth'] as num?)?.toInt() ?? 80,
       terminalHeight: (json['terminalHeight'] as num?)?.toInt() ?? 24,
       keepAlive: json['keepAlive'] as bool? ?? true,
-      keepAliveInterval:
-          (json['keepAliveInterval'] as num?)?.toInt() ?? 30,
+      keepAliveInterval: (json['keepAliveInterval'] as num?)?.toInt() ?? 3,
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
       updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
@@ -130,11 +125,10 @@ class ConnectionConfig {
   }
 }
 
-/// 认证方式
 enum AuthMethod {
-  password, // 密码
-  privateKey, // 私钥
-  both, // 私钥 + 密码（私钥带密码保护）
+  password,
+  privateKey,
+  both;
 
   String get name {
     switch (this) {
@@ -150,11 +144,11 @@ enum AuthMethod {
   String get displayName {
     switch (this) {
       case AuthMethod.password:
-        return '密码认证';
+        return 'Password';
       case AuthMethod.privateKey:
-        return '私钥认证';
+        return 'Private key';
       case AuthMethod.both:
-        return '私钥+密码';
+        return 'Private key + password';
     }
   }
 

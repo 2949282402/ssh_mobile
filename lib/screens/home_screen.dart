@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:uuid/uuid.dart';
-
 import '../services/storage_service.dart';
 import '../services/ssh_service.dart';
 import '../models/connection.dart';
@@ -80,8 +78,8 @@ class HomeScreen extends StatelessWidget {
       itemBuilder: (context, index) {
         final conn = connections[index];
         final isActive = ssh.activeConnectionId == conn.id;
-        final isConnecting = isActive &&
-            ssh.state == SshConnectionState.connecting;
+        final isConnecting =
+            isActive && ssh.state == SshConnectionState.connecting;
 
         return Card(
           margin: const EdgeInsets.only(bottom: 8),
@@ -98,9 +96,9 @@ class HomeScreen extends StatelessWidget {
                     height: 44,
                     decoration: BoxDecoration(
                       color: isActive
-                          ? AppTheme.terminalGreen.withOpacity(0.15)
+                          ? AppTheme.terminalGreen.withValues(alpha: 0.15)
                           : AppTheme.darkTheme.colorScheme.primary
-                              .withOpacity(0.1),
+                              .withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Icon(
@@ -223,9 +221,9 @@ class HomeScreen extends StatelessWidget {
 
     ssh.connect(conn.id).then((_) {
       // 弹出等待对话框
-      if (context.mounted) {
-        Navigator.of(context).pop(); // pop dialog
-      }
+      if (!context.mounted) return;
+      Navigator.of(context).pop(); // pop dialog
+
       if (ssh.isConnected) {
         Navigator.pushNamed(
           context,

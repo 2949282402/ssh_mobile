@@ -8,8 +8,6 @@ import '../models/connection.dart';
 /// 存储服务 - 连接配置 + 密码安全管理
 class StorageService extends ChangeNotifier {
   static const _connectionsKey = 'ssh_connections';
-  static const _settingsKey = 'ssh_settings';
-
   late SharedPreferences _prefs;
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
 
@@ -74,10 +72,12 @@ class StorageService extends ChangeNotifier {
 
     // 安全存储密码/私钥
     if (config.password != null && config.password!.isNotEmpty) {
-      await _secureStorage.write(key: 'pwd_${config.id}', value: config.password!);
+      await _secureStorage.write(
+          key: 'pwd_${config.id}', value: config.password!);
     }
     if (config.privateKey != null && config.privateKey!.isNotEmpty) {
-      await _secureStorage.write(key: 'key_${config.id}', value: config.privateKey!);
+      await _secureStorage.write(
+          key: 'key_${config.id}', value: config.privateKey!);
     }
 
     await _saveConnections();
@@ -95,12 +95,14 @@ class StorageService extends ChangeNotifier {
 
     // 更新密码/私钥
     if (config.password != null && config.password!.isNotEmpty) {
-      await _secureStorage.write(key: 'pwd_${config.id}', value: config.password!);
+      await _secureStorage.write(
+          key: 'pwd_${config.id}', value: config.password!);
     } else {
       await _secureStorage.delete(key: 'pwd_${config.id}');
     }
     if (config.privateKey != null && config.privateKey!.isNotEmpty) {
-      await _secureStorage.write(key: 'key_${config.id}', value: config.privateKey!);
+      await _secureStorage.write(
+          key: 'key_${config.id}', value: config.privateKey!);
     } else {
       await _secureStorage.delete(key: 'key_${config.id}');
     }

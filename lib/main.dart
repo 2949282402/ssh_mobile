@@ -1,26 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:flutter_background_service/flutter_background_service.dart';
 
-import 'theme/app_theme.dart';
-import 'services/ssh_service.dart';
-import 'services/storage_service.dart';
-import 'services/background_service.dart' show BackgroundServiceManager;
+import 'screens/add_edit_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/terminal_screen.dart';
-import 'screens/add_edit_screen.dart';
+import 'services/ssh_service.dart';
+import 'services/storage_service.dart';
+import 'theme/app_theme.dart';
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 初始化后台服务
-  await BackgroundServiceManager.initialize();
-
-  // 初始化存储服务
   final storageService = StorageService();
   await storageService.init();
 
-  // 初始化 SSH 服务
   final sshService = SshService(storageService);
 
   runApp(
@@ -53,8 +46,7 @@ class SshMobileApp extends StatelessWidget {
               builder: (_) => const HomeScreen(),
             );
           case '/terminal':
-            final config = settings.arguments
-                as Map<String, dynamic>;
+            final config = settings.arguments as Map<String, dynamic>;
             return MaterialPageRoute(
               builder: (_) => TerminalScreen(
                 connectionId: config['id'] as String,

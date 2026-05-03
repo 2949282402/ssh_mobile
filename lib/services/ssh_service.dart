@@ -1,15 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
-
-import 'package:flutter/foundation.dart';
 import 'package:dartssh2/dartssh2.dart';
+import 'package:flutter/foundation.dart';
 
 import '../models/connection.dart';
-import 'storage_service.dart';
 import 'background_service.dart';
+import 'storage_service.dart';
 
-/// SSH 连接状态
 enum SshConnectionState {
   disconnected,
   connecting,
@@ -17,54 +14,45 @@ enum SshConnectionState {
   error,
 }
 
-/// SSH 会话数据（终端输出流 + 输入流）
 class SshSession {
   final SSHClient client;
   final SSHSession session;
-
-  /// stdout 流（已经是 UTF-8 解码的字符串流）
   final StreamController<String> outputController;
   final StreamSubscription<Uint8List> _stdoutSub;
+  final StreamSubscription<Uint8List> _stderrSub;
 
   SshSession({
     required this.client,
     required this.session,
     required this.outputController,
     required StreamSubscription<Uint8List> stdoutSub,
-  }) : _stdoutSub = stdoutSub;
+    required StreamSubscription<Uint8List> stderrSub,
+  })  : _stdoutSub = stdoutSub,
+        _stderrSub = stderrSub;
 
   Stream<String> get output => outputController.stream;
 
-  /// 发送输入到 SSH
   void write(String data) {
     session.stdin.add(utf8.encode(data));
   }
 
-  /// 发送原始字节
   void writeBytes(Uint8List data) {
     session.stdin.add(data);
   }
 
-  /// 调整终端大小
   void resize(int width, int height) {
-    session.resize(
-      width,
-      height,
-      0, // pixel width (optional)
-      0, // pixel height (optional)
-    );
+    session.resizeTerminal(width, height);
   }
 
-  /// 关闭会话
-  void close() {
-    _stdoutSub.cancel();
-    outputController.close();
+  Future<void> close() async {
+    await _stdoutSub.cancel();
+    await _stderrSub.cancel();
+    await outputController.close();
     session.close();
     client.close();
   }
 }
 
-/// SSH 连接服务 - 管理连接生命周期
 class SshService extends ChangeNotifier {
   final StorageService _storageService;
 
@@ -73,6 +61,8 @@ class SshService extends ChangeNotifier {
   SshSession? _currentSession;
   String? _activeConnectionId;
   Timer? _keepAliveTimer;
+  int _keepAliveFailures = 0;
+  bool _keepAliveInFlight = false;
 
   SshConnectionState get state => _state;
   String? get errorMessage => _errorMessage;
@@ -82,18 +72,30 @@ class SshService extends ChangeNotifier {
 
   SshService(this._storageService);
 
-  /// 连接到服务器
+  Future<bool> ensureConnected(String connectionId) async {
+    if (_activeConnectionId == connectionId && isConnected) {
+      final ok = await _probeCurrentSession();
+      if (ok) return true;
+
+      debugPrint('SSH session probe failed; reconnecting.');
+      _markConnectionLost('Connection lost while app was in background');
+    }
+
+    await connect(connectionId);
+    return _activeConnectionId == connectionId && isConnected;
+  }
+
   Future<void> connect(String connectionId) async {
     if (_state == SshConnectionState.connecting) return;
 
-    // 如果已有连接，先断开
     if (_currentSession != null) {
       await disconnect();
     }
+    _keepAliveFailures = 0;
 
     final config = _storageService.getConnection(connectionId);
     if (config == null) {
-      _setError('连接配置不存在');
+      _setError('Connection config not found');
       return;
     }
 
@@ -103,69 +105,53 @@ class SshService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // 获取认证凭据
       final password = await _storageService.getPassword(connectionId);
       final privateKey = await _storageService.getPrivateKey(connectionId);
 
-      // 创建 SSH Socket
       final socket = await SSHSocket.connect(
         config.host,
         config.port,
         timeout: const Duration(seconds: 15),
       );
 
-      // 创建 SSH 客户端
-      SSHClient client;
+      final identities = (config.authMethod == AuthMethod.privateKey ||
+                  config.authMethod == AuthMethod.both) &&
+              privateKey != null &&
+              privateKey.isNotEmpty
+          ? SSHKeyPair.fromPem(privateKey, password)
+          : null;
 
-      if (config.authMethod == AuthMethod.privateKey) {
-        client = SSHClient(
-          socket,
-          username: config.username,
-          identities: privateKey != null
-              ? [SSHKeyPair.fromPem(privateKey)]
-              : [],
-          onPasswordRequest: () {
-            // 私钥本身可能带密码保护
-            if (password != null && password.isNotEmpty) {
-              return password;
-            }
-            throw SSHException('需要私钥密码');
-          },
-        );
-      } else {
-        // 密码认证
-        client = SSHClient(
-          socket,
-          username: config.username,
-          onPasswordRequest: () {
-            if (password != null && password.isNotEmpty) {
-              return password;
-            }
-            throw SSHException('认证失败：密码为空');
-          },
-        );
-      }
+      final client = SSHClient(
+        socket,
+        username: config.username,
+        identities: identities,
+        keepAliveInterval: Duration(seconds: _keepAliveIntervalSeconds(config)),
+        onPasswordRequest: () {
+          if (config.authMethod == AuthMethod.privateKey) {
+            return null;
+          }
+          return password?.isNotEmpty == true ? password : null;
+        },
+      );
 
-      // 请求 PTY 并启动 Shell
       final session = await client.shell(
         pty: SSHPtyConfig(
           width: config.terminalWidth,
           height: config.terminalHeight,
-          term: 'xterm-256color',
+          type: 'xterm-256color',
         ),
       );
 
-      // 创建输出流
       final outputController = StreamController<String>.broadcast();
 
       final stdoutSub = session.stdout.listen(
         (data) {
-          // 直接传原始 UTF-8 字节给终端
           outputController.add(utf8.decode(data, allowMalformed: true));
         },
         onError: (error) {
           debugPrint('SSH stdout error: $error');
-          outputController.add('\r\n\x1b[31m[连接中断: $error]\x1b[0m\r\n');
+          outputController
+              .add('\r\n\x1b[31m[Connection error: $error]\x1b[0m\r\n');
           _handleDisconnect();
         },
         onDone: () {
@@ -174,10 +160,12 @@ class SshService extends ChangeNotifier {
         },
       );
 
-      // 监听 stderr
-      session.stderr.listen(
+      final stderrSub = session.stderr.listen(
         (data) {
-          debugPrint('SSH stderr: ${utf8.decode(data)}');
+          outputController.add(utf8.decode(data, allowMalformed: true));
+        },
+        onError: (error) {
+          debugPrint('SSH stderr error: $error');
         },
       );
 
@@ -186,57 +174,75 @@ class SshService extends ChangeNotifier {
         session: session,
         outputController: outputController,
         stdoutSub: stdoutSub,
+        stderrSub: stderrSub,
       );
 
       _state = SshConnectionState.connected;
+      _keepAliveFailures = 0;
 
-      // 启动后台保活
       if (config.keepAlive) {
-        await BackgroundServiceManager.start(config);
         _startKeepAlive(config);
+        try {
+          await BackgroundServiceManager.start(connectionName: config.name);
+          BackgroundServiceManager.updateStatus(
+            'Connected to ${config.name} - keep-alive every '
+            '${_keepAliveIntervalSeconds(config)}s',
+          );
+        } catch (e) {
+          debugPrint('Failed to start background service: $e');
+        }
+      } else {
+        unawaited(BackgroundServiceManager.stop());
       }
 
       notifyListeners();
-    } on SSHException catch (e) {
-      _setError('SSH 连接失败: ${e.message}');
-      _activeConnectionId = null;
     } on TimeoutException {
-      _setError('连接超时，请检查服务器地址和端口');
       _activeConnectionId = null;
+      _setError('Connection timed out');
+    } on SSHMessageError catch (e) {
+      _activeConnectionId = null;
+      _setError('SSH connection failed: ${e.message}');
+    } on SSHError catch (e) {
+      _activeConnectionId = null;
+      _setError('SSH connection failed: $e');
     } catch (e) {
-      _setError('连接失败: $e');
       _activeConnectionId = null;
+      _setError('Connection failed: $e');
     }
   }
 
-  /// 断开连接
   Future<void> disconnect() async {
     _keepAliveTimer?.cancel();
     _keepAliveTimer = null;
+    _keepAliveFailures = 0;
+    _keepAliveInFlight = false;
 
-    if (_currentSession != null) {
+    final session = _currentSession;
+    _currentSession = null;
+    if (session != null) {
       try {
-        _currentSession!.close();
+        await session.close();
       } catch (_) {}
-      _currentSession = null;
     }
 
     _state = SshConnectionState.disconnected;
     _activeConnectionId = null;
     _errorMessage = null;
 
-    await BackgroundServiceManager.stop();
+    try {
+      await BackgroundServiceManager.stop();
+    } catch (e) {
+      debugPrint('Failed to stop background service: $e');
+    }
     notifyListeners();
   }
 
-  /// 调整终端大小
   void resizeTerminal(int width, int height) {
     if (_currentSession != null && isConnected) {
       _currentSession!.resize(width, height);
     }
   }
 
-  /// 发送数据到 SSH session
   void sendData(String data) {
     if (_currentSession != null && isConnected) {
       _currentSession!.write(data);
@@ -249,31 +255,85 @@ class SshService extends ChangeNotifier {
     }
   }
 
-  /// 心跳保活
   void _startKeepAlive(ConnectionConfig config) {
     _keepAliveTimer?.cancel();
+    _keepAliveFailures = 0;
+    _keepAliveInFlight = false;
     _keepAliveTimer = Timer.periodic(
-      Duration(seconds: config.keepAliveInterval),
+      Duration(seconds: _keepAliveIntervalSeconds(config)),
       (_) {
         if (_currentSession != null && isConnected) {
-          try {
-            _currentSession!.client.sendKeepAlive();
-          } catch (e) {
-            debugPrint('心跳失败: $e');
-            _handleDisconnect();
-          }
+          unawaited(_sendKeepAlivePing());
         }
       },
     );
   }
 
-  /// 处理意外断连
+  Future<void> _sendKeepAlivePing() async {
+    final session = _currentSession;
+    if (session == null || !isConnected || _keepAliveInFlight) return;
+
+    _keepAliveInFlight = true;
+    try {
+      await _pingSession(session, timeout: const Duration(seconds: 20));
+      _keepAliveFailures = 0;
+    } catch (e) {
+      _keepAliveFailures += 1;
+      debugPrint('Keep-alive failed ($_keepAliveFailures/3): $e');
+    } finally {
+      _keepAliveInFlight = false;
+    }
+  }
+
+  int _keepAliveIntervalSeconds(ConnectionConfig config) {
+    return 3;
+  }
+
   void _handleDisconnect() {
     if (_state == SshConnectionState.disconnected) return;
     _keepAliveTimer?.cancel();
+    _keepAliveFailures = 0;
+    _keepAliveInFlight = false;
     _state = SshConnectionState.disconnected;
     _currentSession = null;
-    _errorMessage = '连接已断开';
+    _errorMessage = 'Connection closed';
+    unawaited(BackgroundServiceManager.stop());
+    notifyListeners();
+  }
+
+  Future<bool> _probeCurrentSession() async {
+    final session = _currentSession;
+    if (session == null || !isConnected) return false;
+
+    try {
+      await _pingSession(session, timeout: const Duration(seconds: 5));
+      _keepAliveFailures = 0;
+      return true;
+    } catch (e) {
+      debugPrint('SSH probe failed: $e');
+      return false;
+    }
+  }
+
+  Future<void> _pingSession(
+    SshSession session, {
+    required Duration timeout,
+  }) {
+    return session.client.ping().timeout(timeout);
+  }
+
+  void _markConnectionLost(String message) {
+    _keepAliveTimer?.cancel();
+    _keepAliveFailures = 0;
+    _keepAliveInFlight = false;
+    final session = _currentSession;
+    _state = SshConnectionState.disconnected;
+    _currentSession = null;
+    _errorMessage = message;
+    if (session != null) {
+      unawaited(session.close());
+    }
+    unawaited(BackgroundServiceManager.stop());
     notifyListeners();
   }
 
