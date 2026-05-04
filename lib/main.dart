@@ -6,7 +6,10 @@ import 'package:provider/provider.dart';
 import 'screens/add_edit_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/startup_screen.dart';
+import 'screens/terminal_history_screen.dart';
 import 'screens/terminal_screen.dart';
+import 'screens/terminal_windows_screen.dart';
+import 'services/app_log_service.dart';
 import 'services/background_service.dart';
 import 'services/app_settings.dart';
 import 'services/shortcut_command_service.dart';
@@ -15,42 +18,62 @@ import 'services/storage_service.dart';
 import 'theme/app_theme.dart';
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  final appLogService = AppLogService()..install();
 
-  final storageService = StorageService();
-  final sshService = SshService(storageService);
-  final appSettings = AppSettings();
-  final shortcutCommandService = ShortcutCommandService();
+  await runZonedGuarded(
+    () async {
+      WidgetsFlutterBinding.ensureInitialized();
+      appLogService.info('Application bootstrap started');
 
-  await appSettings.init();
+      final storageService = StorageService();
+      final sshService = SshService(storageService);
+      final appSettings = AppSettings();
+      final shortcutCommandService = ShortcutCommandService();
 
-  runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider.value(value: appSettings),
-        ChangeNotifierProvider.value(value: shortcutCommandService),
-        ChangeNotifierProvider.value(value: storageService),
-        ChangeNotifierProvider.value(value: sshService),
-      ],
-      child: const SshMobileApp(),
-    ),
-  );
+      await appSettings.init();
 
-  unawaited(
-    storageService.init().then((_) => sshService.restoreTmuxSessions()),
-  );
-  shortcutCommandService.init();
-
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    Timer(const Duration(milliseconds: 900), () {
-      unawaited(
-        BackgroundServiceManager.prewarm().timeout(
-          const Duration(seconds: 2),
-          onTimeout: () {},
+      runApp(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: appSettings),
+            ChangeNotifierProvider.value(value: shortcutCommandService),
+            ChangeNotifierProvider.value(value: appLogService),
+            ChangeNotifierProvider.value(value: storageService),
+            ChangeNotifierProvider.value(value: sshService),
+          ],
+          child: const SshMobileApp(),
         ),
       );
-    });
-  });
+
+      unawaited(
+        storageService.init().then((_) {
+          appLogService.info('Storage initialized');
+          return sshService.restoreTmuxSessions();
+        }),
+      );
+      unawaited(shortcutCommandService.init());
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Timer(const Duration(milliseconds: 900), () {
+          unawaited(
+            BackgroundServiceManager.prewarm().timeout(
+              const Duration(seconds: 2),
+              onTimeout: () {
+                appLogService.warning('Background service prewarm timed out');
+              },
+            ),
+          );
+        });
+      });
+    },
+    (error, stackTrace) {
+      appLogService.error(
+        'Uncaught zone error',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    },
+  );
 }
 
 class SshMobileApp extends StatelessWidget {
@@ -80,6 +103,14 @@ class SshMobileApp extends StatelessWidget {
                 connectionId: config['id'] as String,
                 sessionId: config['sessionId'] as String,
               ),
+            );
+          case '/windows':
+            return MaterialPageRoute(
+              builder: (_) => const TerminalWindowsScreen(),
+            );
+          case '/history':
+            return MaterialPageRoute(
+              builder: (_) => const TerminalHistoryScreen(),
             );
           case '/add':
             return MaterialPageRoute(

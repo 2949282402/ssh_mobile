@@ -5,11 +5,40 @@ import '../models/connection.dart';
 import '../services/app_settings.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
-import '../theme/app_theme.dart';
 import '../widgets/connection_progress_dialog.dart';
+import '../widgets/window_name_dialog.dart';
+import 'developer_log_screen.dart';
+import 'terminal_windows_screen.dart';
 
-class HomeScreen extends StatelessWidget {
-  const HomeScreen({super.key});
+class HomeScreen extends StatefulWidget {
+  final int initialIndex;
+
+  const HomeScreen({super.key, this.initialIndex = 1});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  static const int _logPage = 0;
+  static const int _serverPage = 1;
+  static const int _windowPage = 2;
+
+  late final PageController _pageController;
+  late int _selectedIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedIndex = widget.initialIndex.clamp(_logPage, _windowPage);
+    _pageController = PageController(initialPage: _selectedIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -38,27 +67,75 @@ class HomeScreen extends StatelessWidget {
             icon: Icon(
               settings.isDarkMode ? Icons.light_mode : Icons.dark_mode,
             ),
-            tooltip: settings.isDarkMode ? strings.lightMode : strings.darkMode,
-            onPressed: settings.toggleTheme,
+            tooltip: settings.isDarkMode
+                ? strings.switchToLightMode
+                : strings.switchToDarkMode,
+            onPressed: () => settings.toggleTheme(),
           ),
-          if (ssh.sessions.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.close, color: Colors.redAccent),
-              tooltip: strings.disconnectAllTooltip,
-              onPressed: () => _disconnect(context),
-            ),
         ],
       ),
-      body: connections.isEmpty
-          ? storage.initialized
-              ? _buildEmptyState(context, strings)
-              : _buildLoadingState()
-          : _buildConnectionList(context, connections, ssh, strings),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _addConnection(context),
-        tooltip: strings.addConnection,
-        child: const Icon(Icons.add),
+      body: PageView(
+        controller: _pageController,
+        onPageChanged: (index) => setState(() => _selectedIndex = index),
+        children: [
+          const DeveloperLogPage(),
+          connections.isEmpty
+              ? storage.initialized
+                  ? _buildEmptyState(context, strings)
+                  : _buildLoadingState()
+              : _buildConnectionList(context, connections, ssh, strings),
+          const TerminalWindowsPage(),
+        ],
       ),
+      floatingActionButton: _selectedIndex == _serverPage
+          ? FloatingActionButton(
+              onPressed: () => _addConnection(context),
+              tooltip: strings.addConnection,
+              child: const Icon(Icons.add),
+            )
+          : null,
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _navigationIndex,
+        onDestinationSelected: _switchNavigationPage,
+        destinations: [
+          NavigationDestination(
+            icon: const Icon(Icons.dns_outlined),
+            selectedIcon: const Icon(Icons.dns_rounded),
+            label: strings.servers,
+          ),
+          NavigationDestination(
+            icon: ssh.sessions.isEmpty
+                ? const Icon(Icons.tab_outlined)
+                : Badge(
+                    label: Text('${ssh.sessions.length}'),
+                    child: const Icon(Icons.tab_outlined),
+                  ),
+            selectedIcon: ssh.sessions.isEmpty
+                ? const Icon(Icons.tab_rounded)
+                : Badge(
+                    label: Text('${ssh.sessions.length}'),
+                    child: const Icon(Icons.tab_rounded),
+                  ),
+            label: strings.windows,
+          ),
+        ],
+      ),
+    );
+  }
+
+  int get _navigationIndex => _selectedIndex == _windowPage ? 1 : 0;
+
+  void _switchNavigationPage(int index) {
+    _switchPage(index == 0 ? _serverPage : _windowPage);
+  }
+
+  void _switchPage(int index) {
+    if (index == _selectedIndex) return;
+    setState(() => _selectedIndex = index);
+    _pageController.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
     );
   }
 
@@ -134,7 +211,7 @@ class HomeScreen extends StatelessWidget {
       itemCount: connections.length + 1,
       itemBuilder: (context, index) {
         if (index == 0) {
-          return _buildOverviewHeader(context, connections, ssh);
+          return _buildOverviewHeader(context, connections, ssh, strings);
         }
 
         final conn = connections[index - 1];
@@ -142,36 +219,28 @@ class HomeScreen extends StatelessWidget {
         final sessionCount = ssh.sessionCountForConnection(conn.id);
         final isConnecting = ssh.latestSessionForConnection(conn.id)?.state ==
             SshConnectionState.connecting;
-        final primary = Theme.of(context).colorScheme.primary;
+        final colorScheme = Theme.of(context).colorScheme;
+        final primary = colorScheme.primary;
+        final success = colorScheme.secondary;
+        final cardColor = _panelColor(context);
+        final textColor = _panelTextColor(context);
+        final mutedTextColor = _panelMutedTextColor(context);
+        final borderColor = isActive
+            ? success.withValues(alpha: 0.42)
+            : _panelBorderColor(context);
 
         return Padding(
           padding: const EdgeInsets.only(bottom: 10),
           child: InkWell(
             borderRadius: BorderRadius.circular(8),
             onTap: () => _connectToServer(context, conn),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOutCubic,
+            child: Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
+                color: cardColor,
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: isActive
-                      ? AppTheme.terminalGreen.withValues(alpha: 0.42)
-                      : Theme.of(context).dividerColor,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(
-                      alpha: Theme.of(context).brightness == Brightness.dark
-                          ? 0.12
-                          : 0.04,
-                    ),
-                    blurRadius: 14,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
+                border: Border.all(color: borderColor),
+                boxShadow: _panelShadow(context),
               ),
               child: Row(
                 children: [
@@ -180,13 +249,13 @@ class HomeScreen extends StatelessWidget {
                     height: 44,
                     decoration: BoxDecoration(
                       color: isActive
-                          ? AppTheme.terminalGreen.withValues(alpha: 0.15)
+                          ? success.withValues(alpha: 0.15)
                           : primary.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Icon(
                       _getStatusIcon(conn, ssh),
-                      color: isActive ? AppTheme.terminalGreen : primary,
+                      color: isActive ? success : primary,
                       size: 24,
                     ),
                   ),
@@ -197,7 +266,8 @@ class HomeScreen extends StatelessWidget {
                       children: [
                         Text(
                           conn.name,
-                          style: const TextStyle(
+                          style: TextStyle(
+                            color: textColor,
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
                           ),
@@ -208,10 +278,7 @@ class HomeScreen extends StatelessWidget {
                             Icon(
                               Icons.dns_outlined,
                               size: 13,
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurface
-                                  .withValues(alpha: 0.48),
+                              color: mutedTextColor.withValues(alpha: 0.72),
                             ),
                             const SizedBox(width: 5),
                             Expanded(
@@ -220,10 +287,7 @@ class HomeScreen extends StatelessWidget {
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   fontSize: 13,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurface
-                                      .withValues(alpha: 0.66),
+                                  color: mutedTextColor,
                                 ),
                               ),
                             ),
@@ -242,10 +306,7 @@ class HomeScreen extends StatelessWidget {
                     PopupMenuButton<String>(
                       icon: Icon(
                         Icons.more_vert,
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withValues(alpha: 0.65),
+                        color: mutedTextColor,
                       ),
                       onSelected: (action) =>
                           _handleAction(context, conn, action),
@@ -297,16 +358,16 @@ class HomeScreen extends StatelessWidget {
                         vertical: 3,
                       ),
                       decoration: BoxDecoration(
-                        color: AppTheme.terminalGreen.withValues(alpha: 0.12),
+                        color: success.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(999),
                         border: Border.all(
-                          color: AppTheme.terminalGreen.withValues(alpha: 0.35),
+                          color: success.withValues(alpha: 0.35),
                         ),
                       ),
                       child: Text(
                         '$sessionCount',
-                        style: const TextStyle(
-                          color: AppTheme.terminalGreen,
+                        style: TextStyle(
+                          color: success,
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
                         ),
@@ -326,8 +387,13 @@ class HomeScreen extends StatelessWidget {
     BuildContext context,
     List<ConnectionConfig> connections,
     SshService ssh,
+    AppStrings strings,
   ) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final cardColor = _panelColor(context);
+    final textColor = _panelTextColor(context);
+    final mutedTextColor = _panelMutedTextColor(context);
     final activeCount =
         connections.where((conn) => ssh.hasConnectedSession(conn.id)).length;
     final windowCount = ssh.sessions.length;
@@ -337,32 +403,39 @@ class HomeScreen extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: colorScheme.surface,
+          color: cardColor,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Theme.of(context).dividerColor),
+          border: Border.all(color: _panelBorderColor(context)),
+          boxShadow: _panelShadow(context),
         ),
         child: Row(
           children: [
             _summaryItem(
               context,
               icon: Icons.storage_rounded,
-              label: 'Servers',
+              label: strings.servers,
               value: '${connections.length}',
+              textColor: textColor,
+              mutedTextColor: mutedTextColor,
             ),
             const SizedBox(width: 10),
             _summaryItem(
               context,
               icon: Icons.link_rounded,
-              label: 'Active',
+              label: strings.active,
               value: '$activeCount',
-              accent: AppTheme.terminalGreen,
+              accent: colorScheme.secondary,
+              textColor: textColor,
+              mutedTextColor: mutedTextColor,
             ),
             const SizedBox(width: 10),
             _summaryItem(
               context,
               icon: Icons.tab_rounded,
-              label: 'Windows',
+              label: strings.windows,
               value: '$windowCount',
+              textColor: textColor,
+              mutedTextColor: mutedTextColor,
             ),
           ],
         ),
@@ -375,9 +448,12 @@ class HomeScreen extends StatelessWidget {
     required IconData icon,
     required String label,
     required String value,
+    required Color textColor,
+    required Color mutedTextColor,
     Color? accent,
   }) {
-    final color = accent ?? Theme.of(context).colorScheme.primary;
+    final colorScheme = Theme.of(context).colorScheme;
+    final color = accent ?? colorScheme.primary;
     return Expanded(
       child: Row(
         children: [
@@ -397,9 +473,10 @@ class HomeScreen extends StatelessWidget {
               children: [
                 Text(
                   value,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w800,
+                    color: textColor,
                   ),
                 ),
                 Text(
@@ -407,10 +484,7 @@ class HomeScreen extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 11,
-                    color: Theme.of(context)
-                        .colorScheme
-                        .onSurface
-                        .withValues(alpha: 0.55),
+                    color: mutedTextColor,
                   ),
                 ),
               ],
@@ -419,6 +493,39 @@ class HomeScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Color _panelColor(BuildContext context) {
+    final isDarkMode = context.read<AppSettings>().isDarkMode;
+    return isDarkMode ? const Color(0xFF161B22) : Colors.white;
+  }
+
+  Color _panelBorderColor(BuildContext context) {
+    final isDarkMode = context.read<AppSettings>().isDarkMode;
+    return isDarkMode ? const Color(0xFF30363D) : const Color(0xFFE0E0E0);
+  }
+
+  Color _panelTextColor(BuildContext context) {
+    final isDarkMode = context.read<AppSettings>().isDarkMode;
+    return isDarkMode ? const Color(0xFFE6EDF3) : const Color(0xFF1F1F1F);
+  }
+
+  Color _panelMutedTextColor(BuildContext context) {
+    final isDarkMode = context.read<AppSettings>().isDarkMode;
+    return isDarkMode ? const Color(0xFF9AA4AF) : const Color(0xFF666666);
+  }
+
+  List<BoxShadow> _panelShadow(BuildContext context) {
+    if (context.read<AppSettings>().isDarkMode) {
+      return const [];
+    }
+    return [
+      BoxShadow(
+        color: Colors.black.withValues(alpha: 0.06),
+        blurRadius: 16,
+        offset: const Offset(0, 8),
+      ),
+    ];
   }
 
   IconData _getStatusIcon(ConnectionConfig conn, SshService ssh) {
@@ -455,33 +562,33 @@ class HomeScreen extends StatelessWidget {
     BuildContext context,
     ConnectionConfig conn,
   ) async {
-    await _openNewTerminalWithOptions(context, conn);
+    final windowName = await _askWindowName(context, conn.id);
+    if (!context.mounted || windowName == null) return;
+    await _openNewTerminalWithOptions(context, conn, windowName);
   }
 
   Future<void> _openNewTerminalWithOptions(
     BuildContext context,
-    ConnectionConfig conn, {
-    bool allowTmuxInstall = false,
-  }) async {
+    ConnectionConfig conn,
+    String windowName,
+  ) async {
     final ssh = context.read<SshService>();
+    final strings = AppStrings(context.read<AppSettings>().language);
 
     showDialog(
       context: context,
       barrierDismissible: false,
       useSafeArea: false,
       builder: (ctx) => ConnectionProgressDialog(
-        title: 'Connecting to ${conn.name}',
-        message: 'Establishing SSH connection...',
+        title: strings.connectingTo(conn.name),
+        message: strings.establishingConnection,
       ),
     );
 
     await waitForConnectionProgressFrame();
     if (!context.mounted) return;
 
-    final sessionId = await ssh.openSession(
-      conn.id,
-      allowTmuxInstall: allowTmuxInstall,
-    );
+    final sessionId = await ssh.openSession(conn.id, displayName: windowName);
     if (!context.mounted) return;
     Navigator.of(context).pop();
 
@@ -495,20 +602,6 @@ class HomeScreen extends StatelessWidget {
         },
       );
     } else {
-      if (!allowTmuxInstall &&
-          conn.launchMode == TerminalLaunchMode.tmux &&
-          _isTmuxMissingError(ssh.errorMessage)) {
-        final confirmed = await _confirmInstallTmux(context, conn);
-        if (confirmed == true && context.mounted) {
-          await _openNewTerminalWithOptions(
-            context,
-            conn,
-            allowTmuxInstall: true,
-          );
-        }
-        return;
-      }
-
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(_formatConnectionFailure(ssh.errorMessage)),
@@ -518,44 +611,29 @@ class HomeScreen extends StatelessWidget {
     }
   }
 
-  bool _isTmuxMissingError(String? message) {
-    return message?.toLowerCase().contains('tmux is not installed') == true;
+  Future<String?> _askWindowName(
+    BuildContext context,
+    String connectionId,
+  ) async {
+    final ssh = context.read<SshService>();
+    return showDialog<String>(
+      context: context,
+      builder: (_) => WindowNameDialog(
+        initialName: ssh.defaultDisplayNameForConnection(connectionId),
+        isNameAvailable: ssh.isSessionNameAvailable,
+      ),
+    );
   }
 
   String _formatConnectionFailure(String? message) {
-    final text = message ?? 'Unknown';
+    final strings = AppStrings(context.read<AppSettings>().language);
+    final text = message ?? strings.unknown;
     final lower = text.toLowerCase();
-    if (lower.contains('tmux automatic install failed') ||
+    if (lower.contains('tmux is not installed') ||
         lower.contains('unable to check tmux')) {
-      return 'Connection failed: $text\n请手动登录服务器安装 tmux 后再重试。';
+      return strings.tmuxMissingHint(text);
     }
-    return 'Connection failed: $text';
-  }
-
-  Future<bool?> _confirmInstallTmux(
-    BuildContext context,
-    ConnectionConfig conn,
-  ) {
-    return showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('服务器未安装 tmux'),
-        content: Text(
-          '连接 "${conn.name}" 需要 tmux。是否允许应用在服务器上尝试安装 tmux？\n\n'
-          '安装会使用服务器上的 apt、dnf、yum、pacman、zypper、apk 或 pkg，并且可能需要当前用户拥有免密 sudo 或 root 权限。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('同意安装'),
-          ),
-        ],
-      ),
-    );
+    return strings.connectionFailed(text);
   }
 
   void _handleAction(
@@ -600,35 +678,6 @@ class HomeScreen extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  Future<void> _disconnect(BuildContext context) async {
-    final ssh = context.read<SshService>();
-    final strings = AppStrings(context.read<AppSettings>().language);
-    final windowCount = ssh.sessions.length;
-    if (windowCount == 0) return;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(strings.closeAllTitle),
-        content: Text(strings.closeAllContent(windowCount)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(strings.cancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
-            child: Text(strings.closeAll),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true || !context.mounted) return;
-    await ssh.disconnect();
   }
 
   void _addConnection(BuildContext context) {

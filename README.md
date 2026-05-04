@@ -1,12 +1,12 @@
 # SSH Mobile
 
-SSH Mobile 是一个基于 Flutter 的移动端 SSH 客户端，重点面向 Android 手机上的长时间 SSH 会话使用场景。它支持多窗口连接、后台前台服务保活、终端快捷键、复制粘贴辅助层、暗色/亮色主题和中英文界面切换。
+SSH Mobile 是一个基于 Flutter 的跨平台 SSH 客户端，重点面向长时间 SSH 会话使用场景。它支持多窗口连接、后台服务保活、终端快捷键、复制粘贴辅助层、暗色/亮色主题和中英文界面切换。
 
-SSH Mobile is a Flutter-based mobile SSH client designed for long-running SSH sessions on Android phones. It supports multiple terminal windows, foreground-service keep-alive, terminal shortcuts, copy/paste helpers, light/dark themes, and Chinese/English UI switching.
+SSH Mobile is a Flutter-based cross-platform SSH client designed for long-running SSH sessions. It supports multiple terminal windows, background keep-alive, terminal shortcuts, copy/paste helpers, light/dark themes, and Chinese/English UI switching.
 
-> 说明：移动系统对后台网络连接有严格限制。应用会尽量通过前台服务、通知、WakeLock、SSH keep-alive 等方式保持连接，但长期后台不断开仍会受到手机厂商策略、电池优化、网络切换和系统内存回收影响。首次使用建议按照应用引导允许后台耗电无限制。
+> 说明：不同系统对后台网络连接有不同限制。应用会尽量通过后台服务、通知、WakeLock、SSH keep-alive 等方式保持连接，但长期后台不断开仍会受到系统后台策略、省电限制、网络切换和内存回收影响。首次使用建议按照应用引导放宽后台运行限制。
 
-> Note: Mobile operating systems place strict limits on background networking. The app tries to keep sessions alive with a foreground service, notification, WakeLock, and SSH keep-alive, but long-running background stability still depends on vendor background policies, battery optimization, network switching, and process reclaiming. On first launch, allow unrestricted background battery usage when prompted.
+> Note: Operating systems place different limits on background networking. The app tries to keep sessions alive with a background service, notification, WakeLock, and SSH keep-alive, but long-running background stability still depends on system background policies, power-saving restrictions, network switching, and process reclaiming. On first launch, relax background-running restrictions when prompted.
 
 ## 主要功能 / Features
 
@@ -14,7 +14,7 @@ SSH Mobile is a Flutter-based mobile SSH client designed for long-running SSH se
 
 - SSH 连接管理：保存多个服务器配置，支持密码、私钥、私钥加密码三种认证方式。
 - 多终端窗口：同一个服务器可以并行打开多个 SSH 窗口，每个窗口可自定义名称。
-- 后台保活：Android 使用前台服务维持 SSH 会话，后台时发送 keep-alive，尽量减少息屏或切应用后的断连。
+- 后台保活：应用通过后台服务和 SSH keep-alive 尽量维持 SSH 会话，减少切到后台后的断连。
 - SSH + tmux 模式：可选择普通 SSH 或 SSH + tmux。tmux 模式会在服务器上绑定当前窗口名的会话，断线或 App 重启后可重新 attach 回原会话。
 - tmux 自动清理：支持配置“无连接自动删除等待时间”，单位为分钟。无人重新连接超过该时间后，服务器端 tmux 会话会自动删除。
 - tmux 安装引导：如果服务器未安装 tmux，应用会先征求用户同意再尝试安装；自动安装失败时会提示用户手动登录服务器安装 tmux 后再重试。
@@ -32,7 +32,7 @@ English:
 
 - SSH connection management: Save multiple server profiles with password, private key, or private key plus password authentication.
 - Multiple terminal windows: Open several SSH windows for the same server in parallel, with custom names per window.
-- Background keep-alive: Android uses a foreground service and SSH keep-alive to reduce disconnects after the app goes to the background.
+- Background keep-alive: The app uses a background service and SSH keep-alive to reduce disconnects after it goes to the background.
 - SSH + tmux mode: Choose normal SSH or SSH + tmux. In tmux mode, the app attaches to a server-side tmux session bound to the current window name, so it can reconnect after disconnects or app restarts.
 - tmux auto cleanup: Configure the no-client auto-delete delay in minutes. If no client reconnects before the delay expires, the server-side tmux session is removed automatically.
 - tmux install guidance: If tmux is missing on the server, the app asks for user approval before trying to install it. If automatic installation fails, the user is told to install tmux manually on the server and retry.
@@ -53,7 +53,7 @@ English:
 | Flutter UI | `flutter` / `provider` | 页面、状态管理、主题与本地化状态 / Screens, state management, themes, and localization state |
 | SSH 协议 / SSH protocol | `dartssh2` | 纯 Dart SSH 客户端实现 / Pure Dart SSH client implementation |
 | 终端渲染 / Terminal rendering | `xterm` | ANSI 终端模拟与输入输出处理 / ANSI terminal emulation and I/O handling |
-| 后台服务 / Background service | `flutter_background_service` | Android 前台服务与后台 SSH 会话保活 / Android foreground service and session keep-alive |
+| 后台服务 / Background service | `flutter_background_service` | 后台 SSH 会话保活 / Background SSH session keep-alive |
 | 通知 / Notifications | `flutter_local_notifications` | 前台服务常驻通知 / Persistent foreground-service notification |
 | 安全存储 / Secure storage | `flutter_secure_storage` | 密码和私钥等敏感信息存储 / Storage for passwords, private keys, and other sensitive data |
 | 本地配置 / Local settings | `shared_preferences` | 主题、语言、快捷命令等轻量配置 / Lightweight settings such as theme, language, and shortcuts |
@@ -120,33 +120,33 @@ ssh_mobile/
 └── README.md
 ```
 
-## Android 权限 / Android Permissions
+## 后台权限 / Background Permissions
 
 中文：
 
-Android 端会用到以下权限：
+应用在支持的平台上可能会用到以下后台相关权限：
 
 - `INTERNET`：建立 SSH 网络连接。
 - `ACCESS_NETWORK_STATE` / `ACCESS_WIFI_STATE`：感知网络状态。
 - `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_DATA_SYNC`：运行前台服务保活 SSH。
-- `POST_NOTIFICATIONS`：显示前台服务通知，Android 13+ 需要用户授权。
+- `POST_NOTIFICATIONS`：显示后台保活通知，部分系统需要用户授权。
 - `WAKE_LOCK`：尽量避免后台任务被过早挂起。
 - `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`：引导用户关闭电池优化，提升后台长连接稳定性。
 
-如果希望 SSH 在切到后台后尽量不断开，请在手机系统设置中允许后台耗电无限制、自启动、锁屏后继续运行、通知权限和后台联网。不同品牌手机的设置名称会有差异，尤其是 vivo、OPPO、小米、华为等系统会更积极地限制后台任务。
+如果希望 SSH 在切到后台后尽量不断开，请在系统设置中允许后台运行、通知权限和后台联网，并放宽可能中断后台网络的省电限制。不同系统的设置名称会有差异。
 
 English:
 
-The Android app uses these permissions:
+The app may use these background-related permissions on supported platforms:
 
 - `INTERNET`: Establish SSH network connections.
 - `ACCESS_NETWORK_STATE` / `ACCESS_WIFI_STATE`: Observe network state.
 - `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_DATA_SYNC`: Run a foreground service to keep SSH sessions alive.
-- `POST_NOTIFICATIONS`: Show the foreground-service notification. Android 13+ requires user approval.
+- `POST_NOTIFICATIONS`: Show the background keep-alive notification. Some systems require user approval.
 - `WAKE_LOCK`: Reduce the chance of background work being suspended too early.
 - `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`: Guide users to disable battery optimization for better long-running stability.
 
-For better background stability, allow unrestricted battery usage, autostart, running after screen lock, notifications, and background networking in system settings. The exact setting names vary by device brand, and systems such as vivo, OPPO, Xiaomi, and Huawei may restrict background tasks more aggressively.
+For better background stability, allow background running, notifications, and background networking in system settings, and relax power-saving restrictions that may interrupt background networking. The exact setting names vary by system.
 
 ## 开发环境 / Development Environment
 
@@ -176,8 +176,8 @@ If you prefer to keep a local SDK under the project directory, for example `.too
 
 - Flutter 3.x
 - Dart SDK `>=3.2.0 <4.0.0`
-- Android Studio 或 Android SDK / Android Studio or Android SDK
-- 一台已开启 USB 调试的 Android 手机 / An Android phone with USB debugging enabled
+- Flutter 支持的目标平台工具链 / Toolchain for your Flutter target platform
+- 至少一个可运行的 Flutter 目标设备或模拟器 / At least one runnable Flutter target device or emulator
 
 ## 获取依赖 / Install Dependencies
 
@@ -193,12 +193,12 @@ English:
 flutter pub get
 ```
 
-## 运行到手机 / Run on a Phone
+## 运行项目 / Run the App
 
 中文：
 
-1. 手机开启开发者选项和 USB 调试。
-2. 使用 USB 连接电脑，并在手机上允许调试授权。
+1. 准备一个 Flutter 支持的目标设备、模拟器或桌面运行环境。
+2. 确认目标设备已连接并允许调试或开发运行。
 3. 查看设备：
 
 ```powershell
@@ -219,8 +219,8 @@ flutter run -d V2309A
 
 English:
 
-1. Enable Developer Options and USB debugging on the phone.
-2. Connect the phone via USB and approve the debugging prompt.
+1. Prepare a Flutter-supported target device, emulator, or desktop runtime.
+2. Make sure the target is connected and allows debug/development runs.
 3. List available devices:
 
 ```powershell
@@ -347,13 +347,13 @@ Inside the terminal, tap the `+` next to the title to create another terminal wi
 
 中文：
 
-连接 SSH 后，Android 会启动前台服务并显示通知。应用进入后台时，服务会继续维护 SSH 会话并发送 keep-alive。为了提高稳定性，请保持前台服务通知开启，将应用设置为后台耗电无限制，不要从最近任务列表中划掉应用，并尽量保持网络稳定。
+连接 SSH 后，应用会启动后台保活服务并显示必要通知。应用进入后台时，服务会继续维护 SSH 会话并发送 keep-alive。为了提高稳定性，请保持通知开启，允许应用后台运行，并尽量保持网络稳定。
 
 如果系统强制回收应用进程，SSH 连接仍可能断开。这是移动系统限制，不是 SSH 协议本身可以完全绕过的问题。
 
 English:
 
-After SSH connects, Android starts a foreground service and shows a notification. When the app goes to the background, the service continues maintaining SSH sessions and sending keep-alive packets. For better stability, keep the foreground-service notification enabled, set the app to unrestricted battery usage, avoid swiping it away from recent apps, and keep the network stable.
+After SSH connects, the app starts a background keep-alive service and shows any required notification. When the app goes to the background, the service continues maintaining SSH sessions and sending keep-alive packets. For better stability, keep notifications enabled, allow background running, and keep the network stable.
 
 If the system forcibly kills the app process, the SSH connection may still drop. This is a mobile OS limitation, not something the SSH protocol can fully bypass.
 
@@ -363,13 +363,13 @@ If the system forcibly kills the app process, the SSH connection may still drop.
 
 在连接配置中可以选择普通 SSH 或 SSH + tmux。普通 SSH 会直接打开交互式 shell；SSH + tmux 会先登录服务器，然后 attach 到与当前终端窗口绑定的 tmux 会话。
 
-tmux 模式适合运行 `codex`、编辑器、编译任务、长时间脚本等需要断线后继续保留状态的场景。手机切到后台、网络切换、系统杀后台或 App 重启后，原始 TCP/SSH 连接可能已经断开，但只要服务器端 tmux 会话还在，重新打开 App 后可以重新连接并回到同一个 tmux 会话。
+tmux 模式适合运行 `codex`、编辑器、编译任务、长时间脚本等需要断线后继续保留状态的场景。应用切到后台、网络切换、系统回收进程或 App 重启后，原始 TCP/SSH 连接可能已经断开，但只要服务器端 tmux 会话还在，重新打开 App 后可以重新连接并回到同一个 tmux 会话。
 
 English:
 
 Connection profiles can use normal SSH or SSH + tmux. Normal SSH opens an interactive shell directly. SSH + tmux logs in first and then attaches to a tmux session bound to the current terminal window.
 
-tmux mode is useful for `codex`, editors, build tasks, long-running scripts, and other workflows that should survive disconnects. When the phone goes to the background, the network changes, the system kills the app, or the app restarts, the original TCP/SSH connection may be gone. As long as the server-side tmux session still exists, reopening the app can reconnect and return to the same tmux session.
+tmux mode is useful for `codex`, editors, build tasks, long-running scripts, and other workflows that should survive disconnects. When the app goes to the background, the network changes, the system reclaims the process, or the app restarts, the original TCP/SSH connection may be gone. As long as the server-side tmux session still exists, reopening the app can reconnect and return to the same tmux session.
 
 ### tmux 自动删除 / tmux Auto Delete
 
@@ -423,23 +423,23 @@ The bottom shortcut bar includes common keys: `TAB`, `ESC`, `ENTER`, `BKSP`, `�
 
 中文：
 
-- Android 厂商后台策略可能导致长时间后台后断连，需要用户手动放开后台限制。
+- 系统后台策略可能导致长时间后台后断连，需要用户手动放开后台限制。
 - 网络从 Wi-Fi、数据、VPN 之间切换时，底层 TCP 连接通常会失效，应用只能检测断连并提示或重连，无法保证原 SSH 会话无缝迁移。
 - SSH + tmux 可以保留服务器端会话并支持 App 重启后重连，但前提是服务器上的 tmux 会话尚未被自动删除。
 - App 重启恢复 tmux 窗口时不会恢复本地终端缓冲区的全部显示内容，进入后会回到 tmux 当前画面，历史输出取决于 tmux 自身 scrollback。
 - 自动安装 tmux 需要服务器支持常见包管理器，并且当前用户拥有 root 或免密 sudo 权限；否则需要用户手动安装。
-- iOS 后台长连接限制更严格，当前项目主要优化目标是 Android。
-- 终端复制使用 Flutter 文本选择层辅助实现，不是系统原生 TextView 终端。
+- 不同系统对后台长连接的支持程度不同，应用会尽量保活，但无法绕过系统级限制。
+- 终端复制使用 Flutter 文本选择层辅助实现，不依赖平台原生终端文本控件。
 
 English:
 
-- Android vendor background policies may disconnect sessions after a long time in the background. Users need to relax background restrictions manually.
+- System background policies may disconnect sessions after a long time in the background. Users need to relax background restrictions manually.
 - When the network switches between Wi-Fi, mobile data, and VPN, the underlying TCP connection usually becomes invalid. The app can detect the disconnect and prompt or reconnect, but it cannot guarantee seamless migration of the original SSH session.
 - SSH + tmux can preserve the server-side session and reconnect after app restarts, but only while the server-side tmux session still exists and has not been auto-deleted.
 - App-restart recovery does not restore the full local terminal buffer. It returns to the current tmux screen, while history depends on tmux scrollback.
 - Automatic tmux installation requires a supported server package manager and root or passwordless sudo privileges. Otherwise, users need to install tmux manually.
-- iOS background long-running connections are more restricted. The current project mainly optimizes Android.
-- Terminal copying is implemented with a Flutter text-selection helper layer, not a native Android TextView terminal.
+- Background long-running connection support varies by system. The app tries to keep sessions alive but cannot bypass system-level limits.
+- Terminal copying is implemented with a Flutter text-selection helper layer, not a platform-native terminal text view.
 
 ## 故障排查 / Troubleshooting
 
@@ -451,7 +451,7 @@ English:
 flutter devices
 ```
 
-如果没有手机，请检查 USB 调试是否开启、手机是否弹出授权确认、USB 连接是否稳定，以及 Android SDK platform-tools 是否可用。
+如果目标设备没有出现，请检查设备是否已连接、是否允许调试或开发运行、连接是否稳定，以及目标平台工具链是否可用。
 
 English:
 
@@ -459,7 +459,7 @@ English:
 flutter devices
 ```
 
-If the phone does not appear, check whether USB debugging is enabled, whether the phone has shown an authorization prompt, whether the USB connection is stable, and whether Android SDK platform-tools are available.
+If the target device does not appear, check whether it is connected, whether it allows debug/development runs, whether the connection is stable, and whether the target platform toolchain is available.
 
 ### 后台很快断连 / Background Disconnects Quickly
 

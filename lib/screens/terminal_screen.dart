@@ -5,12 +5,12 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:xterm/xterm.dart';
 
-import '../models/connection.dart';
 import '../services/app_settings.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/connection_progress_dialog.dart';
+import '../widgets/window_name_dialog.dart';
 import 'terminal/terminal_app_bar.dart';
 import 'terminal/terminal_copy_screen.dart';
 import 'terminal/terminal_shortcut_panel.dart';
@@ -39,12 +39,14 @@ class _TerminalScreenState extends State<TerminalScreen>
   late final TerminalController _terminalController;
   late final FocusNode _terminalFocusNode;
   late final TextEditingController _complexInputController;
+  late final SshService _sshService;
   final GlobalKey<TerminalViewState> _terminalViewKey =
       GlobalKey<TerminalViewState>();
   VoidCallback? _sshListener;
   StreamSubscription<String>? _outputSubscription;
   SshSession? _subscribedSession;
   bool _loadedBufferedOutput = false;
+  bool _loadingBufferedOutput = false;
   bool _reconnectInProgress = false;
   bool _hasShownDisconnectMessage = false;
   double _terminalFontSize = 14;
@@ -64,20 +66,20 @@ class _TerminalScreenState extends State<TerminalScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _sshService = context.read<SshService>();
 
     _terminal = Terminal(
       maxLines: 10000,
       onOutput: (data) {
         if (!mounted) return;
-        context.read<SshService>().sendData(widget.sessionId, data);
+        _sshService.sendData(widget.sessionId, data);
       },
     );
     _terminalController = TerminalController();
     _terminalFocusNode = FocusNode();
     _complexInputController = TextEditingController();
     _terminalFontSize =
-        context.read<SshService>().getSession(widget.sessionId)?.fontSize ??
-            _terminalFontSize;
+        _sshService.getSession(widget.sessionId)?.fontSize ?? _terminalFontSize;
 
     _loadServerInfo();
     _installSshListener();
@@ -93,7 +95,7 @@ class _TerminalScreenState extends State<TerminalScreen>
   }
 
   void _installSshListener() {
-    final ssh = context.read<SshService>();
+    final ssh = _sshService;
 
     _sshListener = () {
       if (!mounted) return;
@@ -110,7 +112,7 @@ class _TerminalScreenState extends State<TerminalScreen>
   }
 
   void _attachExistingSession() {
-    final ssh = context.read<SshService>();
+    final ssh = _sshService;
     final session = ssh.getSession(widget.sessionId);
     if (session?.isConnected == true) {
       _setupOutputStream(ssh);
@@ -129,8 +131,6 @@ class _TerminalScreenState extends State<TerminalScreen>
     _reconnectInProgress = true;
 
     final ssh = context.read<SshService>();
-    final strings = _strings(context);
-    _terminal.write('\r\n\x1b[33m[${strings.reconnecting}]\x1b[0m\r\n');
 
     final connected = await ssh.ensureSessionConnected(
       widget.sessionId,
@@ -148,38 +148,72 @@ class _TerminalScreenState extends State<TerminalScreen>
     _reconnectInProgress = false;
   }
 
-  void _setupOutputStream(SshService ssh) {
+  Future<void> _setupOutputStream(SshService ssh) async {
     final session = ssh.getSession(widget.sessionId);
     if (session == null) return;
     if (identical(_subscribedSession, session)) return;
 
     _outputSubscription?.cancel();
     _subscribedSession = session;
-
-    if (!_loadedBufferedOutput) {
-      final bufferedOutput = session.outputText;
-      if (bufferedOutput.isNotEmpty) {
-        _terminal.write(bufferedOutput);
-      }
-      _loadedBufferedOutput = true;
-    }
+    final pendingOutput = StringBuffer();
+    var queueLiveOutput = !_loadedBufferedOutput;
 
     _outputSubscription = session.output.listen(
-      _terminal.write,
+      (data) {
+        if (queueLiveOutput) {
+          pendingOutput.write(data);
+          return;
+        }
+        _clearTerminalSelection();
+        _terminal.write(data);
+      },
       onError: (error) {
         if (!mounted) return;
+        _clearTerminalSelection();
         _terminal.write('\r\n\x1b[31m[Error: $error]\x1b[0m\r\n');
       },
       onDone: () {
         if (!mounted) return;
+        _clearTerminalSelection();
         _terminal.write('\r\n\x1b[33m[Connection closed]\x1b[0m\r\n');
       },
     );
+
+    if (!_loadedBufferedOutput && !_loadingBufferedOutput) {
+      _loadingBufferedOutput = true;
+      try {
+        final bufferedOutput = session.outputText;
+        final initialOutput = bufferedOutput.isNotEmpty
+            ? bufferedOutput
+            : await ssh.loadSessionHistoryText(session.id);
+
+        if (!mounted || !identical(_subscribedSession, session)) return;
+
+        if (initialOutput.isNotEmpty) {
+          _clearTerminalSelection();
+          _terminal.write(initialOutput);
+        }
+
+        final pending = pendingOutput.toString();
+        if (pending.isNotEmpty && !initialOutput.endsWith(pending)) {
+          _clearTerminalSelection();
+          _terminal.write(pending);
+        }
+
+        _loadedBufferedOutput = true;
+      } finally {
+        _loadingBufferedOutput = false;
+        queueLiveOutput = false;
+      }
+    } else {
+      queueLiveOutput = false;
+    }
   }
 
   void _showDisconnected(String? reason) {
     if (_hasShownDisconnectMessage) return;
     _hasShownDisconnectMessage = true;
+    _clearTerminalSelection();
     _terminal.write(
       '\r\n\x1b[31m[Disconnected: ${reason ?? "unknown"}]\x1b[0m\r\n',
     );
@@ -242,14 +276,16 @@ class _TerminalScreenState extends State<TerminalScreen>
     BuildContext context,
     String connectionId,
   ) async {
-    await _openSessionWindowWithOptions(context, connectionId);
+    final windowName = await _askWindowName(context, connectionId);
+    if (!context.mounted || windowName == null) return;
+    await _openSessionWindowWithOptions(context, connectionId, windowName);
   }
 
   Future<void> _openSessionWindowWithOptions(
     BuildContext context,
-    String connectionId, {
-    bool allowTmuxInstall = false,
-  }) async {
+    String connectionId,
+    String windowName,
+  ) async {
     final strings = _strings(context);
     final ssh = context.read<SshService>();
     final storage = context.read<StorageService>();
@@ -271,26 +307,12 @@ class _TerminalScreenState extends State<TerminalScreen>
 
     final sessionId = await ssh.openSession(
       connectionId,
-      allowTmuxInstall: allowTmuxInstall,
+      displayName: windowName,
     );
     if (!context.mounted) return;
     Navigator.of(context).pop();
 
     if (sessionId == null) {
-      if (!allowTmuxInstall &&
-          config?.launchMode == TerminalLaunchMode.tmux &&
-          _isTmuxMissingError(ssh.errorMessage)) {
-        final confirmed = await _confirmInstallTmux(context, connectionName);
-        if (confirmed == true && context.mounted) {
-          await _openSessionWindowWithOptions(
-            context,
-            connectionId,
-            allowTmuxInstall: true,
-          );
-        }
-        return;
-      }
-
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -311,44 +333,28 @@ class _TerminalScreenState extends State<TerminalScreen>
     _replaceWithTerminalSession(session, animated: true);
   }
 
-  bool _isTmuxMissingError(String? message) {
-    return message?.toLowerCase().contains('tmux is not installed') == true;
+  Future<String?> _askWindowName(
+    BuildContext context,
+    String connectionId,
+  ) async {
+    final ssh = context.read<SshService>();
+    return showDialog<String>(
+      context: context,
+      builder: (_) => WindowNameDialog(
+        initialName: ssh.defaultDisplayNameForConnection(connectionId),
+        isNameAvailable: ssh.isSessionNameAvailable,
+      ),
+    );
   }
 
   String _formatConnectionFailure(TerminalStrings strings, String? message) {
     final text = message ?? strings.unknown;
     final lower = text.toLowerCase();
-    if (lower.contains('tmux automatic install failed') ||
+    if (lower.contains('tmux is not installed') ||
         lower.contains('unable to check tmux')) {
-      return '${strings.connectionFailed(text)}\n请手动登录服务器安装 tmux 后再重试。';
+      return strings.tmuxMissingHint(text);
     }
     return strings.connectionFailed(text);
-  }
-
-  Future<bool?> _confirmInstallTmux(
-    BuildContext context,
-    String connectionName,
-  ) {
-    return showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('服务器未安装 tmux'),
-        content: Text(
-          '连接 "$connectionName" 需要 tmux。是否允许应用在服务器上尝试安装 tmux？\n\n'
-          '安装会使用服务器上的 apt、dnf、yum、pacman、zypper、apk 或 pkg，并且可能需要当前用户拥有免密 sudo 或 root 权限。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('同意安装'),
-          ),
-        ],
-      ),
-    );
   }
 
   Future<void> _showSessionSwitcher(BuildContext context) async {
@@ -450,6 +456,7 @@ class _TerminalScreenState extends State<TerminalScreen>
     SshSession session, {
     bool animated = false,
   }) {
+    _clearTerminalSelection();
     Navigator.of(context).pushAndRemoveUntil(
       animated ? _fadeTerminalRoute(session) : _instantTerminalRoute(session),
       (route) => route.isFirst,
@@ -544,50 +551,6 @@ class _TerminalScreenState extends State<TerminalScreen>
     );
   }
 
-  Future<void> _showRenameDialog(BuildContext context) async {
-    final strings = _strings(context);
-    final ssh = context.read<SshService>();
-    final session = ssh.getSession(widget.sessionId);
-    if (session == null) return;
-
-    var nextName = session.displayName;
-    final name = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(strings.renameWindow),
-        content: TextFormField(
-          initialValue: session.displayName,
-          autofocus: true,
-          decoration: InputDecoration(labelText: strings.windowName),
-          textInputAction: TextInputAction.done,
-          onChanged: (value) => nextName = value,
-          onFieldSubmitted: (value) => Navigator.pop(ctx, value),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(strings.cancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, nextName),
-            child: Text(strings.save),
-          ),
-        ],
-      ),
-    );
-
-    if (name == null) return;
-    final renamed = ssh.renameSession(widget.sessionId, name);
-    if (!renamed && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(strings.duplicateWindowName),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-    }
-  }
-
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) _attachExistingSession();
@@ -613,12 +576,13 @@ class _TerminalScreenState extends State<TerminalScreen>
         session: session,
         serverName: _serverName,
         isConnected: isConnected,
+        isDarkMode: appSettings.isDarkMode,
         reconnectInProgress: _reconnectInProgress,
         onReconnect: _reconnectSession,
+        onToggleTheme: appSettings.toggleTheme,
         onSwitchWindow: () => _showSessionSwitcher(context),
         onCloseWindow: () => _confirmDisconnect(context),
         onOpenSiblingSession: () => _openSiblingSession(context),
-        onRenameWindow: () => _showRenameDialog(context),
         onSmallerFont: () {
           _setTerminalFontSize(_terminalFontSize - 1);
           _syncTerminalSize();
@@ -645,6 +609,7 @@ class _TerminalScreenState extends State<TerminalScreen>
                 onFontSizeChanged: _setTerminalFontSize,
                 onScaleEnd: _syncTerminalSize,
                 onPointerDown: _handleTerminalPointerDown,
+                onPointerMove: _handleTerminalPointerMove,
                 onPointerUp: _handleTerminalPointerUp,
                 onPointerCancel: _handleTerminalPointerCancel,
               ),
@@ -726,13 +691,13 @@ class _TerminalScreenState extends State<TerminalScreen>
 
     switch (action) {
       case _TerminalEditAction.selectCopy:
-        _terminalController.clearSelection();
+        _clearTerminalSelection();
         await _showSelectableCopyLayer();
         break;
       case _TerminalEditAction.copy:
         if (selectedText.trim().isEmpty) return;
         await Clipboard.setData(ClipboardData(text: selectedText));
-        _terminalController.clearSelection();
+        _clearTerminalSelection();
         break;
       case _TerminalEditAction.paste:
         final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
@@ -756,6 +721,12 @@ class _TerminalScreenState extends State<TerminalScreen>
     });
   }
 
+  void _handleTerminalPointerMove(PointerMoveEvent event) {
+    if ((event.position - _lastLongPressPosition).distance > 8) {
+      _longPressTimer?.cancel();
+    }
+  }
+
   void _handleTerminalPointerUp(PointerUpEvent event) {
     _activePointers = (_activePointers - 1).clamp(0, 10);
     _longPressTimer?.cancel();
@@ -767,9 +738,14 @@ class _TerminalScreenState extends State<TerminalScreen>
   }
 
   String _selectedTerminalText() {
-    final selection = _terminalController.selection;
-    if (selection == null) return '';
-    return _terminal.buffer.getText(selection);
+    try {
+      final selection = _terminalController.selection;
+      if (selection == null) return '';
+      return _terminal.buffer.getText(selection);
+    } catch (_) {
+      _clearTerminalSelection();
+      return '';
+    }
   }
 
   Future<void> _showSelectableCopyLayer() async {
@@ -795,21 +771,31 @@ class _TerminalScreenState extends State<TerminalScreen>
     final terminalView = _terminalViewKey.currentState;
     if (terminalView == null) return;
 
-    final renderTerminal = terminalView.renderTerminal;
-    final localToTerminal =
-        renderTerminal.globalToLocal(_lastLongPressPosition);
-    final offset = renderTerminal.getCellOffset(localToTerminal);
-    final boundary = _terminal.buffer.getWordBoundary(offset);
+    try {
+      final renderTerminal = terminalView.renderTerminal;
+      final localToTerminal =
+          renderTerminal.globalToLocal(_lastLongPressPosition);
+      final offset = renderTerminal.getCellOffset(localToTerminal);
+      final boundary = _terminal.buffer.getWordBoundary(offset);
 
-    if (boundary == null) {
-      _terminalController.clearSelection();
-      return;
+      if (boundary == null) {
+        _clearTerminalSelection();
+        return;
+      }
+
+      _terminalController.setSelection(
+        _terminal.buffer.createAnchorFromOffset(boundary.begin),
+        _terminal.buffer.createAnchorFromOffset(boundary.end),
+      );
+    } catch (_) {
+      _clearTerminalSelection();
     }
+  }
 
-    _terminalController.setSelection(
-      _terminal.buffer.createAnchorFromOffset(boundary.begin),
-      _terminal.buffer.createAnchorFromOffset(boundary.end),
-    );
+  void _clearTerminalSelection() {
+    try {
+      _terminalController.clearSelection();
+    } catch (_) {}
   }
 
   void _confirmDisconnect(BuildContext context) {
@@ -864,9 +850,10 @@ class _TerminalScreenState extends State<TerminalScreen>
     _longPressTimer?.cancel();
     final listener = _sshListener;
     if (listener != null) {
-      context.read<SshService>().removeListener(listener);
+      _sshService.removeListener(listener);
     }
     _outputSubscription?.cancel();
+    _clearTerminalSelection();
     _terminalController.dispose();
     _terminalFocusNode.dispose();
     _complexInputController.dispose();

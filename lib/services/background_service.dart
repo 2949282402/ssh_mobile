@@ -183,6 +183,15 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
 
   final sessions = <String, _BackgroundSshSession>{};
 
+  void emitLog(String level, String message, {String? details}) {
+    service.invoke('appLog', {
+      'level': level,
+      'message': message,
+      if (details != null && details.isNotEmpty) 'details': details,
+      'timestamp': DateTime.now().toIso8601String(),
+    });
+  }
+
   void setNotification(String content) {
     if (service is AndroidServiceInstance) {
       service.setAsForegroundService();
@@ -200,6 +209,13 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
     String? connectionId,
     String? connectionName,
   }) {
+    emitLog(
+      'service',
+      'SSH state: $state',
+      details:
+          'sessionId=$sessionId connection=${connectionName ?? connectionId ?? ''}'
+          '${message == null ? '' : ' message=$message'}',
+    );
     service.invoke('sshState', {
       'sessionId': sessionId,
       'state': state,
@@ -218,9 +234,23 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
     return '$count SSH sessions running';
   }
 
-  void closeSsh(String sessionId, {bool notify = true, String? message}) {
+  Future<void> closeSsh(
+    String sessionId, {
+    bool notify = true,
+    String? message,
+    bool destroyTmux = false,
+  }) async {
     final session = sessions.remove(sessionId);
     if (session == null) return;
+    emitLog(
+      'service',
+      'Closing SSH session',
+      details:
+          'sessionId=$sessionId notify=$notify destroyTmux=$destroyTmux mode=${session.launchMode}',
+    );
+    if (destroyTmux) {
+      await session.killTmuxSession();
+    }
     session.close();
     if (notify) {
       emitState(
@@ -234,12 +264,46 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
     }
   }
 
-  void closeAll({bool notify = true}) {
+  Future<void> closeAll({bool notify = true}) async {
     final ids = sessions.keys.toList();
+    emitLog(
+      'service',
+      'Closing all SSH sessions',
+      details: 'count=${ids.length} notify=$notify',
+    );
     for (final sessionId in ids) {
-      closeSsh(sessionId, notify: notify);
+      await closeSsh(sessionId, notify: notify, destroyTmux: true);
     }
     setNotification('SSH service is running');
+  }
+
+  late Future<void> Function(Map<String, dynamic> data) connectSsh;
+
+  Future<void> handleUnexpectedDisconnect(
+    _BackgroundSshSession runtime,
+    String reason,
+  ) async {
+    if (!sessions.containsKey(runtime.sessionId) || runtime.reconnecting) {
+      return;
+    }
+
+    if (runtime.launchMode == 'tmux') {
+      runtime.reconnecting = true;
+      emitLog(
+        'warning',
+        'Reconnecting tmux session',
+        details:
+            'sessionId=${runtime.sessionId} tmux=${runtime.tmuxSessionName} reason=$reason',
+      );
+      await closeSsh(runtime.sessionId, notify: false);
+      unawaited(connectSsh(runtime.reconnectData));
+      return;
+    }
+
+    await closeSsh(
+      runtime.sessionId,
+      message: 'Connection lost: $reason',
+    );
   }
 
   String sanitizeTmuxSessionName(String name) {
@@ -252,71 +316,43 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
     return sanitized.length > 80 ? sanitized.substring(0, 80) : sanitized;
   }
 
+  String shellQuote(String value) {
+    return "'${value.replaceAll("'", "'\"'\"'")}'";
+  }
+
   String buildTmuxAttachCommand(String sessionName, int autoDeleteSeconds) {
     final safeName = sanitizeTmuxSessionName(sessionName);
+    final quotedName = shellQuote(safeName);
     final seconds = autoDeleteSeconds.clamp(30, 86400);
-    final hook = 'run-shell "sleep $seconds; tmux list-clients -t $safeName '
-        '2>/dev/null | grep -q . || tmux kill-session -t $safeName '
-        '2>/dev/null"';
+    final idleWatcher = 'idle_start=0; interval=5; '
+        'while tmux has-session -t $quotedName 2>/dev/null; do '
+        'if tmux list-clients -t $quotedName 2>/dev/null | grep -q .; then '
+        'idle_start=0; '
+        'else now=\$(date +%s); '
+        'if [ "\$idle_start" -eq 0 ]; then idle_start=\$now; fi; '
+        'if [ \$((now - idle_start)) -ge $seconds ]; then '
+        'tmux kill-session -t $quotedName 2>/dev/null; exit; fi; '
+        'fi; sleep \$interval; done';
     return 'if command -v tmux >/dev/null 2>&1; then '
-        'tmux has-session -t $safeName 2>/dev/null || '
-        'tmux new-session -d -s $safeName; '
-        "tmux set-hook -t $safeName client-detached '$hook'; "
-        'tmux attach-session -t $safeName; '
+        'tmux has-session -t $quotedName 2>/dev/null || '
+        'tmux new-session -d -s $quotedName; '
+        'tmux set-option -t $quotedName -q @ssh_mobile_auto_delete_seconds $seconds; '
+        'tmux run-shell -b ${shellQuote(idleWatcher)}; '
+        'tmux attach-session -t $quotedName; '
         'else echo "tmux is not installed on this server"; exit 127; fi';
   }
 
-  String buildTmuxInstallCommand() {
-    return r'''
-if command -v tmux >/dev/null 2>&1; then
-  echo "tmux is already installed"
-  exit 0
-fi
-
-if [ "$(id -u)" -eq 0 ]; then
-  SUDO=""
-elif command -v sudo >/dev/null 2>&1; then
-  SUDO="sudo -n"
-else
-  echo "tmux is missing and sudo is not available"
-  exit 126
-fi
-
-if command -v apt-get >/dev/null 2>&1; then
-  $SUDO apt-get update && $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y tmux
-elif command -v dnf >/dev/null 2>&1; then
-  $SUDO dnf install -y tmux
-elif command -v yum >/dev/null 2>&1; then
-  $SUDO yum install -y tmux
-elif command -v pacman >/dev/null 2>&1; then
-  $SUDO pacman -Sy --noconfirm tmux
-elif command -v zypper >/dev/null 2>&1; then
-  $SUDO zypper --non-interactive install tmux
-elif command -v apk >/dev/null 2>&1; then
-  $SUDO apk add tmux
-elif command -v pkg >/dev/null 2>&1; then
-  $SUDO pkg install -y tmux
-else
-  echo "No supported package manager found for installing tmux"
-  exit 127
-fi
-
-command -v tmux >/dev/null 2>&1
-''';
-  }
-
-  Future<void> installTmuxIfAllowed({
+  Future<void> ensureTmuxInstalled({
     required SSHClient client,
-    required bool allowTmuxInstall,
-    required String sessionId,
-    required ServiceInstance service,
   }) async {
     late final SSHRunResult tmuxCheck;
     try {
+      emitLog('service', 'Checking tmux installation');
       tmuxCheck = await client
           .runWithResult('command -v tmux >/dev/null 2>&1')
           .timeout(const Duration(seconds: 8));
     } catch (e) {
+      emitLog('error', 'Unable to check tmux', details: e.toString());
       throw StateError(
         'Unable to check tmux on this server. Please install tmux manually '
         'on the server and try again. Detail: $e',
@@ -324,53 +360,20 @@ command -v tmux >/dev/null 2>&1
     }
     if (tmuxCheck.exitCode == 0) return;
 
-    if (!allowTmuxInstall) {
-      throw StateError('tmux is not installed on this server');
-    }
-
-    service.invoke('sshOutput', {
-      'sessionId': sessionId,
-      'data':
-          '\r\n\x1b[33m[tmux is missing, installing on the server...]\x1b[0m\r\n',
-    });
-
-    late final SSHRunResult installResult;
-    try {
-      installResult = await client
-          .runWithResult(buildTmuxInstallCommand(), runInPty: true)
-          .timeout(const Duration(minutes: 5));
-    } catch (e) {
-      throw StateError(
-        'tmux automatic install failed. Please install tmux manually on the '
-        'server and try again. Detail: $e',
-      );
-    }
-    final output = utf8.decode(installResult.output, allowMalformed: true);
-    if (output.trim().isNotEmpty) {
-      service.invoke('sshOutput', {
-        'sessionId': sessionId,
-        'data': '$output\r\n',
-      });
-    }
-
-    if (installResult.exitCode != 0) {
-      final detail = output.trim();
-      final tail =
-          detail.length > 500 ? detail.substring(detail.length - 500) : detail;
-      throw StateError(
-        'tmux automatic install failed with exit code '
-        '${installResult.exitCode}. Please install tmux manually on the '
-        'server and try again${tail.isEmpty ? '' : '. Detail: $tail'}',
-      );
-    }
+    emitLog('warning', 'tmux is not installed on server');
+    throw StateError(
+      'tmux is not installed on this server. Please install tmux manually '
+      'on the server and try again.',
+    );
   }
 
-  Future<void> connectSsh(Map<String, dynamic> data) async {
+  connectSsh = (Map<String, dynamic> data) async {
     final sessionId = data['sessionId'] as String?;
     if (sessionId == null || sessionId.isEmpty) {
+      emitLog('warning', 'Ignoring sshConnect without sessionId');
       return;
     }
-    closeSsh(sessionId, notify: false);
+    await closeSsh(sessionId, notify: false);
     final connectionId = data['id'] as String?;
     final name = data['name'] as String? ?? 'server';
     emitState(
@@ -380,6 +383,11 @@ command -v tmux >/dev/null 2>&1
       connectionName: name,
     );
     setNotification('Connecting to $name...');
+    emitLog(
+      'service',
+      'Connecting SSH socket',
+      details: 'sessionId=$sessionId host=${data['host']}:${data['port']}',
+    );
 
     try {
       final host = data['host'] as String;
@@ -393,7 +401,6 @@ command -v tmux >/dev/null 2>&1
       final keepAliveSeconds =
           (data['keepAliveInterval'] as num?)?.toInt() ?? 3;
       final launchMode = data['launchMode'] as String? ?? 'ssh';
-      final allowTmuxInstall = data['allowTmuxInstall'] as bool? ?? false;
       final tmuxSessionName =
           sanitizeTmuxSessionName(data['tmuxSessionName'] as String? ?? name);
       final tmuxAutoDeleteSeconds =
@@ -404,6 +411,11 @@ command -v tmux >/dev/null 2>&1
         host,
         port,
         timeout: const Duration(seconds: 15),
+      );
+      emitLog(
+        'service',
+        'SSH socket connected',
+        details: 'sessionId=$sessionId host=$host:$port',
       );
 
       final identities = (authMethod == 'privateKey' || authMethod == 'both') &&
@@ -424,11 +436,13 @@ command -v tmux >/dev/null 2>&1
 
       if (launchMode == 'tmux') {
         try {
-          await installTmuxIfAllowed(
+          await ensureTmuxInstalled(
             client: client,
-            allowTmuxInstall: allowTmuxInstall,
-            sessionId: sessionId,
-            service: service,
+          );
+          emitLog(
+            'service',
+            'tmux available',
+            details: 'sessionId=$sessionId tmux=$tmuxSessionName',
           );
         } catch (_) {
           client.close();
@@ -442,6 +456,11 @@ command -v tmux >/dev/null 2>&1
           height: height,
           type: 'xterm-256color',
         ),
+      );
+      emitLog(
+        'service',
+        'SSH shell opened',
+        details: 'sessionId=$sessionId size=${width}x$height mode=$launchMode',
       );
 
       final runtime = _BackgroundSshSession(
@@ -465,13 +484,18 @@ command -v tmux >/dev/null 2>&1
           });
         },
         onError: (Object error) {
-          service.invoke('sshOutput', {
-            'sessionId': sessionId,
-            'data': '\r\n\x1b[31m[Connection error: $error]\x1b[0m\r\n',
-          });
-          closeSsh(sessionId);
+          emitLog(
+            'error',
+            'SSH stdout stream error',
+            details: 'sessionId=$sessionId error=$error',
+          );
+          unawaited(handleUnexpectedDisconnect(runtime, error.toString()));
         },
-        onDone: () => closeSsh(sessionId),
+        onDone: () {
+          emitLog('service', 'SSH stdout stream closed',
+              details: 'sessionId=$sessionId');
+          unawaited(handleUnexpectedDisconnect(runtime, 'stdout closed'));
+        },
       );
 
       runtime.stderrSub = shell.stderr.listen(
@@ -487,6 +511,12 @@ command -v tmux >/dev/null 2>&1
         final command = buildTmuxAttachCommand(
           tmuxSessionName,
           tmuxAutoDeleteSeconds,
+        );
+        emitLog(
+          'service',
+          'Attaching tmux session',
+          details:
+              'sessionId=$sessionId tmux=$tmuxSessionName autoDelete=${tmuxAutoDeleteSeconds}s',
         );
         shell.stdin.add(utf8.encode('$command\r'));
       }
@@ -505,32 +535,20 @@ command -v tmux >/dev/null 2>&1
               'timestamp': DateTime.now().toIso8601String(),
             });
           } catch (e) {
+            emitLog(
+              'warning',
+              'SSH keep-alive failed',
+              details:
+                  'sessionId=${runtime.sessionId} failures=${runtime.keepAliveFailures + 1} error=$e',
+            );
             service.invoke('sshKeepAlive', {
               'sessionId': sessionId,
               'ok': false,
               'error': e.toString(),
               'timestamp': DateTime.now().toIso8601String(),
             });
-            if (!sessions.containsKey(runtime.sessionId) ||
-                runtime.reconnecting) {
-              return;
-            }
             runtime.keepAliveFailures++;
-            if (runtime.launchMode == 'tmux') {
-              runtime.reconnecting = true;
-              service.invoke('sshOutput', {
-                'sessionId': runtime.sessionId,
-                'data':
-                    '\r\n\x1b[33m[Connection lost, reconnecting tmux session...]\x1b[0m\r\n',
-              });
-              closeSsh(runtime.sessionId, notify: false);
-              unawaited(connectSsh(runtime.reconnectData));
-            } else {
-              closeSsh(
-                runtime.sessionId,
-                message: 'Connection lost: $e',
-              );
-            }
+            await handleUnexpectedDisconnect(runtime, e.toString());
           } finally {
             runtime.pingInFlight = false;
           }
@@ -544,8 +562,18 @@ command -v tmux >/dev/null 2>&1
         connectionName: name,
       );
       setNotification(notificationSummary());
+      emitLog(
+        'service',
+        'SSH session connected',
+        details: 'sessionId=$sessionId connection=$name mode=$launchMode',
+      );
     } catch (e) {
-      closeSsh(sessionId, notify: false);
+      await closeSsh(sessionId, notify: false);
+      emitLog(
+        'error',
+        'SSH connection failed',
+        details: 'sessionId=$sessionId connection=$name error=$e',
+      );
       emitState(
         'error',
         sessionId: sessionId,
@@ -555,12 +583,18 @@ command -v tmux >/dev/null 2>&1
       );
       setNotification('SSH connection failed');
     }
-  }
+  };
 
   setNotification('SSH service is running');
+  emitLog('service', 'Background SSH service started');
 
   service.on('sshConnect').listen((event) {
     if (event != null) {
+      emitLog(
+        'service',
+        'Received sshConnect request',
+        details: 'sessionId=${event['sessionId']} connection=${event['name']}',
+      );
       unawaited(connectSsh(event));
     }
   });
@@ -571,6 +605,12 @@ command -v tmux >/dev/null 2>&1
     final session = sessionId == null ? null : sessions[sessionId];
     if (data != null && session != null) {
       session.shell.stdin.add(utf8.encode(data));
+    } else if (sessionId != null) {
+      emitLog(
+        'warning',
+        'Ignoring input for missing SSH session',
+        details: 'sessionId=$sessionId',
+      );
     }
   });
 
@@ -581,18 +621,26 @@ command -v tmux >/dev/null 2>&1
     final session = sessionId == null ? null : sessions[sessionId];
     if (width != null && height != null && session != null) {
       session.shell.resizeTerminal(width, height);
+      emitLog(
+        'service',
+        'Resized SSH terminal',
+        details: 'sessionId=$sessionId size=${width}x$height',
+      );
     }
   });
 
   service.on('sshDisconnect').listen((event) {
     final sessionId = event?['sessionId'] as String?;
     if (sessionId != null) {
-      closeSsh(sessionId);
+      emitLog('service', 'Received sshDisconnect request',
+          details: 'sessionId=$sessionId');
+      unawaited(closeSsh(sessionId, destroyTmux: true));
     }
   });
 
-  service.on('sshDisconnectAll').listen((event) {
-    closeAll();
+  service.on('sshDisconnectAll').listen((event) async {
+    emitLog('service', 'Received sshDisconnectAll request');
+    await closeAll();
   });
 
   service.on('update').listen((event) {
@@ -601,8 +649,9 @@ command -v tmux >/dev/null 2>&1
     );
   });
 
-  service.on('stopService').listen((event) {
-    closeAll(notify: false);
+  service.on('stopService').listen((event) async {
+    emitLog('service', 'Stopping background SSH service');
+    await closeAll(notify: false);
     service.stopSelf();
   });
 }
@@ -643,5 +692,17 @@ class _BackgroundSshSession {
     shell.close();
     client.close();
     pingInFlight = false;
+  }
+
+  Future<void> killTmuxSession() async {
+    final name = tmuxSessionName;
+    if (launchMode != 'tmux' || name == null || name.isEmpty) return;
+    try {
+      final quotedName = "'${name.replaceAll("'", "'\"'\"'")}'";
+      final command = 'tmux kill-session -t $quotedName 2>/dev/null || true';
+      await client
+          .runWithResult(command, stdout: false, stderr: false)
+          .timeout(const Duration(seconds: 5));
+    } catch (_) {}
   }
 }

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../../services/app_settings.dart';
 import '../../services/ssh_service.dart';
-import '../../theme/app_theme.dart';
 
 class TerminalScreenAppBar extends StatelessWidget
     implements PreferredSizeWidget {
@@ -10,12 +9,13 @@ class TerminalScreenAppBar extends StatelessWidget
   final SshSession? session;
   final String? serverName;
   final bool isConnected;
+  final bool isDarkMode;
   final bool reconnectInProgress;
   final VoidCallback onReconnect;
+  final VoidCallback onToggleTheme;
   final VoidCallback onSwitchWindow;
   final VoidCallback onCloseWindow;
   final VoidCallback onOpenSiblingSession;
-  final VoidCallback onRenameWindow;
   final VoidCallback onSmallerFont;
   final VoidCallback onLargerFont;
 
@@ -25,12 +25,13 @@ class TerminalScreenAppBar extends StatelessWidget
     required this.session,
     required this.serverName,
     required this.isConnected,
+    required this.isDarkMode,
     required this.reconnectInProgress,
     required this.onReconnect,
+    required this.onToggleTheme,
     required this.onSwitchWindow,
     required this.onCloseWindow,
     required this.onOpenSiblingSession,
-    required this.onRenameWindow,
     required this.onSmallerFont,
     required this.onLargerFont,
   });
@@ -40,11 +41,15 @@ class TerminalScreenAppBar extends StatelessWidget
 
   @override
   Widget build(BuildContext context) {
-    final closeColor = isConnected ? Colors.redAccent : Colors.orangeAccent;
     final colorScheme = Theme.of(context).colorScheme;
+    final connectedColor = colorScheme.secondary;
+    final disconnectedColor = colorScheme.error;
+    final closeColor = isConnected ? colorScheme.error : disconnectedColor;
+    final statusColor = isConnected ? connectedColor : disconnectedColor;
 
     return AppBar(
       surfaceTintColor: Colors.transparent,
+      titleSpacing: 4,
       title: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -68,89 +73,111 @@ class TerminalScreenAppBar extends StatelessWidget
                 tooltip: strings.newWindow,
                 onPressed: onOpenSiblingSession,
               ),
-              _compactIconButton(
-                icon: Icons.edit,
-                iconSize: 16,
-                tooltip: strings.renameWindow,
-                onPressed: onRenameWindow,
-              ),
             ],
           ),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                decoration: BoxDecoration(
-                  color:
-                      (isConnected ? AppTheme.terminalGreen : Colors.redAccent)
-                          .withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(
-                    color: (isConnected
-                            ? AppTheme.terminalGreen
-                            : Colors.redAccent)
-                        .withValues(alpha: 0.32),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: statusColor.withValues(alpha: 0.32),
+                      ),
+                    ),
+                    child: Text(
+                      isConnected ? strings.connected : strings.disconnected,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: statusColor,
+                      ),
+                    ),
                   ),
-                ),
-                child: Text(
-                  isConnected ? strings.connected : strings.disconnected,
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    color:
-                        isConnected ? AppTheme.terminalGreen : Colors.redAccent,
+                  const SizedBox(width: 10),
+                  Text(
+                    strings.fontSize,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: colorScheme.onSurface.withValues(alpha: 0.72),
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 2),
+                  _compactIconButton(
+                    icon: Icons.remove,
+                    iconSize: 18,
+                    tooltip: strings.smallerFont,
+                    onPressed: onSmallerFont,
+                  ),
+                  const SizedBox(width: 2),
+                  _compactIconButton(
+                    icon: Icons.add,
+                    iconSize: 18,
+                    tooltip: strings.largerFont,
+                    onPressed: onLargerFont,
+                  ),
+                ],
               ),
-              const SizedBox(width: 12),
-              Text(
-                strings.fontSize,
-                style: TextStyle(
-                  fontSize: 11,
-                  color: colorScheme.onSurface.withValues(alpha: 0.72),
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(width: 2),
-              _compactIconButton(
-                icon: Icons.remove,
-                iconSize: 18,
-                tooltip: strings.smallerFont,
-                onPressed: onSmallerFont,
-              ),
-              const SizedBox(width: 2),
-              _compactIconButton(
-                icon: Icons.add,
-                iconSize: 18,
-                tooltip: strings.largerFont,
-                onPressed: onLargerFont,
-              ),
-            ],
+            ),
           ),
         ],
       ),
       actions: [
         if (!isConnected)
-          IconButton(
-            icon: const Icon(Icons.refresh, size: 20),
+          _appBarAction(
+            icon: Icons.refresh,
             tooltip: strings.reconnect,
             onPressed: reconnectInProgress ? null : onReconnect,
           ),
-        IconButton(
-          icon: const Icon(Icons.view_list, size: 20),
+        _appBarAction(
+          icon: isDarkMode ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
+          tooltip:
+              isDarkMode ? strings.switchToLightMode : strings.switchToDarkMode,
+          onPressed: onToggleTheme,
+        ),
+        _appBarAction(
+          icon: Icons.view_list,
           tooltip: strings.switchWindow,
           onPressed: onSwitchWindow,
         ),
-        IconButton(
-          icon: Icon(
-            isConnected ? Icons.power_settings_new : Icons.warning_amber,
-            color: closeColor,
-          ),
+        _appBarAction(
+          icon: isConnected ? Icons.power_settings_new : Icons.warning_amber,
+          color: closeColor,
           tooltip: isConnected ? strings.disconnect : strings.closeDisconnected,
           onPressed: onCloseWindow,
         ),
       ],
+    );
+  }
+
+  Widget _appBarAction({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback? onPressed,
+    Color? color,
+  }) {
+    return SizedBox(
+      width: 40,
+      child: IconButton(
+        icon: Icon(icon, size: 20, color: color),
+        tooltip: tooltip,
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        onPressed: onPressed,
+      ),
     );
   }
 
@@ -161,7 +188,7 @@ class TerminalScreenAppBar extends StatelessWidget
     required VoidCallback onPressed,
   }) {
     return SizedBox(
-      width: 28,
+      width: 26,
       height: 28,
       child: IconButton(
         icon: Icon(icon, size: iconSize),

@@ -3,9 +3,9 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/connection.dart';
+import '../services/app_settings.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
-import '../theme/app_theme.dart';
 
 class AddEditScreen extends StatefulWidget {
   final String? editId;
@@ -30,7 +30,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   final _tmuxAutoDeleteController = TextEditingController(text: '10');
 
   AuthMethod _authMethod = AuthMethod.password;
-  TerminalLaunchMode _launchMode = TerminalLaunchMode.ssh;
+  TerminalLaunchMode _launchMode = TerminalLaunchMode.tmux;
   bool _keepAlive = true;
   bool _obscurePassword = true;
   bool _isSaving = false;
@@ -104,9 +104,10 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final strings = AppStrings(context.watch<AppSettings>().language);
     return Scaffold(
       appBar: AppBar(
-        title: Text(isEditing ? '编辑连接' : '添加连接'),
+        title: Text(isEditing ? strings.editConnection : strings.addConnection),
         actions: [
           TextButton.icon(
             onPressed: _isSaving || _isLoadingSecrets ? null : _save,
@@ -117,7 +118,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.check),
-            label: Text(_isSaving ? '保存中...' : '保存'),
+            label: Text(_isSaving ? strings.saving : strings.save),
           ),
         ],
       ),
@@ -130,10 +131,10 @@ class _AddEditScreenState extends State<AddEditScreen> {
               const LinearProgressIndicator(minHeight: 2),
               const SizedBox(height: 12),
             ],
-            _section('基本信息'),
+            _section(strings.basicInfo),
             _buildNameField(),
             const SizedBox(height: 16),
-            _section('连接信息'),
+            _section(strings.connectionInfo),
             _buildHostField(),
             const SizedBox(height: 12),
             Row(
@@ -144,7 +145,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
               ],
             ),
             const SizedBox(height: 20),
-            _section('认证方式'),
+            _section(strings.authMethod),
             _buildAuthMethodSelector(),
             const SizedBox(height: 12),
             if (_authMethod == AuthMethod.password ||
@@ -156,7 +157,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
               _buildPrivateKeyField(),
             ],
             const SizedBox(height: 20),
-            _section('跳板机（可选）'),
+            _section(strings.jumpHostOptional),
             _buildJumpHostField(),
             const SizedBox(height: 12),
             Row(
@@ -167,7 +168,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
               ],
             ),
             const SizedBox(height: 20),
-            _section('高级选项'),
+            _section(strings.advancedOptions),
             _buildLaunchModeSelector(),
             if (_launchMode == TerminalLaunchMode.tmux) ...[
               const SizedBox(height: 12),
@@ -197,93 +198,119 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Widget _buildNameField() {
+    final strings = AppStrings(context.watch<AppSettings>().language);
     return TextFormField(
       controller: _nameController,
-      decoration: const InputDecoration(
-        labelText: '连接名称',
-        hintText: '我的服务器',
-        prefixIcon: Icon(Icons.label_outline),
+      decoration: InputDecoration(
+        labelText: strings.connectionName,
+        hintText: strings.connectionNameHint,
+        prefixIcon: const Icon(Icons.label_outline),
       ),
-      validator: (value) =>
-          value == null || value.trim().isEmpty ? '请输入连接名称' : null,
+      validator: (value) => value == null || value.trim().isEmpty
+          ? strings.enterConnectionName
+          : null,
     );
   }
 
   Widget _buildHostField() {
+    final strings = AppStrings(context.watch<AppSettings>().language);
     return TextFormField(
       controller: _hostController,
-      decoration: const InputDecoration(
-        labelText: '主机地址',
-        hintText: '192.168.1.1 或 example.com',
-        prefixIcon: Icon(Icons.computer),
+      decoration: InputDecoration(
+        labelText: strings.hostAddress,
+        hintText: strings.hostAddressHint,
+        prefixIcon: const Icon(Icons.computer),
       ),
       keyboardType: TextInputType.url,
-      validator: (value) =>
-          value == null || value.trim().isEmpty ? '请输入主机地址' : null,
+      validator: (value) => value == null || value.trim().isEmpty
+          ? strings.enterHostAddress
+          : null,
     );
   }
 
   Widget _buildPortField() {
+    final strings = AppStrings(context.watch<AppSettings>().language);
     return TextFormField(
       controller: _portController,
-      decoration: const InputDecoration(
-        labelText: '端口',
+      decoration: InputDecoration(
+        labelText: strings.port,
         hintText: '22',
-        prefixIcon: Icon(Icons.numbers),
+        prefixIcon: const Icon(Icons.numbers),
       ),
       keyboardType: TextInputType.number,
       validator: (value) {
         final port = int.tryParse(value ?? '');
-        if (port == null || port < 1 || port > 65535) return '无效端口';
+        if (port == null || port < 1 || port > 65535) {
+          return strings.invalidPort;
+        }
         return null;
       },
     );
   }
 
   Widget _buildUsernameField() {
+    final strings = AppStrings(context.watch<AppSettings>().language);
     return TextFormField(
       controller: _usernameController,
-      decoration: const InputDecoration(
-        labelText: '用户名',
+      decoration: InputDecoration(
+        labelText: strings.username,
         hintText: 'root',
-        prefixIcon: Icon(Icons.person_outline),
+        prefixIcon: const Icon(Icons.person_outline),
       ),
       validator: (value) =>
-          value == null || value.trim().isEmpty ? '请输入用户名' : null,
+          value == null || value.trim().isEmpty ? strings.enterUsername : null,
     );
   }
 
   Widget _buildAuthMethodSelector() {
-    return SegmentedButton<AuthMethod>(
-      segments: const [
-        ButtonSegment(
-          value: AuthMethod.password,
-          label: Text('密码'),
-          icon: Icon(Icons.lock_outline, size: 18),
-        ),
-        ButtonSegment(
-          value: AuthMethod.privateKey,
-          label: Text('私钥'),
-          icon: Icon(Icons.key, size: 18),
-        ),
-        ButtonSegment(
-          value: AuthMethod.both,
-          label: Text('私钥+密码'),
-          icon: Icon(Icons.enhanced_encryption, size: 18),
-        ),
-      ],
-      selected: {_authMethod},
-      onSelectionChanged: (set) => setState(() => _authMethod = set.first),
+    final strings = AppStrings(context.watch<AppSettings>().language);
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: SegmentedButton<AuthMethod>(
+        showSelectedIcon: false,
+        segments: [
+          ButtonSegment(
+            value: AuthMethod.password,
+            label: Text(
+              strings.password,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            icon: const Icon(Icons.lock_outline, size: 18),
+          ),
+          ButtonSegment(
+            value: AuthMethod.privateKey,
+            label: Text(
+              strings.privateKey,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            icon: const Icon(Icons.key, size: 18),
+          ),
+          ButtonSegment(
+            value: AuthMethod.both,
+            label: Text(
+              strings.privateKeyPassword,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            icon: const Icon(Icons.enhanced_encryption, size: 18),
+          ),
+        ],
+        selected: {_authMethod},
+        onSelectionChanged: (set) => setState(() => _authMethod = set.first),
+      ),
     );
   }
 
   Widget _buildPasswordField() {
+    final strings = AppStrings(context.watch<AppSettings>().language);
     return TextFormField(
       controller: _passwordController,
       obscureText: _obscurePassword,
       decoration: InputDecoration(
-        labelText: '密码',
-        hintText: '输入 SSH 密码',
+        labelText: strings.password,
+        hintText: strings.passwordHint,
         prefixIcon: const Icon(Icons.lock_outline),
         suffixIcon: IconButton(
           icon: Icon(
@@ -296,7 +323,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
       validator: (value) {
         if (_authMethod == AuthMethod.password &&
             (value == null || value.trim().isEmpty)) {
-          return '密码认证需要输入密码';
+          return strings.passwordRequired;
         }
         return null;
       },
@@ -304,20 +331,21 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Widget _buildPrivateKeyField() {
+    final strings = AppStrings(context.watch<AppSettings>().language);
     return TextFormField(
       controller: _privateKeyController,
       maxLines: 4,
-      decoration: const InputDecoration(
-        labelText: 'SSH 私钥',
+      decoration: InputDecoration(
+        labelText: strings.sshPrivateKey,
         hintText:
             '-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----',
-        prefixIcon: Icon(Icons.key),
+        prefixIcon: const Icon(Icons.key),
         alignLabelWithHint: true,
       ),
       validator: (value) {
         if (_authMethod == AuthMethod.privateKey &&
             (value == null || value.trim().isEmpty)) {
-          return '私钥认证需要输入私钥内容';
+          return strings.privateKeyRequired;
         }
         return null;
       },
@@ -325,21 +353,23 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Widget _buildJumpHostField() {
+    final strings = AppStrings(context.watch<AppSettings>().language);
     return TextFormField(
       controller: _jumpHostController,
-      decoration: const InputDecoration(
-        labelText: '跳板机地址',
-        hintText: '可选，留空则直连',
-        prefixIcon: Icon(Icons.hub_outlined),
+      decoration: InputDecoration(
+        labelText: strings.jumpHost,
+        hintText: strings.jumpHostHint,
+        prefixIcon: const Icon(Icons.hub_outlined),
       ),
     );
   }
 
   Widget _buildJumpPortField() {
+    final strings = AppStrings(context.watch<AppSettings>().language);
     return TextFormField(
       controller: _jumpPortController,
-      decoration: const InputDecoration(
-        labelText: '跳板机端口',
+      decoration: InputDecoration(
+        labelText: strings.jumpPort,
         hintText: '22',
       ),
       keyboardType: TextInputType.number,
@@ -347,40 +377,47 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Widget _buildJumpUsernameField() {
+    final strings = AppStrings(context.watch<AppSettings>().language);
     return TextFormField(
       controller: _jumpUsernameController,
-      decoration: const InputDecoration(
-        labelText: '跳板机用户名',
-        hintText: '可选',
+      decoration: InputDecoration(
+        labelText: strings.jumpUsername,
+        hintText: strings.optional,
       ),
     );
   }
 
   Widget _buildLaunchModeSelector() {
+    final strings = AppStrings(context.watch<AppSettings>().language);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SegmentedButton<TerminalLaunchMode>(
-          segments: const [
-            ButtonSegment(
-              value: TerminalLaunchMode.ssh,
-              label: Text('SSH'),
-              icon: Icon(Icons.terminal, size: 18),
-            ),
-            ButtonSegment(
-              value: TerminalLaunchMode.tmux,
-              label: Text('SSH + tmux'),
-              icon: Icon(Icons.tab_rounded, size: 18),
-            ),
-          ],
-          selected: {_launchMode},
-          onSelectionChanged: (set) => setState(() => _launchMode = set.first),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SegmentedButton<TerminalLaunchMode>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(
+                value: TerminalLaunchMode.ssh,
+                label: Text('SSH', maxLines: 1),
+                icon: Icon(Icons.terminal, size: 18),
+              ),
+              ButtonSegment(
+                value: TerminalLaunchMode.tmux,
+                label: Text('SSH + tmux', maxLines: 1),
+                icon: Icon(Icons.tab_rounded, size: 18),
+              ),
+            ],
+            selected: {_launchMode},
+            onSelectionChanged: (set) =>
+                setState(() => _launchMode = set.first),
+          ),
         ),
         const SizedBox(height: 6),
         Text(
           _launchMode == TerminalLaunchMode.tmux
-              ? '连接 SSH 后自动进入与当前窗口同名的 tmux 会话。'
-              : '打开普通交互式 SSH shell。',
+              ? strings.tmuxModeDescription
+              : strings.sshModeDescription,
           style: TextStyle(
             fontSize: 12,
             color:
@@ -392,35 +429,35 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Widget _buildTmuxAutoDeleteField() {
+    final strings = AppStrings(context.watch<AppSettings>().language);
     return TextFormField(
       controller: _tmuxAutoDeleteController,
-      decoration: const InputDecoration(
-        labelText: 'tmux 无连接自动删除等待时间（分钟）',
+      decoration: InputDecoration(
+        labelText: strings.tmuxAutoDeleteMinutes,
         hintText: '10',
-        helperText: '单位：分钟。断开后无人重新连接，超过该时间自动删除 tmux 会话。',
-        prefixIcon: Icon(Icons.timer_outlined),
+        helperText: strings.tmuxAutoDeleteHelp,
+        prefixIcon: const Icon(Icons.timer_outlined),
       ),
       keyboardType: TextInputType.number,
       validator: (value) {
         if (_launchMode != TerminalLaunchMode.tmux) return null;
         final minutes = int.tryParse(value?.trim() ?? '');
-        if (minutes == null || minutes < 1) return '最少 1 分钟';
-        if (minutes > 1440) return '最多 1440 分钟';
+        if (minutes == null || minutes < 1) return strings.minOneMinute;
+        if (minutes > 1440) return strings.max1440Minutes;
         return null;
       },
     );
   }
 
   Widget _buildKeepAliveSwitch() {
+    final strings = AppStrings(context.watch<AppSettings>().language);
     return SwitchListTile(
       contentPadding: EdgeInsets.zero,
-      title: const Text('后台保持连接'),
-      subtitle: const Text(
-        'Android 使用前台服务和 keep-alive 尽量维持 SSH 连接。',
-        style: TextStyle(fontSize: 12),
-      ),
+      title: Text(strings.keepAliveTitle),
+      subtitle:
+          Text(strings.keepAliveSubtitle, style: const TextStyle(fontSize: 12)),
       value: _keepAlive,
-      activeThumbColor: AppTheme.terminalGreen,
+      activeThumbColor: Theme.of(context).colorScheme.secondary,
       onChanged: (value) => setState(() => _keepAlive = value),
     );
   }
@@ -478,7 +515,12 @@ class _AddEditScreenState extends State<AddEditScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('保存失败: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text(
+              AppStrings(context.read<AppSettings>().language).saveFailed(e),
+            ),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -487,22 +529,21 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Future<bool> _confirmDisconnectActiveWindows(int windowCount) async {
+    final strings = AppStrings(context.read<AppSettings>().language);
     final result = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('保存后将关闭相关窗口'),
-        content: Text(
-          '当前配置有关联的 $windowCount 个终端窗口。保存修改后，这些旧窗口会自动关闭，避免继续向旧 SSH 或旧 tmux 会话发送输入。',
-        ),
+        title: Text(strings.saveWillCloseWindowsTitle),
+        content: Text(strings.saveWillCloseWindowsContent(windowCount)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+            child: Text(strings.cancel),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
-            child: const Text('保存并断开'),
+            child: Text(strings.saveAndDisconnect),
           ),
         ],
       ),

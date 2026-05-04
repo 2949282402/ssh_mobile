@@ -5,11 +5,13 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/connection.dart';
+import 'app_log_service.dart';
 
 class StorageService extends ChangeNotifier {
   static const _connectionsKey = 'ssh_connections';
   static const _powerGuideSeenKey = 'power_guide_seen';
   static const _restorableTmuxSessionsKey = 'restorable_tmux_sessions';
+  static const _terminalHistoryRecordsKey = 'terminal_history_records';
 
   SharedPreferences? _prefs;
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
@@ -31,6 +33,8 @@ class StorageService extends ChangeNotifier {
       await _loadConnections();
     } catch (e) {
       debugPrint('Failed to initialize storage service: $e');
+      AppLogService.instance
+          .error('Failed to initialize storage service', error: e);
       _connections = [];
       _powerGuideSeen = false;
     } finally {
@@ -54,6 +58,7 @@ class StorageService extends ChangeNotifier {
           .toList();
     } catch (e) {
       debugPrint('Failed to load SSH connections: $e');
+      AppLogService.instance.error('Failed to load SSH connections', error: e);
       _connections = [];
     }
   }
@@ -146,6 +151,10 @@ class StorageService extends ChangeNotifier {
           .toList();
     } catch (e) {
       debugPrint('Failed to load restorable tmux sessions: $e');
+      AppLogService.instance.error(
+        'Failed to load restorable tmux sessions',
+        error: e,
+      );
       return [];
     }
   }
@@ -179,11 +188,58 @@ class StorageService extends ChangeNotifier {
     await _prefs!.remove(_restorableTmuxSessionsKey);
   }
 
+  Future<List<TerminalHistoryRecord>> loadTerminalHistoryRecords() async {
+    if (!_initialized || _prefs == null) return [];
+    final jsonStr = _prefs?.getString(_terminalHistoryRecordsKey);
+    if (jsonStr == null || jsonStr.isEmpty) return [];
+
+    try {
+      final list = jsonDecode(jsonStr) as List<dynamic>;
+      final records = list
+          .map((item) =>
+              TerminalHistoryRecord.fromJson(item as Map<String, dynamic>))
+          .toList()
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      return records;
+    } catch (e) {
+      debugPrint('Failed to load terminal history records: $e');
+      AppLogService.instance.error(
+        'Failed to load terminal history records',
+        error: e,
+      );
+      return [];
+    }
+  }
+
+  Future<void> saveTerminalHistoryRecord(TerminalHistoryRecord record) async {
+    if (!_initialized || _prefs == null) return;
+    final records = await loadTerminalHistoryRecords();
+    records.removeWhere((item) => item.sessionId == record.sessionId);
+    records.insert(0, record);
+    await _saveTerminalHistoryRecords(records.take(200).toList());
+    notifyListeners();
+  }
+
+  Future<void> removeTerminalHistoryRecord(String sessionId) async {
+    if (!_initialized || _prefs == null) return;
+    final records = await loadTerminalHistoryRecords();
+    records.removeWhere((item) => item.sessionId == sessionId);
+    await _saveTerminalHistoryRecords(records);
+    notifyListeners();
+  }
+
   Future<void> _saveRestorableTmuxSessions(
     List<RestorableTmuxSession> sessions,
   ) async {
     final jsonStr = jsonEncode(sessions.map((item) => item.toJson()).toList());
     await _prefs!.setString(_restorableTmuxSessionsKey, jsonStr);
+  }
+
+  Future<void> _saveTerminalHistoryRecords(
+    List<TerminalHistoryRecord> records,
+  ) async {
+    final jsonStr = jsonEncode(records.map((item) => item.toJson()).toList());
+    await _prefs!.setString(_terminalHistoryRecordsKey, jsonStr);
   }
 
   Future<void> _saveSecrets(ConnectionConfig config) async {
@@ -247,5 +303,69 @@ class RestorableTmuxSession {
       updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
           DateTime.now(),
     );
+  }
+}
+
+class TerminalHistoryRecord {
+  final String sessionId;
+  final String connectionId;
+  final String connectionName;
+  final String displayName;
+  final String? tmuxSessionName;
+  final String state;
+  final String? errorMessage;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  const TerminalHistoryRecord({
+    required this.sessionId,
+    required this.connectionId,
+    required this.connectionName,
+    required this.displayName,
+    required this.tmuxSessionName,
+    required this.state,
+    required this.errorMessage,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  String? get tmuxKillCommand {
+    final name = tmuxSessionName;
+    if (name == null || name.isEmpty) return null;
+    return "tmux kill-session -t ${_shellQuote(name)}";
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'sessionId': sessionId,
+      'connectionId': connectionId,
+      'connectionName': connectionName,
+      'displayName': displayName,
+      'tmuxSessionName': tmuxSessionName,
+      'state': state,
+      'errorMessage': errorMessage,
+      'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
+    };
+  }
+
+  factory TerminalHistoryRecord.fromJson(Map<String, dynamic> json) {
+    return TerminalHistoryRecord(
+      sessionId: json['sessionId'] as String,
+      connectionId: json['connectionId'] as String? ?? '',
+      connectionName: json['connectionName'] as String? ?? 'SSH',
+      displayName: json['displayName'] as String? ?? 'SSH',
+      tmuxSessionName: json['tmuxSessionName'] as String?,
+      state: json['state'] as String? ?? 'disconnected',
+      errorMessage: json['errorMessage'] as String?,
+      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+          DateTime.now(),
+      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
+          DateTime.now(),
+    );
+  }
+
+  static String _shellQuote(String value) {
+    return "'${value.replaceAll("'", "'\"'\"'")}'";
   }
 }

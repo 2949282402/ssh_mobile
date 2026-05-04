@@ -5,8 +5,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 
 import '../models/connection.dart';
+import 'app_log_service.dart';
 import 'background_service.dart';
 import 'storage_service.dart';
+import 'terminal_history_service.dart';
 
 enum SshConnectionState {
   disconnected,
@@ -23,9 +25,12 @@ class SshSession {
   final StringBuffer _outputBuffer = StringBuffer();
   String displayName;
   String? tmuxSessionName;
+  int? tmuxAutoDeleteSeconds;
   double fontSize;
   SshConnectionState state;
   String? errorMessage;
+  DateTime createdAt;
+  DateTime updatedAt;
 
   SshSession({
     required this.id,
@@ -33,15 +38,31 @@ class SshSession {
     required this.connectionName,
     String? displayName,
     this.tmuxSessionName,
+    this.tmuxAutoDeleteSeconds,
     this.fontSize = 14,
     required this.outputController,
     this.state = SshConnectionState.connecting,
     this.errorMessage,
-  }) : displayName = displayName ?? connectionName;
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  })  : displayName = displayName ?? connectionName,
+        createdAt = createdAt ?? DateTime.now(),
+        updatedAt = updatedAt ?? DateTime.now();
 
   Stream<String> get output => outputController.stream;
   bool get isConnected => state == SshConnectionState.connected;
   String get outputText => _outputBuffer.toString();
+  int get estimatedMemoryBytes {
+    // Rough per-window local cache size. Dart strings are UTF-16, so this
+    // intentionally estimates the terminal text cache rather than process RSS.
+    return _outputBuffer.length * 2;
+  }
+
+  String? get tmuxKillCommand {
+    final name = tmuxSessionName;
+    if (name == null || name.isEmpty) return null;
+    return "tmux kill-session -t ${_shellQuote(name)}";
+  }
 
   void addOutput(String data) {
     _outputBuffer.write(data);
@@ -51,12 +72,17 @@ class SshSession {
   Future<void> close() async {
     await outputController.close();
   }
+
+  static String _shellQuote(String value) {
+    return "'${value.replaceAll("'", "'\"'\"'")}'";
+  }
 }
 
 class SshService extends ChangeNotifier {
   final StorageService _storageService;
   final FlutterBackgroundService _backgroundService =
       FlutterBackgroundService();
+  final TerminalHistoryService _historyService = TerminalHistoryService();
 
   final Map<String, SshSession> _sessions = {};
   final Map<String, Completer<void>> _connectCompleters = {};
@@ -65,6 +91,7 @@ class SshService extends ChangeNotifier {
   StreamSubscription<Map<String, dynamic>?>? _stateSub;
   StreamSubscription<Map<String, dynamic>?>? _outputSub;
   StreamSubscription<Map<String, dynamic>?>? _keepAliveSub;
+  StreamSubscription<Map<String, dynamic>?>? _appLogSub;
   String? _lastSessionId;
   String? _lastErrorMessage;
   bool _restoredTmuxSessions = false;
@@ -88,6 +115,18 @@ class SshService extends ChangeNotifier {
   String? get activeConnectionId => currentSession?.connectionId;
 
   SshSession? getSession(String sessionId) => _sessions[sessionId];
+
+  Future<String> loadSessionHistoryText(String sessionId) {
+    return _historyService.readTail(sessionId);
+  }
+
+  Future<List<TerminalHistoryRecord>> loadTerminalHistoryRecords() {
+    return _storageService.loadTerminalHistoryRecords();
+  }
+
+  Future<void> removeTerminalHistoryRecord(String sessionId) {
+    return _storageService.removeTerminalHistoryRecord(sessionId);
+  }
 
   bool hasConnectedSession(String connectionId) {
     return _sessions.values.any(
@@ -146,11 +185,19 @@ class SshService extends ChangeNotifier {
     if (_restoredTmuxSessions) return;
     _restoredTmuxSessions = true;
     final storedSessions = await _storageService.loadRestorableTmuxSessions();
+    AppLogService.instance.info(
+      'Restoring tmux sessions',
+      details: 'count=${storedSessions.length}',
+    );
     if (storedSessions.isEmpty) return;
 
     for (final stored in storedSessions) {
       final config = _storageService.getConnection(stored.connectionId);
       if (config?.launchMode != TerminalLaunchMode.tmux) {
+        AppLogService.instance.warning(
+          'Removing stale restorable tmux session',
+          details: 'sessionId=${stored.sessionId}',
+        );
         await _storageService.removeRestorableTmuxSession(stored.sessionId);
         continue;
       }
@@ -161,6 +208,7 @@ class SshService extends ChangeNotifier {
         connectionName: config!.name,
         displayName: _uniqueSessionName(stored.displayName),
         tmuxSessionName: stored.tmuxSessionName,
+        tmuxAutoDeleteSeconds: config.tmuxAutoDeleteSeconds,
         fontSize: stored.fontSize,
         outputController: StreamController<String>.broadcast(),
         state: SshConnectionState.disconnected,
@@ -183,18 +231,27 @@ class SshService extends ChangeNotifier {
 
   Future<String?> openSession(
     String connectionId, {
-    bool allowTmuxInstall = false,
+    String? displayName,
   }) async {
     final sessionId = _createSessionId(connectionId);
+    AppLogService.instance.info(
+      'Opening SSH session',
+      details: 'connectionId=$connectionId sessionId=$sessionId',
+    );
     await connect(
       connectionId,
       sessionId: sessionId,
-      allowTmuxInstall: allowTmuxInstall,
+      displayName: displayName,
     );
     final session = _sessions[sessionId];
     if (session?.isConnected == true) return sessionId;
 
     _lastErrorMessage = session?.errorMessage ?? _lastErrorMessage;
+    AppLogService.instance.warning(
+      'Open SSH session failed',
+      details:
+          'connectionId=$connectionId sessionId=$sessionId error=$_lastErrorMessage',
+    );
     await _removeFailedOpenSession(sessionId);
     return null;
   }
@@ -227,10 +284,14 @@ class SshService extends ChangeNotifier {
   Future<void> connect(
     String connectionId, {
     String? sessionId,
-    bool allowTmuxInstall = false,
+    String? displayName,
   }) async {
     final config = _storageService.getConnection(connectionId);
     if (config == null) {
+      AppLogService.instance.error(
+        'Connection config not found',
+        details: 'connectionId=$connectionId sessionId=$sessionId',
+      );
       _setSessionError(
         sessionId ?? _createSessionId(connectionId),
         connectionId,
@@ -241,7 +302,24 @@ class SshService extends ChangeNotifier {
     }
 
     final id = sessionId ?? _createSessionId(connectionId);
-    final defaultDisplayName = _defaultDisplayName(config.name, connectionId);
+    final requestedDisplayName = displayName?.trim();
+    if (requestedDisplayName?.isNotEmpty == true &&
+        _isSessionNameTaken(requestedDisplayName!, exceptSessionId: id)) {
+      AppLogService.instance.warning(
+        'Window name already exists',
+        details: 'name=$requestedDisplayName sessionId=$id',
+      );
+      _setSessionError(
+        id,
+        connectionId,
+        config.name,
+        'Window name already exists',
+      );
+      return;
+    }
+    final defaultDisplayName = requestedDisplayName?.isNotEmpty == true
+        ? requestedDisplayName!
+        : _defaultDisplayName(config.host, connectionId);
     final session = _sessions.putIfAbsent(
       id,
       () => SshSession(
@@ -261,9 +339,17 @@ class SshService extends ChangeNotifier {
 
     session.state = SshConnectionState.connecting;
     session.errorMessage = null;
+    session.tmuxAutoDeleteSeconds = config.tmuxAutoDeleteSeconds;
+    session.updatedAt = DateTime.now();
     _lastErrorMessage = null;
     _lastSessionId = id;
     _connectCompleters[id] = Completer<void>();
+    unawaited(_saveTerminalHistoryRecord(session));
+    AppLogService.instance.info(
+      'Session connecting',
+      details:
+          'sessionId=$id connection=${config.name} mode=${config.launchMode.name}',
+    );
     notifyListeners();
 
     try {
@@ -279,6 +365,12 @@ class SshService extends ChangeNotifier {
               exceptSessionId: id,
             )
           : null;
+      if (session.tmuxSessionName != null) {
+        AppLogService.instance.info(
+          'Using tmux session',
+          details: 'sessionId=$id tmux=${session.tmuxSessionName}',
+        );
+      }
       _backgroundService.invoke('sshConnect', {
         'sessionId': id,
         'id': config.id,
@@ -295,25 +387,39 @@ class SshService extends ChangeNotifier {
         'launchMode': config.launchMode.name,
         'tmuxSessionName': session.tmuxSessionName,
         'tmuxAutoDeleteSeconds': config.tmuxAutoDeleteSeconds,
-        'allowTmuxInstall': allowTmuxInstall,
       });
 
       await _connectCompleters[id]!.future.timeout(
-            allowTmuxInstall
-                ? const Duration(minutes: 6)
-                : const Duration(seconds: 30),
+            const Duration(seconds: 30),
           );
     } on TimeoutException {
+      AppLogService.instance.error(
+        'Session connect timed out',
+        details: 'sessionId=$id connection=${config.name}',
+      );
       _setSessionError(id, connectionId, config.name, 'Connection timed out');
     } catch (e) {
+      AppLogService.instance.error(
+        'Session connect failed',
+        error: e,
+        details: 'sessionId=$id connection=${config.name}',
+      );
       _setSessionError(id, connectionId, config.name, 'Connection failed: $e');
     }
   }
 
   Future<void> disconnectSession(String sessionId) async {
+    AppLogService.instance
+        .info('Disconnecting session', details: 'sessionId=$sessionId');
     _closingSessionIds.add(sessionId);
     _backgroundService.invoke('sshDisconnect', {'sessionId': sessionId});
     final session = _sessions.remove(sessionId);
+    if (session != null) {
+      session.state = SshConnectionState.disconnected;
+      session.errorMessage = 'Closed by user';
+      session.updatedAt = DateTime.now();
+      unawaited(_saveTerminalHistoryRecord(session));
+    }
     await session?.close();
     await _storageService.removeRestorableTmuxSession(sessionId);
     _connectCompleters.remove(sessionId);
@@ -327,6 +433,12 @@ class SshService extends ChangeNotifier {
   Future<void> _removeFailedOpenSession(String sessionId) async {
     _closingSessionIds.add(sessionId);
     final session = _sessions.remove(sessionId);
+    if (session != null) {
+      session.state = SshConnectionState.error;
+      session.errorMessage ??= 'Connection failed';
+      session.updatedAt = DateTime.now();
+      unawaited(_saveTerminalHistoryRecord(session));
+    }
     await session?.close();
     await _storageService.removeRestorableTmuxSession(sessionId);
     _connectCompleters.remove(sessionId);
@@ -338,9 +450,17 @@ class SshService extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    AppLogService.instance.info(
+      'Disconnecting all sessions',
+      details: 'count=${_sessions.length}',
+    );
     _closingSessionIds.addAll(_sessions.keys);
     _backgroundService.invoke('sshDisconnectAll');
     for (final session in _sessions.values) {
+      session.state = SshConnectionState.disconnected;
+      session.errorMessage = 'Closed by user';
+      session.updatedAt = DateTime.now();
+      unawaited(_saveTerminalHistoryRecord(session));
       await session.close();
     }
     _sessions.clear();
@@ -423,6 +543,14 @@ class SshService extends ChangeNotifier {
   }
 
   void _listenToBackgroundService() {
+    _appLogSub = _backgroundService.on('appLog').listen((event) {
+      final level = event?['level'] as String? ?? 'service';
+      final message = event?['message'] as String? ?? '';
+      final details = event?['details'] as String?;
+      if (message.isEmpty) return;
+      AppLogService.instance.add(level, message, details: details);
+    });
+
     _stateSub = _backgroundService.on('sshState').listen((event) {
       final sessionId = event?['sessionId'] as String?;
       if (sessionId == null) return;
@@ -431,6 +559,12 @@ class SshService extends ChangeNotifier {
       final message = event?['message'] as String?;
       final connectionId = event?['connectionId'] as String?;
       final connectionName = event?['connectionName'] as String?;
+      AppLogService.instance.info(
+        'SSH state: ${state ?? 'unknown'}',
+        details:
+            'sessionId=$sessionId connection=${connectionName ?? connectionId ?? ''}'
+            '${message == null ? '' : ' message=$message'}',
+      );
 
       if (state == 'disconnected' && _closingSessionIds.remove(sessionId)) {
         _completeConnect(sessionId);
@@ -475,6 +609,8 @@ class SshService extends ChangeNotifier {
           break;
       }
 
+      session.updatedAt = DateTime.now();
+      unawaited(_saveTerminalHistoryRecord(session));
       notifyListeners();
     });
 
@@ -483,6 +619,7 @@ class SshService extends ChangeNotifier {
       final data = event?['data'] as String?;
       if (sessionId == null || data == null) return;
       _sessions[sessionId]?.addOutput(data);
+      unawaited(_historyService.append(sessionId, data));
     });
 
     _keepAliveSub = _backgroundService.on('sshKeepAlive').listen((event) {
@@ -520,8 +657,10 @@ class SshService extends ChangeNotifier {
     );
     session.state = SshConnectionState.error;
     session.errorMessage = message;
+    session.updatedAt = DateTime.now();
     _lastSessionId = sessionId;
     _completeConnect(sessionId);
+    unawaited(_saveTerminalHistoryRecord(session));
     notifyListeners();
   }
 
@@ -545,6 +684,22 @@ class SshService extends ChangeNotifier {
     );
   }
 
+  Future<void> _saveTerminalHistoryRecord(SshSession session) async {
+    await _storageService.saveTerminalHistoryRecord(
+      TerminalHistoryRecord(
+        sessionId: session.id,
+        connectionId: session.connectionId,
+        connectionName: session.connectionName,
+        displayName: session.displayName,
+        tmuxSessionName: session.tmuxSessionName,
+        state: session.state.name,
+        errorMessage: session.errorMessage,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+      ),
+    );
+  }
+
   String _notificationSummary() {
     final count = _sessions.values
         .where((session) => session.state != SshConnectionState.disconnected)
@@ -554,10 +709,17 @@ class SshService extends ChangeNotifier {
 
   String _defaultDisplayName(String connectionName, String connectionId) {
     final existingCount = sessionCountForConnection(connectionId);
-    final baseName = existingCount == 0
-        ? connectionName
-        : '$connectionName ${existingCount + 1}';
+    final baseName = '$connectionName ${existingCount + 1}';
     return _uniqueSessionName(baseName);
+  }
+
+  String defaultDisplayNameForConnection(String connectionId) {
+    final config = _storageService.getConnection(connectionId);
+    return _defaultDisplayName(config?.host ?? 'SSH', connectionId);
+  }
+
+  bool isSessionNameAvailable(String name) {
+    return name.trim().isNotEmpty && !_isSessionNameTaken(name);
   }
 
   bool _isSessionNameTaken(String name, {String? exceptSessionId}) {
@@ -599,6 +761,8 @@ class SshService extends ChangeNotifier {
     _stateSub?.cancel();
     _outputSub?.cancel();
     _keepAliveSub?.cancel();
+    _appLogSub?.cancel();
+    unawaited(_historyService.flush());
     for (final session in _sessions.values) {
       session.close();
     }
