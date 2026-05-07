@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
 
 class TerminalViewArea extends StatefulWidget {
@@ -16,6 +18,8 @@ class TerminalViewArea extends StatefulWidget {
   final PointerMoveEventListener onPointerMove;
   final PointerUpEventListener onPointerUp;
   final PointerCancelEventListener onPointerCancel;
+  final void Function(TapUpDetails details)? onSecondaryTapUp;
+  final bool useWindowsCommandInput;
 
   const TerminalViewArea({
     super.key,
@@ -33,6 +37,8 @@ class TerminalViewArea extends StatefulWidget {
     required this.onPointerMove,
     required this.onPointerUp,
     required this.onPointerCancel,
+    this.onSecondaryTapUp,
+    this.useWindowsCommandInput = false,
   });
 
   @override
@@ -56,6 +62,59 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
   bool _draggingScrollbar = false;
   bool _userReadingHistory = false;
   bool _metricsUpdateScheduled = false;
+
+  bool get _isWindowsTerminalTarget {
+    return !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+  }
+
+  bool get _useHardwareKeyboardOnlyTerminalInput {
+    return !kIsWeb &&
+        (widget.useWindowsCommandInput ||
+            defaultTargetPlatform == TargetPlatform.macOS ||
+            defaultTargetPlatform == TargetPlatform.linux);
+  }
+
+  String get _terminalFontFamily {
+    if (_isWindowsTerminalTarget) {
+      return 'Cascadia Mono';
+    }
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.macOS) {
+      return 'Menlo';
+    }
+    return 'monospace';
+  }
+
+  List<String> get _terminalFontFallback {
+    if (_isWindowsTerminalTarget) {
+      return const [
+        'Consolas',
+        'Courier New',
+        'Microsoft YaHei Mono',
+        'Noto Sans Mono CJK SC',
+        'monospace',
+      ];
+    }
+    return const [
+      'Roboto Mono',
+      'Noto Sans Mono',
+      'Noto Sans Mono CJK SC',
+      'Droid Sans Mono',
+      'monospace',
+    ];
+  }
+
+  double get _terminalLineHeight {
+    if (_isWindowsTerminalTarget) {
+      return 1.05;
+    }
+    return 1.2;
+  }
+
+  TextInputType get _terminalKeyboardType {
+    return _isWindowsTerminalTarget
+        ? TextInputType.text
+        : TextInputType.emailAddress;
+  }
 
   @override
   void initState() {
@@ -176,17 +235,17 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
                     autofocus: true,
                     backgroundOpacity: 1,
                     simulateScroll: false,
+                    hardwareKeyboardOnly: _useHardwareKeyboardOnlyTerminalInput,
+                    onKeyEvent: _handleWindowsCtrlCSelectionCopy,
+                    keyboardType: _terminalKeyboardType,
+                    onSecondaryTapUp: widget.onSecondaryTapUp == null
+                        ? null
+                        : (details, _) => widget.onSecondaryTapUp!(details),
                     textStyle: TerminalStyle(
                       fontSize: widget.fontSize,
-                      fontFamily: 'monospace',
-                      fontFamilyFallback: const [
-                        'Roboto Mono',
-                        'Noto Sans Mono',
-                        'Noto Sans Mono CJK SC',
-                        'Droid Sans Mono',
-                        'monospace',
-                      ],
-                      height: 1.2,
+                      fontFamily: _terminalFontFamily,
+                      fontFamilyFallback: _terminalFontFallback,
+                      height: _terminalLineHeight,
                     ),
                     textScaler: TextScaler.noScaling,
                     theme: widget.theme,
@@ -210,6 +269,29 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
         ),
       ],
     );
+  }
+
+  KeyEventResult _handleWindowsCtrlCSelectionCopy(
+    FocusNode focusNode,
+    KeyEvent event,
+  ) {
+    if (!_isWindowsTerminalTarget ||
+        event is KeyUpEvent ||
+        event.logicalKey != LogicalKeyboardKey.keyC ||
+        !HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isAltPressed ||
+        HardwareKeyboard.instance.isMetaPressed) {
+      return KeyEventResult.ignored;
+    }
+
+    final selection = widget.controller.selection;
+    if (selection == null) return KeyEventResult.ignored;
+
+    final text = widget.terminal.buffer.getText(selection);
+    if (text.isEmpty) return KeyEventResult.ignored;
+
+    Clipboard.setData(ClipboardData(text: text));
+    return KeyEventResult.handled;
   }
 
   void _jumpToScrollFraction(double fraction) {

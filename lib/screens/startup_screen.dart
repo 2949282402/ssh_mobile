@@ -67,11 +67,19 @@ class _StartupScreenState extends State<StartupScreen> {
   Widget build(BuildContext context) {
     final storage = context.watch<StorageService>();
 
-    if (!storage.initialized || !_powerStatusChecked) {
+    if (!storage.initialized) {
       return const _StartupLoadingScreen();
     }
 
-    if (_isAndroidTarget && _shouldShowPowerGuide) {
+    if (!_isAndroidTarget) {
+      return const HomeScreen();
+    }
+
+    if (!_powerStatusChecked) {
+      return const _StartupLoadingScreen();
+    }
+
+    if (_shouldShowPowerGuide) {
       return PowerGuideScreen(onContinue: _enterAppForThisLaunch);
     }
 

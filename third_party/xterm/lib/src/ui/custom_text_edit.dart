@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -109,11 +111,12 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
     if (hasInputConnection) {
       _connection?.close();
     }
+    _connection = null;
   }
 
   void setEditingState(TextEditingValue value) {
     _currentEditingState = value;
-    _connection?.setEditingState(value);
+    _setPlatformEditingState(value);
   }
 
   void setEditableRect(Rect rect, Rect caretRect) {
@@ -135,7 +138,22 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
 
   KeyEventResult _onKeyEvent(FocusNode focusNode, KeyEvent event) {
     if (_currentEditingState.composing.isCollapsed) {
-      return widget.onKeyEvent(focusNode, event);
+      final result = widget.onKeyEvent(focusNode, event);
+      if (result != KeyEventResult.ignored) {
+        return result;
+      }
+
+      if ((event is KeyDownEvent || event is KeyRepeatEvent) &&
+          event.character != null &&
+          event.character!.isNotEmpty &&
+          !HardwareKeyboard.instance.isControlPressed &&
+          !HardwareKeyboard.instance.isAltPressed &&
+          !HardwareKeyboard.instance.isMetaPressed) {
+        widget.onInsert(event.character!);
+        return KeyEventResult.handled;
+      }
+
+      return result;
     }
 
     return KeyEventResult.skipRemainingHandlers;
@@ -174,15 +192,27 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
 
       // setEditableRect(Rect.zero, Rect.zero);
 
-      _connection!.setEditingState(_initEditingState);
+      _setPlatformEditingState(_initEditingState);
     }
   }
 
   void _closeInputConnectionIfNeeded() {
     if (_connection != null && _connection!.attached) {
       _connection!.close();
-      _connection = null;
     }
+    _connection = null;
+  }
+
+  void _setPlatformEditingState(TextEditingValue value) {
+    final connection = _connection;
+    if (connection == null || !connection.attached) return;
+    unawaited(
+      SystemChannels.textInput
+          .invokeMethod<void>('TextInput.setEditingState', value.toJSON())
+          .catchError((Object _) {
+        _connection = null;
+      }),
+    );
   }
 
   TextEditingValue get _initEditingState => widget.deleteDetection
@@ -234,7 +264,7 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
     // Reset editing state if composing is done
     if (_currentEditingState.composing.isCollapsed &&
         _currentEditingState.text != _initEditingState.text) {
-      _connection!.setEditingState(_initEditingState);
+      _setPlatformEditingState(_initEditingState);
     }
   }
 
@@ -256,7 +286,7 @@ class CustomTextEditState extends State<CustomTextEdit> with TextInputClient {
 
   @override
   void connectionClosed() {
-    // print('connectionClosed');
+    _connection = null;
   }
 
   @override

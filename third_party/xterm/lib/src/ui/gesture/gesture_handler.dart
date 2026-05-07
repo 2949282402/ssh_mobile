@@ -1,4 +1,5 @@
 import 'package:flutter/gestures.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:xterm/src/core/mouse/button.dart';
 import 'package:xterm/src/core/mouse/button_state.dart';
@@ -59,6 +60,17 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
 
   LongPressStartDetails? _lastLongPressStartDetails;
 
+  bool get _isWindowsTerminalHost {
+    return !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+  }
+
+  bool get _enableWindowsStyleDesktopMouseSelection {
+    return !kIsWeb &&
+        (_isWindowsTerminalHost ||
+            defaultTargetPlatform == TargetPlatform.macOS ||
+            defaultTargetPlatform == TargetPlatform.linux);
+  }
+
   @override
   Widget build(BuildContext context) {
     return TerminalGestureDetector(
@@ -70,10 +82,14 @@ class _TerminalGestureHandlerState extends State<TerminalGestureHandler> {
       onSecondaryTapUp: onSecondaryTapUp,
       onTertiaryTapDown: onSecondaryTapDown,
       onTertiaryTapUp: onSecondaryTapUp,
-      // Mobile SSH clients need vertical drags to scroll terminal history.
-      // Selection is implemented by the host app with a separate copy layer,
-      // so xterm's internal drag/long-press selection would fight scrolling.
-      // onLongPressUp: onLongPressUp,
+      onDoubleTapDown:
+          _enableWindowsStyleDesktopMouseSelection ? onDoubleTapDown : null,
+      onDragStart:
+          _enableWindowsStyleDesktopMouseSelection ? onDragStart : null,
+      onDragUpdate:
+          _enableWindowsStyleDesktopMouseSelection ? onDragUpdate : null,
+      // Touch selection is implemented by the host app with a separate copy
+      // layer, so xterm's internal long-press selection would fight scrolling.
     );
   }
 

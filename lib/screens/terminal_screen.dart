@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:collection';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -9,6 +11,7 @@ import '../services/app_settings.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/responsive.dart';
 import '../widgets/connection_progress_dialog.dart';
 import '../widgets/window_name_dialog.dart';
 import 'terminal/terminal_app_bar.dart';
@@ -34,17 +37,24 @@ class _TerminalScreenState extends State<TerminalScreen>
     with WidgetsBindingObserver {
   static const double _minTerminalFontSize = 1.0;
   static const double _maxTerminalFontSize = 28.0;
+  static const int _maxTerminalFlushChars = 24000;
 
   late final Terminal _terminal;
   late final TerminalController _terminalController;
   late final FocusNode _terminalFocusNode;
+  late final FocusNode _windowsCommandInputFocusNode;
+  late final FocusNode _terminalInputFocusNode;
   late final TextEditingController _complexInputController;
+  late final TextEditingController _windowsCommandInputController;
   late final SshService _sshService;
   final GlobalKey<TerminalViewState> _terminalViewKey =
       GlobalKey<TerminalViewState>();
   VoidCallback? _sshListener;
   StreamSubscription<String>? _outputSubscription;
+  final ListQueue<String> _pendingTerminalWrites = ListQueue<String>();
+  int _pendingTerminalWriteChars = 0;
   SshSession? _subscribedSession;
+  bool _terminalWriteScheduled = false;
   bool _loadedBufferedOutput = false;
   bool _loadingBufferedOutput = false;
   bool _reconnectInProgress = false;
@@ -57,6 +67,21 @@ class _TerminalScreenState extends State<TerminalScreen>
   bool _advancedKeyboardVisible = false;
 
   String? _serverName;
+
+  bool get _isWindowsTerminalTarget {
+    return !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+  }
+
+  bool get _isDesktopTerminalTarget {
+    return !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.windows ||
+            defaultTargetPlatform == TargetPlatform.macOS ||
+            defaultTargetPlatform == TargetPlatform.linux);
+  }
+
+  bool get _useWindowsBottomShortcutPanel {
+    return _isWindowsTerminalTarget;
+  }
 
   TerminalStrings _strings(BuildContext context) {
     return TerminalStrings(context.read<AppSettings>().language);
@@ -77,13 +102,23 @@ class _TerminalScreenState extends State<TerminalScreen>
     );
     _terminalController = TerminalController();
     _terminalFocusNode = FocusNode();
+    _windowsCommandInputFocusNode =
+        FocusNode(debugLabel: 'Windows terminal command input');
+    _terminalInputFocusNode = _isWindowsTerminalTarget
+        ? _windowsCommandInputFocusNode
+        : _terminalFocusNode;
     _complexInputController = TextEditingController();
+    _windowsCommandInputController = TextEditingController();
     _terminalFontSize =
         _sshService.getSession(widget.sessionId)?.fontSize ?? _terminalFontSize;
 
     _loadServerInfo();
     _installSshListener();
     _attachExistingSession();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _requestWindowsAwareTerminalFocus();
+    });
   }
 
   void _loadServerInfo() {
@@ -164,18 +199,15 @@ class _TerminalScreenState extends State<TerminalScreen>
           pendingOutput.write(data);
           return;
         }
-        _clearTerminalSelection();
-        _terminal.write(data);
+        _queueTerminalWrite(data);
       },
       onError: (error) {
         if (!mounted) return;
-        _clearTerminalSelection();
-        _terminal.write('\r\n\x1b[31m[Error: $error]\x1b[0m\r\n');
+        _queueTerminalWrite('\r\n\x1b[31m[Error: $error]\x1b[0m\r\n');
       },
       onDone: () {
         if (!mounted) return;
-        _clearTerminalSelection();
-        _terminal.write('\r\n\x1b[33m[Connection closed]\x1b[0m\r\n');
+        _queueTerminalWrite('\r\n\x1b[33m[Connection closed]\x1b[0m\r\n');
       },
     );
 
@@ -190,14 +222,12 @@ class _TerminalScreenState extends State<TerminalScreen>
         if (!mounted || !identical(_subscribedSession, session)) return;
 
         if (initialOutput.isNotEmpty) {
-          _clearTerminalSelection();
-          _terminal.write(initialOutput);
+          _queueTerminalWrite(initialOutput);
         }
 
         final pending = pendingOutput.toString();
         if (pending.isNotEmpty && !initialOutput.endsWith(pending)) {
-          _clearTerminalSelection();
-          _terminal.write(pending);
+          _queueTerminalWrite(pending);
         }
 
         _loadedBufferedOutput = true;
@@ -213,10 +243,71 @@ class _TerminalScreenState extends State<TerminalScreen>
   void _showDisconnected(String? reason) {
     if (_hasShownDisconnectMessage) return;
     _hasShownDisconnectMessage = true;
-    _clearTerminalSelection();
-    _terminal.write(
+    _queueTerminalWrite(
       '\r\n\x1b[31m[Disconnected: ${reason ?? "unknown"}]\x1b[0m\r\n',
     );
+  }
+
+  void _queueTerminalWrite(String data) {
+    if (!mounted || data.isEmpty) return;
+    _pendingTerminalWrites.add(data);
+    _pendingTerminalWriteChars += data.length;
+    if (_terminalWriteScheduled) return;
+    _terminalWriteScheduled = true;
+    WidgetsBinding.instance.scheduleFrameCallback((_) {
+      _flushTerminalWrites();
+    });
+  }
+
+  void _flushTerminalWrites() {
+    if (!mounted) {
+      _pendingTerminalWrites.clear();
+      _pendingTerminalWriteChars = 0;
+      _terminalWriteScheduled = false;
+      return;
+    }
+
+    _terminalWriteScheduled = false;
+    if (_pendingTerminalWrites.isEmpty) return;
+
+    _clearTerminalSelection();
+    final buffer = StringBuffer();
+    var written = 0;
+
+    while (
+        _pendingTerminalWrites.isNotEmpty && written < _maxTerminalFlushChars) {
+      final chunk = _pendingTerminalWrites.removeFirst();
+      final remainingBudget = _maxTerminalFlushChars - written;
+      if (chunk.length <= remainingBudget) {
+        buffer.write(chunk);
+        written += chunk.length;
+        _pendingTerminalWriteChars -= chunk.length;
+        continue;
+      }
+
+      buffer.write(chunk.substring(0, remainingBudget));
+      _pendingTerminalWrites.addFirst(chunk.substring(remainingBudget));
+      written += remainingBudget;
+      _pendingTerminalWriteChars -= remainingBudget;
+      break;
+    }
+
+    final text = buffer.toString();
+    if (text.isNotEmpty) {
+      try {
+        _terminal.write(text);
+      } catch (_) {
+        // Drop malformed chunks rather than leaving xterm in a half-rendered UI
+        // state. The raw stream remains in local history for debugging.
+      }
+    }
+
+    if (_pendingTerminalWrites.isNotEmpty || _pendingTerminalWriteChars > 0) {
+      _terminalWriteScheduled = true;
+      WidgetsBinding.instance.scheduleFrameCallback((_) {
+        _flushTerminalWrites();
+      });
+    }
   }
 
   Future<void> _openSiblingSession(BuildContext context) async {
@@ -527,8 +618,8 @@ class _TerminalScreenState extends State<TerminalScreen>
     return TerminalTheme(
       background: background,
       foreground: const Color(0xFFCCCCCC),
-      cursor: AppTheme.terminalGreen,
-      selection: AppTheme.terminalGreen.withValues(alpha: 0.3),
+      cursor: const Color(0xFF58A6FF),
+      selection: const Color(0xFF58A6FF).withValues(alpha: 0.24),
       searchHitBackground: const Color(0xFF725C00),
       searchHitBackgroundCurrent: const Color(0xFFA88400),
       searchHitForeground: const Color(0xFFFFFFFF),
@@ -569,6 +660,43 @@ class _TerminalScreenState extends State<TerminalScreen>
     final toolbarColor = isDark
         ? const Color(0xFF161B22)
         : Theme.of(context).colorScheme.surface;
+    final useWideDesktopSideShortcutPanel = !_useWindowsBottomShortcutPanel &&
+        MediaQuery.sizeOf(context).width >= AppBreakpoints.wideDesktop;
+    final terminalView = TerminalViewArea(
+      terminalViewKey: _terminalViewKey,
+      terminal: _terminal,
+      controller: _terminalController,
+      focusNode: _terminalFocusNode,
+      theme: _terminalTheme(isDark, terminalBackground),
+      fontSize: _terminalFontSize,
+      minFontSize: _minTerminalFontSize,
+      maxFontSize: _maxTerminalFontSize,
+      onFontSizeChanged: _setTerminalFontSize,
+      onScaleEnd: _syncTerminalSize,
+      onPointerDown: _handleTerminalPointerDown,
+      onPointerMove: _handleTerminalPointerMove,
+      onPointerUp: _handleTerminalPointerUp,
+      onPointerCancel: _handleTerminalPointerCancel,
+      useWindowsCommandInput: _isWindowsTerminalTarget,
+      onSecondaryTapUp: (details) {
+        _lastLongPressPosition = details.globalPosition;
+        _requestWindowsAwareTerminalFocus();
+        unawaited(_showTerminalEditMenu());
+      },
+    );
+    final shortcutPanel = TerminalShortcutPanel(
+      sessionId: widget.sessionId,
+      strings: strings,
+      toolbarColor: toolbarColor,
+      advancedKeyboardVisible: _advancedKeyboardVisible,
+      complexInputController: _complexInputController,
+      terminalFocusNode: _terminalInputFocusNode,
+      onToggleAdvancedKeyboard: () {
+        setState(
+          () => _advancedKeyboardVisible = !_advancedKeyboardVisible,
+        );
+      },
+    );
 
     return Scaffold(
       appBar: TerminalScreenAppBar(
@@ -592,43 +720,37 @@ class _TerminalScreenState extends State<TerminalScreen>
           _syncTerminalSize();
         },
       ),
-      body: Container(
-        color: terminalBackground,
-        child: Column(
-          children: [
-            Expanded(
-              child: TerminalViewArea(
-                terminalViewKey: _terminalViewKey,
-                terminal: _terminal,
-                controller: _terminalController,
-                focusNode: _terminalFocusNode,
-                theme: _terminalTheme(isDark, terminalBackground),
-                fontSize: _terminalFontSize,
-                minFontSize: _minTerminalFontSize,
-                maxFontSize: _maxTerminalFontSize,
-                onFontSizeChanged: _setTerminalFontSize,
-                onScaleEnd: _syncTerminalSize,
-                onPointerDown: _handleTerminalPointerDown,
-                onPointerMove: _handleTerminalPointerMove,
-                onPointerUp: _handleTerminalPointerUp,
-                onPointerCancel: _handleTerminalPointerCancel,
-              ),
-            ),
-            TerminalShortcutPanel(
-              sessionId: widget.sessionId,
-              strings: strings,
-              toolbarColor: toolbarColor,
-              advancedKeyboardVisible: _advancedKeyboardVisible,
-              complexInputController: _complexInputController,
-              terminalFocusNode: _terminalFocusNode,
-              onToggleAdvancedKeyboard: () {
-                setState(
-                  () => _advancedKeyboardVisible = !_advancedKeyboardVisible,
-                );
-              },
-            ),
-          ],
-        ),
+      body: Stack(
+        children: [
+          Container(
+            color: terminalBackground,
+            child: useWideDesktopSideShortcutPanel
+                ? Row(
+                    children: [
+                      Expanded(child: terminalView),
+                      SizedBox(
+                        width: 360,
+                        child: Align(
+                          alignment: Alignment.topCenter,
+                          child: shortcutPanel,
+                        ),
+                      ),
+                    ],
+                  )
+                : Column(
+                    children: [
+                      Expanded(child: terminalView),
+                      if (_isWindowsTerminalTarget)
+                        _buildWindowsCommandInput(
+                          context,
+                          toolbarColor,
+                          strings,
+                        ),
+                      shortcutPanel,
+                    ],
+                  ),
+          ),
+        ],
       ),
     );
   }
@@ -638,6 +760,71 @@ class _TerminalScreenState extends State<TerminalScreen>
     if ((nextSize - _terminalFontSize).abs() < 0.05) return;
     setState(() => _terminalFontSize = nextSize);
     context.read<SshService>().setSessionFontSize(widget.sessionId, nextSize);
+  }
+
+  Widget _buildWindowsCommandInput(
+    BuildContext context,
+    Color toolbarColor,
+    TerminalStrings strings,
+  ) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final colorScheme = Theme.of(context).colorScheme;
+    final borderColor =
+        isDark ? const Color(0xFF30363D) : const Color(0xFFD0D7DE);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: toolbarColor,
+        border: Border(top: BorderSide(color: borderColor)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: Focus(
+                onKeyEvent: _handleWindowsCommandInputKeyEvent,
+                child: TextField(
+                  controller: _windowsCommandInputController,
+                  focusNode: _windowsCommandInputFocusNode,
+                  autofocus: true,
+                  minLines: 1,
+                  maxLines: 4,
+                  keyboardType: TextInputType.multiline,
+                  textInputAction: TextInputAction.newline,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  decoration: InputDecoration(
+                    hintText: strings.multilineHint,
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 9,
+                    ),
+                    suffixText: 'Enter',
+                    suffixStyle: TextStyle(
+                      color: colorScheme.onSurface.withValues(alpha: 0.48),
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            SizedBox(
+              height: 38,
+              width: 42,
+              child: IconButton(
+                icon: const Icon(Icons.send, size: 20),
+                tooltip: strings.send,
+                onPressed: _sendWindowsCommandInput,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _syncTerminalSize() {
@@ -650,13 +837,107 @@ class _TerminalScreenState extends State<TerminalScreen>
             height,
           );
     }
-    _terminalFocusNode.requestFocus();
+    _requestWindowsAwareTerminalFocus();
+  }
+
+  void _requestWindowsAwareTerminalFocus() {
+    if (_isWindowsTerminalTarget) {
+      _windowsCommandInputFocusNode.requestFocus();
+    } else {
+      _terminalFocusNode.requestFocus();
+    }
+  }
+
+  KeyEventResult _handleWindowsCommandInputKeyEvent(
+    FocusNode focusNode,
+    KeyEvent event,
+  ) {
+    if (!_isWindowsTerminalTarget || event is KeyUpEvent) {
+      return KeyEventResult.ignored;
+    }
+
+    if (event.logicalKey == LogicalKeyboardKey.keyC &&
+        HardwareKeyboard.instance.isControlPressed &&
+        !HardwareKeyboard.instance.isAltPressed &&
+        !HardwareKeyboard.instance.isMetaPressed) {
+      final inputSelection = _windowsCommandInputController.selection;
+      if (inputSelection.isValid && !inputSelection.isCollapsed) {
+        return KeyEventResult.ignored;
+      }
+
+      final selectedText = _selectedTerminalText();
+      if (selectedText.isNotEmpty) {
+        Clipboard.setData(ClipboardData(text: selectedText));
+        return KeyEventResult.handled;
+      }
+      return _sendTerminalKey(TerminalKey.keyC, ctrl: true);
+    }
+
+    if (event.logicalKey != LogicalKeyboardKey.enter &&
+        event.logicalKey != LogicalKeyboardKey.numpadEnter) {
+      return KeyEventResult.ignored;
+    }
+
+    final value = _windowsCommandInputController.value;
+    if (!value.composing.isCollapsed) return KeyEventResult.ignored;
+
+    if (HardwareKeyboard.instance.isShiftPressed) {
+      _insertWindowsCommandInputText('\n');
+      return KeyEventResult.handled;
+    }
+
+    _sendWindowsCommandInput();
+    return KeyEventResult.handled;
+  }
+
+  KeyEventResult _sendTerminalKey(
+    TerminalKey key, {
+    bool ctrl = false,
+    bool alt = false,
+    bool shift = false,
+  }) {
+    final handled = _terminal.keyInput(
+      key,
+      ctrl: ctrl,
+      alt: alt,
+      shift: shift,
+    );
+    return handled ? KeyEventResult.handled : KeyEventResult.ignored;
+  }
+
+  void _insertWindowsCommandInputText(String text) {
+    final value = _windowsCommandInputController.value;
+    final selection = value.selection.isValid
+        ? value.selection
+        : TextSelection.collapsed(offset: value.text.length);
+    final nextText = value.text.replaceRange(
+      selection.start,
+      selection.end,
+      text,
+    );
+    final offset = selection.start + text.length;
+    _windowsCommandInputController.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: offset),
+    );
+  }
+
+  void _sendWindowsCommandInput() {
+    final text = _windowsCommandInputController.text;
+    if (text.isEmpty) {
+      _sendTerminalKey(TerminalKey.enter);
+      return;
+    }
+
+    context.read<SshService>().sendData(widget.sessionId, '$text\r');
+    _windowsCommandInputController.clear();
+    _requestWindowsAwareTerminalFocus();
   }
 
   Future<void> _showTerminalEditMenu() async {
     if (_terminalMenuOpen) return;
     _terminalMenuOpen = true;
-    _terminalFocusNode.requestFocus();
+    _requestWindowsAwareTerminalFocus();
     final strings = _strings(context);
 
     final selectedText = _selectedTerminalText();
@@ -682,6 +963,11 @@ class _TerminalScreenState extends State<TerminalScreen>
           value: _TerminalEditAction.paste,
           child: Text(strings.paste),
         ),
+        if (_isDesktopTerminalTarget)
+          PopupMenuItem(
+            value: _TerminalEditAction.selectAll,
+            child: Text(_selectAllLabel(context)),
+          ),
       ],
     );
 
@@ -706,12 +992,20 @@ class _TerminalScreenState extends State<TerminalScreen>
         if (!mounted) return;
         context.read<SshService>().sendData(widget.sessionId, text);
         break;
+      case _TerminalEditAction.selectAll:
+        _selectAllTerminalText();
+        break;
     }
+  }
+
+  String _selectAllLabel(BuildContext context) {
+    return AppStrings(context.read<AppSettings>().language).selectAll;
   }
 
   void _handleTerminalPointerDown(PointerDownEvent event) {
     _activePointers += 1;
     _lastLongPressPosition = event.position;
+    _requestWindowsAwareTerminalFocus();
 
     _longPressTimer?.cancel();
     _longPressTimer = Timer(const Duration(milliseconds: 550), () {
@@ -764,7 +1058,7 @@ class _TerminalScreenState extends State<TerminalScreen>
       ),
     );
 
-    _terminalFocusNode.requestFocus();
+    _requestWindowsAwareTerminalFocus();
   }
 
   void _selectWordAtLastLongPress() {
@@ -796,6 +1090,23 @@ class _TerminalScreenState extends State<TerminalScreen>
     try {
       _terminalController.clearSelection();
     } catch (_) {}
+  }
+
+  void _selectAllTerminalText() {
+    try {
+      _terminalController.setSelection(
+        _terminal.buffer.createAnchor(
+          0,
+          _terminal.buffer.height - _terminal.viewHeight,
+        ),
+        _terminal.buffer.createAnchor(
+          _terminal.viewWidth,
+          _terminal.buffer.height - 1,
+        ),
+      );
+    } catch (_) {
+      _clearTerminalSelection();
+    }
   }
 
   void _confirmDisconnect(BuildContext context) {
@@ -853,10 +1164,14 @@ class _TerminalScreenState extends State<TerminalScreen>
       _sshService.removeListener(listener);
     }
     _outputSubscription?.cancel();
+    _pendingTerminalWrites.clear();
+    _pendingTerminalWriteChars = 0;
     _clearTerminalSelection();
     _terminalController.dispose();
     _terminalFocusNode.dispose();
+    _windowsCommandInputFocusNode.dispose();
     _complexInputController.dispose();
+    _windowsCommandInputController.dispose();
     super.dispose();
   }
 }
@@ -873,6 +1188,7 @@ enum _TerminalEditAction {
   selectCopy,
   copy,
   paste,
+  selectAll,
 }
 
 enum _NewWindowAction {

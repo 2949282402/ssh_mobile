@@ -30,8 +30,6 @@ Future<void> main() async {
       final appSettings = AppSettings();
       final shortcutCommandService = ShortcutCommandService();
 
-      await appSettings.init();
-
       runApp(
         MultiProvider(
           providers: [
@@ -45,6 +43,7 @@ Future<void> main() async {
         ),
       );
 
+      unawaited(appSettings.init());
       unawaited(
         storageService.init().then((_) {
           appLogService.info('Storage initialized');

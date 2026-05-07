@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:ui';
 
 import 'package:dartssh2/dartssh2.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
@@ -17,12 +18,20 @@ class BackgroundServiceManager {
   static bool _notificationPermissionChecked = false;
   static Future<void>? _prewarmFuture;
 
+  static bool get _supportsNativeBackgroundService {
+    return !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.android ||
+            defaultTargetPlatform == TargetPlatform.iOS);
+  }
+
   static Future<void> initialize() async {
+    if (!_supportsNativeBackgroundService) return;
     await _requestNotificationPermission();
     await prewarm();
   }
 
   static Future<void> prewarm() async {
+    if (!_supportsNativeBackgroundService) return;
     if (_configured) return;
     final existing = _prewarmFuture;
     if (existing != null) {
@@ -66,6 +75,7 @@ class BackgroundServiceManager {
   }
 
   static Future<void> start({String? connectionName}) async {
+    if (!_supportsNativeBackgroundService) return;
     await initialize();
     await _acquirePowerLocks();
     unawaited(_requestBatteryOptimizationExemption());
@@ -84,6 +94,7 @@ class BackgroundServiceManager {
   }
 
   static Future<void> stop() async {
+    if (!_supportsNativeBackgroundService) return;
     final service = FlutterBackgroundService();
     if (await service.isRunning()) {
       service.invoke('stopService');
@@ -92,6 +103,7 @@ class BackgroundServiceManager {
   }
 
   static Future<bool> isIgnoringBatteryOptimizations() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return true;
     try {
       return await _powerChannel
               .invokeMethod<bool>('isIgnoringBatteryOptimizations') ??
@@ -102,6 +114,7 @@ class BackgroundServiceManager {
   }
 
   static Future<void> requestBatteryOptimizationExemption() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
     try {
       await _powerChannel.invokeMethod<bool>(
         'requestBatteryOptimizationExemption',
@@ -110,12 +123,14 @@ class BackgroundServiceManager {
   }
 
   static Future<void> openAppSettings() async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
     try {
       await _powerChannel.invokeMethod<bool>('openAppSettings');
     } catch (_) {}
   }
 
   static void updateStatus(String content) {
+    if (!_supportsNativeBackgroundService) return;
     FlutterBackgroundService().invoke('update', {
       'title': 'SSH Mobile',
       'content': content,
@@ -309,7 +324,10 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
   String sanitizeTmuxSessionName(String name) {
     final sanitized = name
         .trim()
-        .replaceAll(RegExp(r'[^A-Za-z0-9_.-]+'), '_')
+        // tmux treats "." as a target separator: session.window. Keep session
+        // names to plain safe characters so domains like hejulian.cn do not
+        // become an invalid tmux target.
+        .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_')
         .replaceAll(RegExp(r'_+'), '_')
         .replaceAll(RegExp(r'^_+|_+$'), '');
     if (sanitized.isEmpty) return 'ssh_mobile';
@@ -337,6 +355,7 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
         'tmux has-session -t $quotedName 2>/dev/null || '
         'tmux new-session -d -s $quotedName; '
         'tmux set-option -t $quotedName -q @ssh_mobile_auto_delete_seconds $seconds; '
+        'tmux set-option -t $quotedName -q status off; '
         'tmux run-shell -b ${shellQuote(idleWatcher)}; '
         'tmux attach-session -t $quotedName; '
         'else echo "tmux is not installed on this server"; exit 127; fi';

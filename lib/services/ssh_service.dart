@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 
+import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 
@@ -85,6 +87,7 @@ class SshService extends ChangeNotifier {
   final TerminalHistoryService _historyService = TerminalHistoryService();
 
   final Map<String, SshSession> _sessions = {};
+  final Map<String, _LocalSshRuntime> _localRuntimes = {};
   final Map<String, Completer<void>> _connectCompleters = {};
   final Set<String> _closingSessionIds = {};
   final Random _random = Random();
@@ -97,7 +100,19 @@ class SshService extends ChangeNotifier {
   bool _restoredTmuxSessions = false;
 
   SshService(this._storageService) {
-    _listenToBackgroundService();
+    if (_usesBackgroundService) {
+      _listenToBackgroundService();
+    } else {
+      AppLogService.instance.info(
+        'Background SSH service disabled on this platform',
+      );
+    }
+  }
+
+  bool get _usesBackgroundService {
+    return !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.android ||
+            defaultTargetPlatform == TargetPlatform.iOS);
   }
 
   List<SshSession> get sessions => List.unmodifiable(_sessions.values);
@@ -343,7 +358,8 @@ class SshService extends ChangeNotifier {
     session.updatedAt = DateTime.now();
     _lastErrorMessage = null;
     _lastSessionId = id;
-    _connectCompleters[id] = Completer<void>();
+    final connectCompleter = Completer<void>();
+    _connectCompleters[id] = connectCompleter;
     unawaited(_saveTerminalHistoryRecord(session));
     AppLogService.instance.info(
       'Session connecting',
@@ -355,13 +371,15 @@ class SshService extends ChangeNotifier {
     try {
       final password = await _storageService.getPassword(connectionId);
       final privateKey = await _storageService.getPrivateKey(connectionId);
-
-      await BackgroundServiceManager.start(
-        connectionName: _notificationSummary(),
+      _validateAuthSecrets(
+        config: config,
+        password: password,
+        privateKey: privateKey,
       );
+
       session.tmuxSessionName ??= config.launchMode == TerminalLaunchMode.tmux
           ? _uniqueTmuxSessionName(
-              _sanitizeTmuxSessionName(session.displayName),
+              _tmuxSessionNameForSession(session),
               exceptSessionId: id,
             )
           : null;
@@ -371,37 +389,50 @@ class SshService extends ChangeNotifier {
           details: 'sessionId=$id tmux=${session.tmuxSessionName}',
         );
       }
-      _backgroundService.invoke('sshConnect', {
-        'sessionId': id,
-        'id': config.id,
-        'name': config.name,
-        'host': config.host,
-        'port': config.port,
-        'username': config.username,
-        'password': password,
-        'privateKey': privateKey,
-        'authMethod': config.authMethod.name,
-        'terminalWidth': config.terminalWidth,
-        'terminalHeight': config.terminalHeight,
-        'keepAliveInterval': 3,
-        'launchMode': config.launchMode.name,
-        'tmuxSessionName': session.tmuxSessionName,
-        'tmuxAutoDeleteSeconds': config.tmuxAutoDeleteSeconds,
-      });
+      if (_usesBackgroundService) {
+        await BackgroundServiceManager.start(
+          connectionName: _notificationSummary(),
+        );
+        _backgroundService.invoke('sshConnect', {
+          'sessionId': id,
+          'id': config.id,
+          'name': config.name,
+          'host': config.host,
+          'port': config.port,
+          'username': config.username,
+          'password': password,
+          'privateKey': privateKey,
+          'authMethod': config.authMethod.name,
+          'terminalWidth': config.terminalWidth,
+          'terminalHeight': config.terminalHeight,
+          'keepAliveInterval': 3,
+          'launchMode': config.launchMode.name,
+          'tmuxSessionName': session.tmuxSessionName,
+          'tmuxAutoDeleteSeconds': config.tmuxAutoDeleteSeconds,
+        });
+      } else {
+        await _connectLocalSession(
+          session: session,
+          config: config,
+          password: password,
+          privateKey: privateKey,
+        );
+      }
 
-      await _connectCompleters[id]!.future.timeout(
-            const Duration(seconds: 30),
-          );
+      await connectCompleter.future.timeout(
+        const Duration(seconds: 30),
+      );
     } on TimeoutException {
       AppLogService.instance.error(
         'Session connect timed out',
         details: 'sessionId=$id connection=${config.name}',
       );
       _setSessionError(id, connectionId, config.name, 'Connection timed out');
-    } catch (e) {
+    } catch (e, stackTrace) {
       AppLogService.instance.error(
         'Session connect failed',
         error: e,
+        stackTrace: stackTrace,
         details: 'sessionId=$id connection=${config.name}',
       );
       _setSessionError(id, connectionId, config.name, 'Connection failed: $e');
@@ -412,7 +443,11 @@ class SshService extends ChangeNotifier {
     AppLogService.instance
         .info('Disconnecting session', details: 'sessionId=$sessionId');
     _closingSessionIds.add(sessionId);
-    _backgroundService.invoke('sshDisconnect', {'sessionId': sessionId});
+    if (_usesBackgroundService) {
+      _backgroundService.invoke('sshDisconnect', {'sessionId': sessionId});
+    } else {
+      await _closeLocalSession(sessionId, destroyTmux: true);
+    }
     final session = _sessions.remove(sessionId);
     if (session != null) {
       session.state = SshConnectionState.disconnected;
@@ -455,7 +490,13 @@ class SshService extends ChangeNotifier {
       details: 'count=${_sessions.length}',
     );
     _closingSessionIds.addAll(_sessions.keys);
-    _backgroundService.invoke('sshDisconnectAll');
+    if (_usesBackgroundService) {
+      _backgroundService.invoke('sshDisconnectAll');
+    } else {
+      for (final sessionId in _sessions.keys.toList()) {
+        await _closeLocalSession(sessionId, destroyTmux: true);
+      }
+    }
     for (final session in _sessions.values) {
       session.state = SshConnectionState.disconnected;
       session.errorMessage = 'Closed by user';
@@ -474,26 +515,266 @@ class SshService extends ChangeNotifier {
   void resizeTerminal(String sessionId, int width, int height) {
     final session = _sessions[sessionId];
     if (session?.isConnected == true) {
-      _backgroundService.invoke('sshResize', {
-        'sessionId': sessionId,
-        'width': width,
-        'height': height,
-      });
+      if (_usesBackgroundService) {
+        _backgroundService.invoke('sshResize', {
+          'sessionId': sessionId,
+          'width': width,
+          'height': height,
+        });
+      } else {
+        _localRuntimes[sessionId]?.shell.resizeTerminal(width, height);
+      }
     }
   }
 
   void sendData(String sessionId, String data) {
     final session = _sessions[sessionId];
     if (session?.isConnected == true) {
-      _backgroundService.invoke('sshInput', {
-        'sessionId': sessionId,
-        'data': data,
-      });
+      if (_usesBackgroundService) {
+        _backgroundService.invoke('sshInput', {
+          'sessionId': sessionId,
+          'data': data,
+        });
+      } else {
+        _localRuntimes[sessionId]?.shell.stdin.add(utf8.encode(data));
+      }
     }
   }
 
   void sendBytes(String sessionId, Uint8List data) {
     sendData(sessionId, String.fromCharCodes(data));
+  }
+
+  void _validateAuthSecrets({
+    required ConnectionConfig config,
+    required String? password,
+    required String? privateKey,
+  }) {
+    final hasPassword = password?.isNotEmpty == true;
+    final hasPrivateKey = privateKey?.isNotEmpty == true;
+
+    switch (config.authMethod) {
+      case AuthMethod.password:
+        if (!hasPassword) {
+          throw StateError(
+            'Password is missing for this connection. Please edit the server '
+            'configuration and save the password again on this device.',
+          );
+        }
+        break;
+      case AuthMethod.privateKey:
+        if (!hasPrivateKey) {
+          throw StateError(
+            'Private key is missing for this connection. Please edit the '
+            'server configuration and save the private key again on this device.',
+          );
+        }
+        break;
+      case AuthMethod.both:
+        if (!hasPrivateKey || !hasPassword) {
+          throw StateError(
+            'Password or private key is missing for this connection. Please '
+            'edit the server configuration and save both credentials again on '
+            'this device.',
+          );
+        }
+        break;
+    }
+  }
+
+  Future<void> _connectLocalSession({
+    required SshSession session,
+    required ConnectionConfig config,
+    required String? password,
+    required String? privateKey,
+  }) async {
+    await _closeLocalSession(session.id, destroyTmux: false);
+    AppLogService.instance.info(
+      'Connecting SSH locally',
+      details: 'sessionId=${session.id} host=${config.host}:${config.port}',
+    );
+
+    final socket = await SSHSocket.connect(
+      config.host,
+      config.port,
+      timeout: const Duration(seconds: 15),
+    );
+    final identities = (config.authMethod == AuthMethod.privateKey ||
+                config.authMethod == AuthMethod.both) &&
+            privateKey?.isNotEmpty == true
+        ? SSHKeyPair.fromPem(privateKey!, password)
+        : null;
+    final client = SSHClient(
+      socket,
+      username: config.username,
+      identities: identities,
+      onPasswordRequest: () {
+        if (config.authMethod == AuthMethod.privateKey) return null;
+        return password!;
+      },
+    );
+
+    if (config.launchMode == TerminalLaunchMode.tmux) {
+      await _ensureLocalTmuxInstalled(client);
+    }
+
+    final shell = await client.shell(
+      pty: SSHPtyConfig(
+        width: config.terminalWidth,
+        height: config.terminalHeight,
+        type: 'xterm-256color',
+      ),
+    );
+    final runtime = _LocalSshRuntime(
+      sessionId: session.id,
+      client: client,
+      shell: shell,
+      tmuxSessionName: config.launchMode == TerminalLaunchMode.tmux
+          ? session.tmuxSessionName
+          : null,
+    );
+    _localRuntimes[session.id] = runtime;
+
+    runtime.stdoutSub = shell.stdout.listen(
+      (bytes) => _handleLocalOutput(session.id, bytes),
+      onError: (Object error) {
+        _handleLocalDisconnect(session.id, 'SSH stdout error: $error');
+      },
+      onDone: () {
+        _handleLocalDisconnect(session.id, 'SSH connection closed');
+      },
+    );
+    runtime.stderrSub = shell.stderr.listen(
+      (bytes) => _handleLocalOutput(session.id, bytes),
+    );
+
+    if (config.launchMode == TerminalLaunchMode.tmux) {
+      shell.stdin.add(
+        utf8.encode(
+          '${_buildTmuxAttachCommand(
+            session.tmuxSessionName ?? config.name,
+            config.tmuxAutoDeleteSeconds,
+          )}\r',
+        ),
+      );
+    }
+
+    runtime.keepAliveTimer = Timer.periodic(
+      Duration(seconds: config.keepAliveInterval.clamp(3, 30)),
+      (_) async {
+        if (runtime.pingInFlight) return;
+        runtime.pingInFlight = true;
+        try {
+          await client.ping().timeout(const Duration(seconds: 10));
+          runtime.keepAliveFailures = 0;
+        } catch (e) {
+          runtime.keepAliveFailures++;
+          AppLogService.instance.warning(
+            'Local SSH keep-alive failed',
+            details:
+                'sessionId=${session.id} failures=${runtime.keepAliveFailures} error=$e',
+          );
+          _handleLocalDisconnect(session.id, 'SSH keep-alive failed: $e');
+        } finally {
+          runtime.pingInFlight = false;
+        }
+      },
+    );
+
+    session.state = SshConnectionState.connected;
+    session.errorMessage = null;
+    session.updatedAt = DateTime.now();
+    _completeConnect(session.id);
+    unawaited(_saveRestorableTmuxSession(session));
+    unawaited(_saveTerminalHistoryRecord(session));
+    AppLogService.instance.info(
+      'Local SSH session connected',
+      details: 'sessionId=${session.id} connection=${config.name}',
+    );
+    notifyListeners();
+  }
+
+  void _handleLocalOutput(String sessionId, List<int> bytes) {
+    final data = utf8.decode(bytes, allowMalformed: true);
+    _sessions[sessionId]?.addOutput(data);
+    unawaited(_historyService.append(sessionId, data));
+  }
+
+  void _handleLocalDisconnect(String sessionId, String message) {
+    if (_closingSessionIds.contains(sessionId)) return;
+    final runtime = _localRuntimes.remove(sessionId);
+    runtime?.close();
+    final session = _sessions[sessionId];
+    if (session == null || session.state == SshConnectionState.disconnected) {
+      return;
+    }
+    session.state = SshConnectionState.disconnected;
+    session.errorMessage = message;
+    session.updatedAt = DateTime.now();
+    _completeConnect(sessionId);
+    unawaited(_saveTerminalHistoryRecord(session));
+    AppLogService.instance.warning(
+      'Local SSH session disconnected',
+      details: 'sessionId=$sessionId message=$message',
+    );
+    notifyListeners();
+  }
+
+  Future<void> _closeLocalSession(
+    String sessionId, {
+    required bool destroyTmux,
+  }) async {
+    final runtime = _localRuntimes.remove(sessionId);
+    if (runtime == null) return;
+    if (destroyTmux && runtime.tmuxSessionName?.isNotEmpty == true) {
+      try {
+        await runtime.client
+            .run(
+                'tmux kill-session -t ${_shellQuote(runtime.tmuxSessionName!)}')
+            .timeout(const Duration(seconds: 3));
+      } catch (_) {}
+    }
+    runtime.close();
+  }
+
+  Future<void> _ensureLocalTmuxInstalled(SSHClient client) async {
+    late final SSHRunResult result;
+    try {
+      result = await client
+          .runWithResult('command -v tmux >/dev/null 2>&1')
+          .timeout(const Duration(seconds: 8));
+    } catch (e) {
+      throw StateError(
+        'Unable to check tmux on this server. Please install tmux manually '
+        'on the server and try again. Detail: $e',
+      );
+    }
+    if (result.exitCode == 0) return;
+    throw StateError(
+      'tmux is not installed on this server. Please install tmux manually '
+      'on the server and try again.',
+    );
+  }
+
+  String _buildTmuxAttachCommand(String sessionName, int autoDeleteSeconds) {
+    final safeName = _sanitizeTmuxSessionName(sessionName);
+    final quotedName = _shellQuote(safeName);
+    final seconds = autoDeleteSeconds.clamp(30, 86400);
+    final idleWatcher = 'idle_start=0; interval=5; '
+        'while tmux has-session -t $quotedName 2>/dev/null; do '
+        'if tmux list-clients -t $quotedName 2>/dev/null | grep -q .; then '
+        'idle_start=0; '
+        'else now=\$(date +%s); '
+        'if [ "\$idle_start" -eq 0 ]; then idle_start=\$now; fi; '
+        'if [ \$((now - idle_start)) -ge $seconds ]; then '
+        'tmux kill-session -t $quotedName 2>/dev/null; exit; fi; '
+        'fi; sleep \$interval; done';
+    return 'tmux has-session -t $quotedName 2>/dev/null || '
+        'tmux new-session -d -s $quotedName; '
+        'tmux set-option -t $quotedName -q @ssh_mobile_auto_delete_seconds $seconds; '
+        'tmux set-option -t $quotedName -q status off; '
+        'tmux run-shell -b ${_shellQuote(idleWatcher)}; '
+        'tmux attach-session -t $quotedName';
   }
 
   String _createSessionId(String connectionId) {
@@ -505,11 +786,49 @@ class SshService extends ChangeNotifier {
   String _sanitizeTmuxSessionName(String name) {
     final sanitized = name
         .trim()
-        .replaceAll(RegExp(r'[^A-Za-z0-9_.-]+'), '_')
+        // tmux treats "." as a target separator: session.window. Keep session
+        // names to plain safe characters so domains like hejulian.cn do not
+        // become an invalid tmux target.
+        .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_')
         .replaceAll(RegExp(r'_+'), '_')
         .replaceAll(RegExp(r'^_+|_+$'), '');
     if (sanitized.isEmpty) return 'ssh_mobile';
     return sanitized.length > 80 ? sanitized.substring(0, 80) : sanitized;
+  }
+
+  String _tmuxSessionNameForSession(SshSession session) {
+    final readableName = _sanitizeTmuxSessionName(session.displayName);
+    final timestamp = _compactTmuxTimestamp(session.createdAt);
+    final suffix = '${timestamp}_${_stableSessionIdSuffix(session.id)}';
+    final maxReadableLength = 80 - suffix.length - 1;
+    final readablePrefix = readableName.length > maxReadableLength
+        ? readableName.substring(0, maxReadableLength)
+        : readableName;
+    return _sanitizeTmuxSessionName('${readablePrefix}_$suffix');
+  }
+
+  String _compactTmuxTimestamp(DateTime time) {
+    final local = time.toLocal();
+    String twoDigits(int value) => value.toString().padLeft(2, '0');
+    return '${local.year}'
+        '${twoDigits(local.month)}'
+        '${twoDigits(local.day)}'
+        '${twoDigits(local.hour)}'
+        '${twoDigits(local.minute)}'
+        '${twoDigits(local.second)}';
+  }
+
+  String _stableSessionIdSuffix(String sessionId) {
+    var hash = 0x811c9dc5;
+    for (final codeUnit in sessionId.codeUnits) {
+      hash ^= codeUnit;
+      hash = (hash * 0x01000193) & 0xffffffff;
+    }
+    return hash.toRadixString(16).padLeft(8, '0');
+  }
+
+  String _shellQuote(String value) {
+    return "'${value.replaceAll("'", "'\"'\"'")}'";
   }
 
   bool _isTmuxSessionNameTaken(String name, {String? exceptSessionId}) {
@@ -763,10 +1082,40 @@ class SshService extends ChangeNotifier {
     _keepAliveSub?.cancel();
     _appLogSub?.cancel();
     unawaited(_historyService.flush());
+    for (final runtime in _localRuntimes.values) {
+      runtime.close();
+    }
     for (final session in _sessions.values) {
       session.close();
     }
     super.dispose();
+  }
+}
+
+class _LocalSshRuntime {
+  final String sessionId;
+  final SSHClient client;
+  final SSHSession shell;
+  final String? tmuxSessionName;
+  StreamSubscription<List<int>>? stdoutSub;
+  StreamSubscription<List<int>>? stderrSub;
+  Timer? keepAliveTimer;
+  bool pingInFlight = false;
+  int keepAliveFailures = 0;
+
+  _LocalSshRuntime({
+    required this.sessionId,
+    required this.client,
+    required this.shell,
+    required this.tmuxSessionName,
+  });
+
+  void close() {
+    keepAliveTimer?.cancel();
+    stdoutSub?.cancel();
+    stderrSub?.cancel();
+    shell.close();
+    client.close();
   }
 }
 

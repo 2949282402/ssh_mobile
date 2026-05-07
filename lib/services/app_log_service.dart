@@ -76,13 +76,15 @@ class AppLogService extends ChangeNotifier {
     StackTrace? stackTrace,
     String? details,
   }) {
+    final safeMessage = _redact(message);
+    final safeDetails = details == null ? null : _redact(details);
     _entries.addLast(
       AppLogEntry(
         time: DateTime.now(),
         level: level,
-        message: message,
+        message: safeMessage,
         stackTrace: stackTrace?.toString(),
-        details: details,
+        details: safeDetails,
       ),
     );
     while (_entries.length > _maxEntries) {
@@ -94,6 +96,33 @@ class AppLogService extends ChangeNotifier {
   void clear() {
     _entries.clear();
     notifyListeners();
+  }
+
+  String _redact(String value) {
+    var text = value;
+    final patterns = <RegExp>[
+      RegExp(
+        r'-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----',
+        caseSensitive: false,
+      ),
+      RegExp(
+        r'(password|passwd|pwd|privateKey|private_key|token|access_token|secret)\s*[:=]\s*[^,\s}\]]+',
+        caseSensitive: false,
+      ),
+      RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]+', caseSensitive: false),
+    ];
+
+    for (final pattern in patterns) {
+      text = text.replaceAllMapped(pattern, (match) {
+        final matched = match.group(0) ?? '';
+        final separatorIndex = matched.indexOf(RegExp(r'[:=]'));
+        if (separatorIndex > 0 && !matched.toLowerCase().startsWith('bearer')) {
+          return '${matched.substring(0, separatorIndex + 1)}[REDACTED]';
+        }
+        return '[REDACTED]';
+      });
+    }
+    return text;
   }
 }
 

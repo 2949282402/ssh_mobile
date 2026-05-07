@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 
 import '../models/connection.dart';
 import '../services/app_settings.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
+import '../utils/responsive.dart';
 import '../widgets/connection_progress_dialog.dart';
 import '../widgets/window_name_dialog.dart';
 import 'developer_log_screen.dart';
@@ -47,11 +49,25 @@ class _HomeScreenState extends State<HomeScreen> {
     final settings = context.watch<AppSettings>();
     final strings = AppStrings(settings.language);
     final connections = storage.connections;
+    final desktop = isDesktopLayout(context);
+    final content = PageView(
+      controller: _pageController,
+      onPageChanged: (index) => setState(() => _selectedIndex = index),
+      children: [
+        const DeveloperLogPage(),
+        connections.isEmpty
+            ? storage.initialized
+                ? _buildEmptyState(context, strings)
+                : _buildLoadingState()
+            : _buildConnectionList(context, connections, ssh, strings),
+        const TerminalWindowsPage(),
+      ],
+    );
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'SSH Mobile',
+        title: Text(
+          _appTitle,
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
         actions: [
@@ -74,19 +90,9 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: PageView(
-        controller: _pageController,
-        onPageChanged: (index) => setState(() => _selectedIndex = index),
-        children: [
-          const DeveloperLogPage(),
-          connections.isEmpty
-              ? storage.initialized
-                  ? _buildEmptyState(context, strings)
-                  : _buildLoadingState()
-              : _buildConnectionList(context, connections, ssh, strings),
-          const TerminalWindowsPage(),
-        ],
-      ),
+      body: desktop
+          ? _buildDesktopShell(context, content, ssh, strings)
+          : content,
       floatingActionButton: _selectedIndex == _serverPage
           ? FloatingActionButton(
               onPressed: () => _addConnection(context),
@@ -94,39 +100,134 @@ class _HomeScreenState extends State<HomeScreen> {
               child: const Icon(Icons.add),
             )
           : null,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _navigationIndex,
-        onDestinationSelected: _switchNavigationPage,
-        destinations: [
-          NavigationDestination(
-            icon: const Icon(Icons.dns_outlined),
-            selectedIcon: const Icon(Icons.dns_rounded),
-            label: strings.servers,
-          ),
-          NavigationDestination(
-            icon: ssh.sessions.isEmpty
-                ? const Icon(Icons.tab_outlined)
-                : Badge(
-                    label: Text('${ssh.sessions.length}'),
-                    child: const Icon(Icons.tab_outlined),
-                  ),
-            selectedIcon: ssh.sessions.isEmpty
-                ? const Icon(Icons.tab_rounded)
-                : Badge(
-                    label: Text('${ssh.sessions.length}'),
-                    child: const Icon(Icons.tab_rounded),
-                  ),
-            label: strings.windows,
-          ),
-        ],
-      ),
+      bottomNavigationBar:
+          desktop ? null : _buildBottomNavigation(context, ssh, strings),
     );
   }
 
-  int get _navigationIndex => _selectedIndex == _windowPage ? 1 : 0;
+  Widget _buildDesktopShell(
+    BuildContext context,
+    Widget content,
+    SshService ssh,
+    AppStrings strings,
+  ) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final width = MediaQuery.sizeOf(context).width;
+    final extended = width >= AppBreakpoints.wideDesktop;
+
+    return Row(
+      children: [
+        NavigationRail(
+          extended: extended,
+          selectedIndex: _navigationIndex,
+          onDestinationSelected: _switchNavigationPage,
+          backgroundColor: colorScheme.surface,
+          indicatorColor: colorScheme.primary.withValues(alpha: 0.12),
+          destinations: [
+            NavigationRailDestination(
+              icon: const Icon(Icons.article_outlined),
+              selectedIcon: const Icon(Icons.article_rounded),
+              label: Text(strings.logs),
+            ),
+            NavigationRailDestination(
+              icon: const Icon(Icons.dns_outlined),
+              selectedIcon: const Icon(Icons.dns_rounded),
+              label: Text(strings.servers),
+            ),
+            NavigationRailDestination(
+              icon: _windowIcon(ssh, selected: false),
+              selectedIcon: _windowIcon(ssh, selected: true),
+              label: Text(strings.windows),
+            ),
+          ],
+        ),
+        VerticalDivider(
+          width: 1,
+          thickness: 1,
+          color: colorScheme.outlineVariant,
+        ),
+        Expanded(child: content),
+      ],
+    );
+  }
+
+  Widget _buildBottomNavigation(
+    BuildContext context,
+    SshService ssh,
+    AppStrings strings,
+  ) {
+    return NavigationBar(
+      selectedIndex: _navigationIndex,
+      onDestinationSelected: _switchNavigationPage,
+      destinations: [
+        NavigationDestination(
+          icon: const Icon(Icons.article_outlined),
+          selectedIcon: const Icon(Icons.article_rounded),
+          label: strings.logs,
+        ),
+        NavigationDestination(
+          icon: const Icon(Icons.dns_outlined),
+          selectedIcon: const Icon(Icons.dns_rounded),
+          label: strings.servers,
+        ),
+        NavigationDestination(
+          icon: _windowIcon(ssh, selected: false),
+          selectedIcon: _windowIcon(ssh, selected: true),
+          label: strings.windows,
+        ),
+      ],
+    );
+  }
+
+  Widget _windowIcon(SshService ssh, {required bool selected}) {
+    final icon = Icon(selected ? Icons.tab_rounded : Icons.tab_outlined);
+    if (ssh.sessions.isEmpty) return icon;
+    return Badge(label: Text('${ssh.sessions.length}'), child: icon);
+  }
+
+  String get _appTitle {
+    if (!kIsWeb) {
+      switch (defaultTargetPlatform) {
+        case TargetPlatform.windows:
+          return 'SSH Windows';
+        case TargetPlatform.macOS:
+          return 'SSH Mac';
+        case TargetPlatform.android:
+        case TargetPlatform.iOS:
+          return 'SSH Mobile';
+        case TargetPlatform.linux:
+        case TargetPlatform.fuchsia:
+          break;
+      }
+    }
+    return 'SSH Mobile';
+  }
+
+  int get _navigationIndex {
+    switch (_selectedIndex) {
+      case _logPage:
+        return 0;
+      case _windowPage:
+        return 2;
+      case _serverPage:
+      default:
+        return 1;
+    }
+  }
 
   void _switchNavigationPage(int index) {
-    _switchPage(index == 0 ? _serverPage : _windowPage);
+    switch (index) {
+      case 0:
+        _switchPage(_logPage);
+        break;
+      case 2:
+        _switchPage(_windowPage);
+        break;
+      case 1:
+      default:
+        _switchPage(_serverPage);
+        break;
+    }
   }
 
   void _switchPage(int index) {
@@ -206,180 +307,246 @@ class _HomeScreenState extends State<HomeScreen> {
     SshService ssh,
     AppStrings strings,
   ) {
-    return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 88),
-      itemCount: connections.length + 1,
-      itemBuilder: (context, index) {
-        if (index == 0) {
-          return _buildOverviewHeader(context, connections, ssh, strings);
-        }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final desktop = constraints.maxWidth >= AppBreakpoints.desktop;
+        final columns = constraints.maxWidth >= AppBreakpoints.wideDesktop
+            ? 3
+            : desktop
+                ? 2
+                : 1;
+        final horizontalPadding = desktop ? 24.0 : 12.0;
+        final maxContentWidth = desktop ? 1480.0 : double.infinity;
 
-        final conn = connections[index - 1];
-        final isActive = ssh.hasConnectedSession(conn.id);
-        final sessionCount = ssh.sessionCountForConnection(conn.id);
-        final isConnecting = ssh.latestSessionForConnection(conn.id)?.state ==
-            SshConnectionState.connecting;
-        final colorScheme = Theme.of(context).colorScheme;
-        final primary = colorScheme.primary;
-        final success = colorScheme.secondary;
-        final cardColor = _panelColor(context);
-        final textColor = _panelTextColor(context);
-        final mutedTextColor = _panelMutedTextColor(context);
-        final borderColor = isActive
-            ? success.withValues(alpha: 0.42)
-            : _panelBorderColor(context);
-
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(8),
-            onTap: () => _connectToServer(context, conn),
-            child: Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: cardColor,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: borderColor),
-                boxShadow: _panelShadow(context),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: isActive
-                          ? success.withValues(alpha: 0.15)
-                          : primary.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Icon(
-                      _getStatusIcon(conn, ssh),
-                      color: isActive ? success : primary,
-                      size: 24,
+        return Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: maxContentWidth),
+            child: CustomScrollView(
+              slivers: [
+                SliverPadding(
+                  padding: EdgeInsets.fromLTRB(
+                    horizontalPadding,
+                    desktop ? 18 : 8,
+                    horizontalPadding,
+                    0,
+                  ),
+                  sliver: SliverToBoxAdapter(
+                    child: _buildOverviewHeader(
+                      context,
+                      connections,
+                      ssh,
+                      strings,
                     ),
                   ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          conn.name,
-                          style: TextStyle(
-                            color: textColor,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
+                ),
+                if (columns == 1)
+                  SliverPadding(
+                    padding: EdgeInsets.fromLTRB(
+                      horizontalPadding,
+                      0,
+                      horizontalPadding,
+                      88,
+                    ),
+                    sliver: SliverList.separated(
+                      itemCount: connections.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 10),
+                      itemBuilder: (context, index) => _buildConnectionCard(
+                        context,
+                        connections[index],
+                        ssh,
+                        strings,
+                      ),
+                    ),
+                  )
+                else
+                  SliverPadding(
+                    padding: EdgeInsets.fromLTRB(
+                      horizontalPadding,
+                      0,
+                      horizontalPadding,
+                      88,
+                    ),
+                    sliver: SliverGrid(
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) => _buildConnectionCard(
+                          context,
+                          connections[index],
+                          ssh,
+                          strings,
                         ),
-                        const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.dns_outlined,
-                              size: 13,
-                              color: mutedTextColor.withValues(alpha: 0.72),
-                            ),
-                            const SizedBox(width: 5),
-                            Expanded(
-                              child: Text(
-                                '${conn.username}@${conn.host}:${conn.port}',
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: mutedTextColor,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
+                        childCount: connections.length,
+                      ),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: columns,
+                        crossAxisSpacing: 14,
+                        mainAxisSpacing: 14,
+                        mainAxisExtent: 108,
+                      ),
                     ),
                   ),
-                  if (isConnecting)
-                    const SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  else
-                    PopupMenuButton<String>(
-                      icon: Icon(
-                        Icons.more_vert,
-                        color: mutedTextColor,
-                      ),
-                      onSelected: (action) =>
-                          _handleAction(context, conn, action),
-                      itemBuilder: (_) => [
-                        PopupMenuItem(
-                          value: 'new_terminal',
-                          child: Row(
-                            children: [
-                              const Icon(Icons.add_to_photos, size: 18),
-                              const SizedBox(width: 8),
-                              Text(strings.newWindow),
-                            ],
-                          ),
-                        ),
-                        PopupMenuItem(
-                          value: 'edit',
-                          child: Row(
-                            children: [
-                              const Icon(Icons.edit, size: 18),
-                              const SizedBox(width: 8),
-                              Text(strings.edit),
-                            ],
-                          ),
-                        ),
-                        PopupMenuItem(
-                          value: 'delete',
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.delete,
-                                size: 18,
-                                color: Colors.red,
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                strings.delete,
-                                style: const TextStyle(color: Colors.red),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  if (sessionCount > 0) ...[
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 7,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: success.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(
-                          color: success.withValues(alpha: 0.35),
-                        ),
-                      ),
-                      child: Text(
-                        '$sessionCount',
-                        style: TextStyle(
-                          color: success,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
+              ],
             ),
           ),
         );
       },
+    );
+  }
+
+  Widget _buildConnectionCard(
+    BuildContext context,
+    ConnectionConfig conn,
+    SshService ssh,
+    AppStrings strings,
+  ) {
+    final isActive = ssh.hasConnectedSession(conn.id);
+    final sessionCount = ssh.sessionCountForConnection(conn.id);
+    final isConnecting = ssh.latestSessionForConnection(conn.id)?.state ==
+        SshConnectionState.connecting;
+    final colorScheme = Theme.of(context).colorScheme;
+    final primary = colorScheme.primary;
+    final success = colorScheme.secondary;
+    final cardColor = _panelColor(context);
+    final textColor = _panelTextColor(context);
+    final mutedTextColor = _panelMutedTextColor(context);
+    final borderColor =
+        isActive ? success.withValues(alpha: 0.42) : _panelBorderColor(context);
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => _connectToServer(context, conn),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: cardColor,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: borderColor),
+          boxShadow: _panelShadow(context),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: isActive
+                    ? success.withValues(alpha: 0.15)
+                    : primary.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                _getStatusIcon(conn, ssh),
+                color: isActive ? success : primary,
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    conn.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.dns_outlined,
+                        size: 13,
+                        color: mutedTextColor.withValues(alpha: 0.72),
+                      ),
+                      const SizedBox(width: 5),
+                      Expanded(
+                        child: Text(
+                          '${conn.username}@${conn.host}:${conn.port}',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: mutedTextColor,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            if (isConnecting)
+              const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              PopupMenuButton<String>(
+                icon: Icon(Icons.more_vert, color: mutedTextColor),
+                onSelected: (action) => _handleAction(context, conn, action),
+                itemBuilder: (_) => [
+                  PopupMenuItem(
+                    value: 'new_terminal',
+                    child: Row(
+                      children: [
+                        const Icon(Icons.add_to_photos, size: 18),
+                        const SizedBox(width: 8),
+                        Text(strings.newWindow),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'edit',
+                    child: Row(
+                      children: [
+                        const Icon(Icons.edit, size: 18),
+                        const SizedBox(width: 8),
+                        Text(strings.edit),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        const Icon(Icons.delete, size: 18, color: Colors.red),
+                        const SizedBox(width: 8),
+                        Text(
+                          strings.delete,
+                          style: const TextStyle(color: Colors.red),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            if (sessionCount > 0) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                decoration: BoxDecoration(
+                  color: success.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: success.withValues(alpha: 0.35)),
+                ),
+                child: Text(
+                  '$sessionCount',
+                  style: TextStyle(
+                    color: success,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 

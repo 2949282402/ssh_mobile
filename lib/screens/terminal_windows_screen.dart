@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../services/app_settings.dart';
 import '../services/ssh_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/responsive.dart';
 
 class TerminalWindowsScreen extends StatelessWidget {
   const TerminalWindowsScreen({super.key});
@@ -45,16 +46,75 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
         Expanded(
           child: sessions.isEmpty
               ? _buildEmptyState(context, strings)
-              : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
-                  itemCount: sessions.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (context, index) {
-                    return _buildWindowItem(context, sessions[index], strings);
-                  },
-                ),
+              : _buildWindowList(context, sessions, strings),
         ),
       ],
+    );
+  }
+
+  Widget _buildWindowList(
+    BuildContext context,
+    List<SshSession> sessions,
+    AppStrings strings,
+  ) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final desktop = constraints.maxWidth >= AppBreakpoints.desktop;
+        final columns = constraints.maxWidth >= AppBreakpoints.wideDesktop
+            ? 3
+            : desktop
+                ? 2
+                : 1;
+        final horizontalPadding = desktop ? 24.0 : 12.0;
+
+        return Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: desktop ? 1480 : double.infinity,
+            ),
+            child: columns == 1
+                ? ListView.separated(
+                    padding: EdgeInsets.fromLTRB(
+                      horizontalPadding,
+                      8,
+                      horizontalPadding,
+                      24,
+                    ),
+                    itemCount: sessions.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (context, index) {
+                      return _buildWindowItem(
+                        context,
+                        sessions[index],
+                        strings,
+                      );
+                    },
+                  )
+                : GridView.builder(
+                    padding: EdgeInsets.fromLTRB(
+                      horizontalPadding,
+                      18,
+                      horizontalPadding,
+                      24,
+                    ),
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: columns,
+                      crossAxisSpacing: 14,
+                      mainAxisSpacing: 14,
+                      mainAxisExtent: 210,
+                    ),
+                    itemCount: sessions.length,
+                    itemBuilder: (context, index) {
+                      return _buildWindowItem(
+                        context,
+                        sessions[index],
+                        strings,
+                      );
+                    },
+                  ),
+          ),
+        );
+      },
     );
   }
 

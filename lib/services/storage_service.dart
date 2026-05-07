@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/connection.dart';
 import 'app_log_service.dart';
+import 'data_protection_service.dart';
 
 class StorageService extends ChangeNotifier {
   static const _connectionsKey = 'ssh_connections';
@@ -15,6 +16,7 @@ class StorageService extends ChangeNotifier {
 
   SharedPreferences? _prefs;
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
+  final DataProtectionService _dataProtection = DataProtectionService.instance;
 
   List<ConnectionConfig> _connections = [];
   bool _initialized = false;
@@ -44,7 +46,7 @@ class StorageService extends ChangeNotifier {
   }
 
   Future<void> _loadConnections() async {
-    final jsonStr = _prefs?.getString(_connectionsKey);
+    final jsonStr = await _readProtectedPref(_connectionsKey);
     if (jsonStr == null || jsonStr.isEmpty) {
       _connections = [];
       return;
@@ -67,7 +69,7 @@ class StorageService extends ChangeNotifier {
     if (!_initialized || _prefs == null) return;
     final jsonStr =
         jsonEncode(_connections.map((item) => item.toJson()).toList());
-    await _prefs!.setString(_connectionsKey, jsonStr);
+    await _writeProtectedPref(_connectionsKey, jsonStr);
   }
 
   Future<void> addConnection(ConnectionConfig config) async {
@@ -139,7 +141,7 @@ class StorageService extends ChangeNotifier {
 
   Future<List<RestorableTmuxSession>> loadRestorableTmuxSessions() async {
     if (!_initialized || _prefs == null) return [];
-    final jsonStr = _prefs?.getString(_restorableTmuxSessionsKey);
+    final jsonStr = await _readProtectedPref(_restorableTmuxSessionsKey);
     if (jsonStr == null || jsonStr.isEmpty) return [];
 
     try {
@@ -190,7 +192,7 @@ class StorageService extends ChangeNotifier {
 
   Future<List<TerminalHistoryRecord>> loadTerminalHistoryRecords() async {
     if (!_initialized || _prefs == null) return [];
-    final jsonStr = _prefs?.getString(_terminalHistoryRecordsKey);
+    final jsonStr = await _readProtectedPref(_terminalHistoryRecordsKey);
     if (jsonStr == null || jsonStr.isEmpty) return [];
 
     try {
@@ -232,14 +234,26 @@ class StorageService extends ChangeNotifier {
     List<RestorableTmuxSession> sessions,
   ) async {
     final jsonStr = jsonEncode(sessions.map((item) => item.toJson()).toList());
-    await _prefs!.setString(_restorableTmuxSessionsKey, jsonStr);
+    await _writeProtectedPref(_restorableTmuxSessionsKey, jsonStr);
   }
 
   Future<void> _saveTerminalHistoryRecords(
     List<TerminalHistoryRecord> records,
   ) async {
     final jsonStr = jsonEncode(records.map((item) => item.toJson()).toList());
-    await _prefs!.setString(_terminalHistoryRecordsKey, jsonStr);
+    await _writeProtectedPref(_terminalHistoryRecordsKey, jsonStr);
+  }
+
+  Future<String?> _readProtectedPref(String key) async {
+    final value = _prefs?.getString(key);
+    if (value == null || value.isEmpty) return value;
+    if (!_dataProtection.isEncrypted(value)) return value;
+    return _dataProtection.decryptString(value);
+  }
+
+  Future<void> _writeProtectedPref(String key, String value) async {
+    final encrypted = await _dataProtection.encryptString(value);
+    await _prefs!.setString(key, encrypted);
   }
 
   Future<void> _saveSecrets(ConnectionConfig config) async {
