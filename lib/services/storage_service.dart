@@ -16,6 +16,7 @@ class StorageService extends ChangeNotifier {
   static const _aiBaseUrlKey = 'ai_base_url';
   static const _aiModelKey = 'ai_model';
   static const _aiApiKeyKey = 'ai_api_key';
+  static const _aiChatsKey = 'ai_chats';
 
   SharedPreferences? _prefs;
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
@@ -141,8 +142,8 @@ class StorageService extends ChangeNotifier {
     final apiKey = await _secureStorage.read(key: _aiApiKeyKey);
     return AiConnectionSettings(
       baseUrl:
-          baseUrl?.isNotEmpty == true ? baseUrl! : 'https://api.openai.com/v1',
-      model: model?.isNotEmpty == true ? model! : 'gpt-4o-mini',
+          baseUrl?.isNotEmpty == true ? baseUrl! : 'https://api.deepseek.com',
+      model: model?.isNotEmpty == true ? model! : 'deepseek-v4-flash',
       hasApiKey: apiKey?.isNotEmpty == true,
     );
   }
@@ -158,14 +159,59 @@ class StorageService extends ChangeNotifier {
     String? apiKey,
   }) async {
     if (!_initialized || _prefs == null) return;
-    await _prefs!.setString(_aiBaseUrlKey, baseUrl.trim());
-    await _prefs!.setString(_aiModelKey, model.trim());
+    final normalizedBaseUrl = baseUrl.trim();
+    final normalizedModel = model.trim();
+    await _prefs!.setString(_aiBaseUrlKey, normalizedBaseUrl);
+    await _prefs!.setString(_aiModelKey, normalizedModel);
+    var apiKeyUpdated = false;
     if (apiKey != null) {
       final trimmed = apiKey.trim();
       if (trimmed.isNotEmpty) {
         await _secureStorage.write(key: _aiApiKeyKey, value: trimmed);
+        apiKeyUpdated = true;
       }
     }
+    AppLogService.instance.info(
+      'LLM settings saved',
+      details:
+          'baseUrl=$normalizedBaseUrl model=$normalizedModel apiKeyUpdated=$apiKeyUpdated',
+    );
+    notifyListeners();
+  }
+
+  Future<List<AiChatRecord>> loadAiChats() async {
+    if (!_initialized || _prefs == null) return [];
+    final jsonStr = await _readProtectedPref(_aiChatsKey);
+    if (jsonStr == null || jsonStr.isEmpty) return [];
+
+    try {
+      final list = jsonDecode(jsonStr) as List<dynamic>;
+      final chats = list
+          .map((item) => AiChatRecord.fromJson(item as Map<String, dynamic>))
+          .toList()
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      return chats;
+    } catch (e) {
+      debugPrint('Failed to load AI chats: $e');
+      AppLogService.instance.error('Failed to load AI chats', error: e);
+      return [];
+    }
+  }
+
+  Future<void> saveAiChat(AiChatRecord chat) async {
+    if (!_initialized || _prefs == null) return;
+    final chats = await loadAiChats();
+    chats.removeWhere((item) => item.id == chat.id);
+    chats.insert(0, chat);
+    await _saveAiChats(chats.take(80).toList());
+    notifyListeners();
+  }
+
+  Future<void> deleteAiChat(String id) async {
+    if (!_initialized || _prefs == null) return;
+    final chats = await loadAiChats();
+    chats.removeWhere((item) => item.id == id);
+    await _saveAiChats(chats);
     notifyListeners();
   }
 
@@ -281,6 +327,11 @@ class StorageService extends ChangeNotifier {
     await _writeProtectedPref(_terminalHistoryRecordsKey, jsonStr);
   }
 
+  Future<void> _saveAiChats(List<AiChatRecord> chats) async {
+    final jsonStr = jsonEncode(chats.map((item) => item.toJson()).toList());
+    await _writeProtectedPref(_aiChatsKey, jsonStr);
+  }
+
   Future<String?> _readProtectedPref(String key) async {
     final value = _prefs?.getString(key);
     if (value == null || value.isEmpty) return value;
@@ -326,6 +377,96 @@ class AiConnectionSettings {
     required this.model,
     required this.hasApiKey,
   });
+}
+
+class AiChatRecord {
+  final String id;
+  final String title;
+  final String model;
+  final List<AiChatMessageRecord> messages;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  const AiChatRecord({
+    required this.id,
+    required this.title,
+    required this.model,
+    required this.messages,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  AiChatRecord copyWith({
+    String? title,
+    String? model,
+    List<AiChatMessageRecord>? messages,
+    DateTime? updatedAt,
+  }) {
+    return AiChatRecord(
+      id: id,
+      title: title ?? this.title,
+      model: model ?? this.model,
+      messages: messages ?? this.messages,
+      createdAt: createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'title': title,
+      'model': model,
+      'messages': messages.map((item) => item.toJson()).toList(),
+      'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
+    };
+  }
+
+  factory AiChatRecord.fromJson(Map<String, dynamic> json) {
+    return AiChatRecord(
+      id: json['id'] as String,
+      title: json['title'] as String? ?? 'New chat',
+      model: json['model'] as String? ?? 'deepseek-v4-flash',
+      messages: ((json['messages'] as List<dynamic>?) ?? const [])
+          .map((item) =>
+              AiChatMessageRecord.fromJson(item as Map<String, dynamic>))
+          .toList(),
+      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+          DateTime.now(),
+      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
+          DateTime.now(),
+    );
+  }
+}
+
+class AiChatMessageRecord {
+  final String role;
+  final String text;
+  final DateTime createdAt;
+
+  const AiChatMessageRecord({
+    required this.role,
+    required this.text,
+    required this.createdAt,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'role': role,
+      'text': text,
+      'createdAt': createdAt.toIso8601String(),
+    };
+  }
+
+  factory AiChatMessageRecord.fromJson(Map<String, dynamic> json) {
+    return AiChatMessageRecord(
+      role: json['role'] as String? ?? 'assistant',
+      text: json['text'] as String? ?? '',
+      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+          DateTime.now(),
+    );
+  }
 }
 
 class RestorableTmuxSession {

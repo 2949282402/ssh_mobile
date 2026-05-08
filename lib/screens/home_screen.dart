@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
@@ -33,16 +35,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
   late final PageController _pageController;
   late int _selectedIndex;
+  Timer? _bottomNavCollapseTimer;
+  bool _bottomNavExpanded = true;
 
   @override
   void initState() {
     super.initState();
     _selectedIndex = widget.initialIndex.clamp(_logPage, _aiPage);
     _pageController = PageController(initialPage: _selectedIndex);
+    _scheduleBottomNavCollapse();
   }
 
   @override
   void dispose() {
+    _bottomNavCollapseTimer?.cancel();
     _pageController.dispose();
     super.dispose();
   }
@@ -55,20 +61,36 @@ class _HomeScreenState extends State<HomeScreen> {
     final strings = AppStrings(settings.language);
     final connections = storage.connections;
     final desktop = isDesktopLayout(context);
-    final content = PageView(
-      controller: _pageController,
-      onPageChanged: (index) => setState(() => _selectedIndex = index),
-      children: [
-        const DeveloperLogPage(),
-        connections.isEmpty
-            ? storage.initialized
-                ? _buildEmptyState(context, strings)
-                : _buildLoadingState()
-            : _buildConnectionList(context, connections, ssh, strings),
-        const SftpScreen(),
-        const TerminalWindowsPage(),
-        const LlmChatScreen(),
-      ],
+    final content = NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        if (desktop || notification.metrics.axis != Axis.horizontal) {
+          return false;
+        }
+        if (notification is ScrollStartNotification) {
+          _showBottomNav();
+        } else if (notification is ScrollEndNotification) {
+          _scheduleBottomNavCollapse();
+        }
+        return false;
+      },
+      child: PageView(
+        controller: _pageController,
+        onPageChanged: (index) {
+          setState(() => _selectedIndex = index);
+          if (!desktop) _scheduleBottomNavCollapse();
+        },
+        children: [
+          const DeveloperLogPage(),
+          connections.isEmpty
+              ? storage.initialized
+                  ? _buildEmptyState(context, strings)
+                  : _buildLoadingState()
+              : _buildConnectionList(context, connections, ssh, strings),
+          const SftpScreen(),
+          const TerminalWindowsPage(),
+          const LlmChatScreen(),
+        ],
+      ),
     );
 
     return Scaffold(
@@ -184,40 +206,57 @@ class _HomeScreenState extends State<HomeScreen> {
       color: colorScheme.surfaceContainer,
       child: SafeArea(
         top: false,
-        child: SizedBox(
-          height: 80,
-          child: Row(
-            children: [
-              _bottomNavItem(
-                context,
-                index: 0,
-                icon: const Icon(Icons.dns_outlined),
-                selectedIcon: const Icon(Icons.dns_rounded),
-                label: strings.servers,
-              ),
-              _bottomNavItem(
-                context,
-                index: 1,
-                icon: const Icon(Icons.folder_open_outlined),
-                selectedIcon: const Icon(Icons.folder_open_rounded),
-                label: strings.sftp,
-              ),
-              _bottomNavItem(
-                context,
-                index: 2,
-                icon: _windowIcon(ssh, selected: false),
-                selectedIcon: _windowIcon(ssh, selected: true),
-                label: strings.windows,
-              ),
-              _bottomNavItem(
-                context,
-                index: 3,
-                icon: const Icon(Icons.smart_toy_outlined),
-                selectedIcon: const Icon(Icons.smart_toy_rounded),
-                label: settingsLabelAi(context),
-              ),
-            ],
-          ),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          height: _bottomNavExpanded ? 80 : 22,
+          child: _bottomNavExpanded
+              ? Row(
+                  children: [
+                    _bottomNavItem(
+                      context,
+                      index: 0,
+                      icon: const Icon(Icons.dns_outlined),
+                      selectedIcon: const Icon(Icons.dns_rounded),
+                      label: strings.servers,
+                    ),
+                    _bottomNavItem(
+                      context,
+                      index: 1,
+                      icon: const Icon(Icons.folder_open_outlined),
+                      selectedIcon: const Icon(Icons.folder_open_rounded),
+                      label: strings.sftp,
+                    ),
+                    _bottomNavItem(
+                      context,
+                      index: 2,
+                      icon: _windowIcon(ssh, selected: false),
+                      selectedIcon: _windowIcon(ssh, selected: true),
+                      label: strings.windows,
+                    ),
+                    _bottomNavItem(
+                      context,
+                      index: 3,
+                      icon: const Icon(Icons.smart_toy_outlined),
+                      selectedIcon: const Icon(Icons.smart_toy_rounded),
+                      label: settingsLabelAi(context),
+                    ),
+                  ],
+                )
+              : InkWell(
+                  onTap: _showBottomNav,
+                  child: Center(
+                    child: Container(
+                      width: 46,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: colorScheme.onSurfaceVariant
+                            .withValues(alpha: 0.46),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                  ),
+                ),
         ),
       ),
     );
@@ -339,12 +378,29 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _switchPage(int index) {
     if (index == _selectedIndex) return;
+    _showBottomNav();
     setState(() => _selectedIndex = index);
     _pageController.animateToPage(
       index,
       duration: const Duration(milliseconds: 260),
       curve: Curves.easeOutCubic,
     );
+  }
+
+  void _showBottomNav() {
+    _bottomNavCollapseTimer?.cancel();
+    if (!_bottomNavExpanded && mounted) {
+      setState(() => _bottomNavExpanded = true);
+    }
+  }
+
+  void _scheduleBottomNavCollapse() {
+    _bottomNavCollapseTimer?.cancel();
+    _bottomNavCollapseTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (mounted && _bottomNavExpanded) {
+        setState(() => _bottomNavExpanded = false);
+      }
+    });
   }
 
   Widget _buildLoadingState() {

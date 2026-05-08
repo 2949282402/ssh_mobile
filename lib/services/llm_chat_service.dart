@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'ai_tool_service.dart';
+import 'app_log_service.dart';
 import 'storage_service.dart';
 
 class LlmChatService {
@@ -13,14 +15,112 @@ class LlmChatService {
     required this.toolService,
   });
 
-  Future<String> send({
-    required List<Map<String, dynamic>> messages,
+  Future<List<String>> fetchModels({
+    required String baseUrl,
+    String? apiKey,
   }) async {
-    final settings = await storageService.loadAiConnectionSettings();
-    final apiKey = await storageService.getAiApiKey();
-    if (apiKey == null || apiKey.isEmpty) {
+    final resolvedApiKey = apiKey?.trim().isNotEmpty == true
+        ? apiKey!.trim()
+        : await storageService.getAiApiKey();
+    if (resolvedApiKey == null || resolvedApiKey.isEmpty) {
       throw StateError('API key is not configured.');
     }
+
+    final endpoint = Uri.parse(_joinUrl(baseUrl, '/models'));
+    final client = HttpClient();
+    final startedAt = DateTime.now();
+    AppLogService.instance.info(
+      'LLM models request sent',
+      details: 'endpoint=$endpoint',
+    );
+    try {
+      final request = await client.getUrl(endpoint).timeout(
+            const Duration(seconds: 15),
+          );
+      request.headers.set(
+        HttpHeaders.authorizationHeader,
+        'Bearer $resolvedApiKey',
+      );
+      final response = await request.close().timeout(
+            const Duration(seconds: 30),
+          );
+      final body = await response.transform(utf8.decoder).join();
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        AppLogService.instance.warning(
+          'LLM models request failed',
+          details:
+              'status=${response.statusCode} elapsedMs=${DateTime.now().difference(startedAt).inMilliseconds} bodyChars=${body.length}',
+        );
+        throw StateError(
+          'Fetch models failed (${response.statusCode}): $body',
+        );
+      }
+
+      final decoded = jsonDecode(body) as Map<String, dynamic>;
+      final data = decoded['data'];
+      final models = <String>[];
+      if (data is List) {
+        for (final item in data) {
+          if (item is Map && item['id'] is String) {
+            models.add((item['id'] as String).trim());
+          } else if (item is String) {
+            models.add(item.trim());
+          }
+        }
+      }
+      models.removeWhere((item) => item.isEmpty);
+      models.sort();
+      AppLogService.instance.info(
+        'LLM models received',
+        details:
+            'count=${models.length} elapsedMs=${DateTime.now().difference(startedAt).inMilliseconds}',
+      );
+      return models;
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'LLM models request error',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'endpoint=$endpoint',
+      );
+      rethrow;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<String> send({
+    required List<Map<String, dynamic>> messages,
+    String? modelOverride,
+  }) async {
+    final buffer = StringBuffer();
+    await for (final chunk in stream(
+      messages: messages,
+      modelOverride: modelOverride,
+    )) {
+      buffer.write(chunk);
+    }
+    return buffer.toString();
+  }
+
+  Stream<String> stream({
+    required List<Map<String, dynamic>> messages,
+    String? modelOverride,
+  }) async* {
+    final settings = await storageService.loadAiConnectionSettings();
+    final model = modelOverride?.trim().isNotEmpty == true
+        ? modelOverride!.trim()
+        : settings.model;
+    final apiKey = await storageService.getAiApiKey();
+    if (apiKey == null || apiKey.isEmpty) {
+      AppLogService.instance.warning('LLM request blocked: API key missing');
+      throw StateError('API key is not configured.');
+    }
+    AppLogService.instance.info(
+      'LLM chat started',
+      details:
+          'baseUrl=${settings.baseUrl} model=$model userMessages=${messages.length}',
+    );
 
     final workingMessages = <Map<String, dynamic>>[
       {
@@ -30,80 +130,222 @@ class LlmChatService {
       ...messages,
     ];
 
-    for (var round = 0; round < 4; round++) {
-      final response = await _chatCompletion(
-        baseUrl: settings.baseUrl,
-        apiKey: apiKey,
-        model: settings.model,
-        messages: workingMessages,
-        tools: toolService.toolDefinitions(),
-      );
-      final message = ((response['choices'] as List).first as Map)['message']
-          as Map<String, dynamic>;
-      final toolCalls = message['tool_calls'] as List<dynamic>?;
-      if (toolCalls == null || toolCalls.isEmpty) {
-        return (message['content'] as String?)?.trim().isNotEmpty == true
-            ? message['content'] as String
-            : 'Done.';
+    for (var round = 0; round < 10; round++) {
+      final content = StringBuffer();
+      final chunkController = StreamController<String>();
+      _StreamChatResult? streamedResponse;
+      Object? streamedError;
+      StackTrace? streamedStackTrace;
+      Future<void> pumpStream() async {
+        try {
+          streamedResponse = await _streamChatCompletion(
+            baseUrl: settings.baseUrl,
+            apiKey: apiKey,
+            model: model,
+            messages: workingMessages,
+            tools: toolService.toolDefinitions(),
+            onContent: (chunk) {
+              content.write(chunk);
+              chunkController.add(chunk);
+            },
+          );
+        } catch (e, stackTrace) {
+          streamedError = e;
+          streamedStackTrace = stackTrace;
+        } finally {
+          await chunkController.close();
+        }
       }
 
-      workingMessages.add(message);
-      for (final rawCall in toolCalls) {
-        final call = rawCall as Map<String, dynamic>;
-        final function = call['function'] as Map<String, dynamic>;
-        final name = function['name'] as String;
-        final arguments = _decodeArguments(function['arguments']);
+      unawaited(pumpStream());
+
+      await for (final chunk in chunkController.stream) {
+        yield chunk;
+      }
+      if (streamedError != null) {
+        Error.throwWithStackTrace(streamedError!, streamedStackTrace!);
+      }
+      final response = streamedResponse;
+      if (response == null) {
+        throw StateError('LLM stream ended without a response.');
+      }
+
+      if (response.toolCalls.isEmpty) {
+        final answer =
+            content.toString().trim().isNotEmpty ? content.toString() : 'Done.';
+        if (content.isEmpty) yield answer;
+        AppLogService.instance.info(
+          'LLM chat completed',
+          details: 'rounds=${round + 1} answerChars=${answer.length}',
+        );
+        return;
+      }
+
+      AppLogService.instance.info(
+        'LLM requested tools',
+        details:
+            'round=${round + 1} tools=${response.toolCalls.map((call) => call.name).join(',')}',
+      );
+      final assistantToolMessage = <String, dynamic>{
+        'role': 'assistant',
+        'content': content.toString(),
+        'tool_calls': [
+          for (final call in response.toolCalls)
+            {
+              'id': call.id,
+              'type': 'function',
+              'function': {
+                'name': call.name,
+                'arguments': call.arguments,
+              },
+            },
+        ],
+      };
+      if (response.reasoningContent.trim().isNotEmpty) {
+        assistantToolMessage['reasoning_content'] = response.reasoningContent;
+      }
+      workingMessages.add(assistantToolMessage);
+      for (final call in response.toolCalls) {
+        final arguments = _decodeArguments(call.arguments);
         String result;
         try {
-          result = await toolService.execute(name, arguments);
+          result = await toolService.execute(call.name, arguments);
         } catch (e) {
           result = jsonEncode({'error': e.toString()});
         }
         workingMessages.add({
           'role': 'tool',
-          'tool_call_id': call['id'],
+          'tool_call_id': call.id,
           'content': result,
         });
       }
     }
 
-    return 'The model requested too many tool rounds. Please narrow the task.';
+    AppLogService.instance.warning('LLM chat stopped: too many tool rounds');
+    yield 'The model requested too many tool rounds. Please narrow the task.';
   }
 
-  Future<Map<String, dynamic>> _chatCompletion({
+  Future<_StreamChatResult> _streamChatCompletion({
     required String baseUrl,
     required String apiKey,
     required String model,
     required List<Map<String, dynamic>> messages,
     required List<Map<String, dynamic>> tools,
+    required void Function(String chunk) onContent,
   }) async {
     final endpoint = Uri.parse(_joinUrl(baseUrl, '/chat/completions'));
     final client = HttpClient();
+    final startedAt = DateTime.now();
+    final contentChunks = <String>[];
+    final reasoningContent = StringBuffer();
+    final toolCalls = <int, _StreamingToolCall>{};
+    AppLogService.instance.info(
+      'LLM stream request sent',
+      details: 'endpoint=$endpoint model=$model messages=${messages.length}',
+    );
     try {
       final request = await client.postUrl(endpoint).timeout(
             const Duration(seconds: 15),
           );
-      request.headers
-        ..set(HttpHeaders.authorizationHeader, 'Bearer $apiKey')
-        ..set(HttpHeaders.contentTypeHeader, 'application/json');
-      request.write(
+      final bodyBytes = utf8.encode(
         jsonEncode({
           'model': model,
           'messages': messages,
           'tools': tools,
           'tool_choice': 'auto',
+          'stream': true,
         }),
       );
+      request.headers
+        ..set(HttpHeaders.authorizationHeader, 'Bearer $apiKey')
+        ..contentType = ContentType.json;
+      request.contentLength = bodyBytes.length;
+      request.add(bodyBytes);
       final response = await request.close().timeout(
             const Duration(seconds: 45),
           );
-      final body = await response.transform(utf8.decoder).join();
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        final body = await response.transform(utf8.decoder).join();
+        AppLogService.instance.warning(
+          'LLM stream request failed',
+          details:
+              'status=${response.statusCode} elapsedMs=${DateTime.now().difference(startedAt).inMilliseconds} bodyChars=${body.length}',
+        );
         throw StateError(
-          'LLM request failed (${response.statusCode}): $body',
+          'LLM stream failed (${response.statusCode}): $body',
         );
       }
-      return jsonDecode(body) as Map<String, dynamic>;
+
+      await for (final line
+          in response.transform(utf8.decoder).transform(const LineSplitter())) {
+        final trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        final data = trimmed.substring(5).trim();
+        if (data == '[DONE]') break;
+        if (data.isEmpty) continue;
+
+        final decoded = jsonDecode(data) as Map<String, dynamic>;
+        final choices = decoded['choices'] as List<dynamic>? ?? const [];
+        if (choices.isEmpty) continue;
+        final delta = (choices.first as Map<String, dynamic>)['delta'] as Map?;
+        if (delta == null) continue;
+
+        final content = delta['content'];
+        if (content is String && content.isNotEmpty) {
+          contentChunks.add(content);
+          onContent(content);
+        }
+
+        final reasoning = delta['reasoning_content'];
+        if (reasoning is String && reasoning.isNotEmpty) {
+          reasoningContent.write(reasoning);
+        }
+
+        final rawToolCalls = delta['tool_calls'];
+        if (rawToolCalls is List) {
+          for (final rawCall in rawToolCalls) {
+            if (rawCall is! Map) continue;
+            final index = rawCall['index'] as int? ?? 0;
+            final current = toolCalls.putIfAbsent(
+              index,
+              () => _StreamingToolCall(id: '', name: '', arguments: ''),
+            );
+            final id = rawCall['id'];
+            if (id is String && id.isNotEmpty) current.id = id;
+            final function = rawCall['function'];
+            if (function is Map) {
+              final name = function['name'];
+              if (name is String && name.isNotEmpty) current.name += name;
+              final arguments = function['arguments'];
+              if (arguments is String && arguments.isNotEmpty) {
+                current.arguments += arguments;
+              }
+            }
+          }
+        }
+      }
+
+      final calls = toolCalls.values
+          .where((call) => call.name.trim().isNotEmpty)
+          .toList();
+      AppLogService.instance.info(
+        'LLM stream response completed',
+        details:
+            'elapsedMs=${DateTime.now().difference(startedAt).inMilliseconds} chunks=${contentChunks.length} toolCalls=${calls.length}',
+      );
+      return _StreamChatResult(
+        contentChunks: contentChunks,
+        reasoningContent: reasoningContent.toString(),
+        toolCalls: calls,
+      );
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'LLM stream request error',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'endpoint=$endpoint model=$model',
+      );
+      rethrow;
     } finally {
       client.close(force: true);
     }
@@ -122,6 +364,30 @@ class LlmChatService {
     final trimmedBase = baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
     return '$trimmedBase$path';
   }
+}
+
+class _StreamChatResult {
+  final List<String> contentChunks;
+  final String reasoningContent;
+  final List<_StreamingToolCall> toolCalls;
+
+  const _StreamChatResult({
+    required this.contentChunks,
+    required this.reasoningContent,
+    required this.toolCalls,
+  });
+}
+
+class _StreamingToolCall {
+  String id;
+  String name;
+  String arguments;
+
+  _StreamingToolCall({
+    required this.id,
+    required this.name,
+    required this.arguments,
+  });
 }
 
 const String _systemPrompt = '''

@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'app_log_service.dart';
 import 'sftp_service.dart';
 import 'ssh_service.dart';
 import 'storage_service.dart';
@@ -15,14 +16,15 @@ class AiToolService {
     required this.sftpService,
   });
 
-  List<Map<String, dynamic>> toolDefinitions() {
+  List<AiTool> get tools {
     return [
-      _tool(
+      AiTool(
         name: 'list_servers',
         description: 'List saved SSH servers. Does not reveal credentials.',
         properties: const {},
+        handler: (_) async => _listServers(),
       ),
-      _tool(
+      AiTool(
         name: 'run_command',
         description:
             'Run a safe read-only shell command on a selected server. Destructive commands are rejected.',
@@ -31,8 +33,9 @@ class AiToolService {
           'command': _string('Read-only shell command to run.'),
         },
         required: const ['connectionId', 'command'],
+        handler: _runCommand,
       ),
-      _tool(
+      AiTool(
         name: 'sftp_list_dir',
         description: 'List a remote directory through SFTP.',
         properties: {
@@ -40,8 +43,9 @@ class AiToolService {
           'path': _string('Remote directory path. Defaults to ".".'),
         },
         required: const ['connectionId'],
+        handler: _listDir,
       ),
-      _tool(
+      AiTool(
         name: 'sftp_read_text',
         description:
             'Read a small remote text file through SFTP. Binary and large files are rejected.',
@@ -50,23 +54,44 @@ class AiToolService {
           'path': _string('Remote text file path.'),
         },
         required: const ['connectionId', 'path'],
+        handler: _readText,
       ),
     ];
   }
 
+  List<Map<String, dynamic>> toolDefinitions() {
+    return tools.map((tool) => tool.definition).toList();
+  }
+
   Future<String> execute(String name, Map<String, dynamic> arguments) async {
-    switch (name) {
-      case 'list_servers':
-        return _listServers();
-      case 'run_command':
-        return _runCommand(arguments);
-      case 'sftp_list_dir':
-        return _listDir(arguments);
-      case 'sftp_read_text':
-        return _readText(arguments);
-      default:
-        return jsonEncode({'error': 'Unknown tool: $name'});
+    for (final tool in tools) {
+      if (tool.name == name) {
+        final startedAt = DateTime.now();
+        AppLogService.instance.info(
+          'AI tool started',
+          details: 'tool=$name args=${_safeArguments(arguments)}',
+        );
+        try {
+          final result = await tool.handler(arguments);
+          AppLogService.instance.info(
+            'AI tool completed',
+            details:
+                'tool=$name elapsedMs=${DateTime.now().difference(startedAt).inMilliseconds} resultChars=${result.length}',
+          );
+          return result;
+        } catch (e, stackTrace) {
+          AppLogService.instance.error(
+            'AI tool failed',
+            error: e,
+            stackTrace: stackTrace,
+            details: 'tool=$name args=${_safeArguments(arguments)}',
+          );
+          rethrow;
+        }
+      }
     }
+    AppLogService.instance.warning('Unknown AI tool requested', details: name);
+    return jsonEncode({'error': 'Unknown tool: $name'});
   }
 
   String _listServers() {
@@ -159,10 +184,15 @@ class AiToolService {
     if (normalized.isEmpty) return 'Command is empty';
     final allowedPrefixes = [
       'cat ',
+      'command -v ',
       'df ',
       'du ',
+      'env',
       'free',
       'head ',
+      'printenv',
+      'readlink ',
+      'realpath ',
       'journalctl ',
       'ls',
       'netstat ',
@@ -174,6 +204,8 @@ class AiToolService {
       'tail ',
       'top ',
       'uptime',
+      'whereis ',
+      'which ',
       'whoami',
     ];
     if (!allowedPrefixes.any(normalized.startsWith)) {
@@ -207,12 +239,45 @@ class AiToolService {
     return '${value.substring(0, _maxToolTextChars)}\n...[truncated]';
   }
 
-  Map<String, dynamic> _tool({
-    required String name,
-    required String description,
-    required Map<String, dynamic> properties,
-    List<String> required = const [],
-  }) {
+  String _safeArguments(Map<String, dynamic> arguments) {
+    return jsonEncode(
+      arguments.map((key, value) {
+        final lowerKey = key.toLowerCase();
+        if (lowerKey.contains('key') ||
+            lowerKey.contains('token') ||
+            lowerKey.contains('secret') ||
+            lowerKey.contains('password')) {
+          return MapEntry(key, '[REDACTED]');
+        }
+        if (value is String && value.length > 300) {
+          return MapEntry(key, '${value.substring(0, 300)}...[truncated]');
+        }
+        return MapEntry(key, value);
+      }),
+    );
+  }
+
+  static Map<String, dynamic> _string(String description) {
+    return {'type': 'string', 'description': description};
+  }
+}
+
+class AiTool {
+  final String name;
+  final String description;
+  final Map<String, dynamic> properties;
+  final List<String> required;
+  final Future<String> Function(Map<String, dynamic> arguments) handler;
+
+  const AiTool({
+    required this.name,
+    required this.description,
+    required this.properties,
+    required this.handler,
+    this.required = const [],
+  });
+
+  Map<String, dynamic> get definition {
     return {
       'type': 'function',
       'function': {
@@ -226,10 +291,6 @@ class AiToolService {
         },
       },
     };
-  }
-
-  static Map<String, dynamic> _string(String description) {
-    return {'type': 'string', 'description': description};
   }
 }
 
