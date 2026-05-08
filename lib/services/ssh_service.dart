@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:math';
 
@@ -9,6 +10,7 @@ import 'package:flutter_background_service/flutter_background_service.dart';
 import '../models/connection.dart';
 import 'app_log_service.dart';
 import 'background_service.dart';
+import 'ssh_client_factory.dart';
 import 'storage_service.dart';
 import 'terminal_history_service.dart';
 
@@ -20,11 +22,15 @@ enum SshConnectionState {
 }
 
 class SshSession {
+  static const int maxOutputCacheChars = 200000;
+
   final String id;
   final String connectionId;
   final String connectionName;
   final StreamController<String> outputController;
-  final StringBuffer _outputBuffer = StringBuffer();
+  final Queue<String> _outputChunks = Queue<String>();
+  String? _cachedOutputText;
+  int _outputCharCount = 0;
   String displayName;
   String? tmuxSessionName;
   int? tmuxAutoDeleteSeconds;
@@ -53,11 +59,11 @@ class SshSession {
 
   Stream<String> get output => outputController.stream;
   bool get isConnected => state == SshConnectionState.connected;
-  String get outputText => _outputBuffer.toString();
+  String get outputText => _cachedOutputText ??= _outputChunks.join();
   int get estimatedMemoryBytes {
     // Rough per-window local cache size. Dart strings are UTF-16, so this
     // intentionally estimates the terminal text cache rather than process RSS.
-    return _outputBuffer.length * 2;
+    return _outputCharCount * 2;
   }
 
   String? get tmuxKillCommand {
@@ -67,7 +73,28 @@ class SshSession {
   }
 
   void addOutput(String data) {
-    _outputBuffer.write(data);
+    if (data.length >= maxOutputCacheChars) {
+      _outputChunks
+        ..clear()
+        ..add(data.substring(data.length - maxOutputCacheChars));
+      _outputCharCount = maxOutputCacheChars;
+    } else {
+      _outputChunks.add(data);
+      _outputCharCount += data.length;
+      while (
+          _outputCharCount > maxOutputCacheChars && _outputChunks.isNotEmpty) {
+        final overflow = _outputCharCount - maxOutputCacheChars;
+        final first = _outputChunks.removeFirst();
+        if (first.length <= overflow) {
+          _outputCharCount -= first.length;
+        } else {
+          _outputChunks.addFirst(first.substring(overflow));
+          _outputCharCount -= overflow;
+          break;
+        }
+      }
+    }
+    _cachedOutputText = null;
     outputController.add(data);
   }
 
@@ -82,6 +109,8 @@ class SshSession {
 
 class SshService extends ChangeNotifier {
   final StorageService _storageService;
+  late final SshClientFactory _clientFactory =
+      SshClientFactory(_storageService);
   final FlutterBackgroundService _backgroundService =
       FlutterBackgroundService();
   final TerminalHistoryService _historyService = TerminalHistoryService();
@@ -369,13 +398,7 @@ class SshService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final password = await _storageService.getPassword(connectionId);
-      final privateKey = await _storageService.getPrivateKey(connectionId);
-      _validateAuthSecrets(
-        config: config,
-        password: password,
-        privateKey: privateKey,
-      );
+      final credentials = await _clientFactory.loadCredentials(config);
 
       session.tmuxSessionName ??= config.launchMode == TerminalLaunchMode.tmux
           ? _uniqueTmuxSessionName(
@@ -400,8 +423,8 @@ class SshService extends ChangeNotifier {
           'host': config.host,
           'port': config.port,
           'username': config.username,
-          'password': password,
-          'privateKey': privateKey,
+          'password': credentials.password,
+          'privateKey': credentials.privateKey,
           'authMethod': config.authMethod.name,
           'terminalWidth': config.terminalWidth,
           'terminalHeight': config.terminalHeight,
@@ -414,8 +437,7 @@ class SshService extends ChangeNotifier {
         await _connectLocalSession(
           session: session,
           config: config,
-          password: password,
-          privateKey: privateKey,
+          credentials: credentials,
         );
       }
 
@@ -545,48 +567,32 @@ class SshService extends ChangeNotifier {
     sendData(sessionId, String.fromCharCodes(data));
   }
 
-  void _validateAuthSecrets({
-    required ConnectionConfig config,
-    required String? password,
-    required String? privateKey,
-  }) {
-    final hasPassword = password?.isNotEmpty == true;
-    final hasPrivateKey = privateKey?.isNotEmpty == true;
-
-    switch (config.authMethod) {
-      case AuthMethod.password:
-        if (!hasPassword) {
-          throw StateError(
-            'Password is missing for this connection. Please edit the server '
-            'configuration and save the password again on this device.',
-          );
-        }
-        break;
-      case AuthMethod.privateKey:
-        if (!hasPrivateKey) {
-          throw StateError(
-            'Private key is missing for this connection. Please edit the '
-            'server configuration and save the private key again on this device.',
-          );
-        }
-        break;
-      case AuthMethod.both:
-        if (!hasPrivateKey || !hasPassword) {
-          throw StateError(
-            'Password or private key is missing for this connection. Please '
-            'edit the server configuration and save both credentials again on '
-            'this device.',
-          );
-        }
-        break;
+  Future<RemoteCommandResult> runOneShotCommand({
+    required String connectionId,
+    required String command,
+    Duration timeout = const Duration(seconds: 15),
+  }) async {
+    final config = _storageService.getConnection(connectionId);
+    if (config == null) {
+      throw StateError('Connection config not found');
+    }
+    final client = await _clientFactory.connectClient(config);
+    try {
+      final result = await client.runWithResult(command).timeout(timeout);
+      return RemoteCommandResult(
+        exitCode: result.exitCode,
+        stdout: utf8.decode(result.stdout, allowMalformed: true),
+        stderr: utf8.decode(result.stderr, allowMalformed: true),
+      );
+    } finally {
+      client.close();
     }
   }
 
   Future<void> _connectLocalSession({
     required SshSession session,
     required ConnectionConfig config,
-    required String? password,
-    required String? privateKey,
+    required SshCredentials credentials,
   }) async {
     await _closeLocalSession(session.id, destroyTmux: false);
     AppLogService.instance.info(
@@ -594,48 +600,44 @@ class SshService extends ChangeNotifier {
       details: 'sessionId=${session.id} host=${config.host}:${config.port}',
     );
 
-    final socket = await SSHSocket.connect(
-      config.host,
-      config.port,
-      timeout: const Duration(seconds: 15),
-    );
-    final identities = (config.authMethod == AuthMethod.privateKey ||
-                config.authMethod == AuthMethod.both) &&
-            privateKey?.isNotEmpty == true
-        ? SSHKeyPair.fromPem(privateKey!, password)
-        : null;
-    final client = SSHClient(
-      socket,
-      username: config.username,
-      identities: identities,
-      onPasswordRequest: () {
-        if (config.authMethod == AuthMethod.privateKey) return null;
-        return password!;
-      },
+    final client = await _clientFactory.connectClient(
+      config,
+      credentials: credentials,
     );
 
-    if (config.launchMode == TerminalLaunchMode.tmux) {
-      await _ensureLocalTmuxInstalled(client);
+    SSHSession? shell;
+    _LocalSshRuntime? runtime;
+    try {
+      if (config.launchMode == TerminalLaunchMode.tmux) {
+        await _ensureLocalTmuxInstalled(client);
+      }
+
+      shell = await client.shell(
+        pty: SSHPtyConfig(
+          width: config.terminalWidth,
+          height: config.terminalHeight,
+          type: 'xterm-256color',
+        ),
+      );
+      runtime = _LocalSshRuntime(
+        sessionId: session.id,
+        client: client,
+        shell: shell,
+        tmuxSessionName: config.launchMode == TerminalLaunchMode.tmux
+            ? session.tmuxSessionName
+            : null,
+      );
+      _localRuntimes[session.id] = runtime;
+    } catch (_) {
+      shell?.close();
+      client.close();
+      rethrow;
     }
 
-    final shell = await client.shell(
-      pty: SSHPtyConfig(
-        width: config.terminalWidth,
-        height: config.terminalHeight,
-        type: 'xterm-256color',
-      ),
-    );
-    final runtime = _LocalSshRuntime(
-      sessionId: session.id,
-      client: client,
-      shell: shell,
-      tmuxSessionName: config.launchMode == TerminalLaunchMode.tmux
-          ? session.tmuxSessionName
-          : null,
-    );
-    _localRuntimes[session.id] = runtime;
+    final connectedRuntime = runtime;
+    final connectedShell = shell;
 
-    runtime.stdoutSub = shell.stdout.listen(
+    connectedRuntime.stdoutSub = connectedShell.stdout.listen(
       (bytes) => _handleLocalOutput(session.id, bytes),
       onError: (Object error) {
         _handleLocalDisconnect(session.id, 'SSH stdout error: $error');
@@ -644,12 +646,12 @@ class SshService extends ChangeNotifier {
         _handleLocalDisconnect(session.id, 'SSH connection closed');
       },
     );
-    runtime.stderrSub = shell.stderr.listen(
+    connectedRuntime.stderrSub = connectedShell.stderr.listen(
       (bytes) => _handleLocalOutput(session.id, bytes),
     );
 
     if (config.launchMode == TerminalLaunchMode.tmux) {
-      shell.stdin.add(
+      connectedShell.stdin.add(
         utf8.encode(
           '${_buildTmuxAttachCommand(
             session.tmuxSessionName ?? config.name,
@@ -659,24 +661,24 @@ class SshService extends ChangeNotifier {
       );
     }
 
-    runtime.keepAliveTimer = Timer.periodic(
+    connectedRuntime.keepAliveTimer = Timer.periodic(
       Duration(seconds: config.keepAliveInterval.clamp(3, 30)),
       (_) async {
-        if (runtime.pingInFlight) return;
-        runtime.pingInFlight = true;
+        if (connectedRuntime.pingInFlight) return;
+        connectedRuntime.pingInFlight = true;
         try {
           await client.ping().timeout(const Duration(seconds: 10));
-          runtime.keepAliveFailures = 0;
+          connectedRuntime.keepAliveFailures = 0;
         } catch (e) {
-          runtime.keepAliveFailures++;
+          connectedRuntime.keepAliveFailures++;
           AppLogService.instance.warning(
             'Local SSH keep-alive failed',
             details:
-                'sessionId=${session.id} failures=${runtime.keepAliveFailures} error=$e',
+                'sessionId=${session.id} failures=${connectedRuntime.keepAliveFailures} error=$e',
           );
           _handleLocalDisconnect(session.id, 'SSH keep-alive failed: $e');
         } finally {
-          runtime.pingInFlight = false;
+          connectedRuntime.pingInFlight = false;
         }
       },
     );
@@ -760,6 +762,14 @@ class SshService extends ChangeNotifier {
     final safeName = _sanitizeTmuxSessionName(sessionName);
     final quotedName = _shellQuote(safeName);
     final seconds = autoDeleteSeconds.clamp(30, 86400);
+    final cleanupOldSessions = 'current=$quotedName; '
+        'tmux list-sessions -F "#{session_name}|#{session_attached}|#{@ssh_mobile_managed}|#{@ssh_mobile_auto_delete_seconds}" 2>/dev/null | '
+        'while IFS="|" read -r name attached managed ttl; do '
+        '[ "\$name" = "\$current" ] && continue; '
+        '[ "\$managed" = "1" ] || [ -n "\$ttl" ] || continue; '
+        '[ "\$attached" = "0" ] || continue; '
+        'tmux kill-session -t "\$name" 2>/dev/null || true; '
+        'done';
     final idleWatcher = 'idle_start=0; interval=5; '
         'while tmux has-session -t $quotedName 2>/dev/null; do '
         'if tmux list-clients -t $quotedName 2>/dev/null | grep -q .; then '
@@ -769,8 +779,10 @@ class SshService extends ChangeNotifier {
         'if [ \$((now - idle_start)) -ge $seconds ]; then '
         'tmux kill-session -t $quotedName 2>/dev/null; exit; fi; '
         'fi; sleep \$interval; done';
-    return 'tmux has-session -t $quotedName 2>/dev/null || '
+    return 'sh -c ${_shellQuote(cleanupOldSessions)}; '
+        'tmux has-session -t $quotedName 2>/dev/null || '
         'tmux new-session -d -s $quotedName; '
+        'tmux set-option -t $quotedName -q @ssh_mobile_managed 1; '
         'tmux set-option -t $quotedName -q @ssh_mobile_auto_delete_seconds $seconds; '
         'tmux set-option -t $quotedName -q status off; '
         'tmux run-shell -b ${_shellQuote(idleWatcher)}; '
@@ -1117,6 +1129,18 @@ class _LocalSshRuntime {
     shell.close();
     client.close();
   }
+}
+
+class RemoteCommandResult {
+  final int? exitCode;
+  final String stdout;
+  final String stderr;
+
+  const RemoteCommandResult({
+    required this.exitCode,
+    required this.stdout,
+    required this.stderr,
+  });
 }
 
 extension _LastOrNull<T> on Iterable<T> {

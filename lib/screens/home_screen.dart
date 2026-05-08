@@ -4,12 +4,15 @@ import 'package:provider/provider.dart';
 
 import '../models/connection.dart';
 import '../services/app_settings.dart';
+import '../services/sftp_service.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
 import '../utils/responsive.dart';
 import '../widgets/connection_progress_dialog.dart';
 import '../widgets/window_name_dialog.dart';
 import 'developer_log_screen.dart';
+import 'llm_chat_screen.dart';
+import 'sftp_screen.dart';
 import 'terminal_windows_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -24,7 +27,9 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   static const int _logPage = 0;
   static const int _serverPage = 1;
-  static const int _windowPage = 2;
+  static const int _sftpPage = 2;
+  static const int _windowPage = 3;
+  static const int _aiPage = 4;
 
   late final PageController _pageController;
   late int _selectedIndex;
@@ -32,7 +37,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _selectedIndex = widget.initialIndex.clamp(_logPage, _windowPage);
+    _selectedIndex = widget.initialIndex.clamp(_logPage, _aiPage);
     _pageController = PageController(initialPage: _selectedIndex);
   }
 
@@ -60,7 +65,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 ? _buildEmptyState(context, strings)
                 : _buildLoadingState()
             : _buildConnectionList(context, connections, ssh, strings),
+        const SftpScreen(),
         const TerminalWindowsPage(),
+        const LlmChatScreen(),
       ],
     );
 
@@ -75,13 +82,13 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: settings.toggleLanguage,
             child: Text(
               settings.isEnglish
-                  ? strings.switchToChinese
-                  : strings.switchToEnglish,
+                  ? strings.switchToEnglish
+                  : strings.switchToChinese,
             ),
           ),
           IconButton(
             icon: Icon(
-              settings.isDarkMode ? Icons.light_mode : Icons.dark_mode,
+              settings.isDarkMode ? Icons.dark_mode : Icons.light_mode,
             ),
             tooltip: settings.isDarkMode
                 ? strings.switchToLightMode
@@ -123,21 +130,37 @@ class _HomeScreenState extends State<HomeScreen> {
           onDestinationSelected: _switchNavigationPage,
           backgroundColor: colorScheme.surface,
           indicatorColor: colorScheme.primary.withValues(alpha: 0.12),
+          selectedIconTheme: IconThemeData(color: colorScheme.primary),
+          unselectedIconTheme:
+              IconThemeData(color: colorScheme.onSurfaceVariant),
+          selectedLabelTextStyle: TextStyle(
+            color: colorScheme.primary,
+            fontWeight: FontWeight.w800,
+          ),
+          unselectedLabelTextStyle: TextStyle(
+            color: colorScheme.onSurfaceVariant,
+            fontWeight: FontWeight.w600,
+          ),
           destinations: [
-            NavigationRailDestination(
-              icon: const Icon(Icons.article_outlined),
-              selectedIcon: const Icon(Icons.article_rounded),
-              label: Text(strings.logs),
-            ),
             NavigationRailDestination(
               icon: const Icon(Icons.dns_outlined),
               selectedIcon: const Icon(Icons.dns_rounded),
               label: Text(strings.servers),
             ),
             NavigationRailDestination(
+              icon: const Icon(Icons.folder_open_outlined),
+              selectedIcon: const Icon(Icons.folder_open_rounded),
+              label: Text(strings.sftp),
+            ),
+            NavigationRailDestination(
               icon: _windowIcon(ssh, selected: false),
               selectedIcon: _windowIcon(ssh, selected: true),
               label: Text(strings.windows),
+            ),
+            NavigationRailDestination(
+              icon: const Icon(Icons.smart_toy_outlined),
+              selectedIcon: const Icon(Icons.smart_toy_rounded),
+              label: Text(settingsLabelAi(context)),
             ),
           ],
         ),
@@ -156,26 +179,99 @@ class _HomeScreenState extends State<HomeScreen> {
     SshService ssh,
     AppStrings strings,
   ) {
-    return NavigationBar(
-      selectedIndex: _navigationIndex,
-      onDestinationSelected: _switchNavigationPage,
-      destinations: [
-        NavigationDestination(
-          icon: const Icon(Icons.article_outlined),
-          selectedIcon: const Icon(Icons.article_rounded),
-          label: strings.logs,
+    final colorScheme = Theme.of(context).colorScheme;
+    return Material(
+      color: colorScheme.surfaceContainer,
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 80,
+          child: Row(
+            children: [
+              _bottomNavItem(
+                context,
+                index: 0,
+                icon: const Icon(Icons.dns_outlined),
+                selectedIcon: const Icon(Icons.dns_rounded),
+                label: strings.servers,
+              ),
+              _bottomNavItem(
+                context,
+                index: 1,
+                icon: const Icon(Icons.folder_open_outlined),
+                selectedIcon: const Icon(Icons.folder_open_rounded),
+                label: strings.sftp,
+              ),
+              _bottomNavItem(
+                context,
+                index: 2,
+                icon: _windowIcon(ssh, selected: false),
+                selectedIcon: _windowIcon(ssh, selected: true),
+                label: strings.windows,
+              ),
+              _bottomNavItem(
+                context,
+                index: 3,
+                icon: const Icon(Icons.smart_toy_outlined),
+                selectedIcon: const Icon(Icons.smart_toy_rounded),
+                label: settingsLabelAi(context),
+              ),
+            ],
+          ),
         ),
-        NavigationDestination(
-          icon: const Icon(Icons.dns_outlined),
-          selectedIcon: const Icon(Icons.dns_rounded),
-          label: strings.servers,
+      ),
+    );
+  }
+
+  Widget _bottomNavItem(
+    BuildContext context, {
+    required int index,
+    required Widget icon,
+    required Widget selectedIcon,
+    required String label,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final selected = _navigationIndex == index;
+    final foreground =
+        selected ? colorScheme.primary : colorScheme.onSurfaceVariant;
+
+    return Expanded(
+      child: InkWell(
+        onTap: () => _switchNavigationPage(index),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              width: 64,
+              height: 32,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: selected
+                    ? colorScheme.secondaryContainer
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: IconTheme(
+                data: IconThemeData(color: foreground, size: 24),
+                child: selected ? selectedIcon : icon,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: foreground,
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+          ],
         ),
-        NavigationDestination(
-          icon: _windowIcon(ssh, selected: false),
-          selectedIcon: _windowIcon(ssh, selected: true),
-          label: strings.windows,
-        ),
-      ],
+      ),
     );
   }
 
@@ -203,31 +299,42 @@ class _HomeScreenState extends State<HomeScreen> {
     return 'SSH Mobile';
   }
 
-  int get _navigationIndex {
+  int? get _navigationIndex {
     switch (_selectedIndex) {
       case _logPage:
-        return 0;
+        return null;
+      case _sftpPage:
+        return 1;
       case _windowPage:
         return 2;
+      case _aiPage:
+        return 3;
       case _serverPage:
       default:
-        return 1;
+        return 0;
     }
   }
 
   void _switchNavigationPage(int index) {
     switch (index) {
       case 0:
-        _switchPage(_logPage);
+        _switchPage(_serverPage);
+        break;
+      case 1:
+        _switchPage(_sftpPage);
         break;
       case 2:
         _switchPage(_windowPage);
         break;
-      case 1:
+      case 3:
       default:
-        _switchPage(_serverPage);
+        _switchPage(_aiPage);
         break;
     }
+  }
+
+  String settingsLabelAi(BuildContext context) {
+    return context.read<AppSettings>().isEnglish ? 'AI' : 'AI';
   }
 
   void _switchPage(int index) {
@@ -823,6 +930,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _confirmDelete(BuildContext context, ConnectionConfig conn) {
     final strings = AppStrings(context.read<AppSettings>().language);
+    final storage = context.read<StorageService>();
+    final ssh = context.read<SshService>();
+    final sftp = context.read<SftpService>();
 
     showDialog(
       context: context,
@@ -835,9 +945,11 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Text(strings.cancel),
           ),
           TextButton(
-            onPressed: () {
-              context.read<StorageService>().deleteConnection(conn.id);
+            onPressed: () async {
               Navigator.pop(ctx);
+              await ssh.disconnectSessionsForConnection(conn.id);
+              await sftp.disconnectConnection(conn.id, forgetPath: true);
+              await storage.deleteConnection(conn.id);
             },
             style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
             child: Text(strings.delete),

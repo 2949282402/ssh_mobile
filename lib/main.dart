@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import 'screens/add_edit_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/sftp_screen.dart';
 import 'screens/startup_screen.dart';
 import 'screens/terminal_history_screen.dart';
 import 'screens/terminal_screen.dart';
@@ -14,6 +15,7 @@ import 'services/background_service.dart';
 import 'services/app_settings.dart';
 import 'services/shortcut_command_service.dart';
 import 'services/ssh_service.dart';
+import 'services/sftp_service.dart';
 import 'services/storage_service.dart';
 import 'theme/app_theme.dart';
 
@@ -27,6 +29,7 @@ Future<void> main() async {
 
       final storageService = StorageService();
       final sshService = SshService(storageService);
+      final sftpService = SftpService(storageService);
       final appSettings = AppSettings();
       final shortcutCommandService = ShortcutCommandService();
 
@@ -38,6 +41,7 @@ Future<void> main() async {
             ChangeNotifierProvider.value(value: appLogService),
             ChangeNotifierProvider.value(value: storageService),
             ChangeNotifierProvider.value(value: sshService),
+            ChangeNotifierProvider.value(value: sftpService),
           ],
           child: const SshMobileApp(),
         ),
@@ -110,6 +114,10 @@ class SshMobileApp extends StatelessWidget {
           case '/history':
             return MaterialPageRoute(
               builder: (_) => const TerminalHistoryScreen(),
+            );
+          case '/sftp':
+            return MaterialPageRoute(
+              builder: (_) => const SftpScreen(),
             );
           case '/add':
             return MaterialPageRoute(

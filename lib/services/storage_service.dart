@@ -13,6 +13,9 @@ class StorageService extends ChangeNotifier {
   static const _powerGuideSeenKey = 'power_guide_seen';
   static const _restorableTmuxSessionsKey = 'restorable_tmux_sessions';
   static const _terminalHistoryRecordsKey = 'terminal_history_records';
+  static const _aiBaseUrlKey = 'ai_base_url';
+  static const _aiModelKey = 'ai_model';
+  static const _aiApiKeyKey = 'ai_api_key';
 
   SharedPreferences? _prefs;
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
@@ -130,6 +133,40 @@ class StorageService extends ChangeNotifier {
   Future<String?> getPrivateKey(String id) async {
     if (!_initialized) return null;
     return _secureStorage.read(key: 'key_$id');
+  }
+
+  Future<AiConnectionSettings> loadAiConnectionSettings() async {
+    final baseUrl = _prefs?.getString(_aiBaseUrlKey)?.trim();
+    final model = _prefs?.getString(_aiModelKey)?.trim();
+    final apiKey = await _secureStorage.read(key: _aiApiKeyKey);
+    return AiConnectionSettings(
+      baseUrl:
+          baseUrl?.isNotEmpty == true ? baseUrl! : 'https://api.openai.com/v1',
+      model: model?.isNotEmpty == true ? model! : 'gpt-4o-mini',
+      hasApiKey: apiKey?.isNotEmpty == true,
+    );
+  }
+
+  Future<String?> getAiApiKey() async {
+    if (!_initialized) return null;
+    return _secureStorage.read(key: _aiApiKeyKey);
+  }
+
+  Future<void> saveAiConnectionSettings({
+    required String baseUrl,
+    required String model,
+    String? apiKey,
+  }) async {
+    if (!_initialized || _prefs == null) return;
+    await _prefs!.setString(_aiBaseUrlKey, baseUrl.trim());
+    await _prefs!.setString(_aiModelKey, model.trim());
+    if (apiKey != null) {
+      final trimmed = apiKey.trim();
+      if (trimmed.isNotEmpty) {
+        await _secureStorage.write(key: _aiApiKeyKey, value: trimmed);
+      }
+    }
+    notifyListeners();
   }
 
   Future<void> markPowerGuideSeen() async {
@@ -277,6 +314,18 @@ class StorageService extends ChangeNotifier {
       throw StateError('Storage service is not initialized yet.');
     }
   }
+}
+
+class AiConnectionSettings {
+  final String baseUrl;
+  final String model;
+  final bool hasApiKey;
+
+  const AiConnectionSettings({
+    required this.baseUrl,
+    required this.model,
+    required this.hasApiKey,
+  });
 }
 
 class RestorableTmuxSession {

@@ -143,7 +143,7 @@ class TerminalScreenAppBar extends StatelessWidget
             onPressed: reconnectInProgress ? null : onReconnect,
           ),
         _appBarAction(
-          icon: isDarkMode ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
+          icon: isDarkMode ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
           tooltip:
               isDarkMode ? strings.switchToLightMode : strings.switchToDarkMode,
           onPressed: onToggleTheme,

@@ -1,0 +1,621 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:dartssh2/dartssh2.dart';
+import 'package:flutter/foundation.dart';
+
+import '../models/connection.dart';
+import 'app_log_service.dart';
+import 'ssh_client_factory.dart';
+import 'storage_service.dart';
+
+enum SftpConnectionState {
+  disconnected,
+  connecting,
+  connected,
+  loading,
+  error,
+}
+
+class SftpEntry {
+  final String connectionId;
+  final String name;
+  final String path;
+  final String lowerName;
+  final bool isDirectory;
+  final bool isLink;
+  final int? size;
+  final String sizeLabel;
+  final DateTime? modifiedAt;
+  final String? modifiedLabel;
+
+  const SftpEntry({
+    required this.connectionId,
+    required this.name,
+    required this.path,
+    required this.lowerName,
+    required this.isDirectory,
+    required this.isLink,
+    required this.sizeLabel,
+    this.size,
+    this.modifiedAt,
+    this.modifiedLabel,
+  });
+}
+
+class SftpService extends ChangeNotifier {
+  static const int maxTextEditBytes = 512 * 1024;
+  static const int maxTextPreviewBytes = 2 * 1024 * 1024;
+  static const int maxRichPreviewBytes = 20 * 1024 * 1024;
+  static const int maxInMemoryTransferBytes = 50 * 1024 * 1024;
+
+  final StorageService _storageService;
+  late final SshClientFactory _clientFactory =
+      SshClientFactory(_storageService);
+
+  final Map<String, _SftpSession> _sessions = {};
+  final Map<String, String> _lastPaths = {};
+  final Map<String, Future<void>> _connectTasks = {};
+  String? _activeConnectionId;
+
+  SftpService(this._storageService);
+
+  _SftpSession? get _activeSession =>
+      _activeConnectionId == null ? null : _sessions[_activeConnectionId];
+
+  String? get connectionId => _activeSession?.connectionId;
+  String? get connectionName => _activeSession?.connectionName;
+  String get currentPath => _activeSession?.currentPath ?? '.';
+  SftpConnectionState get state =>
+      _activeSession?.state ?? SftpConnectionState.disconnected;
+  String? get errorMessage => _activeSession?.errorMessage;
+  List<SftpEntry> get entries =>
+      List.unmodifiable(_activeSession?.entries ?? const []);
+  bool get isConnected => _activeSession?.sftp != null;
+  bool get isBusy =>
+      state == SftpConnectionState.connecting ||
+      state == SftpConnectionState.loading;
+
+  bool isConnectionBusy(String connectionId) {
+    final session = _sessions[connectionId];
+    return session?.state == SftpConnectionState.connecting ||
+        session?.state == SftpConnectionState.loading;
+  }
+
+  bool isConnectionOpen(String connectionId) {
+    return _sessions[connectionId]?.sftp != null;
+  }
+
+  Future<void> connect(String connectionId) async {
+    final config = _storageService.getConnection(connectionId);
+    if (config == null) {
+      _setError('Connection config not found');
+      return;
+    }
+
+    final existing = _sessions[connectionId];
+    if (existing?.sftp != null) {
+      _activeConnectionId = connectionId;
+      notifyListeners();
+      return;
+    }
+    if (existing?.state == SftpConnectionState.connecting) {
+      _activeConnectionId = connectionId;
+      notifyListeners();
+      final task = _connectTasks[connectionId];
+      if (task != null) await task;
+      return;
+    }
+
+    final session = _SftpSession(
+      connectionId: connectionId,
+      connectionName: config.name,
+      currentPath: _lastPaths[connectionId] ?? '.',
+    );
+    _sessions[connectionId] = session;
+    _activeConnectionId = connectionId;
+    session.state = SftpConnectionState.connecting;
+    session.errorMessage = null;
+    notifyListeners();
+    final task = _connect(session, config);
+    _connectTasks[connectionId] = task;
+    try {
+      await task;
+    } finally {
+      if (identical(_connectTasks[connectionId], task)) {
+        _connectTasks.remove(connectionId);
+      }
+    }
+  }
+
+  Future<void> _connect(_SftpSession session, ConnectionConfig config) async {
+    try {
+      final client = await _clientFactory.connectClient(config);
+      if (!session.isCurrent(_sessions)) {
+        client.close();
+        return;
+      }
+      session.client = client;
+      final sftp = await client.sftp().timeout(const Duration(seconds: 15));
+      if (!session.isCurrent(_sessions)) {
+        sftp.close();
+        client.close();
+        return;
+      }
+      session.sftp = sftp;
+      session.state = SftpConnectionState.connected;
+      AppLogService.instance.info(
+        'SFTP connected',
+        details: 'connection=${config.name} host=${config.host}:${config.port}',
+      );
+      notifyListeners();
+      await _openLastKnownPath(session);
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'SFTP connect failed',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'connection=${config.name}',
+      );
+      session.close();
+      session.client = null;
+      session.sftp = null;
+      session.state = SftpConnectionState.error;
+      session.errorMessage = 'SFTP connection failed: $e';
+      notifyListeners();
+    }
+  }
+
+  Future<void> refresh() => openPath(currentPath);
+
+  Future<void> uploadBytes({
+    required String filename,
+    required Uint8List bytes,
+  }) async {
+    final session = _activeSession;
+    final sftp = session?.sftp;
+    if (sftp == null) return;
+    _assertWithinMemoryLimit(bytes.length, 'upload');
+
+    session!.state = SftpConnectionState.loading;
+    session.errorMessage = null;
+    notifyListeners();
+
+    final remotePath = _joinRemotePath(session.currentPath, filename);
+    SftpFile? file;
+    try {
+      file = await sftp.open(
+        remotePath,
+        mode: SftpFileOpenMode.create |
+            SftpFileOpenMode.truncate |
+            SftpFileOpenMode.write,
+      );
+      await file.writeBytes(bytes);
+      AppLogService.instance.info(
+        'SFTP file uploaded',
+        details: 'path=$remotePath bytes=${bytes.length}',
+      );
+      await _openPath(session, session.currentPath);
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'SFTP upload failed',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'path=$remotePath',
+      );
+      session.state = SftpConnectionState.error;
+      session.errorMessage = 'Upload failed: $e';
+      notifyListeners();
+      rethrow;
+    } finally {
+      await _closeFileQuietly(file);
+    }
+  }
+
+  Future<void> deleteEntry(SftpEntry entry) async {
+    final session = _sessionForEntry(entry);
+    final sftp = session.sftp;
+    if (sftp == null) return;
+
+    session.state = SftpConnectionState.loading;
+    session.errorMessage = null;
+    notifyListeners();
+
+    try {
+      if (entry.isDirectory) {
+        await sftp.rmdir(entry.path);
+      } else {
+        await sftp.remove(entry.path);
+      }
+      AppLogService.instance.info(
+        'SFTP entry deleted',
+        details: 'path=${entry.path} directory=${entry.isDirectory}',
+      );
+      await _openPath(session, session.currentPath);
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'SFTP delete failed',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'path=${entry.path}',
+      );
+      session.state = SftpConnectionState.error;
+      session.errorMessage = 'Delete failed: $e';
+      notifyListeners();
+    }
+  }
+
+  Future<Uint8List> downloadBytes(
+    SftpEntry entry, {
+    int maxBytes = maxInMemoryTransferBytes,
+    bool updateState = false,
+  }) async {
+    final session = _sessionForEntry(entry);
+    final sftp = session.sftp;
+    if (sftp == null) throw StateError('SFTP is not connected');
+    if (entry.isDirectory) throw StateError('Directories cannot be downloaded');
+    _assertWithinMemoryLimit(entry.size, 'download', maxBytes: maxBytes);
+    if (updateState) {
+      session.state = SftpConnectionState.loading;
+      session.errorMessage = null;
+      notifyListeners();
+    }
+
+    SftpFile? file;
+    try {
+      file = await sftp.open(entry.path, mode: SftpFileOpenMode.read);
+      final bytes = await file.readBytes();
+      _assertWithinMemoryLimit(bytes.length, 'download', maxBytes: maxBytes);
+      AppLogService.instance.info(
+        'SFTP file downloaded',
+        details: 'path=${entry.path} bytes=${bytes.length}',
+      );
+      if (updateState) {
+        session.state = SftpConnectionState.connected;
+        notifyListeners();
+      }
+      return bytes;
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'SFTP download failed',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'path=${entry.path}',
+      );
+      if (updateState) {
+        session.state = SftpConnectionState.error;
+        session.errorMessage = 'Download failed: $e';
+        notifyListeners();
+      }
+      rethrow;
+    } finally {
+      await _closeFileQuietly(file);
+    }
+  }
+
+  Future<String> readTextFile(SftpEntry entry,
+      {int maxBytes = maxTextEditBytes}) async {
+    final sftp = _sessionForEntry(entry).sftp;
+    if (sftp == null) throw StateError('SFTP is not connected');
+    _assertWithinMemoryLimit(entry.size, 'edit', maxBytes: maxBytes);
+
+    SftpFile? file;
+    try {
+      file = await sftp.open(entry.path, mode: SftpFileOpenMode.read);
+      final bytes = await file.readBytes();
+      _assertWithinMemoryLimit(bytes.length, 'edit', maxBytes: maxBytes);
+      return utf8.decode(bytes, allowMalformed: true);
+    } finally {
+      await _closeFileQuietly(file);
+    }
+  }
+
+  Future<void> saveTextFile(SftpEntry entry, String text) async {
+    final session = _sessionForEntry(entry);
+    final sftp = session.sftp;
+    if (sftp == null) return;
+
+    session.state = SftpConnectionState.loading;
+    session.errorMessage = null;
+    notifyListeners();
+
+    SftpFile? file;
+    try {
+      file = await sftp.open(
+        entry.path,
+        mode: SftpFileOpenMode.create |
+            SftpFileOpenMode.truncate |
+            SftpFileOpenMode.write,
+      );
+      final bytes = Uint8List.fromList(utf8.encode(text));
+      await file.writeBytes(bytes);
+      AppLogService.instance.info(
+        'SFTP text file saved',
+        details: 'path=${entry.path} bytes=${bytes.length}',
+      );
+      await _openPath(session, session.currentPath);
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'SFTP save failed',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'path=${entry.path}',
+      );
+      session.state = SftpConnectionState.error;
+      session.errorMessage = 'Save failed: $e';
+      notifyListeners();
+      rethrow;
+    } finally {
+      await _closeFileQuietly(file);
+    }
+  }
+
+  Future<void> openPath(String path) async {
+    final session = _activeSession;
+    if (session == null) return;
+    return _openPath(session, path);
+  }
+
+  Future<List<SftpEntry>> listDirectoryForConnection(
+    String connectionId,
+    String path,
+  ) async {
+    await connect(connectionId);
+    final session = _sessions[connectionId];
+    if (session == null || session.sftp == null) {
+      throw StateError('SFTP is not connected');
+    }
+    await _openPath(session, path);
+    return List.unmodifiable(session.entries);
+  }
+
+  Future<String> readTextPathForConnection({
+    required String connectionId,
+    required String path,
+    int maxBytes = maxTextPreviewBytes,
+  }) async {
+    await connect(connectionId);
+    final session = _sessions[connectionId];
+    final sftp = session?.sftp;
+    if (session == null || sftp == null) {
+      throw StateError('SFTP is not connected');
+    }
+
+    SftpFile? file;
+    try {
+      file = await sftp.open(path, mode: SftpFileOpenMode.read);
+      final bytes = await file.readBytes();
+      _assertWithinMemoryLimit(bytes.length, 'read', maxBytes: maxBytes);
+      return utf8.decode(bytes, allowMalformed: true);
+    } finally {
+      await _closeFileQuietly(file);
+    }
+  }
+
+  Future<void> _openPath(_SftpSession session, String path) async {
+    final sftp = session.sftp;
+    if (sftp == null) return;
+
+    session.state = SftpConnectionState.loading;
+    session.errorMessage = null;
+    notifyListeners();
+
+    try {
+      final absolutePath = await sftp.absolute(path);
+      final names = await sftp.listdir(absolutePath);
+      final entries = <SftpEntry>[];
+      for (final name in names) {
+        if (name.filename == '.' || name.filename == '..') continue;
+        final modifiedAt = name.attr.modifyTime == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(
+                name.attr.modifyTime! * 1000,
+              );
+        entries.add(
+          SftpEntry(
+            connectionId: session.connectionId,
+            name: name.filename,
+            path: _joinRemotePath(absolutePath, name.filename),
+            lowerName: name.filename.toLowerCase(),
+            isDirectory: name.attr.isDirectory,
+            isLink: name.attr.isSymbolicLink,
+            size: name.attr.size,
+            sizeLabel: _formatBytes(name.attr.size),
+            modifiedAt: modifiedAt,
+            modifiedLabel:
+                modifiedAt == null ? null : _formatTimestamp(modifiedAt),
+          ),
+        );
+      }
+      entries.sort((a, b) {
+        if (a.isDirectory != b.isDirectory) return a.isDirectory ? -1 : 1;
+        return a.lowerName.compareTo(b.lowerName);
+      });
+
+      session.currentPath = absolutePath;
+      _lastPaths[session.connectionId] = absolutePath;
+      session.entries = entries;
+      session.state = SftpConnectionState.connected;
+      notifyListeners();
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'SFTP list directory failed',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'path=$path',
+      );
+      session.state = SftpConnectionState.error;
+      session.errorMessage = 'Unable to read directory: $e';
+      notifyListeners();
+    }
+  }
+
+  Future<void> openParent() {
+    final path = currentPath;
+    if (path == '/' || path.isEmpty) return refresh();
+    final trimmed = path.endsWith('/') && path.length > 1
+        ? path.substring(0, path.length - 1)
+        : path;
+    final slash = trimmed.lastIndexOf('/');
+    if (slash <= 0) return openPath('/');
+    return openPath(trimmed.substring(0, slash));
+  }
+
+  Future<void> disconnect({bool notify = true}) async {
+    final connectionId = _activeConnectionId;
+    if (connectionId == null) return;
+    final session = _sessions.remove(connectionId);
+    if (session != null) {
+      _lastPaths[connectionId] = session.currentPath;
+    }
+    session?.close();
+    _activeConnectionId = null;
+
+    if (notify) notifyListeners();
+  }
+
+  Future<void> disconnectConnection(
+    String connectionId, {
+    bool notify = true,
+    bool forgetPath = false,
+  }) async {
+    _connectTasks.remove(connectionId);
+    final session = _sessions.remove(connectionId);
+    if (session != null && !forgetPath) {
+      _lastPaths[connectionId] = session.currentPath;
+    }
+    if (forgetPath) {
+      _lastPaths.remove(connectionId);
+    }
+    session?.close();
+    if (_activeConnectionId == connectionId) {
+      _activeConnectionId = null;
+    }
+    if (notify) notifyListeners();
+  }
+
+  Future<void> disconnectAll({bool notify = true}) async {
+    _connectTasks.clear();
+    for (final session in _sessions.values) {
+      _lastPaths[session.connectionId] = session.currentPath;
+      session.close();
+    }
+    _sessions.clear();
+    _activeConnectionId = null;
+    if (notify) notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    unawaited(disconnectAll(notify: false));
+    super.dispose();
+  }
+
+  Future<void> _openLastKnownPath(_SftpSession session) async {
+    final targetPath = _lastPaths[session.connectionId] ?? session.currentPath;
+    await _openPath(session, targetPath);
+    if (session.state != SftpConnectionState.error || targetPath == '.') {
+      return;
+    }
+
+    AppLogService.instance.warning(
+      'SFTP last path unavailable, falling back to default directory',
+      details: 'connection=${session.connectionName} path=$targetPath',
+    );
+    session.errorMessage = null;
+    await _openPath(session, '.');
+  }
+
+  void _setError(String message) {
+    final session = _activeSession;
+    if (session == null) return;
+    session.state = SftpConnectionState.error;
+    session.errorMessage = message;
+    notifyListeners();
+  }
+
+  String _joinRemotePath(String base, String name) {
+    if (base == '/' || base.isEmpty) return '/$name';
+    return '$base/$name';
+  }
+
+  _SftpSession _sessionForEntry(SftpEntry entry) {
+    final session = _sessions[entry.connectionId];
+    if (session == null) {
+      throw StateError('SFTP connection is no longer available');
+    }
+    return session;
+  }
+
+  void _assertWithinMemoryLimit(
+    int? bytes,
+    String action, {
+    int maxBytes = maxInMemoryTransferBytes,
+  }) {
+    if (bytes == null || bytes <= maxBytes) return;
+    throw StateError(
+      'File is too large to $action in app memory '
+      '(${_formatBytes(bytes)} > ${_formatBytes(maxBytes)}).',
+    );
+  }
+
+  String _formatBytes(int? bytes) {
+    if (bytes == null) return '-';
+    if (bytes < 1024) return '$bytes B';
+    final kb = bytes / 1024;
+    if (kb < 1024) return '${kb.toStringAsFixed(kb < 10 ? 1 : 0)} KB';
+    final mb = kb / 1024;
+    if (mb < 1024) return '${mb.toStringAsFixed(mb < 10 ? 1 : 0)} MB';
+    final gb = mb / 1024;
+    return '${gb.toStringAsFixed(gb < 10 ? 1 : 0)} GB';
+  }
+
+  String _formatTimestamp(DateTime time) {
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${time.year.toString().padLeft(4, '0')}-'
+        '${two(time.month)}-'
+        '${two(time.day)} '
+        '${two(time.hour)}:'
+        '${two(time.minute)}';
+  }
+
+  Future<void> _closeFileQuietly(SftpFile? file) async {
+    if (file == null) return;
+    try {
+      await file.close();
+    } catch (e) {
+      AppLogService.instance.warning(
+        'SFTP file close failed',
+        details: '$e',
+      );
+    }
+  }
+}
+
+class _SftpSession {
+  final String connectionId;
+  final String connectionName;
+  SSHClient? client;
+  SftpClient? sftp;
+  String currentPath;
+  SftpConnectionState state = SftpConnectionState.disconnected;
+  String? errorMessage;
+  List<SftpEntry> entries = const [];
+  bool _closed = false;
+
+  _SftpSession({
+    required this.connectionId,
+    required this.connectionName,
+    required this.currentPath,
+  });
+
+  void close() {
+    _closed = true;
+    sftp?.close();
+    client?.close();
+  }
+
+  bool isCurrent(Map<String, _SftpSession> sessions) {
+    return !_closed && identical(sessions[connectionId], this);
+  }
+}

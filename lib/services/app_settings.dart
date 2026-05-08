@@ -270,6 +270,54 @@ class AppStrings {
   String get powerLimitUnknown =>
       _en ? 'Power restriction status not confirmed' : '尚未确认省电限制状态';
 
+  String get sftp => _en ? 'SFTP' : 'SFTP';
+  String get sftpServers => _en ? 'SFTP servers' : 'SFTP 服务器';
+  String get sftpEmptyTitle =>
+      _en ? 'Select a server for SFTP' : '选择服务器使用 SFTP';
+  String get sftpEmptyHint => _en
+      ? 'Browse remote files with the same saved SSH connections on desktop and mobile.'
+      : '桌面端和移动端使用同一套 SSH 连接来浏览远程文件。';
+  String get parentDirectory => _en ? 'Parent directory' : '上级目录';
+  String get refresh => _en ? 'Refresh' : '刷新';
+  String get retry => _en ? 'Retry' : '重试';
+  String get disconnect => _en ? 'Disconnect' : '断开连接';
+  String get emptyDirectory => _en ? 'This directory is empty' : '当前目录为空';
+  String get directory => _en ? 'Directory' : '文件夹';
+  String get uploadFile => _en ? 'Upload file' : '上传文件';
+  String get uploadComplete => _en ? 'Upload complete' : '上传完成';
+  String uploadFailed(Object error) =>
+      _en ? 'Upload failed: $error' : '上传失败：$error';
+  String get viewFile => _en ? 'View file' : '查看文件';
+  String get preview => _en ? 'Preview' : '预览';
+  String get source => _en ? 'Source' : '源码';
+  String previewFailed(Object error) =>
+      _en ? 'Preview failed: $error' : '预览失败：$error';
+  String get unsupportedPreview => _en
+      ? 'Preview is not supported for this file type. Download it to open with another app.'
+      : '暂不支持预览这种文件类型。可以下载后用其他应用打开。';
+  String get downloadFile => _en ? 'Download file' : '下载文件';
+  String get downloadComplete => _en ? 'Download complete' : '下载完成';
+  String downloadFailed(Object error) =>
+      _en ? 'Download failed: $error' : '下载失败：$error';
+  String get deleteRemoteEntry => _en ? 'Delete remote entry' : '删除远程项目';
+  String deleteRemoteEntryContent(String name) =>
+      _en ? 'Delete "$name" from the server?' : '从服务器删除 "$name"？';
+  String get deleteComplete => _en ? 'Deleted' : '已删除';
+  String editRemoteFile(String name) => _en ? 'Edit "$name"' : '编辑 "$name"';
+  String get remoteFileContent => _en ? 'Remote file content' : '远程文件内容';
+  String openEditorFailed(Object error) =>
+      _en ? 'Unable to open editor: $error' : '无法打开编辑器：$error';
+  String get saveComplete => _en ? 'Saved' : '已保存';
+  String get smallerFont => _en ? 'Smaller font' : '缩小字号';
+  String get largerFont => _en ? 'Larger font' : '放大字号';
+  String get enableLineWrap => _en ? 'Enable line wrap' : '开启自动换行';
+  String get disableLineWrap => _en ? 'Disable line wrap' : '关闭自动换行';
+  String get discardChangesTitle => _en ? 'Discard changes?' : '放弃修改？';
+  String get discardChangesContent => _en
+      ? 'This file has unsaved changes. Leave without saving?'
+      : '当前文件有未保存的修改，确定不保存并离开吗？';
+  String get discard => _en ? 'Discard' : '放弃';
+
   String connectionFailed(String message) =>
       _en ? 'Connection failed: $message' : '连接失败：$message';
   String tmuxMissingHint(String text) => _en
