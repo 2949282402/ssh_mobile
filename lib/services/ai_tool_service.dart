@@ -27,13 +27,15 @@ class AiToolService {
       AiTool(
         name: 'run_command',
         description:
-            'Run a safe read-only shell command on a selected server. Destructive commands are rejected.',
+            'Run a shell command on a selected server. Read-only diagnostics run immediately; write commands require explicit user approval in the app before execution.',
         properties: {
           'connectionId': _string('Server connection id.'),
-          'command': _string('Read-only shell command to run.'),
+          'command': _string(
+            'Shell command to run. Prefer read-only diagnostics unless the user asks for a write operation.',
+          ),
         },
         required: const ['connectionId', 'command'],
-        handler: _runCommand,
+        handler: (arguments) => _runCommand(arguments),
       ),
       AiTool(
         name: 'sftp_list_dir',
@@ -63,7 +65,30 @@ class AiToolService {
     return tools.map((tool) => tool.definition).toList();
   }
 
-  Future<String> execute(String name, Map<String, dynamic> arguments) async {
+  AiToolApprovalRequest? approvalRequestFor(
+    String name,
+    Map<String, dynamic> arguments,
+  ) {
+    if (name != 'run_command') return null;
+    final connectionId = _arg(arguments, 'connectionId');
+    final command = _arg(arguments, 'command');
+    final review = reviewCommand(command);
+    if (!review.requiresApproval) return null;
+    final config = storageService.getConnection(connectionId);
+    return AiToolApprovalRequest(
+      toolName: name,
+      connectionId: connectionId,
+      connectionName: config?.name ?? connectionId,
+      command: command,
+      reason: review.reason,
+    );
+  }
+
+  Future<String> execute(
+    String name,
+    Map<String, dynamic> arguments, {
+    bool approvedWrite = false,
+  }) async {
     for (final tool in tools) {
       if (tool.name == name) {
         final startedAt = DateTime.now();
@@ -72,7 +97,9 @@ class AiToolService {
           details: 'tool=$name args=${_safeArguments(arguments)}',
         );
         try {
-          final result = await tool.handler(arguments);
+          final result = name == 'run_command'
+              ? await _runCommand(arguments, approvedWrite: approvedWrite)
+              : await tool.handler(arguments);
           AppLogService.instance.info(
             'AI tool completed',
             details:
@@ -110,17 +137,28 @@ class AiToolService {
     return jsonEncode({'servers': servers});
   }
 
-  Future<String> _runCommand(Map<String, dynamic> arguments) async {
+  Future<String> _runCommand(
+    Map<String, dynamic> arguments, {
+    bool approvedWrite = false,
+  }) async {
     final connectionId = _arg(arguments, 'connectionId');
     final command = _arg(arguments, 'command');
-    final rejectedReason = _rejectedCommandReason(command);
-    if (rejectedReason != null) {
+    final review = reviewCommand(command);
+    if (review.blocked) {
       return jsonEncode({
-        'error': rejectedReason,
+        'error': review.reason,
+        'command': command,
+      });
+    }
+    if (review.requiresApproval && !approvedWrite) {
+      return jsonEncode({
+        'error': 'Write command requires user approval before execution.',
         'command': command,
       });
     }
 
+    // This intentionally uses a one-shot SSH exec path, not the tmux-backed
+    // terminal session path, so AI tools do not attach to user workspaces.
     final result = await sshService.runOneShotCommand(
       connectionId: connectionId,
       command: command,
@@ -179,9 +217,30 @@ class AiToolService {
     return value.trim();
   }
 
-  String? _rejectedCommandReason(String command) {
+  AiCommandReview reviewCommand(String command) {
     final normalized = command.trim().toLowerCase();
-    if (normalized.isEmpty) return 'Command is empty';
+    if (normalized.isEmpty) {
+      return const AiCommandReview.blocked('Command is empty');
+    }
+
+    final blocked = [
+      'sudo -s',
+      'sudo su',
+      ' su ',
+      'su -',
+      'passwd',
+      'sshpass',
+      'password=',
+      'private key',
+    ];
+    if (blocked.any(normalized.contains)) {
+      return const AiCommandReview.blocked(
+        'This command asks for elevated shells, passwords, or secret handling.',
+      );
+    }
+
+    // Keep model-operated shell access intentionally narrow: diagnostics and
+    // path discovery run directly; everything else pauses for user approval.
     final allowedPrefixes = [
       'cat ',
       'command -v ',
@@ -209,29 +268,11 @@ class AiToolService {
       'whoami',
     ];
     if (!allowedPrefixes.any(normalized.startsWith)) {
-      return 'Only read-only diagnostic commands are allowed in this version.';
+      return const AiCommandReview.requiresApproval(
+        'This command may change server state.',
+      );
     }
-    final blocked = [
-      ' rm ',
-      'rm ',
-      'sudo ',
-      ' chmod ',
-      ' chown ',
-      ' mv ',
-      ' cp ',
-      ' >',
-      '>>',
-      '| sh',
-      '| bash',
-      '&&',
-      ';',
-      '`',
-      r'$(',
-    ];
-    if (blocked.any(normalized.contains)) {
-      return 'This command contains a blocked destructive or compound operator.';
-    }
-    return null;
+    return const AiCommandReview.readOnly();
   }
 
   String _truncate(String value) {
@@ -260,6 +301,57 @@ class AiToolService {
   static Map<String, dynamic> _string(String description) {
     return {'type': 'string', 'description': description};
   }
+}
+
+class AiToolApprovalRequest {
+  final String toolName;
+  final String connectionId;
+  final String connectionName;
+  final String command;
+  final String reason;
+
+  const AiToolApprovalRequest({
+    required this.toolName,
+    required this.connectionId,
+    required this.connectionName,
+    required this.command,
+    required this.reason,
+  });
+}
+
+class AiToolApprovalDecision {
+  final bool approved;
+  final bool abort;
+  final String? feedback;
+
+  const AiToolApprovalDecision.approved()
+      : approved = true,
+        abort = false,
+        feedback = null;
+
+  const AiToolApprovalDecision.rejected({
+    this.abort = true,
+    this.feedback,
+  }) : approved = false;
+}
+
+class AiCommandReview {
+  final bool requiresApproval;
+  final bool blocked;
+  final String reason;
+
+  const AiCommandReview.readOnly()
+      : requiresApproval = false,
+        blocked = false,
+        reason = 'Read-only diagnostic command.';
+
+  const AiCommandReview.requiresApproval(this.reason)
+      : requiresApproval = true,
+        blocked = false;
+
+  const AiCommandReview.blocked(this.reason)
+      : requiresApproval = false,
+        blocked = true;
 }
 
 class AiTool {

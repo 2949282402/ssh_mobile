@@ -1,0 +1,4 @@
+interface:
+  display_name: "SSH Mobile Maintenance"
+  short_description: "Maintain SSH Mobile Flutter, SFTP, and LLM features"
+  default_prompt: "Use this skill when modifying SSH Mobile Flutter code, SFTP behavior, AI tools, LLM streaming, settings, logs, README, or Android run/debug issues."

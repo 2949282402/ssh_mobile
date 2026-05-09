@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'screens/add_edit_screen.dart';
+import 'screens/ai_skills_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/sftp_screen.dart';
 import 'screens/startup_screen.dart';
@@ -118,6 +119,10 @@ class SshMobileApp extends StatelessWidget {
           case '/sftp':
             return MaterialPageRoute(
               builder: (_) => const SftpScreen(),
+            );
+          case '/ai-skills':
+            return MaterialPageRoute(
+              builder: (_) => const AiSkillsScreen(),
             );
           case '/add':
             return MaterialPageRoute(

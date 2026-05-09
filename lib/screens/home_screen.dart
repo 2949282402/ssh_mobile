@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
@@ -17,22 +19,48 @@ import 'llm_chat_screen.dart';
 import 'sftp_screen.dart';
 import 'terminal_windows_screen.dart';
 
+extension _HomeSettingsStrings on AppStrings {
+  String get settings => language == AppLanguage.en ? 'Settings' : '设置';
+  String get appearance => language == AppLanguage.en ? 'Appearance' : '外观';
+  String get dataBackup => language == AppLanguage.en ? 'Data backup' : '数据备份';
+  String get exportAppData =>
+      language == AppLanguage.en ? 'Export app data' : '导出应用数据';
+  String get importAppData =>
+      language == AppLanguage.en ? 'Import app data' : '导入应用数据';
+  String get exportComplete =>
+      language == AppLanguage.en ? 'Export complete' : '导出完成';
+  String get importComplete =>
+      language == AppLanguage.en ? 'Import complete' : '导入完成';
+  String get importAction => language == AppLanguage.en ? 'Import' : '导入';
+  String get importAppDataWarning => language == AppLanguage.en
+      ? 'Importing will replace saved servers, window history, AI chats, AI settings, and custom skills. Passwords, private keys, and API keys must be configured again. Continue?'
+      : '导入会替换当前设备上的服务器、窗口历史、AI 聊天、AI 设置和自定义 Skills。密码、私钥和 API Key 需要重新配置。是否继续？';
+  String get backupContainsSecrets => language == AppLanguage.en
+      ? 'Passwords, private keys, and API keys are not exported. Reconfigure them after import.'
+      : '密码、私钥和 API Key 不会导出，导入后需要重新配置。';
+  String exportFailed(Object error) =>
+      language == AppLanguage.en ? 'Export failed: $error' : '导出失败：$error';
+  String importFailed(Object error) =>
+      language == AppLanguage.en ? 'Import failed: $error' : '导入失败：$error';
+}
+
 class HomeScreen extends StatefulWidget {
   final int initialIndex;
 
-  const HomeScreen({super.key, this.initialIndex = 1});
+  const HomeScreen({super.key, this.initialIndex = 0});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  static const int _logPage = 0;
-  static const int _serverPage = 1;
+  static const int _serverPage = 0;
+  static const int _windowPage = 1;
   static const int _sftpPage = 2;
-  static const int _windowPage = 3;
-  static const int _aiPage = 4;
+  static const int _aiPage = 3;
+  static const int _logPage = 4;
 
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   late final PageController _pageController;
   late int _selectedIndex;
   Timer? _bottomNavCollapseTimer;
@@ -75,47 +103,40 @@ class _HomeScreenState extends State<HomeScreen> {
       },
       child: PageView(
         controller: _pageController,
+        physics: _selectedIndex == _serverPage
+            ? const NeverScrollableScrollPhysics()
+            : const PageScrollPhysics(),
         onPageChanged: (index) {
           setState(() => _selectedIndex = index);
           if (!desktop) _scheduleBottomNavCollapse();
         },
         children: [
-          const DeveloperLogPage(),
-          connections.isEmpty
-              ? storage.initialized
-                  ? _buildEmptyState(context, strings)
-                  : _buildLoadingState()
-              : _buildConnectionList(context, connections, ssh, strings),
-          const SftpScreen(),
+          _buildServerPage(context, storage, connections, ssh, strings),
           const TerminalWindowsPage(),
+          const SftpScreen(),
           const LlmChatScreen(),
+          const DeveloperLogPage(),
         ],
       ),
     );
 
     return Scaffold(
+      key: _scaffoldKey,
+      endDrawerEnableOpenDragGesture: _selectedIndex == _serverPage,
+      endDrawer: _SettingsPanel(
+        onExport: () => _exportAppData(context, strings),
+        onImport: () => _importAppData(context, strings),
+      ),
       appBar: AppBar(
         title: Text(
           _appTitle,
           style: TextStyle(fontWeight: FontWeight.w700),
         ),
         actions: [
-          TextButton(
-            onPressed: settings.toggleLanguage,
-            child: Text(
-              settings.isEnglish
-                  ? strings.switchToEnglish
-                  : strings.switchToChinese,
-            ),
-          ),
           IconButton(
-            icon: Icon(
-              settings.isDarkMode ? Icons.dark_mode : Icons.light_mode,
-            ),
-            tooltip: settings.isDarkMode
-                ? strings.switchToLightMode
-                : strings.switchToDarkMode,
-            onPressed: () => settings.toggleTheme(),
+            tooltip: strings.settings,
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
           ),
         ],
       ),
@@ -170,14 +191,14 @@ class _HomeScreenState extends State<HomeScreen> {
               label: Text(strings.servers),
             ),
             NavigationRailDestination(
-              icon: const Icon(Icons.folder_open_outlined),
-              selectedIcon: const Icon(Icons.folder_open_rounded),
-              label: Text(strings.sftp),
-            ),
-            NavigationRailDestination(
               icon: _windowIcon(ssh, selected: false),
               selectedIcon: _windowIcon(ssh, selected: true),
               label: Text(strings.windows),
+            ),
+            NavigationRailDestination(
+              icon: const Icon(Icons.folder_open_outlined),
+              selectedIcon: const Icon(Icons.folder_open_rounded),
+              label: Text(strings.sftp),
             ),
             NavigationRailDestination(
               icon: const Icon(Icons.smart_toy_outlined),
@@ -223,16 +244,16 @@ class _HomeScreenState extends State<HomeScreen> {
                     _bottomNavItem(
                       context,
                       index: 1,
-                      icon: const Icon(Icons.folder_open_outlined),
-                      selectedIcon: const Icon(Icons.folder_open_rounded),
-                      label: strings.sftp,
+                      icon: _windowIcon(ssh, selected: false),
+                      selectedIcon: _windowIcon(ssh, selected: true),
+                      label: strings.windows,
                     ),
                     _bottomNavItem(
                       context,
                       index: 2,
-                      icon: _windowIcon(ssh, selected: false),
-                      selectedIcon: _windowIcon(ssh, selected: true),
-                      label: strings.windows,
+                      icon: const Icon(Icons.folder_open_outlined),
+                      selectedIcon: const Icon(Icons.folder_open_rounded),
+                      label: strings.sftp,
                     ),
                     _bottomNavItem(
                       context,
@@ -340,14 +361,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   int? get _navigationIndex {
     switch (_selectedIndex) {
-      case _logPage:
-        return null;
-      case _sftpPage:
-        return 1;
       case _windowPage:
+        return 1;
+      case _sftpPage:
         return 2;
       case _aiPage:
         return 3;
+      case _logPage:
+        return null;
       case _serverPage:
       default:
         return 0;
@@ -360,10 +381,10 @@ class _HomeScreenState extends State<HomeScreen> {
         _switchPage(_serverPage);
         break;
       case 1:
-        _switchPage(_sftpPage);
+        _switchPage(_windowPage);
         break;
       case 2:
-        _switchPage(_windowPage);
+        _switchPage(_sftpPage);
         break;
       case 3:
       default:
@@ -403,6 +424,84 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  Future<void> _exportAppData(
+    BuildContext context,
+    AppStrings strings,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final jsonText = await context.read<StorageService>().exportAppDataJson();
+      if (!context.mounted) return;
+      final now = DateTime.now();
+      final fileName =
+          'ssh_mobile_backup_${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}.json';
+      final path = await FilePicker.saveFile(
+        dialogTitle: strings.exportAppData,
+        fileName: fileName,
+        bytes: utf8.encode(jsonText),
+      );
+      if (!context.mounted || path == null) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text(strings.exportComplete)),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text(strings.exportFailed(e))),
+      );
+    }
+  }
+
+  Future<void> _importAppData(
+    BuildContext context,
+    AppStrings strings,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(strings.importAppData),
+        content: Text(strings.importAppDataWarning),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(strings.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(strings.importAction),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      final result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['json'],
+        withData: true,
+      );
+      if (!context.mounted || result == null || result.files.isEmpty) return;
+      final bytes = result.files.single.bytes;
+      if (bytes == null) {
+        throw StateError('Unable to read selected file.');
+      }
+      await context
+          .read<StorageService>()
+          .importAppDataJson(utf8.decode(bytes));
+      if (!context.mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text(strings.importComplete)),
+      );
+      _switchPage(_serverPage);
+    } catch (e) {
+      if (!context.mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text(strings.importFailed(e))),
+      );
+    }
+  }
+
   Widget _buildLoadingState() {
     return const Center(
       child: SizedBox(
@@ -410,6 +509,29 @@ class _HomeScreenState extends State<HomeScreen> {
         height: 28,
         child: CircularProgressIndicator(strokeWidth: 2),
       ),
+    );
+  }
+
+  Widget _buildServerPage(
+    BuildContext context,
+    StorageService storage,
+    List<ConnectionConfig> connections,
+    SshService ssh,
+    AppStrings strings,
+  ) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragEnd: (details) {
+        if (details.primaryVelocity != null &&
+            details.primaryVelocity! < -520) {
+          _scaffoldKey.currentState?.openEndDrawer();
+        }
+      },
+      child: connections.isEmpty
+          ? storage.initialized
+              ? _buildEmptyState(context, strings)
+              : _buildLoadingState()
+          : _buildConnectionList(context, connections, ssh, strings),
     );
   }
 
@@ -1017,5 +1139,135 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _addConnection(BuildContext context) {
     Navigator.pushNamed(context, '/add');
+  }
+}
+
+class _SettingsPanel extends StatelessWidget {
+  final VoidCallback onExport;
+  final VoidCallback onImport;
+
+  const _SettingsPanel({
+    required this.onExport,
+    required this.onImport,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final settings = context.watch<AppSettings>();
+    final strings = AppStrings(settings.language);
+    final colorScheme = Theme.of(context).colorScheme;
+    return Drawer(
+      child: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+          children: [
+            Row(
+              children: [
+                Icon(Icons.settings_outlined, color: colorScheme.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    strings.settings,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            _SettingsSection(
+              title: strings.appearance,
+              children: [
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.translate_rounded),
+                  title: Text(
+                    settings.isEnglish
+                        ? strings.switchToChinese
+                        : strings.switchToEnglish,
+                  ),
+                  onTap: settings.toggleLanguage,
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  secondary: Icon(
+                    settings.isDarkMode ? Icons.dark_mode : Icons.light_mode,
+                  ),
+                  title: Text(
+                    settings.isDarkMode
+                        ? strings.switchToLightMode
+                        : strings.switchToDarkMode,
+                  ),
+                  value: settings.isDarkMode,
+                  onChanged: (_) => settings.toggleTheme(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            _SettingsSection(
+              title: strings.dataBackup,
+              children: [
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.upload_file_outlined),
+                  title: Text(strings.exportAppData),
+                  subtitle: Text(strings.backupContainsSecrets),
+                  onTap: onExport,
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.download_for_offline_outlined),
+                  title: Text(strings.importAppData),
+                  subtitle: Text(strings.importAppDataWarning),
+                  onTap: onImport,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingsSection extends StatelessWidget {
+  final String title;
+  final List<Widget> children;
+
+  const _SettingsSection({
+    required this.title,
+    required this.children,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.32),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: colorScheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
+            child: Text(
+              title,
+              style: TextStyle(
+                color: colorScheme.onSurfaceVariant,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          ...children,
+        ],
+      ),
+    );
   }
 }

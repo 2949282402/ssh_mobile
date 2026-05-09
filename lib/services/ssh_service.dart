@@ -576,6 +576,8 @@ class SshService extends ChangeNotifier {
     if (config == null) {
       throw StateError('Connection config not found');
     }
+    // AI tools and diagnostics must use plain SSH exec. Do not attach tmux or
+    // reuse terminal sessions here; tmux is only for interactive terminal UI.
     final client = await _clientFactory.connectClient(config);
     try {
       final result = await client.runWithResult(command).timeout(timeout);
