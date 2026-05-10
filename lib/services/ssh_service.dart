@@ -120,6 +120,7 @@ class SshService extends ChangeNotifier {
   final Map<String, Completer<void>> _connectCompleters = {};
   final Set<String> _closingSessionIds = {};
   final Random _random = Random();
+  List<SshSession> _sessionsView = const [];
   StreamSubscription<Map<String, dynamic>?>? _stateSub;
   StreamSubscription<Map<String, dynamic>?>? _outputSub;
   StreamSubscription<Map<String, dynamic>?>? _keepAliveSub;
@@ -144,7 +145,7 @@ class SshService extends ChangeNotifier {
             defaultTargetPlatform == TargetPlatform.iOS);
   }
 
-  List<SshSession> get sessions => List.unmodifiable(_sessions.values);
+  List<SshSession> get sessions => _sessionsView;
   bool get isConnected =>
       _sessions.values.any((session) => session.isConnected);
   SshConnectionState get state =>
@@ -213,7 +214,7 @@ class SshService extends ChangeNotifier {
     }
     session.displayName = nextName;
     unawaited(_saveRestorableTmuxSession(session));
-    notifyListeners();
+    _notifySessionMetadataChanged();
     return true;
   }
 
@@ -222,7 +223,7 @@ class SshService extends ChangeNotifier {
     if (session == null) return;
     session.fontSize = fontSize.clamp(1.0, 28.0);
     unawaited(_saveRestorableTmuxSession(session));
-    notifyListeners();
+    _notifySessionMetadataChanged();
   }
 
   Future<void> restoreTmuxSessions() async {
@@ -261,6 +262,7 @@ class SshService extends ChangeNotifier {
       _lastSessionId = stored.sessionId;
     }
 
+    _refreshSessionsView();
     notifyListeners();
 
     for (final session in _sessions.values.toList()) {
@@ -374,6 +376,7 @@ class SshService extends ChangeNotifier {
         outputController: StreamController<String>.broadcast(),
       ),
     );
+    _refreshSessionsView();
 
     if (session.state == SshConnectionState.connecting &&
         _connectCompleters.containsKey(id)) {
@@ -395,7 +398,7 @@ class SshService extends ChangeNotifier {
       details:
           'sessionId=$id connection=${config.name} mode=${config.launchMode.name}',
     );
-    notifyListeners();
+    _notifySessionMetadataChanged();
 
     try {
       final credentials = await _clientFactory.loadCredentials(config);
@@ -484,7 +487,8 @@ class SshService extends ChangeNotifier {
       _lastSessionId = _sessions.isEmpty ? null : _sessions.keys.last;
     }
     await _stopServiceIfIdle();
-    notifyListeners();
+    _refreshSessionsView();
+    _notifySessionMetadataChanged();
   }
 
   Future<void> _removeFailedOpenSession(String sessionId) async {
@@ -503,7 +507,8 @@ class SshService extends ChangeNotifier {
       _lastSessionId = _sessions.isEmpty ? null : _sessions.keys.last;
     }
     await _stopServiceIfIdle();
-    notifyListeners();
+    _refreshSessionsView();
+    _notifySessionMetadataChanged();
   }
 
   Future<void> disconnect() async {
@@ -527,6 +532,7 @@ class SshService extends ChangeNotifier {
       await session.close();
     }
     _sessions.clear();
+    _refreshSessionsView();
     _connectCompleters.clear();
     _lastSessionId = null;
     await _storageService.clearRestorableTmuxSessions();
@@ -695,7 +701,7 @@ class SshService extends ChangeNotifier {
       'Local SSH session connected',
       details: 'sessionId=${session.id} connection=${config.name}',
     );
-    notifyListeners();
+    _notifySessionMetadataChanged();
   }
 
   void _handleLocalOutput(String sessionId, List<int> bytes) {
@@ -721,7 +727,7 @@ class SshService extends ChangeNotifier {
       'Local SSH session disconnected',
       details: 'sessionId=$sessionId message=$message',
     );
-    notifyListeners();
+    _notifySessionMetadataChanged();
   }
 
   Future<void> _closeLocalSession(
@@ -901,6 +907,7 @@ class SshService extends ChangeNotifier {
 
       if (state == 'disconnected' && _closingSessionIds.remove(sessionId)) {
         _completeConnect(sessionId);
+        _refreshSessionsView();
         notifyListeners();
         return;
       }
@@ -915,6 +922,7 @@ class SshService extends ChangeNotifier {
           outputController: StreamController<String>.broadcast(),
         ),
       );
+      _refreshSessionsView();
 
       switch (state) {
         case 'connecting':
@@ -944,7 +952,7 @@ class SshService extends ChangeNotifier {
 
       session.updatedAt = DateTime.now();
       unawaited(_saveTerminalHistoryRecord(session));
-      notifyListeners();
+      _notifySessionMetadataChanged();
     });
 
     _outputSub = _backgroundService.on('sshOutput').listen((event) {
@@ -988,12 +996,22 @@ class SshService extends ChangeNotifier {
         outputController: StreamController<String>.broadcast(),
       ),
     );
+    _refreshSessionsView();
     session.state = SshConnectionState.error;
     session.errorMessage = message;
     session.updatedAt = DateTime.now();
     _lastSessionId = sessionId;
     _completeConnect(sessionId);
     unawaited(_saveTerminalHistoryRecord(session));
+    _notifySessionMetadataChanged();
+  }
+
+  void _refreshSessionsView() {
+    _sessionsView = List.unmodifiable(_sessions.values);
+  }
+
+  void _notifySessionMetadataChanged() {
+    _refreshSessionsView();
     notifyListeners();
   }
 

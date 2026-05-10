@@ -96,10 +96,19 @@
 
 ## Navigation and Backup
 
-- The main page order is Servers, Windows, SFTP, AI, Logs. The rail/bottom bar
-  intentionally omits Logs; Logs remains reachable by swiping right from AI.
-- The Servers page owns the settings drawer. A left swipe from Servers should
-  open it, with appearance controls and app data export/import inside.
+- The main page order is AI, Servers, Windows, SFTP, Logs. The rail/bottom bar
+  intentionally omits Logs; the app still launches on Servers by default.
+- The Servers page no longer owns a swipe-open settings drawer. Open settings
+  from the settings icon only so left swipes can switch to the next page.
+- The AI page opens chat history from the left on a deliberate left-edge-to-right
+  swipe; make the panel track the finger and settle open/closed instead of
+  waiting until swipe end to show a modal.
+- The chat input `+` menu should expand below the input row as a fixed-height
+  function panel, similar to WeChat, so the input remains anchored above tools.
+  Keep this panel minimal: Server selection and Skills management only.
+- On compact mobile widths, the AI Skills manager should use separate Skills
+  and Editor tabs. A fixed-height list above a long editor makes both areas feel
+  cramped and fights the keyboard.
 - Backup JSON should be versioned and include all user-restorable state:
   connection configs, restorable windows, terminal history, AI settings,
   AI chats, and custom AI skills. Do not export passwords, private keys, API
@@ -122,9 +131,51 @@
 
 - Use `AutomaticKeepAliveClientMixin` for pages that must continue background UI
   work, such as streaming AI responses while another page is selected.
+- Do not estimate chat context tokens directly in `build`; cache by active chat
+  and message fingerprint so navigation and theme rebuilds stay cheap.
+- Throttle streaming answer UI updates instead of calling `setState` for every
+  SSE text chunk. Markdown parsing is expensive enough to make page switching
+  stutter during long answers.
+- Render the currently streaming assistant message as plain selectable text and
+  only parse Markdown after the response completes.
+- Prefer lazy page construction for the home `PageView`; eagerly constructing
+  adjacent pages can load AI chat history even when the user starts on Servers.
+- For the smoothest page swipes, let heavyweight pages know whether they are the
+  settled active page. AI chat should not load stored history while it is merely
+  an adjacent prebuilt page during a drag.
+- Wrap main pages in `RepaintBoundary`, use `TickerMode` for non-active pages,
+  and replace broad `context.watch` calls in the home shell with `select`ed
+  fields so unrelated service notifications do not invalidate the swipe target.
+- Cache log entry snapshots and level counts in `AppLogService`; repeated
+  `toList().reversed` and per-chip scans in the log page add up quickly during
+  AI/tool-heavy sessions.
+- For SFTP lists, take one local entries snapshot per build and wrap rows in
+  `RepaintBoundary`; avoid repeatedly calling service getters from every row.
+- Provider `select` only helps if selected getters return stable values. Cache
+  unmodifiable connection/session views in services instead of allocating a new
+  list for every getter call.
 - For chat switching, keyed `TweenAnimationBuilder` is safer than wrapping the
   message `ListView` in `AnimatedSwitcher` when a shared `ScrollController` is
   involved.
+- Saving AI provider settings should not call broad `StorageService`
+  notifications; persist them on demand, wait until the dialog route has
+  finished a frame, then let the AI page update its own visible model state.
+- If Android still reports Flutter `_dependents.isEmpty` when saving model/API
+  key settings, move the settings UI out of `AlertDialog` and into a dedicated
+  route. Dropdowns, secure-storage writes, keyboard focus, and log updates are
+  much easier to sequence safely on a normal page.
+- AI chat and settings errors must be logged through `AppLogService`, but log UI
+  notifications should be deferred until after the current frame so logging does
+  not rebuild provider dependents during route/dialog teardown.
+- Repeated `RenderFlex overflowed ... on the bottom` errors usually mean a
+  compact `Column` is inside a dialog, bottom input panel, toolbar, or
+  keyboard-shrunk viewport without a scroll/height boundary. Wrap that local
+  stack in `SingleChildScrollView`/`ListView`, or give the flexible middle area
+  `Expanded`, before tuning pixel padding.
+- When users say text cannot fit, prefer making the text area scrollable before
+  hiding content or shrinking fonts. Distinguish prose from machine text: prose
+  can wrap; paths, commands, logs, stack traces, model names, and other unbroken
+  strings should be horizontally scrollable and selectable so nothing is hidden.
 - Long model names need `isExpanded: true`, `selectedItemBuilder`, `maxLines: 1`,
   `overflow: TextOverflow.ellipsis`, and `softWrap: false` inside dropdowns.
 - When the log page is reachable but removed from the navigation bar, map its

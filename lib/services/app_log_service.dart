@@ -1,6 +1,7 @@
 import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 
 import 'app_settings.dart';
 
@@ -8,15 +9,34 @@ class AppLogService extends ChangeNotifier {
   static final AppLogService instance = AppLogService._();
   static const int _maxEntries = 1200;
   final ListQueue<AppLogEntry> _entries = ListQueue<AppLogEntry>();
+  List<AppLogEntry>? _cachedNewestFirstEntries;
+  Map<AppLogLevel, int>? _cachedLevelCounts;
   DebugPrintCallback? _previousDebugPrint;
   bool _installed = false;
+  bool _notifyScheduled = false;
+  int _nextEntryId = 1;
 
   AppLogService._();
 
   factory AppLogService() => instance;
 
-  List<AppLogEntry> get entries =>
-      List.unmodifiable(_entries.toList().reversed);
+  List<AppLogEntry> get entries {
+    return _cachedNewestFirstEntries ??= List.unmodifiable(
+      _entries.toList().reversed,
+    );
+  }
+
+  Map<AppLogLevel, int> get levelCounts {
+    final cached = _cachedLevelCounts;
+    if (cached != null) return cached;
+    final counts = {for (final level in AppLogLevel.values) level: 0};
+    counts[AppLogLevel.all] = _entries.length;
+    for (final entry in _entries) {
+      final level = entry.normalizedLevel;
+      counts[level] = (counts[level] ?? 0) + 1;
+    }
+    return _cachedLevelCounts = Map.unmodifiable(counts);
+  }
 
   void install() {
     if (_installed) return;
@@ -80,9 +100,11 @@ class AppLogService extends ChangeNotifier {
     final safeDetails = details == null ? null : _redact(details);
     _entries.addLast(
       AppLogEntry(
+        id: _nextEntryId++,
         time: DateTime.now(),
         level: level,
         message: safeMessage,
+        sourceLocation: _sourceLocation(stackTrace),
         stackTrace: stackTrace?.toString(),
         details: safeDetails,
       ),
@@ -90,12 +112,38 @@ class AppLogService extends ChangeNotifier {
     while (_entries.length > _maxEntries) {
       _entries.removeFirst();
     }
-    notifyListeners();
+    _invalidateCaches();
+    _scheduleNotify();
+  }
+
+  void deleteEntriesById(Set<int> ids) {
+    if (ids.isEmpty) return;
+    _entries.removeWhere((entry) => ids.contains(entry.id));
+    _invalidateCaches();
+    _scheduleNotify();
   }
 
   void clear() {
     _entries.clear();
-    notifyListeners();
+    _invalidateCaches();
+    _scheduleNotify();
+  }
+
+  void _invalidateCaches() {
+    _cachedNewestFirstEntries = null;
+    _cachedLevelCounts = null;
+  }
+
+  void _scheduleNotify() {
+    if (_notifyScheduled) return;
+    _notifyScheduled = true;
+    // Logs can be produced while routes/dialogs are being torn down. Deferring
+    // the UI notification keeps the log page fresh without rebuilding provider
+    // dependents during Flutter's deactivation pass.
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _notifyScheduled = false;
+      notifyListeners();
+    });
   }
 
   String _redact(String value) {
@@ -124,19 +172,49 @@ class AppLogService extends ChangeNotifier {
     }
     return text;
   }
+
+  String? _sourceLocation(StackTrace? errorStackTrace) {
+    return _sourceFromStack(errorStackTrace) ??
+        _sourceFromStack(StackTrace.current);
+  }
+
+  String? _sourceFromStack(StackTrace? stackTrace) {
+    if (stackTrace == null) return null;
+    final lines = stackTrace.toString().split('\n');
+    for (final line in lines) {
+      if (line.contains('app_log_service.dart')) continue;
+      final packageMatch = RegExp(
+        r'\((package:ssh_mobile/[^:]+\.dart):(\d+):(\d+)\)',
+      ).firstMatch(line);
+      if (packageMatch != null) {
+        return '${packageMatch.group(1)}:${packageMatch.group(2)}';
+      }
+      final fileMatch = RegExp(
+        r'\((file:///.*?/lib/[^:]+\.dart):(\d+):(\d+)\)',
+      ).firstMatch(line.replaceAll('\\', '/'));
+      if (fileMatch != null) {
+        return '${fileMatch.group(1)}:${fileMatch.group(2)}';
+      }
+    }
+    return null;
+  }
 }
 
 class AppLogEntry {
+  final int id;
   final DateTime time;
   final String level;
   final String message;
+  final String? sourceLocation;
   final String? stackTrace;
   final String? details;
 
   const AppLogEntry({
+    required this.id,
     required this.time,
     required this.level,
     required this.message,
+    required this.sourceLocation,
     required this.stackTrace,
     required this.details,
   });
@@ -148,6 +226,11 @@ class AppLogEntry {
       ..write(level)
       ..write('] ')
       ..write(message);
+    if (sourceLocation?.isNotEmpty == true) {
+      buffer
+        ..write('\nsource: ')
+        ..write(sourceLocation);
+    }
     if (details?.isNotEmpty == true) {
       buffer
         ..write('\n')

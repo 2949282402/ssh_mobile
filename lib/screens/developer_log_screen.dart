@@ -4,6 +4,18 @@ import 'package:provider/provider.dart';
 
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
+import '../widgets/overflow_scroll_text.dart';
+
+extension _DeveloperLogStrings on AppStrings {
+  String get copySelectedLogs =>
+      language == AppLanguage.en ? 'Copy selected logs' : '复制选中日志';
+  String get deleteSelectedLogs =>
+      language == AppLanguage.en ? 'Delete selected logs' : '删除选中日志';
+  String selectedLogs(int count) =>
+      language == AppLanguage.en ? '$count logs selected' : '已选择 $count 条日志';
+  String selectedLogsDeleted(int count) =>
+      language == AppLanguage.en ? '$count logs deleted' : '已删除 $count 条日志';
+}
 
 class DeveloperLogPage extends StatefulWidget {
   const DeveloperLogPage({super.key});
@@ -14,18 +26,26 @@ class DeveloperLogPage extends StatefulWidget {
 
 class _DeveloperLogPageState extends State<DeveloperLogPage> {
   AppLogLevel _selectedLevel = AppLogLevel.all;
+  final Set<int> _selectedIds = {};
+
+  bool get _selectionMode => _selectedIds.isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
     final strings = AppStrings(context.watch<AppSettings>().language);
     final logService = context.watch<AppLogService>();
     final allEntries = logService.entries;
+    final levelCounts = logService.levelCounts;
     final entries = _selectedLevel == AppLogLevel.all
         ? allEntries
         : allEntries
             .where((entry) => entry.normalizedLevel == _selectedLevel)
             .toList();
     final colorScheme = Theme.of(context).colorScheme;
+    _selectedIds
+        .removeWhere((id) => !allEntries.any((entry) => entry.id == id));
+    final selectedEntries =
+        allEntries.where((entry) => _selectedIds.contains(entry.id)).toList();
 
     return Column(
       children: [
@@ -43,26 +63,58 @@ class _DeveloperLogPageState extends State<DeveloperLogPage> {
                 children: [
                   Expanded(
                     child: Text(
-                      strings.developerLogs,
+                      _selectionMode
+                          ? strings.selectedLogs(_selectedIds.length)
+                          : strings.developerLogs,
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
                   ),
+                  if (_selectionMode)
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded),
+                      tooltip: strings.cancel,
+                      onPressed: () => setState(_selectedIds.clear),
+                    ),
                   IconButton(
-                    icon: const Icon(Icons.copy_all_rounded),
-                    tooltip: strings.copyFilteredLogs,
-                    onPressed: entries.isEmpty
-                        ? null
-                        : () => _copyEntries(context, entries, strings),
+                    icon: Icon(
+                      _selectionMode
+                          ? Icons.copy_rounded
+                          : Icons.copy_all_rounded,
+                    ),
+                    tooltip: _selectionMode
+                        ? strings.copySelectedLogs
+                        : strings.copyFilteredLogs,
+                    onPressed: _selectionMode
+                        ? selectedEntries.isEmpty
+                            ? null
+                            : () => _copyEntries(
+                                  context,
+                                  selectedEntries,
+                                  strings,
+                                )
+                        : entries.isEmpty
+                            ? null
+                            : () => _copyEntries(context, entries, strings),
                   ),
                   IconButton(
                     icon: const Icon(Icons.delete_outline_rounded),
-                    tooltip: strings.clearLogs,
-                    onPressed: allEntries.isEmpty
-                        ? null
-                        : () => _clearLogs(context, logService, strings),
+                    tooltip: _selectionMode
+                        ? strings.deleteSelectedLogs
+                        : strings.clearLogs,
+                    onPressed: _selectionMode
+                        ? selectedEntries.isEmpty
+                            ? null
+                            : () => _deleteSelectedLogs(
+                                  context,
+                                  logService,
+                                  strings,
+                                )
+                        : allEntries.isEmpty
+                            ? null
+                            : () => _clearLogs(context, logService, strings),
                   ),
                 ],
               ),
@@ -75,11 +127,7 @@ class _DeveloperLogPageState extends State<DeveloperLogPage> {
                   separatorBuilder: (_, __) => const SizedBox(width: 8),
                   itemBuilder: (context, index) {
                     final level = AppLogLevel.values[index];
-                    final count = level == AppLogLevel.all
-                        ? allEntries.length
-                        : allEntries
-                            .where((entry) => entry.normalizedLevel == level)
-                            .length;
+                    final count = levelCounts[level] ?? 0;
                     return FilterChip(
                       label: Text('${level.labelFor(strings.language)} $count'),
                       selected: _selectedLevel == level,
@@ -99,19 +147,43 @@ class _DeveloperLogPageState extends State<DeveloperLogPage> {
               : entries.isEmpty
                   ? Center(child: Text(strings.noLogsForLevel))
                   : ListView.separated(
+                      cacheExtent: 900,
                       padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
                       itemCount: entries.length,
                       separatorBuilder: (_, __) => const SizedBox(height: 8),
                       itemBuilder: (context, index) {
-                        return _LogEntryTile(
-                          entry: entries[index],
-                          strings: strings,
+                        final entry = entries[index];
+                        return RepaintBoundary(
+                          key: ValueKey(
+                            '${entry.time.microsecondsSinceEpoch}-${entry.level}',
+                          ),
+                          child: _LogEntryTile(
+                            entry: entry,
+                            strings: strings,
+                            selected: _selectedIds.contains(entry.id),
+                            selectionMode: _selectionMode,
+                            onTap: () => _handleEntryTap(entry),
+                            onLongPress: () => _selectEntry(entry),
+                          ),
                         );
                       },
                     ),
         ),
       ],
     );
+  }
+
+  void _handleEntryTap(AppLogEntry entry) {
+    if (!_selectionMode) return;
+    setState(() {
+      if (!_selectedIds.add(entry.id)) {
+        _selectedIds.remove(entry.id);
+      }
+    });
+  }
+
+  void _selectEntry(AppLogEntry entry) {
+    setState(() => _selectedIds.add(entry.id));
   }
 
   Future<void> _copyEntries(
@@ -128,6 +200,19 @@ class _DeveloperLogPageState extends State<DeveloperLogPage> {
     );
   }
 
+  void _deleteSelectedLogs(
+    BuildContext context,
+    AppLogService logService,
+    AppStrings strings,
+  ) {
+    final count = _selectedIds.length;
+    logService.deleteEntriesById(_selectedIds);
+    setState(_selectedIds.clear);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(strings.selectedLogsDeleted(count))),
+    );
+  }
+
   void _clearLogs(
     BuildContext context,
     AppLogService logService,
@@ -135,7 +220,10 @@ class _DeveloperLogPageState extends State<DeveloperLogPage> {
   ) {
     FocusManager.instance.primaryFocus?.unfocus();
     logService.clear();
-    setState(() => _selectedLevel = AppLogLevel.all);
+    setState(() {
+      _selectedLevel = AppLogLevel.all;
+      _selectedIds.clear();
+    });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(strings.logsCleared)),
     );
@@ -145,10 +233,18 @@ class _DeveloperLogPageState extends State<DeveloperLogPage> {
 class _LogEntryTile extends StatefulWidget {
   final AppLogEntry entry;
   final AppStrings strings;
+  final bool selected;
+  final bool selectionMode;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
   const _LogEntryTile({
     required this.entry,
     required this.strings,
+    required this.selected,
+    required this.selectionMode,
+    required this.onTap,
+    required this.onLongPress,
   });
 
   @override
@@ -170,20 +266,40 @@ class _LogEntryTileState extends State<_LogEntryTile> {
 
     return InkWell(
       borderRadius: BorderRadius.circular(8),
-      onTap: isLong ? () => setState(() => _expanded = !_expanded) : null,
-      onLongPress: () => _copySingle(context, entry.text, strings),
+      onTap: widget.selectionMode
+          ? widget.onTap
+          : isLong
+              ? () => setState(() => _expanded = !_expanded)
+              : null,
+      onLongPress: widget.onLongPress,
       child: Container(
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
           color: colorScheme.surface,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: colorScheme.outlineVariant),
+          border: Border.all(
+            color: widget.selected
+                ? colorScheme.primary
+                : colorScheme.outlineVariant,
+          ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
+                if (widget.selectionMode) ...[
+                  Icon(
+                    widget.selected
+                        ? Icons.check_circle_rounded
+                        : Icons.radio_button_unchecked_rounded,
+                    color: widget.selected
+                        ? colorScheme.primary
+                        : colorScheme.onSurfaceVariant,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
@@ -203,13 +319,14 @@ class _LogEntryTileState extends State<_LogEntryTile> {
                   ),
                 ),
                 const Spacer(),
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  iconSize: 18,
-                  tooltip: strings.copySingleLog,
-                  onPressed: () => _copySingle(context, entry.text, strings),
-                  icon: const Icon(Icons.copy_rounded),
-                ),
+                if (!widget.selectionMode)
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    iconSize: 18,
+                    tooltip: strings.copySingleLog,
+                    onPressed: () => _copySingle(context, entry.text, strings),
+                    icon: const Icon(Icons.copy_rounded),
+                  ),
                 if (isLong)
                   Icon(
                     _expanded
@@ -221,7 +338,7 @@ class _LogEntryTileState extends State<_LogEntryTile> {
               ],
             ),
             const SizedBox(height: 8),
-            SelectableText(
+            OverflowScrollText(
               entry.text,
               maxLines: _expanded ? null : _collapsedLines,
               style: TextStyle(

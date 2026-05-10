@@ -11,10 +11,12 @@ class AiSkillsScreen extends StatefulWidget {
   State<AiSkillsScreen> createState() => _AiSkillsScreenState();
 }
 
-class _AiSkillsScreenState extends State<AiSkillsScreen> {
+class _AiSkillsScreenState extends State<AiSkillsScreen>
+    with SingleTickerProviderStateMixin {
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
   final TextEditingController _contentController = TextEditingController();
+  late final TabController _mobileTabs;
   List<AiSkillRecord> _skills = const [];
   String? _selectedId;
   bool _enabled = true;
@@ -31,11 +33,13 @@ class _AiSkillsScreenState extends State<AiSkillsScreen> {
   @override
   void initState() {
     super.initState();
+    _mobileTabs = TabController(length: 2, vsync: this);
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadSkills());
   }
 
   @override
   void dispose() {
+    _mobileTabs.dispose();
     _nameController.dispose();
     _descriptionController.dispose();
     _contentController.dispose();
@@ -94,9 +98,23 @@ class _AiSkillsScreenState extends State<AiSkillsScreen> {
                 }
                 return Column(
                   children: [
-                    SizedBox(height: 220, child: list),
+                    Material(
+                      color: colorScheme.surface,
+                      child: TabBar(
+                        controller: _mobileTabs,
+                        tabs: [
+                          Tab(text: strings.skillList),
+                          Tab(text: strings.editor),
+                        ],
+                      ),
+                    ),
                     Divider(height: 1, color: colorScheme.outlineVariant),
-                    Expanded(child: editor),
+                    Expanded(
+                      child: TabBarView(
+                        controller: _mobileTabs,
+                        children: [list, editor],
+                      ),
+                    ),
                   ],
                 );
               },
@@ -162,6 +180,10 @@ class _AiSkillsScreenState extends State<AiSkillsScreen> {
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
+          trailing: Switch(
+            value: skill.enabled,
+            onChanged: (value) => _setSkillEnabled(skill, value),
+          ),
           onTap: () => _selectSkill(skill),
         );
       },
@@ -171,110 +193,118 @@ class _AiSkillsScreenState extends State<AiSkillsScreen> {
   Widget _buildEditor(_SkillStrings strings, ColorScheme colorScheme) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 980),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '${_selectedId == null ? strings.newSkill : strings.editSkill}${_dirty ? ' *' : ''}',
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 900),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${_selectedId == null ? strings.newSkill : strings.editSkill}${_dirty ? ' *' : ''}',
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
-                ),
-                IconButton(
-                  tooltip: strings.delete,
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed: _selectedSkill == null
-                      ? null
-                      : () => _deleteSkill(strings),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _nameController,
-              decoration: InputDecoration(labelText: strings.name),
-              onChanged: (_) => _markDirty(),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _descriptionController,
-              minLines: 3,
-              maxLines: 5,
-              decoration: InputDecoration(
-                labelText: strings.description,
-                alignLabelWithHint: true,
+                  IconButton(
+                    tooltip: strings.delete,
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: _selectedSkill == null
+                        ? null
+                        : () => _deleteSkill(strings),
+                  ),
+                ],
               ),
-              onChanged: (_) => _markDirty(),
-            ),
-            const SizedBox(height: 12),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(strings.available),
-              subtitle: Text(strings.availableHint),
-              value: _enabled,
-              onChanged: (value) {
-                setState(() {
-                  _enabled = value;
-                  _dirty = true;
-                });
-              },
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _contentController,
-              minLines: 14,
-              maxLines: 26,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-              decoration: InputDecoration(
-                labelText: strings.content,
-                helperText: strings.contentHelp,
-                alignLabelWithHint: true,
+              const SizedBox(height: 12),
+              TextField(
+                controller: _nameController,
+                decoration: InputDecoration(labelText: strings.name),
+                onChanged: (_) => _markDirty(),
               ),
-              onChanged: (_) => _markDirty(),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color:
-                    colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: colorScheme.outlineVariant),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _descriptionController,
+                minLines: 3,
+                maxLines: 5,
+                decoration: InputDecoration(
+                  labelText: strings.description,
+                  alignLabelWithHint: true,
+                ),
+                onChanged: (_) => _markDirty(),
               ),
-              child: Text(
-                strings.referenceHint,
-                style: TextStyle(
-                  color: colorScheme.onSurfaceVariant,
-                  height: 1.35,
+              const SizedBox(height: 12),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(strings.available),
+                subtitle: Text(strings.availableHint),
+                value: _enabled,
+                onChanged: (value) {
+                  setState(() {
+                    _enabled = value;
+                    _dirty = true;
+                  });
+                },
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _contentController,
+                minLines: 14,
+                maxLines: 26,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                decoration: InputDecoration(
+                  labelText: strings.content,
+                  helperText: strings.contentHelp,
+                  alignLabelWithHint: true,
+                ),
+                onChanged: (_) => _markDirty(),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHighest
+                      .withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: colorScheme.outlineVariant),
+                ),
+                child: Text(
+                  strings.referenceHint,
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    height: 1.35,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                OutlinedButton.icon(
-                  onPressed: _newSkill,
-                  icon: const Icon(Icons.add_rounded),
-                  label: Text(strings.newSkill),
+              const SizedBox(height: 16),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.end,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _newSkill,
+                      icon: const Icon(Icons.add_rounded),
+                      label: Text(strings.newSkill),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.icon(
+                      onPressed: _canSave ? () => _saveSkill(strings) : null,
+                      icon: const Icon(Icons.save_outlined),
+                      label: Text(strings.save),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: _canSave ? () => _saveSkill(strings) : null,
-                  icon: const Icon(Icons.save_outlined),
-                  label: Text(strings.save),
-                ),
-              ],
-            ),
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -289,6 +319,9 @@ class _AiSkillsScreenState extends State<AiSkillsScreen> {
       _enabled = skill.enabled;
       _dirty = false;
     });
+    if (_isCompactLayout) {
+      _mobileTabs.animateTo(1);
+    }
   }
 
   void _newSkill() {
@@ -302,6 +335,14 @@ class _AiSkillsScreenState extends State<AiSkillsScreen> {
       _enabled = true;
       _dirty = true;
     });
+    if (_isCompactLayout) {
+      _mobileTabs.animateTo(1);
+    }
+  }
+
+  bool get _isCompactLayout {
+    final width = MediaQuery.maybeSizeOf(context)?.width;
+    return width != null && width < 760;
   }
 
   Future<void> _saveSkill(_SkillStrings strings) async {
@@ -342,6 +383,18 @@ class _AiSkillsScreenState extends State<AiSkillsScreen> {
         _selectSkill(item);
         break;
       }
+    }
+  }
+
+  Future<void> _setSkillEnabled(AiSkillRecord skill, bool enabled) async {
+    final storage = context.read<StorageService>();
+    final updated = skill.copyWith(enabled: enabled, updatedAt: DateTime.now());
+    await storage.saveAiSkill(updated);
+    final skills = await storage.loadAiSkills();
+    if (!mounted) return;
+    setState(() => _skills = skills);
+    if (_selectedId == skill.id) {
+      _selectSkill(updated);
     }
   }
 
@@ -431,6 +484,8 @@ class _SkillStrings {
   bool get _en => language == AppLanguage.en;
 
   String get title => _en ? 'AI Skills' : 'AI Skills';
+  String get skillList => _en ? 'Skills' : 'Skills';
+  String get editor => _en ? 'Editor' : '编辑';
   String get newSkill => _en ? 'New skill' : '新增 Skill';
   String get editSkill => _en ? 'Edit skill' : '编辑 Skill';
   String get save => _en ? 'Save' : '保存';

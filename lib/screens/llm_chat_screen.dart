@@ -1,16 +1,19 @@
 import 'dart:async';
-import 'dart:convert';
+
+// ignore_for_file: unused_element
 
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:provider/provider.dart';
 
 import '../services/ai_tool_service.dart';
+import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../services/llm_chat_service.dart';
 import '../services/sftp_service.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
+import '../widgets/overflow_scroll_text.dart';
 
 const List<String> _defaultModels = [
   'deepseek-v4-flash',
@@ -18,7 +21,9 @@ const List<String> _defaultModels = [
 ];
 
 class LlmChatScreen extends StatefulWidget {
-  const LlmChatScreen({super.key});
+  final bool active;
+
+  const LlmChatScreen({super.key, this.active = true});
 
   @override
   State<LlmChatScreen> createState() => _LlmChatScreenState();
@@ -43,6 +48,7 @@ extension _AiSkillToolbarStrings on _AiStrings {
 
 extension _AiToolbarActionStrings on _AiStrings {
   String get serverTarget => language == AppLanguage.en ? 'Server' : '服务器';
+  String get templates => language == AppLanguage.en ? 'Templates' : '妯℃澘';
   String get noDefaultServer =>
       language == AppLanguage.en ? 'No default server' : '不指定默认服务器';
   String get quickSkill =>
@@ -56,18 +62,28 @@ extension _AiToolbarActionStrings on _AiStrings {
 }
 
 class _LlmChatScreenState extends State<LlmChatScreen>
-    with AutomaticKeepAliveClientMixin<LlmChatScreen> {
+    with
+        AutomaticKeepAliveClientMixin<LlmChatScreen>,
+        SingleTickerProviderStateMixin {
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  late final AnimationController _historySlideController;
+  Animation<double>? _historySlideAnimation;
   List<AiChatRecord> _chats = const [];
   String? _activeChatId;
   _PendingToolApproval? _pendingApproval;
   int _contextWindowTokens = AiContextWindowSize.k259;
   bool _loading = true;
+  bool _loadStarted = false;
   bool _sending = false;
   bool _toolsExpanded = false;
   String? _selectedConnectionId;
-  String? _selectedSkillId;
+  String? _contextTokenCacheKey;
+  int _cachedContextTokens = 0;
+  Offset? _historySwipeStart;
+  double _historyDragStartExtent = 0;
+  double _historyPanelExtent = 0;
+  bool _historyDragging = false;
 
   AiChatRecord? get _activeChat {
     for (final chat in _chats) {
@@ -79,7 +95,32 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadChats());
+    _historySlideController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 240),
+    )..addListener(() {
+        final animation = _historySlideAnimation;
+        if (animation == null || !mounted) return;
+        setState(() => _historyPanelExtent = animation.value);
+      });
+    if (widget.active) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadChats();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant LlmChatScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && !_loadStarted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadChats();
+      });
+    }
+    if (widget.active && !oldWidget.active) {
+      _scrollToBottom(jump: true);
+    }
   }
 
   @override
@@ -89,12 +130,15 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         const AiToolApprovalDecision.rejected(),
       );
     }
+    _historySlideController.dispose();
     _inputController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
 
   Future<void> _loadChats() async {
+    if (_loadStarted) return;
+    _loadStarted = true;
     final storage = context.read<StorageService>();
     final settings = await storage.loadAiConnectionSettings();
     final chats = await storage.loadAiChats();
@@ -133,268 +177,242 @@ class _LlmChatScreenState extends State<LlmChatScreen>
             ),
           ]
         : activeChat.messages;
-    final contextTokens = _estimatedContextTokens(activeChat.messages);
+    final contextTokens = _contextTokensFor(activeChat);
     final contextPercent =
         _contextWindowTokens <= 0 ? 0.0 : contextTokens / _contextWindowTokens;
 
     return Scaffold(
-      body: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-            decoration: BoxDecoration(
-              color: colorScheme.surface,
-              border: Border(
-                bottom: BorderSide(color: colorScheme.outlineVariant),
-              ),
-            ),
-            child: Row(
+      body: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (event) => _startHistoryDrag(event.position),
+        onPointerMove: (event) => _updateHistoryDrag(context, event.position),
+        onPointerUp: (event) => _endHistoryDrag(context, event.position),
+        onPointerCancel: (_) => _cancelHistoryDrag(context),
+        child: Stack(
+          children: [
+            Column(
               children: [
-                IconButton(
-                  tooltip: strings.history,
-                  icon: const Icon(Icons.menu_rounded),
-                  onPressed: () => _showHistory(context, strings),
+                Container(
+                  padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+                  decoration: BoxDecoration(
+                    color: colorScheme.surfaceContainer,
+                    border: Border(
+                      bottom: BorderSide(color: colorScheme.outlineVariant),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        tooltip: strings.history,
+                        icon: const Icon(Icons.menu_rounded),
+                        onPressed: () => _showHistory(context, strings),
+                      ),
+                      Expanded(
+                        // Keyed builders make chat switches perceptible without
+                        // replacing the stable toolbar or input controls.
+                        child: TweenAnimationBuilder<double>(
+                          key: ValueKey('chat-title-${activeChat.id}'),
+                          tween: Tween(begin: 0, end: 1),
+                          duration: const Duration(milliseconds: 220),
+                          curve: Curves.easeOutCubic,
+                          builder: (context, value, child) {
+                            return Opacity(
+                              opacity: value,
+                              child: Transform.translate(
+                                offset: Offset(12 * (1 - value), 0),
+                                child: child,
+                              ),
+                            );
+                          },
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                activeChat.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              Text(
+                                '${strings.subtitle} · ${_contextUsage(contextTokens, _contextWindowTokens, contextPercent)}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: colorScheme.onSurface
+                                      .withValues(alpha: 0.62),
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: strings.newChat,
+                        icon: const Icon(Icons.add_comment_outlined),
+                        onPressed:
+                            _sending ? null : () => _createChatFromSettings(),
+                      ),
+                      IconButton(
+                        tooltip: strings.settings,
+                        icon: const Icon(Icons.tune_rounded),
+                        onPressed: () => _showSettings(context, strings),
+                      ),
+                    ],
+                  ),
                 ),
                 Expanded(
-                  // Keyed builders make chat switches perceptible without
-                  // replacing the stable toolbar or input controls.
+                  // Avoid AnimatedSwitcher here: it would briefly mount two
+                  // ListViews that share the same ScrollController.
                   child: TweenAnimationBuilder<double>(
-                    key: ValueKey('chat-title-${activeChat.id}'),
+                    key: ValueKey('chat-body-${activeChat.id}'),
                     tween: Tween(begin: 0, end: 1),
-                    duration: const Duration(milliseconds: 220),
+                    duration: const Duration(milliseconds: 260),
                     curve: Curves.easeOutCubic,
                     builder: (context, value, child) {
                       return Opacity(
                         opacity: value,
                         child: Transform.translate(
-                          offset: Offset(12 * (1 - value), 0),
+                          offset: Offset(0, 18 * (1 - value)),
                           child: child,
                         ),
                       );
                     },
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          activeChat.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
+                    child: ListView.builder(
+                      controller: _scrollController,
+                      cacheExtent: 900,
+                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
+                      itemCount: visibleMessages.length,
+                      itemBuilder: (context, index) {
+                        final message = visibleMessages[index];
+                        final streamingAssistant = _sending &&
+                            message.role == 'assistant' &&
+                            index == visibleMessages.length - 1;
+                        return RepaintBoundary(
+                          key: ValueKey(
+                            '${message.role}-${message.createdAt.microsecondsSinceEpoch}',
                           ),
-                        ),
-                        Text(
-                          '${strings.subtitle} · ${_contextUsage(contextTokens, _contextWindowTokens, contextPercent)}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color:
-                                colorScheme.onSurface.withValues(alpha: 0.62),
-                            fontSize: 12,
+                          child: _MessageBubble(
+                            message: message,
+                            renderMarkdown: !streamingAssistant,
+                            canAct: !_sending &&
+                                activeChat.messages == visibleMessages,
+                            onEditUser: message.role == 'user'
+                                ? () => _editUserMessage(index, strings)
+                                : null,
+                            onRegenerate: message.role == 'assistant'
+                                ? () => _regenerateAssistant(index)
+                                : null,
+                            onBranch: message.role == 'assistant'
+                                ? () => _branchFromAssistant(index, strings)
+                                : null,
                           ),
-                        ),
-                      ],
+                        );
+                      },
                     ),
                   ),
                 ),
-                IconButton(
-                  tooltip: strings.newChat,
-                  icon: const Icon(Icons.add_comment_outlined),
-                  onPressed: _sending ? null : () => _createChatFromSettings(),
-                ),
-                IconButton(
-                  tooltip: strings.settings,
-                  icon: const Icon(Icons.tune_rounded),
-                  onPressed: () => _showSettings(context, strings),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            // Avoid AnimatedSwitcher here: it would briefly mount two
-            // ListViews that share the same ScrollController.
-            child: TweenAnimationBuilder<double>(
-              key: ValueKey('chat-body-${activeChat.id}'),
-              tween: Tween(begin: 0, end: 1),
-              duration: const Duration(milliseconds: 260),
-              curve: Curves.easeOutCubic,
-              builder: (context, value, child) {
-                return Opacity(
-                  opacity: value,
-                  child: Transform.translate(
-                    offset: Offset(0, 18 * (1 - value)),
-                    child: child,
+                if (_pendingApproval?.chatId == activeChat.id)
+                  _ToolApprovalPanel(
+                    pending: _pendingApproval!,
+                    strings: strings,
+                    onApprove: () => _resolvePendingApproval(approved: true),
+                    onReject: () => _resolvePendingApproval(approved: false),
                   ),
-                );
-              },
-              child: ListView.builder(
-                controller: _scrollController,
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
-                itemCount: visibleMessages.length,
-                itemBuilder: (context, index) => _MessageBubble(
-                  message: visibleMessages[index],
-                  canAct: !_sending && activeChat.messages == visibleMessages,
-                  onEditUser: visibleMessages[index].role == 'user'
-                      ? () => _editUserMessage(index, strings)
-                      : null,
-                  onRegenerate: visibleMessages[index].role == 'assistant'
-                      ? () => _regenerateAssistant(index)
-                      : null,
-                  onBranch: visibleMessages[index].role == 'assistant'
-                      ? () => _branchFromAssistant(index, strings)
-                      : null,
-                ),
-              ),
-            ),
-          ),
-          if (_pendingApproval?.chatId == activeChat.id)
-            _ToolApprovalPanel(
-              pending: _pendingApproval!,
-              strings: strings,
-              onApprove: () => _resolvePendingApproval(approved: true),
-              onReject: () => _resolvePendingApproval(approved: false),
-            ),
-          SafeArea(
-            top: false,
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-              decoration: BoxDecoration(
-                color: colorScheme.surface,
-                border: Border(
-                  top: BorderSide(color: colorScheme.outlineVariant),
-                ),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    switchInCurve: Curves.easeOutCubic,
-                    switchOutCurve: Curves.easeInCubic,
-                    child: _toolsExpanded
-                        ? _ChatToolsBar(
-                            key: const ValueKey('chat-tools-bar'),
-                            tools: _availableAiTools(),
-                            skillsLabel: strings.skills,
-                            serverLabel: _selectedServerLabel(strings),
-                            skillLabel: _selectedSkillLabel(strings),
-                            onToolTap: (tool) => _showToolDetails(tool),
-                            onServerTap: () => _selectTargetServer(strings),
-                            onTemplateTap: () => _selectPromptTemplate(strings),
-                            onQuickSkillTap: () => _selectQuickSkill(strings),
-                            onSkillsTap: () {
-                              Navigator.pushNamed(context, '/ai-skills');
-                            },
-                          )
-                        : const SizedBox.shrink(
-                            key: ValueKey('chat-tools-empty'),
+                SafeArea(
+                  top: false,
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainer,
+                      border: Border(
+                        top: BorderSide(color: colorScheme.outlineVariant),
+                      ),
+                    ),
+                    child: SingleChildScrollView(
+                      reverse: true,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _inputController,
+                                  minLines: 1,
+                                  maxLines: 3,
+                                  textInputAction: TextInputAction.newline,
+                                  decoration: InputDecoration(
+                                    hintText: strings.inputHint,
+                                    isDense: true,
+                                  ),
+                                  onSubmitted: (_) => _send(context, strings),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              IconButton(
+                                tooltip: strings.tools,
+                                icon: AnimatedRotation(
+                                  turns: _toolsExpanded ? 0.125 : 0,
+                                  duration: const Duration(milliseconds: 180),
+                                  child: const Icon(Icons.add_rounded),
+                                ),
+                                onPressed: () {
+                                  setState(
+                                      () => _toolsExpanded = !_toolsExpanded);
+                                },
+                              ),
+                              const SizedBox(width: 4),
+                              IconButton.filled(
+                                tooltip: strings.send,
+                                icon: _sending
+                                    ? const SizedBox(
+                                        width: 18,
+                                        height: 18,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2),
+                                      )
+                                    : const Icon(Icons.send_rounded),
+                                onPressed: _sending
+                                    ? null
+                                    : () => _send(context, strings),
+                              ),
+                            ],
                           ),
-                  ),
-                  if (_toolsExpanded) const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _inputController,
-                          minLines: 1,
-                          maxLines: 4,
-                          textInputAction: TextInputAction.newline,
-                          decoration:
-                              InputDecoration(hintText: strings.inputHint),
-                          onSubmitted: (_) => _send(context, strings),
-                        ),
+                          AnimatedSize(
+                            duration: const Duration(milliseconds: 220),
+                            curve: Curves.easeOutCubic,
+                            alignment: Alignment.topCenter,
+                            child: _toolsExpanded
+                                ? Padding(
+                                    padding: const EdgeInsets.only(top: 8),
+                                    child: _ChatToolsBar(
+                                      skillsLabel: strings.skills,
+                                      serverLabel:
+                                          _selectedServerLabel(strings),
+                                      onServerTap: () =>
+                                          _selectTargetServer(strings),
+                                      onSkillsTap: () {
+                                        Navigator.pushNamed(
+                                            context, '/ai-skills');
+                                      },
+                                    ),
+                                  )
+                                : const SizedBox(width: double.infinity),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        tooltip: strings.tools,
-                        icon: AnimatedRotation(
-                          turns: _toolsExpanded ? 0.125 : 0,
-                          duration: const Duration(milliseconds: 180),
-                          child: const Icon(Icons.add_rounded),
-                        ),
-                        onPressed: () {
-                          setState(() => _toolsExpanded = !_toolsExpanded);
-                        },
-                      ),
-                      const SizedBox(width: 4),
-                      IconButton.filled(
-                        tooltip: strings.send,
-                        icon: _sending
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.send_rounded),
-                        onPressed:
-                            _sending ? null : () => _send(context, strings),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  List<AiTool> _availableAiTools() {
-    // Read the catalog from AiToolService so the UI follows tool changes
-    // without maintaining a second hardcoded list.
-    return AiToolService(
-      storageService: context.read<StorageService>(),
-      sshService: context.read<SshService>(),
-      sftpService: context.read<SftpService>(),
-    ).tools;
-  }
-
-  Future<void> _showToolDetails(AiTool tool) async {
-    final strings = _AiStrings(context.read<AppSettings>().language);
-    final parameters = const JsonEncoder.withIndent('  ').convert({
-      'properties': tool.properties,
-      'required': tool.required,
-    });
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(tool.name),
-        content: SizedBox(
-          width: 520,
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  tool.description,
-                  style: TextStyle(
-                    color: Theme.of(ctx).colorScheme.onSurface,
-                    height: 1.35,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SelectableText(
-                  parameters,
-                  style: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 12,
-                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
               ],
             ),
-          ),
+            _buildHistoryOverlay(context, strings),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(strings.close),
-          ),
-        ],
       ),
     );
   }
@@ -404,12 +422,6 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     if (id == null) return strings.serverTarget;
     final connection = context.read<StorageService>().getConnection(id);
     return connection == null ? strings.serverTarget : connection.name;
-  }
-
-  String _selectedSkillLabel(_AiStrings strings) {
-    final id = _selectedSkillId;
-    if (id == null) return strings.quickSkill;
-    return strings.quickSkillActive;
   }
 
   Future<void> _selectTargetServer(_AiStrings strings) async {
@@ -445,84 +457,6 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     setState(() => _selectedConnectionId = selected);
   }
 
-  Future<void> _selectPromptTemplate(_AiStrings strings) async {
-    final selected = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      builder: (ctx) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            for (final template in _PromptTemplate.defaults(strings))
-              ListTile(
-                leading: const Icon(Icons.text_snippet_outlined),
-                title: Text(template.title),
-                subtitle: Text(
-                  template.text,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                onTap: () => Navigator.pop(ctx, template.text),
-              ),
-          ],
-        ),
-      ),
-    );
-    if (selected == null || !mounted) return;
-    final current = _inputController.text.trim();
-    _inputController.text =
-        current.isEmpty ? selected : '$current\n\n$selected';
-    _inputController.selection = TextSelection.collapsed(
-      offset: _inputController.text.length,
-    );
-  }
-
-  Future<void> _selectQuickSkill(_AiStrings strings) async {
-    final skills = (await context.read<StorageService>().loadAiSkills())
-        .where((skill) => skill.enabled)
-        .toList();
-    if (!mounted) return;
-    final selected = await showModalBottomSheet<String?>(
-      context: context,
-      showDragHandle: true,
-      builder: (ctx) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.clear_rounded),
-              title: Text(strings.noQuickSkill),
-              onTap: () => Navigator.pop(ctx, null),
-            ),
-            if (skills.isEmpty)
-              ListTile(
-                leading: const Icon(Icons.auto_awesome_outlined),
-                title: Text(strings.noSkills),
-                onTap: () => Navigator.pop(ctx),
-              ),
-            for (final skill in skills)
-              ListTile(
-                leading: Icon(
-                  skill.id == _selectedSkillId
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_off,
-                ),
-                title: Text(skill.name),
-                subtitle: Text(
-                  skill.description,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                onTap: () => Navigator.pop(ctx, skill.id),
-              ),
-          ],
-        ),
-      ),
-    );
-    if (!mounted) return;
-    setState(() => _selectedSkillId = selected);
-  }
-
   Future<void> _send(BuildContext context, _AiStrings strings) async {
     final text = _inputController.text.trim();
     final activeChat = _activeChat;
@@ -532,6 +466,10 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     final settings = await storage.loadAiConnectionSettings();
     final currentModel = settings.model.trim();
     if (!settings.hasApiKey) {
+      AppLogService.instance.warning(
+        'LLM chat blocked: API key missing or invalid',
+        details: 'model=$currentModel',
+      );
       if (!context.mounted) return;
       await _showSettings(context, strings);
       return;
@@ -604,6 +542,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     try {
       final answer = StringBuffer();
       LlmRunStats? runStats;
+      var lastStreamUiUpdate = DateTime.fromMillisecondsSinceEpoch(0);
       await for (final chunk in service.stream(
         modelOverride: model,
         onStats: (stats) => runStats = stats,
@@ -627,6 +566,12 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       )) {
         answer.write(chunk);
         if (!mounted) return;
+        final now = DateTime.now();
+        if (now.difference(lastStreamUiUpdate) <
+            const Duration(milliseconds: 80)) {
+          continue;
+        }
+        lastStreamUiUpdate = now;
         final currentChat = _chatById(chatId);
         if (currentChat == null) continue;
         final streamedMessages = [...currentChat.messages];
@@ -681,7 +626,13 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       );
       setState(() => _replaceChat(answeredChat));
       await storage.saveAiChat(answeredChat);
-    } catch (e) {
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'LLM chat UI request failed',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'chatId=$chatId model=$model',
+      );
       if (!mounted) return;
       final currentChat = _chatById(chatId) ?? initialChat;
       final errorMessages = [...currentChat.messages];
@@ -920,83 +871,128 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   }
 
   Future<void> _showHistory(BuildContext context, _AiStrings strings) async {
+    _openHistoryPanel(context);
+  }
+
+  double _historyPanelWidth(BuildContext context) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    return screenWidth >= 480 ? 390.0 : screenWidth * 0.86;
+  }
+
+  void _startHistoryDrag(Offset position) {
+    _historySlideController.stop();
+    _historySwipeStart = position;
+    _historyDragStartExtent = _historyPanelExtent;
+    _historyDragging = _historyPanelExtent > 0 || position.dx <= 36;
+  }
+
+  void _updateHistoryDrag(BuildContext context, Offset position) {
+    if (!_historyDragging || _historySwipeStart == null) return;
+    final delta = position - _historySwipeStart!;
+    if (_historyDragStartExtent == 0 && delta.dx.abs() < delta.dy.abs() * 1.2) {
+      return;
+    }
+    final width = _historyPanelWidth(context);
+    final next = (_historyDragStartExtent + delta.dx).clamp(0.0, width);
+    if (next == _historyPanelExtent) return;
+    setState(() => _historyPanelExtent = next);
+  }
+
+  void _endHistoryDrag(BuildContext context, Offset position) {
+    if (!_historyDragging) {
+      _historySwipeStart = null;
+      return;
+    }
+    final start = _historySwipeStart;
+    _historySwipeStart = null;
+    _historyDragging = false;
+    if (start == null) return;
+    final width = _historyPanelWidth(context);
+    final delta = position - start;
+    final shouldOpen = _historyPanelExtent >= width * 0.38 || delta.dx > 120;
+    _animateHistoryPanel(context, shouldOpen ? width : 0);
+  }
+
+  void _cancelHistoryDrag(BuildContext context) {
+    _historySwipeStart = null;
+    _historyDragging = false;
+    final width = _historyPanelWidth(context);
+    _animateHistoryPanel(
+        context, _historyPanelExtent >= width * 0.5 ? width : 0);
+  }
+
+  void _openHistoryPanel(BuildContext context) {
+    _animateHistoryPanel(context, _historyPanelWidth(context));
+  }
+
+  void _closeHistoryPanel(BuildContext context) {
+    _animateHistoryPanel(context, 0);
+  }
+
+  void _animateHistoryPanel(BuildContext context, double target) {
+    final width = _historyPanelWidth(context);
+    final safeTarget = target.clamp(0.0, width);
+    _historySlideAnimation = Tween<double>(
+      begin: _historyPanelExtent.clamp(0.0, width),
+      end: safeTarget,
+    ).animate(
+      CurvedAnimation(
+        parent: _historySlideController,
+        curve: Curves.easeOutCubic,
+        reverseCurve: Curves.easeInCubic,
+      ),
+    );
+    _historySlideController.forward(from: 0);
+  }
+
+  Widget _buildHistoryOverlay(BuildContext context, _AiStrings strings) {
+    final width = _historyPanelWidth(context);
+    final extent = _historyPanelExtent.clamp(0.0, width);
+    if (extent <= 0.5) return const SizedBox.shrink();
     final colorScheme = Theme.of(context).colorScheme;
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 8, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      strings.history,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: strings.newChat,
-                    icon: const Icon(Icons.add_rounded),
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      _createChatFromSettings();
-                    },
-                  ),
-                ],
+    final progress = width == 0 ? 0.0 : extent / width;
+    return Positioned.fill(
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: () => _closeHistoryPanel(context),
+              child: ColoredBox(
+                color: Colors.black.withValues(alpha: 0.28 * progress),
               ),
             ),
-            Expanded(
-              child: ListView.separated(
-                itemCount: _chats.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
-                itemBuilder: (context, index) {
-                  final chat = _chats[index];
-                  final selected = chat.id == _activeChatId;
-                  return ListTile(
-                    selected: selected,
-                    leading: Icon(
-                      selected
-                          ? Icons.chat_bubble_rounded
-                          : Icons.chat_bubble_outline_rounded,
-                      color: selected ? colorScheme.primary : null,
-                    ),
-                    title: Text(
-                      chat.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text(
-                      _formatTime(chat.updatedAt),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: IconButton(
-                      tooltip: strings.delete,
-                      icon: const Icon(Icons.delete_outline),
-                      onPressed: _chats.length <= 1
-                          ? null
-                          : () async {
-                              await _deleteChat(chat.id);
-                              if (ctx.mounted) Navigator.pop(ctx);
-                            },
-                    ),
-                    onTap: () {
-                      setState(() => _activeChatId = chat.id);
-                      Navigator.pop(ctx);
-                      _scrollToBottom();
-                    },
-                  );
-                },
+          ),
+          Positioned(
+            top: 0,
+            bottom: 0,
+            left: extent - width,
+            width: width,
+            child: SafeArea(
+              child: Material(
+                color: colorScheme.surface,
+                elevation: 16,
+                child: _HistoryPanel(
+                  chats: _chats,
+                  activeChatId: _activeChatId,
+                  strings: strings,
+                  formatTime: _formatTime,
+                  onNewChat: () {
+                    _closeHistoryPanel(context);
+                    _createChatFromSettings();
+                  },
+                  onDeleteChat: (chatId) async {
+                    await _deleteChat(chatId);
+                  },
+                  onSelectChat: (chatId) {
+                    setState(() => _activeChatId = chatId);
+                    _closeHistoryPanel(context);
+                    _scrollToBottom();
+                  },
+                ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -1005,6 +1001,36 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     final storage = context.read<StorageService>();
     final settings = await storage.loadAiConnectionSettings();
     if (!context.mounted) return;
+    AppLogService.instance.info(
+      'LLM settings page opened',
+      details:
+          'baseUrl=${settings.baseUrl} model=${settings.model} hasApiKey=${settings.hasApiKey}',
+    );
+
+    if (mounted) {
+      final nextSettings = await Navigator.of(context).push<_PendingAiSettings>(
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => _LlmSettingsScreen(initialSettings: settings),
+        ),
+      );
+      if (nextSettings == null) return;
+      if (!mounted) return;
+      setState(() => _contextWindowTokens = nextSettings.contextWindowTokens);
+      final activeChat = _activeChat;
+      final nextModel = nextSettings.model.trim();
+      if (activeChat != null &&
+          nextModel.isNotEmpty &&
+          activeChat.model != nextModel) {
+        await _updateActiveChat(
+          activeChat.copyWith(
+            model: nextModel,
+            updatedAt: DateTime.now(),
+          ),
+        );
+      }
+      return;
+    }
 
     final baseUrlController = TextEditingController(text: settings.baseUrl);
     final modelController = TextEditingController(text: settings.model);
@@ -1012,6 +1038,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     var models = _modelOptions(settings.model);
     var contextWindowTokens = settings.contextWindowTokens;
     var loadingModels = false;
+    var savingSettings = false;
     String? modelLoadError;
 
     Future<void> refreshModels(
@@ -1044,7 +1071,13 @@ class _LlmChatScreenState extends State<LlmChatScreen>
             modelController.text = models.first;
           }
         });
-      } catch (e) {
+      } catch (e, stackTrace) {
+        AppLogService.instance.error(
+          'LLM model refresh failed in settings',
+          error: e,
+          stackTrace: stackTrace,
+          details: 'baseUrl=${baseUrlController.text.trim()}',
+        );
         if (!ctx.mounted) return;
         setDialogState(() {
           loadingModels = false;
@@ -1060,129 +1093,165 @@ class _LlmChatScreenState extends State<LlmChatScreen>
           title: Text(strings.settings),
           content: SizedBox(
             width: 520,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: baseUrlController,
-                  decoration: InputDecoration(labelText: strings.baseUrl),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        initialValue: models.contains(modelController.text)
-                            ? modelController.text
-                            : models.first,
-                        isExpanded: true,
-                        decoration: InputDecoration(labelText: strings.model),
-                        selectedItemBuilder: (context) => [
-                          for (final model in models)
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: Text(
-                                model,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                softWrap: false,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: baseUrlController,
+                    decoration: InputDecoration(labelText: strings.baseUrl),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          initialValue: models.contains(modelController.text)
+                              ? modelController.text
+                              : models.first,
+                          isExpanded: true,
+                          decoration: InputDecoration(labelText: strings.model),
+                          selectedItemBuilder: (context) => [
+                            for (final model in models)
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  model,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  softWrap: false,
+                                ),
                               ),
-                            ),
-                        ],
-                        items: [
-                          for (final model in models)
-                            DropdownMenuItem(
-                              value: model,
-                              child: Text(
-                                model,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                softWrap: false,
+                          ],
+                          items: [
+                            for (final model in models)
+                              DropdownMenuItem(
+                                value: model,
+                                child: Text(
+                                  model,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  softWrap: false,
+                                ),
                               ),
-                            ),
-                        ],
-                        onChanged: (value) {
-                          if (value != null) modelController.text = value;
-                        },
+                          ],
+                          onChanged: (value) {
+                            if (value != null) modelController.text = value;
+                          },
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      tooltip: strings.refreshModels,
-                      icon: loadingModels
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.sync_rounded),
-                      onPressed: loadingModels
-                          ? null
-                          : () => refreshModels(ctx, setDialogState),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        tooltip: strings.refreshModels,
+                        icon: loadingModels
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.sync_rounded),
+                        onPressed: loadingModels
+                            ? null
+                            : () => refreshModels(ctx, setDialogState),
+                      ),
+                    ],
+                  ),
+                  if (modelLoadError != null) ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        strings.modelsFailed(modelLoadError!),
+                        style: TextStyle(
+                          color: Theme.of(ctx).colorScheme.error,
+                          fontSize: 12,
+                        ),
+                      ),
                     ),
                   ],
-                ),
-                if (modelLoadError != null) ...[
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      strings.modelsFailed(modelLoadError!),
-                      style: TextStyle(
-                        color: Theme.of(ctx).colorScheme.error,
-                        fontSize: 12,
-                      ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int>(
+                    initialValue: contextWindowTokens,
+                    isExpanded: true,
+                    decoration:
+                        const InputDecoration(labelText: 'Context window'),
+                    items: [
+                      for (final value in AiContextWindowSize.values)
+                        DropdownMenuItem(
+                          value: value,
+                          child: Text(AiContextWindowSize.label(value)),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) contextWindowTokens = value;
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: apiKeyController,
+                    obscureText: true,
+                    decoration: InputDecoration(
+                      labelText: settings.hasApiKey
+                          ? strings.apiKeySaved
+                          : strings.apiKeyRequired,
                     ),
                   ),
                 ],
-                const SizedBox(height: 12),
-                DropdownButtonFormField<int>(
-                  initialValue: contextWindowTokens,
-                  isExpanded: true,
-                  decoration:
-                      const InputDecoration(labelText: 'Context window'),
-                  items: [
-                    for (final value in AiContextWindowSize.values)
-                      DropdownMenuItem(
-                        value: value,
-                        child: Text(AiContextWindowSize.label(value)),
-                      ),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) contextWindowTokens = value;
-                  },
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: apiKeyController,
-                  obscureText: true,
-                  decoration: InputDecoration(
-                    labelText: settings.hasApiKey
-                        ? strings.apiKeySaved
-                        : strings.apiKeyRequired,
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(ctx),
+              onPressed: savingSettings ? null : () => Navigator.pop(ctx),
               child: Text(strings.cancel),
             ),
             FilledButton(
-              onPressed: () {
-                Navigator.pop(
-                  ctx,
-                  _PendingAiSettings(
-                    baseUrl: baseUrlController.text,
-                    model: modelController.text,
-                    contextWindowTokens: contextWindowTokens,
-                    apiKey: apiKeyController.text,
-                  ),
-                );
-              },
-              child: Text(strings.save),
+              onPressed: savingSettings
+                  ? null
+                  : () async {
+                      FocusScope.of(ctx).unfocus();
+                      final pending = _PendingAiSettings(
+                        baseUrl: baseUrlController.text,
+                        model: modelController.text,
+                        contextWindowTokens: contextWindowTokens,
+                        apiKey: apiKeyController.text,
+                      );
+                      setDialogState(() {
+                        savingSettings = true;
+                        modelLoadError = null;
+                      });
+                      try {
+                        await storage.saveAiConnectionSettings(
+                          baseUrl: pending.baseUrl,
+                          model: pending.model,
+                          contextWindowTokens: pending.contextWindowTokens,
+                          apiKey: pending.apiKey,
+                        );
+                        if (!ctx.mounted) return;
+                        Navigator.pop(ctx, pending);
+                      } catch (e, stackTrace) {
+                        AppLogService.instance.error(
+                          'LLM settings save failed',
+                          error: e,
+                          stackTrace: stackTrace,
+                          details:
+                              'baseUrl=${pending.baseUrl.trim()} model=${pending.model.trim()} apiKeyProvided=${pending.apiKey.trim().isNotEmpty}',
+                        );
+                        if (!ctx.mounted) return;
+                        setDialogState(() {
+                          savingSettings = false;
+                          modelLoadError = e.toString();
+                        });
+                      }
+                    },
+              child: savingSettings
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Text(strings.save),
             ),
           ],
         ),
@@ -1194,12 +1263,6 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     apiKeyController.dispose();
 
     if (nextSettings == null) return;
-    await storage.saveAiConnectionSettings(
-      baseUrl: nextSettings.baseUrl,
-      model: nextSettings.model,
-      contextWindowTokens: nextSettings.contextWindowTokens,
-      apiKey: nextSettings.apiKey,
-    );
     if (!mounted) return;
     setState(() => _contextWindowTokens = nextSettings.contextWindowTokens);
     final activeChat = _activeChat;
@@ -1271,13 +1334,25 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   }
 
   Future<void> _deleteChat(String id) async {
-    if (_chats.length <= 1) return;
+    if (_chats.isEmpty) return;
+    final storage = context.read<StorageService>();
     final nextChats = _chats.where((chat) => chat.id != id).toList();
+    if (nextChats.isEmpty) {
+      final settings = await storage.loadAiConnectionSettings();
+      if (!mounted) return;
+      nextChats.add(_newChatRecord(settings.model));
+    }
     setState(() {
       _chats = nextChats;
-      if (_activeChatId == id) _activeChatId = nextChats.first.id;
+      if (_activeChatId == id || _activeChatId == null) {
+        _activeChatId = nextChats.first.id;
+      }
     });
-    await context.read<StorageService>().deleteAiChat(id);
+    await storage.deleteAiChat(id);
+    if (nextChats.length == 1 && nextChats.first.messages.isEmpty) {
+      await storage.saveAiChat(nextChats.first);
+    }
+    _scrollToBottom(jump: true);
   }
 
   Future<void> _updateActiveChat(AiChatRecord chat) async {
@@ -1344,7 +1419,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         .map((message) {
           final content = _contextContentFor(message);
           if (content.trim().isEmpty) return null;
-          return {
+          return <String, dynamic>{
             'role': message.role == 'user' ? 'user' : 'assistant',
             'content': content,
           };
@@ -1373,18 +1448,6 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         lines.add(
           'Default target server: ${connection.name} (id: ${connection.id}, host: ${connection.username}@${connection.host}:${connection.port})',
         );
-      }
-    }
-    final skillId = _selectedSkillId;
-    if (skillId != null) {
-      final skills = await context.read<StorageService>().loadAiSkills();
-      for (final skill in skills) {
-        if (skill.id == skillId && skill.enabled) {
-          lines.add(
-            'Temporary user-selected skill for this request:\nName: ${skill.name}\nDescription: ${skill.description}\nContent:\n${skill.content}',
-          );
-          break;
-        }
       }
     }
     if (lines.isEmpty) return null;
@@ -1443,9 +1506,36 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     return score;
   }
 
+  int _contextTokensFor(AiChatRecord chat) {
+    final key = _contextTokenKey(chat);
+    if (_contextTokenCacheKey == key) return _cachedContextTokens;
+    _contextTokenCacheKey = key;
+    _cachedContextTokens = _estimatedContextTokens(chat.messages);
+    return _cachedContextTokens;
+  }
+
+  String _contextTokenKey(AiChatRecord chat) {
+    final messages = chat.messages;
+    if (messages.isEmpty) return '${chat.id}:0';
+    final last = messages.last;
+    return [
+      chat.id,
+      messages.length,
+      last.role,
+      last.createdAt.microsecondsSinceEpoch,
+      last.text.length,
+      last.contextText?.length ?? 0,
+    ].join(':');
+  }
+
   int _estimatedContextTokens(List<AiChatMessageRecord> messages) {
-    final mapped = _messagesForRequest(messages);
-    mapped.insert(0, {'role': 'system', 'content': 'system'});
+    // Keep this list dynamically typed because tool-call messages may later
+    // carry non-string fields; otherwise Dart can infer Map<String, String>
+    // and fail at runtime when inserting or spreading richer request objects.
+    final mapped = <Map<String, dynamic>>[
+      <String, dynamic>{'role': 'system', 'content': 'system'},
+      ..._messagesForRequest(messages),
+    ];
     return LlmChatService.estimateMessagesTokens(mapped);
   }
 
@@ -1464,9 +1554,13 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     return value.toString();
   }
 
-  void _scrollToBottom() {
+  void _scrollToBottom({bool jump = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
+      if (jump) {
+        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+        return;
+      }
       _scrollController.animateTo(
         _scrollController.position.maxScrollExtent,
         duration: const Duration(milliseconds: 220),
@@ -1481,6 +1575,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
 
 class _MessageBubble extends StatelessWidget {
   final AiChatMessageRecord message;
+  final bool renderMarkdown;
   final bool canAct;
   final VoidCallback? onEditUser;
   final VoidCallback? onRegenerate;
@@ -1488,6 +1583,7 @@ class _MessageBubble extends StatelessWidget {
 
   const _MessageBubble({
     required this.message,
+    this.renderMarkdown = true,
     this.canAct = false,
     this.onEditUser,
     this.onRegenerate,
@@ -1509,7 +1605,7 @@ class _MessageBubble extends StatelessWidget {
           children: [
             Container(
               margin: const EdgeInsets.only(bottom: 4),
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
               decoration: BoxDecoration(
                 color: isError
                     ? colorScheme.error.withValues(alpha: 0.1)
@@ -1520,12 +1616,14 @@ class _MessageBubble extends StatelessWidget {
                 border: Border.all(
                   color: isError
                       ? colorScheme.error.withValues(alpha: 0.38)
-                      : colorScheme.outlineVariant,
+                      : isUser
+                          ? colorScheme.primary.withValues(alpha: 0.10)
+                          : colorScheme.outlineVariant.withValues(alpha: 0.78),
                 ),
               ),
-              child: isUser || isError
+              child: isUser || isError || !renderMarkdown
                   ? SelectableText(
-                      message.text,
+                      message.text.isEmpty ? '...' : message.text,
                       style: TextStyle(
                         color:
                             isError ? colorScheme.error : colorScheme.onSurface,
@@ -1623,27 +1721,101 @@ class _MessageBubble extends StatelessWidget {
   }
 }
 
+class _HistoryPanel extends StatelessWidget {
+  final List<AiChatRecord> chats;
+  final String? activeChatId;
+  final _AiStrings strings;
+  final String Function(DateTime time) formatTime;
+  final VoidCallback onNewChat;
+  final ValueChanged<String> onSelectChat;
+  final Future<void> Function(String chatId) onDeleteChat;
+
+  const _HistoryPanel({
+    required this.chats,
+    required this.activeChatId,
+    required this.strings,
+    required this.formatTime,
+    required this.onNewChat,
+    required this.onSelectChat,
+    required this.onDeleteChat,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  strings.history,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: strings.newChat,
+                icon: const Icon(Icons.add_rounded),
+                onPressed: onNewChat,
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.separated(
+            itemCount: chats.length,
+            separatorBuilder: (_, __) => const Divider(height: 1),
+            itemBuilder: (context, index) {
+              final chat = chats[index];
+              final selected = chat.id == activeChatId;
+              return ListTile(
+                selected: selected,
+                leading: Icon(
+                  selected
+                      ? Icons.chat_bubble_rounded
+                      : Icons.chat_bubble_outline_rounded,
+                  color: selected ? colorScheme.primary : null,
+                ),
+                title: Text(
+                  chat.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  formatTime(chat.updatedAt),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: IconButton(
+                  tooltip: strings.delete,
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: () => onDeleteChat(chat.id),
+                ),
+                onTap: () => onSelectChat(chat.id),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _ChatToolsBar extends StatelessWidget {
-  final List<AiTool> tools;
   final String skillsLabel;
   final String serverLabel;
-  final String skillLabel;
-  final ValueChanged<AiTool> onToolTap;
   final VoidCallback onServerTap;
-  final VoidCallback onTemplateTap;
-  final VoidCallback onQuickSkillTap;
   final VoidCallback onSkillsTap;
 
   const _ChatToolsBar({
-    super.key,
-    required this.tools,
     required this.skillsLabel,
     required this.serverLabel,
-    required this.skillLabel,
-    required this.onToolTap,
     required this.onServerTap,
-    required this.onTemplateTap,
-    required this.onQuickSkillTap,
     required this.onSkillsTap,
   });
 
@@ -1652,49 +1824,78 @@ class _ChatToolsBar extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(8),
+      height: 116,
+      padding: const EdgeInsets.fromLTRB(10, 12, 10, 10),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: colorScheme.outlineVariant),
       ),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
+      child: GridView.count(
+        crossAxisCount: 2,
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        childAspectRatio: 1.8,
         children: [
-          ActionChip(
-            avatar: const Icon(Icons.dns_outlined, size: 16),
+          _ChatToolTile(
+            icon: Icons.dns_outlined,
             label: Text(serverLabel),
             onPressed: onServerTap,
           ),
-          ActionChip(
-            avatar: const Icon(Icons.text_snippet_outlined, size: 16),
-            label: const Text('Templates'),
-            onPressed: onTemplateTap,
-          ),
-          ActionChip(
-            avatar: const Icon(Icons.bolt_outlined, size: 16),
-            label: Text(skillLabel),
-            onPressed: onQuickSkillTap,
-          ),
-          ActionChip(
-            avatar: const Icon(Icons.auto_awesome_outlined, size: 16),
+          _ChatToolTile(
+            icon: Icons.auto_awesome_outlined,
             label: Text(skillsLabel),
             onPressed: onSkillsTap,
           ),
-          for (final tool in tools)
-            ActionChip(
-              avatar: const Icon(Icons.construction_rounded, size: 16),
-              label: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 190),
-                child: Text(
-                  tool.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              onPressed: () => onToolTap(tool),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChatToolTile extends StatelessWidget {
+  final IconData icon;
+  final Widget label;
+  final VoidCallback onPressed;
+
+  const _ChatToolTile({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onPressed,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: colorScheme.surface,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: colorScheme.outlineVariant),
             ),
+            child: Icon(icon, size: 21, color: colorScheme.primary),
+          ),
+          const SizedBox(height: 6),
+          DefaultTextStyle.merge(
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: colorScheme.onSurfaceVariant,
+              fontSize: 11,
+              height: 1.15,
+              fontWeight: FontWeight.w600,
+            ),
+            child: label,
+          ),
         ],
       ),
     );
@@ -1909,7 +2110,7 @@ class _TraceEntry extends StatelessWidget {
           children: [
             Align(
               alignment: Alignment.centerLeft,
-              child: SelectableText(
+              child: OverflowScrollText(
                 trace.content.isEmpty ? '-' : trace.content,
                 style: TextStyle(
                   fontSize: 11,
@@ -2077,6 +2278,282 @@ class _ToolApprovalPanel extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _LlmSettingsScreen extends StatefulWidget {
+  final AiConnectionSettings initialSettings;
+
+  const _LlmSettingsScreen({required this.initialSettings});
+
+  @override
+  State<_LlmSettingsScreen> createState() => _LlmSettingsScreenState();
+}
+
+class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
+  late final TextEditingController _baseUrlController;
+  late final TextEditingController _modelController;
+  late final TextEditingController _apiKeyController;
+  late List<String> _models;
+  late int _contextWindowTokens;
+  bool _loadingModels = false;
+  bool _saving = false;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    _baseUrlController =
+        TextEditingController(text: widget.initialSettings.baseUrl);
+    _modelController =
+        TextEditingController(text: widget.initialSettings.model);
+    _apiKeyController = TextEditingController();
+    _models = _modelOptions(widget.initialSettings.model);
+    _contextWindowTokens = widget.initialSettings.contextWindowTokens;
+  }
+
+  @override
+  void dispose() {
+    _baseUrlController.dispose();
+    _modelController.dispose();
+    _apiKeyController.dispose();
+    super.dispose();
+  }
+
+  static List<String> _modelOptions(String model) {
+    return {..._defaultModels, if (model.trim().isNotEmpty) model.trim()}
+        .toList()
+      ..sort();
+  }
+
+  Future<void> _refreshModels(_AiStrings strings) async {
+    final storage = context.read<StorageService>();
+    setState(() {
+      _loadingModels = true;
+      _errorText = null;
+    });
+    try {
+      final service = LlmChatService(
+        storageService: storage,
+        toolService: AiToolService(
+          storageService: storage,
+          sshService: context.read<SshService>(),
+          sftpService: context.read<SftpService>(),
+        ),
+      );
+      final typedApiKey = _apiKeyController.text.trim();
+      final fetched = await service.fetchModels(
+        baseUrl: _baseUrlController.text.trim(),
+        apiKey: typedApiKey.isEmpty ? null : typedApiKey,
+      );
+      if (!mounted) return;
+      setState(() {
+        _models = {..._defaultModels, ...fetched}.toList()..sort();
+        _loadingModels = false;
+        if (_models.isNotEmpty && !_models.contains(_modelController.text)) {
+          _modelController.text = _models.first;
+        }
+      });
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'LLM model refresh failed in settings',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'baseUrl=${_baseUrlController.text.trim()}',
+      );
+      if (!mounted) return;
+      setState(() {
+        _loadingModels = false;
+        _errorText = strings.modelsFailed(e.toString());
+      });
+    }
+  }
+
+  Future<void> _save(_AiStrings strings) async {
+    FocusScope.of(context).unfocus();
+    final storage = context.read<StorageService>();
+    final pending = _PendingAiSettings(
+      baseUrl: _baseUrlController.text,
+      model: _modelController.text,
+      contextWindowTokens: _contextWindowTokens,
+      apiKey: _apiKeyController.text,
+    );
+    setState(() {
+      _saving = true;
+      _errorText = null;
+    });
+    try {
+      await storage.saveAiConnectionSettings(
+        baseUrl: pending.baseUrl,
+        model: pending.model,
+        contextWindowTokens: pending.contextWindowTokens,
+        apiKey: pending.apiKey,
+      );
+      if (!mounted) return;
+      Navigator.pop(context, pending);
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'LLM settings save failed',
+        error: e,
+        stackTrace: stackTrace,
+        details:
+            'baseUrl=${pending.baseUrl.trim()} model=${pending.model.trim()} apiKeyProvided=${pending.apiKey.trim().isNotEmpty}',
+      );
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _errorText = strings.failed(e);
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = _AiStrings(context.watch<AppSettings>().language);
+    final colorScheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(strings.settings),
+        actions: [
+          TextButton(
+            onPressed: _saving ? null : () => Navigator.pop(context),
+            child: Text(strings.cancel),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: FilledButton(
+              onPressed: _saving ? null : () => _save(strings),
+              child: _saving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Text(strings.save),
+            ),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+          children: [
+            TextField(
+              controller: _baseUrlController,
+              decoration: InputDecoration(labelText: strings.baseUrl),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _models.contains(_modelController.text)
+                        ? _modelController.text
+                        : _models.first,
+                    isExpanded: true,
+                    decoration: InputDecoration(labelText: strings.model),
+                    selectedItemBuilder: (context) => [
+                      for (final model in _models)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            model,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            softWrap: false,
+                          ),
+                        ),
+                    ],
+                    items: [
+                      for (final model in _models)
+                        DropdownMenuItem(
+                          value: model,
+                          child: Text(
+                            model,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            softWrap: false,
+                          ),
+                        ),
+                    ],
+                    onChanged: _saving
+                        ? null
+                        : (value) {
+                            if (value != null) _modelController.text = value;
+                          },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filledTonal(
+                  tooltip: strings.refreshModels,
+                  onPressed: _loadingModels || _saving
+                      ? null
+                      : () => _refreshModels(strings),
+                  icon: _loadingModels
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.sync_rounded),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<int>(
+              initialValue: _contextWindowTokens,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Context window'),
+              items: [
+                for (final value in AiContextWindowSize.values)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text(AiContextWindowSize.label(value)),
+                  ),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        setState(() => _contextWindowTokens = value);
+                      }
+                    },
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _apiKeyController,
+              enabled: !_saving,
+              obscureText: true,
+              decoration: InputDecoration(
+                labelText: widget.initialSettings.hasApiKey
+                    ? strings.apiKeySaved
+                    : strings.apiKeyRequired,
+              ),
+            ),
+            if (_errorText != null) ...[
+              const SizedBox(height: 14),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: colorScheme.errorContainer.withValues(alpha: 0.36),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: colorScheme.error.withValues(alpha: 0.42),
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Text(
+                    _errorText!,
+                    style: TextStyle(color: colorScheme.error),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

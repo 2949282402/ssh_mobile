@@ -25,9 +25,29 @@ new path in source or docs.
 - Prefer project services over duplicating protocol code.
 - Write logs for SSH, SFTP, LLM requests, AI tools, and caught failures through
   `AppLogService` so the log page remains useful.
+- Log entries should include a source file/line location when possible, and log
+  page interactions should preserve long-press multi-select with batch delete.
+- AI chat UI failures, settings save/refresh failures, missing or invalid API
+  keys, and model request errors should all be visible in the log page with
+  secrets redacted.
 - Keep mobile and Windows behavior consistent for shared SSH/SFTP features.
+- Keep new UI consistent with `lib/theme/app_theme.dart`: use the app theme for
+  colors, button/input/list/navigation styling, and avoid page-local palettes
+  unless a protocol view such as the terminal requires it.
+- Prevent Flutter `RenderFlex overflowed ... on the bottom` regressions: dialogs,
+  bottom input panels, keyboard-adjacent controls, compact mobile editors, and
+  expandable toolbars must be wrapped in `SingleChildScrollView`, `ListView`, or
+  otherwise bounded with `Expanded`/`Flexible` so small screens, landscape,
+  large fonts, and IME insets cannot make a `Column` exceed its parent.
+- When text cannot be fully displayed, prefer making that region scrollable
+  before shrinking fonts or hiding content. For long unbroken text such as file
+  paths, commands, API errors, stack traces, model names, and logs, use a
+  scrollable text container such as `OverflowScrollText` over clipping or
+  unreadable ellipsis. Use wrapping text for prose, but horizontal scrolling for
+  machine strings that users need to inspect or copy exactly.
 - Keep model configuration in the LLM settings dialog. Do not add another model
-  selector on the chat page.
+  selector on the chat page. On mobile, prefer the dedicated settings page over
+  an `AlertDialog` so saving API keys does not collide with route teardown.
 - Keep AI server tools safe by default: read-only diagnostics run directly, any
   command that may write or change server state must pause for explicit human
   approval in the chat page, and credential exposure remains blocked.
@@ -49,26 +69,28 @@ Use `lib/services/llm_chat_service.dart` for provider protocol behavior and
 - Stream chat with SSE (`stream: true`) and surface chunks immediately to the UI.
 - Tool calls may arrive split across multiple SSE deltas. Accumulate id, name,
   and argument fragments before executing tools.
-- The chat input `+` toolbar should display the current tool catalog from
-  `AiToolService.tools`, not a duplicated UI-only list, so tool maintenance stays
-  centralized.
+- The chat input `+` toolbar should stay below the input row as a compact
+  WeChat-like function panel. It currently exposes only Server selection and the
+  Skills manager entry; do not re-add prompt templates or a temporary Skill
+  picker to this panel unless the product direction changes.
 - The same toolbar includes a Skills entry that opens the custom AI Skills
   manager. Keep skill storage in `StorageService`, and keep the manager page
   theme-aware, bilingual, and flexible enough for SKILL.md-style content,
   references, templates, and maintenance notes. Custom skills have an enabled
   flag; disabled skills remain editable but should not appear in chat selection
-  or be injected into request context.
-- The toolbar can also select a default target server, insert prompt templates,
-  and temporarily apply a custom Skill. Add those as user-message `contextText`
-  rather than changing the main system prompt, so provider prompt caches stay
-  useful.
+  or be injected into request context. On compact mobile widths, use separate
+  list/editor tabs instead of squeezing the skill list above the editor.
+- Toolbar-selected target servers should be represented as user-message
+  `contextText` rather than changing the main system prompt, so provider prompt
+  caches stay useful.
 - DeepSeek thinking mode can return `reasoning_content`. If the response has
   tool calls, pass `reasoning_content` back unchanged in the assistant tool-call
   message. Surface reasoning, tool requests, tool results, and approval outcomes
   as collapsed chat trace details; keep them out of future model context.
 - Track context window usage with the selected 259K, 512K, or 1M limit. When
   estimated usage reaches 90%, call the current model to summarize older
-  history before continuing the user request.
+  history before continuing the user request. Keep token estimation out of the
+  hot build path by caching per active chat/message fingerprint.
 - Keep the primary system prompt stable for cache hits. If old history is
   compressed, pass the summary as a normal assistant memory message instead of
   injecting dynamic system text.
@@ -81,6 +103,12 @@ Use `lib/services/llm_chat_service.dart` for provider protocol behavior and
   selected assistant reply and continue with the same context slimming rules.
 - Store per-assistant-message token and elapsed-time metadata and render it as
   small, low-emphasis text below the message bubble.
+- Throttle streaming UI updates so small SSE chunks do not rebuild Markdown on
+  every token. Around 80ms per visible update keeps output responsive without
+  making page switches stutter.
+- While an assistant message is still streaming, render it as lightweight text
+  and switch to Markdown after completion; continuous Markdown parsing is a
+  common source of AI-page jank.
 - If users report `too many tool rounds`, inspect both tool loop limits and
   whether the command whitelist blocks reasonable read-only discovery commands.
 - If adding write-capable tools, preserve the approval gate: show the exact
@@ -103,9 +131,29 @@ Use `lib/services/sftp_service.dart` for connection/session behavior and
 
 ### Navigation and Chat UX
 
-Current main page order is Servers, Windows, SFTP, AI, then Logs. The mobile
-bottom navigation and desktop rail show only Servers, Windows, SFTP, and AI;
-Logs sits to the right of AI in the `PageView`.
+Current main page order is AI, Servers, Windows, SFTP, then Logs. The mobile
+bottom navigation and desktop rail show only AI, Servers, Windows, and SFTP;
+Logs sits at the far right in the `PageView`. App launch still defaults to the
+Servers page even though AI is the first navigation item.
+
+Use lazy page construction for the main `PageView` so adjacent heavy pages such
+as AI chat do not eagerly load large histories during startup or server-page
+navigation.
+
+For smooth page swiping, keep heavy work out of drag time: pass an `active` flag
+to heavyweight pages, load AI chat history only after the page settles active,
+wrap page bodies in `RepaintBoundary`, pause non-active page tickers with
+`TickerMode`, and use Provider `select` in `HomeScreen` so unrelated storage
+notifications do not rebuild the whole shell.
+
+For log-heavy flows, keep `AppLogService.entries` and level counts cached until
+the log queue changes. Avoid recomputing reversed log lists and per-level counts
+inside `DeveloperLogPage.build`.
+
+Avoid allocation-heavy service getters in widgets that use Provider `select`.
+Cache stable unmodifiable views for connection and SSH session collections, and
+refresh those views only when the underlying collection membership or visible
+metadata changes.
 
 Use keyed animations for chat switching. Avoid an `AnimatedSwitcher` around a
 `ListView` that shares a `ScrollController`, because it can briefly mount two
@@ -114,11 +162,19 @@ lists with the same controller.
 Use `AutomaticKeepAliveClientMixin` for the AI chat page so streaming responses
 continue while the user switches to another navigation page.
 
-The Servers page opens the settings drawer on a left swipe. Keep data
-export/import there. Backup JSON should include saved servers, restorable
+Open the settings drawer only from the settings icon, not from a Servers-page
+swipe; horizontal swipes on Servers should continue to page navigation. Keep
+data export/import there. Backup JSON should include saved servers, restorable
 windows, terminal history, AI settings, AI chats, and custom skills, but must
 not export passwords, private keys, API keys, tokens, or other secrets. Imports
 should leave those credential fields empty so users reconfigure them.
+
+Fresh installs and missing preference fallbacks should default to Chinese and
+light theme. Preserve saved user language/theme preferences during startup.
+
+On the AI page, a clear left-edge-to-right swipe should open the chat history
+panel from the left with a finger-tracking slide, without blocking normal
+horizontal page navigation.
 
 ### Android Device Launch
 

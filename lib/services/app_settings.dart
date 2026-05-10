@@ -12,7 +12,7 @@ class AppSettings extends ChangeNotifier {
   static const _themeModeKey = 'theme_mode';
 
   AppLanguage _language = AppLanguage.zh;
-  ThemeMode _themeMode = ThemeMode.dark;
+  ThemeMode _themeMode = ThemeMode.light;
   bool _initialized = false;
   Future<void> _themeWrite = Future.value();
 
@@ -33,7 +33,7 @@ class AppSettings extends ChangeNotifier {
       _themeMode = _themeModeFromPrefs(prefs);
     } catch (_) {
       _language = AppLanguage.zh;
-      _themeMode = ThemeMode.dark;
+      _themeMode = ThemeMode.light;
     } finally {
       _initialized = true;
       notifyListeners();
@@ -74,9 +74,13 @@ class AppSettings extends ChangeNotifier {
         return ThemeMode.dark;
     }
 
-    return prefs.getBool(_darkModeKey) == false
-        ? ThemeMode.light
-        : ThemeMode.dark;
+    if (prefs.containsKey(_darkModeKey)) {
+      return prefs.getBool(_darkModeKey) == true
+          ? ThemeMode.dark
+          : ThemeMode.light;
+    }
+
+    return ThemeMode.light;
   }
 
   String _themeModeToName(ThemeMode mode) {

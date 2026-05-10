@@ -17,11 +17,16 @@ class SftpScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final strings = AppStrings(context.watch<AppSettings>().language);
-    final storage = context.watch<StorageService>();
+    final storageReady = context.select<StorageService, bool>(
+      (storage) => storage.initialized,
+    );
+    final connections = context.select<StorageService, List<ConnectionConfig>>(
+      (storage) => storage.connections,
+    );
     final sftp = context.watch<SftpService>();
     final desktop = isDesktopLayout(context);
 
-    if (!storage.initialized) {
+    if (!storageReady) {
       return const Center(
         child: SizedBox(
           width: 28,
@@ -37,7 +42,7 @@ class SftpScreen extends StatelessWidget {
               SizedBox(
                 width: 320,
                 child: _ServerPane(
-                  connections: storage.connections,
+                  connections: connections,
                   strings: strings,
                   sftp: sftp,
                 ),
@@ -53,7 +58,7 @@ class SftpScreen extends StatelessWidget {
         : Column(
             children: [
               _MobileServerStrip(
-                connections: storage.connections,
+                connections: connections,
                 strings: strings,
                 sftp: sftp,
               ),
@@ -269,6 +274,7 @@ class _FilePane extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final entries = sftp.entries;
 
     if (sftp.state == SftpConnectionState.disconnected) {
       return _SftpEmptyState(strings: strings);
@@ -344,110 +350,115 @@ class _FilePane extends StatelessWidget {
             ],
           ),
         Expanded(
-          child: sftp.entries.isEmpty && !sftp.isBusy
+          child: entries.isEmpty && !sftp.isBusy
               ? Center(child: Text(strings.emptyDirectory))
               : ListView.separated(
+                  cacheExtent: 900,
                   padding: const EdgeInsets.fromLTRB(8, 8, 8, 24),
-                  itemCount: sftp.entries.length,
+                  itemCount: entries.length,
                   separatorBuilder: (_, __) => const Divider(height: 1),
                   itemBuilder: (context, index) {
-                    final entry = sftp.entries[index];
-                    return ListTile(
-                      minLeadingWidth: 28,
-                      leading: Icon(
-                        entry.isDirectory
-                            ? Icons.folder_rounded
-                            : entry.isLink
-                                ? Icons.shortcut_rounded
-                                : Icons.description_outlined,
-                        color: entry.isDirectory
-                            ? colorScheme.primary
-                            : colorScheme.onSurface.withValues(alpha: 0.72),
-                      ),
-                      title: Text(
-                        entry.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Text(
-                        _entryMeta(strings, entry),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (entry.isDirectory)
-                            const Icon(Icons.chevron_right_rounded),
-                          PopupMenuButton<String>(
-                            onSelected: (action) =>
-                                _handleEntryAction(context, action, entry),
-                            itemBuilder: (_) => [
-                              if (!entry.isDirectory)
-                                PopupMenuItem(
-                                  value: 'view',
-                                  child: Row(
-                                    children: [
-                                      const Icon(
-                                        Icons.visibility_outlined,
-                                        size: 18,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(strings.viewFile),
-                                    ],
-                                  ),
-                                ),
-                              if (!entry.isDirectory)
-                                PopupMenuItem(
-                                  value: 'edit',
-                                  child: Row(
-                                    children: [
-                                      const Icon(Icons.edit_outlined, size: 18),
-                                      const SizedBox(width: 8),
-                                      Text(strings.edit),
-                                    ],
-                                  ),
-                                ),
-                              if (!entry.isDirectory)
-                                PopupMenuItem(
-                                  value: 'download',
-                                  child: Row(
-                                    children: [
-                                      const Icon(
-                                        Icons.download_rounded,
-                                        size: 18,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(strings.downloadFile),
-                                    ],
-                                  ),
-                                ),
-                              PopupMenuItem(
-                                value: 'delete',
-                                child: Row(
-                                  children: [
-                                    const Icon(
-                                      Icons.delete_outline,
-                                      size: 18,
-                                      color: Colors.redAccent,
+                    final entry = entries[index];
+                    return RepaintBoundary(
+                      key: ValueKey('${entry.connectionId}:${entry.path}'),
+                      child: ListTile(
+                        minLeadingWidth: 28,
+                        leading: Icon(
+                          entry.isDirectory
+                              ? Icons.folder_rounded
+                              : entry.isLink
+                                  ? Icons.shortcut_rounded
+                                  : Icons.description_outlined,
+                          color: entry.isDirectory
+                              ? colorScheme.primary
+                              : colorScheme.onSurface.withValues(alpha: 0.72),
+                        ),
+                        title: Text(
+                          entry.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          _entryMeta(strings, entry),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (entry.isDirectory)
+                              const Icon(Icons.chevron_right_rounded),
+                            PopupMenuButton<String>(
+                              onSelected: (action) =>
+                                  _handleEntryAction(context, action, entry),
+                              itemBuilder: (_) => [
+                                if (!entry.isDirectory)
+                                  PopupMenuItem(
+                                    value: 'view',
+                                    child: Row(
+                                      children: [
+                                        const Icon(
+                                          Icons.visibility_outlined,
+                                          size: 18,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(strings.viewFile),
+                                      ],
                                     ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      strings.delete,
-                                      style: const TextStyle(
+                                  ),
+                                if (!entry.isDirectory)
+                                  PopupMenuItem(
+                                    value: 'edit',
+                                    child: Row(
+                                      children: [
+                                        const Icon(Icons.edit_outlined,
+                                            size: 18),
+                                        const SizedBox(width: 8),
+                                        Text(strings.edit),
+                                      ],
+                                    ),
+                                  ),
+                                if (!entry.isDirectory)
+                                  PopupMenuItem(
+                                    value: 'download',
+                                    child: Row(
+                                      children: [
+                                        const Icon(
+                                          Icons.download_rounded,
+                                          size: 18,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(strings.downloadFile),
+                                      ],
+                                    ),
+                                  ),
+                                PopupMenuItem(
+                                  value: 'delete',
+                                  child: Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.delete_outline,
+                                        size: 18,
                                         color: Colors.redAccent,
                                       ),
-                                    ),
-                                  ],
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        strings.delete,
+                                        style: const TextStyle(
+                                          color: Colors.redAccent,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                            ],
-                          ),
-                        ],
+                              ],
+                            ),
+                          ],
+                        ),
+                        onTap: entry.isDirectory
+                            ? () => sftp.openPath(entry.path)
+                            : null,
                       ),
-                      onTap: entry.isDirectory
-                          ? () => sftp.openPath(entry.path)
-                          : null,
                     );
                   },
                 ),

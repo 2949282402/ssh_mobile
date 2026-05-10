@@ -25,10 +25,11 @@ class StorageService extends ChangeNotifier {
   final DataProtectionService _dataProtection = DataProtectionService.instance;
 
   List<ConnectionConfig> _connections = [];
+  List<ConnectionConfig> _connectionsView = const [];
   bool _initialized = false;
   bool _powerGuideSeen = false;
 
-  List<ConnectionConfig> get connections => List.unmodifiable(_connections);
+  List<ConnectionConfig> get connections => _connectionsView;
   bool get initialized => _initialized;
   bool get powerGuideSeen => _powerGuideSeen;
 
@@ -44,6 +45,7 @@ class StorageService extends ChangeNotifier {
       AppLogService.instance
           .error('Failed to initialize storage service', error: e);
       _connections = [];
+      _refreshConnectionsView();
       _powerGuideSeen = false;
     } finally {
       _initialized = true;
@@ -55,6 +57,7 @@ class StorageService extends ChangeNotifier {
     final jsonStr = await _readProtectedPref(_connectionsKey);
     if (jsonStr == null || jsonStr.isEmpty) {
       _connections = [];
+      _refreshConnectionsView();
       return;
     }
 
@@ -64,10 +67,12 @@ class StorageService extends ChangeNotifier {
           .map(
               (item) => ConnectionConfig.fromJson(item as Map<String, dynamic>))
           .toList();
+      _refreshConnectionsView();
     } catch (e) {
       debugPrint('Failed to load SSH connections: $e');
       AppLogService.instance.error('Failed to load SSH connections', error: e);
       _connections = [];
+      _refreshConnectionsView();
     }
   }
 
@@ -87,6 +92,7 @@ class StorageService extends ChangeNotifier {
     }
 
     _connections.add(config);
+    _refreshConnectionsView();
     await _saveSecrets(config);
     await _saveConnections();
     notifyListeners();
@@ -101,6 +107,7 @@ class StorageService extends ChangeNotifier {
     }
 
     _connections[index] = config;
+    _refreshConnectionsView();
     await _saveSecrets(config);
     await _saveConnections();
     if (config.launchMode != TerminalLaunchMode.tmux) {
@@ -113,11 +120,16 @@ class StorageService extends ChangeNotifier {
     if (!_initialized) return;
 
     _connections.removeWhere((item) => item.id == id);
+    _refreshConnectionsView();
     await _secureStorage.delete(key: 'pwd_$id');
     await _secureStorage.delete(key: 'key_$id');
     await removeRestorableTmuxSessionsForConnection(id);
     await _saveConnections();
     notifyListeners();
+  }
+
+  void _refreshConnectionsView() {
+    _connectionsView = List.unmodifiable(_connections);
   }
 
   ConnectionConfig? getConnection(String id) {
@@ -142,7 +154,7 @@ class StorageService extends ChangeNotifier {
     final baseUrl = _prefs?.getString(_aiBaseUrlKey)?.trim();
     final model = _prefs?.getString(_aiModelKey)?.trim();
     final contextWindow = _prefs?.getInt(_aiContextWindowKey);
-    final apiKey = await _secureStorage.read(key: _aiApiKeyKey);
+    final apiKey = await getAiApiKey();
     return AiConnectionSettings(
       baseUrl:
           baseUrl?.isNotEmpty == true ? baseUrl! : 'https://api.deepseek.com',
@@ -154,7 +166,16 @@ class StorageService extends ChangeNotifier {
 
   Future<String?> getAiApiKey() async {
     if (!_initialized) return null;
-    return _secureStorage.read(key: _aiApiKeyKey);
+    final value = await _secureStorage.read(key: _aiApiKeyKey);
+    final normalized = _normalizeAiApiKey(value);
+    if (value != null && value.isNotEmpty && normalized == null) {
+      await _secureStorage.delete(key: _aiApiKeyKey);
+      AppLogService.instance.warning(
+        'Invalid LLM API key cleared',
+        details: 'Stored key contained characters that cannot be used safely.',
+      );
+    }
+    return normalized;
   }
 
   Future<void> saveAiConnectionSettings({
@@ -174,9 +195,17 @@ class StorageService extends ChangeNotifier {
     );
     var apiKeyUpdated = false;
     if (apiKey != null) {
-      final trimmed = apiKey.trim();
-      if (trimmed.isNotEmpty) {
-        await _secureStorage.write(key: _aiApiKeyKey, value: trimmed);
+      final normalizedApiKey = _normalizeAiApiKey(apiKey);
+      if (apiKey.trim().isNotEmpty && normalizedApiKey == null) {
+        AppLogService.instance.warning(
+          'LLM settings rejected invalid API key',
+          details:
+              'baseUrl=$normalizedBaseUrl model=$normalizedModel inputLength=${apiKey.length}',
+        );
+        throw const FormatException('Invalid API key format.');
+      }
+      if (normalizedApiKey != null) {
+        await _secureStorage.write(key: _aiApiKeyKey, value: normalizedApiKey);
         apiKeyUpdated = true;
       }
     }
@@ -185,7 +214,22 @@ class StorageService extends ChangeNotifier {
       details:
           'baseUrl=$normalizedBaseUrl model=$normalizedModel contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} apiKeyUpdated=$apiKeyUpdated',
     );
-    notifyListeners();
+    // AI settings are loaded on demand by the chat page. Avoid notifying the
+    // whole storage tree while the settings dialog is being dismissed; doing so
+    // can rebuild provider dependents during route teardown on Android.
+  }
+
+  String? _normalizeAiApiKey(String? value) {
+    final trimmed = value?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+    if (trimmed.contains(RegExp(r'[\r\n\t]'))) return null;
+    if (trimmed.contains('package:flutter/') ||
+        trimmed.contains('Failed assertion') ||
+        trimmed.contains('docs.flutter.dev/testing/errors')) {
+      return null;
+    }
+    if (trimmed.length > 4096) return null;
+    return trimmed;
   }
 
   Future<List<AiChatRecord>> loadAiChats() async {
@@ -328,6 +372,7 @@ class StorageService extends ChangeNotifier {
       await _secureStorage.delete(key: 'key_${old.id}');
     }
     _connections = importedConnections;
+    _refreshConnectionsView();
     await _saveConnections();
 
     final aiSettings = decoded['aiSettings'];

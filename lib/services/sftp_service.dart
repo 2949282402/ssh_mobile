@@ -69,8 +69,7 @@ class SftpService extends ChangeNotifier {
   SftpConnectionState get state =>
       _activeSession?.state ?? SftpConnectionState.disconnected;
   String? get errorMessage => _activeSession?.errorMessage;
-  List<SftpEntry> get entries =>
-      List.unmodifiable(_activeSession?.entries ?? const []);
+  List<SftpEntry> get entries => _activeSession?.entries ?? const [];
   bool get isConnected => _activeSession?.sftp != null;
   bool get isBusy =>
       state == SftpConnectionState.connecting ||

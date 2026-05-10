@@ -47,29 +47,35 @@ extension _HomeSettingsStrings on AppStrings {
 class HomeScreen extends StatefulWidget {
   final int initialIndex;
 
-  const HomeScreen({super.key, this.initialIndex = 0});
+  // AI stays first in navigation, but launch still lands on Servers because
+  // connection management is the app's operational home page.
+  const HomeScreen({super.key, this.initialIndex = 1});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  static const int _serverPage = 0;
-  static const int _windowPage = 1;
-  static const int _sftpPage = 2;
-  static const int _aiPage = 3;
+  static const int _aiPage = 0;
+  static const int _serverPage = 1;
+  static const int _windowPage = 2;
+  static const int _sftpPage = 3;
   static const int _logPage = 4;
+  static const int _firstPage = _aiPage;
+  static const int _lastPage = _logPage;
 
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   late final PageController _pageController;
   late int _selectedIndex;
+  late int _settledIndex;
   Timer? _bottomNavCollapseTimer;
   bool _bottomNavExpanded = true;
 
   @override
   void initState() {
     super.initState();
-    _selectedIndex = widget.initialIndex.clamp(_logPage, _aiPage);
+    _selectedIndex = widget.initialIndex.clamp(_firstPage, _lastPage);
+    _settledIndex = _selectedIndex;
     _pageController = PageController(initialPage: _selectedIndex);
     _scheduleBottomNavCollapse();
   }
@@ -83,11 +89,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final storage = context.watch<StorageService>();
-    final ssh = context.watch<SshService>();
+    final storageReady = context.select<StorageService, bool>(
+      (storage) => storage.initialized,
+    );
+    final connections = context.select<StorageService, List<ConnectionConfig>>(
+      (storage) => storage.connections,
+    );
+    final sessions = context.select<SshService, List<SshSession>>(
+      (ssh) => ssh.sessions,
+    );
     final settings = context.watch<AppSettings>();
     final strings = AppStrings(settings.language);
-    final connections = storage.connections;
     final desktop = isDesktopLayout(context);
     final content = NotificationListener<ScrollNotification>(
       onNotification: (notification) {
@@ -101,37 +113,37 @@ class _HomeScreenState extends State<HomeScreen> {
         }
         return false;
       },
-      child: PageView(
+      child: PageView.builder(
         controller: _pageController,
-        physics: _selectedIndex == _serverPage
-            ? const NeverScrollableScrollPhysics()
-            : const PageScrollPhysics(),
+        itemCount: _lastPage + 1,
+        allowImplicitScrolling: false,
         onPageChanged: (index) {
-          setState(() => _selectedIndex = index);
+          setState(() {
+            _selectedIndex = index;
+            _settledIndex = index;
+          });
           if (!desktop) _scheduleBottomNavCollapse();
         },
-        children: [
-          _buildServerPage(context, storage, connections, ssh, strings),
-          const TerminalWindowsPage(),
-          const SftpScreen(),
-          const LlmChatScreen(),
-          const DeveloperLogPage(),
-        ],
+        itemBuilder: (context, index) => _buildPage(
+          context,
+          index,
+          storageReady,
+          connections,
+          sessions,
+          strings,
+        ),
       ),
     );
 
     return Scaffold(
       key: _scaffoldKey,
-      endDrawerEnableOpenDragGesture: _selectedIndex == _serverPage,
+      endDrawerEnableOpenDragGesture: false,
       endDrawer: _SettingsPanel(
         onExport: () => _exportAppData(context, strings),
         onImport: () => _importAppData(context, strings),
       ),
       appBar: AppBar(
-        title: Text(
-          _appTitle,
-          style: TextStyle(fontWeight: FontWeight.w700),
-        ),
+        title: Text(_appTitle),
         actions: [
           IconButton(
             tooltip: strings.settings,
@@ -141,7 +153,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       body: desktop
-          ? _buildDesktopShell(context, content, ssh, strings)
+          ? _buildDesktopShell(context, content, sessions, strings)
           : content,
       floatingActionButton: _selectedIndex == _serverPage
           ? FloatingActionButton(
@@ -151,14 +163,14 @@ class _HomeScreenState extends State<HomeScreen> {
             )
           : null,
       bottomNavigationBar:
-          desktop ? null : _buildBottomNavigation(context, ssh, strings),
+          desktop ? null : _buildBottomNavigation(context, sessions, strings),
     );
   }
 
   Widget _buildDesktopShell(
     BuildContext context,
     Widget content,
-    SshService ssh,
+    List<SshSession> sessions,
     AppStrings strings,
   ) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -171,39 +183,26 @@ class _HomeScreenState extends State<HomeScreen> {
           extended: extended,
           selectedIndex: _navigationIndex,
           onDestinationSelected: _switchNavigationPage,
-          backgroundColor: colorScheme.surface,
-          indicatorColor: colorScheme.primary.withValues(alpha: 0.12),
-          selectedIconTheme: IconThemeData(color: colorScheme.primary),
-          unselectedIconTheme:
-              IconThemeData(color: colorScheme.onSurfaceVariant),
-          selectedLabelTextStyle: TextStyle(
-            color: colorScheme.primary,
-            fontWeight: FontWeight.w800,
-          ),
-          unselectedLabelTextStyle: TextStyle(
-            color: colorScheme.onSurfaceVariant,
-            fontWeight: FontWeight.w600,
-          ),
           destinations: [
+            NavigationRailDestination(
+              icon: const Icon(Icons.smart_toy_outlined),
+              selectedIcon: const Icon(Icons.smart_toy_rounded),
+              label: Text(settingsLabelAi(context)),
+            ),
             NavigationRailDestination(
               icon: const Icon(Icons.dns_outlined),
               selectedIcon: const Icon(Icons.dns_rounded),
               label: Text(strings.servers),
             ),
             NavigationRailDestination(
-              icon: _windowIcon(ssh, selected: false),
-              selectedIcon: _windowIcon(ssh, selected: true),
+              icon: _windowIcon(sessions, selected: false),
+              selectedIcon: _windowIcon(sessions, selected: true),
               label: Text(strings.windows),
             ),
             NavigationRailDestination(
               icon: const Icon(Icons.folder_open_outlined),
               selectedIcon: const Icon(Icons.folder_open_rounded),
               label: Text(strings.sftp),
-            ),
-            NavigationRailDestination(
-              icon: const Icon(Icons.smart_toy_outlined),
-              selectedIcon: const Icon(Icons.smart_toy_rounded),
-              label: Text(settingsLabelAi(context)),
             ),
           ],
         ),
@@ -219,12 +218,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildBottomNavigation(
     BuildContext context,
-    SshService ssh,
+    List<SshSession> sessions,
     AppStrings strings,
   ) {
     final colorScheme = Theme.of(context).colorScheme;
     return Material(
-      color: colorScheme.surfaceContainer,
+      color: colorScheme.surface,
       child: SafeArea(
         top: false,
         child: AnimatedContainer(
@@ -237,30 +236,30 @@ class _HomeScreenState extends State<HomeScreen> {
                     _bottomNavItem(
                       context,
                       index: 0,
+                      icon: const Icon(Icons.smart_toy_outlined),
+                      selectedIcon: const Icon(Icons.smart_toy_rounded),
+                      label: settingsLabelAi(context),
+                    ),
+                    _bottomNavItem(
+                      context,
+                      index: 1,
                       icon: const Icon(Icons.dns_outlined),
                       selectedIcon: const Icon(Icons.dns_rounded),
                       label: strings.servers,
                     ),
                     _bottomNavItem(
                       context,
-                      index: 1,
-                      icon: _windowIcon(ssh, selected: false),
-                      selectedIcon: _windowIcon(ssh, selected: true),
+                      index: 2,
+                      icon: _windowIcon(sessions, selected: false),
+                      selectedIcon: _windowIcon(sessions, selected: true),
                       label: strings.windows,
                     ),
                     _bottomNavItem(
                       context,
-                      index: 2,
+                      index: 3,
                       icon: const Icon(Icons.folder_open_outlined),
                       selectedIcon: const Icon(Icons.folder_open_rounded),
                       label: strings.sftp,
-                    ),
-                    _bottomNavItem(
-                      context,
-                      index: 3,
-                      icon: const Icon(Icons.smart_toy_outlined),
-                      selectedIcon: const Icon(Icons.smart_toy_rounded),
-                      label: settingsLabelAi(context),
                     ),
                   ],
                 )
@@ -309,9 +308,9 @@ class _HomeScreenState extends State<HomeScreen> {
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: selected
-                    ? colorScheme.secondaryContainer
+                    ? colorScheme.primary.withValues(alpha: 0.12)
                     : Colors.transparent,
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(999),
               ),
               child: IconTheme(
                 data: IconThemeData(color: foreground, size: 24),
@@ -335,10 +334,10 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _windowIcon(SshService ssh, {required bool selected}) {
+  Widget _windowIcon(List<SshSession> sessions, {required bool selected}) {
     final icon = Icon(selected ? Icons.tab_rounded : Icons.tab_outlined);
-    if (ssh.sessions.isEmpty) return icon;
-    return Badge(label: Text('${ssh.sessions.length}'), child: icon);
+    if (sessions.isEmpty) return icon;
+    return Badge(label: Text('${sessions.length}'), child: icon);
   }
 
   String get _appTitle {
@@ -361,15 +360,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
   int? get _navigationIndex {
     switch (_selectedIndex) {
-      case _windowPage:
+      case _serverPage:
         return 1;
-      case _sftpPage:
+      case _windowPage:
         return 2;
-      case _aiPage:
+      case _sftpPage:
         return 3;
       case _logPage:
         return null;
-      case _serverPage:
+      case _aiPage:
       default:
         return 0;
     }
@@ -378,17 +377,17 @@ class _HomeScreenState extends State<HomeScreen> {
   void _switchNavigationPage(int index) {
     switch (index) {
       case 0:
-        _switchPage(_serverPage);
+        _switchPage(_aiPage);
         break;
       case 1:
-        _switchPage(_windowPage);
+        _switchPage(_serverPage);
         break;
       case 2:
-        _switchPage(_sftpPage);
+        _switchPage(_windowPage);
         break;
       case 3:
       default:
-        _switchPage(_aiPage);
+        _switchPage(_sftpPage);
         break;
     }
   }
@@ -422,6 +421,37 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() => _bottomNavExpanded = false);
       }
     });
+  }
+
+  Widget _buildPage(
+    BuildContext context,
+    int index,
+    bool storageReady,
+    List<ConnectionConfig> connections,
+    List<SshSession> sessions,
+    AppStrings strings,
+  ) {
+    switch (index) {
+      case _aiPage:
+        return _pageShell(index, LlmChatScreen(active: _settledIndex == index));
+      case _serverPage:
+        return _pageShell(
+          index,
+          _buildServerPage(
+              context, storageReady, connections, sessions, strings),
+        );
+      case _windowPage:
+        return _pageShell(index, const TerminalWindowsPage());
+      case _sftpPage:
+        return _pageShell(index, const SftpScreen());
+      case _logPage:
+      default:
+        return _pageShell(index, const DeveloperLogPage());
+    }
+  }
+
+  Widget _pageShell(int index, Widget child) {
+    return RepaintBoundary(child: child);
   }
 
   Future<void> _exportAppData(
@@ -514,25 +544,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildServerPage(
     BuildContext context,
-    StorageService storage,
+    bool storageReady,
     List<ConnectionConfig> connections,
-    SshService ssh,
+    List<SshSession> sessions,
     AppStrings strings,
   ) {
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onHorizontalDragEnd: (details) {
-        if (details.primaryVelocity != null &&
-            details.primaryVelocity! < -520) {
-          _scaffoldKey.currentState?.openEndDrawer();
-        }
-      },
-      child: connections.isEmpty
-          ? storage.initialized
-              ? _buildEmptyState(context, strings)
-              : _buildLoadingState()
-          : _buildConnectionList(context, connections, ssh, strings),
-    );
+    return connections.isEmpty
+        ? storageReady
+            ? _buildEmptyState(context, strings)
+            : _buildLoadingState()
+        : _buildConnectionList(context, connections, sessions, strings);
   }
 
   Widget _buildEmptyState(BuildContext context, AppStrings strings) {
@@ -589,7 +610,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildConnectionList(
     BuildContext context,
     List<ConnectionConfig> connections,
-    SshService ssh,
+    List<SshSession> sessions,
     AppStrings strings,
   ) {
     return LayoutBuilder(
@@ -619,7 +640,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: _buildOverviewHeader(
                       context,
                       connections,
-                      ssh,
+                      sessions,
                       strings,
                     ),
                   ),
@@ -638,7 +659,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       itemBuilder: (context, index) => _buildConnectionCard(
                         context,
                         connections[index],
-                        ssh,
+                        sessions,
                         strings,
                       ),
                     ),
@@ -656,7 +677,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         (context, index) => _buildConnectionCard(
                           context,
                           connections[index],
-                          ssh,
+                          sessions,
                           strings,
                         ),
                         childCount: connections.length,
@@ -680,13 +701,15 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildConnectionCard(
     BuildContext context,
     ConnectionConfig conn,
-    SshService ssh,
+    List<SshSession> sessions,
     AppStrings strings,
   ) {
-    final isActive = ssh.hasConnectedSession(conn.id);
-    final sessionCount = ssh.sessionCountForConnection(conn.id);
-    final isConnecting = ssh.latestSessionForConnection(conn.id)?.state ==
-        SshConnectionState.connecting;
+    final relatedSessions =
+        sessions.where((session) => session.connectionId == conn.id).toList();
+    final isActive = relatedSessions.any((session) => session.isConnected);
+    final sessionCount = relatedSessions.length;
+    final latestSession = relatedSessions.isEmpty ? null : relatedSessions.last;
+    final isConnecting = latestSession?.state == SshConnectionState.connecting;
     final colorScheme = Theme.of(context).colorScheme;
     final primary = colorScheme.primary;
     final success = colorScheme.secondary;
@@ -719,7 +742,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Icon(
-                _getStatusIcon(conn, ssh),
+                _getStatusIcon(conn, latestSession),
                 color: isActive ? success : primary,
                 size: 24,
               ),
@@ -838,7 +861,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildOverviewHeader(
     BuildContext context,
     List<ConnectionConfig> connections,
-    SshService ssh,
+    List<SshSession> sessions,
     AppStrings strings,
   ) {
     final theme = Theme.of(context);
@@ -846,9 +869,14 @@ class _HomeScreenState extends State<HomeScreen> {
     final cardColor = _panelColor(context);
     final textColor = _panelTextColor(context);
     final mutedTextColor = _panelMutedTextColor(context);
-    final activeCount =
-        connections.where((conn) => ssh.hasConnectedSession(conn.id)).length;
-    final windowCount = ssh.sessions.length;
+    final activeConnectionIds = sessions
+        .where((session) => session.isConnected)
+        .map((session) => session.connectionId)
+        .toSet();
+    final activeCount = connections
+        .where((conn) => activeConnectionIds.contains(conn.id))
+        .length;
+    final windowCount = sessions.length;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -980,8 +1008,7 @@ class _HomeScreenState extends State<HomeScreen> {
     ];
   }
 
-  IconData _getStatusIcon(ConnectionConfig conn, SshService ssh) {
-    final session = ssh.latestSessionForConnection(conn.id);
+  IconData _getStatusIcon(ConnectionConfig conn, SshSession? session) {
     if (session != null) {
       if (session.state == SshConnectionState.connected) return Icons.link;
       if (session.state == SshConnectionState.connecting) return Icons.sync;
@@ -1158,74 +1185,107 @@ class _SettingsPanel extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     return Drawer(
       child: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
-          children: [
-            Row(
+        child: ListTileTheme(
+          dense: true,
+          minLeadingWidth: 28,
+          horizontalTitleGap: 10,
+          iconColor: colorScheme.onSurfaceVariant,
+          child: DefaultTextStyle.merge(
+            style: const TextStyle(fontSize: 13),
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
               children: [
-                Icon(Icons.settings_outlined, color: colorScheme.primary),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    strings.settings,
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
+                Row(
+                  children: [
+                    Icon(
+                      Icons.settings_outlined,
+                      color: colorScheme.primary,
+                      size: 21,
                     ),
-                  ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        strings.settings,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                _SettingsSection(
+                  title: strings.appearance,
+                  children: [
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.translate_rounded, size: 20),
+                      title: Text(
+                        settings.isEnglish
+                            ? strings.switchToChinese
+                            : strings.switchToEnglish,
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                      onTap: settings.toggleLanguage,
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      secondary: Icon(
+                        settings.isDarkMode
+                            ? Icons.dark_mode
+                            : Icons.light_mode,
+                        size: 20,
+                      ),
+                      title: Text(
+                        settings.isDarkMode
+                            ? strings.switchToLightMode
+                            : strings.switchToDarkMode,
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                      value: settings.isDarkMode,
+                      onChanged: (_) => settings.toggleTheme(),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                _SettingsSection(
+                  title: strings.dataBackup,
+                  children: [
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.upload_file_outlined, size: 20),
+                      title: Text(
+                        strings.exportAppData,
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                      subtitle: Text(
+                        strings.backupContainsSecrets,
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      onTap: onExport,
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(
+                        Icons.download_for_offline_outlined,
+                        size: 20,
+                      ),
+                      title: Text(
+                        strings.importAppData,
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                      subtitle: Text(
+                        strings.importAppDataWarning,
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      onTap: onImport,
+                    ),
+                  ],
                 ),
               ],
             ),
-            const SizedBox(height: 18),
-            _SettingsSection(
-              title: strings.appearance,
-              children: [
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.translate_rounded),
-                  title: Text(
-                    settings.isEnglish
-                        ? strings.switchToChinese
-                        : strings.switchToEnglish,
-                  ),
-                  onTap: settings.toggleLanguage,
-                ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  secondary: Icon(
-                    settings.isDarkMode ? Icons.dark_mode : Icons.light_mode,
-                  ),
-                  title: Text(
-                    settings.isDarkMode
-                        ? strings.switchToLightMode
-                        : strings.switchToDarkMode,
-                  ),
-                  value: settings.isDarkMode,
-                  onChanged: (_) => settings.toggleTheme(),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            _SettingsSection(
-              title: strings.dataBackup,
-              children: [
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.upload_file_outlined),
-                  title: Text(strings.exportAppData),
-                  subtitle: Text(strings.backupContainsSecrets),
-                  onTap: onExport,
-                ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.download_for_offline_outlined),
-                  title: Text(strings.importAppData),
-                  subtitle: Text(strings.importAppDataWarning),
-                  onTap: onImport,
-                ),
-              ],
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -1260,7 +1320,7 @@ class _SettingsSection extends StatelessWidget {
               title,
               style: TextStyle(
                 color: colorScheme.onSurfaceVariant,
-                fontSize: 12,
+                fontSize: 11,
                 fontWeight: FontWeight.w800,
               ),
             ),

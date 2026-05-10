@@ -29,8 +29,9 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final ssh = context.watch<SshService>();
-    final sessions = ssh.sessions;
+    final sessions = context.select<SshService, List<SshSession>>(
+      (ssh) => ssh.sessions,
+    );
     final strings = AppStrings(context.watch<AppSettings>().language);
 
     _selectedSessionIds.removeWhere(

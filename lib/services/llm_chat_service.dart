@@ -25,6 +25,7 @@ class LlmChatService {
     if (resolvedApiKey == null || resolvedApiKey.isEmpty) {
       throw StateError('API key is not configured.');
     }
+    _assertValidHeaderApiKey(resolvedApiKey);
 
     final endpoint = Uri.parse(_joinUrl(baseUrl, '/models'));
     final client = HttpClient();
@@ -128,6 +129,7 @@ class LlmChatService {
       AppLogService.instance.warning('LLM request blocked: API key missing');
       throw StateError('API key is not configured.');
     }
+    _assertValidHeaderApiKey(apiKey);
     AppLogService.instance.info(
       'LLM chat started',
       details:
@@ -719,6 +721,17 @@ class LlmChatService {
       }
     }
     return (asciiRunes / 4).ceil() + nonAsciiRunes;
+  }
+
+  void _assertValidHeaderApiKey(String apiKey) {
+    if (apiKey.contains(RegExp(r'[\r\n\t]')) ||
+        apiKey.contains('package:flutter/') ||
+        apiKey.contains('Failed assertion') ||
+        apiKey.contains('docs.flutter.dev/testing/errors')) {
+      throw const FormatException(
+        'Invalid API key. Please re-enter the provider API key in LLM settings.',
+      );
+    }
   }
 }
 

@@ -21,11 +21,12 @@ import 'services/storage_service.dart';
 import 'theme/app_theme.dart';
 
 Future<void> main() async {
-  final appLogService = AppLogService()..install();
+  final appLogService = AppLogService();
 
   await runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      appLogService.install();
       appLogService.info('Application bootstrap started');
 
       final storageService = StorageService();
