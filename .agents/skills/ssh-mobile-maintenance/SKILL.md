@@ -173,6 +173,13 @@ should leave those credential fields empty so users reconfigure them.
 Fresh installs and missing preference fallbacks should default to Chinese and
 light theme. Preserve saved user language/theme preferences during startup.
 
+On macOS, configure `flutter_secure_storage` with
+`MacOsOptions(usesDataProtectionKeychain: false)` for v10+ or
+`MacOsOptions(useDataProtectionKeyChain: false)` for older versions unless the
+Xcode project also carries the required Data Protection Keychain signing
+entitlements; otherwise saving server passwords, private keys, or API keys can
+fail with Keychain error `-34018`.
+
 On the AI page, a clear left-edge-to-right swipe should open the chat history
 panel from the left with a finger-tracking slide, without blocking normal
 horizontal page navigation.

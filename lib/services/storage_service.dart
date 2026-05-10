@@ -21,7 +21,12 @@ class StorageService extends ChangeNotifier {
   static const _aiSkillsKey = 'ai_skills';
 
   SharedPreferences? _prefs;
-  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
+  // macOS builds run in the app sandbox. The plugin's default Data Protection
+  // Keychain mode requires extra Keychain entitlements and can fail with
+  // errSecMissingEntitlement (-34018), so use the regular Keychain there.
+  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage(
+    mOptions: MacOsOptions(usesDataProtectionKeychain: false),
+  );
   final DataProtectionService _dataProtection = DataProtectionService.instance;
 
   List<ConnectionConfig> _connections = [];

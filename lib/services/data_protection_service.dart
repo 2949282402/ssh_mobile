@@ -9,7 +9,11 @@ class DataProtectionService {
 
   static final DataProtectionService instance = DataProtectionService._();
 
-  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
+  // Keep this aligned with StorageService: macOS Data Protection Keychain needs
+  // additional signing entitlements and otherwise fails with -34018.
+  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage(
+    mOptions: MacOsOptions(usesDataProtectionKeychain: false),
+  );
   final AesGcm _algorithm = AesGcm.with256bits();
   SecretKey? _cachedKey;
 

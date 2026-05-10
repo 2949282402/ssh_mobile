@@ -160,6 +160,8 @@ build/macos/Build/Products/Release/ssh_mobile.app
 ```
 
 macOS Release 包启用了沙盒权限，并允许出站网络连接以及用户选择文件的读写权限，用于 SSH/SFTP/LLM 网络请求和配置导入导出。
+保存服务器密码、私钥和 AI API Key 时，应用会在 macOS 上使用普通 Keychain，
+避免 Data Protection Keychain 缺少签名 entitlement 时触发 `-34018` 保存失败。
 
 ## Common Commands
 
