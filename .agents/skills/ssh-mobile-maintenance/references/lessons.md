@@ -172,6 +172,15 @@
   keyboard-shrunk viewport without a scroll/height boundary. Wrap that local
   stack in `SingleChildScrollView`/`ListView`, or give the flexible middle area
   `Expanded`, before tuning pixel padding.
+- If a RenderFlex overflow log does not identify project code, log the full
+  `FlutterErrorDetails.toString()` output, not only `toStringShort()`. The full
+  diagnostic tree can include the relevant widget and ownership chain needed to
+  find fixed-height nav bars, tool panels, chips, and tiles.
+- Do not animate a compact nav/tool panel's height while immediately swapping in
+  taller `Row`/`Column` content. During the first expansion frames the full
+  content is laid out in the old collapsed height and can report transient
+  RenderFlex overflows. Switch the height immediately, then animate opacity or
+  child transitions instead.
 - When users say text cannot fit, prefer making the text area scrollable before
   hiding content or shrinking fonts. Distinguish prose from machine text: prose
   can wrap; paths, commands, logs, stack traces, model names, and other unbroken

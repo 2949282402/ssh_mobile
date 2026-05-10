@@ -30,7 +30,8 @@ new path in source or docs.
 - AI chat UI failures, settings save/refresh failures, missing or invalid API
   keys, and model request errors should all be visible in the log page with
   secrets redacted.
-- Keep mobile and Windows behavior consistent for shared SSH/SFTP features.
+- Keep mobile, Windows, and macOS behavior consistent for shared SSH/SFTP
+  features.
 - Keep new UI consistent with `lib/theme/app_theme.dart`: use the app theme for
   colors, button/input/list/navigation styling, and avoid page-local palettes
   unless a protocol view such as the terminal requires it.
@@ -126,8 +127,8 @@ Use `lib/services/sftp_service.dart` for connection/session behavior and
 - Remember the last remote path per connection and restore it after reconnect.
 - Require confirmation before delete.
 - Prefer separate editor/viewer pages for larger editing and previews.
-- Keep upload, download, edit, delete, preview behavior aligned across mobile
-  and Windows.
+- Keep upload, download, edit, delete, preview behavior aligned across mobile,
+  Windows, and macOS.
 
 ### Navigation and Chat UX
 

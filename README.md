@@ -50,6 +50,7 @@ SSH Mobile is a Flutter-based cross-platform SSH / SFTP client for long-running 
 ssh_mobile/
 ├── android/                         # Android 工程和权限配置
 ├── ios/                             # iOS 工程
+├── macos/                           # macOS 桌面工程和沙盒权限配置
 ├── windows/                         # Windows 工程
 ├── assets/                          # 静态资源
 ├── lib/
@@ -144,6 +145,21 @@ flutter build apk --release
 ```text
 build/app/outputs/flutter-apk/
 ```
+
+macOS 桌面端需要在 macOS 设备上构建：
+
+```bash
+flutter config --enable-macos-desktop
+flutter build macos
+```
+
+macOS 产物位置：
+
+```text
+build/macos/Build/Products/Release/ssh_mobile.app
+```
+
+macOS Release 包启用了沙盒权限，并允许出站网络连接以及用户选择文件的读写权限，用于 SSH/SFTP/LLM 网络请求和配置导入导出。
 
 ## Common Commands
 

@@ -51,11 +51,14 @@ class AppLogService extends ChangeNotifier {
 
     final previousFlutterError = FlutterError.onError;
     FlutterError.onError = (details) {
+      // Keep Flutter's full diagnostic tree in the log page. RenderFlex
+      // overflows often hide the business widget in the short message, while
+      // the full details include the ownership chain and relevant widget.
       add(
         'flutter',
         details.exceptionAsString(),
         stackTrace: details.stack,
-        details: details.toStringShort(),
+        details: details.toString(),
       );
       previousFlutterError?.call(details);
     };

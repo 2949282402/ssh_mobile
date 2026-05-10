@@ -1824,41 +1824,52 @@ class _ChatToolsBar extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     return Container(
       width: double.infinity,
-      height: 116,
+      constraints: const BoxConstraints(minHeight: 100, maxHeight: 164),
       padding: const EdgeInsets.fromLTRB(10, 12, 10, 10),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: colorScheme.outlineVariant),
       ),
-      child: GridView.count(
-        crossAxisCount: 2,
-        mainAxisSpacing: 10,
-        crossAxisSpacing: 10,
-        childAspectRatio: 1.8,
-        children: [
-          _ChatToolTile(
-            icon: Icons.dns_outlined,
-            label: Text(serverLabel),
-            onPressed: onServerTap,
-          ),
-          _ChatToolTile(
-            icon: Icons.auto_awesome_outlined,
-            label: Text(skillsLabel),
-            onPressed: onSkillsTap,
-          ),
-        ],
+      child: SingleChildScrollView(
+        physics: const ClampingScrollPhysics(),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final spacing = 10.0;
+            final tileWidth = (constraints.maxWidth - spacing) / 2;
+            return Wrap(
+              spacing: spacing,
+              runSpacing: spacing,
+              children: [
+                _ChatToolTile(
+                  width: tileWidth,
+                  icon: Icons.dns_outlined,
+                  label: Text(serverLabel),
+                  onPressed: onServerTap,
+                ),
+                _ChatToolTile(
+                  width: tileWidth,
+                  icon: Icons.auto_awesome_outlined,
+                  label: Text(skillsLabel),
+                  onPressed: onSkillsTap,
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
 }
 
 class _ChatToolTile extends StatelessWidget {
+  final double width;
   final IconData icon;
   final Widget label;
   final VoidCallback onPressed;
 
   const _ChatToolTile({
+    required this.width,
     required this.icon,
     required this.label,
     required this.onPressed,
@@ -1867,36 +1878,42 @@ class _ChatToolTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return InkWell(
-      borderRadius: BorderRadius.circular(8),
-      onTap: onPressed,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: colorScheme.surface,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: colorScheme.outlineVariant),
-            ),
-            child: Icon(icon, size: 21, color: colorScheme.primary),
+    return SizedBox(
+      width: width,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onPressed,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: colorScheme.surface,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: colorScheme.outlineVariant),
+                ),
+                child: Icon(icon, size: 20, color: colorScheme.primary),
+              ),
+              const SizedBox(height: 4),
+              DefaultTextStyle.merge(
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: colorScheme.onSurfaceVariant,
+                  fontSize: 11,
+                  height: 1.15,
+                  fontWeight: FontWeight.w600,
+                ),
+                child: label,
+              ),
+            ],
           ),
-          const SizedBox(height: 6),
-          DefaultTextStyle.merge(
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: colorScheme.onSurfaceVariant,
-              fontSize: 11,
-              height: 1.15,
-              fontWeight: FontWeight.w600,
-            ),
-            child: label,
-          ),
-        ],
+        ),
       ),
     );
   }

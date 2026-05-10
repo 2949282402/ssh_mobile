@@ -133,15 +133,18 @@ class _MobileServerStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final textScale =
+        MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.8).toDouble();
+    final stripHeight = 88.0 + (textScale - 1.0) * 28.0;
     if (connections.isEmpty) {
       return SizedBox(
-        height: 96,
+        height: stripHeight,
         child: Center(child: Text(strings.noConnections)),
       );
     }
 
     return SizedBox(
-      height: 88,
+      height: stripHeight,
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         scrollDirection: Axis.horizontal,

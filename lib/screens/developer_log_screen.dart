@@ -119,24 +119,33 @@ class _DeveloperLogPageState extends State<DeveloperLogPage> {
                 ],
               ),
               const SizedBox(height: 6),
-              SizedBox(
-                height: 36,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: AppLogLevel.values.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
-                  itemBuilder: (context, index) {
-                    final level = AppLogLevel.values[index];
-                    final count = levelCounts[level] ?? 0;
-                    return FilterChip(
-                      label: Text('${level.labelFor(strings.language)} $count'),
-                      selected: _selectedLevel == level,
-                      onSelected: (_) => setState(() {
-                        _selectedLevel = level;
-                      }),
-                    );
-                  },
-                ),
+              Builder(
+                builder: (context) {
+                  final textScale = MediaQuery.textScalerOf(context)
+                      .scale(1)
+                      .clamp(1.0, 1.6)
+                      .toDouble();
+                  return SizedBox(
+                    height: 36 + (textScale - 1.0) * 18,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: AppLogLevel.values.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      itemBuilder: (context, index) {
+                        final level = AppLogLevel.values[index];
+                        final count = levelCounts[level] ?? 0;
+                        return FilterChip(
+                          label: Text(
+                              '${level.labelFor(strings.language)} $count'),
+                          selected: _selectedLevel == level,
+                          onSelected: (_) => setState(() {
+                            _selectedLevel = level;
+                          }),
+                        );
+                      },
+                    ),
+                  );
+                },
               ),
             ],
           ),

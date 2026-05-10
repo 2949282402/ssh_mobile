@@ -222,61 +222,72 @@ class _HomeScreenState extends State<HomeScreen> {
     AppStrings strings,
   ) {
     final colorScheme = Theme.of(context).colorScheme;
+    final textScale =
+        MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0).toDouble();
+    final expandedHeight = 76.0 + (textScale - 1.0) * 28.0;
     return Material(
       color: colorScheme.surface,
       child: SafeArea(
         top: false,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-          height: _bottomNavExpanded ? 80 : 22,
-          child: _bottomNavExpanded
-              ? Row(
-                  children: [
-                    _bottomNavItem(
-                      context,
-                      index: 0,
-                      icon: const Icon(Icons.smart_toy_outlined),
-                      selectedIcon: const Icon(Icons.smart_toy_rounded),
-                      label: settingsLabelAi(context),
-                    ),
-                    _bottomNavItem(
-                      context,
-                      index: 1,
-                      icon: const Icon(Icons.dns_outlined),
-                      selectedIcon: const Icon(Icons.dns_rounded),
-                      label: strings.servers,
-                    ),
-                    _bottomNavItem(
-                      context,
-                      index: 2,
-                      icon: _windowIcon(sessions, selected: false),
-                      selectedIcon: _windowIcon(sessions, selected: true),
-                      label: strings.windows,
-                    ),
-                    _bottomNavItem(
-                      context,
-                      index: 3,
-                      icon: const Icon(Icons.folder_open_outlined),
-                      selectedIcon: const Icon(Icons.folder_open_rounded),
-                      label: strings.sftp,
-                    ),
-                  ],
-                )
-              : InkWell(
-                  onTap: _showBottomNav,
-                  child: Center(
-                    child: Container(
-                      width: 46,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        color: colorScheme.onSurfaceVariant
-                            .withValues(alpha: 0.46),
-                        borderRadius: BorderRadius.circular(999),
+        child: SizedBox(
+          height: _bottomNavExpanded ? expandedHeight : 22,
+          // Do not animate the height here. During expansion Flutter would lay
+          // out the full navigation Row inside the previous 22 px collapsed
+          // height, which produces transient RenderFlex overflow reports.
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 140),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeOutCubic,
+            child: _bottomNavExpanded
+                ? Row(
+                    key: const ValueKey('bottom-nav-expanded'),
+                    children: [
+                      _bottomNavItem(
+                        context,
+                        index: 0,
+                        icon: const Icon(Icons.smart_toy_outlined),
+                        selectedIcon: const Icon(Icons.smart_toy_rounded),
+                        label: settingsLabelAi(context),
+                      ),
+                      _bottomNavItem(
+                        context,
+                        index: 1,
+                        icon: const Icon(Icons.dns_outlined),
+                        selectedIcon: const Icon(Icons.dns_rounded),
+                        label: strings.servers,
+                      ),
+                      _bottomNavItem(
+                        context,
+                        index: 2,
+                        icon: _windowIcon(sessions, selected: false),
+                        selectedIcon: _windowIcon(sessions, selected: true),
+                        label: strings.windows,
+                      ),
+                      _bottomNavItem(
+                        context,
+                        index: 3,
+                        icon: const Icon(Icons.folder_open_outlined),
+                        selectedIcon: const Icon(Icons.folder_open_rounded),
+                        label: strings.sftp,
+                      ),
+                    ],
+                  )
+                : InkWell(
+                    key: const ValueKey('bottom-nav-collapsed'),
+                    onTap: _showBottomNav,
+                    child: Center(
+                      child: Container(
+                        width: 46,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: colorScheme.onSurfaceVariant
+                              .withValues(alpha: 0.46),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
                       ),
                     ),
                   ),
-                ),
+          ),
         ),
       ),
     );
@@ -297,38 +308,46 @@ class _HomeScreenState extends State<HomeScreen> {
     return Expanded(
       child: InkWell(
         onTap: () => _switchNavigationPage(index),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOutCubic,
-              width: 64,
-              height: 32,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: selected
-                    ? colorScheme.primary.withValues(alpha: 0.12)
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(999),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
+                width: 64,
+                height: 32,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: selected
+                      ? colorScheme.primary.withValues(alpha: 0.12)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: IconTheme(
+                  data: IconThemeData(color: foreground, size: 24),
+                  child: selected ? selectedIcon : icon,
+                ),
               ),
-              child: IconTheme(
-                data: IconThemeData(color: foreground, size: 24),
-                child: selected ? selectedIcon : icon,
+              const SizedBox(height: 2),
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: foreground,
+                      fontSize: 12,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    ),
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: foreground,
-                fontSize: 12,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
