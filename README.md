@@ -364,6 +364,7 @@ AI 页通过 OpenAI-compatible API 调用大模型。模型配置统一在“大
 - Markdown 富文本显示
 - 聊天历史
 - 多会话窗口
+- 桌面端快捷键：Windows / macOS 上 Enter 发送，Ctrl+Enter 换行；移动端保持系统键盘的多行输入体验。
 - 切换动画
 - 切换页面时保活，不会因为切到 SSH/SFTP 页而中断当前回答
 - AI 页位于导航栏第一位；在 AI 页从左边缘向右滑动会跟手打开左侧聊天历史面板。

@@ -83,6 +83,9 @@ Use `lib/services/llm_chat_service.dart` for provider protocol behavior and
   WeChat-like function panel. It currently exposes only Server selection and the
   Skills manager entry; do not re-add prompt templates or a temporary Skill
   picker to this panel unless the product direction changes.
+- On Windows and macOS, the AI chat input uses desktop shortcuts: Enter sends
+  the message and Ctrl+Enter inserts a newline. Keep mobile keyboard behavior
+  independent so phone users can still enter multiline text naturally.
 - The same toolbar includes a Skills entry that opens the custom AI Skills
   manager. Keep skill storage in `StorageService`, and keep the manager page
   theme-aware, bilingual, and flexible enough for SKILL.md-style content,

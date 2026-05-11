@@ -2,8 +2,10 @@ import 'dart:async';
 
 // ignore_for_file: unused_element
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../services/ai_tool_service.dart';
@@ -66,6 +68,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         AutomaticKeepAliveClientMixin<LlmChatScreen>,
         SingleTickerProviderStateMixin {
   final TextEditingController _inputController = TextEditingController();
+  late final FocusNode _inputFocusNode;
   final ScrollController _scrollController = ScrollController();
   late final AnimationController _historySlideController;
   Animation<double>? _historySlideAnimation;
@@ -95,6 +98,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   @override
   void initState() {
     super.initState();
+    _inputFocusNode = FocusNode(onKeyEvent: _handleInputKeyEvent);
     _historySlideController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 240),
@@ -131,6 +135,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       );
     }
     _historySlideController.dispose();
+    _inputFocusNode.dispose();
     _inputController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -358,12 +363,15 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                               Expanded(
                                 child: TextField(
                                   controller: _inputController,
+                                  focusNode: _inputFocusNode,
                                   minLines: 1,
                                   maxLines: 3,
                                   textInputAction: TextInputAction.newline,
                                   decoration:
                                       const InputDecoration(isDense: true),
-                                  onSubmitted: (_) => _send(context, strings),
+                                  onSubmitted: _isDesktopPlatform
+                                      ? null
+                                      : (_) => _send(context, strings),
                                 ),
                               ),
                               const SizedBox(width: 8),
@@ -474,6 +482,42 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   Future<void> _send(BuildContext context, _AiStrings strings) async {
     final text = (_inputController.text.trim());
     await _sendText(context, strings, text: text, clearInput: true);
+  }
+
+  KeyEventResult _handleInputKeyEvent(FocusNode node, KeyEvent event) {
+    if (!_isDesktopPlatform || event is! KeyDownEvent) {
+      return KeyEventResult.ignored;
+    }
+    final isEnter = event.logicalKey == LogicalKeyboardKey.enter ||
+        event.logicalKey == LogicalKeyboardKey.numpadEnter;
+    if (!isEnter) return KeyEventResult.ignored;
+
+    if (HardwareKeyboard.instance.isControlPressed) {
+      _insertInputNewline();
+    } else {
+      final strings = _AiStrings(context.read<AppSettings>().language);
+      unawaited(_send(context, strings));
+    }
+    return KeyEventResult.handled;
+  }
+
+  bool get _isDesktopPlatform {
+    return defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.macOS;
+  }
+
+  void _insertInputNewline() {
+    final value = _inputController.value;
+    final text = value.text;
+    final selection = value.selection;
+    final start = selection.isValid ? selection.start : text.length;
+    final end = selection.isValid ? selection.end : text.length;
+    final nextText = text.replaceRange(start, end, '\n');
+    _inputController.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: start + 1),
+      composing: TextRange.empty,
+    );
   }
 
   Future<void> _sendText(
