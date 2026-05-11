@@ -20,6 +20,13 @@ class StorageService extends ChangeNotifier {
   static const _aiApiKeyKey = 'ai_api_key';
   static const _aiChatsKey = 'ai_chats';
   static const _aiSkillsKey = 'ai_skills';
+  static const _secretCacheEnabledKey = 'secret_cache_enabled';
+  static const _secretCacheTtlSecondsKey = 'secret_cache_ttl_seconds';
+  static const _defaultSecretCacheTtl = Duration(minutes: 15);
+  static const _passwordSecretKeyPrefix = 'pwd_';
+  static const _privateKeySecretKeyPrefix = 'key_';
+  static const _memoryAiApiKeyCacheKey = 'ai_api_key_cached';
+  static const _memorySecretTtlOptionsMinutes = [1, 5, 15, 30, 60];
 
   SharedPreferences? _prefs;
   // macOS builds run in the app sandbox. The plugin's default Data Protection
@@ -34,8 +41,16 @@ class StorageService extends ChangeNotifier {
   List<ConnectionConfig> _connectionsView = const [];
   bool _initialized = false;
   bool _powerGuideSeen = false;
+  bool _secretCacheEnabled = true;
+  Duration _secretCacheTtl = const Duration(minutes: 15);
+  final Map<String, _MemorySecret> _secretCache = {};
 
   List<ConnectionConfig> get connections => _connectionsView;
+  bool get isSecretCacheEnabled => _secretCacheEnabled;
+  Duration get secretCacheTtl => _secretCacheTtl;
+  int get secretCacheTtlMinutes => _secretCacheTtl.inMinutes;
+  List<int> get secretCacheTtlOptionsMinutes =>
+      List.unmodifiable(_memorySecretTtlOptionsMinutes);
   bool get initialized => _initialized;
   bool get powerGuideSeen => _powerGuideSeen;
 
@@ -45,6 +60,7 @@ class StorageService extends ChangeNotifier {
         const Duration(seconds: 3),
       );
       _powerGuideSeen = _prefs?.getBool(_powerGuideSeenKey) ?? false;
+      await _loadSecretCacheSettings();
       await _loadConnections();
     } catch (e) {
       debugPrint('Failed to initialize storage service: $e');
@@ -56,6 +72,57 @@ class StorageService extends ChangeNotifier {
     } finally {
       _initialized = true;
       notifyListeners();
+    }
+  }
+
+  Future<void> _loadSecretCacheSettings() async {
+    if (_prefs == null) return;
+    _secretCacheEnabled = _prefs!.getBool(_secretCacheEnabledKey) ?? true;
+
+    final ttlSeconds = _prefs!.getInt(_secretCacheTtlSecondsKey);
+    if (ttlSeconds != null && ttlSeconds > 0) {
+      _secretCacheTtl = _normalizeSecretCacheTtl(Duration(seconds: ttlSeconds));
+    } else {
+      _secretCacheTtl = _defaultSecretCacheTtl;
+    }
+  }
+
+  Duration _normalizeSecretCacheTtl(Duration value) {
+    final requested = value.inMinutes.clamp(1, 120);
+    final normalized = _memorySecretTtlOptionsMinutes.firstWhere(
+      (option) => option >= requested,
+      orElse: () => _memorySecretTtlOptionsMinutes.last,
+    );
+    return Duration(minutes: normalized);
+  }
+
+  Future<void> setSecretCacheEnabled(bool enabled) async {
+    if (!_initialized || _prefs == null) return;
+    if (_secretCacheEnabled == enabled) return;
+    _secretCacheEnabled = enabled;
+    if (!enabled) {
+      clearSecretCache();
+    }
+    await _prefs!.setBool(_secretCacheEnabledKey, enabled);
+    notifyListeners();
+  }
+
+  Future<void> setSecretCacheTtl(Duration ttl) async {
+    if (!_initialized || _prefs == null) return;
+    final normalized = _normalizeSecretCacheTtl(ttl);
+    if (_secretCacheTtl == normalized) return;
+    _secretCacheTtl = normalized;
+    await _prefs!.setInt(_secretCacheTtlSecondsKey, normalized.inSeconds);
+    notifyListeners();
+  }
+
+  void clearSecretCache() {
+    _secretCache.remove(_memoryAiApiKeyCacheKey);
+    for (final key in _secretCache.keys.toList()) {
+      if (key.startsWith(_passwordSecretKeyPrefix) ||
+          key.startsWith(_privateKeySecretKeyPrefix)) {
+        _secretCache.remove(key);
+      }
     }
   }
 
@@ -127,6 +194,7 @@ class StorageService extends ChangeNotifier {
 
     _connections.removeWhere((item) => item.id == id);
     _refreshConnectionsView();
+    _clearSecretCacheForConnection(id);
     await _secureStorage.delete(key: 'pwd_$id');
     await _secureStorage.delete(key: 'key_$id');
     await removeRestorableTmuxSessionsForConnection(id);
@@ -148,12 +216,12 @@ class StorageService extends ChangeNotifier {
 
   Future<String?> getPassword(String id) async {
     if (!_initialized) return null;
-    return _secureStorage.read(key: 'pwd_$id');
+    return _readSecretWithCache(_cacheKeyPassword(id));
   }
 
   Future<String?> getPrivateKey(String id) async {
     if (!_initialized) return null;
-    return _secureStorage.read(key: 'key_$id');
+    return _readSecretWithCache(_cacheKeyPrivateKey(id));
   }
 
   Future<AiConnectionSettings> loadAiConnectionSettings() async {
@@ -177,13 +245,24 @@ class StorageService extends ChangeNotifier {
 
   Future<String?> getAiApiKey() async {
     if (!_initialized) return null;
+    final cache = _readCachedSecretEntry(_memoryAiApiKeyCacheKey);
+    if (cache != null) return cache.value;
+
     final value = await _secureStorage.read(key: _aiApiKeyKey);
     final normalized = _normalizeAiApiKey(value);
     if (value != null && value.isNotEmpty && normalized == null) {
       await _secureStorage.delete(key: _aiApiKeyKey);
+      _secretCache.remove(_memoryAiApiKeyCacheKey);
       AppLogService.instance.warning(
         'Invalid LLM API key cleared',
         details: 'Stored key contained characters that cannot be used safely.',
+      );
+      return null;
+    }
+    if (_secretCacheEnabled) {
+      _secretCache[_memoryAiApiKeyCacheKey] = _MemorySecret(
+        value: normalized,
+        loadedAt: DateTime.now(),
       );
     }
     return normalized;
@@ -222,7 +301,15 @@ class StorageService extends ChangeNotifier {
       }
       if (normalizedApiKey != null) {
         await _secureStorage.write(key: _aiApiKeyKey, value: normalizedApiKey);
+        if (_secretCacheEnabled) {
+          _secretCache[_memoryAiApiKeyCacheKey] = _MemorySecret(
+            value: normalizedApiKey,
+            loadedAt: DateTime.now(),
+          );
+        }
         apiKeyUpdated = true;
+      } else {
+        _secretCache.remove(_memoryAiApiKeyCacheKey);
       }
     }
     AppLogService.instance.info(
@@ -379,12 +466,14 @@ class StorageService extends ChangeNotifier {
       if (item is! Map<String, dynamic>) continue;
       final config = ConnectionConfig.fromJson(item);
       importedConnections.add(config);
+      _clearSecretCacheForConnection(config.id);
       await _secureStorage.delete(key: 'pwd_${config.id}');
       await _secureStorage.delete(key: 'key_${config.id}');
     }
 
     for (final old in _connections) {
       if (importedConnections.any((item) => item.id == old.id)) continue;
+      _clearSecretCacheForConnection(old.id);
       await _secureStorage.delete(key: 'pwd_${old.id}');
       await _secureStorage.delete(key: 'key_${old.id}');
     }
@@ -564,6 +653,51 @@ class StorageService extends ChangeNotifier {
     await _writeProtectedPref(_aiSkillsKey, jsonStr);
   }
 
+  String _cacheKeyPassword(String connectionId) =>
+      '$_passwordSecretKeyPrefix$connectionId';
+
+  String _cacheKeyPrivateKey(String connectionId) =>
+      '$_privateKeySecretKeyPrefix$connectionId';
+
+  void _cacheConnectionSecretsFromConfig(ConnectionConfig config) {
+    if (!_secretCacheEnabled) return;
+    _secretCache[_cacheKeyPassword(config.id)] = _MemorySecret(
+      value: config.password,
+      loadedAt: DateTime.now(),
+    );
+    _secretCache[_cacheKeyPrivateKey(config.id)] = _MemorySecret(
+      value: config.privateKey,
+      loadedAt: DateTime.now(),
+    );
+  }
+
+  void _clearSecretCacheForConnection(String connectionId) {
+    _secretCache.remove(_cacheKeyPassword(connectionId));
+    _secretCache.remove(_cacheKeyPrivateKey(connectionId));
+  }
+
+  _MemorySecret? _readCachedSecretEntry(String cacheKey) {
+    if (!_secretCacheEnabled) return null;
+    final cached = _secretCache[cacheKey];
+    if (cached == null) return null;
+    if (DateTime.now().difference(cached.loadedAt) > _secretCacheTtl) {
+      _secretCache.remove(cacheKey);
+      return null;
+    }
+    return cached;
+  }
+
+  Future<String?> _readSecretWithCache(String key) async {
+    if (!_secretCacheEnabled) return _secureStorage.read(key: key);
+    final cached = _readCachedSecretEntry(key);
+    if (cached != null) {
+      return cached.value;
+    }
+    final value = await _secureStorage.read(key: key);
+    _secretCache[key] = _MemorySecret(value: value, loadedAt: DateTime.now());
+    return value;
+  }
+
   Future<String?> _readProtectedPref(String key) async {
     final value = _prefs?.getString(key);
     if (value == null || value.isEmpty) return value;
@@ -577,18 +711,19 @@ class StorageService extends ChangeNotifier {
   }
 
   Future<void> _saveSecrets(ConnectionConfig config) async {
+    _cacheConnectionSecretsFromConfig(config);
+    final passwordKey = _cacheKeyPassword(config.id);
+    final privateKeyKey = _cacheKeyPrivateKey(config.id);
     if (config.password != null && config.password!.isNotEmpty) {
-      await _secureStorage.write(
-          key: 'pwd_${config.id}', value: config.password);
+      await _secureStorage.write(key: passwordKey, value: config.password);
     } else {
-      await _secureStorage.delete(key: 'pwd_${config.id}');
+      await _secureStorage.delete(key: passwordKey);
     }
 
     if (config.privateKey != null && config.privateKey!.isNotEmpty) {
-      await _secureStorage.write(
-          key: 'key_${config.id}', value: config.privateKey);
+      await _secureStorage.write(key: privateKeyKey, value: config.privateKey);
     } else {
-      await _secureStorage.delete(key: 'key_${config.id}');
+      await _secureStorage.delete(key: privateKeyKey);
     }
   }
 
@@ -612,6 +747,16 @@ class AiConnectionSettings {
     required this.contextWindowTokens,
     required this.timeoutSeconds,
     required this.hasApiKey,
+  });
+}
+
+class _MemorySecret {
+  final String? value;
+  final DateTime loadedAt;
+
+  const _MemorySecret({
+    required this.value,
+    required this.loadedAt,
   });
 }
 

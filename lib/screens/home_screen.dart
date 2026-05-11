@@ -26,6 +26,16 @@ extension _HomeSettingsStrings on AppStrings {
   String get appFontFamilyNote => language == AppLanguage.en
       ? 'Applied across the app. Font files are not bundled.'
       : '全局统一使用。应用不内置字体文件。';
+  String get security => language == AppLanguage.en ? 'Security' : '安全';
+  String get credentialCache => language == AppLanguage.en
+      ? 'Cache SSH credentials in memory'
+      : '缓存 SSH 凭证到内存';
+  String get credentialCacheHint => language == AppLanguage.en
+      ? 'Reduce repeated Keychain prompts by caching passwords, private keys, and API keys in-memory during this session.'
+      : '在本次会话内缓存密码、私钥和 API Key，可减少重复的密钥链弹窗。';
+  String credentialCacheTimeoutLabel(int minutes) => language == AppLanguage.en
+      ? 'Cache timeout (${minutes}m)'
+      : '缓存时长 (${minutes}m)';
   String get dataBackup => language == AppLanguage.en ? 'Data backup' : '数据备份';
   String get exportAppData =>
       language == AppLanguage.en ? 'Export app data' : '导出应用数据';
@@ -1206,7 +1216,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-class _SettingsPanel extends StatelessWidget {
+class _SettingsPanel extends StatefulWidget {
   final VoidCallback onExport;
   final VoidCallback onImport;
 
@@ -1216,10 +1226,20 @@ class _SettingsPanel extends StatelessWidget {
   });
 
   @override
+  State<_SettingsPanel> createState() => _SettingsPanelState();
+}
+
+class _SettingsPanelState extends State<_SettingsPanel> {
+  @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
+    final storage = context.watch<StorageService>();
     final strings = AppStrings(settings.language);
     final colorScheme = Theme.of(context).colorScheme;
+    final cacheEnabled = storage.isSecretCacheEnabled;
+    final cacheTimeoutMinutes = storage.secretCacheTtlMinutes;
+    final cacheOptions = storage.secretCacheTtlOptionsMinutes;
+
     return Drawer(
       child: SafeArea(
         child: ListTileTheme(
@@ -1325,6 +1345,69 @@ class _SettingsPanel extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 _SettingsSection(
+                  title: strings.security,
+                  children: [
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      secondary: const Icon(Icons.security, size: 20),
+                      title: Text(
+                        strings.credentialCache,
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                      subtitle: Text(
+                        strings.credentialCacheHint,
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      value: cacheEnabled,
+                      onChanged: (value) async {
+                        await storage.setSecretCacheEnabled(value);
+                        if (mounted) setState(() {});
+                      },
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.timer_outlined, size: 20),
+                      title: Text(
+                        strings.credentialCacheTimeoutLabel(
+                          cacheTimeoutMinutes,
+                        ),
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                      trailing: SizedBox(
+                        width: 110,
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<int>(
+                            isDense: true,
+                            isExpanded: true,
+                            value: cacheTimeoutMinutes,
+                            items: [
+                              for (final minutes in cacheOptions)
+                                DropdownMenuItem(
+                                  value: minutes,
+                                  child: Text(
+                                    '${minutes}m',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                            ],
+                            onChanged: cacheEnabled
+                                ? (minutes) {
+                                    if (minutes == null) return;
+                                    storage.setSecretCacheTtl(
+                                      Duration(minutes: minutes),
+                                    );
+                                    if (mounted) setState(() {});
+                                  }
+                                : null,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                _SettingsSection(
                   title: strings.dataBackup,
                   children: [
                     ListTile(
@@ -1338,7 +1421,7 @@ class _SettingsPanel extends StatelessWidget {
                         strings.backupContainsSecrets,
                         style: const TextStyle(fontSize: 11),
                       ),
-                      onTap: onExport,
+                      onTap: widget.onExport,
                     ),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
@@ -1354,7 +1437,7 @@ class _SettingsPanel extends StatelessWidget {
                         strings.importAppDataWarning,
                         style: const TextStyle(fontSize: 11),
                       ),
-                      onTap: onImport,
+                      onTap: widget.onImport,
                     ),
                   ],
                 ),
