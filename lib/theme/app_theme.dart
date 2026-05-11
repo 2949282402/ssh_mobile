@@ -3,6 +3,21 @@ import 'package:flutter/material.dart';
 class AppTheme {
   static const _radius = 8.0;
 
+  static ThemeData lightThemeFor(String? fontFamily) =>
+      _applyFont(lightTheme, fontFamily);
+
+  static ThemeData darkThemeFor(String? fontFamily) =>
+      _applyFont(darkTheme, fontFamily);
+
+  static ThemeData _applyFont(ThemeData theme, String? fontFamily) {
+    final family = fontFamily?.trim();
+    if (family == null || family.isEmpty) return theme;
+    return theme.copyWith(
+      textTheme: theme.textTheme.apply(fontFamily: family),
+      primaryTextTheme: theme.primaryTextTheme.apply(fontFamily: family),
+    );
+  }
+
   static final lightTheme = ThemeData(
     useMaterial3: true,
     brightness: Brightness.light,

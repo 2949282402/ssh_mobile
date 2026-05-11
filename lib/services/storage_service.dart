@@ -16,6 +16,7 @@ class StorageService extends ChangeNotifier {
   static const _aiBaseUrlKey = 'ai_base_url';
   static const _aiModelKey = 'ai_model';
   static const _aiContextWindowKey = 'ai_context_window';
+  static const _aiTimeoutSecondsKey = 'ai_timeout_seconds';
   static const _aiApiKeyKey = 'ai_api_key';
   static const _aiChatsKey = 'ai_chats';
   static const _aiSkillsKey = 'ai_skills';
@@ -165,8 +166,13 @@ class StorageService extends ChangeNotifier {
           baseUrl?.isNotEmpty == true ? baseUrl! : 'https://api.deepseek.com',
       model: model?.isNotEmpty == true ? model! : 'deepseek-v4-flash',
       contextWindowTokens: AiContextWindowSize.normalize(contextWindow),
+      timeoutSeconds: await getAiRequestTimeoutSeconds(),
       hasApiKey: apiKey?.isNotEmpty == true,
     );
+  }
+
+  Future<int> getAiRequestTimeoutSeconds() async {
+    return AiRequestTimeout.normalize(_prefs?.getInt(_aiTimeoutSecondsKey));
   }
 
   Future<String?> getAiApiKey() async {
@@ -187,6 +193,7 @@ class StorageService extends ChangeNotifier {
     required String baseUrl,
     required String model,
     int? contextWindowTokens,
+    int? timeoutSeconds,
     String? apiKey,
   }) async {
     if (!_initialized || _prefs == null) return;
@@ -197,6 +204,10 @@ class StorageService extends ChangeNotifier {
     await _prefs!.setInt(
       _aiContextWindowKey,
       AiContextWindowSize.normalize(contextWindowTokens),
+    );
+    await _prefs!.setInt(
+      _aiTimeoutSecondsKey,
+      AiRequestTimeout.normalize(timeoutSeconds),
     );
     var apiKeyUpdated = false;
     if (apiKey != null) {
@@ -217,7 +228,7 @@ class StorageService extends ChangeNotifier {
     AppLogService.instance.info(
       'LLM settings saved',
       details:
-          'baseUrl=$normalizedBaseUrl model=$normalizedModel contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} apiKeyUpdated=$apiKeyUpdated',
+          'baseUrl=$normalizedBaseUrl model=$normalizedModel contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} timeoutSeconds=${AiRequestTimeout.normalize(timeoutSeconds)} apiKeyUpdated=$apiKeyUpdated',
     );
     // AI settings are loaded on demand by the chat page. Avoid notifying the
     // whole storage tree while the settings dialog is being dismissed; doing so
@@ -338,6 +349,7 @@ class StorageService extends ChangeNotifier {
         'baseUrl': settings.baseUrl,
         'model': settings.model,
         'contextWindowTokens': settings.contextWindowTokens,
+        'timeoutSeconds': settings.timeoutSeconds,
         'apiKey': '',
       },
       'aiChats': (await loadAiChats()).map((item) => item.toJson()).toList(),
@@ -391,6 +403,7 @@ class StorageService extends ChangeNotifier {
         model: aiSettings['model'] as String? ?? 'deepseek-v4-flash',
         contextWindowTokens:
             (aiSettings['contextWindowTokens'] as num?)?.toInt(),
+        timeoutSeconds: (aiSettings['timeoutSeconds'] as num?)?.toInt(),
         apiKey: importedApiKey,
       );
     }
@@ -590,14 +603,35 @@ class AiConnectionSettings {
   final String baseUrl;
   final String model;
   final int contextWindowTokens;
+  final int timeoutSeconds;
   final bool hasApiKey;
 
   const AiConnectionSettings({
     required this.baseUrl,
     required this.model,
     required this.contextWindowTokens,
+    required this.timeoutSeconds,
     required this.hasApiKey,
   });
+}
+
+class AiRequestTimeout {
+  static const int k30 = 30;
+  static const int k60 = 60;
+  static const int k90 = 90;
+  static const int k120 = 120;
+  static const int k180 = 180;
+  static const int k300 = 300;
+  static const int defaultSeconds = k60;
+  static const List<int> values = [k30, k60, k90, k120, k180, k300];
+
+  static int normalize(int? value) {
+    return values.contains(value) ? value! : defaultSeconds;
+  }
+
+  static String label(int value) {
+    return '${normalize(value)}s';
+  }
 }
 
 class AiContextWindowSize {

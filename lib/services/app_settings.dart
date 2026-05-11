@@ -10,9 +10,11 @@ class AppSettings extends ChangeNotifier {
   static const _languageKey = 'app_language';
   static const _darkModeKey = 'dark_mode';
   static const _themeModeKey = 'theme_mode';
+  static const _fontFamilyKey = 'font_family';
 
   AppLanguage _language = AppLanguage.zh;
   ThemeMode _themeMode = ThemeMode.light;
+  String _fontFamilyId = AppFontChoice.systemId;
   bool _initialized = false;
   Future<void> _themeWrite = Future.value();
 
@@ -21,6 +23,9 @@ class AppSettings extends ChangeNotifier {
   bool get initialized => _initialized;
   bool get isEnglish => _language == AppLanguage.en;
   bool get isDarkMode => _themeMode == ThemeMode.dark;
+  String get fontFamilyId => _fontFamilyId;
+  String? get fontFamily => AppFontChoice.byId(_fontFamilyId).fontFamily;
+  AppFontChoice get fontChoice => AppFontChoice.byId(_fontFamilyId);
 
   Future<void> init() async {
     try {
@@ -31,9 +36,11 @@ class AppSettings extends ChangeNotifier {
       _language =
           languageName == AppLanguage.en.name ? AppLanguage.en : AppLanguage.zh;
       _themeMode = _themeModeFromPrefs(prefs);
+      _fontFamilyId = AppFontChoice.normalize(prefs.getString(_fontFamilyKey));
     } catch (_) {
       _language = AppLanguage.zh;
       _themeMode = ThemeMode.light;
+      _fontFamilyId = AppFontChoice.systemId;
     } finally {
       _initialized = true;
       notifyListeners();
@@ -66,6 +73,16 @@ class AppSettings extends ChangeNotifier {
     });
   }
 
+  Future<void> setFontFamilyId(String id) async {
+    final normalized = AppFontChoice.normalize(id);
+    if (_fontFamilyId == normalized) return;
+    _fontFamilyId = normalized;
+    notifyListeners();
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_fontFamilyKey, normalized);
+  }
+
   ThemeMode _themeModeFromPrefs(SharedPreferences prefs) {
     switch (prefs.getString(_themeModeKey)) {
       case 'light':
@@ -92,6 +109,83 @@ class AppSettings extends ChangeNotifier {
       case ThemeMode.system:
         return 'system';
     }
+  }
+}
+
+class AppFontChoice {
+  static const systemId = 'system';
+
+  final String id;
+  final String name;
+  final String? fontFamily;
+  final String licenseNote;
+
+  const AppFontChoice({
+    required this.id,
+    required this.name,
+    required this.fontFamily,
+    required this.licenseNote,
+  });
+
+  static const values = [
+    AppFontChoice(
+      id: systemId,
+      name: 'System',
+      fontFamily: null,
+      licenseNote: 'Use platform default font.',
+    ),
+    AppFontChoice(
+      id: 'noto_sans_sc',
+      name: 'Noto Sans SC',
+      fontFamily: 'Noto Sans SC',
+      licenseNote: 'Open font; app does not bundle font files.',
+    ),
+    AppFontChoice(
+      id: 'noto_sans',
+      name: 'Noto Sans',
+      fontFamily: 'Noto Sans',
+      licenseNote: 'Open font; app does not bundle font files.',
+    ),
+    AppFontChoice(
+      id: 'source_han_sans_sc',
+      name: 'Source Han Sans SC',
+      fontFamily: 'Source Han Sans SC',
+      licenseNote: 'Open font; app does not bundle font files.',
+    ),
+    AppFontChoice(
+      id: 'roboto',
+      name: 'Roboto',
+      fontFamily: 'Roboto',
+      licenseNote: 'Open font; app does not bundle font files.',
+    ),
+    AppFontChoice(
+      id: 'microsoft_yahei',
+      name: 'Microsoft YaHei',
+      fontFamily: 'Microsoft YaHei',
+      licenseNote: 'Uses the platform-installed Windows font.',
+    ),
+    AppFontChoice(
+      id: 'pingfang_sc',
+      name: 'PingFang SC',
+      fontFamily: 'PingFang SC',
+      licenseNote: 'Uses the platform-installed Apple font.',
+    ),
+    AppFontChoice(
+      id: 'segoe_ui',
+      name: 'Segoe UI',
+      fontFamily: 'Segoe UI',
+      licenseNote: 'Uses the platform-installed Windows font.',
+    ),
+  ];
+
+  static String normalize(String? id) {
+    if (id == null || id.isEmpty) return systemId;
+    return values.any((item) => item.id == id) ? id : systemId;
+  }
+
+  static AppFontChoice byId(String? id) {
+    final normalized = normalize(id);
+    return values.firstWhere((item) => item.id == normalized);
   }
 }
 

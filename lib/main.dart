@@ -91,8 +91,8 @@ class SshMobileApp extends StatelessWidget {
     return MaterialApp(
       title: 'SSH Mobile',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.lightTheme,
-      darkTheme: AppTheme.darkTheme,
+      theme: AppTheme.lightThemeFor(settings.fontFamily),
+      darkTheme: AppTheme.darkThemeFor(settings.fontFamily),
       themeMode: settings.themeMode,
       initialRoute: '/',
       onGenerateRoute: (settings) {

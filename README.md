@@ -24,7 +24,7 @@ SSH Mobile is a Flutter-based cross-platform SSH / SFTP client for long-running 
 - 聊天历史与多窗口：AI 页支持多会话历史、新建聊天、切换动画和当前会话保活。
 - 消息编辑与分支：用户消息可编辑后重新发送，AI 回复可重新生成，也可从某条 AI 回复创建新分支继续追问。
 - 开发日志：日志页记录 SSH、SFTP、LLM、tool 调用和错误信息，日志包含来源文件/行号，支持筛选、复制、长按多选和批量删除。
-- 设置面板与备份：点击设置图标展开设置面板，支持主题/语言切换，以及一键导出/导入服务器、窗口历史、AI 聊天和自定义 Skills；密码、私钥和 API Key 不会导出。
+- 设置面板与备份：点击设置图标展开设置面板，支持主题/语言/全局字体切换，以及一键导出/导入服务器、窗口历史、AI 聊天和自定义 Skills；密码、私钥和 API Key 不会导出。
 - 主题与语言：默认使用浅色主题和中文界面，支持黑白主题和中英文界面切换；全局视觉系统统一了色彩、圆角、输入框、按钮和导航样式。
 - 移动端导航优化：底部导航栏可自动收起，减少屏幕占用。
 
@@ -133,35 +133,187 @@ flutter run -d 22011211C
 
 如果安装时报 `INSTALL_FAILED_USER_RESTRICTED`，通常是手机系统拦截了 USB 安装，需要在手机上允许 USB 安装、关闭安装限制或确认安装弹窗。
 
-## Build
+## Build / 构建
+
+Different targets require different host systems and toolchains. Android and
+Windows can be built on Windows; iOS and macOS must be built on macOS with
+Xcode installed.
+
+不同目标平台需要不同的宿主系统和工具链。Android 和 Windows 可以在 Windows
+上构建；iOS 和 macOS 必须在安装了 Xcode 的 macOS 上构建。
+
+### Android / 安卓
+
+Prerequisites / 前置条件：
+
+- Install Flutter and Android Studio / Android SDK.
+- 安装 Flutter 和 Android Studio / Android SDK。
+- Run `flutter doctor` and make sure the Android toolchain is healthy.
+- 运行 `flutter doctor`，确认 Android toolchain 正常。
+- For physical devices, enable USB debugging and USB installation on the phone.
+- 如需真机安装，请在手机上开启 USB 调试和 USB 安装权限。
+
+Commands / 构建命令：
 
 ```powershell
+flutter pub get
 flutter build apk --debug
 flutter build apk --release
 ```
 
-产物位置：
+APK output / APK 产物位置：
 
 ```text
 build/app/outputs/flutter-apk/
 ```
 
-macOS 桌面端需要在 macOS 设备上构建：
+Optional App Bundle build / 可选 App Bundle 构建：
+
+```powershell
+flutter build appbundle --release
+```
+
+App Bundle output / App Bundle 产物位置：
+
+```text
+build/app/outputs/bundle/release/app-release.aab
+```
+
+### iOS / 苹果移动端
+
+iOS must be built on macOS.
+
+iOS 必须在 macOS 上构建。
+
+Prerequisites / 前置条件：
+
+- Install Xcode and complete the first-launch component setup.
+- 安装 Xcode，并完成首次启动时的组件安装。
+- Run `flutter doctor` and make sure the iOS toolchain is healthy.
+- 运行 `flutter doctor`，确认 iOS toolchain 正常。
+- For device or release builds, configure Apple Developer Team, Bundle
+  Identifier, signing certificate, and Provisioning Profile in Xcode.
+- 如需真机或发布构建，请在 Xcode 中配置 Apple Developer Team、Bundle
+  Identifier、签名证书和 Provisioning Profile。
+
+Commands / 构建命令：
+
+```bash
+flutter pub get
+flutter build ios --debug
+flutter build ios --release
+```
+
+iOS build output / iOS 构建产物位置：
+
+```text
+build/ios/iphoneos/
+```
+
+For App Store submission, open the Xcode workspace and archive from Xcode:
+
+如需提交 App Store，请打开 Xcode workspace 并在 Xcode 中归档：
+
+```bash
+open ios/Runner.xcworkspace
+```
+
+Then use `Product > Archive`.
+
+然后选择 `Product > Archive`。
+
+### Windows / Windows 桌面端
+
+Windows desktop must be built on Windows.
+
+Windows 桌面端必须在 Windows 上构建。
+
+Prerequisites / 前置条件：
+
+- Install Flutter.
+- 安装 Flutter。
+- Install Visual Studio with the `Desktop development with C++` workload.
+- 安装 Visual Studio，并勾选 `Desktop development with C++` 工作负载。
+- Enable Flutter Windows desktop support.
+- 启用 Flutter Windows 桌面支持。
+
+Commands / 构建命令：
+
+```powershell
+flutter config --enable-windows-desktop
+flutter pub get
+flutter build windows
+```
+
+Windows output / Windows 产物位置：
+
+```text
+build/windows/x64/runner/Release/
+```
+
+To create a traditional Windows MSI installer / 生成传统 Windows MSI 安装包：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build_windows_msi.ps1
+```
+
+The MSI script uses WiX Toolset v3 to package the Flutter Windows release
+folder. If WiX is not installed, the script downloads the WiX v3 NuGet package
+into `build/wix` and uses it without changing the system environment.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build_windows_msi.ps1
+```
+
+MSI output / MSI 产物位置：
+
+```text
+build/windows_msi/out/SSH_Mobile_Windows_v1.0.0_setup.msi
+```
+
+MSI 脚本使用 WiX Toolset v3 打包 Flutter Windows release 目录。如果本机没有
+安装 WiX，脚本会自动下载 WiX v3 NuGet 包到 `build/wix` 并直接使用，不会修改
+系统环境。传统 MSI 不像 MSIX 一样强制要求发布者证书才能安装，但正式公开分发
+仍建议做代码签名，以减少 SmartScreen 或杀毒软件提示。
+
+### macOS / macOS 桌面端
+
+macOS desktop must be built on macOS.
+
+macOS 桌面端必须在 macOS 上构建。
+
+Prerequisites / 前置条件：
+
+- Install Xcode.
+- 安装 Xcode。
+- Run `flutter doctor` and make sure the macOS desktop toolchain is healthy.
+- 运行 `flutter doctor`，确认 macOS desktop toolchain 正常。
+- Enable Flutter macOS desktop support.
+- 启用 Flutter macOS 桌面支持。
+
+Commands / 构建命令：
 
 ```bash
 flutter config --enable-macos-desktop
+flutter pub get
 flutter build macos
 ```
 
-macOS 产物位置：
+macOS output / macOS 产物位置：
 
 ```text
 build/macos/Build/Products/Release/ssh_mobile.app
 ```
 
-macOS Release 包启用了沙盒权限，并允许出站网络连接以及用户选择文件的读写权限，用于 SSH/SFTP/LLM 网络请求和配置导入导出。
-保存服务器密码、私钥和 AI API Key 时，应用会在 macOS 上使用普通 Keychain，
-避免 Data Protection Keychain 缺少签名 entitlement 时触发 `-34018` 保存失败。
+The macOS target enables sandbox entitlements for outbound network access and
+user-selected file read/write access. The app stores server passwords, private
+keys, and AI API keys through the regular macOS Keychain to avoid Data
+Protection Keychain entitlement error `-34018`.
+
+macOS 目标启用了沙盒权限，允许出站网络连接以及用户选择文件的读写权限，用于
+SSH/SFTP/LLM 网络请求和配置导入导出。保存服务器密码、私钥和 AI API Key
+时，应用会使用普通 macOS Keychain，避免 Data Protection Keychain 缺少签名
+entitlement 时触发 `-34018` 保存失败。
 
 ## Common Commands
 
@@ -181,7 +333,7 @@ flutter pub get
 
 删除服务器时，应用会同步移除该服务器对应的 SSH 窗口和 SFTP 连接。
 
-点击右上角设置图标会展开设置面板，设置面板包含语言、主题，以及完整应用数据导入/导出。备份文件会包含服务器连接配置、窗口历史、AI 设置、AI 聊天记录和自定义 Skills；SSH 密码、私钥和 API Key 会保持为空，导入后需要重新配置。
+点击右上角设置图标会展开设置面板，设置面板包含语言、主题、全局字体，以及完整应用数据导入/导出。字体选择会作用于整个应用，项目不内置或重新分发字体文件；Noto / Source Han / Roboto 等选项使用系统已安装字体或开源字体名称回退，Microsoft YaHei、PingFang SC、Segoe UI 等只调用平台自带字体。备份文件会包含服务器连接配置、窗口历史、AI 设置、AI 聊天记录和自定义 Skills；SSH 密码、私钥和 AI API Key 会保持为空，导入后需要重新配置。
 
 ### Terminal Windows
 
@@ -201,7 +353,7 @@ SFTP 页支持：
 
 ### AI Assistant
 
-AI 页通过 OpenAI-compatible API 调用大模型。模型配置统一在“大模型设置”弹窗中完成，包括 Base URL、API Key、模型选择和上下文窗口大小。默认模型列表包含：
+AI 页通过 OpenAI-compatible API 调用大模型。模型配置统一在“大模型设置”页面中完成，包括 Base URL、API Key、模型选择、上下文窗口大小和请求超时时间。请求超时默认 60 秒，可在 30 秒到 300 秒之间选择；超时后聊天页会保留错误消息，并提供“继续”按钮，让用户从当前上下文继续而不是重新生成。默认模型列表包含：
 
 - `deepseek-v4-flash`
 - `deepseek-v4-pro`

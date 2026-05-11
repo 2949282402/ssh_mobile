@@ -35,6 +35,11 @@ new path in source or docs.
 - Keep new UI consistent with `lib/theme/app_theme.dart`: use the app theme for
   colors, button/input/list/navigation styling, and avoid page-local palettes
   unless a protocol view such as the terminal requires it.
+- Keep the main application font family centralized in `AppSettings` and
+  `AppTheme`. Do not set unrelated page-local font families for normal UI text;
+  vary only size, weight, color, and emphasis. If adding font choices, prefer
+  system-installed or clearly open-licensed fonts, and do not bundle or
+  redistribute font files unless the license has been verified and documented.
 - Prevent Flutter `RenderFlex overflowed ... on the bottom` regressions: dialogs,
   bottom input panels, keyboard-adjacent controls, compact mobile editors, and
   expandable toolbars must be wrapped in `SingleChildScrollView`, `ListView`, or
@@ -56,6 +61,10 @@ new path in source or docs.
   navigation entries, settings, AI tools, dependencies, or platform behavior,
   update this skill and `README.md` in the same task so documentation stays in
   sync with the project.
+- Windows installer packaging uses WiX Toolset v3 through
+  `scripts/build_windows_msi.ps1` and `installer/windows/Product.wxs`; keep
+  README build instructions aligned if MSI identity, output naming, shortcuts,
+  or signing behavior changes.
 - When writing or changing code, add concise maintenance comments for non-obvious
   behavior, lifecycle constraints, protocol quirks, safety gates, or context
   management decisions. Avoid noisy comments that only restate the code.
@@ -115,8 +124,16 @@ Use `lib/services/llm_chat_service.dart` for provider protocol behavior and
 - If adding write-capable tools, preserve the approval gate: show the exact
   server and command in the chat page, execute only after approval, and let
   rejection abort the current operation so the user can give new instructions.
+- Write-command approval panels must keep their action buttons visible. Put
+  long commands in a bounded vertical/horizontal scroll area instead of letting
+  the command text determine the panel height.
 - Keep AI command execution on the plain one-shot SSH exec path. Do not attach
   tmux or reuse interactive terminal sessions for LLM tools.
+- AI one-shot diagnostic commands may search slow paths on real servers, so
+  their timeout should be user-configurable, shared with LLM request timeouts,
+  and should return a tool result explaining the timeout instead of crashing the
+  chat turn. Chat timeout errors should offer a Continue action that sends a
+  short follow-up from the existing context rather than forcing regeneration.
 
 ### SFTP
 

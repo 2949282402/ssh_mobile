@@ -22,6 +22,10 @@ import 'terminal_windows_screen.dart';
 extension _HomeSettingsStrings on AppStrings {
   String get settings => language == AppLanguage.en ? 'Settings' : '设置';
   String get appearance => language == AppLanguage.en ? 'Appearance' : '外观';
+  String get appFontFamily => language == AppLanguage.en ? 'App font' : '应用字体';
+  String get appFontFamilyNote => language == AppLanguage.en
+      ? 'Applied across the app. Font files are not bundled.'
+      : '全局统一使用。应用不内置字体文件。';
   String get dataBackup => language == AppLanguage.en ? 'Data backup' : '数据备份';
   String get exportAppData =>
       language == AppLanguage.en ? 'Export app data' : '导出应用数据';
@@ -238,6 +242,12 @@ class _HomeScreenState extends State<HomeScreen> {
             duration: const Duration(milliseconds: 140),
             switchInCurve: Curves.easeOutCubic,
             switchOutCurve: Curves.easeOutCubic,
+            // When the bar collapses, the outgoing expanded Row must not keep
+            // laying out inside the 22 px collapsed slot; that creates the
+            // bottom RenderFlex overflow reported from _bottomNavItem.
+            layoutBuilder: (currentChild, previousChildren) {
+              return currentChild ?? const SizedBox.shrink();
+            },
             child: _bottomNavExpanded
                 ? Row(
                     key: const ValueKey('bottom-nav-expanded'),
@@ -308,46 +318,54 @@ class _HomeScreenState extends State<HomeScreen> {
     return Expanded(
       child: InkWell(
         onTap: () => _switchNavigationPage(index),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOutCubic,
-                width: 64,
-                height: 32,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: selected
-                      ? colorScheme.primary.withValues(alpha: 0.12)
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: IconTheme(
-                  data: IconThemeData(color: foreground, size: 24),
-                  child: selected ? selectedIcon : icon,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Flexible(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: foreground,
-                      fontSize: 12,
-                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxHeight < 52) {
+              return const SizedBox.shrink();
+            }
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    curve: Curves.easeOutCubic,
+                    width: 64,
+                    height: 32,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? colorScheme.primary.withValues(alpha: 0.12)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: IconTheme(
+                      data: IconThemeData(color: foreground, size: 24),
+                      child: selected ? selectedIcon : icon,
                     ),
                   ),
-                ),
+                  const SizedBox(height: 2),
+                  Flexible(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: foreground,
+                          fontSize: 12,
+                          fontWeight:
+                              selected ? FontWeight.w700 : FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );
@@ -1264,6 +1282,44 @@ class _SettingsPanel extends StatelessWidget {
                       ),
                       value: settings.isDarkMode,
                       onChanged: (_) => settings.toggleTheme(),
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading:
+                          const Icon(Icons.font_download_outlined, size: 20),
+                      title: Text(
+                        strings.appFontFamily,
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                      subtitle: Text(
+                        strings.appFontFamilyNote,
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      trailing: SizedBox(
+                        width: 150,
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String>(
+                            value: settings.fontFamilyId,
+                            isExpanded: true,
+                            items: [
+                              for (final font in AppFontChoice.values)
+                                DropdownMenuItem(
+                                  value: font.id,
+                                  child: Text(
+                                    font.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                            ],
+                            onChanged: (value) {
+                              if (value != null) {
+                                settings.setFontFamilyId(value);
+                              }
+                            },
+                          ),
+                        ),
+                      ),
                     ),
                   ],
                 ),

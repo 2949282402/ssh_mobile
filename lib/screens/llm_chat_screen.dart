@@ -237,7 +237,11 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                                 ),
                               ),
                               Text(
-                                '${strings.subtitle} · ${_contextUsage(contextTokens, _contextWindowTokens, contextPercent)}',
+                                _contextUsage(
+                                  contextTokens,
+                                  _contextWindowTokens,
+                                  contextPercent,
+                                ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
@@ -309,6 +313,11 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                             onBranch: message.role == 'assistant'
                                 ? () => _branchFromAssistant(index, strings)
                                 : null,
+                            onContinueTimeout: message.role == 'error' &&
+                                    index == visibleMessages.length - 1 &&
+                                    _isTimeoutError(message.text)
+                                ? () => _continueAfterTimeout(strings)
+                                : null,
                           ),
                         );
                       },
@@ -316,11 +325,18 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                   ),
                 ),
                 if (_pendingApproval?.chatId == activeChat.id)
-                  _ToolApprovalPanel(
-                    pending: _pendingApproval!,
-                    strings: strings,
-                    onApprove: () => _resolvePendingApproval(approved: true),
-                    onReject: () => _resolvePendingApproval(approved: false),
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.sizeOf(context).height < 700
+                          ? MediaQuery.sizeOf(context).height * 0.52
+                          : 420,
+                    ),
+                    child: _ToolApprovalPanel(
+                      pending: _pendingApproval!,
+                      strings: strings,
+                      onApprove: () => _resolvePendingApproval(approved: true),
+                      onReject: () => _resolvePendingApproval(approved: false),
+                    ),
                   ),
                 SafeArea(
                   top: false,
@@ -345,10 +361,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                                   minLines: 1,
                                   maxLines: 3,
                                   textInputAction: TextInputAction.newline,
-                                  decoration: InputDecoration(
-                                    hintText: strings.inputHint,
-                                    isDense: true,
-                                  ),
+                                  decoration:
+                                      const InputDecoration(isDense: true),
                                   onSubmitted: (_) => _send(context, strings),
                                 ),
                               ),
@@ -458,7 +472,16 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   }
 
   Future<void> _send(BuildContext context, _AiStrings strings) async {
-    final text = _inputController.text.trim();
+    final text = (_inputController.text.trim());
+    await _sendText(context, strings, text: text, clearInput: true);
+  }
+
+  Future<void> _sendText(
+    BuildContext context,
+    _AiStrings strings, {
+    required String text,
+    required bool clearInput,
+  }) async {
     final activeChat = _activeChat;
     if (text.isEmpty || _sending || activeChat == null) return;
 
@@ -504,7 +527,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     setState(() {
       _replaceChat(nextChat);
       _sending = true;
-      _inputController.clear();
+      if (clearInput) _inputController.clear();
     });
     await storage.saveAiChat(nextChat);
     _scrollToBottom();
@@ -517,6 +540,20 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       requestMessages: nextMessages,
       strings: strings,
     );
+  }
+
+  void _continueAfterTimeout(_AiStrings strings) {
+    _sendText(
+      context,
+      strings,
+      text: strings.continueAfterTimeoutPrompt,
+      clearInput: false,
+    );
+  }
+
+  bool _isTimeoutError(String text) {
+    final lower = text.toLowerCase();
+    return lower.contains('timeout') || text.contains('超时');
   }
 
   Future<void> _generateAssistantResponse({
@@ -824,7 +861,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
             autofocus: true,
             minLines: 3,
             maxLines: 8,
-            decoration: InputDecoration(hintText: strings.inputHint),
+            decoration: const InputDecoration(),
           ),
         ),
         actions: [
@@ -1037,6 +1074,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     final apiKeyController = TextEditingController();
     var models = _modelOptions(settings.model);
     var contextWindowTokens = settings.contextWindowTokens;
+    var timeoutSeconds = settings.timeoutSeconds;
     var loadingModels = false;
     var savingSettings = false;
     String? modelLoadError;
@@ -1188,6 +1226,23 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                     },
                   ),
                   const SizedBox(height: 12),
+                  DropdownButtonFormField<int>(
+                    initialValue: timeoutSeconds,
+                    isExpanded: true,
+                    decoration:
+                        InputDecoration(labelText: strings.requestTimeout),
+                    items: [
+                      for (final value in AiRequestTimeout.values)
+                        DropdownMenuItem(
+                          value: value,
+                          child: Text(AiRequestTimeout.label(value)),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) timeoutSeconds = value;
+                    },
+                  ),
+                  const SizedBox(height: 12),
                   TextField(
                     controller: apiKeyController,
                     obscureText: true,
@@ -1215,6 +1270,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                         baseUrl: baseUrlController.text,
                         model: modelController.text,
                         contextWindowTokens: contextWindowTokens,
+                        timeoutSeconds: timeoutSeconds,
                         apiKey: apiKeyController.text,
                       );
                       setDialogState(() {
@@ -1226,6 +1282,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                           baseUrl: pending.baseUrl,
                           model: pending.model,
                           contextWindowTokens: pending.contextWindowTokens,
+                          timeoutSeconds: pending.timeoutSeconds,
                           apiKey: pending.apiKey,
                         );
                         if (!ctx.mounted) return;
@@ -1580,6 +1637,7 @@ class _MessageBubble extends StatelessWidget {
   final VoidCallback? onEditUser;
   final VoidCallback? onRegenerate;
   final VoidCallback? onBranch;
+  final VoidCallback? onContinueTimeout;
 
   const _MessageBubble({
     required this.message,
@@ -1588,6 +1646,7 @@ class _MessageBubble extends StatelessWidget {
     this.onEditUser,
     this.onRegenerate,
     this.onBranch,
+    this.onContinueTimeout,
   });
 
   @override
@@ -1659,12 +1718,14 @@ class _MessageBubble extends StatelessWidget {
             if (canAct &&
                 (onEditUser != null ||
                     onRegenerate != null ||
-                    onBranch != null))
+                    onBranch != null ||
+                    onContinueTimeout != null))
               _MessageActions(
                 isUser: isUser,
                 onEditUser: onEditUser,
                 onRegenerate: onRegenerate,
                 onBranch: onBranch,
+                onContinueTimeout: onContinueTimeout,
               ),
             if (!isUser && !isError && message.traces.isNotEmpty)
               _TracePanel(traces: message.traces),
@@ -1958,12 +2019,14 @@ class _MessageActions extends StatelessWidget {
   final VoidCallback? onEditUser;
   final VoidCallback? onRegenerate;
   final VoidCallback? onBranch;
+  final VoidCallback? onContinueTimeout;
 
   const _MessageActions({
     required this.isUser,
     this.onEditUser,
     this.onRegenerate,
     this.onBranch,
+    this.onContinueTimeout,
   });
 
   @override
@@ -1990,6 +2053,13 @@ class _MessageActions extends StatelessWidget {
           tooltip: 'Branch from here',
           icon: Icons.call_split_rounded,
           onPressed: onBranch,
+        ),
+      if (onContinueTimeout != null)
+        _actionButton(
+          context,
+          tooltip: 'Continue',
+          icon: Icons.play_arrow_rounded,
+          onPressed: onContinueTimeout,
         ),
     ];
     return Padding(
@@ -2255,38 +2325,50 @@ class _ToolApprovalPanel extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             description,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: colorScheme.onSurface.withValues(alpha: 0.72),
               height: 1.35,
             ),
           ),
           const SizedBox(height: 8),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: colorScheme.surface.withValues(alpha: 0.78),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: colorScheme.outlineVariant),
-            ),
-            child: SelectableText(
-              pending.request.command,
-              style: TextStyle(
-                fontFamily: 'monospace',
-                color: colorScheme.onSurface,
+          Flexible(
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: colorScheme.surface.withValues(alpha: 0.78),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: colorScheme.outlineVariant),
+              ),
+              child: Scrollbar(
+                child: SingleChildScrollView(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: SelectableText(
+                      pending.request.command,
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
           const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
+          Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 8,
+            runSpacing: 8,
             children: [
               OutlinedButton.icon(
                 onPressed: onReject,
                 icon: const Icon(Icons.close_rounded),
                 label: Text(reject),
               ),
-              const SizedBox(width: 8),
               FilledButton.icon(
                 onPressed: onApprove,
                 icon: const Icon(Icons.check_rounded),
@@ -2315,6 +2397,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   late final TextEditingController _apiKeyController;
   late List<String> _models;
   late int _contextWindowTokens;
+  late int _timeoutSeconds;
   bool _loadingModels = false;
   bool _saving = false;
   String? _errorText;
@@ -2329,6 +2412,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _apiKeyController = TextEditingController();
     _models = _modelOptions(widget.initialSettings.model);
     _contextWindowTokens = widget.initialSettings.contextWindowTokens;
+    _timeoutSeconds = widget.initialSettings.timeoutSeconds;
   }
 
   @override
@@ -2395,6 +2479,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       baseUrl: _baseUrlController.text,
       model: _modelController.text,
       contextWindowTokens: _contextWindowTokens,
+      timeoutSeconds: _timeoutSeconds,
       apiKey: _apiKeyController.text,
     );
     setState(() {
@@ -2406,6 +2491,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         baseUrl: pending.baseUrl,
         model: pending.model,
         contextWindowTokens: pending.contextWindowTokens,
+        timeoutSeconds: pending.timeoutSeconds,
         apiKey: pending.apiKey,
       );
       if (!mounted) return;
@@ -2540,6 +2626,26 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                     },
             ),
             const SizedBox(height: 14),
+            DropdownButtonFormField<int>(
+              initialValue: _timeoutSeconds,
+              isExpanded: true,
+              decoration: InputDecoration(labelText: strings.requestTimeout),
+              items: [
+                for (final value in AiRequestTimeout.values)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text(AiRequestTimeout.label(value)),
+                  ),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        setState(() => _timeoutSeconds = value);
+                      }
+                    },
+            ),
+            const SizedBox(height: 14),
             TextField(
               controller: _apiKeyController,
               enabled: !_saving,
@@ -2580,12 +2686,14 @@ class _PendingAiSettings {
   final String baseUrl;
   final String model;
   final int contextWindowTokens;
+  final int timeoutSeconds;
   final String apiKey;
 
   const _PendingAiSettings({
     required this.baseUrl,
     required this.model,
     required this.contextWindowTokens,
+    required this.timeoutSeconds,
     required this.apiKey,
   });
 }
@@ -2598,9 +2706,6 @@ class _AiStrings {
   bool get _en => language == AppLanguage.en;
 
   String get title => _en ? 'LLM Assistant' : '大模型助手';
-  String get subtitle => _en
-      ? 'OpenAI-compatible tools for SSH and SFTP'
-      : '通过 OpenAI 格式调用 SSH/SFTP 工具';
   String get welcome => _en
       ? 'Ask me about your servers, logs, status, or a remote file.'
       : '可以问我服务器状态、日志、远程文件等。';
@@ -2608,13 +2713,14 @@ class _AiStrings {
   String get newChat => _en ? 'New chat' : '新聊天';
   String get delete => _en ? 'Delete' : '删除';
   String get settings => _en ? 'LLM settings' : '大模型设置';
-  String get inputHint => _en
-      ? 'Ask about a server, logs, status, or a remote file...'
-      : '询问服务器状态、日志、远程文件等...';
   String get send => _en ? 'Send' : '发送';
   String get baseUrl => _en ? 'Base URL' : 'Base URL';
   String get model => _en ? 'Model' : '模型';
   String get refreshModels => _en ? 'Refresh models' : '刷新模型';
+  String get requestTimeout => _en ? 'Request timeout' : '请求超时';
+  String get continueAfterTimeoutPrompt => _en
+      ? 'Continue the previous answer. If a server command timed out, narrow the scope and continue with a smaller diagnostic step.'
+      : '继续上一次回答。如果服务器命令超时，请缩小范围，用更小的诊断步骤继续。';
   String modelsFailed(String error) =>
       _en ? 'Unable to load models: $error' : '无法加载模型：$error';
   String get apiKeySaved =>

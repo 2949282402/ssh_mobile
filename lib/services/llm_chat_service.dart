@@ -28,6 +28,7 @@ class LlmChatService {
     _assertValidHeaderApiKey(resolvedApiKey);
 
     final endpoint = Uri.parse(_joinUrl(baseUrl, '/models'));
+    final timeoutSeconds = await storageService.getAiRequestTimeoutSeconds();
     final client = HttpClient();
     final startedAt = DateTime.now();
     AppLogService.instance.info(
@@ -36,14 +37,14 @@ class LlmChatService {
     );
     try {
       final request = await client.getUrl(endpoint).timeout(
-            const Duration(seconds: 15),
+            Duration(seconds: timeoutSeconds),
           );
       request.headers.set(
         HttpHeaders.authorizationHeader,
         'Bearer $resolvedApiKey',
       );
       final response = await request.close().timeout(
-            const Duration(seconds: 30),
+            Duration(seconds: timeoutSeconds),
           );
       final body = await response.transform(utf8.decoder).join();
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -82,7 +83,7 @@ class LlmChatService {
         'LLM models request error',
         error: e,
         stackTrace: stackTrace,
-        details: 'endpoint=$endpoint',
+        details: 'endpoint=$endpoint timeoutSeconds=$timeoutSeconds',
       );
       rethrow;
     } finally {
@@ -133,7 +134,7 @@ class LlmChatService {
     AppLogService.instance.info(
       'LLM chat started',
       details:
-          'baseUrl=${settings.baseUrl} model=$model userMessages=${messages.length}',
+          'baseUrl=${settings.baseUrl} model=$model userMessages=${messages.length} timeoutSeconds=${settings.timeoutSeconds}',
     );
 
     var workingMessages = <Map<String, dynamic>>[
@@ -152,6 +153,7 @@ class LlmChatService {
         model: model,
         messages: messages,
         contextWindowTokens: settings.contextWindowTokens,
+        timeoutSeconds: settings.timeoutSeconds,
       );
       compressed = true;
     }
@@ -173,6 +175,7 @@ class LlmChatService {
             model: model,
             messages: workingMessages,
             tools: toolService.toolDefinitions(),
+            timeoutSeconds: settings.timeoutSeconds,
             onContent: (chunk) {
               content.write(chunk);
               chunkController.add(chunk);
@@ -384,6 +387,7 @@ class LlmChatService {
     required String model,
     required List<Map<String, dynamic>> messages,
     required List<Map<String, dynamic>> tools,
+    required int timeoutSeconds,
     required void Function(String chunk) onContent,
     bool includeUsage = true,
   }) async {
@@ -400,7 +404,7 @@ class LlmChatService {
     );
     try {
       final request = await client.postUrl(endpoint).timeout(
-            const Duration(seconds: 15),
+            Duration(seconds: timeoutSeconds),
           );
       final requestBody = {
         'model': model,
@@ -417,7 +421,7 @@ class LlmChatService {
       request.contentLength = bodyBytes.length;
       request.add(bodyBytes);
       final response = await request.close().timeout(
-            const Duration(seconds: 45),
+            Duration(seconds: timeoutSeconds),
           );
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final body = await response.transform(utf8.decoder).join();
@@ -435,6 +439,7 @@ class LlmChatService {
             model: model,
             messages: messages,
             tools: tools,
+            timeoutSeconds: timeoutSeconds,
             onContent: onContent,
             includeUsage: false,
           );
@@ -524,7 +529,8 @@ class LlmChatService {
         'LLM stream request error',
         error: e,
         stackTrace: stackTrace,
-        details: 'endpoint=$endpoint model=$model',
+        details:
+            'endpoint=$endpoint model=$model timeoutSeconds=$timeoutSeconds',
       );
       rethrow;
     } finally {
@@ -593,6 +599,7 @@ class LlmChatService {
     required String model,
     required List<Map<String, dynamic>> messages,
     required int contextWindowTokens,
+    required int timeoutSeconds,
   }) async {
     final lastUserIndex =
         messages.lastIndexWhere((message) => message['role'] == 'user');
@@ -625,6 +632,7 @@ class LlmChatService {
         },
         {'role': 'user', 'content': transcript},
       ],
+      timeoutSeconds: timeoutSeconds,
     );
     final summary = _contentFromChatResponse(response);
     AppLogService.instance.info(
@@ -647,12 +655,13 @@ class LlmChatService {
     required String apiKey,
     required String model,
     required List<Map<String, dynamic>> messages,
+    required int timeoutSeconds,
   }) async {
     final endpoint = Uri.parse(_joinUrl(baseUrl, '/chat/completions'));
     final client = HttpClient();
     try {
       final request = await client.postUrl(endpoint).timeout(
-            const Duration(seconds: 15),
+            Duration(seconds: timeoutSeconds),
           );
       final bodyBytes = utf8.encode(
         jsonEncode({
@@ -666,7 +675,7 @@ class LlmChatService {
       request.contentLength = bodyBytes.length;
       request.add(bodyBytes);
       final response = await request.close().timeout(
-            const Duration(seconds: 60),
+            Duration(seconds: timeoutSeconds),
           );
       final body = await response.transform(utf8.decoder).join();
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -680,7 +689,8 @@ class LlmChatService {
         'LLM compression request error',
         error: e,
         stackTrace: stackTrace,
-        details: 'endpoint=$endpoint model=$model',
+        details:
+            'endpoint=$endpoint model=$model timeoutSeconds=$timeoutSeconds',
       );
       rethrow;
     } finally {

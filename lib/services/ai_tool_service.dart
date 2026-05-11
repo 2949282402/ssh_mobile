@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'app_log_service.dart';
@@ -157,12 +158,31 @@ class AiToolService {
       });
     }
 
-    // This intentionally uses a one-shot SSH exec path, not the tmux-backed
-    // terminal session path, so AI tools do not attach to user workspaces.
-    final result = await sshService.runOneShotCommand(
-      connectionId: connectionId,
-      command: command,
-    );
+    final timeoutSeconds = await storageService.getAiRequestTimeoutSeconds();
+    late final RemoteCommandResult result;
+    try {
+      // This intentionally uses a one-shot SSH exec path, not the tmux-backed
+      // terminal session path, so AI tools do not attach to user workspaces.
+      // Some diagnostics, such as searching logs under /var or /, can be slow
+      // on real servers, so AI tool commands get a longer timeout than UI
+      // connection setup.
+      result = await sshService.runOneShotCommand(
+        connectionId: connectionId,
+        command: command,
+        timeout: Duration(seconds: timeoutSeconds),
+      );
+    } on TimeoutException {
+      AppLogService.instance.warning(
+        'AI tool command timed out',
+        details:
+            'connectionId=$connectionId timeoutSeconds=$timeoutSeconds command=${_truncate(command)}',
+      );
+      return jsonEncode({
+        'error':
+            'Command timed out after $timeoutSeconds seconds. Narrow the search path or run a smaller diagnostic command.',
+        'command': command,
+      });
+    }
     return jsonEncode({
       'exitCode': result.exitCode,
       'stdout': _truncate(result.stdout),
