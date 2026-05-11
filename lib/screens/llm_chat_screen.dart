@@ -313,17 +313,17 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                                 ? () => _editUserMessage(index, strings)
                                 : null,
                             onRegenerate: message.role == 'assistant'
-                                ? () => _regenerateAssistant(index)
+                                ? () => _confirmRegenerateAssistant(index, strings)
                                 : null,
-                            onBranch: message.role == 'assistant'
-                                ? () => _branchFromAssistant(index, strings)
-                                : null,
-                            onContinueTimeout: message.role == 'error' &&
-                                    index == visibleMessages.length - 1 &&
-                                    _isTimeoutError(message.text)
-                                ? () => _continueAfterTimeout(strings)
-                                : null,
-                          ),
+                onBranch: message.role == 'assistant'
+                    ? () => _confirmBranchFromAssistant(index, strings)
+                    : null,
+                onContinueTimeout: message.role == 'error' &&
+                        index == visibleMessages.length - 1 &&
+                        _isTimeoutError(message.text)
+                    ? () => _continueAfterTimeout(strings)
+                    : null,
+              ),
                         );
                       },
                     ),
@@ -779,6 +779,66 @@ class _LlmChatScreenState extends State<LlmChatScreen>
           ? const AiToolApprovalDecision.approved()
           : const AiToolApprovalDecision.rejected(),
     );
+  }
+
+  Future<bool> _confirmChatAction({
+    required String title,
+    required String content,
+    required String confirmLabel,
+    required _AiStrings strings,
+  }) async {
+    final bool? result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(content),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(strings.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text(confirmLabel),
+          ),
+        ],
+      ),
+    );
+    return result == true;
+  }
+
+  Future<void> _confirmRegenerateAssistant(
+    int messageIndex,
+    _AiStrings strings,
+  ) async {
+    final en = strings.language == AppLanguage.en;
+    final confirmed = await _confirmChatAction(
+      title: en ? 'Regenerate this reply?' : '确认重新生成这条回复吗？',
+      content: en
+          ? 'This will replace this assistant message and regenerate from this point. Continue?'
+          : '这会替换这条 AI 回复并从该位置重新生成。确定继续吗？',
+      confirmLabel: en ? 'Regenerate' : '重新生成',
+      strings: strings,
+    );
+    if (!confirmed) return;
+    await _regenerateAssistant(messageIndex);
+  }
+
+  Future<void> _confirmBranchFromAssistant(
+    int messageIndex,
+    _AiStrings strings,
+  ) async {
+    final en = strings.language == AppLanguage.en;
+    final confirmed = await _confirmChatAction(
+      title: en ? 'Create a chat branch?' : '确认创建聊天分支吗？',
+      content: en
+          ? 'This creates a new chat thread from this message and continues independently from here.'
+          : '将从该消息创建一个新的聊天分支，并从这里继续新对话。',
+      confirmLabel: en ? 'Create branch' : '创建分支',
+      strings: strings,
+    );
+    if (!confirmed) return;
+    await _branchFromAssistant(messageIndex, strings);
   }
 
   Future<void> _regenerateAssistant(int messageIndex) async {
@@ -2075,6 +2135,7 @@ class _MessageActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final en = context.read<AppSettings>().language == AppLanguage.en;
     final colorScheme = Theme.of(context).colorScheme;
     final children = <Widget>[
       if (onEditUser != null)
@@ -2087,14 +2148,14 @@ class _MessageActions extends StatelessWidget {
       if (onRegenerate != null)
         _actionButton(
           context,
-          tooltip: 'Regenerate',
+          tooltip: en ? 'Regenerate' : '重新生成',
           icon: Icons.refresh_rounded,
           onPressed: onRegenerate,
         ),
       if (onBranch != null)
         _actionButton(
           context,
-          tooltip: 'Branch from here',
+          tooltip: en ? 'Create branch' : '创建分支',
           icon: Icons.call_split_rounded,
           onPressed: onBranch,
         ),

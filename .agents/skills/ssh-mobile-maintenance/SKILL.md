@@ -114,6 +114,9 @@ Use `lib/services/llm_chat_service.dart` for provider protocol behavior and
   messages after that point and regenerate fresh assistant text, traces, token
   stats, and `contextText`. Chat branches should copy messages through the
   selected assistant reply and continue with the same context slimming rules.
+- Add a second confirmation step for destructive/rewrite actions on the AI chat
+  page: both branch creation and assistant reply regeneration should require
+  explicit user confirmation before executing.
 - Store per-assistant-message token and elapsed-time metadata and render it as
   small, low-emphasis text below the message bubble.
 - Throttle streaming UI updates so small SSE chunks do not rebuild Markdown on
