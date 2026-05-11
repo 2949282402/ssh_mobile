@@ -22,6 +22,7 @@ new path in source or docs.
 ## Maintenance Rules
 
 - Preserve user work in the git tree. Do not revert unrelated dirty files.
+- Use UTF-8 for all source and data files. Avoid UTF-8 with BOM, and when writing or rewriting files, enforce UTF-8 (without BOM) encoding to prevent string corruption.
 - Prefer project services over duplicating protocol code.
 - Write logs for SSH, SFTP, LLM requests, AI tools, and caught failures through
   `AppLogService` so the log page remains useful.

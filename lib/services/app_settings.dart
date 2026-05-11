@@ -119,12 +119,16 @@ class AppFontChoice {
   final String name;
   final String? fontFamily;
   final String licenseNote;
+  final bool platformSpecific;
+  final List<TargetPlatform>? supportedPlatforms;
 
   const AppFontChoice({
     required this.id,
     required this.name,
     required this.fontFamily,
     required this.licenseNote,
+    this.platformSpecific = false,
+    this.supportedPlatforms,
   });
 
   static const values = [
@@ -133,48 +137,74 @@ class AppFontChoice {
       name: 'System',
       fontFamily: null,
       licenseNote: 'Use platform default font.',
+      platformSpecific: false,
+      supportedPlatforms: TargetPlatform.values,
     ),
     AppFontChoice(
       id: 'noto_sans_sc',
       name: 'Noto Sans SC',
       fontFamily: 'Noto Sans SC',
       licenseNote: 'Open font; app does not bundle font files.',
+      platformSpecific: false,
+      supportedPlatforms: TargetPlatform.values,
     ),
     AppFontChoice(
       id: 'noto_sans',
       name: 'Noto Sans',
       fontFamily: 'Noto Sans',
       licenseNote: 'Open font; app does not bundle font files.',
+      platformSpecific: false,
+      supportedPlatforms: TargetPlatform.values,
     ),
     AppFontChoice(
       id: 'source_han_sans_sc',
       name: 'Source Han Sans SC',
       fontFamily: 'Source Han Sans SC',
       licenseNote: 'Open font; app does not bundle font files.',
+      platformSpecific: false,
+      supportedPlatforms: [
+        TargetPlatform.windows,
+        TargetPlatform.macOS,
+        TargetPlatform.android,
+      ],
     ),
     AppFontChoice(
       id: 'roboto',
       name: 'Roboto',
       fontFamily: 'Roboto',
       licenseNote: 'Open font; app does not bundle font files.',
+      platformSpecific: false,
+      supportedPlatforms: [
+        TargetPlatform.android,
+        TargetPlatform.iOS,
+        TargetPlatform.macOS,
+        TargetPlatform.windows,
+        TargetPlatform.linux,
+      ],
     ),
     AppFontChoice(
       id: 'microsoft_yahei',
       name: 'Microsoft YaHei',
       fontFamily: 'Microsoft YaHei',
       licenseNote: 'Uses the platform-installed Windows font.',
+      platformSpecific: true,
+      supportedPlatforms: [TargetPlatform.windows],
     ),
     AppFontChoice(
       id: 'pingfang_sc',
       name: 'PingFang SC',
       fontFamily: 'PingFang SC',
       licenseNote: 'Uses the platform-installed Apple font.',
+      platformSpecific: true,
+      supportedPlatforms: [TargetPlatform.macOS, TargetPlatform.iOS],
     ),
     AppFontChoice(
       id: 'segoe_ui',
       name: 'Segoe UI',
       fontFamily: 'Segoe UI',
       licenseNote: 'Uses the platform-installed Windows font.',
+      platformSpecific: true,
+      supportedPlatforms: [TargetPlatform.windows],
     ),
   ];
 
@@ -186,6 +216,12 @@ class AppFontChoice {
   static AppFontChoice byId(String? id) {
     final normalized = normalize(id);
     return values.firstWhere((item) => item.id == normalized);
+  }
+
+  bool isLikelyAvailableOn(TargetPlatform platform) {
+    final platforms = supportedPlatforms;
+    if (platforms == null || platforms.isEmpty) return true;
+    return platforms.contains(platform);
   }
 }
 

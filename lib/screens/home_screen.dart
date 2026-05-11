@@ -29,7 +29,7 @@ extension _HomeSettingsStrings on AppStrings {
   String get security => language == AppLanguage.en ? 'Security' : '安全';
   String get credentialCache => language == AppLanguage.en
       ? 'Cache SSH credentials in memory'
-      : '缓存 SSH 凭证到内存';
+      : '缓存 SSH 凭证到内存。';
   String get credentialCacheHint => language == AppLanguage.en
       ? 'Reduce repeated Keychain prompts by caching passwords, private keys, and API keys in-memory during this session.'
       : '在本次会话内缓存密码、私钥和 API Key，可减少重复的密钥链弹窗。';
@@ -56,6 +56,19 @@ extension _HomeSettingsStrings on AppStrings {
       language == AppLanguage.en ? 'Export failed: $error' : '导出失败：$error';
   String importFailed(Object error) =>
       language == AppLanguage.en ? 'Import failed: $error' : '导入失败：$error';
+}
+
+extension _HomeFontSettingStrings on AppStrings {
+  String get appFontPreview =>
+      language == AppLanguage.en ? 'Font preview' : '字体预览';
+  String get appFontCurrent =>
+      language == AppLanguage.en ? 'Current font' : '当前字体';
+  String get fontFallbackHint => language == AppLanguage.en
+      ? 'If this font is unavailable on your device, system fallback will be used.'
+      : '如该字体在设备上不存在，系统将自动回退到默认字体。';
+  String get fontPlatformHint => language == AppLanguage.en
+      ? 'Font availability depends on platform resources; install the font to force direct usage.'
+      : '字体是否可用取决于平台资源，若需要可安装该字体后再使用。';
 }
 
 class HomeScreen extends StatefulWidget {
@@ -1341,6 +1354,15 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                         ),
                       ),
                     ),
+                    const SizedBox(height: 10),
+                    _FontPreviewCard(
+                      currentFont: settings.fontChoice,
+                      isLikelyAvailable:
+                          settings.fontChoice.isLikelyAvailableOn(
+                        Theme.of(context).platform,
+                      ),
+                      strings: strings,
+                    ),
                   ],
                 ),
                 const SizedBox(height: 12),
@@ -1445,6 +1467,105 @@ class _SettingsPanelState extends State<_SettingsPanel> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _FontPreviewCard extends StatelessWidget {
+  final AppFontChoice currentFont;
+  final bool isLikelyAvailable;
+  final AppStrings strings;
+
+  const _FontPreviewCard({
+    required this.currentFont,
+    required this.isLikelyAvailable,
+    required this.strings,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final hasFontFamily = currentFont.fontFamily != null;
+    final fontStyle = hasFontFamily
+        ? TextStyle(
+            fontFamily: currentFont.fontFamily,
+            fontSize: 14,
+            height: 1.3,
+            color: colorScheme.onSurface,
+          )
+        : null;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: colorScheme.outline),
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.25),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            strings.appFontCurrent,
+            style: TextStyle(
+              color: colorScheme.onSurfaceVariant,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            currentFont.name,
+            style: TextStyle(
+              color: colorScheme.onSurface,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            strings.appFontPreview,
+            style: TextStyle(
+              color: colorScheme.onSurfaceVariant,
+              fontSize: 11,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Aa文本 Font preview sample 12345',
+            style: fontStyle ?? Theme.of(context).textTheme.bodyMedium,
+            maxLines: 2,
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Icon(
+                isLikelyAvailable
+                    ? Icons.check_circle_outline
+                    : Icons.warning_amber,
+                size: 14,
+                color: isLikelyAvailable
+                    ? colorScheme.secondary
+                    : colorScheme.error,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  isLikelyAvailable
+                      ? strings.fontPlatformHint
+                      : '${currentFont.name}  $strings.fontFallbackHint',
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 10.5,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
