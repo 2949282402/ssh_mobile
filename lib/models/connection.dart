@@ -12,6 +12,7 @@ class ConnectionConfig {
   bool keepAlive;
   int keepAliveInterval;
   TerminalLaunchMode launchMode;
+  ServerPlatform serverPlatform;
   int tmuxAutoDeleteSeconds;
   DateTime createdAt;
   DateTime updatedAt;
@@ -34,6 +35,7 @@ class ConnectionConfig {
     this.keepAlive = true,
     this.keepAliveInterval = 3,
     this.launchMode = TerminalLaunchMode.tmux,
+    this.serverPlatform = ServerPlatform.linux,
     this.tmuxAutoDeleteSeconds = 600,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -57,6 +59,7 @@ class ConnectionConfig {
       'keepAlive': keepAlive,
       'keepAliveInterval': keepAliveInterval,
       'launchMode': launchMode.name,
+      'serverPlatform': serverPlatform.name,
       'tmuxAutoDeleteSeconds': tmuxAutoDeleteSeconds,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
@@ -68,6 +71,12 @@ class ConnectionConfig {
   }
 
   factory ConnectionConfig.fromJson(Map<String, dynamic> json) {
+    final serverPlatform = ServerPlatform.fromName(
+      json['serverPlatform'] as String? ?? json['platform'] as String?,
+    );
+    final launchMode = TerminalLaunchMode.fromName(
+      json['launchMode'] as String?,
+    );
     return ConnectionConfig(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -79,7 +88,11 @@ class ConnectionConfig {
       terminalHeight: (json['terminalHeight'] as num?)?.toInt() ?? 24,
       keepAlive: json['keepAlive'] as bool? ?? true,
       keepAliveInterval: (json['keepAliveInterval'] as num?)?.toInt() ?? 3,
-      launchMode: TerminalLaunchMode.fromName(json['launchMode'] as String?),
+      launchMode: serverPlatform == ServerPlatform.windows &&
+              launchMode == TerminalLaunchMode.tmux
+          ? TerminalLaunchMode.ssh
+          : launchMode,
+      serverPlatform: serverPlatform,
       tmuxAutoDeleteSeconds:
           (json['tmuxAutoDeleteSeconds'] as num?)?.toInt() ?? 600,
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
@@ -107,12 +120,15 @@ class ConnectionConfig {
     bool? keepAlive,
     int? keepAliveInterval,
     TerminalLaunchMode? launchMode,
+    ServerPlatform? serverPlatform,
     int? tmuxAutoDeleteSeconds,
     String? jumpHost,
     int? jumpPort,
     String? jumpUsername,
     String? group,
   }) {
+    final nextPlatform = serverPlatform ?? this.serverPlatform;
+    final nextLaunchMode = launchMode ?? this.launchMode;
     return ConnectionConfig(
       id: id ?? this.id,
       name: name ?? this.name,
@@ -126,7 +142,11 @@ class ConnectionConfig {
       terminalHeight: terminalHeight ?? this.terminalHeight,
       keepAlive: keepAlive ?? this.keepAlive,
       keepAliveInterval: keepAliveInterval ?? this.keepAliveInterval,
-      launchMode: launchMode ?? this.launchMode,
+      launchMode: nextPlatform == ServerPlatform.windows &&
+              nextLaunchMode == TerminalLaunchMode.tmux
+          ? TerminalLaunchMode.ssh
+          : nextLaunchMode,
+      serverPlatform: nextPlatform,
       tmuxAutoDeleteSeconds:
           tmuxAutoDeleteSeconds ?? this.tmuxAutoDeleteSeconds,
       createdAt: createdAt,
@@ -136,6 +156,39 @@ class ConnectionConfig {
       jumpUsername: jumpUsername ?? this.jumpUsername,
       group: group ?? this.group,
     );
+  }
+}
+
+enum ServerPlatform {
+  linux,
+  windows;
+
+  String get name {
+    switch (this) {
+      case ServerPlatform.linux:
+        return 'linux';
+      case ServerPlatform.windows:
+        return 'windows';
+    }
+  }
+
+  String get displayName {
+    switch (this) {
+      case ServerPlatform.linux:
+        return 'Linux';
+      case ServerPlatform.windows:
+        return 'Windows';
+    }
+  }
+
+  static ServerPlatform fromName(String? name) {
+    switch (name?.toLowerCase()) {
+      case 'windows':
+      case 'win':
+        return ServerPlatform.windows;
+      default:
+        return ServerPlatform.linux;
+    }
   }
 }
 

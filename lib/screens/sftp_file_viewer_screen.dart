@@ -41,9 +41,10 @@ class _SftpFileViewerScreenState extends State<SftpFileViewerScreen> {
     super.initState();
     _kind = _previewKind(widget.entry.name);
     if (_kind != _PreviewKind.unsupported) {
+      final settings = context.read<AppSettings>();
       _bytesFuture = context.read<SftpService>().downloadBytes(
             widget.entry,
-            maxBytes: _previewLimitFor(_kind),
+            maxBytes: _previewLimitFor(_kind, settings),
           );
     }
   }
@@ -193,15 +194,15 @@ class _SftpFileViewerScreenState extends State<SftpFileViewerScreen> {
     return utf8.decode(bytes, allowMalformed: true);
   }
 
-  int _previewLimitFor(_PreviewKind kind) {
+  int _previewLimitFor(_PreviewKind kind, AppSettings settings) {
     switch (kind) {
       case _PreviewKind.text:
       case _PreviewKind.markdown:
       case _PreviewKind.html:
-        return SftpService.maxTextPreviewBytes;
+        return settings.sftpTextPreviewLimitBytes;
       case _PreviewKind.image:
       case _PreviewKind.pdf:
-        return SftpService.maxRichPreviewBytes;
+        return settings.sftpRichPreviewLimitBytes;
       case _PreviewKind.unsupported:
         return 0;
     }

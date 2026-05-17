@@ -33,9 +33,19 @@ new path in source or docs.
   secrets redacted.
 - Keep mobile, Windows, and macOS behavior consistent for shared SSH/SFTP
   features.
+- When adding or editing a saved server, validate the SSH login with the
+  submitted host, port, username, password, and/or private key before saving.
+  On failure, keep the user on the form and guide them to correct the
+  connection details.
+- Saved servers include a `serverPlatform` selection, defaulting to Linux.
+  Windows servers must use plain SSH mode in the app; native Windows OpenSSH
+  does not provide tmux unless the user is really connecting to WSL or another
+  Linux-like shell with tmux installed.
 - Keep new UI consistent with `lib/theme/app_theme.dart`: use the app theme for
-  colors, button/input/list/navigation styling, and avoid page-local palettes
-  unless a protocol view such as the terminal requires it.
+  colors, card surfaces, drawers, bottom sheets, segmented controls, expansion
+  tiles, scrollbars, progress indicators, button/input/list/navigation styling,
+  and avoid page-local palettes unless a protocol view such as the terminal
+  requires it.
 - Keep the main application font family centralized in `AppSettings` and
   `AppTheme`. Do not set unrelated page-local font families for normal UI text;
   vary only size, weight, color, and emphasis. If adding font choices, prefer
@@ -58,6 +68,17 @@ new path in source or docs.
 - Keep AI server tools safe by default: read-only diagnostics run directly, any
   command that may write or change server state must pause for explicit human
   approval in the chat page, and credential exposure remains blocked.
+- AI `run_command` must enforce the saved server platform. Linux servers accept
+  Linux/POSIX diagnostics; Windows servers require explicit `cmd /c` or
+  PowerShell/pwsh commands. Do not silently run a Linux command on Windows or a
+  Windows command on Linux.
+- Delete/remove commands are blocked for AI tools, even with user approval.
+  This includes common Linux deletion commands, Windows `del`/`rd`/`Remove-*`,
+  and resource deletion verbs such as `docker rm`, `kubectl delete`, `sc delete`,
+  and `reg delete`.
+- If a Windows tool command returns an access-denied/elevation error, return a
+  clear permission message explaining that the current account lacks permission
+  and that the user needs an Administrator/elevated account or explicit access.
 - When code changes add, remove, rename, or materially change files, features,
   navigation entries, settings, AI tools, dependencies, or platform behavior,
   update this skill and `README.md` in the same task so documentation stays in
@@ -81,9 +102,9 @@ Use `lib/services/llm_chat_service.dart` for provider protocol behavior and
 - Tool calls may arrive split across multiple SSE deltas. Accumulate id, name,
   and argument fragments before executing tools.
 - The chat input `+` toolbar should stay below the input row as a compact
-  WeChat-like function panel. It currently exposes only Server selection and the
-  Skills manager entry; do not re-add prompt templates or a temporary Skill
-  picker to this panel unless the product direction changes.
+  WeChat-like function panel. It exposes Server selection, the Skills manager,
+  and the current chat session's WebView entry; do not re-add prompt templates
+  or a temporary Skill picker to this panel unless the product direction changes.
 - On Windows and macOS, the AI chat input uses desktop shortcuts: Enter sends
   the message and Ctrl+Enter inserts a newline. Keep mobile keyboard behavior
   independent so phone users can still enter multiline text naturally.
@@ -100,7 +121,31 @@ Use `lib/services/llm_chat_service.dart` for provider protocol behavior and
 - DeepSeek thinking mode can return `reasoning_content`. If the response has
   tool calls, pass `reasoning_content` back unchanged in the assistant tool-call
   message. Surface reasoning, tool requests, tool results, and approval outcomes
-  as collapsed chat trace details; keep them out of future model context.
+  as collapsed chat trace details, and include those trace details in
+  assistant `contextText` memory so later turns can inspect server state. The
+  LLM settings page exposes DeepSeek-only `thinking` and `reasoning_effort`
+  controls; send those parameters only to DeepSeek API hosts, not to generic
+  OpenAI-compatible aggregators.
+- Internet search for the LLM is exposed as an optional client-side
+  `web_search` function tool backed by a user-configured SearXNG instance. Keep
+  it disabled until the user enables it and provides an instance URL; return
+  cited result URLs in the tool result. Do not rely on DeepSeek Chat Completions
+  having hosted web search; its documented tools are function tools. OpenAI
+  hosted web search should be handled by a separate Responses API adapter.
+- Client device tools must use the `client_` prefix, state clearly in their
+  descriptions that they run on the SSH Mobile client device rather than a
+  server, and return `execution: client`. Keep OS/device client tool logic in
+  `ClientSystemToolService` instead of mixing it into SSH/SFTP code. Client
+  tools currently cover time, device info, network info, battery status,
+  opening app settings, clipboard writes, reminders, and current-chat WebView
+  plain-text reading. Keep WebView session state in `ClientWebViewService`; it
+  is keyed by AI chat id, should survive returning from the WebView route, and
+  should be cleared when that chat history is deleted. Client reminders may use
+  in-memory local notifications; Android system alarms should go through the
+  native `ssh_mobile/client_system` MethodChannel and
+  `AlarmClock.ACTION_SET_ALARM`. Android-only client diagnostics such as
+  network and battery details should return a graceful unsupported payload on
+  other platforms.
 - Track context window usage with the selected 259K, 512K, or 1M limit. When
   estimated usage reaches 90%, call the current model to summarize older
   history before continuing the user request. Keep token estimation out of the
@@ -115,19 +160,27 @@ Use `lib/services/llm_chat_service.dart` for provider protocol behavior and
   messages after that point and regenerate fresh assistant text, traces, token
   stats, and `contextText`. Chat branches should copy messages through the
   selected assistant reply and continue with the same context slimming rules.
+- New AI page entries should open an unsaved empty draft chat by default.
+  Persist the chat only after the user sends a message.
 - Add a second confirmation step for destructive/rewrite actions on the AI chat
   page: both branch creation and assistant reply regeneration should require
   explicit user confirmation before executing.
 - Store per-assistant-message token and elapsed-time metadata and render it as
   small, low-emphasis text below the message bubble.
 - Throttle streaming UI updates so small SSE chunks do not rebuild Markdown on
-  every token. Around 80ms per visible update keeps output responsive without
-  making page switches stutter.
-- While an assistant message is still streaming, render it as lightweight text
-  and switch to Markdown after completion; continuous Markdown parsing is a
-  common source of AI-page jank.
-- If users report `too many tool rounds`, inspect both tool loop limits and
-  whether the command whitelist blocks reasonable read-only discovery commands.
+  every token. Markdown is rendered during streaming for readability, so keep
+  visible updates batched and avoid adding extra work to the hot message build
+  path. During streaming, throttle context-token estimation, coalesce
+  scroll-to-bottom requests, jump instead of animating repeated streaming
+  scrolls, and avoid resorting the chat list for every partial assistant
+  update. Keep history drawer slide/drag animation local to the overlay rather
+  than rebuilding the whole chat page each frame.
+- Tool rounds are intentionally unbounded; if a model loops, rely on the chat
+  stop button and inspect whether the command whitelist blocks reasonable
+  read-only discovery commands.
+- Keep a visible stop button during LLM streaming. Cancelling should close the
+  active HTTP stream, reject any pending tool approval, and save the partial
+  assistant message with a cancellation trace.
 - If adding write-capable tools, preserve the approval gate: show the exact
   server and command in the chat page, execute only after approval, and let
   rejection abort the current operation so the user can give new instructions.
@@ -136,6 +189,13 @@ Use `lib/services/llm_chat_service.dart` for provider protocol behavior and
   the command text determine the panel height.
 - Keep AI command execution on the plain one-shot SSH exec path. Do not attach
   tmux or reuse interactive terminal sessions for LLM tools.
+- AI tools must handle Windows and Linux/Unix targets. Use the saved
+  `serverPlatform` when available, and call `detect_os` before emitting
+  OS-specific commands when the target is still unclear. Keep Windows
+  diagnostics read-only by default (`cmd /c ver`, `dir`, `type`, `tasklist`,
+  `netstat`, `ipconfig`, safe PowerShell `Get-*` queries), keep non-delete
+  write operations behind the existing approval gate, and keep delete/remove
+  operations blocked.
 - AI one-shot diagnostic commands may search slow paths on real servers, so
   their timeout should be user-configurable, shared with LLM request timeouts,
   and should return a tool result explaining the timeout instead of crashing the
@@ -149,36 +209,156 @@ Use `lib/services/sftp_service.dart` for connection/session behavior and
 
 - Keep multi-server switching warm when possible.
 - Remember the last remote path per connection and restore it after reconnect.
-- Require confirmation before delete.
+- Let users collapse the SFTP server selector after choosing a server. On
+  desktop, preserve a narrow status rail; on mobile, preserve a compact current
+  server bar so users can expand it again without losing context.
+- Require typed-name confirmation before SFTP delete. The user must enter the
+  exact file or directory name, and `SftpService.deleteEntry` must receive and
+  verify that name before deleting.
 - Prefer separate editor/viewer pages for larger editing and previews.
+- Normal SFTP downloads may be larger than preview/edit files; keep preview and
+  editor limits protective, but allow ordinary file downloads up to the current
+  download cap.
+- The settings drawer owns client-side SFTP limits for normal downloads, text
+  preview, rich preview, and text editing. Read those values from
+  `AppSettings` at the UI entry points instead of hardcoding service constants
+  into screens.
 - Keep upload, download, edit, delete, preview behavior aligned across mobile,
   Windows, and macOS.
 
+### Performance Monitor
+
+Use `lib/services/performance_monitor_service.dart` for sampling,
+`lib/services/server_status_probe.dart` for read-only Linux status commands and
+parsers, and `lib/screens/performance_monitor_screen.dart` for UI. The monitor
+page uses the same server selector/collapse pattern as SFTP, supports
+multi-select on the Performance tab, and must stay silent until the user taps
+Start. Starting monitoring freezes the selected server set for that run,
+collapses the server selector, clears previous samples, and creates fresh
+in-memory series for the selected servers. Keep at most ten minutes of samples
+in memory and never persist monitor samples.
+
+Collect server metrics with read-only one-shot SSH exec commands; do not attach
+to tmux or interactive terminal sessions. Dispatch by the saved server platform:
+Linux reads `/proc/stat`, `/proc/meminfo`, `/proc/diskstats`, `/proc/net/dev`,
+and `df -P`; Windows uses the PowerShell status probe in `ServerStatusProbe` and
+parses CPU, memory, disk usage, listening ports, and process memory from its JSON
+payload. The performance page has three internal tabs: Performance, Ports, and
+Applications. Performance sampling is user-started and app-scoped; Ports and
+Applications only allow one selected server each and keep their selections
+isolated from Performance and from each other. They only fetch when their tab is
+opened or refreshed. Starting
+performance monitoring should collapse the configuration panel and show elapsed
+monitoring time in the collapsed header. Disk usage and individual line charts
+should be collapsible. Multi-server charts should support grouping by a
+user-selected number of servers per chart, with 1, 3, and 5 as presets plus a
+custom count. Sampling failures should back off by increasing the effective
+refresh interval and should not show noisy banners while the user is working.
+Keep the performance command tolerant of `df` variants: some BusyBox/minimal
+Linux systems do not support `df -B1`, so parse usable `/proc` output even when
+the disk-usage subsection has to fall back or is unavailable. Always clear
+sampling-in-progress flags in a `finally` path so a failed probe cannot block
+future samples. If a one-shot SSH probe is interrupted by a transient network
+drop, retry once with a fresh one-shot SSH connection before surfacing the
+sampling failure.
+Keep the existing foreground background service/power-lock path active when
+monitoring starts so sampling has the best chance to continue when the app is
+backgrounded.
+
+Port monitor rows should show compact port/process summaries by default and
+keep address, protocol, state, and process details collapsed until the user
+expands the row. Ports and Applications refresh buttons should be disabled
+while their current fetch is still in flight.
+
+The monitor service also owns lightweight in-memory health state. Health scores
+combine the latest sample, disk usage, and sampling errors; recent alerts should
+stay in memory only and be lightly deduplicated so threshold crossings do not
+spam the UI. The Servers page may show the latest health chip from the monitor
+service, but it should keep using lightweight snapshots outside Sliver item
+builders instead of watching the full service inside each card.
+
+The `get_server_status` AI tool should use `ServerStatusProbe` so LLM-accessible
+server status matches the monitor page parsers. Keep this tool read-only and on
+the one-shot SSH exec path. `generate_ops_report` should also stay read-only,
+reuse `ServerStatusProbe`, and return structured health, risk, port, and process
+data so the model can write a user-facing operations report.
+
 ### Navigation and Chat UX
 
-Current main page order is AI, Servers, Windows, SFTP, then Logs. The mobile
-bottom navigation and desktop rail show only AI, Servers, Windows, and SFTP;
-Logs sits at the far right in the `PageView`. App launch still defaults to the
-Servers page even though AI is the first navigation item.
+Current main page order is AI, Servers, SFTP, Performance Monitor, then Logs.
+Terminal window management is embedded in the Servers page: each server card has
+a default-collapsed window section that lists only that server's terminal
+windows, and the connection history action sits in the server/window overview
+header. The mobile bottom navigation and desktop rail show AI, Servers, SFTP,
+and Performance Monitor; Logs sits at the far right in the `PageView`. App
+launch still defaults to the Servers page even though AI is the first navigation
+item.
 
-Use lazy page construction for the main `PageView` so adjacent heavy pages such
-as AI chat do not eagerly load large histories during startup or server-page
-navigation.
+The app shell does not use a global top app bar. App settings live in the left
+drawer, with the app title shown inside the drawer. Open app settings from the
+AI page's explicit App settings button instead of a left-edge drawer gesture, so
+the main `PageView` can keep horizontal page swiping on the AI page. Keep the
+LLM settings button separate from app settings. AI chat history must open only
+via the top-left history button and should display as a full-width overlay with
+an explicit close button.
+
+Mobile bottom navigation is persistent by default. Do not reintroduce automatic
+collapse unless the product direction changes. Keep mobile UI density adapted
+through `lib/utils/responsive.dart` so 1.5K-class phones do not render
+noticeably larger than 2K-class phones.
+
+Use deferred page activation for the main `PageView` so adjacent pages stay
+blank and do not mount their data subscriptions until they are selected. While
+a selected page is activating, show only the shared centered loading indicator.
+The AI page should load only settings and an unsaved draft on first activation;
+after it has been opened, keep the active draft/chat widget state alive across
+navigation page switches. Saved chat history is loaded lazily when the history
+panel is opened, with a blank panel body and loading indicator during the read.
 
 For smooth page swiping, keep heavy work out of drag time: pass an `active` flag
 to heavyweight pages, load AI chat history only after the page settles active,
-wrap page bodies in `RepaintBoundary`, pause non-active page tickers with
-`TickerMode`, and use Provider `select` in `HomeScreen` so unrelated storage
-notifications do not rebuild the whole shell.
+wrap page bodies in `RepaintBoundary`, pause non-selected page tickers with
+`TickerMode`, and keep page-specific Provider `select` calls inside the page
+body instead of the top-level `HomeScreen` shell.
 
 For log-heavy flows, keep `AppLogService.entries` and level counts cached until
 the log queue changes. Avoid recomputing reversed log lists and per-level counts
-inside `DeveloperLogPage.build`.
+inside `DeveloperLogPage.build`. Coalesce log notifications so noisy SSH/LLM
+diagnostics do not rebuild the log page for every single line. Keep filtered log
+lists and entry id sets cached in `AppLogService` rather than rebuilding them in
+the log page. Do not capture a fresh current stack trace for intercepted
+`debugPrint` lines or background-isolate log relays; those high-frequency logs
+should skip source lookup unless an explicit stack trace is already available.
+
+Coalesce SFTP service notifications during connect, refresh, upload, download,
+save, and delete flows. State should still update immediately in memory, but UI
+listeners should not be notified multiple times inside the same frame-sized
+window.
 
 Avoid allocation-heavy service getters in widgets that use Provider `select`.
 Cache stable unmodifiable views for connection and SSH session collections, and
 refresh those views only when the underlying collection membership or visible
-metadata changes.
+metadata changes. Server overview cards should select a lightweight session
+summary rather than the full `SshSession` list, so terminal window rename/font
+changes do not rebuild the whole server list.
+
+The embedded terminal windows list should select immutable window snapshots with
+value equality instead of the raw `SshSession` list, so `SshService` view
+refreshes do not rebuild the list unless displayed window metadata actually
+changed.
+
+Batch terminal history writes before encrypting and appending them to disk.
+Encrypting every small stdout/stderr chunk can cause terminal jank on noisy SSH
+sessions even when the visible terminal renderer is frame-throttled.
+Keep terminal visible writes capped per frame so large command output cannot
+monopolize rendering. Keep the interactive xterm scrollback bounded and avoid
+rebuilding the terminal view for scrollbar metric changes; full raw output
+belongs in encrypted terminal history. Shortcut key usage tracking should
+persist in the background without notifying the shortcut panel on every key tap.
+The visible shortcut bar uses a saved manual order, not LRU sorting; long-press
+dragging reorders commands, and custom commands still need an explicit delete
+path. Terminal font controls intentionally allow a very small minimum size so
+phone users can trade readability for denser terminal output when needed.
 
 Use keyed animations for chat switching. Avoid an `AnimatedSwitcher` around a
 `ListView` that shares a `ScrollController`, because it can briefly mount two
@@ -186,6 +366,17 @@ lists with the same controller.
 
 Use `AutomaticKeepAliveClientMixin` for the AI chat page so streaming responses
 continue while the user switches to another navigation page.
+
+Keep `StorageService` list data cached for AI chats, AI skills, tmux restore
+records, and terminal history records. High-frequency saves should mutate the
+cached list and write it back, rather than decoding the full JSON payload before
+every single save. Debounce those list writes and flush pending protected-pref
+writes when the app enters inactive/paused/detached lifecycle states.
+
+Terminal pages should select only the active session metadata needed by the
+app bar. Avoid `context.watch<SshService>()` in the terminal screen body,
+because unrelated session metadata notifications can otherwise rebuild the
+whole terminal chrome.
 
 Open the settings drawer only from the settings icon, not from a Servers-page
 swipe; horizontal swipes on Servers should continue to page navigation. Keep

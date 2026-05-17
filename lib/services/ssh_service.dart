@@ -23,6 +23,9 @@ enum SshConnectionState {
 
 class SshSession {
   static const int maxOutputCacheChars = 200000;
+  static const double defaultTerminalFontSize = 8.0;
+  static const double minTerminalFontSize = 4.0;
+  static const double maxTerminalFontSize = 28.0;
 
   final String id;
   final String connectionId;
@@ -47,7 +50,7 @@ class SshSession {
     String? displayName,
     this.tmuxSessionName,
     this.tmuxAutoDeleteSeconds,
-    this.fontSize = 14,
+    this.fontSize = defaultTerminalFontSize,
     required this.outputController,
     this.state = SshConnectionState.connecting,
     this.errorMessage,
@@ -221,7 +224,8 @@ class SshService extends ChangeNotifier {
   void setSessionFontSize(String sessionId, double fontSize) {
     final session = _sessions[sessionId];
     if (session == null) return;
-    session.fontSize = fontSize.clamp(1.0, 28.0);
+    session.fontSize = fontSize.clamp(
+        SshSession.minTerminalFontSize, SshSession.maxTerminalFontSize);
     unawaited(_saveRestorableTmuxSession(session));
     _notifySessionMetadataChanged();
   }
@@ -390,25 +394,28 @@ class SshService extends ChangeNotifier {
     session.updatedAt = DateTime.now();
     _lastErrorMessage = null;
     _lastSessionId = id;
+    final launchMode = _effectiveLaunchMode(config);
     final connectCompleter = Completer<void>();
     _connectCompleters[id] = connectCompleter;
     unawaited(_saveTerminalHistoryRecord(session));
     AppLogService.instance.info(
       'Session connecting',
-      details:
-          'sessionId=$id connection=${config.name} mode=${config.launchMode.name}',
+      details: 'sessionId=$id connection=${config.name} '
+          'mode=${launchMode.name} platform=${config.serverPlatform.name}',
     );
     _notifySessionMetadataChanged();
 
     try {
       final credentials = await _clientFactory.loadCredentials(config);
 
-      session.tmuxSessionName ??= config.launchMode == TerminalLaunchMode.tmux
-          ? _uniqueTmuxSessionName(
-              _tmuxSessionNameForSession(session),
-              exceptSessionId: id,
-            )
-          : null;
+      if (launchMode == TerminalLaunchMode.tmux) {
+        session.tmuxSessionName ??= _uniqueTmuxSessionName(
+          _tmuxSessionNameForSession(session),
+          exceptSessionId: id,
+        );
+      } else {
+        session.tmuxSessionName = null;
+      }
       if (session.tmuxSessionName != null) {
         AppLogService.instance.info(
           'Using tmux session',
@@ -432,7 +439,7 @@ class SshService extends ChangeNotifier {
           'terminalWidth': config.terminalWidth,
           'terminalHeight': config.terminalHeight,
           'keepAliveInterval': 3,
-          'launchMode': config.launchMode.name,
+          'launchMode': launchMode.name,
           'tmuxSessionName': session.tmuxSessionName,
           'tmuxAutoDeleteSeconds': config.tmuxAutoDeleteSeconds,
         });
@@ -441,6 +448,7 @@ class SshService extends ChangeNotifier {
           session: session,
           config: config,
           credentials: credentials,
+          launchMode: launchMode,
         );
       }
 
@@ -601,6 +609,7 @@ class SshService extends ChangeNotifier {
     required SshSession session,
     required ConnectionConfig config,
     required SshCredentials credentials,
+    required TerminalLaunchMode launchMode,
   }) async {
     await _closeLocalSession(session.id, destroyTmux: false);
     AppLogService.instance.info(
@@ -616,7 +625,7 @@ class SshService extends ChangeNotifier {
     SSHSession? shell;
     _LocalSshRuntime? runtime;
     try {
-      if (config.launchMode == TerminalLaunchMode.tmux) {
+      if (launchMode == TerminalLaunchMode.tmux) {
         await _ensureLocalTmuxInstalled(client);
       }
 
@@ -631,7 +640,7 @@ class SshService extends ChangeNotifier {
         sessionId: session.id,
         client: client,
         shell: shell,
-        tmuxSessionName: config.launchMode == TerminalLaunchMode.tmux
+        tmuxSessionName: launchMode == TerminalLaunchMode.tmux
             ? session.tmuxSessionName
             : null,
       );
@@ -658,7 +667,7 @@ class SshService extends ChangeNotifier {
       (bytes) => _handleLocalOutput(session.id, bytes),
     );
 
-    if (config.launchMode == TerminalLaunchMode.tmux) {
+    if (launchMode == TerminalLaunchMode.tmux) {
       connectedShell.stdin.add(
         utf8.encode(
           '${_buildTmuxAttachCommand(
@@ -702,6 +711,13 @@ class SshService extends ChangeNotifier {
       details: 'sessionId=${session.id} connection=${config.name}',
     );
     _notifySessionMetadataChanged();
+  }
+
+  TerminalLaunchMode _effectiveLaunchMode(ConnectionConfig config) {
+    if (config.serverPlatform == ServerPlatform.windows) {
+      return TerminalLaunchMode.ssh;
+    }
+    return config.launchMode;
   }
 
   void _handleLocalOutput(String sessionId, List<int> bytes) {
@@ -887,7 +903,12 @@ class SshService extends ChangeNotifier {
       final message = event?['message'] as String? ?? '';
       final details = event?['details'] as String?;
       if (message.isEmpty) return;
-      AppLogService.instance.add(level, message, details: details);
+      AppLogService.instance.add(
+        level,
+        message,
+        details: details,
+        captureSource: false,
+      );
     });
 
     _stateSub = _backgroundService.on('sshState').listen((event) {

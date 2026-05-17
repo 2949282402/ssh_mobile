@@ -35,9 +35,10 @@ class TerminalScreen extends StatefulWidget {
 
 class _TerminalScreenState extends State<TerminalScreen>
     with WidgetsBindingObserver {
-  static const double _minTerminalFontSize = 1.0;
-  static const double _maxTerminalFontSize = 28.0;
-  static const int _maxTerminalFlushChars = 24000;
+  static const double _minTerminalFontSize = SshSession.minTerminalFontSize;
+  static const double _maxTerminalFontSize = SshSession.maxTerminalFontSize;
+  static const int _maxTerminalFlushChars = 6000;
+  static const int _terminalScrollbackLines = 4000;
 
   late final Terminal _terminal;
   late final TerminalController _terminalController;
@@ -59,7 +60,7 @@ class _TerminalScreenState extends State<TerminalScreen>
   bool _loadingBufferedOutput = false;
   bool _reconnectInProgress = false;
   bool _hasShownDisconnectMessage = false;
-  double _terminalFontSize = 14;
+  double _terminalFontSize = SshSession.defaultTerminalFontSize;
   Offset _lastLongPressPosition = Offset.zero;
   Timer? _longPressTimer;
   int _activePointers = 0;
@@ -94,7 +95,10 @@ class _TerminalScreenState extends State<TerminalScreen>
     _sshService = context.read<SshService>();
 
     _terminal = Terminal(
-      maxLines: 10000,
+      // Keep the interactive scrollback bounded; full raw output still goes to
+      // encrypted terminal history, while a huge xterm buffer makes touch
+      // scrolling and repainting noticeably slower on phones.
+      maxLines: _terminalScrollbackLines,
       onOutput: (data) {
         if (!mounted) return;
         _sshService.sendData(widget.sessionId, data);
@@ -109,8 +113,10 @@ class _TerminalScreenState extends State<TerminalScreen>
         : _terminalFocusNode;
     _complexInputController = TextEditingController();
     _windowsCommandInputController = TextEditingController();
-    _terminalFontSize =
-        _sshService.getSession(widget.sessionId)?.fontSize ?? _terminalFontSize;
+    _terminalFontSize = (_sshService.getSession(widget.sessionId)?.fontSize ??
+            _terminalFontSize)
+        .clamp(_minTerminalFontSize, _maxTerminalFontSize)
+        .toDouble();
 
     _loadServerInfo();
     _installSshListener();
@@ -212,7 +218,11 @@ class _TerminalScreenState extends State<TerminalScreen>
     );
 
     if (!_loadedBufferedOutput && !_loadingBufferedOutput) {
-      _loadingBufferedOutput = true;
+      if (mounted) {
+        setState(() => _loadingBufferedOutput = true);
+      } else {
+        _loadingBufferedOutput = true;
+      }
       try {
         final bufferedOutput = session.outputText;
         final initialOutput = bufferedOutput.isNotEmpty
@@ -232,7 +242,11 @@ class _TerminalScreenState extends State<TerminalScreen>
 
         _loadedBufferedOutput = true;
       } finally {
-        _loadingBufferedOutput = false;
+        if (mounted && identical(_subscribedSession, session)) {
+          setState(() => _loadingBufferedOutput = false);
+        } else {
+          _loadingBufferedOutput = false;
+        }
         queueLiveOutput = false;
       }
     } else {
@@ -649,11 +663,13 @@ class _TerminalScreenState extends State<TerminalScreen>
 
   @override
   Widget build(BuildContext context) {
-    final ssh = context.watch<SshService>();
     final appSettings = context.watch<AppSettings>();
     final strings = TerminalStrings(appSettings.language);
-    final session = ssh.getSession(widget.sessionId);
-    final isConnected = session?.isConnected == true;
+    final sessionSnapshot =
+        context.select<SshService, _TerminalSessionSnapshot>(
+      (ssh) => _TerminalSessionSnapshot.from(ssh.getSession(widget.sessionId)),
+    );
+    final isConnected = sessionSnapshot.isConnected;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final terminalBackground =
         isDark ? AppTheme.terminalBg : const Color(0xFFFAFBFC);
@@ -701,7 +717,7 @@ class _TerminalScreenState extends State<TerminalScreen>
     return Scaffold(
       appBar: TerminalScreenAppBar(
         strings: strings,
-        session: session,
+        displayName: sessionSnapshot.displayName,
         serverName: _serverName,
         isConnected: isConnected,
         isDarkMode: appSettings.isDarkMode,
@@ -750,6 +766,17 @@ class _TerminalScreenState extends State<TerminalScreen>
                     ],
                   ),
           ),
+          if (_loadingBufferedOutput)
+            ColoredBox(
+              color: terminalBackground.withValues(alpha: 0.72),
+              child: const Center(
+                child: SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -1088,6 +1115,7 @@ class _TerminalScreenState extends State<TerminalScreen>
 
   void _clearTerminalSelection() {
     try {
+      if (_terminalController.selection == null) return;
       _terminalController.clearSelection();
     } catch (_) {}
   }
@@ -1174,6 +1202,39 @@ class _TerminalScreenState extends State<TerminalScreen>
     _windowsCommandInputController.dispose();
     super.dispose();
   }
+}
+
+class _TerminalSessionSnapshot {
+  final String? displayName;
+  final SshConnectionState? state;
+  final String? errorMessage;
+
+  const _TerminalSessionSnapshot({
+    required this.displayName,
+    required this.state,
+    required this.errorMessage,
+  });
+
+  factory _TerminalSessionSnapshot.from(SshSession? session) {
+    return _TerminalSessionSnapshot(
+      displayName: session?.displayName,
+      state: session?.state,
+      errorMessage: session?.errorMessage,
+    );
+  }
+
+  bool get isConnected => state == SshConnectionState.connected;
+
+  @override
+  bool operator ==(Object other) {
+    return other is _TerminalSessionSnapshot &&
+        other.displayName == displayName &&
+        other.state == state &&
+        other.errorMessage == errorMessage;
+  }
+
+  @override
+  int get hashCode => Object.hash(displayName, state, errorMessage);
 }
 
 class _SessionSwitcherAction {

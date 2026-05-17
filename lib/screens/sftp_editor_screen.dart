@@ -43,7 +43,10 @@ class _SftpEditorScreenState extends State<SftpEditorScreen> {
   }
 
   Future<void> _load() async {
-    final text = await context.read<SftpService>().readTextFile(widget.entry);
+    final text = await context.read<SftpService>().readTextFile(
+          widget.entry,
+          maxBytes: context.read<AppSettings>().sftpTextEditLimitBytes,
+        );
     _originalText = text;
     _controller.text = text;
   }

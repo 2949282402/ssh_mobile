@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
@@ -50,7 +48,14 @@ class ConnectionProgressDialog extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const _SmoothSpinner(size: 42),
+                    const SizedBox(
+                      width: 42,
+                      height: 42,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 3,
+                        color: AppTheme.terminalGreen,
+                      ),
+                    ),
                     const SizedBox(height: 18),
                     Text(
                       title,
@@ -76,102 +81,5 @@ class ConnectionProgressDialog extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-class _SmoothSpinner extends StatefulWidget {
-  final double size;
-
-  const _SmoothSpinner({required this.size});
-
-  @override
-  State<_SmoothSpinner> createState() => _SmoothSpinnerState();
-}
-
-class _SmoothSpinnerState extends State<_SmoothSpinner>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    )..repeat();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return RepaintBoundary(
-      child: AnimatedBuilder(
-        animation: _controller,
-        builder: (context, _) {
-          return Transform.rotate(
-            angle: _controller.value * math.pi * 2,
-            child: CustomPaint(
-              size: Size.square(widget.size),
-              painter: _SpinnerPainter(
-                color: AppTheme.terminalGreen,
-                trackColor: Theme.of(context)
-                    .colorScheme
-                    .onSurface
-                    .withValues(alpha: 0.12),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-}
-
-class _SpinnerPainter extends CustomPainter {
-  final Color color;
-  final Color trackColor;
-
-  const _SpinnerPainter({
-    required this.color,
-    required this.trackColor,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final strokeWidth = size.width * 0.1;
-    final rect = Offset.zero & size;
-    final insetRect = rect.deflate(strokeWidth / 2);
-
-    final trackPaint = Paint()
-      ..color = trackColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.round;
-    canvas.drawArc(insetRect, 0, math.pi * 2, false, trackPaint);
-
-    final arcPaint = Paint()
-      ..shader = SweepGradient(
-        colors: [
-          color.withValues(alpha: 0.08),
-          color.withValues(alpha: 0.35),
-          color,
-        ],
-        stops: const [0.0, 0.55, 1.0],
-      ).createShader(insetRect)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.round;
-
-    canvas.drawArc(insetRect, -math.pi / 2, math.pi * 1.45, false, arcPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _SpinnerPainter oldDelegate) {
-    return oldDelegate.color != color || oldDelegate.trackColor != trackColor;
   }
 }

@@ -1,7 +1,7 @@
+import 'dart:async';
 import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/scheduler.dart';
 
 import 'app_settings.dart';
 
@@ -11,9 +11,12 @@ class AppLogService extends ChangeNotifier {
   final ListQueue<AppLogEntry> _entries = ListQueue<AppLogEntry>();
   List<AppLogEntry>? _cachedNewestFirstEntries;
   Map<AppLogLevel, int>? _cachedLevelCounts;
+  Map<AppLogLevel, List<AppLogEntry>>? _cachedEntriesByLevel;
+  Set<int>? _cachedEntryIds;
   DebugPrintCallback? _previousDebugPrint;
   bool _installed = false;
   bool _notifyScheduled = false;
+  Timer? _notifyTimer;
   int _nextEntryId = 1;
 
   AppLogService._();
@@ -38,13 +41,33 @@ class AppLogService extends ChangeNotifier {
     return _cachedLevelCounts = Map.unmodifiable(counts);
   }
 
+  List<AppLogEntry> entriesForLevel(AppLogLevel level) {
+    if (level == AppLogLevel.all) return entries;
+    final cached = _cachedEntriesByLevel;
+    if (cached != null && cached.containsKey(level)) {
+      return cached[level]!;
+    }
+    final map = Map<AppLogLevel, List<AppLogEntry>>.of(cached ?? const {});
+    map[level] = List.unmodifiable(
+      entries.where((entry) => entry.normalizedLevel == level),
+    );
+    _cachedEntriesByLevel = map;
+    return map[level]!;
+  }
+
+  Set<int> get entryIds {
+    return _cachedEntryIds ??= Set.unmodifiable(
+      entries.map((entry) => entry.id),
+    );
+  }
+
   void install() {
     if (_installed) return;
     _installed = true;
     _previousDebugPrint ??= debugPrint;
     debugPrint = (String? message, {int? wrapWidth}) {
       if (message != null && message.isNotEmpty) {
-        add('debug', message);
+        add('debug', message, captureSource: false);
       }
       _previousDebugPrint?.call(message, wrapWidth: wrapWidth);
     };
@@ -98,6 +121,7 @@ class AppLogService extends ChangeNotifier {
     String message, {
     StackTrace? stackTrace,
     String? details,
+    bool captureSource = true,
   }) {
     final safeMessage = _redact(message);
     final safeDetails = details == null ? null : _redact(details);
@@ -107,7 +131,7 @@ class AppLogService extends ChangeNotifier {
         time: DateTime.now(),
         level: level,
         message: safeMessage,
-        sourceLocation: _sourceLocation(stackTrace),
+        sourceLocation: captureSource ? _sourceLocation(stackTrace) : null,
         stackTrace: stackTrace?.toString(),
         details: safeDetails,
       ),
@@ -135,15 +159,17 @@ class AppLogService extends ChangeNotifier {
   void _invalidateCaches() {
     _cachedNewestFirstEntries = null;
     _cachedLevelCounts = null;
+    _cachedEntriesByLevel = null;
+    _cachedEntryIds = null;
   }
 
   void _scheduleNotify() {
     if (_notifyScheduled) return;
     _notifyScheduled = true;
     // Logs can be produced while routes/dialogs are being torn down. Deferring
-    // the UI notification keeps the log page fresh without rebuilding provider
-    // dependents during Flutter's deactivation pass.
-    SchedulerBinding.instance.addPostFrameCallback((_) {
+    // and batching the UI notification keeps provider dependents from
+    // rebuilding every line during noisy SSH/LLM/server diagnostics.
+    _notifyTimer = Timer(const Duration(milliseconds: 160), () {
       _notifyScheduled = false;
       notifyListeners();
     });
@@ -200,6 +226,12 @@ class AppLogService extends ChangeNotifier {
       }
     }
     return null;
+  }
+
+  @override
+  void dispose() {
+    _notifyTimer?.cancel();
+    super.dispose();
   }
 }
 

@@ -92,6 +92,29 @@ class AppTheme {
     ),
     dialogTheme: _dialogTheme(Colors.white),
     popupMenuTheme: _popupMenuTheme(Colors.white),
+    drawerTheme: _drawerTheme(Colors.white, const Color(0xFFE2E8F0)),
+    bottomSheetTheme: _bottomSheetTheme(
+      background: Colors.white,
+      outline: const Color(0xFFE2E8F0),
+    ),
+    segmentedButtonTheme: _segmentedButtonTheme(
+      primary: const Color(0xFF2563EB),
+      outline: const Color(0xFFCBD5E1),
+      surface: Colors.white,
+      foreground: const Color(0xFF334155),
+    ),
+    expansionTileTheme: _expansionTileTheme(
+      foreground: const Color(0xFF111827),
+      muted: const Color(0xFF64748B),
+    ),
+    progressIndicatorTheme: _progressIndicatorTheme(
+      primary: const Color(0xFF2563EB),
+      track: const Color(0xFFE2E8F0),
+    ),
+    scrollbarTheme: _scrollbarTheme(
+      thumb: const Color(0xFF94A3B8),
+      track: const Color(0xFFE2E8F0),
+    ),
     dividerTheme: const DividerThemeData(
       color: Color(0xFFE2E8F0),
       thickness: 1,
@@ -173,6 +196,32 @@ class AppTheme {
     ),
     dialogTheme: _dialogTheme(const Color(0xFF111827)),
     popupMenuTheme: _popupMenuTheme(const Color(0xFF111827)),
+    drawerTheme: _drawerTheme(
+      const Color(0xFF111827),
+      const Color(0xFF273449),
+    ),
+    bottomSheetTheme: _bottomSheetTheme(
+      background: const Color(0xFF111827),
+      outline: const Color(0xFF273449),
+    ),
+    segmentedButtonTheme: _segmentedButtonTheme(
+      primary: const Color(0xFF60A5FA),
+      outline: const Color(0xFF3A465A),
+      surface: const Color(0xFF111827),
+      foreground: const Color(0xFFE5E7EB),
+    ),
+    expansionTileTheme: _expansionTileTheme(
+      foreground: const Color(0xFFE5E7EB),
+      muted: const Color(0xFF94A3B8),
+    ),
+    progressIndicatorTheme: _progressIndicatorTheme(
+      primary: const Color(0xFF60A5FA),
+      track: const Color(0xFF273449),
+    ),
+    scrollbarTheme: _scrollbarTheme(
+      thumb: const Color(0xFF64748B),
+      track: const Color(0xFF273449),
+    ),
     dividerTheme: const DividerThemeData(
       color: Color(0xFF273449),
       thickness: 1,
@@ -450,6 +499,123 @@ class AppTheme {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(_radius),
       ),
+    );
+  }
+
+  static DrawerThemeData _drawerTheme(Color background, Color outline) {
+    return DrawerThemeData(
+      backgroundColor: background,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: const BorderRadius.horizontal(
+          right: Radius.circular(_radius),
+        ),
+        side: BorderSide(color: outline),
+      ),
+    );
+  }
+
+  static BottomSheetThemeData _bottomSheetTheme({
+    required Color background,
+    required Color outline,
+  }) {
+    return BottomSheetThemeData(
+      backgroundColor: background,
+      modalBackgroundColor: background,
+      surfaceTintColor: Colors.transparent,
+      showDragHandle: true,
+      shape: RoundedRectangleBorder(
+        borderRadius: const BorderRadius.vertical(
+          top: Radius.circular(_radius),
+        ),
+        side: BorderSide(color: outline),
+      ),
+    );
+  }
+
+  static SegmentedButtonThemeData _segmentedButtonTheme({
+    required Color primary,
+    required Color outline,
+    required Color surface,
+    required Color foreground,
+  }) {
+    return SegmentedButtonThemeData(
+      style: ButtonStyle(
+        minimumSize: const WidgetStatePropertyAll(Size(44, 38)),
+        padding: const WidgetStatePropertyAll(
+          EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        ),
+        backgroundColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? primary.withValues(alpha: 0.12)
+              : surface,
+        ),
+        foregroundColor: WidgetStateProperty.resolveWith(
+          (states) =>
+              states.contains(WidgetState.selected) ? primary : foreground,
+        ),
+        side: WidgetStateProperty.resolveWith(
+          (states) => BorderSide(
+            color: states.contains(WidgetState.selected) ? primary : outline,
+          ),
+        ),
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(_radius),
+          ),
+        ),
+        textStyle: const WidgetStatePropertyAll(
+          TextStyle(fontWeight: FontWeight.w700, letterSpacing: 0),
+        ),
+      ),
+    );
+  }
+
+  static ExpansionTileThemeData _expansionTileTheme({
+    required Color foreground,
+    required Color muted,
+  }) {
+    return ExpansionTileThemeData(
+      iconColor: muted,
+      collapsedIconColor: muted,
+      textColor: foreground,
+      collapsedTextColor: foreground,
+      tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+      childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(_radius),
+      ),
+      collapsedShape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(_radius),
+      ),
+    );
+  }
+
+  static ProgressIndicatorThemeData _progressIndicatorTheme({
+    required Color primary,
+    required Color track,
+  }) {
+    return ProgressIndicatorThemeData(
+      color: primary,
+      circularTrackColor: track,
+      linearTrackColor: track,
+    );
+  }
+
+  static ScrollbarThemeData _scrollbarTheme({
+    required Color thumb,
+    required Color track,
+  }) {
+    return ScrollbarThemeData(
+      thumbVisibility: const WidgetStatePropertyAll(false),
+      thickness: const WidgetStatePropertyAll(4),
+      radius: const Radius.circular(_radius),
+      thumbColor: WidgetStateProperty.resolveWith(
+        (states) => thumb.withValues(
+          alpha: states.contains(WidgetState.dragged) ? 0.8 : 0.55,
+        ),
+      ),
+      trackColor: WidgetStatePropertyAll(track.withValues(alpha: 0.42)),
     );
   }
 

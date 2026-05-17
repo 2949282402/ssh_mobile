@@ -10,13 +10,43 @@ import 'data_protection_service.dart';
 class TerminalHistoryService {
   static const int defaultLoadBytes = 2 * 1024 * 1024;
   static const int _encryptedChunkChars = 32 * 1024;
+  static const int _maxBufferedWriteChars = 64 * 1024;
+  static const Duration _writeFlushDelay = Duration(milliseconds: 220);
 
   final Map<String, Future<void>> _writeQueues = {};
+  final Map<String, _PendingHistoryWrite> _pendingWrites = {};
   final DataProtectionService _dataProtection = DataProtectionService.instance;
   Future<Directory>? _historyDirectory;
 
   Future<void> append(String sessionId, String data) {
     if (data.isEmpty) return Future.value();
+
+    final pending =
+        _pendingWrites.putIfAbsent(sessionId, _PendingHistoryWrite.new);
+    pending.buffer.write(data);
+    pending.timer?.cancel();
+
+    if (pending.buffer.length >= _maxBufferedWriteChars) {
+      _flushPendingWrite(sessionId);
+    } else {
+      pending.timer = Timer(
+        _writeFlushDelay,
+        () => _flushPendingWrite(sessionId),
+      );
+    }
+
+    return pending.completer.future;
+  }
+
+  void _flushPendingWrite(String sessionId) {
+    final pending = _pendingWrites.remove(sessionId);
+    if (pending == null) return;
+    pending.timer?.cancel();
+    final data = pending.buffer.toString();
+    if (data.isEmpty) {
+      if (!pending.completer.isCompleted) pending.completer.complete();
+      return;
+    }
 
     final previous = _writeQueues[sessionId] ?? Future<void>.value();
     final next =
@@ -30,7 +60,16 @@ class TerminalHistoryService {
     });
 
     _writeQueues[sessionId] = queued;
-    return queued;
+    queued.then(
+      (_) {
+        if (!pending.completer.isCompleted) pending.completer.complete();
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (!pending.completer.isCompleted) {
+          pending.completer.completeError(error, stackTrace);
+        }
+      },
+    );
   }
 
   Future<String> readTail(
@@ -78,6 +117,9 @@ class TerminalHistoryService {
   Future<File> historyFile(String sessionId) => _historyFile(sessionId);
 
   Future<void> flush() async {
+    for (final sessionId in _pendingWrites.keys.toList()) {
+      _flushPendingWrite(sessionId);
+    }
     await Future.wait(_writeQueues.values);
   }
 
@@ -153,4 +195,10 @@ class TerminalHistoryService {
       await sink.close();
     }
   }
+}
+
+class _PendingHistoryWrite {
+  final StringBuffer buffer = StringBuffer();
+  final Completer<void> completer = Completer<void>();
+  Timer? timer;
 }

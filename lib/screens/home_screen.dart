@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
@@ -16,8 +15,10 @@ import '../widgets/connection_progress_dialog.dart';
 import '../widgets/window_name_dialog.dart';
 import 'developer_log_screen.dart';
 import 'llm_chat_screen.dart';
+import 'performance_monitor_screen.dart';
 import 'sftp_screen.dart';
 import 'terminal_windows_screen.dart';
+import '../services/performance_monitor_service.dart';
 
 extension _HomeSettingsStrings on AppStrings {
   String get settings => language == AppLanguage.en ? 'Settings' : '设置';
@@ -37,6 +38,28 @@ extension _HomeSettingsStrings on AppStrings {
       ? 'Cache timeout (${minutes}m)'
       : '缓存时长 (${minutes}m)';
   String get dataBackup => language == AppLanguage.en ? 'Data backup' : '数据备份';
+  String get sftpLimits =>
+      language == AppLanguage.en ? 'SFTP file limits' : 'SFTP 文件限制';
+  String get sftpLimitsHint => language == AppLanguage.en
+      ? 'Client-side limits for in-memory download, preview, and editing.'
+      : '用于客户端下载、预览和编辑的内存保护限制。';
+  String get sftpDownloadLimit =>
+      language == AppLanguage.en ? 'Download limit' : '下载限制';
+  String get sftpTextPreviewLimit =>
+      language == AppLanguage.en ? 'Text preview limit' : '文本预览限制';
+  String get sftpRichPreviewLimit =>
+      language == AppLanguage.en ? 'Image/PDF preview limit' : '图片/PDF 预览限制';
+  String get sftpEditLimit =>
+      language == AppLanguage.en ? 'Text edit limit' : '文本编辑限制';
+  String get sftpLimitDialogHint => language == AppLanguage.en
+      ? 'Enter a size in MB. Decimal values are allowed.'
+      : '请输入 MB 单位大小，支持小数。';
+  String get sftpLimitInvalid => language == AppLanguage.en
+      ? 'Enter a value greater than 0.'
+      : '请输入大于 0 的数值。';
+  String sftpLimitRange(String min, String max) => language == AppLanguage.en
+      ? 'Allowed range: $min - $max'
+      : '允许范围：$min - $max';
   String get exportAppData =>
       language == AppLanguage.en ? 'Export app data' : '导出应用数据';
   String get importAppData =>
@@ -85,8 +108,8 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   static const int _aiPage = 0;
   static const int _serverPage = 1;
-  static const int _windowPage = 2;
-  static const int _sftpPage = 3;
+  static const int _sftpPage = 2;
+  static const int _performancePage = 3;
   static const int _logPage = 4;
   static const int _firstPage = _aiPage;
   static const int _lastPage = _logPage;
@@ -95,8 +118,9 @@ class _HomeScreenState extends State<HomeScreen> {
   late final PageController _pageController;
   late int _selectedIndex;
   late int _settledIndex;
-  Timer? _bottomNavCollapseTimer;
-  bool _bottomNavExpanded = true;
+  final Set<String> _expandedConnectionWindowIds = {};
+  bool _aiHistoryVisible = false;
+  bool _appDataBusy = false;
 
   @override
   void initState() {
@@ -104,27 +128,16 @@ class _HomeScreenState extends State<HomeScreen> {
     _selectedIndex = widget.initialIndex.clamp(_firstPage, _lastPage);
     _settledIndex = _selectedIndex;
     _pageController = PageController(initialPage: _selectedIndex);
-    _scheduleBottomNavCollapse();
   }
 
   @override
   void dispose() {
-    _bottomNavCollapseTimer?.cancel();
     _pageController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final storageReady = context.select<StorageService, bool>(
-      (storage) => storage.initialized,
-    );
-    final connections = context.select<StorageService, List<ConnectionConfig>>(
-      (storage) => storage.connections,
-    );
-    final sessions = context.select<SshService, List<SshSession>>(
-      (ssh) => ssh.sessions,
-    );
     final settings = context.watch<AppSettings>();
     final strings = AppStrings(settings.language);
     final desktop = isDesktopLayout(context);
@@ -133,55 +146,47 @@ class _HomeScreenState extends State<HomeScreen> {
         if (desktop || notification.metrics.axis != Axis.horizontal) {
           return false;
         }
-        if (notification is ScrollStartNotification) {
-          _showBottomNav();
-        } else if (notification is ScrollEndNotification) {
-          _scheduleBottomNavCollapse();
-        }
         return false;
       },
       child: PageView.builder(
         controller: _pageController,
         itemCount: _lastPage + 1,
+        physics: const PageScrollPhysics(),
         allowImplicitScrolling: false,
         onPageChanged: (index) {
           setState(() {
             _selectedIndex = index;
             _settledIndex = index;
           });
-          if (!desktop) _scheduleBottomNavCollapse();
         },
-        itemBuilder: (context, index) => _buildPage(
-          context,
-          index,
-          storageReady,
-          connections,
-          sessions,
-          strings,
-        ),
+        itemBuilder: (context, index) => _buildPage(context, index, strings),
       ),
     );
 
     return Scaffold(
       key: _scaffoldKey,
-      endDrawerEnableOpenDragGesture: false,
-      endDrawer: _SettingsPanel(
+      drawerEnableOpenDragGesture: false,
+      drawer: _SettingsPanel(
+        appTitle: _appTitle,
         onExport: () => _exportAppData(context, strings),
         onImport: () => _importAppData(context, strings),
       ),
-      appBar: AppBar(
-        title: Text(_appTitle),
-        actions: [
-          IconButton(
-            tooltip: strings.settings,
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
-          ),
-        ],
+      body: SafeArea(
+        bottom: false,
+        child: Stack(
+          children: [
+            desktop ? _buildDesktopShell(context, content, strings) : content,
+            if (_appDataBusy)
+              ColoredBox(
+                color: Theme.of(context)
+                    .colorScheme
+                    .surface
+                    .withValues(alpha: 0.72),
+                child: _buildLoadingState(),
+              ),
+          ],
+        ),
       ),
-      body: desktop
-          ? _buildDesktopShell(context, content, sessions, strings)
-          : content,
       floatingActionButton: _selectedIndex == _serverPage
           ? FloatingActionButton(
               onPressed: () => _addConnection(context),
@@ -189,15 +194,15 @@ class _HomeScreenState extends State<HomeScreen> {
               child: const Icon(Icons.add),
             )
           : null,
-      bottomNavigationBar:
-          desktop ? null : _buildBottomNavigation(context, sessions, strings),
+      bottomNavigationBar: desktop || _aiHistoryVisible
+          ? null
+          : _buildBottomNavigation(context, strings),
     );
   }
 
   Widget _buildDesktopShell(
     BuildContext context,
     Widget content,
-    List<SshSession> sessions,
     AppStrings strings,
   ) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -222,14 +227,14 @@ class _HomeScreenState extends State<HomeScreen> {
               label: Text(strings.servers),
             ),
             NavigationRailDestination(
-              icon: _windowIcon(sessions, selected: false),
-              selectedIcon: _windowIcon(sessions, selected: true),
-              label: Text(strings.windows),
-            ),
-            NavigationRailDestination(
               icon: const Icon(Icons.folder_open_outlined),
               selectedIcon: const Icon(Icons.folder_open_rounded),
               label: Text(strings.sftp),
+            ),
+            NavigationRailDestination(
+              icon: const Icon(Icons.monitor_heart_outlined),
+              selectedIcon: const Icon(Icons.monitor_heart_rounded),
+              label: Text(strings.performanceMonitor),
             ),
           ],
         ),
@@ -245,81 +250,49 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildBottomNavigation(
     BuildContext context,
-    List<SshSession> sessions,
     AppStrings strings,
   ) {
     final colorScheme = Theme.of(context).colorScheme;
     final textScale =
         MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0).toDouble();
-    final expandedHeight = 76.0 + (textScale - 1.0) * 28.0;
+    final expandedHeight = 62.0 + (textScale - 1.0) * 18.0;
     return Material(
       color: colorScheme.surface,
       child: SafeArea(
         top: false,
         child: SizedBox(
-          height: _bottomNavExpanded ? expandedHeight : 22,
-          // Do not animate the height here. During expansion Flutter would lay
-          // out the full navigation Row inside the previous 22 px collapsed
-          // height, which produces transient RenderFlex overflow reports.
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 140),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeOutCubic,
-            // When the bar collapses, the outgoing expanded Row must not keep
-            // laying out inside the 22 px collapsed slot; that creates the
-            // bottom RenderFlex overflow reported from _bottomNavItem.
-            layoutBuilder: (currentChild, previousChildren) {
-              return currentChild ?? const SizedBox.shrink();
-            },
-            child: _bottomNavExpanded
-                ? Row(
-                    key: const ValueKey('bottom-nav-expanded'),
-                    children: [
-                      _bottomNavItem(
-                        context,
-                        index: 0,
-                        icon: const Icon(Icons.smart_toy_outlined),
-                        selectedIcon: const Icon(Icons.smart_toy_rounded),
-                        label: settingsLabelAi(context),
-                      ),
-                      _bottomNavItem(
-                        context,
-                        index: 1,
-                        icon: const Icon(Icons.dns_outlined),
-                        selectedIcon: const Icon(Icons.dns_rounded),
-                        label: strings.servers,
-                      ),
-                      _bottomNavItem(
-                        context,
-                        index: 2,
-                        icon: _windowIcon(sessions, selected: false),
-                        selectedIcon: _windowIcon(sessions, selected: true),
-                        label: strings.windows,
-                      ),
-                      _bottomNavItem(
-                        context,
-                        index: 3,
-                        icon: const Icon(Icons.folder_open_outlined),
-                        selectedIcon: const Icon(Icons.folder_open_rounded),
-                        label: strings.sftp,
-                      ),
-                    ],
-                  )
-                : InkWell(
-                    key: const ValueKey('bottom-nav-collapsed'),
-                    onTap: _showBottomNav,
-                    child: Center(
-                      child: Container(
-                        width: 46,
-                        height: 5,
-                        decoration: BoxDecoration(
-                          color: colorScheme.onSurfaceVariant
-                              .withValues(alpha: 0.46),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                      ),
-                    ),
-                  ),
+          height: expandedHeight,
+          child: Row(
+            children: [
+              _bottomNavItem(
+                context,
+                index: 0,
+                icon: const Icon(Icons.smart_toy_outlined),
+                selectedIcon: const Icon(Icons.smart_toy_rounded),
+                label: settingsLabelAi(context),
+              ),
+              _bottomNavItem(
+                context,
+                index: 1,
+                icon: const Icon(Icons.dns_outlined),
+                selectedIcon: const Icon(Icons.dns_rounded),
+                label: strings.servers,
+              ),
+              _bottomNavItem(
+                context,
+                index: 2,
+                icon: const Icon(Icons.folder_open_outlined),
+                selectedIcon: const Icon(Icons.folder_open_rounded),
+                label: strings.sftp,
+              ),
+              _bottomNavItem(
+                context,
+                index: 3,
+                icon: const Icon(Icons.monitor_heart_outlined),
+                selectedIcon: const Icon(Icons.monitor_heart_rounded),
+                label: strings.performanceMonitor,
+              ),
+            ],
           ),
         ),
       ),
@@ -343,19 +316,19 @@ class _HomeScreenState extends State<HomeScreen> {
         onTap: () => _switchNavigationPage(index),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            if (constraints.maxHeight < 52) {
+            if (constraints.maxHeight < 44) {
               return const SizedBox.shrink();
             }
             return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 2),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   AnimatedContainer(
                     duration: const Duration(milliseconds: 180),
                     curve: Curves.easeOutCubic,
-                    width: 64,
-                    height: 32,
+                    width: 54,
+                    height: 28,
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
                       color: selected
@@ -364,7 +337,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: IconTheme(
-                      data: IconThemeData(color: foreground, size: 24),
+                      data: IconThemeData(color: foreground, size: 22),
                       child: selected ? selectedIcon : icon,
                     ),
                   ),
@@ -378,7 +351,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: foreground,
-                          fontSize: 12,
+                          fontSize: 11,
                           fontWeight:
                               selected ? FontWeight.w700 : FontWeight.w500,
                         ),
@@ -392,12 +365,6 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
-  }
-
-  Widget _windowIcon(List<SshSession> sessions, {required bool selected}) {
-    final icon = Icon(selected ? Icons.tab_rounded : Icons.tab_outlined);
-    if (sessions.isEmpty) return icon;
-    return Badge(label: Text('${sessions.length}'), child: icon);
   }
 
   String get _appTitle {
@@ -422,9 +389,9 @@ class _HomeScreenState extends State<HomeScreen> {
     switch (_selectedIndex) {
       case _serverPage:
         return 1;
-      case _windowPage:
-        return 2;
       case _sftpPage:
+        return 2;
+      case _performancePage:
         return 3;
       case _logPage:
         return null;
@@ -443,9 +410,11 @@ class _HomeScreenState extends State<HomeScreen> {
         _switchPage(_serverPage);
         break;
       case 2:
-        _switchPage(_windowPage);
+        _switchPage(_sftpPage);
         break;
       case 3:
+        _switchPage(_performancePage);
+        break;
       default:
         _switchPage(_sftpPage);
         break;
@@ -458,7 +427,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _switchPage(int index) {
     if (index == _selectedIndex) return;
-    _showBottomNav();
     setState(() => _selectedIndex = index);
     _pageController.animateToPage(
       index,
@@ -467,51 +435,51 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _showBottomNav() {
-    _bottomNavCollapseTimer?.cancel();
-    if (!_bottomNavExpanded && mounted) {
-      setState(() => _bottomNavExpanded = true);
-    }
-  }
-
-  void _scheduleBottomNavCollapse() {
-    _bottomNavCollapseTimer?.cancel();
-    _bottomNavCollapseTimer = Timer(const Duration(milliseconds: 1500), () {
-      if (mounted && _bottomNavExpanded) {
-        setState(() => _bottomNavExpanded = false);
-      }
-    });
-  }
-
   Widget _buildPage(
     BuildContext context,
     int index,
-    bool storageReady,
-    List<ConnectionConfig> connections,
-    List<SshSession> sessions,
     AppStrings strings,
   ) {
-    switch (index) {
-      case _aiPage:
-        return _pageShell(index, LlmChatScreen(active: _settledIndex == index));
-      case _serverPage:
-        return _pageShell(
-          index,
-          _buildServerPage(
-              context, storageReady, connections, sessions, strings),
-        );
-      case _windowPage:
-        return _pageShell(index, const TerminalWindowsPage());
-      case _sftpPage:
-        return _pageShell(index, const SftpScreen());
-      case _logPage:
-      default:
-        return _pageShell(index, const DeveloperLogPage());
-    }
+    final active = _selectedIndex == index;
+    return _pageShell(
+      index,
+      _DeferredNavPage(
+        active: active,
+        loading: _buildLoadingState(),
+        keepAliveAfterFirstBuild: index == _aiPage,
+        builder: (context) {
+          switch (index) {
+            case _aiPage:
+              return LlmChatScreen(
+                key: const PageStorageKey<String>('ai-chat-page'),
+                active: _settledIndex == index,
+                onHistoryVisibilityChanged: (visible) {
+                  if (_aiHistoryVisible == visible) return;
+                  setState(() => _aiHistoryVisible = visible);
+                },
+                onOpenSettingsDrawer: () =>
+                    _scaffoldKey.currentState?.openDrawer(),
+              );
+            case _serverPage:
+              return _buildServerPage(context, strings);
+            case _sftpPage:
+              return const SftpScreen();
+            case _performancePage:
+              return const PerformanceMonitorScreen();
+            case _logPage:
+            default:
+              return const DeveloperLogPage();
+          }
+        },
+      ),
+    );
   }
 
   Widget _pageShell(int index, Widget child) {
-    return RepaintBoundary(child: child);
+    return TickerMode(
+      enabled: _selectedIndex == index || _settledIndex == index,
+      child: RepaintBoundary(child: child),
+    );
   }
 
   Future<void> _exportAppData(
@@ -520,6 +488,7 @@ class _HomeScreenState extends State<HomeScreen> {
   ) async {
     final messenger = ScaffoldMessenger.of(context);
     try {
+      if (mounted) setState(() => _appDataBusy = true);
       final jsonText = await context.read<StorageService>().exportAppDataJson();
       if (!context.mounted) return;
       final now = DateTime.now();
@@ -539,6 +508,8 @@ class _HomeScreenState extends State<HomeScreen> {
       messenger.showSnackBar(
         SnackBar(content: Text(strings.exportFailed(e))),
       );
+    } finally {
+      if (mounted) setState(() => _appDataBusy = false);
     }
   }
 
@@ -576,6 +547,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (bytes == null) {
         throw StateError('Unable to read selected file.');
       }
+      if (mounted) setState(() => _appDataBusy = true);
       await context
           .read<StorageService>()
           .importAppDataJson(utf8.decode(bytes));
@@ -589,6 +561,8 @@ class _HomeScreenState extends State<HomeScreen> {
       messenger.showSnackBar(
         SnackBar(content: Text(strings.importFailed(e))),
       );
+    } finally {
+      if (mounted) setState(() => _appDataBusy = false);
     }
   }
 
@@ -604,16 +578,32 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildServerPage(
     BuildContext context,
-    bool storageReady,
-    List<ConnectionConfig> connections,
-    List<SshSession> sessions,
     AppStrings strings,
   ) {
+    final storageReady = context.select<StorageService, bool>(
+      (storage) => storage.initialized,
+    );
+    final connections = context.select<StorageService, List<ConnectionConfig>>(
+      (storage) => storage.connections,
+    );
+    final sessionSnapshot = context.select<SshService, _ServerSessionsSnapshot>(
+      _ServerSessionsSnapshot.from,
+    );
+    final healthByConnection = context
+        .select<PerformanceMonitorService, Map<String, ServerHealthSnapshot>>(
+      (monitor) => monitor.healthByConnection,
+    );
     return connections.isEmpty
         ? storageReady
             ? _buildEmptyState(context, strings)
             : _buildLoadingState()
-        : _buildConnectionList(context, connections, sessions, strings);
+        : _buildConnectionList(
+            context,
+            connections,
+            sessionSnapshot,
+            healthByConnection,
+            strings,
+          );
   }
 
   Widget _buildEmptyState(BuildContext context, AppStrings strings) {
@@ -670,17 +660,13 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildConnectionList(
     BuildContext context,
     List<ConnectionConfig> connections,
-    List<SshSession> sessions,
+    _ServerSessionsSnapshot sessions,
+    Map<String, ServerHealthSnapshot> healthByConnection,
     AppStrings strings,
   ) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final desktop = constraints.maxWidth >= AppBreakpoints.desktop;
-        final columns = constraints.maxWidth >= AppBreakpoints.wideDesktop
-            ? 3
-            : desktop
-                ? 2
-                : 1;
         final horizontalPadding = desktop ? 24.0 : 12.0;
         final maxContentWidth = desktop ? 1480.0 : double.infinity;
 
@@ -705,51 +691,33 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                 ),
-                if (columns == 1)
-                  SliverPadding(
-                    padding: EdgeInsets.fromLTRB(
-                      horizontalPadding,
-                      0,
-                      horizontalPadding,
-                      88,
-                    ),
-                    sliver: SliverList.separated(
-                      itemCount: connections.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 10),
-                      itemBuilder: (context, index) => _buildConnectionCard(
-                        context,
-                        connections[index],
-                        sessions,
-                        strings,
-                      ),
-                    ),
-                  )
-                else
-                  SliverPadding(
-                    padding: EdgeInsets.fromLTRB(
-                      horizontalPadding,
-                      0,
-                      horizontalPadding,
-                      88,
-                    ),
-                    sliver: SliverGrid(
-                      delegate: SliverChildBuilderDelegate(
-                        (context, index) => _buildConnectionCard(
-                          context,
-                          connections[index],
-                          sessions,
-                          strings,
-                        ),
-                        childCount: connections.length,
-                      ),
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: columns,
-                        crossAxisSpacing: 14,
-                        mainAxisSpacing: 14,
-                        mainAxisExtent: 108,
-                      ),
+                SliverPadding(
+                  padding: EdgeInsets.fromLTRB(
+                    horizontalPadding,
+                    0,
+                    horizontalPadding,
+                    88,
+                  ),
+                  sliver: SliverList.separated(
+                    itemCount: connections.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (context, index) => _buildConnectionCard(
+                      context,
+                      connections[index],
+                      sessions.forConnection(connections[index].id),
+                      healthByConnection[connections[index].id] ??
+                          ServerHealthSnapshot(
+                            connectionId: connections[index].id,
+                            level: ServerHealthLevel.unknown,
+                            score: 0,
+                            summary: 'No samples',
+                            details: const [],
+                            updatedAt: DateTime.now(),
+                          ),
+                      strings,
                     ),
                   ),
+                ),
               ],
             ),
           ),
@@ -761,15 +729,14 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildConnectionCard(
     BuildContext context,
     ConnectionConfig conn,
-    List<SshSession> sessions,
+    _ConnectionSessionSummary sessionSummary,
+    ServerHealthSnapshot health,
     AppStrings strings,
   ) {
-    final relatedSessions =
-        sessions.where((session) => session.connectionId == conn.id).toList();
-    final isActive = relatedSessions.any((session) => session.isConnected);
-    final sessionCount = relatedSessions.length;
-    final latestSession = relatedSessions.isEmpty ? null : relatedSessions.last;
-    final isConnecting = latestSession?.state == SshConnectionState.connecting;
+    final isActive = sessionSummary.hasConnected;
+    final sessionCount = sessionSummary.count;
+    final latestState = sessionSummary.latestState;
+    final isConnecting = latestState == SshConnectionState.connecting;
     final colorScheme = Theme.of(context).colorScheme;
     final primary = colorScheme.primary;
     final success = colorScheme.secondary;
@@ -779,141 +746,224 @@ class _HomeScreenState extends State<HomeScreen> {
     final borderColor =
         isActive ? success.withValues(alpha: 0.42) : _panelBorderColor(context);
 
-    return InkWell(
-      borderRadius: BorderRadius.circular(8),
-      onTap: () => _connectToServer(context, conn),
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: cardColor,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: borderColor),
-          boxShadow: _panelShadow(context),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: isActive
-                    ? success.withValues(alpha: 0.15)
-                    : primary.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(10),
+    final windowsExpanded = _expandedConnectionWindowIds.contains(conn.id);
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: cardColor,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: borderColor),
+        boxShadow: _panelShadow(context),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: isActive
+                      ? success.withValues(alpha: 0.15)
+                      : primary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  _getStatusIcon(conn, latestState),
+                  color: isActive ? success : primary,
+                  size: 24,
+                ),
               ),
-              child: Icon(
-                _getStatusIcon(conn, latestSession),
-                color: isActive ? success : primary,
-                size: 24,
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    conn.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: textColor,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.dns_outlined,
-                        size: 13,
-                        color: mutedTextColor.withValues(alpha: 0.72),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      conn.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: textColor,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
                       ),
-                      const SizedBox(width: 5),
-                      Expanded(
-                        child: Text(
-                          '${conn.username}@${conn.host}:${conn.port}',
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: mutedTextColor,
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.dns_outlined,
+                          size: 13,
+                          color: mutedTextColor.withValues(alpha: 0.72),
+                        ),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                            '${conn.username}@${conn.host}:${conn.port}',
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: mutedTextColor,
+                            ),
                           ),
                         ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    _buildHealthChip(context, health, strings),
+                  ],
+                ),
+              ),
+              if (sessionCount > 0) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: success.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: success.withValues(alpha: 0.35)),
+                  ),
+                  child: Text(
+                    '$sessionCount',
+                    style: TextStyle(
+                      color: success,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+              if (isConnecting)
+                const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else ...[
+                IconButton(
+                  tooltip: strings.newWindow,
+                  icon: const Icon(Icons.add_to_photos_outlined),
+                  color: mutedTextColor,
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => _openNewTerminal(context, conn),
+                ),
+                PopupMenuButton<String>(
+                  icon: Icon(Icons.more_vert, color: mutedTextColor),
+                  onSelected: (action) => _handleAction(context, conn, action),
+                  itemBuilder: (_) => [
+                    PopupMenuItem(
+                      value: 'edit',
+                      child: Row(
+                        children: [
+                          const Icon(Icons.edit, size: 18),
+                          const SizedBox(width: 8),
+                          Text(strings.edit),
+                        ],
                       ),
-                    ],
+                    ),
+                    PopupMenuItem(
+                      value: 'delete',
+                      child: Row(
+                        children: [
+                          const Icon(Icons.delete, size: 18, color: Colors.red),
+                          const SizedBox(width: 8),
+                          Text(
+                            strings.delete,
+                            style: const TextStyle(color: Colors.red),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 10),
+          Divider(
+              height: 1, color: Theme.of(context).colorScheme.outlineVariant),
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => _toggleConnectionWindows(conn.id),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(4, 9, 4, 0),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.tab_outlined,
+                    size: 17,
+                    color: mutedTextColor,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '${strings.terminalWindows} ($sessionCount)',
+                      style: TextStyle(
+                        color: textColor,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    windowsExpanded
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                    color: mutedTextColor,
                   ),
                 ],
               ),
             ),
-            if (isConnecting)
-              const SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            else
-              PopupMenuButton<String>(
-                icon: Icon(Icons.more_vert, color: mutedTextColor),
-                onSelected: (action) => _handleAction(context, conn, action),
-                itemBuilder: (_) => [
-                  PopupMenuItem(
-                    value: 'new_terminal',
-                    child: Row(
-                      children: [
-                        const Icon(Icons.add_to_photos, size: 18),
-                        const SizedBox(width: 8),
-                        Text(strings.newWindow),
-                      ],
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'edit',
-                    child: Row(
-                      children: [
-                        const Icon(Icons.edit, size: 18),
-                        const SizedBox(width: 8),
-                        Text(strings.edit),
-                      ],
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'delete',
-                    child: Row(
-                      children: [
-                        const Icon(Icons.delete, size: 18, color: Colors.red),
-                        const SizedBox(width: 8),
-                        Text(
-                          strings.delete,
-                          style: const TextStyle(color: Colors.red),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+          ),
+          if (windowsExpanded)
+            TerminalWindowsPage(
+              key: PageStorageKey<String>('server-windows-${conn.id}'),
+              connectionId: conn.id,
+              showHeader: false,
+              embedded: true,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHealthChip(
+    BuildContext context,
+    ServerHealthSnapshot health,
+    AppStrings strings,
+  ) {
+    final color = _healthColor(context, health.level);
+    final label = _healthLabel(strings, health.level);
+    final detail = health.details.isEmpty ? label : health.details.join(' / ');
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(_healthIcon(health.level), size: 13, color: color),
+          const SizedBox(width: 5),
+          Flexible(
+            child: Text(
+              '${strings.language == AppLanguage.en ? 'Health' : '健康'} ${health.score} · $detail',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: color,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
               ),
-            if (sessionCount > 0) ...[
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                decoration: BoxDecoration(
-                  color: success.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: success.withValues(alpha: 0.35)),
-                ),
-                child: Text(
-                  '$sessionCount',
-                  style: TextStyle(
-                    color: success,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ],
-        ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -921,7 +971,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildOverviewHeader(
     BuildContext context,
     List<ConnectionConfig> connections,
-    List<SshSession> sessions,
+    _ServerSessionsSnapshot sessions,
     AppStrings strings,
   ) {
     final theme = Theme.of(context);
@@ -929,56 +979,97 @@ class _HomeScreenState extends State<HomeScreen> {
     final cardColor = _panelColor(context);
     final textColor = _panelTextColor(context);
     final mutedTextColor = _panelMutedTextColor(context);
-    final activeConnectionIds = sessions
-        .where((session) => session.isConnected)
-        .map((session) => session.connectionId)
-        .toSet();
     final activeCount = connections
-        .where((conn) => activeConnectionIds.contains(conn.id))
+        .where((conn) => sessions.forConnection(conn.id).hasConnected)
         .length;
-    final windowCount = sessions.length;
+    final windowCount = sessions.windowCount;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: cardColor,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: _panelBorderColor(context)),
-          boxShadow: _panelShadow(context),
-        ),
-        child: Row(
-          children: [
-            _summaryItem(
-              context,
-              icon: Icons.storage_rounded,
-              label: strings.servers,
-              value: '${connections.length}',
-              textColor: textColor,
-              mutedTextColor: mutedTextColor,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(2, 0, 0, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        context.read<AppSettings>().isEnglish
+                            ? 'Server overview'
+                            : '服务器总览',
+                        style: TextStyle(
+                          color: textColor,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        context.read<AppSettings>().isEnglish
+                            ? 'Server information and terminal windows are managed together here.'
+                            : '服务器信息与终端窗口在这里统一管理。',
+                        style: TextStyle(
+                          color: mutedTextColor,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: strings.connectionHistory,
+                  icon: const Icon(Icons.history_rounded),
+                  color: mutedTextColor,
+                  onPressed: () => Navigator.pushNamed(context, '/history'),
+                ),
+              ],
             ),
-            const SizedBox(width: 10),
-            _summaryItem(
-              context,
-              icon: Icons.link_rounded,
-              label: strings.active,
-              value: '$activeCount',
-              accent: colorScheme.secondary,
-              textColor: textColor,
-              mutedTextColor: mutedTextColor,
+          ),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: cardColor,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _panelBorderColor(context)),
+              boxShadow: _panelShadow(context),
             ),
-            const SizedBox(width: 10),
-            _summaryItem(
-              context,
-              icon: Icons.tab_rounded,
-              label: strings.windows,
-              value: '$windowCount',
-              textColor: textColor,
-              mutedTextColor: mutedTextColor,
+            child: Row(
+              children: [
+                _summaryItem(
+                  context,
+                  icon: Icons.storage_rounded,
+                  label: strings.servers,
+                  value: '${connections.length}',
+                  textColor: textColor,
+                  mutedTextColor: mutedTextColor,
+                ),
+                const SizedBox(width: 10),
+                _summaryItem(
+                  context,
+                  icon: Icons.link_rounded,
+                  label: strings.active,
+                  value: '$activeCount',
+                  accent: colorScheme.secondary,
+                  textColor: textColor,
+                  mutedTextColor: mutedTextColor,
+                ),
+                const SizedBox(width: 10),
+                _summaryItem(
+                  context,
+                  icon: Icons.tab_rounded,
+                  label: strings.windows,
+                  value: '$windowCount',
+                  textColor: textColor,
+                  mutedTextColor: mutedTextColor,
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -1035,66 +1126,62 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Color _healthColor(BuildContext context, ServerHealthLevel level) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return switch (level) {
+      ServerHealthLevel.healthy => colorScheme.secondary,
+      ServerHealthLevel.warning => Colors.orangeAccent.shade700,
+      ServerHealthLevel.critical => colorScheme.error,
+      ServerHealthLevel.unknown => colorScheme.onSurfaceVariant,
+    };
+  }
+
+  IconData _healthIcon(ServerHealthLevel level) {
+    return switch (level) {
+      ServerHealthLevel.healthy => Icons.verified_rounded,
+      ServerHealthLevel.warning => Icons.warning_amber_rounded,
+      ServerHealthLevel.critical => Icons.error_rounded,
+      ServerHealthLevel.unknown => Icons.help_outline_rounded,
+    };
+  }
+
+  String _healthLabel(AppStrings strings, ServerHealthLevel level) {
+    final en = strings.language == AppLanguage.en;
+    return switch (level) {
+      ServerHealthLevel.healthy => en ? 'Healthy' : '正常',
+      ServerHealthLevel.warning => en ? 'Warning' : '警告',
+      ServerHealthLevel.critical => en ? 'Critical' : '危险',
+      ServerHealthLevel.unknown => en ? 'No samples' : '暂无采样',
+    };
+  }
+
   Color _panelColor(BuildContext context) {
-    final isDarkMode = context.read<AppSettings>().isDarkMode;
-    return isDarkMode ? const Color(0xFF161B22) : Colors.white;
+    return Theme.of(context).colorScheme.surface;
   }
 
   Color _panelBorderColor(BuildContext context) {
-    final isDarkMode = context.read<AppSettings>().isDarkMode;
-    return isDarkMode ? const Color(0xFF30363D) : const Color(0xFFE0E0E0);
+    return Theme.of(context).colorScheme.outlineVariant;
   }
 
   Color _panelTextColor(BuildContext context) {
-    final isDarkMode = context.read<AppSettings>().isDarkMode;
-    return isDarkMode ? const Color(0xFFE6EDF3) : const Color(0xFF1F1F1F);
+    return Theme.of(context).colorScheme.onSurface;
   }
 
   Color _panelMutedTextColor(BuildContext context) {
-    final isDarkMode = context.read<AppSettings>().isDarkMode;
-    return isDarkMode ? const Color(0xFF9AA4AF) : const Color(0xFF666666);
+    return Theme.of(context).colorScheme.onSurfaceVariant;
   }
 
   List<BoxShadow> _panelShadow(BuildContext context) {
-    if (context.read<AppSettings>().isDarkMode) {
-      return const [];
-    }
-    return [
-      BoxShadow(
-        color: Colors.black.withValues(alpha: 0.06),
-        blurRadius: 16,
-        offset: const Offset(0, 8),
-      ),
-    ];
+    return const [];
   }
 
-  IconData _getStatusIcon(ConnectionConfig conn, SshSession? session) {
-    if (session != null) {
-      if (session.state == SshConnectionState.connected) return Icons.link;
-      if (session.state == SshConnectionState.connecting) return Icons.sync;
+  IconData _getStatusIcon(ConnectionConfig conn, SshConnectionState? state) {
+    if (state != null) {
+      if (state == SshConnectionState.connected) return Icons.link;
+      if (state == SshConnectionState.connecting) return Icons.sync;
       return Icons.link_off;
     }
     return Icons.dns_outlined;
-  }
-
-  void _connectToServer(BuildContext context, ConnectionConfig conn) {
-    final ssh = context.read<SshService>();
-
-    final existing = ssh.latestSessionForConnection(conn.id);
-    if (existing?.isConnected == true ||
-        (existing != null && conn.launchMode == TerminalLaunchMode.tmux)) {
-      Navigator.pushNamed(
-        context,
-        '/terminal',
-        arguments: {
-          'id': conn.id,
-          'sessionId': existing!.id,
-        },
-      );
-      return;
-    }
-
-    _openNewTerminal(context, conn);
   }
 
   Future<void> _openNewTerminal(
@@ -1181,9 +1268,6 @@ class _HomeScreenState extends State<HomeScreen> {
     String action,
   ) {
     switch (action) {
-      case 'new_terminal':
-        _openNewTerminal(context, conn);
-        break;
       case 'edit':
         Navigator.pushNamed(context, '/edit', arguments: conn.id);
         break;
@@ -1193,11 +1277,22 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _toggleConnectionWindows(String connectionId) {
+    setState(() {
+      if (_expandedConnectionWindowIds.contains(connectionId)) {
+        _expandedConnectionWindowIds.remove(connectionId);
+      } else {
+        _expandedConnectionWindowIds.add(connectionId);
+      }
+    });
+  }
+
   void _confirmDelete(BuildContext context, ConnectionConfig conn) {
     final strings = AppStrings(context.read<AppSettings>().language);
     final storage = context.read<StorageService>();
     final ssh = context.read<SshService>();
     final sftp = context.read<SftpService>();
+    final performance = context.read<PerformanceMonitorService>();
 
     showDialog(
       context: context,
@@ -1214,6 +1309,7 @@ class _HomeScreenState extends State<HomeScreen> {
               Navigator.pop(ctx);
               await ssh.disconnectSessionsForConnection(conn.id);
               await sftp.disconnectConnection(conn.id, forgetPath: true);
+              performance.stopForConnection(conn.id);
               await storage.deleteConnection(conn.id);
             },
             style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
@@ -1229,11 +1325,174 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
+class _DeferredNavPage extends StatefulWidget {
+  final bool active;
+  final Widget loading;
+  final WidgetBuilder builder;
+  final bool keepAliveAfterFirstBuild;
+
+  const _DeferredNavPage({
+    required this.active,
+    required this.loading,
+    required this.builder,
+    this.keepAliveAfterFirstBuild = false,
+  });
+
+  @override
+  State<_DeferredNavPage> createState() => _DeferredNavPageState();
+}
+
+class _DeferredNavPageState extends State<_DeferredNavPage> {
+  bool _ready = false;
+  bool _activationScheduled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.active) _scheduleActivation();
+  }
+
+  @override
+  void didUpdateWidget(covariant _DeferredNavPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.active) {
+      if (widget.keepAliveAfterFirstBuild && _ready) return;
+      if (_ready || _activationScheduled) {
+        _ready = false;
+        _activationScheduled = false;
+      }
+      return;
+    }
+    if (!oldWidget.active || !_ready) {
+      _scheduleActivation();
+    }
+  }
+
+  void _scheduleActivation() {
+    if (_ready || _activationScheduled) return;
+    _activationScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      if (!mounted || !widget.active) return;
+      setState(() {
+        _activationScheduled = false;
+        _ready = true;
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.keepAliveAfterFirstBuild && _ready) {
+      return Offstage(
+        offstage: !widget.active,
+        child: TickerMode(
+          enabled: widget.active,
+          child: Builder(builder: widget.builder),
+        ),
+      );
+    }
+
+    if (!widget.active) {
+      return const SizedBox.expand();
+    }
+    if (!_ready) {
+      _scheduleActivation();
+      return widget.loading;
+    }
+    return widget.builder(context);
+  }
+}
+
+class _ServerSessionsSnapshot {
+  static const _emptySummary = _ConnectionSessionSummary(
+    count: 0,
+    latestState: null,
+    hasConnected: false,
+  );
+
+  final Map<String, _ConnectionSessionSummary> byConnection;
+  final int windowCount;
+
+  const _ServerSessionsSnapshot({
+    required this.byConnection,
+    required this.windowCount,
+  });
+
+  factory _ServerSessionsSnapshot.from(SshService ssh) {
+    final summaries = <String, _ConnectionSessionSummary>{};
+    for (final session in ssh.sessions) {
+      final previous = summaries[session.connectionId] ?? _emptySummary;
+      summaries[session.connectionId] = _ConnectionSessionSummary(
+        count: previous.count + 1,
+        latestState: session.state,
+        hasConnected: previous.hasConnected || session.isConnected,
+      );
+    }
+    return _ServerSessionsSnapshot(
+      byConnection: Map.unmodifiable(summaries),
+      windowCount: ssh.sessions.length,
+    );
+  }
+
+  _ConnectionSessionSummary forConnection(String connectionId) {
+    return byConnection[connectionId] ?? _emptySummary;
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (other is! _ServerSessionsSnapshot ||
+        other.windowCount != windowCount ||
+        other.byConnection.length != byConnection.length) {
+      return false;
+    }
+    for (final entry in byConnection.entries) {
+      if (other.byConnection[entry.key] != entry.value) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        windowCount,
+        Object.hashAllUnordered(
+          byConnection.entries.map(
+            (entry) => Object.hash(entry.key, entry.value),
+          ),
+        ),
+      );
+}
+
+class _ConnectionSessionSummary {
+  final int count;
+  final SshConnectionState? latestState;
+  final bool hasConnected;
+
+  const _ConnectionSessionSummary({
+    required this.count,
+    required this.latestState,
+    required this.hasConnected,
+  });
+
+  @override
+  bool operator ==(Object other) {
+    return other is _ConnectionSessionSummary &&
+        other.count == count &&
+        other.latestState == latestState &&
+        other.hasConnected == hasConnected;
+  }
+
+  @override
+  int get hashCode => Object.hash(count, latestState, hasConnected);
+}
+
 class _SettingsPanel extends StatefulWidget {
+  final String appTitle;
   final VoidCallback onExport;
   final VoidCallback onImport;
 
   const _SettingsPanel({
+    required this.appTitle,
     required this.onExport,
     required this.onImport,
   });
@@ -1243,6 +1502,102 @@ class _SettingsPanel extends StatefulWidget {
 }
 
 class _SettingsPanelState extends State<_SettingsPanel> {
+  Future<void> _editSftpLimit({
+    required String title,
+    required int currentBytes,
+    required Future<void> Function(int bytes) onChanged,
+  }) async {
+    final settings = context.read<AppSettings>();
+    final strings = AppStrings(settings.language);
+    final controller = TextEditingController(
+      text: _initialLimitMbText(currentBytes),
+    );
+    String? errorText;
+    final bytes = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(title),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    labelText: 'MB',
+                    helperText: strings.sftpLimitDialogHint,
+                    errorText: errorText,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  strings.sftpLimitRange(
+                    _formatLimitBytes(AppSettings.minSftpLimitBytes),
+                    _formatLimitBytes(AppSettings.maxSftpLimitBytes),
+                  ),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: Text(strings.cancel),
+            ),
+            TextButton(
+              onPressed: () {
+                final value = double.tryParse(controller.text.trim());
+                if (value == null || value <= 0) {
+                  setDialogState(() => errorText = strings.sftpLimitInvalid);
+                  return;
+                }
+                Navigator.pop(
+                  dialogContext,
+                  (value * 1024 * 1024).round(),
+                );
+              },
+              child: Text(strings.save),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (bytes == null || !mounted) return;
+    await onChanged(bytes);
+  }
+
+  String _initialLimitMbText(int bytes) {
+    final mb = bytes / 1024 / 1024;
+    if (mb >= 1 && mb == mb.roundToDouble()) return mb.toStringAsFixed(0);
+    return mb.toStringAsFixed(mb < 1 ? 2 : 1);
+  }
+
+  String _formatLimitBytes(int bytes) {
+    const kb = 1024;
+    const mb = 1024 * 1024;
+    const gb = 1024 * 1024 * 1024;
+    if (bytes >= gb) {
+      final value = bytes / gb;
+      return '${value.toStringAsFixed(value == value.roundToDouble() ? 0 : 1)} GB';
+    }
+    if (bytes >= mb) {
+      final value = bytes / mb;
+      return '${value.toStringAsFixed(value == value.roundToDouble() ? 0 : 1)} MB';
+    }
+    final value = bytes / kb;
+    return '${value.toStringAsFixed(value == value.roundToDouble() ? 0 : 1)} KB';
+  }
+
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
@@ -1274,12 +1629,25 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                     ),
                     const SizedBox(width: 10),
                     Expanded(
-                      child: Text(
-                        strings.settings,
-                        style: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            widget.appTitle,
+                            style: const TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          Text(
+                            strings.settings,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: colorScheme.onSurfaceVariant,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -1362,6 +1730,64 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                         Theme.of(context).platform,
                       ),
                       strings: strings,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                _SettingsSection(
+                  title: strings.sftpLimits,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Text(
+                        strings.sftpLimitsHint,
+                        style: TextStyle(
+                          color: colorScheme.onSurfaceVariant,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                    _SftpLimitTile(
+                      icon: Icons.download_outlined,
+                      title: strings.sftpDownloadLimit,
+                      value: _formatLimitBytes(settings.sftpDownloadLimitBytes),
+                      onTap: () => _editSftpLimit(
+                        title: strings.sftpDownloadLimit,
+                        currentBytes: settings.sftpDownloadLimitBytes,
+                        onChanged: settings.setSftpDownloadLimitBytes,
+                      ),
+                    ),
+                    _SftpLimitTile(
+                      icon: Icons.article_outlined,
+                      title: strings.sftpTextPreviewLimit,
+                      value:
+                          _formatLimitBytes(settings.sftpTextPreviewLimitBytes),
+                      onTap: () => _editSftpLimit(
+                        title: strings.sftpTextPreviewLimit,
+                        currentBytes: settings.sftpTextPreviewLimitBytes,
+                        onChanged: settings.setSftpTextPreviewLimitBytes,
+                      ),
+                    ),
+                    _SftpLimitTile(
+                      icon: Icons.preview_outlined,
+                      title: strings.sftpRichPreviewLimit,
+                      value:
+                          _formatLimitBytes(settings.sftpRichPreviewLimitBytes),
+                      onTap: () => _editSftpLimit(
+                        title: strings.sftpRichPreviewLimit,
+                        currentBytes: settings.sftpRichPreviewLimitBytes,
+                        onChanged: settings.setSftpRichPreviewLimitBytes,
+                      ),
+                    ),
+                    _SftpLimitTile(
+                      icon: Icons.edit_note_outlined,
+                      title: strings.sftpEditLimit,
+                      value: _formatLimitBytes(settings.sftpTextEditLimitBytes),
+                      onTap: () => _editSftpLimit(
+                        title: strings.sftpEditLimit,
+                        currentBytes: settings.sftpTextEditLimitBytes,
+                        onChanged: settings.setSftpTextEditLimitBytes,
+                      ),
                     ),
                   ],
                 ),
@@ -1472,6 +1898,41 @@ class _SettingsPanelState extends State<_SettingsPanel> {
   }
 }
 
+class _SftpLimitTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String value;
+  final VoidCallback onTap;
+
+  const _SftpLimitTile({
+    required this.icon,
+    required this.title,
+    required this.value,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(icon, size: 20),
+      title: Text(title, style: const TextStyle(fontSize: 13)),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            value,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(width: 8),
+          const Icon(Icons.edit_outlined, size: 18),
+        ],
+      ),
+      onTap: onTap,
+    );
+  }
+}
+
 class _FontPreviewCard extends StatelessWidget {
   final AppFontChoice currentFont;
   final bool isLikelyAvailable;
@@ -1554,7 +2015,7 @@ class _FontPreviewCard extends StatelessWidget {
                 child: Text(
                   isLikelyAvailable
                       ? strings.fontPlatformHint
-                      : '${currentFont.name}  $strings.fontFallbackHint',
+                      : '${currentFont.name}  ${strings.fontFallbackHint}',
                   style: TextStyle(
                     color: colorScheme.onSurfaceVariant,
                     fontSize: 10.5,

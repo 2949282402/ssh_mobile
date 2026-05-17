@@ -36,16 +36,13 @@ class _DeveloperLogPageState extends State<DeveloperLogPage> {
     final logService = context.watch<AppLogService>();
     final allEntries = logService.entries;
     final levelCounts = logService.levelCounts;
-    final entries = _selectedLevel == AppLogLevel.all
-        ? allEntries
-        : allEntries
-            .where((entry) => entry.normalizedLevel == _selectedLevel)
-            .toList();
+    final entries = logService.entriesForLevel(_selectedLevel);
     final colorScheme = Theme.of(context).colorScheme;
-    _selectedIds
-        .removeWhere((id) => !allEntries.any((entry) => entry.id == id));
-    final selectedEntries =
-        allEntries.where((entry) => _selectedIds.contains(entry.id)).toList();
+    final allEntryIds = logService.entryIds;
+    _selectedIds.removeWhere((id) => !allEntryIds.contains(id));
+    final selectedEntries = _selectionMode
+        ? allEntries.where((entry) => _selectedIds.contains(entry.id)).toList()
+        : const <AppLogEntry>[];
 
     return Column(
       children: [

@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../../services/app_settings.dart';
-import '../../services/ssh_service.dart';
 
 class TerminalScreenAppBar extends StatelessWidget
     implements PreferredSizeWidget {
   final TerminalStrings strings;
-  final SshSession? session;
+  final String? displayName;
   final String? serverName;
   final bool isConnected;
   final bool isDarkMode;
@@ -22,7 +21,7 @@ class TerminalScreenAppBar extends StatelessWidget
   const TerminalScreenAppBar({
     super.key,
     required this.strings,
-    required this.session,
+    required this.displayName,
     required this.serverName,
     required this.isConnected,
     required this.isDarkMode,
@@ -58,7 +57,7 @@ class TerminalScreenAppBar extends StatelessWidget
             children: [
               Flexible(
                 child: Text(
-                  session?.displayName ?? serverName ?? strings.defaultTerminal,
+                  displayName ?? serverName ?? strings.defaultTerminal,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 14,

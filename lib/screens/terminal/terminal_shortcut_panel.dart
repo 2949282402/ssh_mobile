@@ -94,7 +94,13 @@ class TerminalShortcutPanel extends StatelessWidget {
   }
 
   Widget _buildShortcutBar(BuildContext context) {
-    final shortcuts = context.watch<ShortcutCommandService>();
+    final shortcuts = context.read<ShortcutCommandService>();
+    context.select<ShortcutCommandService, int>(
+      (service) => service.orderVersion,
+    );
+    final customCommands =
+        context.select<ShortcutCommandService, List<ShortcutCommand>>(
+            (service) => service.customCommands);
     final commands = shortcuts.sortByUsage([
       const ShortcutCommand(id: 'tab', label: 'TAB', code: '\t'),
       const ShortcutCommand(id: 'esc', label: 'ESC', code: '\x1b'),
@@ -111,14 +117,32 @@ class TerminalShortcutPanel extends StatelessWidget {
       const ShortcutCommand(id: 'ctrl_c', label: 'CTRL+C', code: '\x03'),
       const ShortcutCommand(id: 'ctrl_d', label: 'CTRL+D', code: '\x04'),
       const ShortcutCommand(id: 'ctrl_l', label: 'CTRL+L', code: '\x0c'),
-      ...shortcuts.customCommands,
+      ...customCommands,
     ]);
 
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children:
-            commands.map((command) => _quickKey(context, command)).toList(),
+    return SizedBox(
+      height: 36,
+      child: ReorderableListView.builder(
+        scrollDirection: Axis.horizontal,
+        buildDefaultDragHandles: false,
+        itemCount: commands.length,
+        onReorder: (oldIndex, newIndex) {
+          final reordered = commands.toList();
+          final item = reordered.removeAt(oldIndex);
+          final targetIndex = newIndex > oldIndex ? newIndex - 1 : newIndex;
+          reordered.insert(targetIndex, item);
+          shortcuts.reorderCommands(
+            reordered.map((command) => command.id).toList(),
+          );
+        },
+        itemBuilder: (context, index) {
+          final command = commands[index];
+          return ReorderableDelayedDragStartListener(
+            key: ValueKey(command.id),
+            index: index,
+            child: _quickKey(context, command),
+          );
+        },
       ),
     );
   }
@@ -202,15 +226,12 @@ class TerminalShortcutPanel extends StatelessWidget {
   }
 
   Widget _keyGroup(BuildContext context, List<_KeySpec> keys) {
-    final shortcuts = context.watch<ShortcutCommandService>();
-    final commands = shortcuts.sortByUsage(
-      keys
-          .map(
-            (key) =>
-                ShortcutCommand(id: key.id, label: key.label, code: key.code),
-          )
-          .toList(),
-    );
+    final commands = keys
+        .map(
+          (key) =>
+              ShortcutCommand(id: key.id, label: key.label, code: key.code),
+        )
+        .toList();
 
     return SizedBox(
       height: 34,
@@ -244,35 +265,34 @@ class TerminalShortcutPanel extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 2),
-      child: GestureDetector(
-        onLongPress: command.custom
+      child: InputChip(
+        label: Text(
+          command.label,
+          style: TextStyle(
+            fontSize: 11,
+            fontFamily: 'monospace',
+            fontWeight: FontWeight.w700,
+            color: command.custom ? customBorder : foreground,
+          ),
+        ),
+        backgroundColor: command.custom ? customBackground : normalBackground,
+        side: BorderSide(
+          color: command.custom ? customBorder : normalBorder,
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        avatar: command.custom
+            ? Icon(Icons.bolt, size: 14, color: customBorder)
+            : null,
+        deleteIcon: const Icon(Icons.close_rounded, size: 14),
+        onDeleted: command.custom
             ? () => _confirmRemoveShortcut(context, command)
             : null,
-        child: ActionChip(
-          label: Text(
-            command.label,
-            style: TextStyle(
-              fontSize: 11,
-              fontFamily: 'monospace',
-              fontWeight: FontWeight.w700,
-              color: command.custom ? customBorder : foreground,
-            ),
-          ),
-          backgroundColor: command.custom ? customBackground : normalBackground,
-          side: BorderSide(
-            color: command.custom ? customBorder : normalBorder,
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          avatar: command.custom
-              ? Icon(Icons.bolt, size: 14, color: customBorder)
-              : null,
-          onPressed: () {
-            context.read<ShortcutCommandService>().recordUse(command.id);
-            context.read<SshService>().sendData(sessionId, command.code);
-            terminalFocusNode.requestFocus();
-          },
-        ),
+        onPressed: () {
+          context.read<ShortcutCommandService>().recordUse(command.id);
+          context.read<SshService>().sendData(sessionId, command.code);
+          terminalFocusNode.requestFocus();
+        },
       ),
     );
   }

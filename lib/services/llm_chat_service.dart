@@ -98,6 +98,7 @@ class LlmChatService {
         requestToolApproval,
     void Function(LlmRunStats stats)? onStats,
     void Function(LlmTraceEvent event)? onTrace,
+    LlmCancellationToken? cancellationToken,
   }) async {
     final buffer = StringBuffer();
     await for (final chunk in stream(
@@ -106,6 +107,7 @@ class LlmChatService {
       requestToolApproval: requestToolApproval,
       onStats: onStats,
       onTrace: onTrace,
+      cancellationToken: cancellationToken,
     )) {
       buffer.write(chunk);
     }
@@ -119,6 +121,7 @@ class LlmChatService {
         requestToolApproval,
     void Function(LlmRunStats stats)? onStats,
     void Function(LlmTraceEvent event)? onTrace,
+    LlmCancellationToken? cancellationToken,
   }) async* {
     final settings = await storageService.loadAiConnectionSettings();
     final runStartedAt = DateTime.now();
@@ -154,11 +157,15 @@ class LlmChatService {
         messages: messages,
         contextWindowTokens: settings.contextWindowTokens,
         timeoutSeconds: settings.timeoutSeconds,
+        deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
+        deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
       );
       compressed = true;
     }
 
-    for (var round = 0; round < 10; round++) {
+    final visibleOutput = StringBuffer();
+    for (var round = 0;; round++) {
+      cancellationToken?.throwIfCancelled();
       final content = StringBuffer();
       final chunkController = StreamController<String>();
       _StreamChatResult? streamedResponse;
@@ -174,9 +181,13 @@ class LlmChatService {
             apiKey: apiKey,
             model: model,
             messages: workingMessages,
-            tools: toolService.toolDefinitions(),
+            tools: await toolService.toolDefinitions(),
             timeoutSeconds: settings.timeoutSeconds,
+            deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
+            deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
+            cancellationToken: cancellationToken,
             onContent: (chunk) {
+              cancellationToken?.throwIfCancelled();
               content.write(chunk);
               chunkController.add(chunk);
             },
@@ -192,11 +203,13 @@ class LlmChatService {
       unawaited(pumpStream());
 
       await for (final chunk in chunkController.stream) {
+        visibleOutput.write(chunk);
         yield chunk;
       }
       if (streamedError != null) {
         Error.throwWithStackTrace(streamedError!, streamedStackTrace!);
       }
+      cancellationToken?.throwIfCancelled();
       final response = streamedResponse;
       if (response == null) {
         throw StateError('LLM stream ended without a response.');
@@ -264,6 +277,7 @@ class LlmChatService {
       }
       workingMessages.add(assistantToolMessage);
       for (final call in response.toolCalls) {
+        cancellationToken?.throwIfCancelled();
         final arguments = _decodeArguments(call.arguments);
         onTrace?.call(
           LlmTraceEvent(
@@ -304,6 +318,7 @@ class LlmChatService {
                   'tool=${call.name} connection=${approvalRequest.connectionName} command=${approvalRequest.command}',
             );
             final decision = await requestToolApproval(approvalRequest);
+            cancellationToken?.throwIfCancelled();
             if (!decision.approved) {
               AppLogService.instance.warning(
                 'AI tool approval rejected',
@@ -365,6 +380,9 @@ class LlmChatService {
             arguments,
             approvedWrite: approvedWrite,
           );
+          cancellationToken?.throwIfCancelled();
+        } on LlmCancelledException {
+          rethrow;
         } catch (e) {
           result = jsonEncode({'error': e.toString()});
         }
@@ -375,10 +393,12 @@ class LlmChatService {
           'content': result,
         });
       }
+      final separator = _toolContinuationSeparator(visibleOutput.toString());
+      if (separator.isNotEmpty) {
+        visibleOutput.write(separator);
+        yield separator;
+      }
     }
-
-    AppLogService.instance.warning('LLM chat stopped: too many tool rounds');
-    yield 'The model requested too many tool rounds. Please narrow the task.';
   }
 
   Future<_StreamChatResult> _streamChatCompletion({
@@ -388,11 +408,15 @@ class LlmChatService {
     required List<Map<String, dynamic>> messages,
     required List<Map<String, dynamic>> tools,
     required int timeoutSeconds,
+    required bool deepSeekThinkingEnabled,
+    required String deepSeekReasoningEffort,
     required void Function(String chunk) onContent,
+    LlmCancellationToken? cancellationToken,
     bool includeUsage = true,
   }) async {
     final endpoint = Uri.parse(_joinUrl(baseUrl, '/chat/completions'));
     final client = HttpClient();
+    cancellationToken?.onCancel(() => client.close(force: true));
     final startedAt = DateTime.now();
     final contentChunks = <String>[];
     final reasoningContent = StringBuffer();
@@ -403,10 +427,12 @@ class LlmChatService {
       details: 'endpoint=$endpoint model=$model messages=${messages.length}',
     );
     try {
+      cancellationToken?.throwIfCancelled();
       final request = await client.postUrl(endpoint).timeout(
             Duration(seconds: timeoutSeconds),
           );
-      final requestBody = {
+      cancellationToken?.throwIfCancelled();
+      final requestBody = <String, dynamic>{
         'model': model,
         'messages': messages,
         'tools': tools,
@@ -414,6 +440,13 @@ class LlmChatService {
         'stream': true,
         if (includeUsage) 'stream_options': {'include_usage': true},
       };
+      requestBody.addAll(
+        _deepSeekThinkingParams(
+          baseUrl: baseUrl,
+          enabled: deepSeekThinkingEnabled,
+          effort: deepSeekReasoningEffort,
+        ),
+      );
       final bodyBytes = utf8.encode(jsonEncode(requestBody));
       request.headers
         ..set(HttpHeaders.authorizationHeader, 'Bearer $apiKey')
@@ -440,7 +473,10 @@ class LlmChatService {
             messages: messages,
             tools: tools,
             timeoutSeconds: timeoutSeconds,
+            deepSeekThinkingEnabled: deepSeekThinkingEnabled,
+            deepSeekReasoningEffort: deepSeekReasoningEffort,
             onContent: onContent,
+            cancellationToken: cancellationToken,
             includeUsage: false,
           );
         }
@@ -456,6 +492,7 @@ class LlmChatService {
 
       await for (final line
           in response.transform(utf8.decoder).transform(const LineSplitter())) {
+        cancellationToken?.throwIfCancelled();
         final trimmed = line.trim();
         if (!trimmed.startsWith('data:')) continue;
         final data = trimmed.substring(5).trim();
@@ -525,6 +562,14 @@ class LlmChatService {
         usage: usage,
       );
     } catch (e, stackTrace) {
+      if (cancellationToken?.isCancelled == true ||
+          e is LlmCancelledException) {
+        AppLogService.instance.info(
+          'LLM stream cancelled',
+          details: 'endpoint=$endpoint model=$model',
+        );
+        throw const LlmCancelledException();
+      }
       AppLogService.instance.error(
         'LLM stream request error',
         error: e,
@@ -593,6 +638,13 @@ class LlmChatService {
     return const JsonEncoder.withIndent('  ').convert(value);
   }
 
+  String _toolContinuationSeparator(String visibleText) {
+    if (visibleText.trim().isEmpty) return '';
+    if (visibleText.endsWith('\n\n')) return '';
+    if (visibleText.endsWith('\n')) return '\n';
+    return '\n\n';
+  }
+
   Future<List<Map<String, dynamic>>> _compressWorkingMessages({
     required String baseUrl,
     required String apiKey,
@@ -600,6 +652,8 @@ class LlmChatService {
     required List<Map<String, dynamic>> messages,
     required int contextWindowTokens,
     required int timeoutSeconds,
+    required bool deepSeekThinkingEnabled,
+    required String deepSeekReasoningEffort,
   }) async {
     final lastUserIndex =
         messages.lastIndexWhere((message) => message['role'] == 'user');
@@ -633,6 +687,8 @@ class LlmChatService {
         {'role': 'user', 'content': transcript},
       ],
       timeoutSeconds: timeoutSeconds,
+      deepSeekThinkingEnabled: deepSeekThinkingEnabled,
+      deepSeekReasoningEffort: deepSeekReasoningEffort,
     );
     final summary = _contentFromChatResponse(response);
     AppLogService.instance.info(
@@ -656,6 +712,8 @@ class LlmChatService {
     required String model,
     required List<Map<String, dynamic>> messages,
     required int timeoutSeconds,
+    required bool deepSeekThinkingEnabled,
+    required String deepSeekReasoningEffort,
   }) async {
     final endpoint = Uri.parse(_joinUrl(baseUrl, '/chat/completions'));
     final client = HttpClient();
@@ -663,12 +721,18 @@ class LlmChatService {
       final request = await client.postUrl(endpoint).timeout(
             Duration(seconds: timeoutSeconds),
           );
-      final bodyBytes = utf8.encode(
-        jsonEncode({
-          'model': model,
-          'messages': messages,
-        }),
+      final requestBody = <String, dynamic>{
+        'model': model,
+        'messages': messages,
+      };
+      requestBody.addAll(
+        _deepSeekThinkingParams(
+          baseUrl: baseUrl,
+          enabled: deepSeekThinkingEnabled,
+          effort: deepSeekReasoningEffort,
+        ),
       );
+      final bodyBytes = utf8.encode(jsonEncode(requestBody));
       request.headers
         ..set(HttpHeaders.authorizationHeader, 'Bearer $apiKey')
         ..contentType = ContentType.json;
@@ -709,6 +773,26 @@ class LlmChatService {
     return 'No prior context summary was returned.';
   }
 
+  Map<String, dynamic> _deepSeekThinkingParams({
+    required String baseUrl,
+    required bool enabled,
+    required String effort,
+  }) {
+    if (!_isDeepSeekBaseUrl(baseUrl)) return const {};
+    final params = <String, dynamic>{
+      'thinking': {'type': enabled ? 'enabled' : 'disabled'},
+    };
+    if (enabled) {
+      params['reasoning_effort'] = DeepSeekReasoningEffort.normalize(effort);
+    }
+    return params;
+  }
+
+  bool _isDeepSeekBaseUrl(String baseUrl) {
+    final uri = Uri.tryParse(baseUrl.trim());
+    return uri?.host.toLowerCase().endsWith('deepseek.com') == true;
+  }
+
   static int estimateMessagesTokens(List<Map<String, dynamic>> messages) {
     var total = 0;
     for (final message in messages) {
@@ -743,6 +827,42 @@ class LlmChatService {
       );
     }
   }
+}
+
+class LlmCancellationToken {
+  final List<void Function()> _callbacks = [];
+  bool _cancelled = false;
+
+  bool get isCancelled => _cancelled;
+
+  void cancel() {
+    if (_cancelled) return;
+    _cancelled = true;
+    final callbacks = List<void Function()>.of(_callbacks);
+    _callbacks.clear();
+    for (final callback in callbacks) {
+      callback();
+    }
+  }
+
+  void onCancel(void Function() callback) {
+    if (_cancelled) {
+      callback();
+      return;
+    }
+    _callbacks.add(callback);
+  }
+
+  void throwIfCancelled() {
+    if (_cancelled) throw const LlmCancelledException();
+  }
+}
+
+class LlmCancelledException implements Exception {
+  const LlmCancelledException();
+
+  @override
+  String toString() => 'LLM request cancelled.';
 }
 
 class _StreamChatResult {
@@ -850,7 +970,12 @@ const String _systemPrompt = '''
 You are an SSH Mobile assistant running inside the user's phone.
 You can request tools to inspect the user's saved servers and perform safe read-only server operations.
 Never ask for SSH passwords, private keys, or API keys.
+Tools whose names start with client_ execute on the user's phone/app, not on SSH servers. Use client tools for local time, client device/network/battery info, clipboard, app settings, client alarms/reminders, and the current chat's WebView plain-text page reading, and say clearly that the action happened on the client.
+The client_webview_get_page_text tool only reads visible plain text from the WebView bound to the current chat session. It does not read images, hidden DOM data, passwords, or cross-origin iframe contents.
 Before using a server tool, identify the target server by name or id. If unclear, ask the user.
+Servers may be Linux/Unix or Windows. Use the server's saved platform from list_servers/detect_os and never mix Linux commands with Windows commands. Use POSIX commands on Linux/Unix and explicit cmd /c or PowerShell read-only diagnostics on Windows.
+Delete/remove commands are not supported through tools. Do not ask run_command to delete files, directories, services, registry keys, containers, or other resources.
 Use run_command for read-only diagnostics by default. If the user explicitly asks for a server-changing command, request the command through run_command and wait for the app's human approval gate before it is executed.
+Use generate_ops_report when the user asks for a health report, operations report, or broad server status review.
 Summarize tool results clearly and mention which server/path/command you used.
 ''';

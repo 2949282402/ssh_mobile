@@ -11,10 +11,24 @@ class AppSettings extends ChangeNotifier {
   static const _darkModeKey = 'dark_mode';
   static const _themeModeKey = 'theme_mode';
   static const _fontFamilyKey = 'font_family';
+  static const _sftpDownloadLimitBytesKey = 'sftp_download_limit_bytes';
+  static const _sftpTextPreviewLimitBytesKey = 'sftp_text_preview_limit_bytes';
+  static const _sftpRichPreviewLimitBytesKey = 'sftp_rich_preview_limit_bytes';
+  static const _sftpTextEditLimitBytesKey = 'sftp_text_edit_limit_bytes';
+  static const int minSftpLimitBytes = 64 * 1024;
+  static const int maxSftpLimitBytes = 2 * 1024 * 1024 * 1024;
+  static const int defaultSftpDownloadLimitBytes = 512 * 1024 * 1024;
+  static const int defaultSftpTextPreviewLimitBytes = 2 * 1024 * 1024;
+  static const int defaultSftpRichPreviewLimitBytes = 20 * 1024 * 1024;
+  static const int defaultSftpTextEditLimitBytes = 512 * 1024;
 
   AppLanguage _language = AppLanguage.zh;
   ThemeMode _themeMode = ThemeMode.light;
   String _fontFamilyId = AppFontChoice.systemId;
+  int _sftpDownloadLimitBytes = defaultSftpDownloadLimitBytes;
+  int _sftpTextPreviewLimitBytes = defaultSftpTextPreviewLimitBytes;
+  int _sftpRichPreviewLimitBytes = defaultSftpRichPreviewLimitBytes;
+  int _sftpTextEditLimitBytes = defaultSftpTextEditLimitBytes;
   bool _initialized = false;
   Future<void> _themeWrite = Future.value();
 
@@ -26,6 +40,10 @@ class AppSettings extends ChangeNotifier {
   String get fontFamilyId => _fontFamilyId;
   String? get fontFamily => AppFontChoice.byId(_fontFamilyId).fontFamily;
   AppFontChoice get fontChoice => AppFontChoice.byId(_fontFamilyId);
+  int get sftpDownloadLimitBytes => _sftpDownloadLimitBytes;
+  int get sftpTextPreviewLimitBytes => _sftpTextPreviewLimitBytes;
+  int get sftpRichPreviewLimitBytes => _sftpRichPreviewLimitBytes;
+  int get sftpTextEditLimitBytes => _sftpTextEditLimitBytes;
 
   Future<void> init() async {
     try {
@@ -37,10 +55,30 @@ class AppSettings extends ChangeNotifier {
           languageName == AppLanguage.en.name ? AppLanguage.en : AppLanguage.zh;
       _themeMode = _themeModeFromPrefs(prefs);
       _fontFamilyId = AppFontChoice.normalize(prefs.getString(_fontFamilyKey));
+      _sftpDownloadLimitBytes = _normalizeSftpLimit(
+        prefs.getInt(_sftpDownloadLimitBytesKey),
+        defaultSftpDownloadLimitBytes,
+      );
+      _sftpTextPreviewLimitBytes = _normalizeSftpLimit(
+        prefs.getInt(_sftpTextPreviewLimitBytesKey),
+        defaultSftpTextPreviewLimitBytes,
+      );
+      _sftpRichPreviewLimitBytes = _normalizeSftpLimit(
+        prefs.getInt(_sftpRichPreviewLimitBytesKey),
+        defaultSftpRichPreviewLimitBytes,
+      );
+      _sftpTextEditLimitBytes = _normalizeSftpLimit(
+        prefs.getInt(_sftpTextEditLimitBytesKey),
+        defaultSftpTextEditLimitBytes,
+      );
     } catch (_) {
       _language = AppLanguage.zh;
       _themeMode = ThemeMode.light;
       _fontFamilyId = AppFontChoice.systemId;
+      _sftpDownloadLimitBytes = defaultSftpDownloadLimitBytes;
+      _sftpTextPreviewLimitBytes = defaultSftpTextPreviewLimitBytes;
+      _sftpRichPreviewLimitBytes = defaultSftpRichPreviewLimitBytes;
+      _sftpTextEditLimitBytes = defaultSftpTextEditLimitBytes;
     } finally {
       _initialized = true;
       notifyListeners();
@@ -81,6 +119,67 @@ class AppSettings extends ChangeNotifier {
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_fontFamilyKey, normalized);
+  }
+
+  Future<void> setSftpDownloadLimitBytes(int bytes) {
+    return _setSftpLimitBytes(
+      key: _sftpDownloadLimitBytesKey,
+      current: _sftpDownloadLimitBytes,
+      fallback: defaultSftpDownloadLimitBytes,
+      bytes: bytes,
+      apply: (value) => _sftpDownloadLimitBytes = value,
+    );
+  }
+
+  Future<void> setSftpTextPreviewLimitBytes(int bytes) {
+    return _setSftpLimitBytes(
+      key: _sftpTextPreviewLimitBytesKey,
+      current: _sftpTextPreviewLimitBytes,
+      fallback: defaultSftpTextPreviewLimitBytes,
+      bytes: bytes,
+      apply: (value) => _sftpTextPreviewLimitBytes = value,
+    );
+  }
+
+  Future<void> setSftpRichPreviewLimitBytes(int bytes) {
+    return _setSftpLimitBytes(
+      key: _sftpRichPreviewLimitBytesKey,
+      current: _sftpRichPreviewLimitBytes,
+      fallback: defaultSftpRichPreviewLimitBytes,
+      bytes: bytes,
+      apply: (value) => _sftpRichPreviewLimitBytes = value,
+    );
+  }
+
+  Future<void> setSftpTextEditLimitBytes(int bytes) {
+    return _setSftpLimitBytes(
+      key: _sftpTextEditLimitBytesKey,
+      current: _sftpTextEditLimitBytes,
+      fallback: defaultSftpTextEditLimitBytes,
+      bytes: bytes,
+      apply: (value) => _sftpTextEditLimitBytes = value,
+    );
+  }
+
+  Future<void> _setSftpLimitBytes({
+    required String key,
+    required int current,
+    required int fallback,
+    required int bytes,
+    required ValueChanged<int> apply,
+  }) async {
+    final normalized = _normalizeSftpLimit(bytes, fallback);
+    if (current == normalized) return;
+    apply(normalized);
+    notifyListeners();
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(key, normalized);
+  }
+
+  int _normalizeSftpLimit(int? bytes, int fallback) {
+    final value = bytes == null || bytes <= 0 ? fallback : bytes;
+    return value.clamp(minSftpLimitBytes, maxSftpLimitBytes).toInt();
   }
 
   ThemeMode _themeModeFromPrefs(SharedPreferences prefs) {
@@ -243,6 +342,7 @@ class AppStrings {
   String get windows => _en ? 'Windows' : '窗口';
   String get window => _en ? 'Window' : '窗口';
   String get active => _en ? 'Active' : '活跃';
+  String get performanceMonitor => _en ? 'Monitor' : '监控';
   String get logs => _en ? 'Logs' : '日志';
   String get cancel => _en ? 'Cancel' : '取消';
   String get create => _en ? 'Create' : '创建';
@@ -406,6 +506,8 @@ class AppStrings {
 
   String get sftp => _en ? 'SFTP' : 'SFTP';
   String get sftpServers => _en ? 'SFTP servers' : 'SFTP 服务器';
+  String get collapseServerList => _en ? 'Collapse server list' : '折叠服务器列表';
+  String get expandServerList => _en ? 'Expand server list' : '展开服务器列表';
   String get sftpEmptyTitle =>
       _en ? 'Select a server for SFTP' : '选择服务器使用 SFTP';
   String get sftpEmptyHint => _en

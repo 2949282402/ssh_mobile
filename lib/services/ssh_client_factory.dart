@@ -35,6 +35,11 @@ class SshClientFactory {
     SshCredentials? credentials,
   }) async {
     final resolvedCredentials = credentials ?? await loadCredentials(config);
+    validateAuthSecrets(
+      config: config,
+      password: resolvedCredentials.password,
+      privateKey: resolvedCredentials.privateKey,
+    );
     final socket = await SSHSocket.connect(
       config.host,
       config.port,

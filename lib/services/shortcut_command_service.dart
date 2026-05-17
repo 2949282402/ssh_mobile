@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -36,14 +37,19 @@ class ShortcutCommand {
 class ShortcutCommandService extends ChangeNotifier {
   static const _usageKey = 'shortcut_command_usage';
   static const _customKey = 'custom_shortcut_commands';
+  static const _orderKey = 'shortcut_command_order';
 
   final Map<String, int> _usage = {};
+  final List<String> _orderIds = [];
   final List<ShortcutCommand> _customCommands = [];
+  List<ShortcutCommand> _customCommandsView = const [];
+  Timer? _usageSaveTimer;
+  int _orderVersion = 0;
   bool _initialized = false;
 
   bool get initialized => _initialized;
-  List<ShortcutCommand> get customCommands =>
-      List.unmodifiable(_customCommands);
+  List<ShortcutCommand> get customCommands => _customCommandsView;
+  int get orderVersion => _orderVersion;
 
   Future<void> init() async {
     try {
@@ -65,6 +71,16 @@ class ShortcutCommandService extends ChangeNotifier {
         } catch (_) {}
       }
 
+      final orderJson = prefs.getString(_orderKey);
+      if (orderJson != null && orderJson.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(orderJson) as List<dynamic>;
+          _orderIds
+            ..clear()
+            ..addAll(decoded.whereType<String>());
+        } catch (_) {}
+      }
+
       final customJson = prefs.getString(_customKey);
       if (customJson != null && customJson.isNotEmpty) {
         try {
@@ -78,11 +94,14 @@ class ShortcutCommandService extends ChangeNotifier {
                 ),
               ),
             );
+          _refreshCustomCommandsView();
         } catch (_) {}
       }
     } catch (_) {
       _usage.clear();
+      _orderIds.clear();
       _customCommands.clear();
+      _refreshCustomCommandsView();
     } finally {
       _initialized = true;
       notifyListeners();
@@ -92,47 +111,88 @@ class ShortcutCommandService extends ChangeNotifier {
   int usageFor(String id) => _usage[id] ?? 0;
 
   List<ShortcutCommand> sortByUsage(List<ShortcutCommand> commands) {
-    final indexed = commands.indexed.toList();
-    indexed.sort((a, b) {
-      final usageCompare = usageFor(b.$2.id).compareTo(usageFor(a.$2.id));
-      if (usageCompare != 0) return usageCompare;
-      return a.$1.compareTo(b.$1);
-    });
-    return indexed.map((item) => item.$2).toList();
+    if (_orderIds.isEmpty) return List.unmodifiable(commands);
+    final byId = {for (final command in commands) command.id: command};
+    final ordered = <ShortcutCommand>[];
+    final used = <String>{};
+    for (final id in _orderIds) {
+      final command = byId[id];
+      if (command == null || !used.add(id)) continue;
+      ordered.add(command);
+    }
+    for (final command in commands) {
+      if (used.add(command.id)) ordered.add(command);
+    }
+    return ordered;
   }
 
   Future<void> recordUse(String id) async {
     _usage[id] = usageFor(id) + 1;
-    notifyListeners();
+    _scheduleUsageSave();
+  }
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_usageKey, jsonEncode(_usage));
+  Future<void> reorderCommands(List<String> ids) async {
+    final seen = <String>{};
+    _orderIds
+      ..clear()
+      ..addAll(ids.where((id) => seen.add(id)));
+    _orderVersion++;
+    notifyListeners();
+    await _saveOrder();
   }
 
   Future<void> addCustomCommand(String label, String code) async {
     final trimmedLabel = label.trim();
     if (trimmedLabel.isEmpty || code.isEmpty) return;
 
-    _customCommands.add(
-      ShortcutCommand(
-        id: 'custom_${DateTime.now().microsecondsSinceEpoch}',
-        label: trimmedLabel,
-        code: code,
-        custom: true,
-      ),
+    final command = ShortcutCommand(
+      id: 'custom_${DateTime.now().microsecondsSinceEpoch}',
+      label: trimmedLabel,
+      code: code,
+      custom: true,
     );
+    _customCommands.add(command);
+    _orderIds.add(command.id);
+    _orderVersion++;
+    _refreshCustomCommandsView();
     notifyListeners();
+    await _saveOrder();
     await _saveCustomCommands();
   }
 
   Future<void> removeCustomCommand(String id) async {
     _customCommands.removeWhere((command) => command.id == id);
     _usage.remove(id);
+    _orderIds.removeWhere((value) => value == id);
+    _orderVersion++;
+    _refreshCustomCommandsView();
     notifyListeners();
 
+    await _saveUsage();
+    await _saveOrder();
+    await _saveCustomCommands();
+  }
+
+  void _refreshCustomCommandsView() {
+    _customCommandsView = List.unmodifiable(_customCommands);
+  }
+
+  void _scheduleUsageSave() {
+    _usageSaveTimer?.cancel();
+    _usageSaveTimer = Timer(const Duration(milliseconds: 800), () {
+      _usageSaveTimer = null;
+      unawaited(_saveUsage());
+    });
+  }
+
+  Future<void> _saveUsage() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_usageKey, jsonEncode(_usage));
-    await _saveCustomCommands();
+  }
+
+  Future<void> _saveOrder() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_orderKey, jsonEncode(_orderIds));
   }
 
   Future<void> _saveCustomCommands() async {
@@ -141,5 +201,12 @@ class ShortcutCommandService extends ChangeNotifier {
       _customKey,
       jsonEncode(_customCommands.map((item) => item.toJson()).toList()),
     );
+  }
+
+  @override
+  void dispose() {
+    _usageSaveTimer?.cancel();
+    unawaited(_saveUsage());
+    super.dispose();
   }
 }

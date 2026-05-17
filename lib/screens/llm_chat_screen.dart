@@ -8,9 +8,11 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import 'client_webview_screen.dart';
 import '../services/ai_tool_service.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
+import '../services/client_webview_service.dart';
 import '../services/llm_chat_service.dart';
 import '../services/sftp_service.dart';
 import '../services/ssh_service.dart';
@@ -24,8 +26,15 @@ const List<String> _defaultModels = [
 
 class LlmChatScreen extends StatefulWidget {
   final bool active;
+  final ValueChanged<bool>? onHistoryVisibilityChanged;
+  final VoidCallback? onOpenSettingsDrawer;
 
-  const LlmChatScreen({super.key, this.active = true});
+  const LlmChatScreen({
+    super.key,
+    this.active = true,
+    this.onHistoryVisibilityChanged,
+    this.onOpenSettingsDrawer,
+  });
 
   @override
   State<LlmChatScreen> createState() => _LlmChatScreenState();
@@ -46,6 +55,7 @@ extension _AiToolBarStrings on _AiStrings {
 
 extension _AiSkillToolbarStrings on _AiStrings {
   String get skills => language == AppLanguage.en ? 'Skills' : '技能';
+  String get webView => language == AppLanguage.en ? 'WebView' : '网页';
 }
 
 extension _AiToolbarActionStrings on _AiStrings {
@@ -72,21 +82,26 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   final ScrollController _scrollController = ScrollController();
   late final AnimationController _historySlideController;
   Animation<double>? _historySlideAnimation;
+  final ValueNotifier<double> _historyPanelExtent = ValueNotifier(0);
   List<AiChatRecord> _chats = const [];
+  List<AiChatRecord> _savedHistoryChats = const [];
   String? _activeChatId;
   _PendingToolApproval? _pendingApproval;
+  LlmCancellationToken? _activeCancellationToken;
   int _contextWindowTokens = AiContextWindowSize.k259;
   bool _loading = true;
-  bool _loadStarted = false;
+  bool _settingsLoadStarted = false;
+  bool _historyLoadStarted = false;
+  bool _historyLoading = false;
   bool _sending = false;
   bool _toolsExpanded = false;
   String? _selectedConnectionId;
   String? _contextTokenCacheKey;
+  String? _contextTokenCacheChatId;
   int _cachedContextTokens = 0;
-  Offset? _historySwipeStart;
-  double _historyDragStartExtent = 0;
-  double _historyPanelExtent = 0;
-  bool _historyDragging = false;
+  DateTime _lastContextTokenEstimateAt = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _scrollToBottomScheduled = false;
+  bool _pendingScrollJump = false;
 
   AiChatRecord? get _activeChat {
     for (final chat in _chats) {
@@ -105,11 +120,11 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     )..addListener(() {
         final animation = _historySlideAnimation;
         if (animation == null || !mounted) return;
-        setState(() => _historyPanelExtent = animation.value);
+        _setHistoryPanelExtent(animation.value);
       });
     if (widget.active) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _loadChats();
+        if (mounted) _loadInitialDraft();
       });
     }
   }
@@ -117,9 +132,9 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   @override
   void didUpdateWidget(covariant LlmChatScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.active && !_loadStarted) {
+    if (widget.active && !_settingsLoadStarted) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _loadChats();
+        if (mounted) _loadInitialDraft();
       });
     }
     if (widget.active && !oldWidget.active) {
@@ -134,25 +149,46 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         const AiToolApprovalDecision.rejected(),
       );
     }
+    _activeCancellationToken?.cancel();
     _historySlideController.dispose();
+    _historyPanelExtent.dispose();
     _inputFocusNode.dispose();
     _inputController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadChats() async {
-    if (_loadStarted) return;
-    _loadStarted = true;
+  Future<void> _loadInitialDraft() async {
+    if (_settingsLoadStarted) return;
+    _settingsLoadStarted = true;
     final storage = context.read<StorageService>();
     final settings = await storage.loadAiConnectionSettings();
-    final chats = await storage.loadAiChats();
     if (!mounted) return;
     setState(() {
-      _chats = chats.isEmpty ? [_newChatRecord(settings.model)] : chats;
-      _activeChatId = _chats.first.id;
+      final draft = _newChatRecord(settings.model);
+      _chats = [draft];
+      _activeChatId = draft.id;
       _contextWindowTokens = settings.contextWindowTokens;
       _loading = false;
+    });
+  }
+
+  Future<void> _loadHistoryChatsIfNeeded() async {
+    if (_historyLoadStarted || _historyLoading) return;
+    setState(() => _historyLoading = true);
+    final chats = await context.read<StorageService>().loadAiChats();
+    if (!mounted) return;
+    setState(() {
+      _historyLoadStarted = true;
+      _historyLoading = false;
+      _savedHistoryChats = chats;
+      final drafts = _chats.where((chat) => chat.messages.isEmpty).toList();
+      final draftIds = drafts.map((chat) => chat.id).toSet();
+      _chats = [
+        ...drafts,
+        ...chats.where((chat) => !draftIds.contains(chat.id)),
+      ];
+      _activeChatId ??= _chats.isEmpty ? null : _chats.first.id;
     });
   }
 
@@ -187,254 +223,249 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         _contextWindowTokens <= 0 ? 0.0 : contextTokens / _contextWindowTokens;
 
     return Scaffold(
-      body: Listener(
-        behavior: HitTestBehavior.translucent,
-        onPointerDown: (event) => _startHistoryDrag(event.position),
-        onPointerMove: (event) => _updateHistoryDrag(context, event.position),
-        onPointerUp: (event) => _endHistoryDrag(context, event.position),
-        onPointerCancel: (_) => _cancelHistoryDrag(context),
-        child: Stack(
-          children: [
-            Column(
-              children: [
-                Container(
-                  padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-                  decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainer,
-                    border: Border(
-                      bottom: BorderSide(color: colorScheme.outlineVariant),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        tooltip: strings.history,
-                        icon: const Icon(Icons.menu_rounded),
-                        onPressed: () => _showHistory(context, strings),
-                      ),
-                      Expanded(
-                        // Keyed builders make chat switches perceptible without
-                        // replacing the stable toolbar or input controls.
-                        child: TweenAnimationBuilder<double>(
-                          key: ValueKey('chat-title-${activeChat.id}'),
-                          tween: Tween(begin: 0, end: 1),
-                          duration: const Duration(milliseconds: 220),
-                          curve: Curves.easeOutCubic,
-                          builder: (context, value, child) {
-                            return Opacity(
-                              opacity: value,
-                              child: Transform.translate(
-                                offset: Offset(12 * (1 - value), 0),
-                                child: child,
-                              ),
-                            );
-                          },
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                activeChat.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                              Text(
-                                _contextUsage(
-                                  contextTokens,
-                                  _contextWindowTokens,
-                                  contextPercent,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: colorScheme.onSurface
-                                      .withValues(alpha: 0.62),
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: strings.newChat,
-                        icon: const Icon(Icons.add_comment_outlined),
-                        onPressed:
-                            _sending ? null : () => _createChatFromSettings(),
-                      ),
-                      IconButton(
-                        tooltip: strings.settings,
-                        icon: const Icon(Icons.tune_rounded),
-                        onPressed: () => _showSettings(context, strings),
-                      ),
-                    ],
+      body: Stack(
+        children: [
+          Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainer,
+                  border: Border(
+                    bottom: BorderSide(color: colorScheme.outlineVariant),
                   ),
                 ),
-                Expanded(
-                  // Avoid AnimatedSwitcher here: it would briefly mount two
-                  // ListViews that share the same ScrollController.
-                  child: TweenAnimationBuilder<double>(
-                    key: ValueKey('chat-body-${activeChat.id}'),
-                    tween: Tween(begin: 0, end: 1),
-                    duration: const Duration(milliseconds: 260),
-                    curve: Curves.easeOutCubic,
-                    builder: (context, value, child) {
-                      return Opacity(
-                        opacity: value,
-                        child: Transform.translate(
-                          offset: Offset(0, 18 * (1 - value)),
-                          child: child,
+                child: Row(
+                  children: [
+                    IconButton(
+                      tooltip: strings.history,
+                      icon: const Icon(Icons.menu_rounded),
+                      onPressed: () => _showHistory(context, strings),
+                    ),
+                    Expanded(
+                      // Keyed builders make chat switches perceptible without
+                      // replacing the stable toolbar or input controls.
+                      child: TweenAnimationBuilder<double>(
+                        key: ValueKey('chat-title-${activeChat.id}'),
+                        tween: Tween(begin: 0, end: 1),
+                        duration: const Duration(milliseconds: 220),
+                        curve: Curves.easeOutCubic,
+                        builder: (context, value, child) {
+                          return Opacity(
+                            opacity: value,
+                            child: Transform.translate(
+                              offset: Offset(12 * (1 - value), 0),
+                              child: child,
+                            ),
+                          );
+                        },
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              activeChat.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            Text(
+                              _contextUsage(
+                                contextTokens,
+                                _contextWindowTokens,
+                                contextPercent,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: colorScheme.onSurface
+                                    .withValues(alpha: 0.62),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: strings.newChat,
+                      icon: const Icon(Icons.add_comment_outlined),
+                      onPressed:
+                          _sending ? null : () => _createChatFromSettings(),
+                    ),
+                    IconButton(
+                      tooltip: strings.appSettings,
+                      icon: const Icon(Icons.settings_outlined),
+                      onPressed: widget.onOpenSettingsDrawer,
+                    ),
+                    IconButton(
+                      tooltip: strings.settings,
+                      icon: const Icon(Icons.tune_rounded),
+                      onPressed: () => _showSettings(context, strings),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                // Avoid AnimatedSwitcher here: it would briefly mount two
+                // ListViews that share the same ScrollController.
+                child: TweenAnimationBuilder<double>(
+                  key: ValueKey('chat-body-${activeChat.id}'),
+                  tween: Tween(begin: 0, end: 1),
+                  duration: const Duration(milliseconds: 260),
+                  curve: Curves.easeOutCubic,
+                  builder: (context, value, child) {
+                    return Opacity(
+                      opacity: value,
+                      child: Transform.translate(
+                        offset: Offset(0, 18 * (1 - value)),
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    cacheExtent: 900,
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
+                    itemCount: visibleMessages.length,
+                    itemBuilder: (context, index) {
+                      final message = visibleMessages[index];
+                      return RepaintBoundary(
+                        key: ValueKey(
+                          '${message.role}-${message.createdAt.microsecondsSinceEpoch}',
+                        ),
+                        child: _MessageBubble(
+                          message: message,
+                          canAct: !_sending &&
+                              activeChat.messages == visibleMessages,
+                          onEditUser: message.role == 'user'
+                              ? () => _editUserMessage(index, strings)
+                              : null,
+                          onRegenerate: message.role == 'assistant'
+                              ? () =>
+                                  _confirmRegenerateAssistant(index, strings)
+                              : null,
+                          onBranch: message.role == 'assistant'
+                              ? () =>
+                                  _confirmBranchFromAssistant(index, strings)
+                              : null,
+                          onContinueTimeout: message.role == 'error' &&
+                                  index == visibleMessages.length - 1 &&
+                                  _isTimeoutError(message.text)
+                              ? () => _continueAfterTimeout(strings)
+                              : null,
                         ),
                       );
                     },
-                    child: ListView.builder(
-                      controller: _scrollController,
-                      cacheExtent: 900,
-                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
-                      itemCount: visibleMessages.length,
-                      itemBuilder: (context, index) {
-                        final message = visibleMessages[index];
-                        final streamingAssistant = _sending &&
-                            message.role == 'assistant' &&
-                            index == visibleMessages.length - 1;
-                        return RepaintBoundary(
-                          key: ValueKey(
-                            '${message.role}-${message.createdAt.microsecondsSinceEpoch}',
-                          ),
-                          child: _MessageBubble(
-                            message: message,
-                            renderMarkdown: !streamingAssistant,
-                            canAct: !_sending &&
-                                activeChat.messages == visibleMessages,
-                            onEditUser: message.role == 'user'
-                                ? () => _editUserMessage(index, strings)
-                                : null,
-                            onRegenerate: message.role == 'assistant'
-                                ? () => _confirmRegenerateAssistant(index, strings)
-                                : null,
-                onBranch: message.role == 'assistant'
-                    ? () => _confirmBranchFromAssistant(index, strings)
-                    : null,
-                onContinueTimeout: message.role == 'error' &&
-                        index == visibleMessages.length - 1 &&
-                        _isTimeoutError(message.text)
-                    ? () => _continueAfterTimeout(strings)
-                    : null,
+                  ),
+                ),
               ),
-                        );
-                      },
-                    ),
+              if (_pendingApproval?.chatId == activeChat.id)
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.sizeOf(context).height < 700
+                        ? MediaQuery.sizeOf(context).height * 0.52
+                        : 420,
+                  ),
+                  child: _ToolApprovalPanel(
+                    pending: _pendingApproval!,
+                    strings: strings,
+                    onApprove: () => _resolvePendingApproval(approved: true),
+                    onReject: () => _resolvePendingApproval(approved: false),
                   ),
                 ),
-                if (_pendingApproval?.chatId == activeChat.id)
-                  ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxHeight: MediaQuery.sizeOf(context).height < 700
-                          ? MediaQuery.sizeOf(context).height * 0.52
-                          : 420,
-                    ),
-                    child: _ToolApprovalPanel(
-                      pending: _pendingApproval!,
-                      strings: strings,
-                      onApprove: () => _resolvePendingApproval(approved: true),
-                      onReject: () => _resolvePendingApproval(approved: false),
+              SafeArea(
+                top: false,
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                  decoration: BoxDecoration(
+                    color: colorScheme.surfaceContainer,
+                    border: Border(
+                      top: BorderSide(color: colorScheme.outlineVariant),
                     ),
                   ),
-                SafeArea(
-                  top: false,
-                  child: Container(
-                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-                    decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainer,
-                      border: Border(
-                        top: BorderSide(color: colorScheme.outlineVariant),
-                      ),
-                    ),
-                    child: SingleChildScrollView(
-                      reverse: true,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: TextField(
-                                  controller: _inputController,
-                                  focusNode: _inputFocusNode,
-                                  minLines: 1,
-                                  maxLines: 3,
-                                  textInputAction: TextInputAction.newline,
-                                  decoration:
-                                      const InputDecoration(isDense: true),
-                                  onSubmitted: _isDesktopPlatform
-                                      ? null
-                                      : (_) => _send(context, strings),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              IconButton(
-                                tooltip: strings.tools,
-                                icon: AnimatedRotation(
-                                  turns: _toolsExpanded ? 0.125 : 0,
-                                  duration: const Duration(milliseconds: 180),
-                                  child: const Icon(Icons.add_rounded),
-                                ),
-                                onPressed: () {
-                                  setState(
-                                      () => _toolsExpanded = !_toolsExpanded);
-                                },
-                              ),
-                              const SizedBox(width: 4),
-                              IconButton.filled(
-                                tooltip: strings.send,
-                                icon: _sending
-                                    ? const SizedBox(
-                                        width: 18,
-                                        height: 18,
-                                        child: CircularProgressIndicator(
-                                            strokeWidth: 2),
-                                      )
-                                    : const Icon(Icons.send_rounded),
-                                onPressed: _sending
+                  child: SingleChildScrollView(
+                    reverse: true,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _inputController,
+                                focusNode: _inputFocusNode,
+                                minLines: 1,
+                                maxLines: 3,
+                                textInputAction: TextInputAction.newline,
+                                decoration:
+                                    const InputDecoration(isDense: true),
+                                onSubmitted: _isDesktopPlatform
                                     ? null
-                                    : () => _send(context, strings),
+                                    : (_) => _send(context, strings),
                               ),
-                            ],
-                          ),
-                          AnimatedSize(
-                            duration: const Duration(milliseconds: 220),
-                            curve: Curves.easeOutCubic,
-                            alignment: Alignment.topCenter,
-                            child: _toolsExpanded
-                                ? Padding(
-                                    padding: const EdgeInsets.only(top: 8),
-                                    child: _ChatToolsBar(
-                                      skillsLabel: strings.skills,
-                                      serverLabel:
-                                          _selectedServerLabel(strings),
-                                      onServerTap: () =>
-                                          _selectTargetServer(strings),
-                                      onSkillsTap: () {
-                                        Navigator.pushNamed(
-                                            context, '/ai-skills');
-                                      },
-                                    ),
-                                  )
-                                : const SizedBox(width: double.infinity),
-                          ),
-                        ],
-                      ),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              tooltip: strings.tools,
+                              icon: AnimatedRotation(
+                                turns: _toolsExpanded ? 0.125 : 0,
+                                duration: const Duration(milliseconds: 180),
+                                child: const Icon(Icons.add_rounded),
+                              ),
+                              onPressed: () {
+                                setState(
+                                    () => _toolsExpanded = !_toolsExpanded);
+                              },
+                            ),
+                            const SizedBox(width: 4),
+                            IconButton.filled(
+                              tooltip: _sending ? strings.stop : strings.send,
+                              icon: Icon(
+                                _sending
+                                    ? Icons.stop_rounded
+                                    : Icons.send_rounded,
+                              ),
+                              onPressed: _sending
+                                  ? _stopGeneration
+                                  : () => _send(context, strings),
+                            ),
+                          ],
+                        ),
+                        AnimatedSize(
+                          duration: const Duration(milliseconds: 220),
+                          curve: Curves.easeOutCubic,
+                          alignment: Alignment.topCenter,
+                          child: _toolsExpanded
+                              ? Padding(
+                                  padding: const EdgeInsets.only(top: 8),
+                                  child: _ChatToolsBar(
+                                    skillsLabel: strings.skills,
+                                    serverLabel: _selectedServerLabel(strings),
+                                    webViewLabel: strings.webView,
+                                    onServerTap: () =>
+                                        _selectTargetServer(strings),
+                                    onSkillsTap: () {
+                                      Navigator.pushNamed(
+                                          context, '/ai-skills');
+                                    },
+                                    onWebViewTap: () =>
+                                        _openClientWebView(activeChat.id),
+                                  ),
+                                )
+                              : const SizedBox(width: double.infinity),
+                        ),
+                      ],
                     ),
                   ),
                 ),
-              ],
-            ),
-            _buildHistoryOverlay(context, strings),
-          ],
-        ),
+              ),
+            ],
+          ),
+          _buildHistoryOverlay(context, strings),
+        ],
       ),
     );
   }
@@ -477,6 +508,14 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     );
     if (!mounted) return;
     setState(() => _selectedConnectionId = selected);
+  }
+
+  Future<void> _openClientWebView(String chatId) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ClientWebViewScreen(chatId: chatId),
+      ),
+    );
   }
 
   Future<void> _send(BuildContext context, _AiStrings strings) async {
@@ -617,11 +656,14 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         storageService: storage,
         sshService: ssh,
         sftpService: sftp,
+        clientWebViewSessionId: chatId,
       ),
     );
+    final cancellationToken = LlmCancellationToken();
+    _activeCancellationToken = cancellationToken;
+    final answer = StringBuffer();
 
     try {
-      final answer = StringBuffer();
       LlmRunStats? runStats;
       var lastStreamUiUpdate = DateTime.fromMillisecondsSinceEpoch(0);
       await for (final chunk in service.stream(
@@ -640,6 +682,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
             request: request,
           );
         },
+        cancellationToken: cancellationToken,
         messages: _messagesForRequest(
           requestMessages,
           placeholder: assistantMessage,
@@ -649,7 +692,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         if (!mounted) return;
         final now = DateTime.now();
         if (now.difference(lastStreamUiUpdate) <
-            const Duration(milliseconds: 80)) {
+            const Duration(milliseconds: 120)) {
           continue;
         }
         lastStreamUiUpdate = now;
@@ -672,9 +715,10 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                 messages: streamedMessages,
                 updatedAt: DateTime.now(),
               ),
+              sort: false,
             );
           });
-          _scrollToBottom();
+          _scrollToBottom(jump: true);
         }
       }
       if (!mounted) return;
@@ -689,7 +733,10 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         completedMessages[assistantIndex] =
             completedMessages[assistantIndex].copyWith(
           text: answer.toString(),
-          contextText: _contextTextForAssistant(answer.toString()),
+          contextText: _contextTextForAssistant(
+            answer.toString(),
+            traces: completedMessages[assistantIndex].traces,
+          ),
           promptTokens: runStats?.promptTokens,
           completionTokens: runStats?.completionTokens,
           totalTokens: runStats?.totalTokens,
@@ -707,6 +754,45 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       );
       setState(() => _replaceChat(answeredChat));
       await storage.saveAiChat(answeredChat);
+    } on LlmCancelledException {
+      AppLogService.instance.info(
+        'LLM chat UI request cancelled',
+        details: 'chatId=$chatId model=$model',
+      );
+      if (!mounted) return;
+      final currentChat = _chatById(chatId) ?? initialChat;
+      final cancelledMessages = [...currentChat.messages];
+      final assistantIndex = cancelledMessages.indexWhere(
+        (message) =>
+            message.role == 'assistant' &&
+            message.createdAt == assistantMessage.createdAt,
+      );
+      if (assistantIndex >= 0) {
+        final stoppedText = answer.toString().trim().isEmpty
+            ? strings.stopped
+            : '${answer.toString()}\n\n${strings.stopped}';
+        final traces = [
+          ...cancelledMessages[assistantIndex].traces,
+          AiMessageTrace(
+            kind: 'approval',
+            title: 'Stopped by user',
+            content: strings.stopped,
+            createdAt: DateTime.now(),
+          ),
+        ];
+        cancelledMessages[assistantIndex] =
+            cancelledMessages[assistantIndex].copyWith(
+          text: stoppedText,
+          traces: traces,
+          contextText: _contextTextForAssistant(stoppedText, traces: traces),
+        );
+      }
+      final cancelledChat = currentChat.copyWith(
+        messages: cancelledMessages,
+        updatedAt: DateTime.now(),
+      );
+      setState(() => _replaceChat(cancelledChat));
+      await storage.saveAiChat(cancelledChat);
     } catch (e, stackTrace) {
       AppLogService.instance.error(
         'LLM chat UI request failed',
@@ -745,6 +831,9 @@ class _LlmChatScreenState extends State<LlmChatScreen>
           if (_pendingApproval?.chatId == chatId) {
             _pendingApproval = null;
           }
+          if (identical(_activeCancellationToken, cancellationToken)) {
+            _activeCancellationToken = null;
+          }
         });
         _scrollToBottom();
       }
@@ -779,6 +868,18 @@ class _LlmChatScreenState extends State<LlmChatScreen>
           ? const AiToolApprovalDecision.approved()
           : const AiToolApprovalDecision.rejected(),
     );
+  }
+
+  void _stopGeneration() {
+    if (!_sending) return;
+    _activeCancellationToken?.cancel();
+    final pending = _pendingApproval;
+    if (pending != null && !pending.completer.isCompleted) {
+      pending.completer.complete(
+        const AiToolApprovalDecision.rejected(abort: true),
+      );
+    }
+    setState(() => _pendingApproval = null);
   }
 
   Future<bool> _confirmChatAction({
@@ -1005,6 +1106,10 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     );
     setState(() {
       _chats = [branch, ..._chats];
+      if (branch.messages.isNotEmpty) {
+        _savedHistoryChats = [branch, ..._savedHistoryChats];
+        _historyLoadStarted = true;
+      }
       _activeChatId = branch.id;
     });
     await context.read<StorageService>().saveAiChat(branch);
@@ -1013,57 +1118,16 @@ class _LlmChatScreenState extends State<LlmChatScreen>
 
   Future<void> _showHistory(BuildContext context, _AiStrings strings) async {
     _openHistoryPanel(context);
+    unawaited(_loadHistoryChatsIfNeeded());
   }
 
   double _historyPanelWidth(BuildContext context) {
-    final screenWidth = MediaQuery.sizeOf(context).width;
-    return screenWidth >= 480 ? 390.0 : screenWidth * 0.86;
-  }
-
-  void _startHistoryDrag(Offset position) {
-    _historySlideController.stop();
-    _historySwipeStart = position;
-    _historyDragStartExtent = _historyPanelExtent;
-    _historyDragging = _historyPanelExtent > 0 || position.dx <= 36;
-  }
-
-  void _updateHistoryDrag(BuildContext context, Offset position) {
-    if (!_historyDragging || _historySwipeStart == null) return;
-    final delta = position - _historySwipeStart!;
-    if (_historyDragStartExtent == 0 && delta.dx.abs() < delta.dy.abs() * 1.2) {
-      return;
-    }
-    final width = _historyPanelWidth(context);
-    final next = (_historyDragStartExtent + delta.dx).clamp(0.0, width);
-    if (next == _historyPanelExtent) return;
-    setState(() => _historyPanelExtent = next);
-  }
-
-  void _endHistoryDrag(BuildContext context, Offset position) {
-    if (!_historyDragging) {
-      _historySwipeStart = null;
-      return;
-    }
-    final start = _historySwipeStart;
-    _historySwipeStart = null;
-    _historyDragging = false;
-    if (start == null) return;
-    final width = _historyPanelWidth(context);
-    final delta = position - start;
-    final shouldOpen = _historyPanelExtent >= width * 0.38 || delta.dx > 120;
-    _animateHistoryPanel(context, shouldOpen ? width : 0);
-  }
-
-  void _cancelHistoryDrag(BuildContext context) {
-    _historySwipeStart = null;
-    _historyDragging = false;
-    final width = _historyPanelWidth(context);
-    _animateHistoryPanel(
-        context, _historyPanelExtent >= width * 0.5 ? width : 0);
+    return MediaQuery.sizeOf(context).width;
   }
 
   void _openHistoryPanel(BuildContext context) {
     _animateHistoryPanel(context, _historyPanelWidth(context));
+    unawaited(_loadHistoryChatsIfNeeded());
   }
 
   void _closeHistoryPanel(BuildContext context) {
@@ -1074,7 +1138,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     final width = _historyPanelWidth(context);
     final safeTarget = target.clamp(0.0, width);
     _historySlideAnimation = Tween<double>(
-      begin: _historyPanelExtent.clamp(0.0, width),
+      begin: _historyPanelExtent.value.clamp(0.0, width),
       end: safeTarget,
     ).animate(
       CurvedAnimation(
@@ -1086,55 +1150,84 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     _historySlideController.forward(from: 0);
   }
 
+  void _setHistoryPanelExtent(double extent) {
+    if ((_historyPanelExtent.value - extent).abs() < 0.5) return;
+    final wasVisible = _historyPanelExtent.value > 0.5;
+    _historyPanelExtent.value = extent;
+    final isVisible = extent > 0.5;
+    if (wasVisible != isVisible) {
+      widget.onHistoryVisibilityChanged?.call(isVisible);
+    }
+  }
+
   Widget _buildHistoryOverlay(BuildContext context, _AiStrings strings) {
     final width = _historyPanelWidth(context);
-    final extent = _historyPanelExtent.clamp(0.0, width);
-    if (extent <= 0.5) return const SizedBox.shrink();
     final colorScheme = Theme.of(context).colorScheme;
-    final progress = width == 0 ? 0.0 : extent / width;
-    return Positioned.fill(
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: GestureDetector(
-              onTap: () => _closeHistoryPanel(context),
-              child: ColoredBox(
-                color: Colors.black.withValues(alpha: 0.28 * progress),
-              ),
-            ),
-          ),
-          Positioned(
-            top: 0,
-            bottom: 0,
-            left: extent - width,
-            width: width,
-            child: SafeArea(
-              child: Material(
-                color: colorScheme.surface,
-                elevation: 16,
-                child: _HistoryPanel(
-                  chats: _chats,
-                  activeChatId: _activeChatId,
-                  strings: strings,
-                  formatTime: _formatTime,
-                  onNewChat: () {
-                    _closeHistoryPanel(context);
-                    _createChatFromSettings();
-                  },
-                  onDeleteChat: (chatId) async {
-                    await _deleteChat(chatId);
-                  },
-                  onSelectChat: (chatId) {
-                    setState(() => _activeChatId = chatId);
-                    _closeHistoryPanel(context);
-                    _scrollToBottom();
-                  },
+    return ValueListenableBuilder<double>(
+      valueListenable: _historyPanelExtent,
+      builder: (context, rawExtent, _) {
+        final extent = rawExtent.clamp(0.0, width);
+        if (extent <= 0.5) return const SizedBox.shrink();
+        final progress = width == 0 ? 0.0 : extent / width;
+        return Positioned.fill(
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: GestureDetector(
+                  onTap: () => _closeHistoryPanel(context),
+                  child: ColoredBox(
+                    color: Colors.black.withValues(alpha: 0.28 * progress),
+                  ),
                 ),
               ),
-            ),
+              Positioned(
+                top: 0,
+                bottom: 0,
+                left: extent - width,
+                width: width,
+                child: SafeArea(
+                  child: Material(
+                    color: colorScheme.surface,
+                    elevation: 16,
+                    child: _HistoryPanel(
+                      chats: _savedHistoryChats,
+                      activeChatId: _activeChatId,
+                      loading: _historyLoading,
+                      strings: strings,
+                      formatTime: _formatTime,
+                      onClose: () => _closeHistoryPanel(context),
+                      onNewChat: () {
+                        _closeHistoryPanel(context);
+                        _createChatFromSettings();
+                      },
+                      onDeleteChat: (chatId) async {
+                        await _deleteChat(chatId);
+                      },
+                      onSelectChat: (chatId) {
+                        final selected = _chatById(chatId);
+                        setState(() {
+                          if (selected != null &&
+                              !_chats.any((chat) => chat.id == selected.id)) {
+                            _chats = [
+                              selected,
+                              ..._chats
+                                  .where((chat) => chat.messages.isNotEmpty),
+                              ..._chats.where((chat) => chat.messages.isEmpty),
+                            ];
+                          }
+                          _activeChatId = chatId;
+                        });
+                        _closeHistoryPanel(context);
+                        _scrollToBottom();
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -1163,12 +1256,15 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       if (activeChat != null &&
           nextModel.isNotEmpty &&
           activeChat.model != nextModel) {
-        await _updateActiveChat(
-          activeChat.copyWith(
-            model: nextModel,
-            updatedAt: DateTime.now(),
-          ),
+        final updatedChat = activeChat.copyWith(
+          model: nextModel,
+          updatedAt: DateTime.now(),
         );
+        if (activeChat.messages.isEmpty) {
+          setState(() => _replaceChat(updatedChat));
+        } else {
+          await _updateActiveChat(updatedChat);
+        }
       }
       return;
     }
@@ -1179,6 +1275,13 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     var models = _modelOptions(settings.model);
     var contextWindowTokens = settings.contextWindowTokens;
     var timeoutSeconds = settings.timeoutSeconds;
+    var deepSeekThinkingEnabled = settings.deepSeekThinkingEnabled;
+    var deepSeekReasoningEffort = settings.deepSeekReasoningEffort;
+    var webSearchEnabled = settings.webSearchEnabled;
+    var webSearchProvider = settings.webSearchProvider;
+    var webSearchMaxResults = settings.webSearchMaxResults;
+    final webSearchBaseUrlController =
+        TextEditingController(text: settings.webSearchBaseUrl);
     var loadingModels = false;
     var savingSettings = false;
     String? modelLoadError;
@@ -1347,6 +1450,104 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                     },
                   ),
                   const SizedBox(height: 12),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(strings.deepSeekThinking),
+                    subtitle: Text(strings.deepSeekThinkingHint),
+                    value: deepSeekThinkingEnabled,
+                    onChanged: savingSettings
+                        ? null
+                        : (value) {
+                            setDialogState(
+                              () => deepSeekThinkingEnabled = value,
+                            );
+                          },
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: DeepSeekReasoningEffort.normalize(
+                      deepSeekReasoningEffort,
+                    ),
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      labelText: strings.deepSeekReasoningEffort,
+                    ),
+                    items: [
+                      for (final value in DeepSeekReasoningEffort.values)
+                        DropdownMenuItem(
+                          value: value,
+                          child: Text(DeepSeekReasoningEffort.label(value)),
+                        ),
+                    ],
+                    onChanged: savingSettings || !deepSeekThinkingEnabled
+                        ? null
+                        : (value) {
+                            if (value != null) {
+                              deepSeekReasoningEffort = value;
+                            }
+                          },
+                  ),
+                  const SizedBox(height: 12),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(strings.webSearch),
+                    subtitle: Text(strings.webSearchHint),
+                    value: webSearchEnabled,
+                    onChanged: savingSettings
+                        ? null
+                        : (value) {
+                            setDialogState(() => webSearchEnabled = value);
+                          },
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: AiWebSearchProvider.normalize(
+                      webSearchProvider,
+                    ),
+                    isExpanded: true,
+                    decoration:
+                        InputDecoration(labelText: strings.webSearchProvider),
+                    items: [
+                      for (final value in AiWebSearchProvider.values)
+                        DropdownMenuItem(
+                          value: value,
+                          child: Text(AiWebSearchProvider.label(value)),
+                        ),
+                    ],
+                    onChanged: savingSettings || !webSearchEnabled
+                        ? null
+                        : (value) {
+                            if (value != null) webSearchProvider = value;
+                          },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: webSearchBaseUrlController,
+                    enabled: !savingSettings && webSearchEnabled,
+                    decoration:
+                        InputDecoration(labelText: strings.searxngBaseUrl),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int>(
+                    initialValue:
+                        AiWebSearchMaxResults.normalize(webSearchMaxResults),
+                    isExpanded: true,
+                    decoration:
+                        InputDecoration(labelText: strings.webSearchMaxResults),
+                    items: [
+                      for (final value in AiWebSearchMaxResults.values)
+                        DropdownMenuItem(
+                          value: value,
+                          child: Text('$value'),
+                        ),
+                    ],
+                    onChanged: savingSettings || !webSearchEnabled
+                        ? null
+                        : (value) {
+                            if (value != null) webSearchMaxResults = value;
+                          },
+                  ),
+                  const SizedBox(height: 12),
                   TextField(
                     controller: apiKeyController,
                     obscureText: true,
@@ -1375,6 +1576,12 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                         model: modelController.text,
                         contextWindowTokens: contextWindowTokens,
                         timeoutSeconds: timeoutSeconds,
+                        deepSeekThinkingEnabled: deepSeekThinkingEnabled,
+                        deepSeekReasoningEffort: deepSeekReasoningEffort,
+                        webSearchEnabled: webSearchEnabled,
+                        webSearchProvider: webSearchProvider,
+                        webSearchBaseUrl: webSearchBaseUrlController.text,
+                        webSearchMaxResults: webSearchMaxResults,
                         apiKey: apiKeyController.text,
                       );
                       setDialogState(() {
@@ -1387,6 +1594,14 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                           model: pending.model,
                           contextWindowTokens: pending.contextWindowTokens,
                           timeoutSeconds: pending.timeoutSeconds,
+                          deepSeekThinkingEnabled:
+                              pending.deepSeekThinkingEnabled,
+                          deepSeekReasoningEffort:
+                              pending.deepSeekReasoningEffort,
+                          webSearchEnabled: pending.webSearchEnabled,
+                          webSearchProvider: pending.webSearchProvider,
+                          webSearchBaseUrl: pending.webSearchBaseUrl,
+                          webSearchMaxResults: pending.webSearchMaxResults,
                           apiKey: pending.apiKey,
                         );
                         if (!ctx.mounted) return;
@@ -1421,6 +1636,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
 
     baseUrlController.dispose();
     modelController.dispose();
+    webSearchBaseUrlController.dispose();
     apiKeyController.dispose();
 
     if (nextSettings == null) return;
@@ -1431,12 +1647,15 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     if (activeChat != null &&
         nextModel.isNotEmpty &&
         activeChat.model != nextModel) {
-      await _updateActiveChat(
-        activeChat.copyWith(
-          model: nextModel,
-          updatedAt: DateTime.now(),
-        ),
+      final updatedChat = activeChat.copyWith(
+        model: nextModel,
+        updatedAt: DateTime.now(),
       );
+      if (activeChat.messages.isEmpty) {
+        setState(() => _replaceChat(updatedChat));
+      } else {
+        await _updateActiveChat(updatedChat);
+      }
     }
   }
 
@@ -1487,16 +1706,19 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   void _createChat(String model) {
     final chat = _newChatRecord(model);
     setState(() {
-      _chats = [chat, ..._chats];
+      _chats = [
+        chat,
+        ..._chats.where((item) => item.messages.isNotEmpty),
+      ];
       _activeChatId = chat.id;
     });
-    context.read<StorageService>().saveAiChat(chat);
     _scrollToBottom();
   }
 
   Future<void> _deleteChat(String id) async {
-    if (_chats.isEmpty) return;
+    if (_chats.isEmpty && _savedHistoryChats.isEmpty) return;
     final storage = context.read<StorageService>();
+    final deleted = _chatById(id);
     final nextChats = _chats.where((chat) => chat.id != id).toList();
     if (nextChats.isEmpty) {
       final settings = await storage.loadAiConnectionSettings();
@@ -1505,14 +1727,16 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     }
     setState(() {
       _chats = nextChats;
+      _savedHistoryChats =
+          _savedHistoryChats.where((chat) => chat.id != id).toList();
       if (_activeChatId == id || _activeChatId == null) {
         _activeChatId = nextChats.first.id;
       }
     });
-    await storage.deleteAiChat(id);
-    if (nextChats.length == 1 && nextChats.first.messages.isEmpty) {
-      await storage.saveAiChat(nextChats.first);
+    if (deleted?.messages.isNotEmpty == true) {
+      await storage.deleteAiChat(id);
     }
+    ClientWebViewService.instance.clearSession(id);
     _scrollToBottom(jump: true);
   }
 
@@ -1521,7 +1745,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     await context.read<StorageService>().saveAiChat(chat);
   }
 
-  void _replaceChat(AiChatRecord chat) {
+  void _replaceChat(AiChatRecord chat, {bool sort = true}) {
     final chats = [..._chats];
     final index = chats.indexWhere((item) => item.id == chat.id);
     if (index >= 0) {
@@ -1529,13 +1753,29 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     } else {
       chats.insert(0, chat);
     }
-    chats.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    if (sort) {
+      chats.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    }
     _chats = chats;
+    if (chat.messages.isNotEmpty) {
+      final history = [..._savedHistoryChats];
+      final historyIndex = history.indexWhere((item) => item.id == chat.id);
+      if (historyIndex >= 0) {
+        history[historyIndex] = chat;
+      } else if (_historyLoadStarted) {
+        history.insert(0, chat);
+      }
+      history.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      _savedHistoryChats = history;
+    }
     _activeChatId = chat.id;
   }
 
   AiChatRecord? _chatById(String id) {
     for (final chat in _chats) {
+      if (chat.id == id) return chat;
+    }
+    for (final chat in _savedHistoryChats) {
       if (chat.id == id) return chat;
     }
     return null;
@@ -1594,7 +1834,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       return message.contextText!;
     }
     if (message.role == 'assistant') {
-      return message.contextText ?? _contextTextForAssistant(message.text);
+      return message.contextText ??
+          _contextTextForAssistant(message.text, traces: message.traces);
     }
     return message.text;
   }
@@ -1615,11 +1856,34 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     return '${lines.join('\n\n')}\n\nUser request:\n$text';
   }
 
-  String _contextTextForAssistant(String text) {
+  String _contextTextForAssistant(
+    String text, {
+    List<AiMessageTrace> traces = const [],
+  }) {
     final trimmed = text.trim();
-    if (trimmed.isEmpty) return trimmed;
-    if (!_shouldOmitAssistantBody(trimmed)) return trimmed;
+    final body = trimmed.isEmpty
+        ? trimmed
+        : !_shouldOmitAssistantBody(trimmed)
+            ? trimmed
+            : _slimAssistantBody(trimmed);
+    if (traces.isEmpty) return body;
 
+    final buffer = StringBuffer();
+    if (body.isNotEmpty) {
+      buffer.writeln(body);
+      buffer.writeln();
+    }
+    buffer.writeln('Assistant execution memory:');
+    for (final trace in traces) {
+      buffer
+        ..writeln('[${trace.kind}] ${trace.title}')
+        ..writeln(trace.content.trim())
+        ..writeln();
+    }
+    return buffer.toString().trimRight();
+  }
+
+  String _slimAssistantBody(String trimmed) {
     final preview =
         trimmed.replaceAll(RegExp(r'\s+'), ' ').trim().runes.take(420);
     final type = _largeAssistantBodyType(trimmed);
@@ -1670,7 +1934,17 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   int _contextTokensFor(AiChatRecord chat) {
     final key = _contextTokenKey(chat);
     if (_contextTokenCacheKey == key) return _cachedContextTokens;
+    final now = DateTime.now();
+    if (_sending &&
+        _contextTokenCacheChatId == chat.id &&
+        _contextTokenCacheKey != null &&
+        now.difference(_lastContextTokenEstimateAt) <
+            const Duration(milliseconds: 1500)) {
+      return _cachedContextTokens;
+    }
     _contextTokenCacheKey = key;
+    _contextTokenCacheChatId = chat.id;
+    _lastContextTokenEstimateAt = now;
     _cachedContextTokens = _estimatedContextTokens(chat.messages);
     return _cachedContextTokens;
   }
@@ -1686,6 +1960,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       last.createdAt.microsecondsSinceEpoch,
       last.text.length,
       last.contextText?.length ?? 0,
+      last.traces.length,
     ].join(':');
   }
 
@@ -1716,9 +1991,15 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   }
 
   void _scrollToBottom({bool jump = false}) {
+    _pendingScrollJump = _pendingScrollJump || jump;
+    if (_scrollToBottomScheduled) return;
+    _scrollToBottomScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollToBottomScheduled = false;
+      final shouldJump = _pendingScrollJump;
+      _pendingScrollJump = false;
       if (!_scrollController.hasClients) return;
-      if (jump) {
+      if (shouldJump || _sending) {
         _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
         return;
       }
@@ -1736,7 +2017,6 @@ class _LlmChatScreenState extends State<LlmChatScreen>
 
 class _MessageBubble extends StatelessWidget {
   final AiChatMessageRecord message;
-  final bool renderMarkdown;
   final bool canAct;
   final VoidCallback? onEditUser;
   final VoidCallback? onRegenerate;
@@ -1745,7 +2025,6 @@ class _MessageBubble extends StatelessWidget {
 
   const _MessageBubble({
     required this.message,
-    this.renderMarkdown = true,
     this.canAct = false,
     this.onEditUser,
     this.onRegenerate,
@@ -1784,7 +2063,7 @@ class _MessageBubble extends StatelessWidget {
                           : colorScheme.outlineVariant.withValues(alpha: 0.78),
                 ),
               ),
-              child: isUser || isError || !renderMarkdown
+              child: isUser || isError
                   ? SelectableText(
                       message.text.isEmpty ? '...' : message.text,
                       style: TextStyle(
@@ -1832,7 +2111,11 @@ class _MessageBubble extends StatelessWidget {
                 onContinueTimeout: onContinueTimeout,
               ),
             if (!isUser && !isError && message.traces.isNotEmpty)
-              _TracePanel(traces: message.traces),
+              _TracePanel(
+                traces: message.traces,
+                storageKey:
+                    'trace-panel-${message.createdAt.microsecondsSinceEpoch}',
+              ),
             if (!isUser && !isError && message.totalTokens != null)
               Padding(
                 padding: const EdgeInsets.only(left: 4, bottom: 8),
@@ -1889,8 +2172,10 @@ class _MessageBubble extends StatelessWidget {
 class _HistoryPanel extends StatelessWidget {
   final List<AiChatRecord> chats;
   final String? activeChatId;
+  final bool loading;
   final _AiStrings strings;
   final String Function(DateTime time) formatTime;
+  final VoidCallback onClose;
   final VoidCallback onNewChat;
   final ValueChanged<String> onSelectChat;
   final Future<void> Function(String chatId) onDeleteChat;
@@ -1898,8 +2183,10 @@ class _HistoryPanel extends StatelessWidget {
   const _HistoryPanel({
     required this.chats,
     required this.activeChatId,
+    required this.loading,
     required this.strings,
     required this.formatTime,
+    required this.onClose,
     required this.onNewChat,
     required this.onSelectChat,
     required this.onDeleteChat,
@@ -1914,6 +2201,11 @@ class _HistoryPanel extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
           child: Row(
             children: [
+              IconButton(
+                tooltip: strings.close,
+                icon: const Icon(Icons.close_rounded),
+                onPressed: onClose,
+              ),
               Expanded(
                 child: Text(
                   strings.history,
@@ -1932,39 +2224,47 @@ class _HistoryPanel extends StatelessWidget {
           ),
         ),
         Expanded(
-          child: ListView.separated(
-            itemCount: chats.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (context, index) {
-              final chat = chats[index];
-              final selected = chat.id == activeChatId;
-              return ListTile(
-                selected: selected,
-                leading: Icon(
-                  selected
-                      ? Icons.chat_bubble_rounded
-                      : Icons.chat_bubble_outline_rounded,
-                  color: selected ? colorScheme.primary : null,
+          child: loading
+              ? const Center(
+                  child: SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              : ListView.separated(
+                  itemCount: chats.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final chat = chats[index];
+                    final selected = chat.id == activeChatId;
+                    return ListTile(
+                      selected: selected,
+                      leading: Icon(
+                        selected
+                            ? Icons.chat_bubble_rounded
+                            : Icons.chat_bubble_outline_rounded,
+                        color: selected ? colorScheme.primary : null,
+                      ),
+                      title: Text(
+                        chat.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        formatTime(chat.updatedAt),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: IconButton(
+                        tooltip: strings.delete,
+                        icon: const Icon(Icons.delete_outline),
+                        onPressed: () => onDeleteChat(chat.id),
+                      ),
+                      onTap: () => onSelectChat(chat.id),
+                    );
+                  },
                 ),
-                title: Text(
-                  chat.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Text(
-                  formatTime(chat.updatedAt),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                trailing: IconButton(
-                  tooltip: strings.delete,
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed: () => onDeleteChat(chat.id),
-                ),
-                onTap: () => onSelectChat(chat.id),
-              );
-            },
-          ),
         ),
       ],
     );
@@ -1974,14 +2274,18 @@ class _HistoryPanel extends StatelessWidget {
 class _ChatToolsBar extends StatelessWidget {
   final String skillsLabel;
   final String serverLabel;
+  final String webViewLabel;
   final VoidCallback onServerTap;
   final VoidCallback onSkillsTap;
+  final VoidCallback onWebViewTap;
 
   const _ChatToolsBar({
     required this.skillsLabel,
     required this.serverLabel,
+    required this.webViewLabel,
     required this.onServerTap,
     required this.onSkillsTap,
+    required this.onWebViewTap,
   });
 
   @override
@@ -2017,6 +2321,12 @@ class _ChatToolsBar extends StatelessWidget {
                   icon: Icons.auto_awesome_outlined,
                   label: Text(skillsLabel),
                   onPressed: onSkillsTap,
+                ),
+                _ChatToolTile(
+                  width: tileWidth,
+                  icon: Icons.language_rounded,
+                  label: Text(webViewLabel),
+                  onPressed: onWebViewTap,
                 ),
               ],
             );
@@ -2214,8 +2524,12 @@ class _MessageActions extends StatelessWidget {
 
 class _TracePanel extends StatelessWidget {
   final List<AiMessageTrace> traces;
+  final String storageKey;
 
-  const _TracePanel({required this.traces});
+  const _TracePanel({
+    required this.traces,
+    required this.storageKey,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2232,6 +2546,7 @@ class _TracePanel extends StatelessWidget {
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
+          key: PageStorageKey<String>(storageKey),
           tilePadding: const EdgeInsets.symmetric(horizontal: 10),
           childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
           dense: true,
@@ -2251,7 +2566,11 @@ class _TracePanel extends StatelessWidget {
           ),
           children: [
             for (var i = 0; i < traces.length; i++)
-              _TraceEntry(trace: traces[i], index: i + 1),
+              _TraceEntry(
+                trace: traces[i],
+                index: i + 1,
+                storageKey: '$storageKey-entry-$i',
+              ),
           ],
         ),
       ),
@@ -2262,10 +2581,12 @@ class _TracePanel extends StatelessWidget {
 class _TraceEntry extends StatelessWidget {
   final AiMessageTrace trace;
   final int index;
+  final String storageKey;
 
   const _TraceEntry({
     required this.trace,
     required this.index,
+    required this.storageKey,
   });
 
   @override
@@ -2281,6 +2602,7 @@ class _TraceEntry extends StatelessWidget {
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
+          key: PageStorageKey<String>(storageKey),
           tilePadding: const EdgeInsets.symmetric(horizontal: 10),
           childrenPadding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
           dense: true,
@@ -2399,6 +2721,8 @@ class _ToolApprovalPanel extends StatelessWidget {
         : '模型想在 ${pending.request.connectionName} 上执行可能修改服务器状态的命令。原因：${pending.request.reason}';
     final reject = en ? 'Reject' : '拒绝';
     final approve = en ? 'Approve' : '同意';
+    final maxCommandHeight =
+        (MediaQuery.sizeOf(context).height * 0.24).clamp(96.0, 180.0);
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
@@ -2409,6 +2733,7 @@ class _ToolApprovalPanel extends StatelessWidget {
         border: Border.all(color: colorScheme.error.withValues(alpha: 0.42)),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
@@ -2438,7 +2763,8 @@ class _ToolApprovalPanel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
-          Flexible(
+          ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxCommandHeight),
             child: Container(
               width: double.infinity,
               padding: const EdgeInsets.all(10),
@@ -2503,6 +2829,12 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   late List<String> _models;
   late int _contextWindowTokens;
   late int _timeoutSeconds;
+  late bool _deepSeekThinkingEnabled;
+  late String _deepSeekReasoningEffort;
+  late bool _webSearchEnabled;
+  late String _webSearchProvider;
+  late int _webSearchMaxResults;
+  late final TextEditingController _webSearchBaseUrlController;
   bool _loadingModels = false;
   bool _saving = false;
   String? _errorText;
@@ -2518,12 +2850,20 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _models = _modelOptions(widget.initialSettings.model);
     _contextWindowTokens = widget.initialSettings.contextWindowTokens;
     _timeoutSeconds = widget.initialSettings.timeoutSeconds;
+    _deepSeekThinkingEnabled = widget.initialSettings.deepSeekThinkingEnabled;
+    _deepSeekReasoningEffort = widget.initialSettings.deepSeekReasoningEffort;
+    _webSearchEnabled = widget.initialSettings.webSearchEnabled;
+    _webSearchProvider = widget.initialSettings.webSearchProvider;
+    _webSearchMaxResults = widget.initialSettings.webSearchMaxResults;
+    _webSearchBaseUrlController =
+        TextEditingController(text: widget.initialSettings.webSearchBaseUrl);
   }
 
   @override
   void dispose() {
     _baseUrlController.dispose();
     _modelController.dispose();
+    _webSearchBaseUrlController.dispose();
     _apiKeyController.dispose();
     super.dispose();
   }
@@ -2585,6 +2925,12 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       model: _modelController.text,
       contextWindowTokens: _contextWindowTokens,
       timeoutSeconds: _timeoutSeconds,
+      deepSeekThinkingEnabled: _deepSeekThinkingEnabled,
+      deepSeekReasoningEffort: _deepSeekReasoningEffort,
+      webSearchEnabled: _webSearchEnabled,
+      webSearchProvider: _webSearchProvider,
+      webSearchBaseUrl: _webSearchBaseUrlController.text,
+      webSearchMaxResults: _webSearchMaxResults,
       apiKey: _apiKeyController.text,
     );
     setState(() {
@@ -2597,6 +2943,12 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         model: pending.model,
         contextWindowTokens: pending.contextWindowTokens,
         timeoutSeconds: pending.timeoutSeconds,
+        deepSeekThinkingEnabled: pending.deepSeekThinkingEnabled,
+        deepSeekReasoningEffort: pending.deepSeekReasoningEffort,
+        webSearchEnabled: pending.webSearchEnabled,
+        webSearchProvider: pending.webSearchProvider,
+        webSearchBaseUrl: pending.webSearchBaseUrl,
+        webSearchMaxResults: pending.webSearchMaxResults,
         apiKey: pending.apiKey,
       );
       if (!mounted) return;
@@ -2751,6 +3103,102 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                     },
             ),
             const SizedBox(height: 14),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: Text(strings.deepSeekThinking),
+              subtitle: Text(strings.deepSeekThinkingHint),
+              value: _deepSeekThinkingEnabled,
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      setState(() => _deepSeekThinkingEnabled = value);
+                    },
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<String>(
+              initialValue:
+                  DeepSeekReasoningEffort.normalize(_deepSeekReasoningEffort),
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: strings.deepSeekReasoningEffort,
+              ),
+              items: [
+                for (final value in DeepSeekReasoningEffort.values)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text(DeepSeekReasoningEffort.label(value)),
+                  ),
+              ],
+              onChanged: _saving || !_deepSeekThinkingEnabled
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        setState(() => _deepSeekReasoningEffort = value);
+                      }
+                    },
+            ),
+            const SizedBox(height: 14),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: Text(strings.webSearch),
+              subtitle: Text(strings.webSearchHint),
+              value: _webSearchEnabled,
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      setState(() => _webSearchEnabled = value);
+                    },
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<String>(
+              initialValue: AiWebSearchProvider.normalize(_webSearchProvider),
+              isExpanded: true,
+              decoration: InputDecoration(labelText: strings.webSearchProvider),
+              items: [
+                for (final value in AiWebSearchProvider.values)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text(AiWebSearchProvider.label(value)),
+                  ),
+              ],
+              onChanged: _saving || !_webSearchEnabled
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        setState(() => _webSearchProvider = value);
+                      }
+                    },
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _webSearchBaseUrlController,
+              enabled: !_saving && _webSearchEnabled,
+              decoration: InputDecoration(labelText: strings.searxngBaseUrl),
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<int>(
+              initialValue: AiWebSearchMaxResults.normalize(
+                _webSearchMaxResults,
+              ),
+              isExpanded: true,
+              decoration:
+                  InputDecoration(labelText: strings.webSearchMaxResults),
+              items: [
+                for (final value in AiWebSearchMaxResults.values)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text('$value'),
+                  ),
+              ],
+              onChanged: _saving || !_webSearchEnabled
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        setState(() => _webSearchMaxResults = value);
+                      }
+                    },
+            ),
+            const SizedBox(height: 14),
             TextField(
               controller: _apiKeyController,
               enabled: !_saving,
@@ -2792,6 +3240,12 @@ class _PendingAiSettings {
   final String model;
   final int contextWindowTokens;
   final int timeoutSeconds;
+  final bool deepSeekThinkingEnabled;
+  final String deepSeekReasoningEffort;
+  final bool webSearchEnabled;
+  final String webSearchProvider;
+  final String webSearchBaseUrl;
+  final int webSearchMaxResults;
   final String apiKey;
 
   const _PendingAiSettings({
@@ -2799,6 +3253,12 @@ class _PendingAiSettings {
     required this.model,
     required this.contextWindowTokens,
     required this.timeoutSeconds,
+    required this.deepSeekThinkingEnabled,
+    required this.deepSeekReasoningEffort,
+    required this.webSearchEnabled,
+    required this.webSearchProvider,
+    required this.webSearchBaseUrl,
+    required this.webSearchMaxResults,
     required this.apiKey,
   });
 }
@@ -2817,12 +3277,28 @@ class _AiStrings {
   String get history => _en ? 'Chat history' : '聊天历史';
   String get newChat => _en ? 'New chat' : '新聊天';
   String get delete => _en ? 'Delete' : '删除';
+  String get appSettings => _en ? 'App settings' : '应用设置';
   String get settings => _en ? 'LLM settings' : '大模型设置';
   String get send => _en ? 'Send' : '发送';
+  String get stop => _en ? 'Stop' : '停止';
+  String get stopped => _en ? '[Stopped by user]' : '[用户已终止]';
   String get baseUrl => _en ? 'Base URL' : 'Base URL';
   String get model => _en ? 'Model' : '模型';
   String get refreshModels => _en ? 'Refresh models' : '刷新模型';
   String get requestTimeout => _en ? 'Request timeout' : '请求超时';
+  String get deepSeekThinking => _en ? 'DeepSeek thinking' : 'DeepSeek 思考模式';
+  String get deepSeekThinkingHint => _en
+      ? 'Only sent to DeepSeek API hosts. Disable it for faster simple replies.'
+      : '仅在 DeepSeek API 地址下发送。关闭后简单回复会更快。';
+  String get deepSeekReasoningEffort =>
+      _en ? 'DeepSeek reasoning effort' : 'DeepSeek 思考强度';
+  String get webSearch => _en ? 'Open-source web search' : '开源网络搜索';
+  String get webSearchHint => _en
+      ? 'Expose a web_search tool through your own SearXNG instance. No paid search API key is required.'
+      : '通过自建 SearXNG 实例给模型提供 web_search 工具，不需要付费搜索 API Key。';
+  String get webSearchProvider => _en ? 'Search provider' : '搜索服务';
+  String get searxngBaseUrl => _en ? 'SearXNG base URL' : 'SearXNG 实例地址';
+  String get webSearchMaxResults => _en ? 'Search results per call' : '每次搜索结果数';
   String get continueAfterTimeoutPrompt => _en
       ? 'Continue the previous answer. If a server command timed out, narrow the scope and continue with a smaller diagnostic step.'
       : '继续上一次回答。如果服务器命令超时，请缩小范围，用更小的诊断步骤继续。';
@@ -2831,6 +3307,7 @@ class _AiStrings {
   String get apiKeySaved =>
       _en ? 'API Key (saved, leave blank)' : 'API Key（已保存，留空不改）';
   String get apiKeyRequired => _en ? 'API Key' : 'API Key';
+  String get close => _en ? 'Close' : '关闭';
   String get cancel => _en ? 'Cancel' : '取消';
   String get save => _en ? 'Save' : '保存';
   String failed(Object error) => _en ? 'Failed: $error' : '失败：$error';

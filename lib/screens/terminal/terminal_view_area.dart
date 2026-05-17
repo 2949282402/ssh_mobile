@@ -57,8 +57,8 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
   double _pinchStartDistance = 0;
   double _pinchStartFontSize = 0;
   double _lastAppliedFontSize = 0;
-  double _scrollPixels = 0;
-  double _maxScrollExtent = 0;
+  final ValueNotifier<_TerminalScrollMetrics> _scrollMetrics =
+      ValueNotifier(const _TerminalScrollMetrics());
   bool _draggingScrollbar = false;
   bool _userReadingHistory = false;
   bool _metricsUpdateScheduled = false;
@@ -127,6 +127,7 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
   void dispose() {
     _scrollController.removeListener(_syncScrollMetrics);
     _scrollController.dispose();
+    _scrollMetrics.dispose();
     super.dispose();
   }
 
@@ -167,15 +168,16 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
       }
     }
 
-    if ((nextPixels - _scrollPixels).abs() < 0.5 &&
-        (nextMax - _maxScrollExtent).abs() < 0.5) {
+    final current = _scrollMetrics.value;
+    if ((nextPixels - current.pixels).abs() < 0.5 &&
+        (nextMax - current.maxScrollExtent).abs() < 0.5) {
       return;
     }
     if (!mounted) return;
-    setState(() {
-      _scrollPixels = nextPixels;
-      _maxScrollExtent = nextMax;
-    });
+    _scrollMetrics.value = _TerminalScrollMetrics(
+      pixels: nextPixels,
+      maxScrollExtent: nextMax,
+    );
   }
 
   bool _handleScrollNotification(ScrollNotification notification) {
@@ -259,12 +261,17 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
           top: 8,
           right: 4,
           bottom: 8,
-          child: _TerminalHistoryScrollbar(
-            pixels: _scrollPixels,
-            maxScrollExtent: _maxScrollExtent,
-            onInteractionStart: _startScrollbarInteraction,
-            onInteractionEnd: _endScrollbarInteraction,
-            onScrollFractionChanged: _jumpToScrollFraction,
+          child: ValueListenableBuilder<_TerminalScrollMetrics>(
+            valueListenable: _scrollMetrics,
+            builder: (context, metrics, _) {
+              return _TerminalHistoryScrollbar(
+                pixels: metrics.pixels,
+                maxScrollExtent: metrics.maxScrollExtent,
+                onInteractionStart: _startScrollbarInteraction,
+                onInteractionEnd: _endScrollbarInteraction,
+                onScrollFractionChanged: _jumpToScrollFraction,
+              );
+            },
           ),
         ),
       ],
@@ -295,9 +302,10 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
   }
 
   void _jumpToScrollFraction(double fraction) {
-    if (!_scrollController.hasClients || _maxScrollExtent <= 0) return;
-    final target = (_maxScrollExtent * fraction).clamp(0.0, _maxScrollExtent);
-    _userReadingHistory = (_maxScrollExtent - target) > _bottomTolerance;
+    final maxScrollExtent = _scrollMetrics.value.maxScrollExtent;
+    if (!_scrollController.hasClients || maxScrollExtent <= 0) return;
+    final target = (maxScrollExtent * fraction).clamp(0.0, maxScrollExtent);
+    _userReadingHistory = (maxScrollExtent - target) > _bottomTolerance;
     _jumpToScrollOffset(target);
     _syncScrollMetrics();
   }
@@ -414,6 +422,16 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
       });
     });
   }
+}
+
+class _TerminalScrollMetrics {
+  final double pixels;
+  final double maxScrollExtent;
+
+  const _TerminalScrollMetrics({
+    this.pixels = 0,
+    this.maxScrollExtent = 0,
+  });
 }
 
 class _TerminalHistoryScrollbar extends StatelessWidget {

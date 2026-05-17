@@ -47,7 +47,10 @@ class SftpService extends ChangeNotifier {
   static const int maxTextEditBytes = 512 * 1024;
   static const int maxTextPreviewBytes = 2 * 1024 * 1024;
   static const int maxRichPreviewBytes = 20 * 1024 * 1024;
-  static const int maxInMemoryTransferBytes = 50 * 1024 * 1024;
+  static const int maxUploadBytes = 50 * 1024 * 1024;
+  static const int maxDownloadBytes = 512 * 1024 * 1024;
+  static const int maxInMemoryTransferBytes = maxDownloadBytes;
+  static const Duration _notifyCoalesceDelay = Duration(milliseconds: 16);
 
   final StorageService _storageService;
   late final SshClientFactory _clientFactory =
@@ -56,7 +59,9 @@ class SftpService extends ChangeNotifier {
   final Map<String, _SftpSession> _sessions = {};
   final Map<String, String> _lastPaths = {};
   final Map<String, Future<void>> _connectTasks = {};
+  Timer? _notifyTimer;
   String? _activeConnectionId;
+  bool _disposed = false;
 
   SftpService(this._storageService);
 
@@ -174,7 +179,7 @@ class SftpService extends ChangeNotifier {
     final session = _activeSession;
     final sftp = session?.sftp;
     if (sftp == null) return;
-    _assertWithinMemoryLimit(bytes.length, 'upload');
+    _assertWithinMemoryLimit(bytes.length, 'upload', maxBytes: maxUploadBytes);
 
     session!.state = SftpConnectionState.loading;
     session.errorMessage = null;
@@ -211,7 +216,13 @@ class SftpService extends ChangeNotifier {
     }
   }
 
-  Future<void> deleteEntry(SftpEntry entry) async {
+  Future<void> deleteEntry(
+    SftpEntry entry, {
+    required String confirmedName,
+  }) async {
+    if (confirmedName != entry.name && confirmedName.trim() != entry.name) {
+      throw StateError('Deletion confirmation does not match the entry name.');
+    }
     final session = _sessionForEntry(entry);
     final sftp = session.sftp;
     if (sftp == null) return;
@@ -246,7 +257,7 @@ class SftpService extends ChangeNotifier {
 
   Future<Uint8List> downloadBytes(
     SftpEntry entry, {
-    int maxBytes = maxInMemoryTransferBytes,
+    int maxBytes = maxDownloadBytes,
     bool updateState = false,
   }) async {
     final session = _sessionForEntry(entry);
@@ -359,13 +370,20 @@ class SftpService extends ChangeNotifier {
     String connectionId,
     String path,
   ) async {
-    await connect(connectionId);
-    final session = _sessions[connectionId];
-    if (session == null || session.sftp == null) {
-      throw StateError('SFTP is not connected');
-    }
-    await _openPath(session, path);
-    return List.unmodifiable(session.entries);
+    return _withDetachedSftp(connectionId, (sftp, config) async {
+      final absolutePath = await sftp.absolute(path);
+      final names = await sftp.listdir(absolutePath);
+      final entries = _buildEntries(
+        connectionId: config.id,
+        absolutePath: absolutePath,
+        names: names,
+      );
+      AppLogService.instance.info(
+        'SFTP directory listed for tool',
+        details: 'connection=${config.name} path=$absolutePath',
+      );
+      return List.unmodifiable(entries);
+    });
   }
 
   Future<String> readTextPathForConnection({
@@ -373,22 +391,21 @@ class SftpService extends ChangeNotifier {
     required String path,
     int maxBytes = maxTextPreviewBytes,
   }) async {
-    await connect(connectionId);
-    final session = _sessions[connectionId];
-    final sftp = session?.sftp;
-    if (session == null || sftp == null) {
-      throw StateError('SFTP is not connected');
-    }
-
-    SftpFile? file;
-    try {
-      file = await sftp.open(path, mode: SftpFileOpenMode.read);
-      final bytes = await file.readBytes();
-      _assertWithinMemoryLimit(bytes.length, 'read', maxBytes: maxBytes);
-      return utf8.decode(bytes, allowMalformed: true);
-    } finally {
-      await _closeFileQuietly(file);
-    }
+    return _withDetachedSftp(connectionId, (sftp, config) async {
+      SftpFile? file;
+      try {
+        file = await sftp.open(path, mode: SftpFileOpenMode.read);
+        final bytes = await file.readBytes();
+        _assertWithinMemoryLimit(bytes.length, 'read', maxBytes: maxBytes);
+        AppLogService.instance.info(
+          'SFTP file read for tool',
+          details: 'connection=${config.name} path=$path bytes=${bytes.length}',
+        );
+        return utf8.decode(bytes, allowMalformed: true);
+      } finally {
+        await _closeFileQuietly(file);
+      }
+    });
   }
 
   Future<void> _openPath(_SftpSession session, String path) async {
@@ -402,34 +419,11 @@ class SftpService extends ChangeNotifier {
     try {
       final absolutePath = await sftp.absolute(path);
       final names = await sftp.listdir(absolutePath);
-      final entries = <SftpEntry>[];
-      for (final name in names) {
-        if (name.filename == '.' || name.filename == '..') continue;
-        final modifiedAt = name.attr.modifyTime == null
-            ? null
-            : DateTime.fromMillisecondsSinceEpoch(
-                name.attr.modifyTime! * 1000,
-              );
-        entries.add(
-          SftpEntry(
-            connectionId: session.connectionId,
-            name: name.filename,
-            path: _joinRemotePath(absolutePath, name.filename),
-            lowerName: name.filename.toLowerCase(),
-            isDirectory: name.attr.isDirectory,
-            isLink: name.attr.isSymbolicLink,
-            size: name.attr.size,
-            sizeLabel: _formatBytes(name.attr.size),
-            modifiedAt: modifiedAt,
-            modifiedLabel:
-                modifiedAt == null ? null : _formatTimestamp(modifiedAt),
-          ),
-        );
-      }
-      entries.sort((a, b) {
-        if (a.isDirectory != b.isDirectory) return a.isDirectory ? -1 : 1;
-        return a.lowerName.compareTo(b.lowerName);
-      });
+      final entries = _buildEntries(
+        connectionId: session.connectionId,
+        absolutePath: absolutePath,
+        names: names,
+      );
 
       session.currentPath = absolutePath;
       _lastPaths[session.connectionId] = absolutePath;
@@ -505,7 +499,19 @@ class SftpService extends ChangeNotifier {
   }
 
   @override
+  void notifyListeners() {
+    if (_disposed) return;
+    if (_notifyTimer != null) return;
+    _notifyTimer = Timer(_notifyCoalesceDelay, () {
+      _notifyTimer = null;
+      if (!_disposed) super.notifyListeners();
+    });
+  }
+
+  @override
   void dispose() {
+    _disposed = true;
+    _notifyTimer?.cancel();
     unawaited(disconnectAll(notify: false));
     super.dispose();
   }
@@ -523,6 +529,62 @@ class SftpService extends ChangeNotifier {
     );
     session.errorMessage = null;
     await _openPath(session, '.');
+  }
+
+  Future<T> _withDetachedSftp<T>(
+    String connectionId,
+    Future<T> Function(SftpClient sftp, ConnectionConfig config) action,
+  ) async {
+    final config = _storageService.getConnection(connectionId);
+    if (config == null) {
+      throw StateError('Connection config not found');
+    }
+
+    final client = await _clientFactory.connectClient(config);
+    SftpClient? sftp;
+    try {
+      sftp = await client.sftp().timeout(const Duration(seconds: 15));
+      return await action(sftp, config);
+    } finally {
+      sftp?.close();
+      client.close();
+    }
+  }
+
+  List<SftpEntry> _buildEntries({
+    required String connectionId,
+    required String absolutePath,
+    required Iterable<dynamic> names,
+  }) {
+    final entries = <SftpEntry>[];
+    for (final name in names) {
+      if (name.filename == '.' || name.filename == '..') continue;
+      final modifiedAt = name.attr.modifyTime == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(
+              name.attr.modifyTime! * 1000,
+            );
+      entries.add(
+        SftpEntry(
+          connectionId: connectionId,
+          name: name.filename,
+          path: _joinRemotePath(absolutePath, name.filename),
+          lowerName: name.filename.toLowerCase(),
+          isDirectory: name.attr.isDirectory,
+          isLink: name.attr.isSymbolicLink,
+          size: name.attr.size,
+          sizeLabel: _formatBytes(name.attr.size),
+          modifiedAt: modifiedAt,
+          modifiedLabel:
+              modifiedAt == null ? null : _formatTimestamp(modifiedAt),
+        ),
+      );
+    }
+    entries.sort((a, b) {
+      if (a.isDirectory != b.isDirectory) return a.isDirectory ? -1 : 1;
+      return a.lowerName.compareTo(b.lowerName);
+    });
+    return entries;
   }
 
   void _setError(String message) {

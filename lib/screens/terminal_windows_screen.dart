@@ -17,7 +17,16 @@ class TerminalWindowsScreen extends StatelessWidget {
 }
 
 class TerminalWindowsPage extends StatefulWidget {
-  const TerminalWindowsPage({super.key});
+  final String? connectionId;
+  final bool showHeader;
+  final bool embedded;
+
+  const TerminalWindowsPage({
+    super.key,
+    this.connectionId,
+    this.showHeader = true,
+    this.embedded = false,
+  });
 
   @override
   State<TerminalWindowsPage> createState() => _TerminalWindowsPageState();
@@ -29,9 +38,13 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final sessions = context.select<SshService, List<SshSession>>(
-      (ssh) => ssh.sessions,
+    final snapshot = context.select<SshService, _WindowSessionsSnapshot>(
+      (ssh) => _WindowSessionsSnapshot.from(
+        ssh,
+        connectionId: widget.connectionId,
+      ),
     );
+    final sessions = snapshot.sessions;
     final strings = AppStrings(context.watch<AppSettings>().language);
 
     _selectedSessionIds.removeWhere(
@@ -41,23 +54,38 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
       _selectionMode = false;
     }
 
+    final body = sessions.isEmpty
+        ? _buildEmptyState(context, strings)
+        : _buildWindowList(context, sessions, strings);
+    if (widget.embedded) return body;
+
     return Column(
       children: [
-        _buildHeader(context, sessions, strings),
-        Expanded(
-          child: sessions.isEmpty
-              ? _buildEmptyState(context, strings)
-              : _buildWindowList(context, sessions, strings),
-        ),
+        if (widget.showHeader) _buildHeader(context, sessions, strings),
+        Expanded(child: body),
       ],
     );
   }
 
   Widget _buildWindowList(
     BuildContext context,
-    List<SshSession> sessions,
+    List<_WindowSessionSnapshot> sessions,
     AppStrings strings,
   ) {
+    if (widget.embedded) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Column(
+          children: [
+            for (var index = 0; index < sessions.length; index++) ...[
+              if (index > 0) const SizedBox(height: 8),
+              _buildWindowItem(context, sessions[index], strings),
+            ],
+          ],
+        ),
+      );
+    }
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final desktop = constraints.maxWidth >= AppBreakpoints.desktop;
@@ -121,7 +149,7 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
 
   Widget _buildHeader(
     BuildContext context,
-    List<SshSession> sessions,
+    List<_WindowSessionSnapshot> sessions,
     AppStrings strings,
   ) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -180,6 +208,27 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
 
   Widget _buildEmptyState(BuildContext context, AppStrings strings) {
     final colorScheme = Theme.of(context).colorScheme;
+    if (widget.embedded) {
+      return Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(top: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.34),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: colorScheme.outlineVariant),
+        ),
+        child: Text(
+          strings.noOpenWindows,
+          style: TextStyle(
+            color: colorScheme.onSurfaceVariant,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      );
+    }
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(28),
@@ -217,7 +266,7 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
 
   Widget _buildWindowItem(
     BuildContext context,
-    SshSession session,
+    _WindowSessionSnapshot session,
     AppStrings strings,
   ) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -400,7 +449,7 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
 
   Widget _buildSessionMeta(
     BuildContext context,
-    SshSession session,
+    _WindowSessionSnapshot session,
     AppStrings strings,
   ) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -442,7 +491,10 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
     );
   }
 
-  String _formatAutoDestroy(SshSession session, AppStrings strings) {
+  String _formatAutoDestroy(
+    _WindowSessionSnapshot session,
+    AppStrings strings,
+  ) {
     final seconds = session.tmuxAutoDeleteSeconds;
     if (session.tmuxSessionName == null || seconds == null) {
       return strings.notAvailable;
@@ -481,7 +533,7 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
 
   Widget _buildLeadingIcon(
     BuildContext context,
-    SshSession session,
+    _WindowSessionSnapshot session,
     bool selected,
     Color statusColor,
   ) {
@@ -504,7 +556,7 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
     );
   }
 
-  Color _statusColor(BuildContext context, SshSession session) {
+  Color _statusColor(BuildContext context, _WindowSessionSnapshot session) {
     final colorScheme = Theme.of(context).colorScheme;
     switch (session.state) {
       case SshConnectionState.connected:
@@ -517,7 +569,7 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
     }
   }
 
-  String _statusLabel(SshSession session, AppStrings strings) {
+  String _statusLabel(_WindowSessionSnapshot session, AppStrings strings) {
     switch (session.state) {
       case SshConnectionState.connected:
         return strings.connected;
@@ -530,7 +582,7 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
     }
   }
 
-  void _openWindow(BuildContext context, SshSession session) {
+  void _openWindow(BuildContext context, _WindowSessionSnapshot session) {
     Navigator.pushNamedAndRemoveUntil(
       context,
       '/terminal',
@@ -553,7 +605,7 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
     });
   }
 
-  void _selectAll(List<SshSession> sessions) {
+  void _selectAll(List<_WindowSessionSnapshot> sessions) {
     setState(() {
       _selectionMode = true;
       _selectedSessionIds
@@ -569,7 +621,10 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
     });
   }
 
-  Future<void> _closeWindow(BuildContext context, SshSession session) async {
+  Future<void> _closeWindow(
+    BuildContext context,
+    _WindowSessionSnapshot session,
+  ) async {
     final cleanupCommand = session.tmuxKillCommand;
     final strings = AppStrings(context.read<AppSettings>().language);
     final confirmed = await showDialog<bool>(
@@ -663,6 +718,125 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
       await ssh.disconnectSession(sessionId);
     }
   }
+}
+
+class _WindowSessionsSnapshot {
+  final List<_WindowSessionSnapshot> sessions;
+
+  const _WindowSessionsSnapshot({required this.sessions});
+
+  factory _WindowSessionsSnapshot.from(
+    SshService ssh, {
+    String? connectionId,
+  }) {
+    return _WindowSessionsSnapshot(
+      sessions: List.unmodifiable(
+        ssh.sessions
+            .where(
+              (session) =>
+                  connectionId == null || session.connectionId == connectionId,
+            )
+            .map(_WindowSessionSnapshot.from),
+      ),
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (other is! _WindowSessionsSnapshot ||
+        other.sessions.length != sessions.length) {
+      return false;
+    }
+    for (var index = 0; index < sessions.length; index++) {
+      if (other.sessions[index] != sessions[index]) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode => Object.hashAll(sessions);
+}
+
+class _WindowSessionSnapshot {
+  final String id;
+  final String connectionId;
+  final String connectionName;
+  final String displayName;
+  final String? tmuxSessionName;
+  final int? tmuxAutoDeleteSeconds;
+  final SshConnectionState state;
+  final String? errorMessage;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final int estimatedMemoryBytes;
+  final String? tmuxKillCommand;
+
+  const _WindowSessionSnapshot({
+    required this.id,
+    required this.connectionId,
+    required this.connectionName,
+    required this.displayName,
+    required this.tmuxSessionName,
+    required this.tmuxAutoDeleteSeconds,
+    required this.state,
+    required this.errorMessage,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.estimatedMemoryBytes,
+    required this.tmuxKillCommand,
+  });
+
+  factory _WindowSessionSnapshot.from(SshSession session) {
+    return _WindowSessionSnapshot(
+      id: session.id,
+      connectionId: session.connectionId,
+      connectionName: session.connectionName,
+      displayName: session.displayName,
+      tmuxSessionName: session.tmuxSessionName,
+      tmuxAutoDeleteSeconds: session.tmuxAutoDeleteSeconds,
+      state: session.state,
+      errorMessage: session.errorMessage,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      estimatedMemoryBytes: session.estimatedMemoryBytes,
+      tmuxKillCommand: session.tmuxKillCommand,
+    );
+  }
+
+  bool get isConnected => state == SshConnectionState.connected;
+
+  @override
+  bool operator ==(Object other) {
+    return other is _WindowSessionSnapshot &&
+        other.id == id &&
+        other.connectionId == connectionId &&
+        other.connectionName == connectionName &&
+        other.displayName == displayName &&
+        other.tmuxSessionName == tmuxSessionName &&
+        other.tmuxAutoDeleteSeconds == tmuxAutoDeleteSeconds &&
+        other.state == state &&
+        other.errorMessage == errorMessage &&
+        other.createdAt == createdAt &&
+        other.updatedAt == updatedAt &&
+        other.estimatedMemoryBytes == estimatedMemoryBytes &&
+        other.tmuxKillCommand == tmuxKillCommand;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        id,
+        connectionId,
+        connectionName,
+        displayName,
+        tmuxSessionName,
+        tmuxAutoDeleteSeconds,
+        state,
+        errorMessage,
+        createdAt,
+        updatedAt,
+        estimatedMemoryBytes,
+        tmuxKillCommand,
+      );
 }
 
 class _MetaChip extends StatelessWidget {

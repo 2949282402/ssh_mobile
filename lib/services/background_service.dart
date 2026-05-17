@@ -1,11 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ui';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -193,9 +191,6 @@ class BackgroundServiceManager {
 
 @pragma('vm:entry-point')
 void sshBackgroundServiceEntryPoint(ServiceInstance service) {
-  WidgetsFlutterBinding.ensureInitialized();
-  DartPluginRegistrant.ensureInitialized();
-
   final sessions = <String, _BackgroundSshSession>{};
 
   void emitLog(String level, String message, {String? details}) {

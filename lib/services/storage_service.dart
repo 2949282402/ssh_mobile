@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -17,12 +18,19 @@ class StorageService extends ChangeNotifier {
   static const _aiModelKey = 'ai_model';
   static const _aiContextWindowKey = 'ai_context_window';
   static const _aiTimeoutSecondsKey = 'ai_timeout_seconds';
+  static const _aiDeepSeekThinkingEnabledKey = 'ai_deepseek_thinking_enabled';
+  static const _aiDeepSeekReasoningEffortKey = 'ai_deepseek_reasoning_effort';
+  static const _aiWebSearchEnabledKey = 'ai_web_search_enabled';
+  static const _aiWebSearchProviderKey = 'ai_web_search_provider';
+  static const _aiWebSearchBaseUrlKey = 'ai_web_search_base_url';
+  static const _aiWebSearchMaxResultsKey = 'ai_web_search_max_results';
   static const _aiApiKeyKey = 'ai_api_key';
   static const _aiChatsKey = 'ai_chats';
   static const _aiSkillsKey = 'ai_skills';
   static const _secretCacheEnabledKey = 'secret_cache_enabled';
   static const _secretCacheTtlSecondsKey = 'secret_cache_ttl_seconds';
   static const _defaultSecretCacheTtl = Duration(minutes: 15);
+  static const _protectedPrefWriteDebounce = Duration(milliseconds: 700);
   static const _passwordSecretKeyPrefix = 'pwd_';
   static const _privateKeySecretKeyPrefix = 'key_';
   static const _memoryAiApiKeyCacheKey = 'ai_api_key_cached';
@@ -36,9 +44,15 @@ class StorageService extends ChangeNotifier {
     mOptions: MacOsOptions(usesDataProtectionKeychain: false),
   );
   final DataProtectionService _dataProtection = DataProtectionService.instance;
+  final Map<String, _PendingProtectedPrefWrite> _pendingProtectedPrefWrites =
+      {};
 
   List<ConnectionConfig> _connections = [];
   List<ConnectionConfig> _connectionsView = const [];
+  List<AiChatRecord>? _aiChatsCache;
+  List<AiSkillRecord>? _aiSkillsCache;
+  List<RestorableTmuxSession>? _restorableTmuxSessionsCache;
+  List<TerminalHistoryRecord>? _terminalHistoryRecordsCache;
   bool _initialized = false;
   bool _powerGuideSeen = false;
   bool _secretCacheEnabled = true;
@@ -228,6 +242,15 @@ class StorageService extends ChangeNotifier {
     final baseUrl = _prefs?.getString(_aiBaseUrlKey)?.trim();
     final model = _prefs?.getString(_aiModelKey)?.trim();
     final contextWindow = _prefs?.getInt(_aiContextWindowKey);
+    final thinkingEnabled =
+        _prefs?.getBool(_aiDeepSeekThinkingEnabledKey) ?? true;
+    final reasoningEffort = DeepSeekReasoningEffort.normalize(
+      _prefs?.getString(_aiDeepSeekReasoningEffortKey),
+    );
+    final webSearchProvider = AiWebSearchProvider.normalize(
+      _prefs?.getString(_aiWebSearchProviderKey),
+    );
+    final webSearchBaseUrl = _prefs?.getString(_aiWebSearchBaseUrlKey)?.trim();
     final apiKey = await getAiApiKey();
     return AiConnectionSettings(
       baseUrl:
@@ -235,6 +258,14 @@ class StorageService extends ChangeNotifier {
       model: model?.isNotEmpty == true ? model! : 'deepseek-v4-flash',
       contextWindowTokens: AiContextWindowSize.normalize(contextWindow),
       timeoutSeconds: await getAiRequestTimeoutSeconds(),
+      deepSeekThinkingEnabled: thinkingEnabled,
+      deepSeekReasoningEffort: reasoningEffort,
+      webSearchEnabled: _prefs?.getBool(_aiWebSearchEnabledKey) ?? false,
+      webSearchProvider: webSearchProvider,
+      webSearchBaseUrl: webSearchBaseUrl ?? '',
+      webSearchMaxResults: AiWebSearchMaxResults.normalize(
+        _prefs?.getInt(_aiWebSearchMaxResultsKey),
+      ),
       hasApiKey: apiKey?.isNotEmpty == true,
     );
   }
@@ -273,6 +304,12 @@ class StorageService extends ChangeNotifier {
     required String model,
     int? contextWindowTokens,
     int? timeoutSeconds,
+    bool? deepSeekThinkingEnabled,
+    String? deepSeekReasoningEffort,
+    bool? webSearchEnabled,
+    String? webSearchProvider,
+    String? webSearchBaseUrl,
+    int? webSearchMaxResults,
     String? apiKey,
   }) async {
     if (!_initialized || _prefs == null) return;
@@ -287,6 +324,40 @@ class StorageService extends ChangeNotifier {
     await _prefs!.setInt(
       _aiTimeoutSecondsKey,
       AiRequestTimeout.normalize(timeoutSeconds),
+    );
+    await _prefs!.setBool(
+      _aiDeepSeekThinkingEnabledKey,
+      deepSeekThinkingEnabled ??
+          (_prefs!.getBool(_aiDeepSeekThinkingEnabledKey) ?? true),
+    );
+    await _prefs!.setString(
+      _aiDeepSeekReasoningEffortKey,
+      DeepSeekReasoningEffort.normalize(
+        deepSeekReasoningEffort ??
+            _prefs!.getString(_aiDeepSeekReasoningEffortKey),
+      ),
+    );
+    await _prefs!.setBool(
+      _aiWebSearchEnabledKey,
+      webSearchEnabled ?? (_prefs!.getBool(_aiWebSearchEnabledKey) ?? false),
+    );
+    await _prefs!.setString(
+      _aiWebSearchProviderKey,
+      AiWebSearchProvider.normalize(
+        webSearchProvider ?? _prefs!.getString(_aiWebSearchProviderKey),
+      ),
+    );
+    await _prefs!.setString(
+      _aiWebSearchBaseUrlKey,
+      webSearchBaseUrl?.trim() ??
+          _prefs!.getString(_aiWebSearchBaseUrlKey)?.trim() ??
+          '',
+    );
+    await _prefs!.setInt(
+      _aiWebSearchMaxResultsKey,
+      AiWebSearchMaxResults.normalize(
+        webSearchMaxResults ?? _prefs!.getInt(_aiWebSearchMaxResultsKey),
+      ),
     );
     var apiKeyUpdated = false;
     if (apiKey != null) {
@@ -315,7 +386,7 @@ class StorageService extends ChangeNotifier {
     AppLogService.instance.info(
       'LLM settings saved',
       details:
-          'baseUrl=$normalizedBaseUrl model=$normalizedModel contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} timeoutSeconds=${AiRequestTimeout.normalize(timeoutSeconds)} apiKeyUpdated=$apiKeyUpdated',
+          'baseUrl=$normalizedBaseUrl model=$normalizedModel contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} timeoutSeconds=${AiRequestTimeout.normalize(timeoutSeconds)} deepSeekThinking=${deepSeekThinkingEnabled ?? (_prefs!.getBool(_aiDeepSeekThinkingEnabledKey) ?? true)} deepSeekEffort=${DeepSeekReasoningEffort.normalize(deepSeekReasoningEffort ?? _prefs!.getString(_aiDeepSeekReasoningEffortKey))} webSearch=${webSearchEnabled ?? (_prefs!.getBool(_aiWebSearchEnabledKey) ?? false)} webSearchProvider=${AiWebSearchProvider.normalize(webSearchProvider ?? _prefs!.getString(_aiWebSearchProviderKey))} apiKeyUpdated=$apiKeyUpdated',
     );
     // AI settings are loaded on demand by the chat page. Avoid notifying the
     // whole storage tree while the settings dialog is being dismissed; doing so
@@ -337,8 +408,12 @@ class StorageService extends ChangeNotifier {
 
   Future<List<AiChatRecord>> loadAiChats() async {
     if (!_initialized || _prefs == null) return [];
+    final cached = _aiChatsCache;
+    if (cached != null) return cached;
     final jsonStr = await _readProtectedPref(_aiChatsKey);
-    if (jsonStr == null || jsonStr.isEmpty) return [];
+    if (jsonStr == null || jsonStr.isEmpty) {
+      return _aiChatsCache = const [];
+    }
 
     try {
       final list = jsonDecode(jsonStr) as List<dynamic>;
@@ -346,17 +421,17 @@ class StorageService extends ChangeNotifier {
           .map((item) => AiChatRecord.fromJson(item as Map<String, dynamic>))
           .toList()
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-      return chats;
+      return _aiChatsCache = List.unmodifiable(chats);
     } catch (e) {
       debugPrint('Failed to load AI chats: $e');
       AppLogService.instance.error('Failed to load AI chats', error: e);
-      return [];
+      return _aiChatsCache = const [];
     }
   }
 
   Future<void> saveAiChat(AiChatRecord chat) async {
     if (!_initialized || _prefs == null) return;
-    final chats = await loadAiChats();
+    final chats = [...await loadAiChats()];
     chats.removeWhere((item) => item.id == chat.id);
     chats.insert(0, chat);
     await _saveAiChats(chats.take(80).toList());
@@ -365,7 +440,7 @@ class StorageService extends ChangeNotifier {
 
   Future<void> deleteAiChat(String id) async {
     if (!_initialized || _prefs == null) return;
-    final chats = await loadAiChats();
+    final chats = [...await loadAiChats()];
     chats.removeWhere((item) => item.id == id);
     await _saveAiChats(chats);
     notifyListeners();
@@ -373,25 +448,30 @@ class StorageService extends ChangeNotifier {
 
   Future<List<AiSkillRecord>> loadAiSkills() async {
     if (!_initialized || _prefs == null) return [];
+    final cached = _aiSkillsCache;
+    if (cached != null) return cached;
     final jsonStr = await _readProtectedPref(_aiSkillsKey);
-    if (jsonStr == null || jsonStr.isEmpty) return [];
+    if (jsonStr == null || jsonStr.isEmpty) {
+      return _aiSkillsCache = const [];
+    }
 
     try {
       final list = jsonDecode(jsonStr) as List<dynamic>;
-      return list
+      final skills = list
           .map((item) => AiSkillRecord.fromJson(item as Map<String, dynamic>))
           .toList()
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      return _aiSkillsCache = List.unmodifiable(skills);
     } catch (e) {
       debugPrint('Failed to load AI skills: $e');
       AppLogService.instance.error('Failed to load AI skills', error: e);
-      return [];
+      return _aiSkillsCache = const [];
     }
   }
 
   Future<void> saveAiSkill(AiSkillRecord skill) async {
     if (!_initialized || _prefs == null) return;
-    final skills = await loadAiSkills();
+    final skills = [...await loadAiSkills()];
     skills.removeWhere((item) => item.id == skill.id);
     skills.insert(0, skill);
     await _saveAiSkills(skills);
@@ -400,7 +480,7 @@ class StorageService extends ChangeNotifier {
 
   Future<void> deleteAiSkill(String id) async {
     if (!_initialized || _prefs == null) return;
-    final skills = await loadAiSkills();
+    final skills = [...await loadAiSkills()];
     skills.removeWhere((item) => item.id == id);
     await _saveAiSkills(skills);
     notifyListeners();
@@ -437,6 +517,12 @@ class StorageService extends ChangeNotifier {
         'model': settings.model,
         'contextWindowTokens': settings.contextWindowTokens,
         'timeoutSeconds': settings.timeoutSeconds,
+        'deepSeekThinkingEnabled': settings.deepSeekThinkingEnabled,
+        'deepSeekReasoningEffort': settings.deepSeekReasoningEffort,
+        'webSearchEnabled': settings.webSearchEnabled,
+        'webSearchProvider': settings.webSearchProvider,
+        'webSearchBaseUrl': settings.webSearchBaseUrl,
+        'webSearchMaxResults': settings.webSearchMaxResults,
         'apiKey': '',
       },
       'aiChats': (await loadAiChats()).map((item) => item.toJson()).toList(),
@@ -493,6 +579,14 @@ class StorageService extends ChangeNotifier {
         contextWindowTokens:
             (aiSettings['contextWindowTokens'] as num?)?.toInt(),
         timeoutSeconds: (aiSettings['timeoutSeconds'] as num?)?.toInt(),
+        deepSeekThinkingEnabled: aiSettings['deepSeekThinkingEnabled'] as bool?,
+        deepSeekReasoningEffort:
+            aiSettings['deepSeekReasoningEffort'] as String?,
+        webSearchEnabled: aiSettings['webSearchEnabled'] as bool?,
+        webSearchProvider: aiSettings['webSearchProvider'] as String?,
+        webSearchBaseUrl: aiSettings['webSearchBaseUrl'] as String?,
+        webSearchMaxResults:
+            (aiSettings['webSearchMaxResults'] as num?)?.toInt(),
         apiKey: importedApiKey,
       );
     }
@@ -502,24 +596,28 @@ class StorageService extends ChangeNotifier {
           .whereType<Map<String, dynamic>>()
           .map(RestorableTmuxSession.fromJson)
           .toList(),
+      immediate: true,
     );
     await _saveTerminalHistoryRecords(
       ((decoded['terminalHistoryRecords'] as List<dynamic>?) ?? const [])
           .whereType<Map<String, dynamic>>()
           .map(TerminalHistoryRecord.fromJson)
           .toList(),
+      immediate: true,
     );
     await _saveAiChats(
       ((decoded['aiChats'] as List<dynamic>?) ?? const [])
           .whereType<Map<String, dynamic>>()
           .map(AiChatRecord.fromJson)
           .toList(),
+      immediate: true,
     );
     await _saveAiSkills(
       ((decoded['aiSkills'] as List<dynamic>?) ?? const [])
           .whereType<Map<String, dynamic>>()
           .map(AiSkillRecord.fromJson)
           .toList(),
+      immediate: true,
     );
     _powerGuideSeen = decoded['powerGuideSeen'] as bool? ?? _powerGuideSeen;
     await _prefs?.setBool(_powerGuideSeenKey, _powerGuideSeen);
@@ -540,29 +638,34 @@ class StorageService extends ChangeNotifier {
 
   Future<List<RestorableTmuxSession>> loadRestorableTmuxSessions() async {
     if (!_initialized || _prefs == null) return [];
+    final cached = _restorableTmuxSessionsCache;
+    if (cached != null) return cached;
     final jsonStr = await _readProtectedPref(_restorableTmuxSessionsKey);
-    if (jsonStr == null || jsonStr.isEmpty) return [];
+    if (jsonStr == null || jsonStr.isEmpty) {
+      return _restorableTmuxSessionsCache = const [];
+    }
 
     try {
       final list = jsonDecode(jsonStr) as List<dynamic>;
-      return list
+      final sessions = list
           .map((item) =>
               RestorableTmuxSession.fromJson(item as Map<String, dynamic>))
           .where((item) => getConnection(item.connectionId) != null)
           .toList();
+      return _restorableTmuxSessionsCache = List.unmodifiable(sessions);
     } catch (e) {
       debugPrint('Failed to load restorable tmux sessions: $e');
       AppLogService.instance.error(
         'Failed to load restorable tmux sessions',
         error: e,
       );
-      return [];
+      return _restorableTmuxSessionsCache = const [];
     }
   }
 
   Future<void> saveRestorableTmuxSession(RestorableTmuxSession session) async {
     if (!_initialized || _prefs == null) return;
-    final sessions = await loadRestorableTmuxSessions();
+    final sessions = [...await loadRestorableTmuxSessions()];
     sessions.removeWhere((item) => item.sessionId == session.sessionId);
     sessions.add(session);
     await _saveRestorableTmuxSessions(sessions);
@@ -570,7 +673,7 @@ class StorageService extends ChangeNotifier {
 
   Future<void> removeRestorableTmuxSession(String sessionId) async {
     if (!_initialized || _prefs == null) return;
-    final sessions = await loadRestorableTmuxSessions();
+    final sessions = [...await loadRestorableTmuxSessions()];
     sessions.removeWhere((item) => item.sessionId == sessionId);
     await _saveRestorableTmuxSessions(sessions);
   }
@@ -579,20 +682,26 @@ class StorageService extends ChangeNotifier {
     String connectionId,
   ) async {
     if (!_initialized || _prefs == null) return;
-    final sessions = await loadRestorableTmuxSessions();
+    final sessions = [...await loadRestorableTmuxSessions()];
     sessions.removeWhere((item) => item.connectionId == connectionId);
     await _saveRestorableTmuxSessions(sessions);
   }
 
   Future<void> clearRestorableTmuxSessions() async {
     if (!_initialized || _prefs == null) return;
+    _restorableTmuxSessionsCache = const [];
+    _cancelPendingProtectedPrefWrite(_restorableTmuxSessionsKey);
     await _prefs!.remove(_restorableTmuxSessionsKey);
   }
 
   Future<List<TerminalHistoryRecord>> loadTerminalHistoryRecords() async {
     if (!_initialized || _prefs == null) return [];
+    final cached = _terminalHistoryRecordsCache;
+    if (cached != null) return cached;
     final jsonStr = await _readProtectedPref(_terminalHistoryRecordsKey);
-    if (jsonStr == null || jsonStr.isEmpty) return [];
+    if (jsonStr == null || jsonStr.isEmpty) {
+      return _terminalHistoryRecordsCache = const [];
+    }
 
     try {
       final list = jsonDecode(jsonStr) as List<dynamic>;
@@ -601,20 +710,20 @@ class StorageService extends ChangeNotifier {
               TerminalHistoryRecord.fromJson(item as Map<String, dynamic>))
           .toList()
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-      return records;
+      return _terminalHistoryRecordsCache = List.unmodifiable(records);
     } catch (e) {
       debugPrint('Failed to load terminal history records: $e');
       AppLogService.instance.error(
         'Failed to load terminal history records',
         error: e,
       );
-      return [];
+      return _terminalHistoryRecordsCache = const [];
     }
   }
 
   Future<void> saveTerminalHistoryRecord(TerminalHistoryRecord record) async {
     if (!_initialized || _prefs == null) return;
-    final records = await loadTerminalHistoryRecords();
+    final records = [...await loadTerminalHistoryRecords()];
     records.removeWhere((item) => item.sessionId == record.sessionId);
     records.insert(0, record);
     await _saveTerminalHistoryRecords(records.take(200).toList());
@@ -623,34 +732,68 @@ class StorageService extends ChangeNotifier {
 
   Future<void> removeTerminalHistoryRecord(String sessionId) async {
     if (!_initialized || _prefs == null) return;
-    final records = await loadTerminalHistoryRecords();
+    final records = [...await loadTerminalHistoryRecords()];
     records.removeWhere((item) => item.sessionId == sessionId);
     await _saveTerminalHistoryRecords(records);
     notifyListeners();
   }
 
   Future<void> _saveRestorableTmuxSessions(
-    List<RestorableTmuxSession> sessions,
-  ) async {
+    List<RestorableTmuxSession> sessions, {
+    bool immediate = false,
+  }) async {
+    _restorableTmuxSessionsCache = List.unmodifiable(sessions);
     final jsonStr = jsonEncode(sessions.map((item) => item.toJson()).toList());
-    await _writeProtectedPref(_restorableTmuxSessionsKey, jsonStr);
+    await _writeProtectedPrefBuffered(
+      _restorableTmuxSessionsKey,
+      jsonStr,
+      immediate: immediate,
+    );
   }
 
   Future<void> _saveTerminalHistoryRecords(
-    List<TerminalHistoryRecord> records,
-  ) async {
-    final jsonStr = jsonEncode(records.map((item) => item.toJson()).toList());
-    await _writeProtectedPref(_terminalHistoryRecordsKey, jsonStr);
+    List<TerminalHistoryRecord> records, {
+    bool immediate = false,
+  }) async {
+    final sorted = [...records]
+      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    _terminalHistoryRecordsCache = List.unmodifiable(sorted);
+    final jsonStr = jsonEncode(sorted.map((item) => item.toJson()).toList());
+    await _writeProtectedPrefBuffered(
+      _terminalHistoryRecordsKey,
+      jsonStr,
+      immediate: immediate,
+    );
   }
 
-  Future<void> _saveAiChats(List<AiChatRecord> chats) async {
-    final jsonStr = jsonEncode(chats.map((item) => item.toJson()).toList());
-    await _writeProtectedPref(_aiChatsKey, jsonStr);
+  Future<void> _saveAiChats(
+    List<AiChatRecord> chats, {
+    bool immediate = false,
+  }) async {
+    final sorted = [...chats]
+      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    _aiChatsCache = List.unmodifiable(sorted);
+    final jsonStr = jsonEncode(sorted.map((item) => item.toJson()).toList());
+    await _writeProtectedPrefBuffered(
+      _aiChatsKey,
+      jsonStr,
+      immediate: immediate,
+    );
   }
 
-  Future<void> _saveAiSkills(List<AiSkillRecord> skills) async {
-    final jsonStr = jsonEncode(skills.map((item) => item.toJson()).toList());
-    await _writeProtectedPref(_aiSkillsKey, jsonStr);
+  Future<void> _saveAiSkills(
+    List<AiSkillRecord> skills, {
+    bool immediate = false,
+  }) async {
+    final sorted = [...skills]
+      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    _aiSkillsCache = List.unmodifiable(sorted);
+    final jsonStr = jsonEncode(sorted.map((item) => item.toJson()).toList());
+    await _writeProtectedPrefBuffered(
+      _aiSkillsKey,
+      jsonStr,
+      immediate: immediate,
+    );
   }
 
   String _cacheKeyPassword(String connectionId) =>
@@ -710,6 +853,66 @@ class StorageService extends ChangeNotifier {
     await _prefs!.setString(key, encrypted);
   }
 
+  Future<void> _writeProtectedPrefBuffered(
+    String key,
+    String value, {
+    required bool immediate,
+  }) {
+    if (immediate) {
+      final pending = _pendingProtectedPrefWrites[key];
+      pending?.timer?.cancel();
+      if (pending == null) {
+        return _writeProtectedPref(key, value);
+      }
+      pending.value = value;
+      pending.generation++;
+      return _flushProtectedPrefWrite(key);
+    }
+
+    final pending = _pendingProtectedPrefWrites.putIfAbsent(
+      key,
+      () => _PendingProtectedPrefWrite(value),
+    );
+    pending.value = value;
+    pending.generation++;
+    pending.timer?.cancel();
+    pending.timer = Timer(_protectedPrefWriteDebounce, () {
+      unawaited(_flushProtectedPrefWrite(key));
+    });
+    return Future.value();
+  }
+
+  Future<void> flushPendingWrites() async {
+    final keys = _pendingProtectedPrefWrites.keys.toList(growable: false);
+    await Future.wait(keys.map(_flushProtectedPrefWrite));
+  }
+
+  Future<void> _flushProtectedPrefWrite(String key) {
+    final pending = _pendingProtectedPrefWrites[key];
+    if (pending == null) return Future.value();
+    pending.timer?.cancel();
+    pending.timer = null;
+    final generation = pending.generation;
+    final value = pending.value;
+    final previous = pending.writeChain;
+    final next = previous.catchError((_) {}).then((_) async {
+      await _writeProtectedPref(key, value);
+    });
+    pending.writeChain = next.whenComplete(() {
+      final current = _pendingProtectedPrefWrites[key];
+      if (!identical(current, pending)) return;
+      if (current!.generation == generation && current.timer == null) {
+        _pendingProtectedPrefWrites.remove(key);
+      }
+    });
+    return pending.writeChain;
+  }
+
+  void _cancelPendingProtectedPrefWrite(String key) {
+    final pending = _pendingProtectedPrefWrites.remove(key);
+    pending?.timer?.cancel();
+  }
+
   Future<void> _saveSecrets(ConnectionConfig config) async {
     _cacheConnectionSecretsFromConfig(config);
     final passwordKey = _cacheKeyPassword(config.id);
@@ -732,6 +935,24 @@ class StorageService extends ChangeNotifier {
       throw StateError('Storage service is not initialized yet.');
     }
   }
+
+  @override
+  void dispose() {
+    for (final pending in _pendingProtectedPrefWrites.values) {
+      pending.timer?.cancel();
+    }
+    unawaited(flushPendingWrites());
+    super.dispose();
+  }
+}
+
+class _PendingProtectedPrefWrite {
+  String value;
+  Timer? timer;
+  Future<void> writeChain = Future<void>.value();
+  int generation = 0;
+
+  _PendingProtectedPrefWrite(this.value);
 }
 
 class AiConnectionSettings {
@@ -739,6 +960,12 @@ class AiConnectionSettings {
   final String model;
   final int contextWindowTokens;
   final int timeoutSeconds;
+  final bool deepSeekThinkingEnabled;
+  final String deepSeekReasoningEffort;
+  final bool webSearchEnabled;
+  final String webSearchProvider;
+  final String webSearchBaseUrl;
+  final int webSearchMaxResults;
   final bool hasApiKey;
 
   const AiConnectionSettings({
@@ -746,8 +973,55 @@ class AiConnectionSettings {
     required this.model,
     required this.contextWindowTokens,
     required this.timeoutSeconds,
+    required this.deepSeekThinkingEnabled,
+    required this.deepSeekReasoningEffort,
+    required this.webSearchEnabled,
+    required this.webSearchProvider,
+    required this.webSearchBaseUrl,
+    required this.webSearchMaxResults,
     required this.hasApiKey,
   });
+}
+
+class AiWebSearchProvider {
+  static const String searxng = 'searxng';
+  static const String defaultProvider = searxng;
+  static const List<String> values = [searxng];
+
+  static String normalize(String? value) {
+    final normalized = value?.trim().toLowerCase();
+    return values.contains(normalized) ? normalized! : defaultProvider;
+  }
+
+  static String label(String value) {
+    return normalize(value) == searxng ? 'SearXNG' : value;
+  }
+}
+
+class AiWebSearchMaxResults {
+  static const int defaultValue = 5;
+  static const List<int> values = [3, 5, 8, 10];
+
+  static int normalize(int? value) {
+    if (value == null) return defaultValue;
+    return value.clamp(values.first, values.last).toInt();
+  }
+}
+
+class DeepSeekReasoningEffort {
+  static const String high = 'high';
+  static const String max = 'max';
+  static const String defaultEffort = high;
+  static const List<String> values = [high, max];
+
+  static String normalize(String? value) {
+    final normalized = value?.trim().toLowerCase();
+    return values.contains(normalized) ? normalized! : defaultEffort;
+  }
+
+  static String label(String value) {
+    return normalize(value) == max ? 'Max' : 'High';
+  }
 }
 
 class _MemorySecret {
