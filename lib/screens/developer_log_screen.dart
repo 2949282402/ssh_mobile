@@ -33,147 +33,43 @@ class _DeveloperLogPageState extends State<DeveloperLogPage> {
   @override
   Widget build(BuildContext context) {
     final strings = AppStrings(context.watch<AppSettings>().language);
-    final logService = context.watch<AppLogService>();
-    final allEntries = logService.entries;
-    final levelCounts = logService.levelCounts;
-    final entries = logService.entriesForLevel(_selectedLevel);
-    final colorScheme = Theme.of(context).colorScheme;
-    final allEntryIds = logService.entryIds;
-    _selectedIds.removeWhere((id) => !allEntryIds.contains(id));
-    final selectedEntries = _selectionMode
-        ? allEntries.where((entry) => _selectedIds.contains(entry.id)).toList()
-        : const <AppLogEntry>[];
 
     return Column(
       children: [
-        Container(
-          padding: const EdgeInsets.fromLTRB(16, 8, 8, 10),
-          decoration: BoxDecoration(
-            color: Theme.of(context).scaffoldBackgroundColor,
-            border: Border(
-              bottom: BorderSide(color: colorScheme.outlineVariant),
-            ),
+        if (_selectionMode)
+          _SelectedLogPruner(
+            selectedIds: _selectedIds,
+            onPruned: () {
+              if (mounted) setState(() {});
+            },
           ),
-          child: Column(
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _selectionMode
-                          ? strings.selectedLogs(_selectedIds.length)
-                          : strings.developerLogs,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                  if (_selectionMode)
-                    IconButton(
-                      icon: const Icon(Icons.close_rounded),
-                      tooltip: strings.cancel,
-                      onPressed: () => setState(_selectedIds.clear),
-                    ),
-                  IconButton(
-                    icon: Icon(
-                      _selectionMode
-                          ? Icons.copy_rounded
-                          : Icons.copy_all_rounded,
-                    ),
-                    tooltip: _selectionMode
-                        ? strings.copySelectedLogs
-                        : strings.copyFilteredLogs,
-                    onPressed: _selectionMode
-                        ? selectedEntries.isEmpty
-                            ? null
-                            : () => _copyEntries(
-                                  context,
-                                  selectedEntries,
-                                  strings,
-                                )
-                        : entries.isEmpty
-                            ? null
-                            : () => _copyEntries(context, entries, strings),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline_rounded),
-                    tooltip: _selectionMode
-                        ? strings.deleteSelectedLogs
-                        : strings.clearLogs,
-                    onPressed: _selectionMode
-                        ? selectedEntries.isEmpty
-                            ? null
-                            : () => _deleteSelectedLogs(
-                                  context,
-                                  logService,
-                                  strings,
-                                )
-                        : allEntries.isEmpty
-                            ? null
-                            : () => _clearLogs(context, logService, strings),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Builder(
-                builder: (context) {
-                  final textScale = MediaQuery.textScalerOf(context)
-                      .scale(1)
-                      .clamp(1.0, 1.6)
-                      .toDouble();
-                  return SizedBox(
-                    height: 36 + (textScale - 1.0) * 18,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: AppLogLevel.values.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 8),
-                      itemBuilder: (context, index) {
-                        final level = AppLogLevel.values[index];
-                        final count = levelCounts[level] ?? 0;
-                        return FilterChip(
-                          label: Text(
-                              '${level.labelFor(strings.language)} $count'),
-                          selected: _selectedLevel == level,
-                          onSelected: (_) => setState(() {
-                            _selectedLevel = level;
-                          }),
-                        );
-                      },
-                    ),
-                  );
-                },
-              ),
-            ],
+        _DeveloperLogToolbar(
+          strings: strings,
+          selectedLevel: _selectedLevel,
+          selectedIds: _selectedIds,
+          onLevelChanged: (level) => setState(() => _selectedLevel = level),
+          onClearSelection: () => setState(_selectedIds.clear),
+          onCopyEntries: (entries) => _copyEntries(context, entries, strings),
+          onDeleteSelected: () => _deleteSelectedLogs(
+            context,
+            context.read<AppLogService>(),
+            strings,
+          ),
+          onClearLogs: () => _clearLogs(
+            context,
+            context.read<AppLogService>(),
+            strings,
           ),
         ),
         Expanded(
-          child: allEntries.isEmpty
-              ? Center(child: Text(strings.noLogs))
-              : entries.isEmpty
-                  ? Center(child: Text(strings.noLogsForLevel))
-                  : ListView.separated(
-                      cacheExtent: 900,
-                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
-                      itemCount: entries.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 8),
-                      itemBuilder: (context, index) {
-                        final entry = entries[index];
-                        return RepaintBoundary(
-                          key: ValueKey(
-                            '${entry.time.microsecondsSinceEpoch}-${entry.level}',
-                          ),
-                          child: _LogEntryTile(
-                            entry: entry,
-                            strings: strings,
-                            selected: _selectedIds.contains(entry.id),
-                            selectionMode: _selectionMode,
-                            onTap: () => _handleEntryTap(entry),
-                            onLongPress: () => _selectEntry(entry),
-                          ),
-                        );
-                      },
-                    ),
+          child: _DeveloperLogList(
+            strings: strings,
+            selectedLevel: _selectedLevel,
+            selectedIds: _selectedIds,
+            selectionMode: _selectionMode,
+            onEntryTap: _handleEntryTap,
+            onEntryLongPress: _selectEntry,
+          ),
         ),
       ],
     );
@@ -234,6 +130,277 @@ class _DeveloperLogPageState extends State<DeveloperLogPage> {
       SnackBar(content: Text(strings.logsCleared)),
     );
   }
+}
+
+class _SelectedLogPruner extends StatelessWidget {
+  final Set<int> selectedIds;
+  final VoidCallback onPruned;
+
+  const _SelectedLogPruner({
+    required this.selectedIds,
+    required this.onPruned,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final entryIds = context.select<AppLogService, Set<int>>(
+      (service) => service.entryIds,
+    );
+    final staleIds = [
+      for (final id in selectedIds)
+        if (!entryIds.contains(id)) id,
+    ];
+    if (staleIds.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        selectedIds.removeAll(staleIds);
+        onPruned();
+      });
+    }
+    return const SizedBox.shrink();
+  }
+}
+
+class _DeveloperLogToolbar extends StatelessWidget {
+  final AppStrings strings;
+  final AppLogLevel selectedLevel;
+  final Set<int> selectedIds;
+  final ValueChanged<AppLogLevel> onLevelChanged;
+  final VoidCallback onClearSelection;
+  final ValueChanged<List<AppLogEntry>> onCopyEntries;
+  final VoidCallback onDeleteSelected;
+  final VoidCallback onClearLogs;
+
+  const _DeveloperLogToolbar({
+    required this.strings,
+    required this.selectedLevel,
+    required this.selectedIds,
+    required this.onLevelChanged,
+    required this.onClearSelection,
+    required this.onCopyEntries,
+    required this.onDeleteSelected,
+    required this.onClearLogs,
+  });
+
+  bool get _selectionMode => selectedIds.isNotEmpty;
+
+  @override
+  Widget build(BuildContext context) {
+    final snapshot =
+        context.select<AppLogService, _DeveloperLogToolbarSnapshot>(
+      (service) => _DeveloperLogToolbarSnapshot.from(
+        service,
+        selectedLevel,
+        selectedIds,
+      ),
+    );
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 8, 8, 10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        border: Border(
+          bottom: BorderSide(color: colorScheme.outlineVariant),
+        ),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _selectionMode
+                      ? strings.selectedLogs(selectedIds.length)
+                      : strings.developerLogs,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              if (_selectionMode)
+                IconButton(
+                  icon: const Icon(Icons.close_rounded),
+                  tooltip: strings.cancel,
+                  onPressed: onClearSelection,
+                ),
+              IconButton(
+                icon: Icon(
+                  _selectionMode ? Icons.copy_rounded : Icons.copy_all_rounded,
+                ),
+                tooltip: _selectionMode
+                    ? strings.copySelectedLogs
+                    : strings.copyFilteredLogs,
+                onPressed: _selectionMode
+                    ? snapshot.selectedEntries.isEmpty
+                        ? null
+                        : () => onCopyEntries(snapshot.selectedEntries)
+                    : snapshot.filteredEntries.isEmpty
+                        ? null
+                        : () => onCopyEntries(snapshot.filteredEntries),
+              ),
+              IconButton(
+                icon: const Icon(Icons.delete_outline_rounded),
+                tooltip: _selectionMode
+                    ? strings.deleteSelectedLogs
+                    : strings.clearLogs,
+                onPressed: _selectionMode
+                    ? snapshot.selectedEntries.isEmpty
+                        ? null
+                        : onDeleteSelected
+                    : snapshot.hasEntries
+                        ? onClearLogs
+                        : null,
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Builder(
+            builder: (context) {
+              final textScale = MediaQuery.textScalerOf(context)
+                  .scale(1)
+                  .clamp(1.0, 1.6)
+                  .toDouble();
+              return SizedBox(
+                height: 36 + (textScale - 1.0) * 18,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: AppLogLevel.values.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (context, index) {
+                    final level = AppLogLevel.values[index];
+                    final count = snapshot.levelCounts[level] ?? 0;
+                    return FilterChip(
+                      label: Text('${level.labelFor(strings.language)} $count'),
+                      selected: selectedLevel == level,
+                      onSelected: (_) => onLevelChanged(level),
+                    );
+                  },
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DeveloperLogList extends StatelessWidget {
+  final AppStrings strings;
+  final AppLogLevel selectedLevel;
+  final Set<int> selectedIds;
+  final bool selectionMode;
+  final ValueChanged<AppLogEntry> onEntryTap;
+  final ValueChanged<AppLogEntry> onEntryLongPress;
+
+  const _DeveloperLogList({
+    required this.strings,
+    required this.selectedLevel,
+    required this.selectedIds,
+    required this.selectionMode,
+    required this.onEntryTap,
+    required this.onEntryLongPress,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final snapshot = context.select<AppLogService, _DeveloperLogListSnapshot>(
+      (service) => _DeveloperLogListSnapshot.from(service, selectedLevel),
+    );
+    if (!snapshot.hasEntries) {
+      return Center(child: Text(strings.noLogs));
+    }
+    final entries = snapshot.filteredEntries;
+    if (entries.isEmpty) {
+      return Center(child: Text(strings.noLogsForLevel));
+    }
+    return ListView.separated(
+      cacheExtent: 900,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+      itemCount: entries.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (context, index) {
+        final entry = entries[index];
+        return RepaintBoundary(
+          key: ValueKey(
+            '${entry.time.microsecondsSinceEpoch}-${entry.level}',
+          ),
+          child: _LogEntryTile(
+            entry: entry,
+            strings: strings,
+            selected: selectedIds.contains(entry.id),
+            selectionMode: selectionMode,
+            onTap: () => onEntryTap(entry),
+            onLongPress: () => onEntryLongPress(entry),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _DeveloperLogToolbarSnapshot {
+  final Map<AppLogLevel, int> levelCounts;
+  final List<AppLogEntry> filteredEntries;
+  final List<AppLogEntry> selectedEntries;
+  final bool hasEntries;
+
+  const _DeveloperLogToolbarSnapshot({
+    required this.levelCounts,
+    required this.filteredEntries,
+    required this.selectedEntries,
+    required this.hasEntries,
+  });
+
+  factory _DeveloperLogToolbarSnapshot.from(
+    AppLogService service,
+    AppLogLevel selectedLevel,
+    Set<int> selectedIds,
+  ) {
+    final allEntries = service.entries;
+    return _DeveloperLogToolbarSnapshot(
+      levelCounts: service.levelCounts,
+      filteredEntries: service.entriesForLevel(selectedLevel),
+      selectedEntries: selectedIds.isEmpty
+          ? const <AppLogEntry>[]
+          : [
+              for (final entry in allEntries)
+                if (selectedIds.contains(entry.id)) entry,
+            ],
+      hasEntries: allEntries.isNotEmpty,
+    );
+  }
+}
+
+class _DeveloperLogListSnapshot {
+  final List<AppLogEntry> filteredEntries;
+  final bool hasEntries;
+
+  const _DeveloperLogListSnapshot({
+    required this.filteredEntries,
+    required this.hasEntries,
+  });
+
+  factory _DeveloperLogListSnapshot.from(
+    AppLogService service,
+    AppLogLevel selectedLevel,
+  ) {
+    return _DeveloperLogListSnapshot(
+      filteredEntries: service.entriesForLevel(selectedLevel),
+      hasEntries: service.entries.isNotEmpty,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is _DeveloperLogListSnapshot &&
+        identical(other.filteredEntries, filteredEntries) &&
+        other.hasEntries == hasEntries;
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(identityHashCode(filteredEntries), hasEntries);
 }
 
 class _LogEntryTile extends StatefulWidget {

@@ -6,6 +6,11 @@ SSH Mobile is a Flutter-based cross-platform SSH / SFTP client for long-running 
 
 > 后台网络连接受系统策略影响。应用会尽量通过前台服务、通知、WakeLock、SSH keep-alive 和 tmux 恢复机制提高稳定性，但长期后台运行仍可能受到省电策略、网络切换和进程回收影响。需要保留服务器端工作现场时，推荐使用 SSH + tmux。
 
+## Android Native Rewrite Guide
+
+For a feature-by-feature Kotlin / Jetpack Compose rewrite roadmap, see
+[`docs/ANDROID_NATIVE_REWRITE_GUIDE.md`](docs/ANDROID_NATIVE_REWRITE_GUIDE.md).
+
 ## Features
 
 - SSH 连接管理：保存多服务器配置，支持密码、私钥、私钥密码和可选跳板机。

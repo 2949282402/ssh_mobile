@@ -47,11 +47,11 @@ class _SftpScreenState extends State<SftpScreen> {
       (storage) => storage.connections,
     );
     final sftp = context.read<SftpService>();
-    final snapshot = context.select<SftpService, _SftpUiSnapshot>(
-      (service) => _SftpUiSnapshot.from(service, connections),
+    final shellSnapshot = context.select<SftpService, _SftpShellSnapshot>(
+      (service) => _SftpShellSnapshot.from(service, connections),
     );
     final desktop = isDesktopLayout(context);
-    final selectedConnection = _selectedConnection(connections, snapshot);
+    final selectedConnection = _selectedConnection(connections, shellSnapshot);
     final serversCollapsed = _serversCollapsed && connections.isNotEmpty;
 
     if (!storageReady) {
@@ -75,9 +75,11 @@ class _SftpScreenState extends State<SftpScreen> {
                     ? _CollapsedDesktopServerRail(
                         selectedConnection: selectedConnection,
                         busy: selectedConnection != null &&
-                            snapshot.isConnectionBusy(selectedConnection.id),
+                            shellSnapshot
+                                .isConnectionBusy(selectedConnection.id),
                         connected: selectedConnection != null &&
-                            snapshot.isConnectionOpen(selectedConnection.id),
+                            shellSnapshot
+                                .isConnectionOpen(selectedConnection.id),
                         strings: strings,
                         onExpand: _expandServers,
                       )
@@ -85,7 +87,7 @@ class _SftpScreenState extends State<SftpScreen> {
                         connections: connections,
                         strings: strings,
                         sftp: sftp,
-                        snapshot: snapshot,
+                        snapshot: shellSnapshot,
                         onCollapse: _collapseServers,
                       ),
               ),
@@ -98,7 +100,6 @@ class _SftpScreenState extends State<SftpScreen> {
                 child: _FilePane(
                   strings: strings,
                   sftp: sftp,
-                  snapshot: snapshot,
                 ),
               ),
             ],
@@ -114,9 +115,11 @@ class _SftpScreenState extends State<SftpScreen> {
                         key: const ValueKey('sftp-server-collapsed'),
                         selectedConnection: selectedConnection,
                         busy: selectedConnection != null &&
-                            snapshot.isConnectionBusy(selectedConnection.id),
+                            shellSnapshot
+                                .isConnectionBusy(selectedConnection.id),
                         connected: selectedConnection != null &&
-                            snapshot.isConnectionOpen(selectedConnection.id),
+                            shellSnapshot
+                                .isConnectionOpen(selectedConnection.id),
                         strings: strings,
                         onExpand: _expandServers,
                       )
@@ -125,7 +128,7 @@ class _SftpScreenState extends State<SftpScreen> {
                         connections: connections,
                         strings: strings,
                         sftp: sftp,
-                        snapshot: snapshot,
+                        snapshot: shellSnapshot,
                         onCollapse: _collapseServers,
                       ),
               ),
@@ -138,7 +141,6 @@ class _SftpScreenState extends State<SftpScreen> {
                 child: _FilePane(
                   strings: strings,
                   sftp: sftp,
-                  snapshot: snapshot,
                 ),
               ),
             ],
@@ -165,7 +167,7 @@ class _SftpScreenState extends State<SftpScreen> {
 
   ConnectionConfig? _selectedConnection(
     List<ConnectionConfig> connections,
-    _SftpUiSnapshot snapshot,
+    _SftpShellSnapshot snapshot,
   ) {
     final activeId = snapshot.connectionId;
     if (activeId == null) return null;
@@ -180,7 +182,7 @@ class _ServerPane extends StatelessWidget {
   final List<ConnectionConfig> connections;
   final AppStrings strings;
   final SftpService sftp;
-  final _SftpUiSnapshot snapshot;
+  final _SftpShellSnapshot snapshot;
   final VoidCallback onCollapse;
 
   const _ServerPane({
@@ -290,7 +292,7 @@ class _MobileServerStrip extends StatelessWidget {
   final List<ConnectionConfig> connections;
   final AppStrings strings;
   final SftpService sftp;
-  final _SftpUiSnapshot snapshot;
+  final _SftpShellSnapshot snapshot;
   final VoidCallback onCollapse;
 
   const _MobileServerStrip({
@@ -621,16 +623,17 @@ class _ServerTile extends StatelessWidget {
 class _FilePane extends StatelessWidget {
   final AppStrings strings;
   final SftpService sftp;
-  final _SftpUiSnapshot snapshot;
 
   const _FilePane({
     required this.strings,
     required this.sftp,
-    required this.snapshot,
   });
 
   @override
   Widget build(BuildContext context) {
+    final snapshot = context.select<SftpService, _SftpUiSnapshot>(
+      _SftpUiSnapshot.from,
+    );
     final colorScheme = Theme.of(context).colorScheme;
     final entries = snapshot.entries;
 
@@ -1051,35 +1054,23 @@ class _FilePane extends StatelessWidget {
   }
 }
 
-class _SftpUiSnapshot {
+class _SftpShellSnapshot {
   final String? connectionId;
-  final String currentPath;
-  final SftpConnectionState state;
-  final String? errorMessage;
-  final List<SftpEntry> entries;
   final Set<String> busyConnectionIds;
   final Set<String> openConnectionIds;
 
-  const _SftpUiSnapshot({
+  const _SftpShellSnapshot({
     required this.connectionId,
-    required this.currentPath,
-    required this.state,
-    required this.errorMessage,
-    required this.entries,
     required this.busyConnectionIds,
     required this.openConnectionIds,
   });
 
-  factory _SftpUiSnapshot.from(
+  factory _SftpShellSnapshot.from(
     SftpService service,
     List<ConnectionConfig> connections,
   ) {
-    return _SftpUiSnapshot(
+    return _SftpShellSnapshot(
       connectionId: service.connectionId,
-      currentPath: service.currentPath,
-      state: service.state,
-      errorMessage: service.errorMessage,
-      entries: service.entries,
       busyConnectionIds: {
         for (final connection in connections)
           if (service.isConnectionBusy(connection.id)) connection.id,
@@ -1091,10 +1082,6 @@ class _SftpUiSnapshot {
     );
   }
 
-  bool get isBusy =>
-      state == SftpConnectionState.connecting ||
-      state == SftpConnectionState.loading;
-
   bool isConnectionBusy(String connectionId) {
     return busyConnectionIds.contains(connectionId);
   }
@@ -1105,12 +1092,8 @@ class _SftpUiSnapshot {
 
   @override
   bool operator ==(Object other) {
-    return other is _SftpUiSnapshot &&
+    return other is _SftpShellSnapshot &&
         other.connectionId == connectionId &&
-        other.currentPath == currentPath &&
-        other.state == state &&
-        other.errorMessage == errorMessage &&
-        listEquals(other.entries, entries) &&
         setEquals(other.busyConnectionIds, busyConnectionIds) &&
         setEquals(other.openConnectionIds, openConnectionIds);
   }
@@ -1118,12 +1101,52 @@ class _SftpUiSnapshot {
   @override
   int get hashCode => Object.hash(
         connectionId,
+        Object.hashAllUnordered(busyConnectionIds),
+        Object.hashAllUnordered(openConnectionIds),
+      );
+}
+
+class _SftpUiSnapshot {
+  final String currentPath;
+  final SftpConnectionState state;
+  final String? errorMessage;
+  final List<SftpEntry> entries;
+
+  const _SftpUiSnapshot({
+    required this.currentPath,
+    required this.state,
+    required this.errorMessage,
+    required this.entries,
+  });
+
+  factory _SftpUiSnapshot.from(SftpService service) {
+    return _SftpUiSnapshot(
+      currentPath: service.currentPath,
+      state: service.state,
+      errorMessage: service.errorMessage,
+      entries: service.entries,
+    );
+  }
+
+  bool get isBusy =>
+      state == SftpConnectionState.connecting ||
+      state == SftpConnectionState.loading;
+
+  @override
+  bool operator ==(Object other) {
+    return other is _SftpUiSnapshot &&
+        other.currentPath == currentPath &&
+        other.state == state &&
+        other.errorMessage == errorMessage &&
+        listEquals(other.entries, entries);
+  }
+
+  @override
+  int get hashCode => Object.hash(
         currentPath,
         state,
         errorMessage,
         Object.hashAll(entries),
-        Object.hashAllUnordered(busyConnectionIds),
-        Object.hashAllUnordered(openConnectionIds),
       );
 }
 

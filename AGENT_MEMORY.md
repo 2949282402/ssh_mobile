@@ -23,3 +23,7 @@ across sessions.
   through `.agents/skills/ssh-mobile-maintenance/SKILL.md` and
   `.claude/skills/ssh-mobile-maintenance/SKILL.md`. Use
   `scripts/sync_agent_skills.ps1` to check or restore synchronization.
+- 2026-05-18: Android native rewrite planning lives in
+  `docs/ANDROID_NATIVE_REWRITE_GUIDE.md`; it is now a beginner-oriented
+  step-by-step Kotlin + Compose + MVVM tutorial aligned with SSH/SFTP,
+  monitor, AI tools, logs, settings, and backup behavior.

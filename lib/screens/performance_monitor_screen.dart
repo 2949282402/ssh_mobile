@@ -81,16 +81,20 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
     final connections = context.select<StorageService, List<ConnectionConfig>>(
       (storage) => storage.connections,
     );
-    final monitor = context.watch<PerformanceMonitorService>();
+    final monitor = context.read<PerformanceMonitorService>();
+    final monitorShell =
+        context.select<PerformanceMonitorService, _MonitorShellSnapshot>(
+      (monitor) => _MonitorShellSnapshot.from(monitor),
+    );
     final desktop = isDesktopLayout(context);
     final monitoringConnections = _connectionsByIds(
       connections,
-      monitor.monitoringConnectionIds,
+      monitorShell.monitoringConnectionIds,
     );
-    final tabSelectedIds = _selectedIdsForTab(monitor);
+    final tabSelectedIds = _selectedIdsForTab(monitorShell);
     final tabSelectedConnections =
         _connectionsByIds(connections, tabSelectedIds);
-    final railConnections = _tabIndex == 0 && monitor.isRunning
+    final railConnections = _tabIndex == 0 && monitorShell.isRunning
         ? monitoringConnections
         : tabSelectedConnections;
     final serversCollapsed = _serversCollapsed && connections.isNotEmpty;
@@ -121,20 +125,24 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
                       curve: Curves.easeOutCubic,
                       width: serversCollapsed ? 64 : 320,
                       child: serversCollapsed
-                          ? _CollapsedDesktopMonitorRail(
-                              connections: railConnections,
-                              sampling: monitor.isSampling && _tabIndex == 0,
-                              strings: strings,
-                              onExpand: _expandServers,
+                          ? Selector<PerformanceMonitorService, bool>(
+                              selector: (_, monitor) => monitor.isSampling,
+                              builder: (context, sampling, _) =>
+                                  _CollapsedDesktopMonitorRail(
+                                connections: railConnections,
+                                sampling: sampling && _tabIndex == 0,
+                                strings: strings,
+                                onExpand: _expandServers,
+                              ),
                             )
                           : _MonitorServerPane(
                               connections: connections,
                               strings: strings,
                               selectedConnectionIds: tabSelectedIds,
                               samplingConnectionIds:
-                                  monitor.monitoringConnectionIds,
-                              sampling: monitor.isSampling && _tabIndex == 0,
-                              disabled: _tabIndex == 0 && monitor.isRunning,
+                                  monitorShell.monitoringConnectionIds,
+                              disabled:
+                                  _tabIndex == 0 && monitorShell.isRunning,
                               onConnectionTap: (id) =>
                                   _handleServerSelection(context, monitor, id),
                               onDisabledTap: () =>
@@ -170,12 +178,16 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
                       switchInCurve: Curves.easeOutCubic,
                       switchOutCurve: Curves.easeInCubic,
                       child: serversCollapsed
-                          ? _CollapsedMobileMonitorBar(
+                          ? Selector<PerformanceMonitorService, bool>(
                               key: const ValueKey('monitor-server-collapsed'),
-                              connections: railConnections,
-                              sampling: monitor.isSampling && _tabIndex == 0,
-                              strings: strings,
-                              onExpand: _expandServers,
+                              selector: (_, monitor) => monitor.isSampling,
+                              builder: (context, sampling, _) =>
+                                  _CollapsedMobileMonitorBar(
+                                connections: railConnections,
+                                sampling: sampling && _tabIndex == 0,
+                                strings: strings,
+                                onExpand: _expandServers,
+                              ),
                             )
                           : _MobileMonitorServerStrip(
                               key: const ValueKey('monitor-server-expanded'),
@@ -183,9 +195,9 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
                               strings: strings,
                               selectedConnectionIds: tabSelectedIds,
                               samplingConnectionIds:
-                                  monitor.monitoringConnectionIds,
-                              sampling: monitor.isSampling && _tabIndex == 0,
-                              disabled: _tabIndex == 0 && monitor.isRunning,
+                                  monitorShell.monitoringConnectionIds,
+                              disabled:
+                                  _tabIndex == 0 && monitorShell.isRunning,
                               onConnectionTap: (id) =>
                                   _handleServerSelection(context, monitor, id),
                               onDisabledTap: () =>
@@ -243,7 +255,7 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
     );
   }
 
-  Set<String> _selectedIdsForTab(PerformanceMonitorService monitor) {
+  Set<String> _selectedIdsForTab(_MonitorShellSnapshot monitorShell) {
     switch (_tabIndex) {
       case 1:
         return _portConnectionId == null ? const {} : {_portConnectionId!};
@@ -251,7 +263,7 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
         return _appConnectionId == null ? const {} : {_appConnectionId!};
       case 0:
       default:
-        return monitor.selectedConnectionIds;
+        return monitorShell.selectedConnectionIds;
     }
   }
 
@@ -301,12 +313,46 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
   }
 }
 
+class _MonitorShellSnapshot {
+  final bool isRunning;
+  final Set<String> selectedConnectionIds;
+  final Set<String> monitoringConnectionIds;
+
+  const _MonitorShellSnapshot({
+    required this.isRunning,
+    required this.selectedConnectionIds,
+    required this.monitoringConnectionIds,
+  });
+
+  factory _MonitorShellSnapshot.from(PerformanceMonitorService monitor) {
+    return _MonitorShellSnapshot(
+      isRunning: monitor.isRunning,
+      selectedConnectionIds: monitor.selectedConnectionIds,
+      monitoringConnectionIds: monitor.monitoringConnectionIds,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is _MonitorShellSnapshot &&
+        other.isRunning == isRunning &&
+        other.selectedConnectionIds == selectedConnectionIds &&
+        other.monitoringConnectionIds == monitoringConnectionIds;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        isRunning,
+        selectedConnectionIds,
+        monitoringConnectionIds,
+      );
+}
+
 class _MonitorServerPane extends StatelessWidget {
   final List<ConnectionConfig> connections;
   final AppStrings strings;
   final Set<String> selectedConnectionIds;
   final Set<String> samplingConnectionIds;
-  final bool sampling;
   final bool disabled;
   final ValueChanged<String> onConnectionTap;
   final VoidCallback onDisabledTap;
@@ -317,7 +363,6 @@ class _MonitorServerPane extends StatelessWidget {
     required this.strings,
     required this.selectedConnectionIds,
     required this.samplingConnectionIds,
-    required this.sampling,
     required this.disabled,
     required this.onConnectionTap,
     required this.onDisabledTap,
@@ -369,16 +414,19 @@ class _MonitorServerPane extends StatelessWidget {
                         ),
                       ),
                       Expanded(
-                        child: _MonitorServerTile(
-                          connection: connection,
-                          selected:
-                              selectedConnectionIds.contains(connection.id),
-                          sampling: samplingConnectionIds
-                                  .contains(connection.id) &&
-                              sampling,
-                          disabled: disabled,
-                          onTap: () => onConnectionTap(connection.id),
-                          onDisabledTap: onDisabledTap,
+                        child: Selector<PerformanceMonitorService, bool>(
+                          selector: (_, monitor) => monitor.isSampling,
+                          builder: (context, sampling, _) => _MonitorServerTile(
+                            connection: connection,
+                            selected:
+                                selectedConnectionIds.contains(connection.id),
+                            sampling:
+                                samplingConnectionIds.contains(connection.id) &&
+                                    sampling,
+                            disabled: disabled,
+                            onTap: () => onConnectionTap(connection.id),
+                            onDisabledTap: onDisabledTap,
+                          ),
                         ),
                       ),
                     ],
@@ -428,7 +476,6 @@ class _MobileMonitorServerStrip extends StatelessWidget {
   final AppStrings strings;
   final Set<String> selectedConnectionIds;
   final Set<String> samplingConnectionIds;
-  final bool sampling;
   final bool disabled;
   final ValueChanged<String> onConnectionTap;
   final VoidCallback onDisabledTap;
@@ -440,7 +487,6 @@ class _MobileMonitorServerStrip extends StatelessWidget {
     required this.strings,
     required this.selectedConnectionIds,
     required this.samplingConnectionIds,
-    required this.sampling,
     required this.disabled,
     required this.onConnectionTap,
     required this.onDisabledTap,
@@ -476,15 +522,18 @@ class _MobileMonitorServerStrip extends StatelessWidget {
           final connection = connections[index - 1];
           return SizedBox(
             width: 210,
-            child: _MonitorServerTile(
-              connection: connection,
-              selected: selectedConnectionIds.contains(connection.id),
-              sampling:
-                  samplingConnectionIds.contains(connection.id) && sampling,
-              disabled: disabled,
-              compact: true,
-              onTap: () => onConnectionTap(connection.id),
-              onDisabledTap: onDisabledTap,
+            child: Selector<PerformanceMonitorService, bool>(
+              selector: (_, monitor) => monitor.isSampling,
+              builder: (context, sampling, _) => _MonitorServerTile(
+                connection: connection,
+                selected: selectedConnectionIds.contains(connection.id),
+                sampling:
+                    samplingConnectionIds.contains(connection.id) && sampling,
+                disabled: disabled,
+                compact: true,
+                onTap: () => onConnectionTap(connection.id),
+                onDisabledTap: onDisabledTap,
+              ),
             ),
           );
         },
@@ -812,6 +861,9 @@ class _MonitorContentState extends State<_MonitorContent> {
 
   @override
   Widget build(BuildContext context) {
+    final monitor = widget.tabIndex == 0
+        ? context.watch<PerformanceMonitorService>()
+        : context.read<PerformanceMonitorService>();
     if (monitor.isRunning && !_wasRunning) {
       _configExpanded = false;
     }
@@ -843,42 +895,49 @@ class _MonitorContentState extends State<_MonitorContent> {
             ),
           ),
         Expanded(
-          child: IndexedStack(
-            index: widget.tabIndex,
-            children: [
-              _buildPerformanceTab(context),
-              _ServerSnapshotTab<PortProcessSnapshot>(
-                strings: strings,
-                connections: activeConnections,
-                emptyText: _monitorText(
-                    strings, 'No listening ports found', '未发现监听端口'),
-                future: _portsFuture,
-                onRefresh: () => setState(() => _portsFuture = _loadPorts()),
-                itemBuilder: _buildPortItem,
-              ),
-              _ServerSnapshotTab<ApplicationMemorySnapshot>(
-                strings: strings,
-                connections: activeConnections,
-                emptyText: _monitorText(
-                    strings, 'No application data found', '未发现应用数据'),
-                future: _appsFuture,
-                onRefresh: () =>
-                    setState(() => _appsFuture = _loadApplications()),
-                itemBuilder: _buildApplicationItem,
-              ),
-            ],
-          ),
+          child: _buildActiveTab(context),
         ),
       ],
     );
   }
 
+  Widget _buildActiveTab(BuildContext context) {
+    switch (widget.tabIndex) {
+      case 1:
+        return _ServerSnapshotTab<PortProcessSnapshot>(
+          strings: strings,
+          connections: activeConnections,
+          emptyText:
+              _monitorText(strings, 'No listening ports found', '未发现监听端口'),
+          future: _portsFuture,
+          onRefresh: () => setState(() => _portsFuture = _loadPorts()),
+          itemBuilder: _buildPortItem,
+        );
+      case 2:
+        return _ServerSnapshotTab<ApplicationMemorySnapshot>(
+          strings: strings,
+          connections: activeConnections,
+          emptyText:
+              _monitorText(strings, 'No application data found', '未发现应用数据'),
+          future: _appsFuture,
+          onRefresh: () => setState(() => _appsFuture = _loadApplications()),
+          itemBuilder: _buildApplicationItem,
+        );
+      case 0:
+      default:
+        return _buildPerformanceTab(context);
+    }
+  }
+
   Widget _buildPerformanceTab(BuildContext context) {
     final chartConnections = activeConnections;
-    final allSamples = [
+    final samplesByConnection = {
       for (final connection in widget.monitoringConnections)
-        ...monitor.visibleSamplesFor(connection.id),
-    ];
+        connection.id: monitor.visibleSamplesFor(connection.id),
+    };
+    final hasSamples = samplesByConnection.values.any((samples) {
+      return samples.isNotEmpty;
+    });
     if (!monitor.isRunning) {
       return _MonitorResponsiveEmptyState(
         strings: strings,
@@ -890,7 +949,7 @@ class _MonitorContentState extends State<_MonitorContent> {
                 '停止监控后可修改服务器选择。'),
       );
     }
-    if (allSamples.isEmpty) {
+    if (!hasSamples) {
       return Center(
         child: Text(_monitorText(strings, 'Waiting for samples', '等待采样数据')),
       );
@@ -898,35 +957,89 @@ class _MonitorContentState extends State<_MonitorContent> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final twoColumns = constraints.maxWidth >= 860;
-        return ListView(
+        final chartItems = _metricChartItems(chartConnections);
+        return ListView.builder(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-          children: [
-            _HealthAlertPanel(
-              strings: strings,
-              connections: chartConnections,
-              monitor: monitor,
-            ),
-            const SizedBox(height: 12),
-            _DiskUsagePanel(
-              strings: strings,
-              connections: chartConnections,
-              monitor: monitor,
-              expanded: _diskExpanded,
-              onToggle: () => setState(() => _diskExpanded = !_diskExpanded),
-            ),
-            const SizedBox(height: 12),
-            ..._metricCharts(chartConnections, twoColumns),
-          ],
+          itemCount: chartItems.length + 2,
+          itemBuilder: (context, index) {
+            if (index == 0) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _HealthAlertPanel(
+                  strings: strings,
+                  connections: chartConnections,
+                  monitor: monitor,
+                ),
+              );
+            }
+            if (index == 1) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _DiskUsagePanel(
+                  strings: strings,
+                  connections: chartConnections,
+                  monitor: monitor,
+                  expanded: _diskExpanded,
+                  onToggle: () =>
+                      setState(() => _diskExpanded = !_diskExpanded),
+                ),
+              );
+            }
+            final item = chartItems[index - 2];
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _MetricChart(
+                title: item.title,
+                unit: item.spec.unit,
+                connections: item.connections,
+                samplesByConnection: samplesByConnection,
+                chartHeight: twoColumns ? 178 : 218,
+                maxY: item.spec.maxY,
+                valueFor: item.spec.valueFor,
+                latestTextFor: item.spec.latestTextFor,
+                expanded: !_collapsedChartKeys.contains(item.key),
+                onToggle: () {
+                  setState(() {
+                    if (!_collapsedChartKeys.remove(item.key)) {
+                      _collapsedChartKeys.add(item.key);
+                    }
+                  });
+                },
+              ),
+            );
+          },
         );
       },
     );
   }
 
-  List<Widget> _metricCharts(
+  List<_MetricChartItem> _metricChartItems(
     List<ConnectionConfig> chartConnections,
-    bool twoColumns,
   ) {
-    final specs = [
+    final specs = _metricSpecs();
+    final items = <_MetricChartItem>[];
+    final groupSize = _serversPerChart.clamp(1, 99);
+    for (final spec in specs) {
+      for (var start = 0; start < chartConnections.length; start += groupSize) {
+        final end = min(start + groupSize, chartConnections.length);
+        final group = chartConnections.sublist(start, end);
+        items.add(
+          _MetricChartItem(
+            key: '${spec.key}-$start',
+            title: group.length == chartConnections.length
+                ? spec.title
+                : '${spec.title} ${start + 1}-${start + group.length}',
+            spec: spec,
+            connections: group,
+          ),
+        );
+      }
+    }
+    return items;
+  }
+
+  List<_MetricSpec> _metricSpecs() {
+    return [
       _MetricSpec(
         key: 'cpu',
         title: 'CPU',
@@ -961,40 +1074,6 @@ class _MonitorContentState extends State<_MonitorContent> {
             '${_formatRate(sample.networkBytesPerSecond)}/s',
       ),
     ];
-    final widgets = <Widget>[];
-    final groupSize = _serversPerChart.clamp(1, 99);
-    for (final spec in specs) {
-      for (var start = 0; start < chartConnections.length; start += groupSize) {
-        final group = chartConnections.skip(start).take(groupSize).toList();
-        final key = '${spec.key}-$start';
-        widgets.add(
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: _MetricChart(
-              title: group.length == chartConnections.length
-                  ? spec.title
-                  : '${spec.title} ${start + 1}-${start + group.length}',
-              unit: spec.unit,
-              connections: group,
-              monitor: monitor,
-              chartHeight: twoColumns ? 178 : 218,
-              maxY: spec.maxY,
-              valueFor: spec.valueFor,
-              latestTextFor: spec.latestTextFor,
-              expanded: !_collapsedChartKeys.contains(key),
-              onToggle: () {
-                setState(() {
-                  if (!_collapsedChartKeys.remove(key)) {
-                    _collapsedChartKeys.add(key);
-                  }
-                });
-              },
-            ),
-          ),
-        );
-      }
-    }
-    return widgets;
   }
 
   Future<Map<String, List<PortProcessSnapshot>>> _loadPorts() async {
@@ -1137,10 +1216,12 @@ class _MonitorContentState extends State<_MonitorContent> {
 }
 
 class _MetricChart extends StatelessWidget {
+  static const int _maxChartPointsPerSeries = 140;
+
   final String title;
   final String unit;
   final List<ConnectionConfig> connections;
-  final PerformanceMonitorService monitor;
+  final Map<String, List<PerformanceSample>> samplesByConnection;
   final double Function(PerformanceSample sample) valueFor;
   final String Function(PerformanceSample sample) latestTextFor;
   final double chartHeight;
@@ -1152,7 +1233,7 @@ class _MetricChart extends StatelessWidget {
     required this.title,
     required this.unit,
     required this.connections,
-    required this.monitor,
+    required this.samplesByConnection,
     required this.chartHeight,
     required this.valueFor,
     required this.latestTextFor,
@@ -1172,7 +1253,9 @@ class _MetricChart extends StatelessWidget {
 
     for (var i = 0; i < connections.length; i++) {
       final connection = connections[i];
-      final samples = monitor.visibleSamplesFor(connection.id);
+      final rawSamples =
+          samplesByConnection[connection.id] ?? const <PerformanceSample>[];
+      final samples = _thinSamples(rawSamples);
       if (samples.isEmpty) continue;
       final color = _serverColor(i);
       final spots = [
@@ -1189,17 +1272,14 @@ class _MetricChart extends StatelessWidget {
       series.add(
         LineChartBarData(
           spots: spots,
-          isCurved: true,
+          isCurved: false,
           barWidth: 2,
           color: color,
           dotData: const FlDotData(show: false),
-          belowBarData: BarAreaData(
-            show: true,
-            color: color.withValues(alpha: 0.08),
-          ),
+          belowBarData: BarAreaData(show: false),
         ),
       );
-      final latest = samples.last;
+      final latest = rawSamples.last;
       latestLabels.add(
         _LegendLabel(
           color: color,
@@ -1264,67 +1344,70 @@ class _MetricChart extends StatelessWidget {
             const SizedBox(height: 8),
             SizedBox(
               height: chartHeight,
-              child: LineChart(
-                LineChartData(
-                  minX: 0,
-                  maxX: maxX,
-                  minY: 0,
-                  maxY: chartMaxY,
-                  clipData: const FlClipData.all(),
-                  lineTouchData: const LineTouchData(enabled: false),
-                  gridData: FlGridData(
-                    show: true,
-                    drawVerticalLine: false,
-                    getDrawingHorizontalLine: (_) => FlLine(
-                      color: colorScheme.outlineVariant.withValues(alpha: 0.5),
-                      strokeWidth: 1,
+              child: RepaintBoundary(
+                child: LineChart(
+                  LineChartData(
+                    minX: 0,
+                    maxX: maxX,
+                    minY: 0,
+                    maxY: chartMaxY,
+                    clipData: const FlClipData.all(),
+                    lineTouchData: const LineTouchData(enabled: false),
+                    gridData: FlGridData(
+                      show: true,
+                      drawVerticalLine: false,
+                      getDrawingHorizontalLine: (_) => FlLine(
+                        color:
+                            colorScheme.outlineVariant.withValues(alpha: 0.5),
+                        strokeWidth: 1,
+                      ),
                     ),
-                  ),
-                  titlesData: FlTitlesData(
-                    topTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false),
-                    ),
-                    rightTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false),
-                    ),
-                    leftTitles: AxisTitles(
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        reservedSize: 36,
-                        interval: leftInterval,
-                        getTitlesWidget: (value, meta) => Text(
-                          value >= 100
-                              ? value.toStringAsFixed(0)
-                              : value.toStringAsFixed(1),
-                          style: TextStyle(
-                            color: colorScheme.onSurfaceVariant,
-                            fontSize: 10,
+                    titlesData: FlTitlesData(
+                      topTitles: const AxisTitles(
+                        sideTitles: SideTitles(showTitles: false),
+                      ),
+                      rightTitles: const AxisTitles(
+                        sideTitles: SideTitles(showTitles: false),
+                      ),
+                      leftTitles: AxisTitles(
+                        sideTitles: SideTitles(
+                          showTitles: true,
+                          reservedSize: 36,
+                          interval: leftInterval,
+                          getTitlesWidget: (value, meta) => Text(
+                            value >= 100
+                                ? value.toStringAsFixed(0)
+                                : value.toStringAsFixed(1),
+                            style: TextStyle(
+                              color: colorScheme.onSurfaceVariant,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ),
+                      ),
+                      bottomTitles: AxisTitles(
+                        sideTitles: SideTitles(
+                          showTitles: true,
+                          reservedSize: 20,
+                          interval: bottomInterval,
+                          getTitlesWidget: (value, meta) => Text(
+                            '${value.round()}s',
+                            style: TextStyle(
+                              color: colorScheme.onSurfaceVariant,
+                              fontSize: 10,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                    bottomTitles: AxisTitles(
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        reservedSize: 20,
-                        interval: bottomInterval,
-                        getTitlesWidget: (value, meta) => Text(
-                          '${value.round()}s',
-                          style: TextStyle(
-                            color: colorScheme.onSurfaceVariant,
-                            fontSize: 10,
-                          ),
-                        ),
-                      ),
+                    borderData: FlBorderData(
+                      show: true,
+                      border: Border.all(color: colorScheme.outlineVariant),
                     ),
+                    lineBarsData: series,
                   ),
-                  borderData: FlBorderData(
-                    show: true,
-                    border: Border.all(color: colorScheme.outlineVariant),
-                  ),
-                  lineBarsData: series,
+                  duration: Duration.zero,
                 ),
-                duration: const Duration(milliseconds: 180),
               ),
             ),
           ],
@@ -1336,7 +1419,8 @@ class _MetricChart extends StatelessWidget {
   DateTime _oldestVisibleSampleTime() {
     DateTime? oldest;
     for (final connection in connections) {
-      final samples = monitor.visibleSamplesFor(connection.id);
+      final samples =
+          samplesByConnection[connection.id] ?? const <PerformanceSample>[];
       if (samples.isEmpty) continue;
       final first = samples.first.time;
       if (oldest == null || first.isBefore(oldest)) oldest = first;
@@ -1344,7 +1428,33 @@ class _MetricChart extends StatelessWidget {
     return oldest ?? DateTime.now();
   }
 
+  List<PerformanceSample> _thinSamples(List<PerformanceSample> samples) {
+    if (samples.length <= _maxChartPointsPerSeries) return samples;
+    final step = (samples.length / (_maxChartPointsPerSeries - 1)).ceil();
+    final thinned = <PerformanceSample>[];
+    for (var index = 0; index < samples.length; index += step) {
+      thinned.add(samples[index]);
+    }
+    final last = samples.last;
+    if (!identical(thinned.last, last)) thinned.add(last);
+    return thinned;
+  }
+
   Color _serverColor(int index) => _monitorSeriesColor(index);
+}
+
+class _MetricChartItem {
+  final String key;
+  final String title;
+  final _MetricSpec spec;
+  final List<ConnectionConfig> connections;
+
+  const _MetricChartItem({
+    required this.key,
+    required this.title,
+    required this.spec,
+    required this.connections,
+  });
 }
 
 class _LegendLabel extends StatelessWidget {
