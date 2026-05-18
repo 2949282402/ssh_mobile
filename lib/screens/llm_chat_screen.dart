@@ -2169,7 +2169,7 @@ class _MessageBubble extends StatelessWidget {
   }
 }
 
-class _HistoryPanel extends StatelessWidget {
+class _HistoryPanel extends StatefulWidget {
   final List<AiChatRecord> chats;
   final String? activeChatId;
   final bool loading;
@@ -2193,8 +2193,31 @@ class _HistoryPanel extends StatelessWidget {
   });
 
   @override
+  State<_HistoryPanel> createState() => _HistoryPanelState();
+}
+
+class _HistoryPanelState extends State<_HistoryPanel> {
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  List<AiChatRecord> get _filteredChats {
+    if (_searchQuery.isEmpty) return widget.chats;
+    final query = _searchQuery.toLowerCase();
+    return widget.chats.where((chat) {
+      return chat.title.toLowerCase().contains(query);
+    }).toList();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final filtered = _filteredChats;
     return Column(
       children: [
         Padding(
@@ -2202,13 +2225,13 @@ class _HistoryPanel extends StatelessWidget {
           child: Row(
             children: [
               IconButton(
-                tooltip: strings.close,
+                tooltip: widget.strings.close,
                 icon: const Icon(Icons.close_rounded),
-                onPressed: onClose,
+                onPressed: widget.onClose,
               ),
               Expanded(
                 child: Text(
-                  strings.history,
+                  widget.strings.history,
                   style: const TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w800,
@@ -2216,15 +2239,43 @@ class _HistoryPanel extends StatelessWidget {
                 ),
               ),
               IconButton(
-                tooltip: strings.newChat,
+                tooltip: widget.strings.newChat,
                 icon: const Icon(Icons.add_rounded),
-                onPressed: onNewChat,
+                onPressed: widget.onNewChat,
               ),
             ],
           ),
         ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: TextField(
+            controller: _searchController,
+            onChanged: (value) => setState(() => _searchQuery = value),
+            decoration: InputDecoration(
+              hintText: widget.strings.language == AppLanguage.en
+                  ? 'Search history'
+                  : '搜索历史记录',
+              prefixIcon: const Icon(Icons.search_rounded, size: 20),
+              suffixIcon: _searchQuery.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear_rounded, size: 18),
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(() => _searchQuery = '');
+                      },
+                    )
+                  : null,
+              isDense: true,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+          ),
+        ),
         Expanded(
-          child: loading
+          child: widget.loading
               ? const Center(
                   child: SizedBox(
                     width: 28,
@@ -2232,13 +2283,28 @@ class _HistoryPanel extends StatelessWidget {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                 )
-              : ListView.separated(
-                  itemCount: chats.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (context, index) {
-                    final chat = chats[index];
-                    final selected = chat.id == activeChatId;
-                    return ListTile(
+              : filtered.isEmpty
+                  ? Center(
+                      child: Text(
+                        _searchQuery.isNotEmpty
+                            ? (widget.strings.language == AppLanguage.en
+                                ? 'No results'
+                                : '无搜索结果')
+                            : (widget.strings.language == AppLanguage.en
+                                ? 'No history'
+                                : '暂无历史记录'),
+                        style: TextStyle(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    )
+                  : ListView.separated(
+                      itemCount: filtered.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (context, index) {
+                        final chat = filtered[index];
+                        final selected = chat.id == widget.activeChatId;
+                        return ListTile(
                       selected: selected,
                       leading: Icon(
                         selected
@@ -2252,16 +2318,16 @@ class _HistoryPanel extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                       ),
                       subtitle: Text(
-                        formatTime(chat.updatedAt),
+                        widget.formatTime(chat.updatedAt),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                       trailing: IconButton(
-                        tooltip: strings.delete,
+                        tooltip: widget.strings.delete,
                         icon: const Icon(Icons.delete_outline),
-                        onPressed: () => onDeleteChat(chat.id),
+                        onPressed: () => widget.onDeleteChat(chat.id),
                       ),
-                      onTap: () => onSelectChat(chat.id),
+                      onTap: () => widget.onSelectChat(chat.id),
                     );
                   },
                 ),

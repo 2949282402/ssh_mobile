@@ -114,13 +114,14 @@ class _HomeScreenState extends State<HomeScreen> {
   static const int _firstPage = _aiPage;
   static const int _lastPage = _logPage;
 
-  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   late final PageController _pageController;
   late int _selectedIndex;
   late int _settledIndex;
   final Set<String> _expandedConnectionWindowIds = {};
   bool _aiHistoryVisible = false;
   bool _appDataBusy = false;
+  bool _serverSelectionMode = false;
+  final Set<String> _selectedServerIds = {};
 
   @override
   void initState() {
@@ -151,7 +152,7 @@ class _HomeScreenState extends State<HomeScreen> {
       child: PageView.builder(
         controller: _pageController,
         itemCount: _lastPage + 1,
-        physics: const PageScrollPhysics(),
+        physics: const NeverScrollableScrollPhysics(),
         allowImplicitScrolling: false,
         onPageChanged: (index) {
           setState(() {
@@ -164,18 +165,27 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     return Scaffold(
-      key: _scaffoldKey,
-      drawerEnableOpenDragGesture: false,
-      drawer: _SettingsPanel(
-        appTitle: _appTitle,
-        onExport: () => _exportAppData(context, strings),
-        onImport: () => _importAppData(context, strings),
-      ),
       body: SafeArea(
         bottom: false,
         child: Stack(
           children: [
             desktop ? _buildDesktopShell(context, content, strings) : content,
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: 28,
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onHorizontalDragEnd: (details) {
+                  if (details.primaryVelocity != null &&
+                      details.primaryVelocity! > 300) {
+                    _openSettings(context);
+                  }
+                },
+                child: const SizedBox.expand(),
+              ),
+            ),
             if (_appDataBusy)
               ColoredBox(
                 color: Theme.of(context)
@@ -236,6 +246,11 @@ class _HomeScreenState extends State<HomeScreen> {
               selectedIcon: const Icon(Icons.monitor_heart_rounded),
               label: Text(strings.performanceMonitor),
             ),
+            NavigationRailDestination(
+              icon: const Icon(Icons.article_outlined),
+              selectedIcon: const Icon(Icons.article_rounded),
+              label: Text(strings.logs),
+            ),
           ],
         ),
         VerticalDivider(
@@ -291,6 +306,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 icon: const Icon(Icons.monitor_heart_outlined),
                 selectedIcon: const Icon(Icons.monitor_heart_rounded),
                 label: strings.performanceMonitor,
+              ),
+              _bottomNavItem(
+                context,
+                index: 4,
+                icon: const Icon(Icons.article_outlined),
+                selectedIcon: const Icon(Icons.article_rounded),
+                label: strings.logs,
               ),
             ],
           ),
@@ -394,7 +416,7 @@ class _HomeScreenState extends State<HomeScreen> {
       case _performancePage:
         return 3;
       case _logPage:
-        return null;
+        return 4;
       case _aiPage:
       default:
         return 0;
@@ -415,6 +437,9 @@ class _HomeScreenState extends State<HomeScreen> {
       case 3:
         _switchPage(_performancePage);
         break;
+      case 4:
+        _switchPage(_logPage);
+        break;
       default:
         _switchPage(_sftpPage);
         break;
@@ -432,6 +457,36 @@ class _HomeScreenState extends State<HomeScreen> {
       index,
       duration: const Duration(milliseconds: 260),
       curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _openSettings(BuildContext context) {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            _SettingsPage(
+          appTitle: _appTitle,
+          onExport: () => _exportAppData(context, AppStrings(
+            context.read<AppSettings>().language,
+          )),
+          onImport: () => _importAppData(context, AppStrings(
+            context.read<AppSettings>().language,
+          )),
+        ),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          const begin = Offset(-1.0, 0.0);
+          const end = Offset.zero;
+          const curve = Curves.easeOutCubic;
+          var tween = Tween(begin: begin, end: end)
+              .chain(CurveTween(curve: curve));
+          return SlideTransition(
+            position: animation.drive(tween),
+            child: child,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 260),
+      ),
     );
   }
 
@@ -458,7 +513,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   setState(() => _aiHistoryVisible = visible);
                 },
                 onOpenSettingsDrawer: () =>
-                    _scaffoldKey.currentState?.openDrawer(),
+                    _openSettings(context),
               );
             case _serverPage:
               return _buildServerPage(context, strings);
@@ -670,37 +725,37 @@ class _HomeScreenState extends State<HomeScreen> {
         final horizontalPadding = desktop ? 24.0 : 12.0;
         final maxContentWidth = desktop ? 1480.0 : double.infinity;
 
-        return Center(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: maxContentWidth),
-            child: CustomScrollView(
-              slivers: [
-                SliverPadding(
-                  padding: EdgeInsets.fromLTRB(
-                    horizontalPadding,
-                    desktop ? 18 : 8,
-                    horizontalPadding,
-                    0,
-                  ),
-                  sliver: SliverToBoxAdapter(
-                    child: _buildOverviewHeader(
-                      context,
-                      connections,
-                      sessions,
-                      strings,
-                    ),
-                  ),
+        return SizedBox(
+          width: maxContentWidth.isInfinite
+              ? constraints.maxWidth
+              : maxContentWidth,
+          height: constraints.maxHeight,
+          child: Column(
+            children: [
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  horizontalPadding,
+                  desktop ? 18 : 8,
+                  horizontalPadding,
+                  12,
                 ),
-                SliverPadding(
-                  padding: EdgeInsets.fromLTRB(
-                    horizontalPadding,
-                    0,
-                    horizontalPadding,
-                    88,
-                  ),
-                  sliver: SliverList.separated(
+                child: _buildOverviewHeader(
+                  context,
+                  connections,
+                  sessions,
+                  strings,
+                ),
+              ),
+              Expanded(
+                child: ReorderableListView.builder(
+                    buildDefaultDragHandles: false,
+                    padding: EdgeInsets.fromLTRB(
+                      horizontalPadding,
+                      0,
+                      horizontalPadding,
+                      88,
+                    ),
                     itemCount: connections.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
                     itemBuilder: (context, index) => _buildConnectionCard(
                       context,
                       connections[index],
@@ -715,14 +770,69 @@ class _HomeScreenState extends State<HomeScreen> {
                             updatedAt: DateTime.now(),
                           ),
                       strings,
+                      connIndex: index,
                     ),
+                    onReorder: (oldIndex, newIndex) {
+                      context
+                          .read<StorageService>()
+                          .reorderConnections(oldIndex, newIndex);
+                    },
                   ),
                 ),
+                if (_serverSelectionMode)
+                  _buildSelectionBar(context, strings),
               ],
             ),
-          ),
-        );
+          );
       },
+    );
+  }
+
+  Widget _buildSelectionBar(BuildContext context, AppStrings strings) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final count = _selectedServerIds.length;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHigh,
+        border: Border(
+          top: BorderSide(color: colorScheme.outlineVariant),
+        ),
+      ),
+      child: Row(
+        children: [
+          Text(
+            '$count ${strings.language == AppLanguage.en ? 'selected' : '已选择'}',
+            style: TextStyle(
+              color: colorScheme.onSurface,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const Spacer(),
+          TextButton.icon(
+            icon: const Icon(Icons.close, size: 18),
+            label: Text(strings.cancel),
+            onPressed: () {
+              setState(() {
+                _serverSelectionMode = false;
+                _selectedServerIds.clear();
+              });
+            },
+          ),
+          const SizedBox(width: 8),
+          if (count > 0)
+            FilledButton.tonalIcon(
+              icon: const Icon(Icons.delete, size: 18),
+              label: Text(strings.delete),
+              style: FilledButton.styleFrom(
+                foregroundColor: colorScheme.error,
+                backgroundColor: colorScheme.errorContainer,
+              ),
+              onPressed: () => _confirmBatchDelete(context, strings),
+            ),
+        ],
+      ),
     );
   }
 
@@ -731,8 +841,9 @@ class _HomeScreenState extends State<HomeScreen> {
     ConnectionConfig conn,
     _ConnectionSessionSummary sessionSummary,
     ServerHealthSnapshot health,
-    AppStrings strings,
-  ) {
+    AppStrings strings, {
+    int connIndex = 0,
+  }) {
     final isActive = sessionSummary.hasConnected;
     final sessionCount = sessionSummary.count;
     final latestState = sessionSummary.latestState;
@@ -745,21 +856,44 @@ class _HomeScreenState extends State<HomeScreen> {
     final mutedTextColor = _panelMutedTextColor(context);
     final borderColor =
         isActive ? success.withValues(alpha: 0.42) : _panelBorderColor(context);
+    final isSelected = _selectedServerIds.contains(conn.id);
 
     final windowsExpanded = _expandedConnectionWindowIds.contains(conn.id);
 
     return Container(
+      key: ValueKey(conn.id),
+      margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: cardColor,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: borderColor),
+        border: Border.all(
+          color: isSelected ? colorScheme.primary : borderColor,
+          width: isSelected ? 1.5 : 1,
+        ),
         boxShadow: _panelShadow(context),
       ),
       child: Column(
         children: [
           Row(
             children: [
+              if (!_serverSelectionMode)
+                ReorderableDragStartListener(
+                  index: connIndex,
+                  child: Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: Icon(
+                      Icons.drag_handle,
+                      size: 20,
+                      color: mutedTextColor.withValues(alpha: 0.5),
+                    ),
+                  ),
+                ),
+              if (_serverSelectionMode)
+                Checkbox(
+                  value: isSelected,
+                  onChanged: (_) => _toggleServerSelection(conn.id),
+                ),
               Container(
                 width: 44,
                 height: 44,
@@ -775,20 +909,31 @@ class _HomeScreenState extends State<HomeScreen> {
                   size: 24,
                 ),
               ),
-              const SizedBox(width: 14),
+              if (!_serverSelectionMode) const SizedBox(width: 14),
+              if (_serverSelectionMode) const SizedBox(width: 8),
               Expanded(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      conn.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: textColor,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
+                    GestureDetector(
+                      onLongPress: () {
+                        if (!_serverSelectionMode) {
+                          setState(() {
+                            _serverSelectionMode = true;
+                            _selectedServerIds.add(conn.id);
+                          });
+                        }
+                      },
+                      child: Text(
+                        conn.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: textColor,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -800,24 +945,29 @@ class _HomeScreenState extends State<HomeScreen> {
                           color: mutedTextColor.withValues(alpha: 0.72),
                         ),
                         const SizedBox(width: 5),
-                        Expanded(
-                          child: Text(
-                            '${conn.username}@${conn.host}:${conn.port}',
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: mutedTextColor,
+                        Flexible(
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Text(
+                              '${conn.username}@${conn.host}:${conn.port}',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: mutedTextColor,
+                              ),
                             ),
                           ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 6),
-                    _buildHealthChip(context, health, strings),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: _buildHealthChip(context, health, strings),
+                    ),
                   ],
                 ),
               ),
-              if (sessionCount > 0) ...[
+              if (!_serverSelectionMode && sessionCount > 0) ...[
                 const SizedBox(width: 8),
                 Container(
                   padding:
@@ -837,13 +987,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
               ],
-              if (isConnecting)
+              if (!_serverSelectionMode && isConnecting)
                 const SizedBox(
                   width: 24,
                   height: 24,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              else ...[
+              else if (!_serverSelectionMode) ...[
                 IconButton(
                   tooltip: strings.newWindow,
                   icon: const Icon(Icons.add_to_photos_outlined),
@@ -1323,6 +1473,65 @@ class _HomeScreenState extends State<HomeScreen> {
   void _addConnection(BuildContext context) {
     Navigator.pushNamed(context, '/add');
   }
+
+  void _toggleServerSelection(String id) {
+    setState(() {
+      if (_selectedServerIds.contains(id)) {
+        _selectedServerIds.remove(id);
+        if (_selectedServerIds.isEmpty) {
+          _serverSelectionMode = false;
+        }
+      } else {
+        _selectedServerIds.add(id);
+      }
+    });
+  }
+
+  Future<void> _confirmBatchDelete(
+    BuildContext context,
+    AppStrings strings,
+  ) async {
+    final ids = _selectedServerIds.toList(growable: false);
+    if (ids.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(strings.deleteConnectionTitle),
+        content: Text(
+          strings.language == AppLanguage.en
+              ? 'Delete ${ids.length} selected server${ids.length == 1 ? '' : 's'}? Passwords and private keys will also be removed.'
+              : '确定删除选中的 $ids 台服务器吗？密码和私钥也会一并清除。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(strings.cancel),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+            child: Text(strings.delete),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    final storage = context.read<StorageService>();
+    final ssh = context.read<SshService>();
+    final sftp = context.read<SftpService>();
+    final performance = context.read<PerformanceMonitorService>();
+    for (final id in ids) {
+      await ssh.disconnectSessionsForConnection(id);
+      await sftp.disconnectConnection(id, forgetPath: true);
+      performance.stopForConnection(id);
+    }
+    await storage.deleteConnections(ids);
+    if (!mounted) return;
+    setState(() {
+      _serverSelectionMode = false;
+      _selectedServerIds.clear();
+    });
+  }
 }
 
 class _DeferredNavPage extends StatefulWidget {
@@ -1608,17 +1817,15 @@ class _SettingsPanelState extends State<_SettingsPanel> {
     final cacheTimeoutMinutes = storage.secretCacheTtlMinutes;
     final cacheOptions = storage.secretCacheTtlOptionsMinutes;
 
-    return Drawer(
-      child: SafeArea(
-        child: ListTileTheme(
-          dense: true,
-          minLeadingWidth: 28,
-          horizontalTitleGap: 10,
-          iconColor: colorScheme.onSurfaceVariant,
-          child: DefaultTextStyle.merge(
-            style: const TextStyle(fontSize: 13),
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+    return ListTileTheme(
+      dense: true,
+      minLeadingWidth: 28,
+      horizontalTitleGap: 10,
+      iconColor: colorScheme.onSurfaceVariant,
+      child: DefaultTextStyle.merge(
+        style: const TextStyle(fontSize: 13),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
               children: [
                 Row(
                   children: [
@@ -1892,9 +2099,7 @@ class _SettingsPanelState extends State<_SettingsPanel> {
               ],
             ),
           ),
-        ),
-      ),
-    );
+        );
   }
 }
 
@@ -2067,6 +2272,39 @@ class _SettingsSection extends StatelessWidget {
           ),
           ...children,
         ],
+      ),
+    );
+  }
+}
+
+/// Full-screen settings wrapper pushed via _openSettings.
+class _SettingsPage extends StatelessWidget {
+  final String appTitle;
+  final VoidCallback onExport;
+  final VoidCallback onImport;
+
+  const _SettingsPage({
+    required this.appTitle,
+    required this.onExport,
+    required this.onImport,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(appTitle),
+        backgroundColor: colorScheme.surface,
+      ),
+      body: _SettingsPanel(
+        appTitle: appTitle,
+        onExport: onExport,
+        onImport: onImport,
       ),
     );
   }

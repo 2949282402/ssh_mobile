@@ -51,6 +51,18 @@ class PerformanceMonitorService extends ChangeNotifier {
   final Map<String, RawPerformanceCounters> _previousCountersByConnection = {};
   final Map<String, DateTime> _lastAlertAtByKey = {};
   final List<MonitorAlert> _alerts = [];
+  Set<String>? _selectedConnectionIdsView;
+  Set<String>? _monitoringConnectionIdsView;
+  Map<String, String>? _errorsByConnectionView;
+  List<MonitorAlert>? _alertsView;
+  Map<String, ServerHealthSnapshot>? _healthByConnectionView;
+  final Map<String, ServerHealthSnapshot> _healthByConnectionEntryCache = {};
+  final Map<String, List<DiskUsageSnapshot>> _diskUsageViewsByConnection = {};
+  final Map<String, List<PerformanceSample>> _sampleViewsByConnection = {};
+  final Map<String, List<PerformanceSample>> _visibleSamplesByConnection = {};
+  DateTime? _visibleSamplesCutoff;
+  int? _visibleSamplesCutoffBucket;
+  Duration? _visibleSamplesWindow;
 
   PerformanceMonitorService(this._sshService, this._storageService);
 
@@ -61,33 +73,46 @@ class PerformanceMonitorService extends ChangeNotifier {
   Duration get historyWindow => _historyWindow;
   DateTime? get startedAt => _startedAt;
   Set<String> get selectedConnectionIds =>
-      Set.unmodifiable(_selectedConnectionIds);
-  Set<String> get monitoringConnectionIds =>
+      _selectedConnectionIdsView ??= Set.unmodifiable(_selectedConnectionIds);
+  Set<String> get monitoringConnectionIds => _monitoringConnectionIdsView ??=
       Set.unmodifiable(_monitoringConnectionIds);
   Map<String, String> get errorsByConnection =>
-      Map.unmodifiable(_errorsByConnection);
-  List<MonitorAlert> get alerts => List.unmodifiable(_alerts);
+      _errorsByConnectionView ??= Map.unmodifiable(_errorsByConnection);
+  List<MonitorAlert> get alerts => _alertsView ??= List.unmodifiable(_alerts);
   Map<String, ServerHealthSnapshot> get healthByConnection {
+    final cached = _healthByConnectionView;
+    if (cached != null) return cached;
     final ids = {
       ..._selectedConnectionIds,
       ..._monitoringConnectionIds,
       ..._samplesByConnection.keys,
       ..._errorsByConnection.keys,
     };
-    return Map.unmodifiable({
-      for (final id in ids) id: healthFor(id),
+    return _healthByConnectionView = Map.unmodifiable({
+      for (final id in ids) id: _buildHealthFor(id),
     });
   }
 
   List<DiskUsageSnapshot> diskUsageFor(String connectionId) {
-    return List.unmodifiable(_diskUsageByConnection[connectionId] ?? const []);
+    return _diskUsageViewsByConnection[connectionId] ??= List.unmodifiable(
+      _diskUsageByConnection[connectionId] ?? const <DiskUsageSnapshot>[],
+    );
   }
 
   List<PerformanceSample> samplesFor(String connectionId) {
-    return List.unmodifiable(_samplesByConnection[connectionId] ?? const []);
+    return _sampleViewsByConnection[connectionId] ??= List.unmodifiable(
+      _samplesByConnection[connectionId] ?? const <PerformanceSample>[],
+    );
   }
 
   ServerHealthSnapshot healthFor(String connectionId) {
+    final cached = _healthByConnectionView?[connectionId];
+    if (cached != null) return cached;
+    return _healthByConnectionEntryCache[connectionId] ??=
+        _buildHealthFor(connectionId);
+  }
+
+  ServerHealthSnapshot _buildHealthFor(String connectionId) {
     final error = _errorsByConnection[connectionId];
     final samples = _samplesByConnection[connectionId] ?? const [];
     if (error != null && error.isNotEmpty) {
@@ -159,9 +184,66 @@ class PerformanceMonitorService extends ChangeNotifier {
 
   List<PerformanceSample> visibleSamplesFor(String connectionId) {
     final cutoff = DateTime.now().subtract(_historyWindow);
-    return (_samplesByConnection[connectionId] ?? const [])
-        .where((sample) => !sample.time.isBefore(cutoff))
-        .toList();
+    final cutoffBucket = cutoff.millisecondsSinceEpoch ~/ 1000;
+    if (_visibleSamplesWindow != _historyWindow ||
+        _visibleSamplesCutoffBucket != cutoffBucket) {
+      _visibleSamplesByConnection.clear();
+      _visibleSamplesWindow = _historyWindow;
+      _visibleSamplesCutoffBucket = cutoffBucket;
+      _visibleSamplesCutoff = cutoff;
+    }
+    final activeCutoff = _visibleSamplesCutoff ?? cutoff;
+    return _visibleSamplesByConnection[connectionId] ??= List.unmodifiable(
+      (_samplesByConnection[connectionId] ?? const <PerformanceSample>[])
+          .where((sample) => !sample.time.isBefore(activeCutoff)),
+    );
+  }
+
+  // Sampling widgets read these snapshots several times per build. Keep stable
+  // immutable views and invalidate only the affected connection when data moves.
+  void _invalidateSelectionCache() {
+    _selectedConnectionIdsView = null;
+    _healthByConnectionView = null;
+  }
+
+  void _invalidateMonitoringCache() {
+    _monitoringConnectionIdsView = null;
+    _healthByConnectionView = null;
+  }
+
+  void _invalidateErrorsCache([String? connectionId]) {
+    _errorsByConnectionView = null;
+    _healthByConnectionView = null;
+    if (connectionId == null) {
+      _healthByConnectionEntryCache.clear();
+    } else {
+      _healthByConnectionEntryCache.remove(connectionId);
+    }
+  }
+
+  void _invalidateSamplesFor(String connectionId) {
+    _sampleViewsByConnection.remove(connectionId);
+    _visibleSamplesByConnection.remove(connectionId);
+    _healthByConnectionView = null;
+    _healthByConnectionEntryCache.remove(connectionId);
+  }
+
+  void _invalidateAllSamplesCache() {
+    _sampleViewsByConnection.clear();
+    _invalidateVisibleSamplesCache();
+    _healthByConnectionView = null;
+    _healthByConnectionEntryCache.clear();
+  }
+
+  void _invalidateVisibleSamplesCache() {
+    _visibleSamplesByConnection.clear();
+    _visibleSamplesCutoff = null;
+    _visibleSamplesCutoffBucket = null;
+    _visibleSamplesWindow = null;
+  }
+
+  void _invalidateDiskUsageFor(String connectionId) {
+    _diskUsageViewsByConnection.remove(connectionId);
   }
 
   void toggleSelection(String connectionId) {
@@ -169,12 +251,14 @@ class PerformanceMonitorService extends ChangeNotifier {
     if (!_selectedConnectionIds.remove(connectionId)) {
       _selectedConnectionIds.add(connectionId);
     }
+    _invalidateSelectionCache();
     notifyListeners();
   }
 
   void clearSelection() {
     if (_running || _selectedConnectionIds.isEmpty) return;
     _selectedConnectionIds.clear();
+    _invalidateSelectionCache();
     notifyListeners();
   }
 
@@ -194,6 +278,9 @@ class PerformanceMonitorService extends ChangeNotifier {
     _errorsByConnection.clear();
     _failureCountsByConnection.clear();
     _previousCountersByConnection.clear();
+    _invalidateMonitoringCache();
+    _invalidateErrorsCache();
+    _invalidateAllSamplesCache();
     notifyListeners();
 
     // Keep the app's foreground service and power locks active while monitoring.
@@ -215,6 +302,8 @@ class PerformanceMonitorService extends ChangeNotifier {
     _errorsByConnection.clear();
     _failureCountsByConnection.clear();
     _previousCountersByConnection.clear();
+    _invalidateMonitoringCache();
+    _invalidateErrorsCache();
     notifyListeners();
   }
 
@@ -227,6 +316,11 @@ class PerformanceMonitorService extends ChangeNotifier {
     _diskUsageByConnection.remove(connectionId);
     _failureCountsByConnection.remove(connectionId);
     _previousCountersByConnection.remove(connectionId);
+    _invalidateSelectionCache();
+    _invalidateMonitoringCache();
+    _invalidateErrorsCache(connectionId);
+    _invalidateSamplesFor(connectionId);
+    _invalidateDiskUsageFor(connectionId);
     if (_monitoringConnectionIds.isEmpty) {
       _timer?.cancel();
       _timer = null;
@@ -247,6 +341,7 @@ class PerformanceMonitorService extends ChangeNotifier {
     final next = window > maxRetention ? maxRetention : window;
     if (_historyWindow == next) return;
     _historyWindow = next;
+    _invalidateVisibleSamplesCache();
     notifyListeners();
   }
 
@@ -303,9 +398,12 @@ class PerformanceMonitorService extends ChangeNotifier {
       _diskUsageByConnection[connectionId] = raw.diskUsage;
       (_samplesByConnection[connectionId] ??= []).add(sample);
       _trimSamples(connectionId);
-      _errorsByConnection.remove(connectionId);
+      final hadError = _errorsByConnection.remove(connectionId) != null;
       _failureCountsByConnection.remove(connectionId);
       _evaluateAlerts(connectionId, sample, raw.diskUsage);
+      _invalidateSamplesFor(connectionId);
+      _invalidateDiskUsageFor(connectionId);
+      if (hadError) _invalidateErrorsCache(connectionId);
     } catch (e, stackTrace) {
       _errorsByConnection[connectionId] = e.toString();
       _failureCountsByConnection[connectionId] =
@@ -316,6 +414,7 @@ class PerformanceMonitorService extends ChangeNotifier {
         level: ServerHealthLevel.critical,
         message: 'Sampling failed: $e',
       );
+      _invalidateErrorsCache(connectionId);
       AppLogService.instance.warning(
         'Performance sample failed',
         details: 'connectionId=$connectionId error=$e',
@@ -341,9 +440,12 @@ class PerformanceMonitorService extends ChangeNotifier {
     _diskUsageByConnection[connectionId] = status.diskUsage;
     (_samplesByConnection[connectionId] ??= []).add(sample);
     _trimSamples(connectionId);
-    _errorsByConnection.remove(connectionId);
+    final hadError = _errorsByConnection.remove(connectionId) != null;
     _failureCountsByConnection.remove(connectionId);
     _evaluateAlerts(connectionId, sample, status.diskUsage);
+    _invalidateSamplesFor(connectionId);
+    _invalidateDiskUsageFor(connectionId);
+    if (hadError) _invalidateErrorsCache(connectionId);
   }
 
   void _restartTimer() {
@@ -618,6 +720,7 @@ class PerformanceMonitorService extends ChangeNotifier {
     if (_alerts.length > 80) {
       _alerts.removeRange(80, _alerts.length);
     }
+    _alertsView = null;
   }
 
   @override

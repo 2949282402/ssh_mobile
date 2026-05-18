@@ -132,6 +132,21 @@ ssh_mobile/
 └── README.md
 ```
 
+## Agent Collaboration
+
+Codex uses `.agents/skills/ssh-mobile-maintenance/SKILL.md`; Claude Code uses
+`.claude/skills/ssh-mobile-maintenance/SKILL.md`. Keep them synchronized with:
+
+```powershell
+.\scripts\sync_agent_skills.ps1 -Mode Check
+.\scripts\sync_agent_skills.ps1 -Mode Link -Force
+```
+
+Use `AGENT_MEMORY.md` for shared durable project notes between Codex and Claude
+Code. This is repository-backed memory rather than live model memory, so keep it
+short and never store passwords, private keys, API keys, tokens, or server
+credentials there.
+
 ## Development Environment
 
 本项目不提交 Flutter SDK，也不依赖仓库内固定 SDK 路径。请先在本机安装 Flutter，并确保命令可用：

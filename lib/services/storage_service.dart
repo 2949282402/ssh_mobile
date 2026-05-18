@@ -216,6 +216,30 @@ class StorageService extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> deleteConnections(List<String> ids) async {
+    if (!_initialized) return;
+    for (final id in ids) {
+      _connections.removeWhere((item) => item.id == id);
+      _clearSecretCacheForConnection(id);
+      await _secureStorage.delete(key: 'pwd_$id');
+      await _secureStorage.delete(key: 'key_$id');
+      await removeRestorableTmuxSessionsForConnection(id);
+    }
+    _refreshConnectionsView();
+    await _saveConnections();
+    notifyListeners();
+  }
+
+  Future<void> reorderConnections(int oldIndex, int newIndex) async {
+    if (!_initialized) return;
+    if (newIndex > oldIndex) newIndex--;
+    final item = _connections.removeAt(oldIndex);
+    _connections.insert(newIndex, item);
+    _refreshConnectionsView();
+    await _saveConnections();
+    notifyListeners();
+  }
+
   void _refreshConnectionsView() {
     _connectionsView = List.unmodifiable(_connections);
   }

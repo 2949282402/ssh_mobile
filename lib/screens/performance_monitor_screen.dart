@@ -87,8 +87,6 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
       connections,
       monitor.monitoringConnectionIds,
     );
-    _portConnectionId ??= connections.isEmpty ? null : connections.first.id;
-    _appConnectionId ??= connections.isEmpty ? null : connections.first.id;
     final tabSelectedIds = _selectedIdsForTab(monitor);
     final tabSelectedConnections =
         _connectionsByIds(connections, tabSelectedIds);
@@ -112,7 +110,7 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
         _MonitorTopTabs(
           selectedIndex: _tabIndex,
           strings: strings,
-          onChanged: (index) => _setMonitorTab(index, connections),
+          onChanged: (index) => _setMonitorTab(index),
         ),
         Expanded(
           child: desktop
@@ -257,15 +255,9 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
     }
   }
 
-  void _setMonitorTab(int index, List<ConnectionConfig> connections) {
+  void _setMonitorTab(int index) {
     setState(() {
       _tabIndex = index;
-      if (index == 1 && _portConnectionId == null && connections.isNotEmpty) {
-        _portConnectionId = connections.first.id;
-      }
-      if (index == 2 && _appConnectionId == null && connections.isNotEmpty) {
-        _appConnectionId = connections.first.id;
-      }
       _selectionVersion++;
     });
   }
@@ -335,46 +327,96 @@ class _MonitorServerPane extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    if (connections.isEmpty) {
+      return Material(
+        color: colorScheme.surface,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+          children: [
+            _header(colorScheme),
+            _MonitorResponsiveEmptyState(strings: strings),
+          ],
+        ),
+      );
+    }
     return Material(
       color: colorScheme.surface,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+      child: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 0, 0, 10),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    _monitorText(strings, 'Monitor servers', '监控服务器'),
-                    style: TextStyle(
-                      color: colorScheme.onSurface,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w800,
-                    ),
+          _header(colorScheme),
+          Expanded(
+            child: ReorderableListView.builder(
+              buildDefaultDragHandles: false,
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+              itemCount: connections.length,
+              itemBuilder: (context, index) {
+                final connection = connections[index];
+                return Container(
+                  key: ValueKey(connection.id),
+                  margin: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    children: [
+                      ReorderableDragStartListener(
+                        index: index,
+                        child: Padding(
+                          padding: const EdgeInsets.only(right: 4),
+                          child: Icon(
+                            Icons.drag_handle,
+                            size: 20,
+                            color: colorScheme.onSurfaceVariant
+                                .withValues(alpha: 0.5),
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: _MonitorServerTile(
+                          connection: connection,
+                          selected:
+                              selectedConnectionIds.contains(connection.id),
+                          sampling: samplingConnectionIds
+                                  .contains(connection.id) &&
+                              sampling,
+                          disabled: disabled,
+                          onTap: () => onConnectionTap(connection.id),
+                          onDisabledTap: onDisabledTap,
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-                IconButton(
-                  tooltip: strings.collapseServerList,
-                  icon: const Icon(Icons.keyboard_double_arrow_left_rounded),
-                  onPressed: connections.isEmpty ? null : onCollapse,
-                ),
-              ],
+                );
+              },
+              onReorder: (oldIndex, newIndex) {
+                context
+                    .read<StorageService>()
+                    .reorderConnections(oldIndex, newIndex);
+              },
             ),
           ),
-          if (connections.isEmpty)
-            _MonitorResponsiveEmptyState(strings: strings)
-          else
-            for (final connection in connections)
-              _MonitorServerTile(
-                connection: connection,
-                selected: selectedConnectionIds.contains(connection.id),
-                sampling:
-                    samplingConnectionIds.contains(connection.id) && sampling,
-                disabled: disabled,
-                onTap: () => onConnectionTap(connection.id),
-                onDisabledTap: onDisabledTap,
+        ],
+      ),
+    );
+  }
+
+  Widget _header(ColorScheme colorScheme) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              _monitorText(strings, 'Monitor servers', '监控服务器'),
+              style: TextStyle(
+                color: colorScheme.onSurface,
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
               ),
+            ),
+          ),
+          IconButton(
+            tooltip: strings.collapseServerList,
+            icon: const Icon(Icons.keyboard_double_arrow_left_rounded),
+            onPressed: connections.isEmpty ? null : onCollapse,
+          ),
         ],
       ),
     );

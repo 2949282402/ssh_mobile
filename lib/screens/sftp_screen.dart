@@ -194,44 +194,92 @@ class _ServerPane extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    if (connections.isEmpty) {
+      return Material(
+        color: colorScheme.surface,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+          children: [
+            _header(context, colorScheme),
+            _SftpEmptyState(strings: strings),
+          ],
+        ),
+      );
+    }
     return Material(
       color: colorScheme.surface,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+      child: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 0, 0, 10),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    strings.sftpServers,
-                    style: TextStyle(
-                      color: colorScheme.onSurface,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w800,
-                    ),
+          _header(context, colorScheme),
+          Expanded(
+            child: ReorderableListView.builder(
+              buildDefaultDragHandles: false,
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+              itemCount: connections.length,
+              itemBuilder: (context, index) {
+                final connection = connections[index];
+                return Container(
+                  key: ValueKey(connection.id),
+                  margin: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      ReorderableDragStartListener(
+                        index: index,
+                        child: Padding(
+                          padding: const EdgeInsets.only(right: 4),
+                          child: Icon(
+                            Icons.drag_handle,
+                            size: 20,
+                            color: colorScheme.onSurfaceVariant
+                                .withValues(alpha: 0.5),
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: _ServerTile(
+                          connection: connection,
+                          selected: snapshot.connectionId == connection.id,
+                          busy: snapshot.isConnectionBusy(connection.id),
+                          connected: snapshot.isConnectionOpen(connection.id),
+                          onTap: () => sftp.connect(connection.id),
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-                IconButton(
-                  tooltip: strings.collapseServerList,
-                  icon: const Icon(Icons.keyboard_double_arrow_left_rounded),
-                  onPressed: connections.isEmpty ? null : onCollapse,
-                ),
-              ],
+                );
+              },
+              onReorder: (oldIndex, newIndex) {
+                context
+                    .read<StorageService>()
+                    .reorderConnections(oldIndex, newIndex);
+              },
             ),
           ),
-          if (connections.isEmpty)
-            _SftpEmptyState(strings: strings)
-          else
-            for (final connection in connections)
-              _ServerTile(
-                connection: connection,
-                selected: snapshot.connectionId == connection.id,
-                busy: snapshot.isConnectionBusy(connection.id),
-                connected: snapshot.isConnectionOpen(connection.id),
-                onTap: () => sftp.connect(connection.id),
+        ],
+      ),
+    );
+  }
+
+  Widget _header(BuildContext context, ColorScheme colorScheme) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              strings.sftpServers,
+              style: TextStyle(
+                color: colorScheme.onSurface,
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
               ),
+            ),
+          ),
+          IconButton(
+            tooltip: strings.collapseServerList,
+            icon: const Icon(Icons.keyboard_double_arrow_left_rounded),
+            onPressed: connections.isEmpty ? null : onCollapse,
+          ),
         ],
       ),
     );

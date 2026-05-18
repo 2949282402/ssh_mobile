@@ -2,11 +2,13 @@
 
 ## Build and Environment
 
-- The project has been validated with a local Flutter SDK at
-  `E:\coding\flutter_windows_3.41.9-stable\flutter\bin\flutter.bat`.
+- Resolve the Flutter SDK dynamically instead of recording machine-local paths:
+  prefer `flutter` on `PATH`, then `FLUTTER_ROOT\bin\flutter.bat` on Windows or
+  `FLUTTER_ROOT/bin/flutter` on macOS/Linux.
 - Use `PUB_HOSTED_URL=https://pub.flutter-io.cn` when package access is flaky.
-- Avoid writing fixed SDK paths into app code. README examples may mention
-  generic `flutter` commands and note that local paths vary.
+- Avoid writing fixed SDK, toolchain, or resource absolute paths into app code,
+  README, skills, or `AGENT_MEMORY.md`. Use environment variables, platform
+  discovery commands, or repo-relative paths.
 
 ## Encoding and Documentation
 
