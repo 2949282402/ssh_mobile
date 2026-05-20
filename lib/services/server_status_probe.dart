@@ -1,6 +1,14 @@
 import 'dart:convert';
 import 'dart:math';
 
+/// 服务器状态探测工具类（纯静态方法）。
+///
+/// 双平台数据采集：
+/// - Linux：复合 Shell 脚本通过 SSH exec 一次性读取 /proc + df + ss + ps
+/// - Windows：单条 PowerShell 命令通过 CIM/WMI/PerformanceCounter 采集
+///
+/// 解析层统一输出 RawServerCounters / PortProcessSnapshot /
+/// ApplicationMemorySnapshot 等不可变结构，上层不关心平台差异。
 class ServerStatusProbe {
   static const performanceCommand = r'''
 printf '__PROC__\n'

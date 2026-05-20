@@ -1,5 +1,13 @@
 import 'package:flutter/material.dart';
 
+/// Material 3 亮色/暗色主题定义。
+///
+/// 两套完整主题：lightTheme / darkTheme，均使用 Material 3 ColorScheme。
+/// lightThemeFor / darkThemeFor 接收字体参数，在主题基础上替换 textTheme 字体族。
+///
+/// 设计决策：
+/// - 桌面端使用一致的 ColorScheme，通过自动亮度检测切换 themeMode
+/// - 字体不内嵌 bundle，由系统安装字体提供
 class AppTheme {
   static const _radius = 8.0;
 

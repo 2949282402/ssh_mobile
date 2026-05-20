@@ -6,6 +6,16 @@ import 'ai_tool_service.dart';
 import 'app_log_service.dart';
 import 'storage_service.dart';
 
+/// OpenAI 兼容 LLM 流式对话服务。
+///
+/// 核心能力：
+/// 1. SSE 流式解析 — 手动解析 data: 行，累积 tool_calls delta
+/// 2. 多轮工具调用循环 — 自动执行工具并返回结果给 LLM
+/// 3. 上下文压缩 — Token 超过 90% 窗口时自动压缩中间轮次
+/// 4. DeepSeek 扩展 — reasoning_content 透传、thinking 参数
+///
+/// 使用 dart:io HttpClient 而非第三方 HTTP 包，直接逐行读取 response body
+/// 实现真实流式渲染（而不是等待完整响应）。
 class LlmChatService {
   final StorageService storageService;
   final AiToolService toolService;
@@ -114,6 +124,13 @@ class LlmChatService {
     return buffer.toString();
   }
 
+  /// 流式聊天入口。返回 `Stream<String>` 实现打字机效果。
+  ///
+  /// 核心循环：
+  /// 1. 检查上下文窗口（>90% 则压缩）
+  /// 2. 发送 SSE 请求并逐 chunk 产出文本
+  /// 3. 如果 LLM 返回 tool_calls → 执行工具（含审批流程）→ 追加结果 → 回到步骤 2
+  /// 4. 如果 LLM 返回普通文本 → 产出完整答案并返回
   Stream<String> stream({
     required List<Map<String, dynamic>> messages,
     String? modelOverride,
@@ -401,6 +418,16 @@ class LlmChatService {
     }
   }
 
+  /// 底层 SSE 流式请求。
+  ///
+  /// HTTP POST -> SSE data: 行解析 -> 内容/tool_calls/reasoning 提取 -> 结果返回。
+  ///
+  /// 关键设计：
+  /// - tool_calls 按 index 在 `Map<int, _StreamingToolCall>` 中累积
+  ///   （因为 function.arguments JSON 字符串分多个 delta 块传输）
+  /// - reasoning_content 使用 StringBuffer 累积
+  /// - stream_options.include_usage 在最后一个 chunk 后获取 token 用量
+  /// - 如果 stream_options 不受支持（400 错误），自动降级重试不带 usage 的请求
   Future<_StreamChatResult> _streamChatCompletion({
     required String baseUrl,
     required String apiKey,
@@ -645,6 +672,9 @@ class LlmChatService {
     return '\n\n';
   }
 
+  /// 上下文压缩：当消息估算 Token 超过 contextWindow * 90% 时触发。
+  /// 将除最后一条 user 消息外的历史发给 LLM 做摘要，
+  /// 保留服务器名、路径、命令、决策等关键操作信息。
   Future<List<Map<String, dynamic>>> _compressWorkingMessages({
     required String baseUrl,
     required String apiKey,
@@ -803,6 +833,8 @@ class LlmChatService {
     return total;
   }
 
+  /// 简单的 Token 估算：ASCII 4 字符 = 1 token，非 ASCII = 1 token 每字符
+  /// 精确度约 80-85%，不依赖 tiktoken（Dart 生态不成熟）
   static int estimateTextTokens(String text) {
     if (text.isEmpty) return 0;
     var asciiRunes = 0;
@@ -829,6 +861,8 @@ class LlmChatService {
   }
 }
 
+/// 可取消令牌：调用 cancel() 后，所有 isCancelled/throwIfCancelled 点立即响应。
+/// onCancel 用于释放资源（关闭 HttpClient 连接）。
 class LlmCancellationToken {
   final List<void Function()> _callbacks = [];
   bool _cancelled = false;

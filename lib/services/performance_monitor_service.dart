@@ -10,6 +10,18 @@ import 'server_status_probe.dart';
 import 'ssh_service.dart';
 import 'storage_service.dart';
 
+/// 服务器性能监控采样服务。
+///
+/// 可配置参数：
+/// - 采样间隔：2s / 5s / 10s / 15s / 30s / 1m / 2m / 5m
+/// - 历史窗口：30s / 1m / 2m / 3m / 5m / 10m
+///
+/// 特性：
+/// - 指数退避重试（SSH 临时失败自动重试）
+/// - 健康评分：CPU/内存/磁盘阈值打分，生成 alerts
+/// - 告警去重：同类型告警 5 分钟内不重复发出
+/// - 不可变视图：所有暴露的集合使用 List.unmodifiable 或 Set.unmodifiable
+/// - 缓存优化：采样数据按 connectionId 分组，只通知关联监听器
 class PerformanceMonitorService extends ChangeNotifier {
   static const Duration maxRetention = Duration(minutes: 10);
   static const Duration defaultInterval = Duration(seconds: 10);

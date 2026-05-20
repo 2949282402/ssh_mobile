@@ -22,15 +22,24 @@ import 'services/storage_service.dart';
 import 'theme/app_theme.dart';
 import 'utils/responsive.dart';
 
+/// 应用入口。在 runZonedGuarded 中初始化所有核心服务
+/// 并通过 MultiProvider 注入 Widget 树。
+///
+/// 初始化顺序：依赖链从底向上。
+/// StorageService（持久化）→ SshService / SftpService / PerformanceMonitorService
+/// → AppSettings / ShortcutCommandService → runApp。
 Future<void> main() async {
   final appLogService = AppLogService();
 
+  // runZonedGuarded 捕获所有未处理的异步异常，避免应用直接崩溃
   await runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
-      appLogService.install();
+      appLogService.install();  // 替换 debugPrint / FlutterError.onError 等全局钩子
       appLogService.info('Application bootstrap started');
 
+      // --- 服务装配 ---
+      // 创建顺序体现了依赖关系：storage 最底层 → ssh/sftp 依赖于 storage → monitor 依赖于 ssh
       final storageService = StorageService();
       final sshService = SshService(storageService);
       final sftpService = SftpService(storageService);
@@ -39,6 +48,7 @@ Future<void> main() async {
       final appSettings = AppSettings();
       final shortcutCommandService = ShortcutCommandService();
 
+      // 7 个 ChangeNotifier 通过 Provider 注入整棵 Widget 树
       runApp(
         MultiProvider(
           providers: [
@@ -54,15 +64,17 @@ Future<void> main() async {
         ),
       );
 
+      // --- 异步初始化（不阻塞 runApp） ---
       unawaited(appSettings.init());
       unawaited(
         storageService.init().then((_) {
           appLogService.info('Storage initialized');
-          return sshService.restoreTmuxSessions();
+          return sshService.restoreTmuxSessions(); // 从持久化状态恢复 tmux 会话
         }),
       );
       unawaited(shortcutCommandService.init());
 
+      // 首帧渲染完成后延迟预启动后台服务
       WidgetsBinding.instance.addPostFrameCallback((_) {
         Timer(const Duration(milliseconds: 900), () {
           unawaited(
@@ -76,6 +88,7 @@ Future<void> main() async {
         });
       });
     },
+    // 全局未捕获异常处理
     (error, stackTrace) {
       appLogService.error(
         'Uncaught zone error',

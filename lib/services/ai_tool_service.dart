@@ -11,6 +11,14 @@ import 'server_status_probe.dart';
 import 'ssh_service.dart';
 import 'storage_service.dart';
 
+/// AI Function Calling（工具调用）定义与调度中心。
+///
+/// 架构：
+/// - AiTool 是纯数据类：name + description + JSON Schema properties + handler function
+/// - 18 个工具分三类：client 端工具（剪贴板、闹钟、时间、设备信息）、
+///   server 端工具（命令执行、OS 检测、SFTP）、诊断工具（性能、端口、进程、ops report）
+/// - 命令安全三级审查：只读(自动) → 需审批(弹窗) → 已拦截(拒绝)
+/// - 所有 server 工具使用一次性 SSH exec 连接（非 tmux），不与用户终端环境混合
 class AiToolService {
   final StorageService storageService;
   final SshService sshService;
@@ -759,6 +767,9 @@ class AiToolService {
     });
   }
 
+  /// 健康评分惩罚函数：单指标超出阈值时线性扣分。
+  /// value: 当前值（如内存 85%），warning/critical: 阈值，maxPenalty: 满分扣。
+  /// 例：内存 85%(超 70) → 扣 (85-70)/(95-70)*40 = 24 分
   double _opsPenalty(
     double value,
     double warning,
@@ -920,6 +931,14 @@ class AiToolService {
     return base.replace(path: searchPath, queryParameters: params);
   }
 
+  /// 三级命令安全审查。
+  ///
+  /// 规则：
+  /// 1. 拦截危险命令（sudo、删除、dd、提权等）
+  /// 2. 只读命令（cat、ls、df、ps、grep 等）→ 自动执行
+  /// 3. 其余命令 → 需用户审批
+  ///
+  /// 同时做跨平台拦截：Linux 命令禁止在 Windows 执行，反之亦然。
   AiCommandReview reviewCommand(
     String command, {
     ServerPlatform? platform,
@@ -1054,6 +1073,9 @@ class AiToolService {
     );
   }
 
+  /// 删除命令拦截：识别 rm -rf、del、remove-item 等破坏性操作。
+  /// 使用正则匹配（而非简单前缀），避免误拦 `rm file.txt`（只删一个文件需审批）
+  /// 而拦截 `rm -rf /`。
   String? _deletionCommandBlockReason(String normalized) {
     final text = normalized
         .replaceAll(RegExp(r'''["'`]'''), ' ')
@@ -1238,6 +1260,7 @@ class AiToolService {
   }
 }
 
+/// 工具调用审批请求：AI 想执行一个"需审批"级别的命令时触发
 class AiToolApprovalRequest {
   final String toolName;
   final String connectionId;
@@ -1254,6 +1277,7 @@ class AiToolApprovalRequest {
   });
 }
 
+/// 用户对工具调用的审批决定：批准/拒绝（含是否终止本轮对话）
 class AiToolApprovalDecision {
   final bool approved;
   final bool abort;
@@ -1270,6 +1294,7 @@ class AiToolApprovalDecision {
   }) : approved = false;
 }
 
+/// 命令审查结果：三级分级（只读 / 需审批 / 已拦截）
 class AiCommandReview {
   final bool requiresApproval;
   final bool blocked;
@@ -1289,6 +1314,7 @@ class AiCommandReview {
         blocked = true;
 }
 
+/// 工具定义：name + description + JSON Schema + handler function
 class AiTool {
   final String name;
   final String description;

@@ -5,6 +5,14 @@ import 'package:flutter/foundation.dart';
 
 import 'app_settings.dart';
 
+/// 应用级日志服务（单例）。
+///
+/// 功能：
+/// 1. 全局 debugPrint / FlutterError.onError / PlatformDispatcher.onError 拦截
+/// 2. 内存环形日志缓冲区（上限 1200 条）
+/// 3. 日志脱敏：自动检测并替换私钥 PEM、Bearer Token、密码字段
+/// 4. UI 通知合并：160ms 内多次 add() 合并为一次 notifyListeners()
+/// 5. 多级缓存：entries、levelCounts、entriesByLevel 惰性计算+缓存
 class AppLogService extends ChangeNotifier {
   static final AppLogService instance = AppLogService._();
   static const int _maxEntries = 1200;
@@ -175,6 +183,8 @@ class AppLogService extends ChangeNotifier {
     });
   }
 
+  /// 日志脱敏：替换私钥 PEM、Bearer Token、密码字段等敏感信息为 [REDACTED]。
+  /// 匹配策略：私钥块完整匹配、key=value 格式保留键名只脱敏值、Bearer 替换整个 token。
   String _redact(String value) {
     var text = value;
     final patterns = <RegExp>[

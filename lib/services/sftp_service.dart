@@ -43,6 +43,12 @@ class SftpEntry {
   });
 }
 
+/// SFTP 文件操作服务。
+///
+/// 职责：目录列表、文件上传/下载/读取/保存/删除。
+/// 文件大小上限：文本编辑 512KB / 文本预览 2MB / 富预览 20MB / 上传 50MB / 下载 512MB。
+/// 多级缓存：SFTP 连接按 connectionId + host 缓存复用。
+/// 通知合并：调用 notifyListeners() 有 16ms 延迟合并窗口，防止高频操作导致 UI 卡顿。
 class SftpService extends ChangeNotifier {
   static const int maxTextEditBytes = 512 * 1024;
   static const int maxTextPreviewBytes = 2 * 1024 * 1024;

@@ -6,6 +6,14 @@ enum AppLanguage {
   en,
 }
 
+/// 应用设置 + 国际化字符串服务。
+///
+/// 职责：
+/// 1. 持久化设置：ThemeMode、语言、字体、SFTP 大小限制
+/// 2. AppStrings：中英双语约 230 个字符串的集中管理
+/// 3. 字体选择：8 个预定义字体（思源黑体、Noto Sans、Roboto、Microsoft YaHei、PingFang SC 等）
+///
+/// 语言切换后通过 notifyListeners() 触发 MaterialApp 重建，实现全局语言切换。
 class AppSettings extends ChangeNotifier {
   static const _languageKey = 'app_language';
   static const _darkModeKey = 'dark_mode';

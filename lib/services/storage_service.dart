@@ -9,6 +9,16 @@ import '../models/connection.dart';
 import 'app_log_service.dart';
 import 'data_protection_service.dart';
 
+/// 中央持久化服务。管理应用的所有数据持久化，采用三层存储策略：
+///
+/// | 数据类型            | 存储位置                              | 加密方式        |
+/// |---------------------|---------------------------------------|-----------------|
+/// | SSH 密码、私钥、API | FlutterSecureStorage (平台 Keychain)  | 平台原生加密     |
+/// | 连接配置、聊天记录   | SharedPreferences + AES-256-GCM       | DataProtection   |
+/// | 主题、语言、字体     | SharedPreferences 明文                 | 无（不含敏感信息）|
+///
+/// 高频写操作（AI 聊天、tmux 会话、终端历史）使用 700ms 防抖批量写入，
+/// App 进入后台时调用 flushPendingWrites() 确保数据落盘。
 class StorageService extends ChangeNotifier {
   static const _connectionsKey = 'ssh_connections';
   static const _powerGuideSeenKey = 'power_guide_seen';
@@ -30,7 +40,7 @@ class StorageService extends ChangeNotifier {
   static const _secretCacheEnabledKey = 'secret_cache_enabled';
   static const _secretCacheTtlSecondsKey = 'secret_cache_ttl_seconds';
   static const _defaultSecretCacheTtl = Duration(minutes: 15);
-  static const _protectedPrefWriteDebounce = Duration(milliseconds: 700);
+  static const _protectedPrefWriteDebounce = Duration(milliseconds: 700); // 防抖窗口
   static const _passwordSecretKeyPrefix = 'pwd_';
   static const _privateKeySecretKeyPrefix = 'key_';
   static const _memoryAiApiKeyCacheKey = 'ai_api_key_cached';
@@ -44,11 +54,12 @@ class StorageService extends ChangeNotifier {
     mOptions: MacOsOptions(usesDataProtectionKeychain: false),
   );
   final DataProtectionService _dataProtection = DataProtectionService.instance;
+  // 防抖写入队列：key → 待写入值，700ms 内多次修改只写最后一次
   final Map<String, _PendingProtectedPrefWrite> _pendingProtectedPrefWrites =
       {};
 
   List<ConnectionConfig> _connections = [];
-  List<ConnectionConfig> _connectionsView = const [];
+  List<ConnectionConfig> _connectionsView = const []; // 不可变视图暴露给外部
   List<AiChatRecord>? _aiChatsCache;
   List<AiSkillRecord>? _aiSkillsCache;
   List<RestorableTmuxSession>? _restorableTmuxSessionsCache;
@@ -57,6 +68,7 @@ class StorageService extends ChangeNotifier {
   bool _powerGuideSeen = false;
   bool _secretCacheEnabled = true;
   Duration _secretCacheTtl = const Duration(minutes: 15);
+  // 内存缓存：密码/私钥/API Key 的 in-memory TTL 缓存，减少 Keychain 访问
   final Map<String, _MemorySecret> _secretCache = {};
 
   List<ConnectionConfig> get connections => _connectionsView;
@@ -89,6 +101,7 @@ class StorageService extends ChangeNotifier {
     }
   }
 
+  /// 从 SharedPreferences 读取密钥缓存开关和 TTL
   Future<void> _loadSecretCacheSettings() async {
     if (_prefs == null) return;
     _secretCacheEnabled = _prefs!.getBool(_secretCacheEnabledKey) ?? true;
@@ -101,6 +114,7 @@ class StorageService extends ChangeNotifier {
     }
   }
 
+  /// 将用户输入的 TTL 规整到预设选项中最接近的大于等于值
   Duration _normalizeSecretCacheTtl(Duration value) {
     final requested = value.inMinutes.clamp(1, 120);
     final normalized = _memorySecretTtlOptionsMinutes.firstWhere(
@@ -130,6 +144,7 @@ class StorageService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 清除所有内存中缓存的秘密（密码/私钥/API Key）
   void clearSecretCache() {
     _secretCache.remove(_memoryAiApiKeyCacheKey);
     for (final key in _secretCache.keys.toList()) {
@@ -262,6 +277,8 @@ class StorageService extends ChangeNotifier {
     return _readSecretWithCache(_cacheKeyPrivateKey(id));
   }
 
+  /// 加载 AI 连接设置（baseUrl、model、timeout 等），
+  /// 各字段为空时返回合理的默认值。
   Future<AiConnectionSettings> loadAiConnectionSettings() async {
     final baseUrl = _prefs?.getString(_aiBaseUrlKey)?.trim();
     final model = _prefs?.getString(_aiModelKey)?.trim();
@@ -510,6 +527,8 @@ class StorageService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 导出所有用户数据为 JSON 格式。
+  /// 注意：密码/私钥/API Key 置空，不包含在导出中。
   Future<String> exportAppDataJson() async {
     if (!_initialized || _prefs == null) {
       throw StateError('Storage service is not initialized yet.');
@@ -561,6 +580,8 @@ class StorageService extends ChangeNotifier {
     return const JsonEncoder.withIndent('  ').convert(payload);
   }
 
+  /// 从 JSON 备份导入所有用户数据。
+  /// 格式校验：必须包含 'ssh_mobile_backup' 标记。
   Future<void> importAppDataJson(String jsonText) async {
     if (!_initialized || _prefs == null) {
       throw StateError('Storage service is not initialized yet.');
@@ -865,6 +886,7 @@ class StorageService extends ChangeNotifier {
     return value;
   }
 
+  /// 加密读取：从 SharedPreferences 读取后，如果已加密则自动解密
   Future<String?> _readProtectedPref(String key) async {
     final value = _prefs?.getString(key);
     if (value == null || value.isEmpty) return value;
@@ -872,11 +894,15 @@ class StorageService extends ChangeNotifier {
     return _dataProtection.decryptString(value);
   }
 
+  /// 加密写入：先加密再写入 SharedPreferences
   Future<void> _writeProtectedPref(String key, String value) async {
     final encrypted = await _dataProtection.encryptString(value);
     await _prefs!.setString(key, encrypted);
   }
 
+  /// 带防抖的加密写入。
+  /// immediate=true：跳过防抖立即写入（用于导出/导入等紧急场景）。
+  /// immediate=false：700ms 内多次调用只执行最后一次写入。
   Future<void> _writeProtectedPrefBuffered(
     String key,
     String value, {
@@ -970,6 +996,9 @@ class StorageService extends ChangeNotifier {
   }
 }
 
+/// 带生成计数的延迟写入请求，用于防抖机制。
+/// generation 避免竞争条件：如果某 key 在防抖期内被更新多次，
+/// 前序的 flush 执行完毕后检测 generation 已变，则不自销毁。
 class _PendingProtectedPrefWrite {
   String value;
   Timer? timer;
@@ -979,6 +1008,7 @@ class _PendingProtectedPrefWrite {
   _PendingProtectedPrefWrite(this.value);
 }
 
+/// AI 连接参数：API 地址、模型、超时、DeepSeek 思考开关、Web 搜索等
 class AiConnectionSettings {
   final String baseUrl;
   final String model;
@@ -1048,6 +1078,7 @@ class DeepSeekReasoningEffort {
   }
 }
 
+/// 内存中缓存一个秘密值及其加载时间，配合 TTL 用
 class _MemorySecret {
   final String? value;
   final DateTime loadedAt;
@@ -1100,6 +1131,7 @@ class AiContextWindowSize {
   }
 }
 
+/// AI 技能定义：用户可自定 system prompts 作为独立技能
 class AiSkillRecord {
   final String id;
   final String name;
@@ -1164,6 +1196,7 @@ class AiSkillRecord {
   }
 }
 
+/// AI 聊天记录：包含标题、模型、消息列表
 class AiChatRecord {
   final String id;
   final String title;
@@ -1225,6 +1258,7 @@ class AiChatRecord {
   }
 }
 
+/// 单条 AI 聊天消息，含 Token 用量和推理链路追踪
 class AiChatMessageRecord {
   final String role;
   final String text;
@@ -1333,6 +1367,7 @@ class AiChatMessageRecord {
   }
 }
 
+/// 推理追踪数据：记录 tool 请求/响应、审批、思考过程等
 class AiMessageTrace {
   final String kind;
   final String title;
@@ -1366,6 +1401,7 @@ class AiMessageTrace {
   }
 }
 
+/// 可恢复的 tmux 会话：保存会话名和字体大小，用于 App 重启后自动 attach
 class RestorableTmuxSession {
   final String sessionId;
   final String connectionId;
@@ -1407,6 +1443,7 @@ class RestorableTmuxSession {
   }
 }
 
+/// 终端历史记录：记录终端会话的连接信息和最终状态
 class TerminalHistoryRecord {
   final String sessionId;
   final String connectionId;

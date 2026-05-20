@@ -8,6 +8,16 @@ import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+/// Android/iOS 前台服务管理。
+///
+/// 职责：
+/// 1. 启动/停止前台服务（flutter_background_service）
+/// 2. 通知渠道创建 + 权限请求
+/// 3. WakeLock 获取/释放（通过 MethodChannel 'ssh_mobile/power'）
+/// 4. 电池优化豁免引导
+///
+/// sshBackgroundServiceEntryPoint：后台 SSH 入口点函数，与 UI 进程隔离运行。
+/// 完整实现 SSH 客户端、Shell 管理、心跳保活和重连逻辑。
 class BackgroundServiceManager {
   static const String _channelId = 'ssh_mobile_foreground';
   static const int _notificationId = 1001;

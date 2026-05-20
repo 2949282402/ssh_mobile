@@ -21,6 +21,13 @@ enum SshConnectionState {
   error,
 }
 
+/// SSH 连接会话的核心状态。管理输出缓存（上限 200K 字符的环形缓冲区）、
+/// tmux 会话绑定、字体缩放等。
+///
+/// 设计要点：
+/// - output 通过 `StreamController<String>.broadcast()` 供 UI 层订阅
+/// - 输出缓存使用 `Queue<String> +` 字符计数实现环形淘汰，避免大字符串拼接
+/// - _cachedOutputText 惰性缓存，只在实际读取时构建完整文本
 class SshSession {
   static const int maxOutputCacheChars = 200000;
   static const double defaultTerminalFontSize = 8.0;
@@ -110,6 +117,14 @@ class SshSession {
   }
 }
 
+/// SSH 会话管理器。每个连接最多可以有多个 SshSession（窗口）。
+///
+/// 双模架构：
+/// 1. 桌面端（Windows/macOS）：直接本地 SSH 连接（_LocalSshRuntime）
+/// 2. 移动端（Android/iOS）：通过 flutter_background_service 桥接（MethodChannel）
+///
+/// tmux 集成：连接后自动创建或 attach 到指定 tmux session，服务端持久化。
+/// App 重启后通过 RestorableTmuxSession 列表自动恢复会话。
 class SshService extends ChangeNotifier {
   final StorageService _storageService;
   late final SshClientFactory _clientFactory =
@@ -581,6 +596,9 @@ class SshService extends ChangeNotifier {
     sendData(sessionId, String.fromCharCodes(data));
   }
 
+  /// 执行单次 SSH 命令并返回结果。
+  /// AI 工具和诊断场景使用此方法，通过普通 SSH exec 执行（非 tmux）。
+  /// 不复用交互式终端会话，每条命令独立连接，用完即关。
   Future<RemoteCommandResult> runOneShotCommand({
     required String connectionId,
     required String command,
@@ -605,6 +623,10 @@ class SshService extends ChangeNotifier {
     }
   }
 
+  /// 本地（桌面端）SSH 连接逻辑。建立 SSH client → 创建 Shell（xterm-256color）→
+  /// 如果使用 tmux 模式则发送 attach 命令 -> 启动 keep-alive 心跳。
+  ///
+  /// 三种监听流：stdout（数据输出）、stderr（错误输出）、keepAlive（保活探测）
   Future<void> _connectLocalSession({
     required SshSession session,
     required ConnectionConfig config,
@@ -782,6 +804,9 @@ class SshService extends ChangeNotifier {
     );
   }
 
+  /// 构建 tmux attach 命令。
+  /// 功能：清理旧的无用 tmux 会话 → 创建新会话（不存在时）→ 设置管理标记和 idle 自动删除 → attach。
+  /// idle 自动删除：当 tmux session 无人附着超过 autoDeleteSeconds 后自动 kill。
   String _buildTmuxAttachCommand(String sessionName, int autoDeleteSeconds) {
     final safeName = _sanitizeTmuxSessionName(sessionName);
     final quotedName = _shellQuote(safeName);
@@ -897,6 +922,9 @@ class SshService extends ChangeNotifier {
     }
   }
 
+  /// 监听后台服务的事件流（移动端架构使用）。
+  /// 后台服务进程通过 MethodChannel 发送 sshState/sshOutput/sshKeepAlive 事件，
+  /// 这里将它们桥接到 SshService 的统一状态机中。
   void _listenToBackgroundService() {
     _appLogSub = _backgroundService.on('appLog').listen((event) {
       final level = event?['level'] as String? ?? 'service';
