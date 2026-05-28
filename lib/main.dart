@@ -93,6 +93,8 @@ Future<void> main() async {
       appLogService.error(
         'Uncaught zone error',
         error: error,
+
+
         stackTrace: stackTrace,
       );
     },

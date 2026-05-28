@@ -27,3 +27,25 @@ across sessions.
   `docs/ANDROID_NATIVE_REWRITE_GUIDE.md`; it is now a beginner-oriented
   step-by-step Kotlin + Compose + MVVM tutorial aligned with SSH/SFTP,
   monitor, AI tools, logs, settings, and backup behavior.
+- 2026-05-27: `OverflowScrollText` can live inside `ExpansionTile` content, but
+  it must use its own `PageStorageBucket`; otherwise Flutter may read the
+  tile's stored expanded-state `bool` as a scroll offset and then trip
+  follow-on widget-tree assertions around `SelectableText`.
+- 2026-05-27: On the Servers, SFTP, and Performance Monitor pages, avoid
+  top-level Provider subscriptions to whole health/status maps or whole monitor
+  service state. Prefer per-card/per-panel `Selector` snapshots so one
+  connection's sampling or SFTP state change does not rebuild the entire page.
+- 2026-05-27: For the Servers page, cache lightweight SSH connection summaries
+  in `SshService` and let the page select that cached overview instead of
+  recomputing summaries from `ssh.sessions` inside the widget tree. For SFTP
+  directory panes, prefer a session-side `entriesRevision` over `listEquals`
+  on every `Selector` pass so large directories do not pay repeated O(n)
+  equality checks.
+- 2026-05-27: In the Performance Monitor page, keep Ports/Applications results
+  cached per selected-server key inside the page state so switching tabs does
+  not refetch snapshots unless the selection changes or the user explicitly
+  refreshes.
+- 2026-05-28: When wrapping `ReorderableListView.builder` items in `Selector`
+  or another widget, keep the stable item key on the immediate widget returned
+  by `itemBuilder`. A key on a descendant does not satisfy Flutter's reorderable
+  list assertion.
