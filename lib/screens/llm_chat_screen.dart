@@ -2371,7 +2371,7 @@ class _AssistantMarkdownBody extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     return MarkdownBody(
       data: value.isEmpty ? '...' : value,
-      selectable: true,
+      selectable: false,
       styleSheet: MarkdownStyleSheet.fromTheme(
         Theme.of(context),
       ).copyWith(

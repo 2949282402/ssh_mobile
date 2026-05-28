@@ -170,10 +170,11 @@ Use `lib/services/llm_chat_service.dart` for provider protocol behavior and
   WebView using a lightweight DuckDuckGo HTML results page. It is enabled by
   default and can be disabled by the user in LLM settings; the assistant prompt
   should tell enabled models to call it before answering current/latest/news or
-  other external-information questions. Return cited result URLs in the tool
-  result. Do not rely on DeepSeek Chat Completions having hosted web search; its
-  documented tools are function tools. OpenAI hosted web search should be
-  handled by a separate Responses API adapter.
+  other external-information questions. Embed the current per-call result count
+  setting in the tool definition so models see the default and maximum. Return
+  cited result URLs in the tool result. Do not rely on DeepSeek Chat Completions
+  having hosted web search; its documented tools are function tools. OpenAI
+  hosted web search should be handled by a separate Responses API adapter.
 - AI WebView browsing uses a per-chat operation token. While the token is
   active, the WebView page is view-only and the user must tap Interrupt before
   manual address-bar, navigation, refresh, or page-touch actions are enabled.

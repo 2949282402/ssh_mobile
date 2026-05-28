@@ -75,6 +75,8 @@ across sessions.
   chat's WebView session. Prefer lightweight DuckDuckGo HTML results over Bing
   SERP DOM parsing for stability, and avoid viewport-geometry visibility checks
   in result extraction because AI browsing may run in a background WebView.
+  Keep the configured per-call result count embedded in the `web_search` tool
+  schema and aligned with the execution clamp.
 - 2026-05-28: AI WebView browsing has a per-chat operation token. While active,
   the WebView UI is view-only; user interruption clears the token so the tool
   result reports interruption instead of continuing from a stale page.

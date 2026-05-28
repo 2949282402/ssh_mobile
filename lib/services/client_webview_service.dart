@@ -125,6 +125,7 @@ class ClientWebViewService extends ChangeNotifier {
       final payload = await _waitForSearchResults(
         session,
         aiBrowsingToken: token,
+        desiredResults: effectiveMaxResults,
       );
       if (!_isCurrentSession(session)) {
         return ClientWebViewSearchResult(
@@ -482,12 +483,16 @@ class ClientWebViewService extends ChangeNotifier {
   Future<Map<String, dynamic>> _waitForSearchResults(
     ClientWebViewSession session, {
     required String aiBrowsingToken,
+    required int desiredResults,
     Duration timeout = const Duration(seconds: 14),
   }) async {
     final controller = session.controller;
     if (controller == null) return const {};
     final deadline = DateTime.now().add(timeout);
     Map<String, dynamic>? lastPayload;
+    Map<String, dynamic>? bestPayload;
+    var bestCount = 0;
+    DateTime? firstResultAt;
     while (DateTime.now().isBefore(deadline)) {
       if (!_isAiBrowsingCurrent(session, aiBrowsingToken)) return const {};
       try {
@@ -498,15 +503,25 @@ class ClientWebViewService extends ChangeNotifier {
         final payload = _decodeJavaScriptPayload(raw);
         lastPayload = payload;
         final rawResults = payload['results'];
-        if (rawResults is List && rawResults.isNotEmpty) {
-          return payload;
+        final count = rawResults is List ? rawResults.length : 0;
+        if (count > bestCount) {
+          bestCount = count;
+          bestPayload = payload;
+        }
+        if (count > 0) {
+          firstResultAt ??= DateTime.now();
+          final settled = DateTime.now().difference(firstResultAt) >=
+              const Duration(milliseconds: 1200);
+          if (count >= desiredResults || settled) {
+            return bestPayload ?? payload;
+          }
         }
       } catch (_) {
         // The search page may still be settling or replacing its DOM.
       }
       await Future<void>.delayed(const Duration(milliseconds: 550));
     }
-    return lastPayload ?? const {};
+    return bestPayload ?? lastPayload ?? const {};
   }
 
   String _beginAiBrowsing(ClientWebViewSession session, String label) {

@@ -99,7 +99,8 @@ client can send `thinking.enabled/disabled` and `reasoning_effort` (`high` or
 is enabled by default as a client-side `web_search` function tool backed by the
 current chat's WebView, and users can disable it in LLM settings. The assistant
 prompt tells enabled models to call it before answering current/latest/news or
-other external-information questions. OpenAI hosted web search belongs in a
+other external-information questions, and the tool definition embeds the
+current per-call result count setting. OpenAI hosted web search belongs in a
 separate Responses API adapter.
 
 ## Tech Stack
@@ -504,7 +505,7 @@ AI 页通过 OpenAI-compatible API 调用大模型。模型配置统一在“大
 - `client_set_clipboard`：在客户端执行，把文本复制到当前设备剪贴板，方便用户粘贴命令、报告或配置片段。
 - `client_set_alarm`：在客户端执行，设置本地提醒；Android 会尝试调用系统 Clock 创建闹钟，其他平台使用应用内本地通知提醒。
 - `client_list_alarms` / `client_cancel_alarm`：在客户端执行，查看或取消本次应用进程内创建的提醒。
-- `web_search`: client-side local web search through the current chat WebView using a lightweight DuckDuckGo HTML results page; returns readable search result titles, URLs, and snippets.
+- `web_search`: client-side local web search through the current chat WebView using a lightweight DuckDuckGo HTML results page; returns readable search result titles, URLs, and snippets, with the configured per-call result count embedded in the tool schema.
 - During AI WebView browsing, the WebView page is view-only. The user must tap Interrupt before address-bar, navigation, refresh, or page-touch actions are enabled again.
 - `client_webview_get_page_text`：在客户端执行，读取当前聊天 session 绑定 WebView 的可见纯文本内容，不读取图片、隐藏 DOM、密码字段或跨域 iframe 内容。
 - `run_command`：在指定服务器执行 shell 命令。只读诊断命令可直接执行，写命令必须在聊天页由用户人工同意后才会执行。

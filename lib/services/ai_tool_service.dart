@@ -63,18 +63,24 @@ class AiToolService implements AiToolExecutor {
   @override
   Future<List<AiTool>> tools() async {
     final searchSettings = await storageService.loadAiConnectionSettings();
+    final webSearchMaxResults = AiWebSearchMaxResults.normalize(
+      searchSettings.webSearchMaxResults,
+    );
     return [
       if (searchSettings.webSearchEnabled)
         AiTool(
           name: 'web_search',
           description:
-              'Search the public web from the SSH Mobile client WebView bound to the current chat session. Return cited result URLs. Use this before answering questions about current, latest, news, or external information.',
+              'Search the public web from the SSH Mobile client WebView bound to the current chat session. Return cited result URLs. Use this before answering questions about current, latest, news, or external information. Current app setting returns up to $webSearchMaxResults results by default.',
           properties: {
             'query': _string('Search query. Keep it concise.'),
             'limit': {
               'type': 'integer',
+              'minimum': 1,
+              'maximum': webSearchMaxResults,
+              'default': webSearchMaxResults,
               'description':
-                  'Maximum number of results to return. Defaults to the app setting.',
+                  'Maximum number of results to return. Omit this to use the current app setting of $webSearchMaxResults results. Do not request more than $webSearchMaxResults.',
             },
           },
           required: const ['query'],
@@ -370,16 +376,25 @@ class AiToolService implements AiToolExecutor {
       });
     }
     final query = _arg(arguments, 'query');
-    final requestedLimit = arguments['limit'];
-    final limit = requestedLimit is num
-        ? requestedLimit.toInt().clamp(1, settings.webSearchMaxResults)
-        : settings.webSearchMaxResults;
+    final limit = _webSearchLimit(arguments['limit'], settings);
     final result = await clientWebViewService.searchWeb(
       chatId,
       query,
       maxResults: limit,
     );
     return jsonEncode(result.toJson());
+  }
+
+  int _webSearchLimit(Object? requestedLimit, AiConnectionSettings settings) {
+    final configuredLimit = AiWebSearchMaxResults.normalize(
+      settings.webSearchMaxResults,
+    );
+    final parsedLimit = switch (requestedLimit) {
+      num value => value.toInt(),
+      String value => int.tryParse(value.trim()),
+      _ => null,
+    };
+    return (parsedLimit ?? configuredLimit).clamp(1, configuredLimit).toInt();
   }
 
   Future<String> _clientSetAlarm(Map<String, dynamic> arguments) async {

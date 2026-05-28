@@ -102,6 +102,32 @@ void main() {
     expect(names, contains('web_search'));
   });
 
+  test('web search tool definition embeds configured result limit', () async {
+    await storage.init();
+    await storage.saveAiConnectionSettings(
+      baseUrl: 'https://api.example.com',
+      model: 'demo-model',
+      webSearchMaxResults: 8,
+    );
+
+    final definitions = await tools.toolDefinitions();
+    final webSearch = definitions.firstWhere(
+      (definition) =>
+          (definition['function'] as Map<String, dynamic>)['name'] ==
+          'web_search',
+    );
+    final function = webSearch['function'] as Map<String, dynamic>;
+    final parameters = function['parameters'] as Map<String, dynamic>;
+    final properties = parameters['properties'] as Map<String, dynamic>;
+    final limit = properties['limit'] as Map<String, dynamic>;
+
+    expect(function['description'], contains('8 results'));
+    expect(limit['default'], 8);
+    expect(limit['maximum'], 8);
+    expect(limit['minimum'], 1);
+    expect(limit['description'], contains('8 results'));
+  });
+
   test('hides local web search when disabled by the user', () async {
     await storage.init();
     await storage.saveAiConnectionSettings(
