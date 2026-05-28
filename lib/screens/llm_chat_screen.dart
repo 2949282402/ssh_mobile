@@ -26,6 +26,29 @@ const List<String> _defaultModels = [
   'deepseek-v4-pro',
 ];
 
+@visibleForTesting
+List<String> resolveFetchedModelOptions({
+  required Iterable<String> fetchedModels,
+  required Iterable<String> fallbackModels,
+}) {
+  final normalizedFetched = fetchedModels
+      .map((model) => model.trim())
+      .where((model) => model.isNotEmpty)
+      .toSet()
+      .toList()
+    ..sort();
+  if (normalizedFetched.isNotEmpty) {
+    return normalizedFetched;
+  }
+
+  return fallbackModels
+      .map((model) => model.trim())
+      .where((model) => model.isNotEmpty)
+      .toSet()
+      .toList()
+    ..sort();
+}
+
 class LlmChatScreen extends StatefulWidget {
   final bool active;
   final ValueChanged<bool>? onHistoryVisibilityChanged;
@@ -1386,7 +1409,10 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         );
         if (!ctx.mounted) return;
         setDialogState(() {
-          models = {..._defaultModels, ...fetched}.toList()..sort();
+          models = resolveFetchedModelOptions(
+            fetchedModels: fetched,
+            fallbackModels: models,
+          );
           loadingModels = false;
           if (models.isNotEmpty && !models.contains(modelController.text)) {
             modelController.text = models.first;
@@ -3305,7 +3331,10 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       );
       if (!mounted) return;
       setState(() {
-        _models = {..._defaultModels, ...fetched}.toList()..sort();
+        _models = resolveFetchedModelOptions(
+          fetchedModels: fetched,
+          fallbackModels: _models,
+        );
         _loadingModels = false;
         if (_models.isNotEmpty && !_models.contains(_modelController.text)) {
           _modelController.text = _models.first;
