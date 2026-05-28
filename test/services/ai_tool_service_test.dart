@@ -93,27 +93,29 @@ void main() {
     expect(review.reason, contains('explicit'));
   });
 
-  test('exposes local web search when enabled without provider config',
-      () async {
+  test('exposes local web search by default', () async {
     await storage.init();
-    await storage.saveAiConnectionSettings(
-      baseUrl: 'https://api.example.com',
-      model: 'demo-model',
-      webSearchEnabled: true,
-    );
 
     final names = (await tools.tools()).map((tool) => tool.name);
 
     expect(names, contains('web_search'));
   });
 
-  test('local web search reports missing chat session', () async {
+  test('hides local web search when disabled by the user', () async {
     await storage.init();
     await storage.saveAiConnectionSettings(
       baseUrl: 'https://api.example.com',
       model: 'demo-model',
-      webSearchEnabled: true,
+      webSearchEnabled: false,
     );
+
+    final names = (await tools.tools()).map((tool) => tool.name);
+
+    expect(names, isNot(contains('web_search')));
+  });
+
+  test('local web search reports missing chat session', () async {
+    await storage.init();
 
     final raw = await tools.execute('web_search', {'query': 'flutter'});
     final decoded = jsonDecode(raw) as Map<String, dynamic>;

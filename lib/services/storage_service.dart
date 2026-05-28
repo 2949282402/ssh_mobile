@@ -380,7 +380,7 @@ class StorageService extends ChangeNotifier
       timeoutSeconds: await getAiRequestTimeoutSeconds(),
       deepSeekThinkingEnabled: thinkingEnabled,
       deepSeekReasoningEffort: reasoningEffort,
-      webSearchEnabled: _prefs?.getBool(_aiWebSearchEnabledKey) ?? false,
+      webSearchEnabled: _prefs?.getBool(_aiWebSearchEnabledKey) ?? true,
       webSearchMaxResults: AiWebSearchMaxResults.normalize(
         _prefs?.getInt(_aiWebSearchMaxResultsKey),
       ),
@@ -455,7 +455,7 @@ class StorageService extends ChangeNotifier
     );
     await _prefs!.setBool(
       _aiWebSearchEnabledKey,
-      webSearchEnabled ?? (_prefs!.getBool(_aiWebSearchEnabledKey) ?? false),
+      webSearchEnabled ?? (_prefs!.getBool(_aiWebSearchEnabledKey) ?? true),
     );
     await _prefs!.setInt(
       _aiWebSearchMaxResultsKey,
@@ -491,7 +491,7 @@ class StorageService extends ChangeNotifier
     AppLogService.instance.info(
       'LLM settings saved',
       details:
-          'baseUrl=$normalizedBaseUrl model=$normalizedModel contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} timeoutSeconds=${AiRequestTimeout.normalize(timeoutSeconds)} deepSeekThinking=${deepSeekThinkingEnabled ?? (_prefs!.getBool(_aiDeepSeekThinkingEnabledKey) ?? true)} deepSeekEffort=${DeepSeekReasoningEffort.normalize(deepSeekReasoningEffort ?? _prefs!.getString(_aiDeepSeekReasoningEffortKey))} webSearch=${webSearchEnabled ?? (_prefs!.getBool(_aiWebSearchEnabledKey) ?? false)} apiKeyUpdated=$apiKeyUpdated',
+          'baseUrl=$normalizedBaseUrl model=$normalizedModel contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} timeoutSeconds=${AiRequestTimeout.normalize(timeoutSeconds)} deepSeekThinking=${deepSeekThinkingEnabled ?? (_prefs!.getBool(_aiDeepSeekThinkingEnabledKey) ?? true)} deepSeekEffort=${DeepSeekReasoningEffort.normalize(deepSeekReasoningEffort ?? _prefs!.getString(_aiDeepSeekReasoningEffortKey))} webSearch=${webSearchEnabled ?? (_prefs!.getBool(_aiWebSearchEnabledKey) ?? true)} apiKeyUpdated=$apiKeyUpdated',
     );
     // AI settings are loaded on demand by the chat page. Avoid notifying the
     // whole storage tree while the settings dialog is being dismissed; doing so

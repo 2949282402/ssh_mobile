@@ -96,9 +96,9 @@ retry with a fresh one-shot SSH connection after transient interruptions.
 LLM settings include DeepSeek-only thinking controls. For DeepSeek API hosts the
 client can send `thinking.enabled/disabled` and `reasoning_effort` (`high` or
 `max`); generic OpenAI-compatible providers are left untouched. Local web search
-is available as an optional client-side `web_search` function tool backed by the
-current chat's WebView, while OpenAI hosted web search belongs in a separate
-Responses API adapter.
+is enabled by default as a client-side `web_search` function tool backed by the
+current chat's WebView, and users can disable it in LLM settings. OpenAI hosted
+web search belongs in a separate Responses API adapter.
 
 ## Tech Stack
 
@@ -467,6 +467,7 @@ AI 页通过 OpenAI-compatible API 调用大模型。模型配置统一在“大
 
 - 流式输出
 - Markdown 富文本显示
+- AI 回复支持一键复制全文，也可以打开选择复制面板选中部分文本。
 - 聊天历史
 - 多会话窗口
 - 桌面端快捷键：Windows / macOS 上 Enter 发送，Ctrl+Enter 换行；移动端保持系统键盘的多行输入体验。

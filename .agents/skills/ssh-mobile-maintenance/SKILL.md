@@ -167,10 +167,11 @@ Use `lib/services/llm_chat_service.dart` for provider protocol behavior and
   OpenAI-compatible aggregators.
 - Internet search for the LLM is exposed as an optional client-side
   `web_search` function tool backed by the current chat session's local
-  WebView. Keep it disabled until the user enables it; return cited result URLs
-  in the tool result. Do not rely on DeepSeek Chat Completions having hosted web
-  search; its documented tools are function tools. OpenAI hosted web search
-  should be handled by a separate Responses API adapter.
+  WebView. It is enabled by default and can be disabled by the user in LLM
+  settings; return cited result URLs in the tool result. Do not rely on DeepSeek
+  Chat Completions having hosted web search; its documented tools are function
+  tools. OpenAI hosted web search should be handled by a separate Responses API
+  adapter.
 - AI WebView browsing uses a per-chat operation token. While the token is
   active, the WebView page is view-only and the user must tap Interrupt before
   manual address-bar, navigation, refresh, or page-touch actions are enabled.
@@ -209,6 +210,8 @@ Use `lib/services/llm_chat_service.dart` for provider protocol behavior and
   explicit user confirmation before executing.
 - Store per-assistant-message token and elapsed-time metadata and render it as
   small, low-emphasis text below the message bubble.
+- Assistant replies expose compact copy actions for copying the full raw reply
+  and opening a selectable text panel for partial copy.
 - Throttle streaming UI updates so small SSE chunks do not rebuild Markdown on
   every token. Markdown is rendered during streaming for readability, so keep
   visible updates batched and avoid adding extra work to the hot message build
