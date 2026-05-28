@@ -1082,9 +1082,9 @@ class SshService extends ChangeNotifier {
 
     _keepAliveSub = _backgroundService.on('sshKeepAlive').listen((event) {
       if (event?['ok'] == false) {
-        debugPrint(
-          'Service keep-alive failed for ${event?['sessionId']}: '
-          '${event?['error']}',
+        AppLogService.instance.warning(
+          'Background SSH keep-alive failed',
+          details: 'sessionId=${event?['sessionId']} error=${event?['error']}',
         );
       }
     });

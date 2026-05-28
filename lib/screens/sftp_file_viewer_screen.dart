@@ -51,7 +51,10 @@ class _SftpFileViewerScreenState extends State<SftpFileViewerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
+    final strings = AppStrings(language);
     final canToggleSource =
         _kind == _PreviewKind.markdown || _kind == _PreviewKind.html;
 

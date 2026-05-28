@@ -18,22 +18,15 @@ class StartupScreen extends StatefulWidget {
 class _StartupScreenState extends State<StartupScreen> {
   bool _checkingPowerStatus = false;
   bool _powerStatusChecked = false;
+  bool _powerStatusCheckScheduled = false;
   bool _shouldShowPowerGuide = false;
 
   bool get _isAndroidTarget {
     return !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
   }
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final storage = context.watch<StorageService>();
-    if (storage.initialized && !_powerStatusChecked && !_checkingPowerStatus) {
-      _checkPowerGuideStatus();
-    }
-  }
-
   Future<void> _checkPowerGuideStatus() async {
+    if (_powerStatusChecked || _checkingPowerStatus) return;
     if (!_isAndroidTarget) {
       setState(() {
         _powerStatusChecked = true;
@@ -65,15 +58,19 @@ class _StartupScreenState extends State<StartupScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final storage = context.watch<StorageService>();
+    final storageInitialized = context.select<StorageService, bool>(
+      (storage) => storage.initialized,
+    );
 
-    if (!storage.initialized) {
+    if (!storageInitialized) {
       return const _StartupLoadingScreen();
     }
 
     if (!_isAndroidTarget) {
       return const HomeScreen();
     }
+
+    _schedulePowerGuideCheck();
 
     if (!_powerStatusChecked) {
       return const _StartupLoadingScreen();
@@ -84,6 +81,21 @@ class _StartupScreenState extends State<StartupScreen> {
     }
 
     return const HomeScreen();
+  }
+
+  void _schedulePowerGuideCheck() {
+    if (_powerStatusChecked ||
+        _checkingPowerStatus ||
+        _powerStatusCheckScheduled) {
+      return;
+    }
+    _powerStatusCheckScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _powerStatusCheckScheduled = false;
+      if (mounted) {
+        _checkPowerGuideStatus();
+      }
+    });
   }
 }
 
@@ -145,7 +157,10 @@ class _PowerGuideScreenState extends State<PowerGuideScreen> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
+    final strings = AppStrings(language);
 
     return Scaffold(
       appBar: AppBar(title: Text(strings.backgroundConnectionSettings)),
@@ -220,7 +235,10 @@ class _StatusTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
+    final strings = AppStrings(language);
     final statusColor =
         isExempt ? colorScheme.secondary : AppTheme.terminalAmber;
 

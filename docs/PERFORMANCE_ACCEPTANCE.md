@@ -1,0 +1,46 @@
+# Performance Acceptance Scenarios
+
+Use these scenarios before and after changes that touch rendering, storage,
+SSH/SFTP, AI streaming, or monitoring. Record device/emulator, build mode,
+commit, and observed regressions.
+
+## Terminal Large Output
+
+- Run a command that prints at least 100k lines or several megabytes of text.
+- Verify the terminal remains responsive while output is arriving.
+- Verify scrolling history, font-size changes, selection/copy, and shortcut bar
+  actions still work.
+- Watch for frame jank, memory growth, and delayed encrypted history writes.
+
+## AI Long Streaming Reply
+
+- Ask for a long Markdown response with code blocks and tables.
+- Verify partial text updates are batched, the current assistant bubble shows a
+  running indicator before first token, and stop/cancel saves partial output.
+- Verify context-token display does not update on every streamed chunk.
+
+## SFTP Large Directory
+
+- Open a directory with hundreds or thousands of entries.
+- Verify connect, refresh, upload, download, delete confirmation, preview, and
+  edit actions do not rebuild the whole page unnecessarily.
+- Confirm large downloads respect the normal download cap while preview/edit
+  limits remain protective.
+
+## Multi-Server Monitor
+
+- Start performance sampling for several servers.
+- Verify sampling starts only after the user taps Start, selected servers stay
+  frozen for the run, and failures back off without noisy banners.
+- Check charts, disk sections, ports, and applications tabs for rebuild jank and
+  refresh-button disabled states.
+
+## Suggested Metrics
+
+- Flutter DevTools frame chart: no sustained frame build/raster spikes during
+  steady-state streaming or sampling.
+- Memory: no unbounded growth after five minutes of terminal output or monitor
+  sampling.
+- Logs: no high-frequency debug lines bypass `AppLogService`.
+- Background: SSH/tmux sessions survive app backgrounding according to platform
+  policy and configured keep-alive settings.

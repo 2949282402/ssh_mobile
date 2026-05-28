@@ -11,6 +11,18 @@ SSH Mobile is a Flutter-based cross-platform SSH / SFTP client for long-running 
 For a feature-by-feature Kotlin / Jetpack Compose rewrite roadmap, see
 [`docs/ANDROID_NATIVE_REWRITE_GUIDE.md`](docs/ANDROID_NATIVE_REWRITE_GUIDE.md).
 
+## Engineering Baseline
+
+The current maintenance baseline is documented in
+[`docs/ADR_ENGINEERING_BASELINE.md`](docs/ADR_ENGINEERING_BASELINE.md). Release
+Android builds disable cleartext traffic by default; debug and profile builds
+keep cleartext enabled for local OpenAI-compatible provider or SearXNG testing.
+
+Performance-sensitive changes should be checked against
+[`docs/PERFORMANCE_ACCEPTANCE.md`](docs/PERFORMANCE_ACCEPTANCE.md), especially
+terminal large output, AI long streaming replies, SFTP large directories, and
+multi-server monitor sampling.
+
 ## Features
 
 - SSH 连接管理：保存多服务器配置，支持密码、私钥、私钥密码和可选跳板机。

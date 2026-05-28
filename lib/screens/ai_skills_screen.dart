@@ -58,7 +58,10 @@ class _AiSkillsScreenState extends State<AiSkillsScreen>
 
   @override
   Widget build(BuildContext context) {
-    final strings = _SkillStrings(context.watch<AppSettings>().language);
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
+    final strings = _SkillStrings(language);
     final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(

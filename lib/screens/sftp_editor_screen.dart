@@ -53,7 +53,10 @@ class _SftpEditorScreenState extends State<SftpEditorScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
+    final strings = AppStrings(language);
     final colorScheme = Theme.of(context).colorScheme;
 
     return PopScope(

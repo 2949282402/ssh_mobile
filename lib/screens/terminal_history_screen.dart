@@ -38,7 +38,10 @@ class _TerminalHistoryPageState extends State<TerminalHistoryPage> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
+    final strings = AppStrings(language);
     return Column(
       children: [
         Container(

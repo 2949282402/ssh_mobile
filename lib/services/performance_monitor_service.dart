@@ -80,6 +80,8 @@ class PerformanceMonitorService extends ChangeNotifier {
 
   bool get isRunning => _running;
   bool get isSampling => _samplingConnectionIds.isNotEmpty;
+  bool isSamplingConnection(String connectionId) =>
+      _samplingConnectionIds.contains(connectionId);
   Duration get interval => _interval;
   Duration get effectiveInterval => _effectiveInterval;
   Duration get historyWindow => _historyWindow;
@@ -431,7 +433,12 @@ class PerformanceMonitorService extends ChangeNotifier {
         'Performance sample failed',
         details: 'connectionId=$connectionId error=$e',
       );
-      debugPrint('Performance sample failed: $e\n$stackTrace');
+      AppLogService.instance.error(
+        'Performance sample stack trace',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'connectionId=$connectionId',
+      );
     }
   }
 

@@ -100,7 +100,18 @@ class SftpService extends ChangeNotifier {
   Future<void> connect(String connectionId) async {
     final config = _storageService.getConnection(connectionId);
     if (config == null) {
-      _setError('Connection config not found');
+      _activeConnectionId = connectionId;
+      final session = _sessions.putIfAbsent(
+        connectionId,
+        () => _SftpSession(
+          connectionId: connectionId,
+          connectionName: connectionId,
+          currentPath: _lastPaths[connectionId] ?? '.',
+        ),
+      );
+      session.state = SftpConnectionState.error;
+      session.errorMessage = 'Connection config not found';
+      notifyListeners();
       return;
     }
 
@@ -593,14 +604,6 @@ class SftpService extends ChangeNotifier {
       return a.lowerName.compareTo(b.lowerName);
     });
     return entries;
-  }
-
-  void _setError(String message) {
-    final session = _activeSession;
-    if (session == null) return;
-    session.state = SftpConnectionState.error;
-    session.errorMessage = message;
-    notifyListeners();
   }
 
   String _joinRemotePath(String base, String name) {

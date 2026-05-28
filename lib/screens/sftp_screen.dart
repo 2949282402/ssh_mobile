@@ -38,7 +38,10 @@ class _SftpScreenState extends State<SftpScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
+    final strings = AppStrings(language);
     final storageReady = context.select<StorageService, bool>(
       (storage) => storage.initialized,
     );
@@ -617,11 +620,10 @@ class _FilePane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final snapshot = context.select<SftpService, _SftpUiSnapshot>(
-      _SftpUiSnapshot.from,
+    final snapshot = context.select<SftpService, _SftpPaneStatusSnapshot>(
+      _SftpPaneStatusSnapshot.from,
     );
     final colorScheme = Theme.of(context).colorScheme;
-    final entries = snapshot.entries;
 
     if (snapshot.state == SftpConnectionState.disconnected) {
       return _SftpEmptyState(strings: strings);
@@ -697,127 +699,13 @@ class _FilePane extends StatelessWidget {
             ],
           ),
         Expanded(
-          child: snapshot.isBusy
-              ? const Center(
-                  child: SizedBox(
-                    width: 28,
-                    height: 28,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                )
-              : entries.isEmpty
-                  ? Center(child: Text(strings.emptyDirectory))
-                  : ListView.separated(
-                      cacheExtent: 900,
-                      padding: const EdgeInsets.fromLTRB(8, 8, 8, 24),
-                      itemCount: entries.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (context, index) {
-                        final entry = entries[index];
-                        return RepaintBoundary(
-                          key: ValueKey('${entry.connectionId}:${entry.path}'),
-                          child: ListTile(
-                            minLeadingWidth: 28,
-                            leading: Icon(
-                              entry.isDirectory
-                                  ? Icons.folder_rounded
-                                  : entry.isLink
-                                      ? Icons.shortcut_rounded
-                                      : Icons.description_outlined,
-                              color: entry.isDirectory
-                                  ? colorScheme.primary
-                                  : colorScheme.onSurface
-                                      .withValues(alpha: 0.72),
-                            ),
-                            title: Text(
-                              entry.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            subtitle: Text(
-                              _entryMeta(strings, entry),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (entry.isDirectory)
-                                  const Icon(Icons.chevron_right_rounded),
-                                PopupMenuButton<String>(
-                                  onSelected: (action) => _handleEntryAction(
-                                      context, action, entry),
-                                  itemBuilder: (_) => [
-                                    if (!entry.isDirectory)
-                                      PopupMenuItem(
-                                        value: 'view',
-                                        child: Row(
-                                          children: [
-                                            const Icon(
-                                              Icons.visibility_outlined,
-                                              size: 18,
-                                            ),
-                                            const SizedBox(width: 8),
-                                            Text(strings.viewFile),
-                                          ],
-                                        ),
-                                      ),
-                                    if (!entry.isDirectory)
-                                      PopupMenuItem(
-                                        value: 'edit',
-                                        child: Row(
-                                          children: [
-                                            const Icon(Icons.edit_outlined,
-                                                size: 18),
-                                            const SizedBox(width: 8),
-                                            Text(strings.edit),
-                                          ],
-                                        ),
-                                      ),
-                                    if (!entry.isDirectory)
-                                      PopupMenuItem(
-                                        value: 'download',
-                                        child: Row(
-                                          children: [
-                                            const Icon(
-                                              Icons.download_rounded,
-                                              size: 18,
-                                            ),
-                                            const SizedBox(width: 8),
-                                            Text(strings.downloadFile),
-                                          ],
-                                        ),
-                                      ),
-                                    PopupMenuItem(
-                                      value: 'delete',
-                                      child: Row(
-                                        children: [
-                                          const Icon(
-                                            Icons.delete_outline,
-                                            size: 18,
-                                            color: Colors.redAccent,
-                                          ),
-                                          const SizedBox(width: 8),
-                                          Text(
-                                            strings.delete,
-                                            style: const TextStyle(
-                                              color: Colors.redAccent,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                            onTap: entry.isDirectory
-                                ? () => sftp.openPath(entry.path)
-                                : null,
-                          ),
-                        );
-                      },
-                    ),
+          child: _SftpEntryList(
+            strings: strings,
+            sftp: sftp,
+            busy: snapshot.isBusy,
+            onEntryAction: _handleEntryAction,
+            entryMeta: _entryMeta,
+          ),
         ),
       ],
     );
@@ -1040,6 +928,157 @@ class _FilePane extends StatelessWidget {
   }
 }
 
+class _SftpEntryList extends StatelessWidget {
+  final AppStrings strings;
+  final SftpService sftp;
+  final bool busy;
+  final Future<void> Function(
+    BuildContext context,
+    String action,
+    SftpEntry entry,
+  ) onEntryAction;
+  final String Function(AppStrings strings, SftpEntry entry) entryMeta;
+
+  const _SftpEntryList({
+    required this.strings,
+    required this.sftp,
+    required this.busy,
+    required this.onEntryAction,
+    required this.entryMeta,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final snapshot = context.select<SftpService, _SftpEntriesSnapshot>(
+      _SftpEntriesSnapshot.from,
+    );
+    final entries = snapshot.entries;
+    if (busy && entries.isEmpty) {
+      return const Center(
+        child: SizedBox(
+          width: 28,
+          height: 28,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    if (entries.isEmpty) {
+      return Center(child: Text(strings.emptyDirectory));
+    }
+
+    final colorScheme = Theme.of(context).colorScheme;
+    return ListView.separated(
+      cacheExtent: 900,
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 24),
+      itemCount: entries.length,
+      separatorBuilder: (_, __) => const Divider(height: 1),
+      itemBuilder: (context, index) {
+        final entry = entries[index];
+        return RepaintBoundary(
+          key: ValueKey('${entry.connectionId}:${entry.path}'),
+          child: ListTile(
+            minLeadingWidth: 28,
+            leading: Icon(
+              entry.isDirectory
+                  ? Icons.folder_rounded
+                  : entry.isLink
+                      ? Icons.shortcut_rounded
+                      : Icons.description_outlined,
+              color: entry.isDirectory
+                  ? colorScheme.primary
+                  : colorScheme.onSurface.withValues(alpha: 0.72),
+            ),
+            title: Text(
+              entry.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Text(
+              entryMeta(strings, entry),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (entry.isDirectory) const Icon(Icons.chevron_right_rounded),
+                PopupMenuButton<String>(
+                  onSelected: (action) => onEntryAction(
+                    context,
+                    action,
+                    entry,
+                  ),
+                  itemBuilder: (_) => [
+                    if (!entry.isDirectory)
+                      PopupMenuItem(
+                        value: 'view',
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.visibility_outlined,
+                              size: 18,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(strings.viewFile),
+                          ],
+                        ),
+                      ),
+                    if (!entry.isDirectory)
+                      PopupMenuItem(
+                        value: 'edit',
+                        child: Row(
+                          children: [
+                            const Icon(Icons.edit_outlined, size: 18),
+                            const SizedBox(width: 8),
+                            Text(strings.edit),
+                          ],
+                        ),
+                      ),
+                    if (!entry.isDirectory)
+                      PopupMenuItem(
+                        value: 'download',
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.download_rounded,
+                              size: 18,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(strings.downloadFile),
+                          ],
+                        ),
+                      ),
+                    PopupMenuItem(
+                      value: 'delete',
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.delete_outline,
+                            size: 18,
+                            color: Colors.redAccent,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            strings.delete,
+                            style: const TextStyle(
+                              color: Colors.redAccent,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            onTap: entry.isDirectory ? () => sftp.openPath(entry.path) : null,
+          ),
+        );
+      },
+    );
+  }
+}
+
 class _SftpServerTileBinding extends StatelessWidget {
   final ConnectionConfig connection;
   final bool compact;
@@ -1107,31 +1146,25 @@ class _SftpConnectionStatusSnapshot {
   int get hashCode => Object.hash(selected, busy, connected);
 }
 
-class _SftpUiSnapshot {
+class _SftpPaneStatusSnapshot {
   final String? connectionId;
   final String currentPath;
   final SftpConnectionState state;
   final String? errorMessage;
-  final int entriesRevision;
-  final List<SftpEntry> entries;
 
-  const _SftpUiSnapshot({
+  const _SftpPaneStatusSnapshot({
     required this.connectionId,
     required this.currentPath,
     required this.state,
     required this.errorMessage,
-    required this.entriesRevision,
-    required this.entries,
   });
 
-  factory _SftpUiSnapshot.from(SftpService service) {
-    return _SftpUiSnapshot(
+  factory _SftpPaneStatusSnapshot.from(SftpService service) {
+    return _SftpPaneStatusSnapshot(
       connectionId: service.connectionId,
       currentPath: service.currentPath,
       state: service.state,
       errorMessage: service.errorMessage,
-      entriesRevision: service.entriesRevision,
-      entries: service.entries,
     );
   }
 
@@ -1141,12 +1174,11 @@ class _SftpUiSnapshot {
 
   @override
   bool operator ==(Object other) {
-    return other is _SftpUiSnapshot &&
+    return other is _SftpPaneStatusSnapshot &&
         other.connectionId == connectionId &&
         other.currentPath == currentPath &&
         other.state == state &&
-        other.errorMessage == errorMessage &&
-        other.entriesRevision == entriesRevision;
+        other.errorMessage == errorMessage;
   }
 
   @override
@@ -1155,8 +1187,37 @@ class _SftpUiSnapshot {
         currentPath,
         state,
         errorMessage,
-        entriesRevision,
       );
+}
+
+class _SftpEntriesSnapshot {
+  final String? connectionId;
+  final int entriesRevision;
+  final List<SftpEntry> entries;
+
+  const _SftpEntriesSnapshot({
+    required this.connectionId,
+    required this.entriesRevision,
+    required this.entries,
+  });
+
+  factory _SftpEntriesSnapshot.from(SftpService service) {
+    return _SftpEntriesSnapshot(
+      connectionId: service.connectionId,
+      entriesRevision: service.entriesRevision,
+      entries: service.entries,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is _SftpEntriesSnapshot &&
+        other.connectionId == connectionId &&
+        other.entriesRevision == entriesRevision;
+  }
+
+  @override
+  int get hashCode => Object.hash(connectionId, entriesRevision);
 }
 
 class _SftpEmptyState extends StatelessWidget {

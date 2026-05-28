@@ -49,6 +49,13 @@ class _AddEditScreenState extends State<AddEditScreen> {
     return minutes.clamp(1, 1440) * 60;
   }
 
+  AppStrings _strings(BuildContext context) {
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
+    return AppStrings(language);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -111,7 +118,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final strings = _strings(context);
     return Scaffold(
       appBar: AppBar(
         title: Text(isEditing ? strings.editConnection : strings.addConnection),
@@ -211,7 +218,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Widget _buildNameField() {
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final strings = _strings(context);
     return TextFormField(
       controller: _nameController,
       decoration: InputDecoration(
@@ -226,7 +233,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Widget _buildHostField() {
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final strings = _strings(context);
     return TextFormField(
       controller: _hostController,
       decoration: InputDecoration(
@@ -242,7 +249,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Widget _buildPortField() {
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final strings = _strings(context);
     return TextFormField(
       controller: _portController,
       decoration: InputDecoration(
@@ -262,7 +269,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Widget _buildUsernameField() {
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final strings = _strings(context);
     return TextFormField(
       controller: _usernameController,
       decoration: InputDecoration(
@@ -276,7 +283,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Widget _buildAuthMethodSelector() {
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final strings = _strings(context);
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: SegmentedButton<AuthMethod>(
@@ -317,7 +324,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Widget _buildPasswordField() {
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final strings = _strings(context);
     return TextFormField(
       controller: _passwordController,
       obscureText: _obscurePassword,
@@ -344,7 +351,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Widget _buildPrivateKeyField() {
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final strings = _strings(context);
     return TextFormField(
       controller: _privateKeyController,
       maxLines: 4,
@@ -366,7 +373,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Widget _buildJumpHostField() {
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final strings = _strings(context);
     return TextFormField(
       controller: _jumpHostController,
       decoration: InputDecoration(
@@ -378,7 +385,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Widget _buildJumpPortField() {
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final strings = _strings(context);
     return TextFormField(
       controller: _jumpPortController,
       decoration: InputDecoration(
@@ -390,7 +397,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Widget _buildJumpUsernameField() {
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final strings = _strings(context);
     return TextFormField(
       controller: _jumpUsernameController,
       decoration: InputDecoration(
@@ -401,7 +408,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Widget _buildLaunchModeSelector() {
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final strings = _strings(context);
     final supportsTmux = _serverPlatform == ServerPlatform.linux;
     final selectedLaunchMode =
         supportsTmux ? _launchMode : TerminalLaunchMode.ssh;
@@ -509,7 +516,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Widget _buildTmuxAutoDeleteField() {
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final strings = _strings(context);
     return TextFormField(
       controller: _tmuxAutoDeleteController,
       decoration: InputDecoration(
@@ -530,7 +537,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Widget _buildKeepAliveSwitch() {
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final strings = _strings(context);
     return SwitchListTile(
       contentPadding: EdgeInsets.zero,
       title: Text(strings.keepAliveTitle),

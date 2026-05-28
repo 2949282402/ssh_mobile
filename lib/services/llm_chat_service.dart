@@ -179,6 +179,7 @@ class LlmChatService {
       );
       compressed = true;
     }
+    final toolDefinitions = await toolService.toolDefinitions();
 
     final visibleOutput = StringBuffer();
     for (var round = 0;; round++) {
@@ -198,7 +199,7 @@ class LlmChatService {
             apiKey: apiKey,
             model: model,
             messages: workingMessages,
-            tools: await toolService.toolDefinitions(),
+            tools: toolDefinitions,
             timeoutSeconds: settings.timeoutSeconds,
             deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
             deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
@@ -440,6 +441,7 @@ class LlmChatService {
     required void Function(String chunk) onContent,
     LlmCancellationToken? cancellationToken,
     bool includeUsage = true,
+    bool includeTools = true,
   }) async {
     final endpoint = Uri.parse(_joinUrl(baseUrl, '/chat/completions'));
     final client = HttpClient();
@@ -459,12 +461,15 @@ class LlmChatService {
             Duration(seconds: timeoutSeconds),
           );
       cancellationToken?.throwIfCancelled();
+      final useTools = includeTools && tools.isNotEmpty;
       final requestBody = <String, dynamic>{
         'model': model,
         'messages': messages,
-        'tools': tools,
-        'tool_choice': 'auto',
         'stream': true,
+        if (useTools) ...{
+          'tools': tools,
+          'tool_choice': 'auto',
+        },
         if (includeUsage) 'stream_options': {'include_usage': true},
       };
       requestBody.addAll(
@@ -505,6 +510,27 @@ class LlmChatService {
             onContent: onContent,
             cancellationToken: cancellationToken,
             includeUsage: false,
+            includeTools: includeTools,
+          );
+        }
+        if (includeTools && _looksLikeToolUnsupportedError(body)) {
+          AppLogService.instance.warning(
+            'LLM stream tools unsupported, retrying without tools',
+            details: 'endpoint=$endpoint model=$model bodyChars=${body.length}',
+          );
+          return _streamChatCompletion(
+            baseUrl: baseUrl,
+            apiKey: apiKey,
+            model: model,
+            messages: messages,
+            tools: tools,
+            timeoutSeconds: timeoutSeconds,
+            deepSeekThinkingEnabled: deepSeekThinkingEnabled,
+            deepSeekReasoningEffort: deepSeekReasoningEffort,
+            onContent: onContent,
+            cancellationToken: cancellationToken,
+            includeUsage: includeUsage,
+            includeTools: false,
           );
         }
         AppLogService.instance.warning(
@@ -574,9 +600,15 @@ class LlmChatService {
         }
       }
 
-      final calls = toolCalls.values
-          .where((call) => call.name.trim().isNotEmpty)
-          .toList();
+      final calls = toolCalls.entries
+          .where((entry) => entry.value.name.trim().isNotEmpty)
+          .map((entry) {
+        final call = entry.value;
+        if (call.id.trim().isEmpty) {
+          call.id = 'call_${entry.key}';
+        }
+        return call;
+      }).toList();
       AppLogService.instance.info(
         'LLM stream response completed',
         details:
@@ -620,8 +652,52 @@ class LlmChatService {
   }
 
   String _joinUrl(String baseUrl, String path) {
-    final trimmedBase = baseUrl.trim().replaceFirst(RegExp(r'/+$'), '');
-    return '$trimmedBase$path';
+    return resolveOpenAiCompatibleUrl(baseUrl, path);
+  }
+
+  static String resolveOpenAiCompatibleUrl(String baseUrl, String path) {
+    final trimmedBase = baseUrl
+        .trim()
+        .split(RegExp(r'[?#]'))
+        .first
+        .replaceFirst(RegExp(r'/+$'), '');
+    final normalizedPath = path.startsWith('/') ? path : '/$path';
+    final uri = Uri.tryParse(trimmedBase);
+    if (uri == null) return '$trimmedBase$normalizedPath';
+
+    final basePath = uri.path.replaceFirst(RegExp(r'/+$'), '');
+    if (basePath.endsWith(normalizedPath)) return trimmedBase;
+    const chatPath = '/chat/completions';
+    const modelsPath = '/models';
+    if (normalizedPath == modelsPath && basePath.endsWith(chatPath)) {
+      final nextPath =
+          '${basePath.substring(0, basePath.length - chatPath.length)}$modelsPath';
+      return uri
+          .replace(path: nextPath, query: null, fragment: null)
+          .toString();
+    }
+    if (normalizedPath == chatPath && basePath.endsWith(modelsPath)) {
+      final nextPath =
+          '${basePath.substring(0, basePath.length - modelsPath.length)}$chatPath';
+      return uri
+          .replace(path: nextPath, query: null, fragment: null)
+          .toString();
+    }
+    return '$trimmedBase$normalizedPath';
+  }
+
+  bool _looksLikeToolUnsupportedError(String body) {
+    return looksLikeToolUnsupportedError(body);
+  }
+
+  static bool looksLikeToolUnsupportedError(String body) {
+    final lower = body.toLowerCase();
+    return lower.contains('tool_choice') ||
+        lower.contains('"tools"') ||
+        lower.contains("'tools'") ||
+        lower.contains('tools is not supported') ||
+        lower.contains('tool calls') ||
+        lower.contains('function calling');
   }
 
   void _emitReasoningTrace(

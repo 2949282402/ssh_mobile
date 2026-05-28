@@ -75,7 +75,10 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
+    final strings = AppStrings(language);
     final storageReady = context.select<StorageService, bool>(
       (storage) => storage.initialized,
     );
@@ -140,8 +143,6 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
                               connections: connections,
                               strings: strings,
                               selectedConnectionIds: tabSelectedIds,
-                              samplingConnectionIds:
-                                  monitorShell.monitoringConnectionIds,
                               disabled:
                                   _tabIndex == 0 && monitorShell.isRunning,
                               onConnectionTap: (id) =>
@@ -195,8 +196,6 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
                               connections: connections,
                               strings: strings,
                               selectedConnectionIds: tabSelectedIds,
-                              samplingConnectionIds:
-                                  monitorShell.monitoringConnectionIds,
                               disabled:
                                   _tabIndex == 0 && monitorShell.isRunning,
                               onConnectionTap: (id) =>
@@ -337,15 +336,15 @@ class _MonitorShellSnapshot {
   bool operator ==(Object other) {
     return other is _MonitorShellSnapshot &&
         other.isRunning == isRunning &&
-        other.selectedConnectionIds == selectedConnectionIds &&
-        other.monitoringConnectionIds == monitoringConnectionIds;
+        setEquals(other.selectedConnectionIds, selectedConnectionIds) &&
+        setEquals(other.monitoringConnectionIds, monitoringConnectionIds);
   }
 
   @override
   int get hashCode => Object.hash(
         isRunning,
-        selectedConnectionIds,
-        monitoringConnectionIds,
+        Object.hashAllUnordered(selectedConnectionIds),
+        Object.hashAllUnordered(monitoringConnectionIds),
       );
 }
 
@@ -353,7 +352,6 @@ class _MonitorServerPane extends StatelessWidget {
   final List<ConnectionConfig> connections;
   final AppStrings strings;
   final Set<String> selectedConnectionIds;
-  final Set<String> samplingConnectionIds;
   final bool disabled;
   final ValueChanged<String> onConnectionTap;
   final VoidCallback onDisabledTap;
@@ -363,7 +361,6 @@ class _MonitorServerPane extends StatelessWidget {
     required this.connections,
     required this.strings,
     required this.selectedConnectionIds,
-    required this.samplingConnectionIds,
     required this.disabled,
     required this.onConnectionTap,
     required this.onDisabledTap,
@@ -416,14 +413,13 @@ class _MonitorServerPane extends StatelessWidget {
                       ),
                       Expanded(
                         child: Selector<PerformanceMonitorService, bool>(
-                          selector: (_, monitor) => monitor.isSampling,
+                          selector: (_, monitor) =>
+                              monitor.isSamplingConnection(connection.id),
                           builder: (context, sampling, _) => _MonitorServerTile(
                             connection: connection,
                             selected:
                                 selectedConnectionIds.contains(connection.id),
-                            sampling:
-                                samplingConnectionIds.contains(connection.id) &&
-                                    sampling,
+                            sampling: sampling,
                             disabled: disabled,
                             onTap: () => onConnectionTap(connection.id),
                             onDisabledTap: onDisabledTap,
@@ -476,7 +472,6 @@ class _MobileMonitorServerStrip extends StatelessWidget {
   final List<ConnectionConfig> connections;
   final AppStrings strings;
   final Set<String> selectedConnectionIds;
-  final Set<String> samplingConnectionIds;
   final bool disabled;
   final ValueChanged<String> onConnectionTap;
   final VoidCallback onDisabledTap;
@@ -487,7 +482,6 @@ class _MobileMonitorServerStrip extends StatelessWidget {
     required this.connections,
     required this.strings,
     required this.selectedConnectionIds,
-    required this.samplingConnectionIds,
     required this.disabled,
     required this.onConnectionTap,
     required this.onDisabledTap,
@@ -524,12 +518,12 @@ class _MobileMonitorServerStrip extends StatelessWidget {
           return SizedBox(
             width: 210,
             child: Selector<PerformanceMonitorService, bool>(
-              selector: (_, monitor) => monitor.isSampling,
+              selector: (_, monitor) =>
+                  monitor.isSamplingConnection(connection.id),
               builder: (context, sampling, _) => _MonitorServerTile(
                 connection: connection,
                 selected: selectedConnectionIds.contains(connection.id),
-                sampling:
-                    samplingConnectionIds.contains(connection.id) && sampling,
+                sampling: sampling,
                 disabled: disabled,
                 compact: true,
                 onTap: () => onConnectionTap(connection.id),

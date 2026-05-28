@@ -19,15 +19,18 @@ class TerminalCopyScreen extends StatefulWidget {
 
 class _TerminalCopyScreenState extends State<TerminalCopyScreen> {
   final ScrollController _scrollController = ScrollController();
+  late final TextEditingController _textController;
 
   @override
   void initState() {
     super.initState();
+    _textController = TextEditingController(text: widget.text);
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
   }
 
   @override
   void dispose() {
+    _textController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -54,18 +57,29 @@ class _TerminalCopyScreenState extends State<TerminalCopyScreen> {
         ],
       ),
       body: SafeArea(
-        child: SelectionArea(
-          child: SingleChildScrollView(
-            controller: _scrollController,
-            padding: const EdgeInsets.all(12),
-            child: SelectableText(
-              widget.text,
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 13,
-                height: 1.35,
-                color: Theme.of(context).colorScheme.onSurface,
-              ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 14, 24, 18),
+          child: TextField(
+            controller: _textController,
+            scrollController: _scrollController,
+            readOnly: true,
+            minLines: null,
+            maxLines: null,
+            expands: true,
+            keyboardType: TextInputType.multiline,
+            textAlignVertical: TextAlignVertical.top,
+            enableSuggestions: false,
+            autocorrect: false,
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 13,
+              height: 1.35,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
+            decoration: const InputDecoration(
+              border: InputBorder.none,
+              isCollapsed: true,
+              contentPadding: EdgeInsets.zero,
             ),
           ),
         ),

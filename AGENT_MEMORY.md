@@ -49,3 +49,19 @@ across sessions.
   or another widget, keep the stable item key on the immediate widget returned
   by `itemBuilder`. A key on a descendant does not satisfy Flutter's reorderable
   list assertion.
+- 2026-05-28: Keep app-wide settings dependencies narrow in page hot paths:
+  prefer `context.select<AppSettings, AppLanguage>` or a page-specific value
+  snapshot over `context.watch<AppSettings>()`, so unrelated setting changes do
+  not rebuild full pages. AI chat streaming text is intentionally held in a
+  local `ValueNotifier` and committed back to `AiChatRecord` only on
+  completion/cancel/error; avoid per-token `_replaceChat`/whole-page `setState`
+  regressions.
+- 2026-05-28: The vendored xterm renderer treats new `TerminalStyle` and
+  `TerminalTheme` object identities as cache-changing inputs. Keep those
+  objects memoized for unchanged font/theme values; otherwise ordinary terminal
+  screen rebuilds clear paragraph/color caches and can amplify font-scaling
+  repaint artifacts.
+- 2026-05-28: Android release builds intentionally set
+  `usesCleartextTraffic=false`; debug/profile manifests override it for local
+  provider testing only. Do not re-enable release cleartext unless a scoped
+  network security config and README/ADR note are added.

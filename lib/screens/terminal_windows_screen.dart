@@ -45,7 +45,10 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
       ),
     );
     final sessions = snapshot.sessions;
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
+    final strings = AppStrings(language);
 
     _selectedSessionIds.removeWhere(
       (sessionId) => sessions.every((session) => session.id != sessionId),

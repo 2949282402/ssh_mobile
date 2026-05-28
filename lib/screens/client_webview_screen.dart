@@ -53,7 +53,9 @@ class _ClientWebViewScreenState extends State<ClientWebViewScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final language = context.watch<AppSettings>().language;
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
     final strings = _WebViewStrings(language);
 
     return Scaffold(

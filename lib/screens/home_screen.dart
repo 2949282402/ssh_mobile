@@ -139,8 +139,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final settings = context.watch<AppSettings>();
-    final strings = AppStrings(settings.language);
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
+    final strings = AppStrings(language);
     final desktop = isDesktopLayout(context);
     final content = NotificationListener<ScrollNotification>(
       onNotification: (notification) {
@@ -1765,13 +1767,20 @@ class _SettingsPanelState extends State<_SettingsPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final settings = context.watch<AppSettings>();
-    final storage = context.watch<StorageService>();
-    final strings = AppStrings(settings.language);
+    final appSnapshot = context.select<AppSettings, _SettingsAppSnapshot>(
+      _SettingsAppSnapshot.from,
+    );
+    final secretSnapshot =
+        context.select<StorageService, _SettingsSecretSnapshot>(
+      _SettingsSecretSnapshot.from,
+    );
+    final settings = context.read<AppSettings>();
+    final storage = context.read<StorageService>();
+    final strings = AppStrings(appSnapshot.language);
     final colorScheme = Theme.of(context).colorScheme;
-    final cacheEnabled = storage.isSecretCacheEnabled;
-    final cacheTimeoutMinutes = storage.secretCacheTtlMinutes;
-    final cacheOptions = storage.secretCacheTtlOptionsMinutes;
+    final cacheEnabled = secretSnapshot.cacheEnabled;
+    final cacheTimeoutMinutes = secretSnapshot.cacheTimeoutMinutes;
+    final cacheOptions = secretSnapshot.cacheOptions;
 
     return ListTileTheme(
       dense: true,
@@ -1823,7 +1832,7 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.translate_rounded, size: 20),
                   title: Text(
-                    settings.isEnglish
+                    appSnapshot.isEnglish
                         ? strings.switchToChinese
                         : strings.switchToEnglish,
                     style: const TextStyle(fontSize: 13),
@@ -1833,16 +1842,16 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   secondary: Icon(
-                    settings.isDarkMode ? Icons.dark_mode : Icons.light_mode,
+                    appSnapshot.isDarkMode ? Icons.dark_mode : Icons.light_mode,
                     size: 20,
                   ),
                   title: Text(
-                    settings.isDarkMode
+                    appSnapshot.isDarkMode
                         ? strings.switchToLightMode
                         : strings.switchToDarkMode,
                     style: const TextStyle(fontSize: 13),
                   ),
-                  value: settings.isDarkMode,
+                  value: appSnapshot.isDarkMode,
                   onChanged: (_) => settings.toggleTheme(),
                 ),
                 ListTile(
@@ -1860,7 +1869,7 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                     width: 150,
                     child: DropdownButtonHideUnderline(
                       child: DropdownButton<String>(
-                        value: settings.fontFamilyId,
+                        value: appSnapshot.fontFamilyId,
                         isExpanded: true,
                         items: [
                           for (final font in AppFontChoice.values)
@@ -1884,8 +1893,8 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                 ),
                 const SizedBox(height: 10),
                 _FontPreviewCard(
-                  currentFont: settings.fontChoice,
-                  isLikelyAvailable: settings.fontChoice.isLikelyAvailableOn(
+                  currentFont: appSnapshot.fontChoice,
+                  isLikelyAvailable: appSnapshot.fontChoice.isLikelyAvailableOn(
                     Theme.of(context).platform,
                   ),
                   strings: strings,
@@ -1909,40 +1918,42 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                 _SftpLimitTile(
                   icon: Icons.download_outlined,
                   title: strings.sftpDownloadLimit,
-                  value: _formatLimitBytes(settings.sftpDownloadLimitBytes),
+                  value: _formatLimitBytes(appSnapshot.sftpDownloadLimitBytes),
                   onTap: () => _editSftpLimit(
                     title: strings.sftpDownloadLimit,
-                    currentBytes: settings.sftpDownloadLimitBytes,
+                    currentBytes: appSnapshot.sftpDownloadLimitBytes,
                     onChanged: settings.setSftpDownloadLimitBytes,
                   ),
                 ),
                 _SftpLimitTile(
                   icon: Icons.article_outlined,
                   title: strings.sftpTextPreviewLimit,
-                  value: _formatLimitBytes(settings.sftpTextPreviewLimitBytes),
+                  value:
+                      _formatLimitBytes(appSnapshot.sftpTextPreviewLimitBytes),
                   onTap: () => _editSftpLimit(
                     title: strings.sftpTextPreviewLimit,
-                    currentBytes: settings.sftpTextPreviewLimitBytes,
+                    currentBytes: appSnapshot.sftpTextPreviewLimitBytes,
                     onChanged: settings.setSftpTextPreviewLimitBytes,
                   ),
                 ),
                 _SftpLimitTile(
                   icon: Icons.preview_outlined,
                   title: strings.sftpRichPreviewLimit,
-                  value: _formatLimitBytes(settings.sftpRichPreviewLimitBytes),
+                  value:
+                      _formatLimitBytes(appSnapshot.sftpRichPreviewLimitBytes),
                   onTap: () => _editSftpLimit(
                     title: strings.sftpRichPreviewLimit,
-                    currentBytes: settings.sftpRichPreviewLimitBytes,
+                    currentBytes: appSnapshot.sftpRichPreviewLimitBytes,
                     onChanged: settings.setSftpRichPreviewLimitBytes,
                   ),
                 ),
                 _SftpLimitTile(
                   icon: Icons.edit_note_outlined,
                   title: strings.sftpEditLimit,
-                  value: _formatLimitBytes(settings.sftpTextEditLimitBytes),
+                  value: _formatLimitBytes(appSnapshot.sftpTextEditLimitBytes),
                   onTap: () => _editSftpLimit(
                     title: strings.sftpEditLimit,
-                    currentBytes: settings.sftpTextEditLimitBytes,
+                    currentBytes: appSnapshot.sftpTextEditLimitBytes,
                     onChanged: settings.setSftpTextEditLimitBytes,
                   ),
                 ),
@@ -1966,7 +1977,6 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                   value: cacheEnabled,
                   onChanged: (value) async {
                     await storage.setSecretCacheEnabled(value);
-                    if (mounted) setState(() {});
                   },
                 ),
                 ListTile(
@@ -1997,12 +2007,11 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                             ),
                         ],
                         onChanged: cacheEnabled
-                            ? (minutes) {
+                            ? (minutes) async {
                                 if (minutes == null) return;
-                                storage.setSecretCacheTtl(
+                                await storage.setSecretCacheTtl(
                                   Duration(minutes: minutes),
                                 );
-                                if (mounted) setState(() {});
                               }
                             : null,
                       ),
@@ -2051,6 +2060,106 @@ class _SettingsPanelState extends State<_SettingsPanel> {
       ),
     );
   }
+}
+
+class _SettingsAppSnapshot {
+  final AppLanguage language;
+  final bool isEnglish;
+  final bool isDarkMode;
+  final String fontFamilyId;
+  final AppFontChoice fontChoice;
+  final int sftpDownloadLimitBytes;
+  final int sftpTextPreviewLimitBytes;
+  final int sftpRichPreviewLimitBytes;
+  final int sftpTextEditLimitBytes;
+
+  const _SettingsAppSnapshot({
+    required this.language,
+    required this.isEnglish,
+    required this.isDarkMode,
+    required this.fontFamilyId,
+    required this.fontChoice,
+    required this.sftpDownloadLimitBytes,
+    required this.sftpTextPreviewLimitBytes,
+    required this.sftpRichPreviewLimitBytes,
+    required this.sftpTextEditLimitBytes,
+  });
+
+  factory _SettingsAppSnapshot.from(AppSettings settings) {
+    return _SettingsAppSnapshot(
+      language: settings.language,
+      isEnglish: settings.isEnglish,
+      isDarkMode: settings.isDarkMode,
+      fontFamilyId: settings.fontFamilyId,
+      fontChoice: settings.fontChoice,
+      sftpDownloadLimitBytes: settings.sftpDownloadLimitBytes,
+      sftpTextPreviewLimitBytes: settings.sftpTextPreviewLimitBytes,
+      sftpRichPreviewLimitBytes: settings.sftpRichPreviewLimitBytes,
+      sftpTextEditLimitBytes: settings.sftpTextEditLimitBytes,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is _SettingsAppSnapshot &&
+        other.language == language &&
+        other.isEnglish == isEnglish &&
+        other.isDarkMode == isDarkMode &&
+        other.fontFamilyId == fontFamilyId &&
+        other.fontChoice == fontChoice &&
+        other.sftpDownloadLimitBytes == sftpDownloadLimitBytes &&
+        other.sftpTextPreviewLimitBytes == sftpTextPreviewLimitBytes &&
+        other.sftpRichPreviewLimitBytes == sftpRichPreviewLimitBytes &&
+        other.sftpTextEditLimitBytes == sftpTextEditLimitBytes;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        language,
+        isEnglish,
+        isDarkMode,
+        fontFamilyId,
+        fontChoice,
+        sftpDownloadLimitBytes,
+        sftpTextPreviewLimitBytes,
+        sftpRichPreviewLimitBytes,
+        sftpTextEditLimitBytes,
+      );
+}
+
+class _SettingsSecretSnapshot {
+  final bool cacheEnabled;
+  final int cacheTimeoutMinutes;
+  final List<int> cacheOptions;
+
+  const _SettingsSecretSnapshot({
+    required this.cacheEnabled,
+    required this.cacheTimeoutMinutes,
+    required this.cacheOptions,
+  });
+
+  factory _SettingsSecretSnapshot.from(StorageService storage) {
+    return _SettingsSecretSnapshot(
+      cacheEnabled: storage.isSecretCacheEnabled,
+      cacheTimeoutMinutes: storage.secretCacheTtlMinutes,
+      cacheOptions: storage.secretCacheTtlOptionsMinutes,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is _SettingsSecretSnapshot &&
+        other.cacheEnabled == cacheEnabled &&
+        other.cacheTimeoutMinutes == cacheTimeoutMinutes &&
+        listEquals(other.cacheOptions, cacheOptions);
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        cacheEnabled,
+        cacheTimeoutMinutes,
+        Object.hashAll(cacheOptions),
+      );
 }
 
 class _SftpLimitTile extends StatelessWidget {

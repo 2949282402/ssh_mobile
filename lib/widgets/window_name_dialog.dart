@@ -34,7 +34,10 @@ class _WindowNameDialogState extends State<WindowNameDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
+    final strings = AppStrings(language);
     final name = _controller.text.trim();
     final valid = widget.isNameAvailable(name);
     return AlertDialog(

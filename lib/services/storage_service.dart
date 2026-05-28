@@ -141,7 +141,6 @@ class StorageService extends ChangeNotifier {
       await _loadSecretCacheSettings();
       await _loadConnections();
     } catch (e) {
-      debugPrint('Failed to initialize storage service: $e');
       AppLogService.instance
           .error('Failed to initialize storage service', error: e);
       _connections = [];
@@ -223,7 +222,6 @@ class StorageService extends ChangeNotifier {
           .toList();
       _refreshConnectionsView();
     } catch (e) {
-      debugPrint('Failed to load SSH connections: $e');
       AppLogService.instance.error('Failed to load SSH connections', error: e);
       _connections = [];
       _refreshConnectionsView();
@@ -516,7 +514,6 @@ class StorageService extends ChangeNotifier {
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       return _aiChatsCache = List.unmodifiable(chats);
     } catch (e) {
-      debugPrint('Failed to load AI chats: $e');
       AppLogService.instance.error('Failed to load AI chats', error: e);
       return _aiChatsCache = const [];
     }
@@ -559,7 +556,6 @@ class StorageService extends ChangeNotifier {
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       return _aiSkillsCache = List.unmodifiable(skills);
     } catch (e) {
-      debugPrint('Failed to load AI skills: $e');
       AppLogService.instance.error('Failed to load AI skills', error: e);
       return _aiSkillsCache = const [];
     }
@@ -756,7 +752,6 @@ class StorageService extends ChangeNotifier {
           .toList();
       return _restorableTmuxSessionsCache = List.unmodifiable(sessions);
     } catch (e) {
-      debugPrint('Failed to load restorable tmux sessions: $e');
       AppLogService.instance.error(
         'Failed to load restorable tmux sessions',
         error: e,
@@ -814,7 +809,6 @@ class StorageService extends ChangeNotifier {
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       return _terminalHistoryRecordsCache = List.unmodifiable(records);
     } catch (e) {
-      debugPrint('Failed to load terminal history records: $e');
       AppLogService.instance.error(
         'Failed to load terminal history records',
         error: e,

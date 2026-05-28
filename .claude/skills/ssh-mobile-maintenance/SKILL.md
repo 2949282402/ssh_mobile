@@ -119,6 +119,9 @@ or maintenance lesson should be shared across Codex and Claude Code sessions.
   `scripts/build_windows_msi.ps1` and `installer/windows/Product.wxs`; keep
   README build instructions aligned if MSI identity, output naming, shortcuts,
   or signing behavior changes.
+- Android release builds disable cleartext traffic by default. Keep debug and
+  profile cleartext allowances only for local provider/SearXNG testing, and do
+  not re-enable release cleartext without a documented network-security reason.
 - When writing or changing code, add concise maintenance comments for non-obvious
   behavior, lifecycle constraints, protocol quirks, safety gates, or context
   management decisions. Avoid noisy comments that only restate the code.

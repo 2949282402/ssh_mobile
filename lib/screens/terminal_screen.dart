@@ -66,6 +66,9 @@ class _TerminalScreenState extends State<TerminalScreen>
   int _activePointers = 0;
   bool _terminalMenuOpen = false;
   bool _advancedKeyboardVisible = false;
+  TerminalTheme? _cachedTerminalTheme;
+  bool? _cachedTerminalThemeIsDark;
+  Color? _cachedTerminalThemeBackground;
 
   String? _serverName;
 
@@ -601,59 +604,68 @@ class _TerminalScreenState extends State<TerminalScreen>
   }
 
   TerminalTheme _terminalTheme(bool isDark, Color background) {
-    if (!isDark) {
-      return TerminalTheme(
-        background: background,
-        foreground: const Color(0xFF24292F),
-        cursor: const Color(0xFF0969DA),
-        selection: const Color(0xFF0969DA).withValues(alpha: 0.22),
-        searchHitBackground: const Color(0xFFFFD33D),
-        searchHitBackgroundCurrent: const Color(0xFFFFAB00),
-        searchHitForeground: const Color(0xFF24292F),
-        black: const Color(0xFF24292F),
-        red: const Color(0xFFCF222E),
-        green: const Color(0xFF116329),
-        yellow: const Color(0xFF4D2D00),
-        blue: const Color(0xFF0969DA),
-        magenta: const Color(0xFF8250DF),
-        cyan: const Color(0xFF1B7C83),
-        white: const Color(0xFF6E7781),
-        brightBlack: const Color(0xFF57606A),
-        brightRed: const Color(0xFFA40E26),
-        brightGreen: const Color(0xFF1A7F37),
-        brightYellow: const Color(0xFF9A6700),
-        brightBlue: const Color(0xFF218BFF),
-        brightMagenta: const Color(0xFFA475F9),
-        brightCyan: const Color(0xFF3192AA),
-        brightWhite: const Color(0xFF24292F),
-      );
+    final cached = _cachedTerminalTheme;
+    if (cached != null &&
+        _cachedTerminalThemeIsDark == isDark &&
+        _cachedTerminalThemeBackground == background) {
+      return cached;
     }
 
-    return TerminalTheme(
-      background: background,
-      foreground: const Color(0xFFCCCCCC),
-      cursor: const Color(0xFF58A6FF),
-      selection: const Color(0xFF58A6FF).withValues(alpha: 0.24),
-      searchHitBackground: const Color(0xFF725C00),
-      searchHitBackgroundCurrent: const Color(0xFFA88400),
-      searchHitForeground: const Color(0xFFFFFFFF),
-      black: const Color(0xFF1A1A2E),
-      red: const Color(0xFFFF6B6B),
-      green: const Color(0xFF00FF41),
-      yellow: const Color(0xFFFFD93D),
-      blue: const Color(0xFF58A6FF),
-      magenta: const Color(0xFFB388FF),
-      cyan: const Color(0xFF00D4FF),
-      white: const Color(0xFFCCCCCC),
-      brightBlack: const Color(0xFF4A4A5E),
-      brightRed: const Color(0xFFFF8E8E),
-      brightGreen: const Color(0xFF6BFF6B),
-      brightYellow: const Color(0xFFFFF176),
-      brightBlue: const Color(0xFF8BC4FF),
-      brightMagenta: const Color(0xFFD1BFFF),
-      brightCyan: const Color(0xFF80EBFF),
-      brightWhite: const Color(0xFFFFFFFF),
-    );
+    final theme = !isDark
+        ? TerminalTheme(
+            background: background,
+            foreground: const Color(0xFF24292F),
+            cursor: const Color(0xFF0969DA),
+            selection: const Color(0xFF0969DA).withValues(alpha: 0.22),
+            searchHitBackground: const Color(0xFFFFD33D),
+            searchHitBackgroundCurrent: const Color(0xFFFFAB00),
+            searchHitForeground: const Color(0xFF24292F),
+            black: const Color(0xFF24292F),
+            red: const Color(0xFFCF222E),
+            green: const Color(0xFF116329),
+            yellow: const Color(0xFF4D2D00),
+            blue: const Color(0xFF0969DA),
+            magenta: const Color(0xFF8250DF),
+            cyan: const Color(0xFF1B7C83),
+            white: const Color(0xFF6E7781),
+            brightBlack: const Color(0xFF57606A),
+            brightRed: const Color(0xFFA40E26),
+            brightGreen: const Color(0xFF1A7F37),
+            brightYellow: const Color(0xFF9A6700),
+            brightBlue: const Color(0xFF218BFF),
+            brightMagenta: const Color(0xFFA475F9),
+            brightCyan: const Color(0xFF3192AA),
+            brightWhite: const Color(0xFF24292F),
+          )
+        : TerminalTheme(
+            background: background,
+            foreground: const Color(0xFFCCCCCC),
+            cursor: const Color(0xFF58A6FF),
+            selection: const Color(0xFF58A6FF).withValues(alpha: 0.24),
+            searchHitBackground: const Color(0xFF725C00),
+            searchHitBackgroundCurrent: const Color(0xFFA88400),
+            searchHitForeground: const Color(0xFFFFFFFF),
+            black: const Color(0xFF1A1A2E),
+            red: const Color(0xFFFF6B6B),
+            green: const Color(0xFF00FF41),
+            yellow: const Color(0xFFFFD93D),
+            blue: const Color(0xFF58A6FF),
+            magenta: const Color(0xFFB388FF),
+            cyan: const Color(0xFF00D4FF),
+            white: const Color(0xFFCCCCCC),
+            brightBlack: const Color(0xFF4A4A5E),
+            brightRed: const Color(0xFFFF8E8E),
+            brightGreen: const Color(0xFF6BFF6B),
+            brightYellow: const Color(0xFFFFF176),
+            brightBlue: const Color(0xFF8BC4FF),
+            brightMagenta: const Color(0xFFD1BFFF),
+            brightCyan: const Color(0xFF80EBFF),
+            brightWhite: const Color(0xFFFFFFFF),
+          );
+    _cachedTerminalTheme = theme;
+    _cachedTerminalThemeIsDark = isDark;
+    _cachedTerminalThemeBackground = background;
+    return theme;
   }
 
   @override
@@ -663,7 +675,9 @@ class _TerminalScreenState extends State<TerminalScreen>
 
   @override
   Widget build(BuildContext context) {
-    final appSettings = context.watch<AppSettings>();
+    final appSettings = context.select<AppSettings, _TerminalSettingsSnapshot>(
+      _TerminalSettingsSnapshot.from,
+    );
     final strings = TerminalStrings(appSettings.language);
     final sessionSnapshot =
         context.select<SshService, _TerminalSessionSnapshot>(
@@ -723,7 +737,7 @@ class _TerminalScreenState extends State<TerminalScreen>
         isDarkMode: appSettings.isDarkMode,
         reconnectInProgress: _reconnectInProgress,
         onReconnect: _reconnectSession,
-        onToggleTheme: appSettings.toggleTheme,
+        onToggleTheme: context.read<AppSettings>().toggleTheme,
         onSwitchWindow: () => _showSessionSwitcher(context),
         onCloseWindow: () => _confirmDisconnect(context),
         onOpenSiblingSession: () => _openSiblingSession(context),
@@ -1202,6 +1216,33 @@ class _TerminalScreenState extends State<TerminalScreen>
     _windowsCommandInputController.dispose();
     super.dispose();
   }
+}
+
+class _TerminalSettingsSnapshot {
+  final AppLanguage language;
+  final bool isDarkMode;
+
+  const _TerminalSettingsSnapshot({
+    required this.language,
+    required this.isDarkMode,
+  });
+
+  factory _TerminalSettingsSnapshot.from(AppSettings settings) {
+    return _TerminalSettingsSnapshot(
+      language: settings.language,
+      isDarkMode: settings.isDarkMode,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is _TerminalSettingsSnapshot &&
+        other.language == language &&
+        other.isDarkMode == isDarkMode;
+  }
+
+  @override
+  int get hashCode => Object.hash(language, isDarkMode);
 }
 
 class _TerminalSessionSnapshot {

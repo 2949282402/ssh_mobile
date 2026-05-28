@@ -32,7 +32,10 @@ class _DeveloperLogPageState extends State<DeveloperLogPage> {
 
   @override
   Widget build(BuildContext context) {
-    final strings = AppStrings(context.watch<AppSettings>().language);
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
+    final strings = AppStrings(language);
 
     return Column(
       children: [

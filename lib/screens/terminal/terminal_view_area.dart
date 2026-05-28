@@ -59,6 +59,11 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
   double _lastAppliedFontSize = 0;
   final ValueNotifier<_TerminalScrollMetrics> _scrollMetrics =
       ValueNotifier(const _TerminalScrollMetrics());
+  TerminalStyle? _cachedTerminalStyle;
+  double? _cachedStyleFontSize;
+  double? _cachedStyleLineHeight;
+  String? _cachedStyleFontFamily;
+  List<String>? _cachedStyleFontFallback;
   bool _draggingScrollbar = false;
   bool _userReadingHistory = false;
   bool _metricsUpdateScheduled = false;
@@ -108,6 +113,34 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
       return 1.05;
     }
     return 1.2;
+  }
+
+  TerminalStyle get _terminalStyle {
+    final fontSize = widget.fontSize;
+    final lineHeight = _terminalLineHeight;
+    final fontFamily = _terminalFontFamily;
+    final fontFallback = _terminalFontFallback;
+    final cached = _cachedTerminalStyle;
+    if (cached != null &&
+        _cachedStyleFontSize == fontSize &&
+        _cachedStyleLineHeight == lineHeight &&
+        _cachedStyleFontFamily == fontFamily &&
+        listEquals(_cachedStyleFontFallback, fontFallback)) {
+      return cached;
+    }
+
+    final style = TerminalStyle(
+      fontSize: fontSize,
+      fontFamily: fontFamily,
+      fontFamilyFallback: fontFallback,
+      height: lineHeight,
+    );
+    _cachedTerminalStyle = style;
+    _cachedStyleFontSize = fontSize;
+    _cachedStyleLineHeight = lineHeight;
+    _cachedStyleFontFamily = fontFamily;
+    _cachedStyleFontFallback = fontFallback;
+    return style;
   }
 
   TextInputType get _terminalKeyboardType {
@@ -212,6 +245,11 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
   @override
   Widget build(BuildContext context) {
     _scheduleMetricsUpdate();
+    final terminalPaintKey = Object.hash(
+      widget.fontSize.toStringAsFixed(2),
+      widget.theme.background,
+      widget.theme.foreground,
+    );
 
     return Stack(
       children: [
@@ -228,29 +266,30 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
                 onNotification: _handleScrollMetricsNotification,
                 child: NotificationListener<ScrollNotification>(
                   onNotification: _handleScrollNotification,
-                  child: TerminalView(
-                    key: widget.terminalViewKey,
-                    widget.terminal,
-                    controller: widget.controller,
-                    focusNode: widget.focusNode,
-                    scrollController: _scrollController,
-                    autofocus: true,
-                    backgroundOpacity: 1,
-                    simulateScroll: false,
-                    hardwareKeyboardOnly: _useHardwareKeyboardOnlyTerminalInput,
-                    onKeyEvent: _handleWindowsCtrlCSelectionCopy,
-                    keyboardType: _terminalKeyboardType,
-                    onSecondaryTapUp: widget.onSecondaryTapUp == null
-                        ? null
-                        : (details, _) => widget.onSecondaryTapUp!(details),
-                    textStyle: TerminalStyle(
-                      fontSize: widget.fontSize,
-                      fontFamily: _terminalFontFamily,
-                      fontFamilyFallback: _terminalFontFallback,
-                      height: _terminalLineHeight,
+                  child: RepaintBoundary(
+                    key: ValueKey<int>(terminalPaintKey),
+                    child: ClipRect(
+                      child: TerminalView(
+                        key: widget.terminalViewKey,
+                        widget.terminal,
+                        controller: widget.controller,
+                        focusNode: widget.focusNode,
+                        scrollController: _scrollController,
+                        autofocus: true,
+                        backgroundOpacity: 1,
+                        simulateScroll: false,
+                        hardwareKeyboardOnly:
+                            _useHardwareKeyboardOnlyTerminalInput,
+                        onKeyEvent: _handleWindowsCtrlCSelectionCopy,
+                        keyboardType: _terminalKeyboardType,
+                        onSecondaryTapUp: widget.onSecondaryTapUp == null
+                            ? null
+                            : (details, _) => widget.onSecondaryTapUp!(details),
+                        textStyle: _terminalStyle,
+                        textScaler: TextScaler.noScaling,
+                        theme: widget.theme,
+                      ),
                     ),
-                    textScaler: TextScaler.noScaling,
-                    theme: widget.theme,
                   ),
                 ),
               ),

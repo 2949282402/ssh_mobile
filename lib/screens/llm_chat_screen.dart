@@ -19,6 +19,8 @@ import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
 import '../widgets/overflow_scroll_text.dart';
 
+part 'llm_chat/assistant_run_indicator.dart';
+
 const List<String> _defaultModels = [
   'deepseek-v4-flash',
   'deepseek-v4-pro',
@@ -73,6 +75,38 @@ extension _AiToolbarActionStrings on _AiStrings {
       language == AppLanguage.en ? 'No custom skills yet' : '还没有自定义 Skills';
 }
 
+extension _AiRunStatusStrings on _AiStrings {
+  String get assistantPreparing =>
+      language == AppLanguage.en ? 'Preparing response...' : '模型正在准备回答...';
+  String get assistantThinking =>
+      language == AppLanguage.en ? 'Thinking...' : '模型正在思考...';
+  String get assistantResponding =>
+      language == AppLanguage.en ? 'Generating answer...' : '正在输出回答...';
+  String get assistantProcessingToolResult =>
+      language == AppLanguage.en ? 'Processing tool result...' : '正在处理工具结果...';
+  String get assistantProcessingApproval => language == AppLanguage.en
+      ? 'Processing approval decision...'
+      : '正在处理审批结果...';
+
+  String assistantRunningTool(String toolName) {
+    final name = toolName.trim();
+    if (language == AppLanguage.en) {
+      return name.isEmpty ? 'Running tool...' : 'Running tool: $name';
+    }
+    return name.isEmpty ? '正在调用工具...' : '正在调用工具：$name';
+  }
+
+  String assistantAwaitingApproval(String serverName) {
+    final name = serverName.trim();
+    if (language == AppLanguage.en) {
+      return name.isEmpty
+          ? 'Waiting for command approval...'
+          : 'Waiting for command approval on $name...';
+    }
+    return name.isEmpty ? '等待确认服务器命令...' : '等待确认 $name 上的服务器命令...';
+  }
+}
+
 class _LlmChatScreenState extends State<LlmChatScreen>
     with
         AutomaticKeepAliveClientMixin<LlmChatScreen>,
@@ -102,6 +136,11 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   DateTime _lastContextTokenEstimateAt = DateTime.fromMillisecondsSinceEpoch(0);
   bool _scrollToBottomScheduled = false;
   bool _pendingScrollJump = false;
+  final ValueNotifier<String> _streamingAssistantText =
+      ValueNotifier<String>('');
+  final ValueNotifier<String> _streamingAssistantStatus =
+      ValueNotifier<String>('');
+  _StreamingAssistantTarget? _streamingAssistantTarget;
 
   AiChatRecord? get _activeChat {
     for (final chat in _chats) {
@@ -152,6 +191,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     _activeCancellationToken?.cancel();
     _historySlideController.dispose();
     _historyPanelExtent.dispose();
+    _streamingAssistantText.dispose();
+    _streamingAssistantStatus.dispose();
     _inputFocusNode.dispose();
     _inputController.dispose();
     _scrollController.dispose();
@@ -195,7 +236,10 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final strings = _AiStrings(context.watch<AppSettings>().language);
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
+    final strings = _AiStrings(language);
     final colorScheme = Theme.of(context).colorScheme;
     final activeChat = _activeChat;
 
@@ -332,12 +376,18 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                     itemCount: visibleMessages.length,
                     itemBuilder: (context, index) {
                       final message = visibleMessages[index];
+                      final streamingTextListenable =
+                          _streamingTextFor(activeChat.id, message);
+                      final streamingStatusListenable =
+                          _streamingStatusFor(activeChat.id, message);
                       return RepaintBoundary(
                         key: ValueKey(
                           '${message.role}-${message.createdAt.microsecondsSinceEpoch}',
                         ),
                         child: _MessageBubble(
                           message: message,
+                          streamingTextListenable: streamingTextListenable,
+                          streamingStatusListenable: streamingStatusListenable,
                           canAct: !_sending &&
                               activeChat.messages == visibleMessages,
                           onEditUser: message.role == 'user'
@@ -662,6 +712,15 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     final cancellationToken = LlmCancellationToken();
     _activeCancellationToken = cancellationToken;
     final answer = StringBuffer();
+    if (mounted) {
+      setState(() {
+        _beginStreamingAssistant(
+          chatId: chatId,
+          assistantCreatedAt: assistantMessage.createdAt,
+          status: strings.assistantPreparing,
+        );
+      });
+    }
 
     try {
       LlmRunStats? runStats;
@@ -670,6 +729,9 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         modelOverride: model,
         onStats: (stats) => runStats = stats,
         onTrace: (event) {
+          _updateStreamingAssistantStatus(
+            _assistantStatusForTrace(event, strings),
+          );
           _appendTraceToAssistant(
             chatId: chatId,
             assistantCreatedAt: assistantMessage.createdAt,
@@ -689,6 +751,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         ),
       )) {
         answer.write(chunk);
+        _updateStreamingAssistantStatus(strings.assistantResponding);
         if (!mounted) return;
         final now = DateTime.now();
         if (now.difference(lastStreamUiUpdate) <
@@ -696,30 +759,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
           continue;
         }
         lastStreamUiUpdate = now;
-        final currentChat = _chatById(chatId);
-        if (currentChat == null) continue;
-        final streamedMessages = [...currentChat.messages];
-        final assistantIndex = streamedMessages.indexWhere(
-          (message) =>
-              message.role == 'assistant' &&
-              message.createdAt == assistantMessage.createdAt,
-        );
-        if (assistantIndex >= 0) {
-          streamedMessages[assistantIndex] =
-              streamedMessages[assistantIndex].copyWith(
-            text: answer.toString(),
-          );
-          setState(() {
-            _replaceChat(
-              currentChat.copyWith(
-                messages: streamedMessages,
-                updatedAt: DateTime.now(),
-              ),
-              sort: false,
-            );
-          });
-          _scrollToBottom(jump: true);
-        }
+        _updateStreamingAssistant(answer.toString());
+        _scrollToBottom(jump: true);
       }
       if (!mounted) return;
       final currentChat = _chatById(chatId) ?? initialChat;
@@ -752,7 +793,13 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         messages: completedMessages,
         updatedAt: DateTime.now(),
       );
-      setState(() => _replaceChat(answeredChat));
+      setState(() {
+        _clearStreamingAssistant(
+          chatId: chatId,
+          assistantCreatedAt: assistantMessage.createdAt,
+        );
+        _replaceChat(answeredChat);
+      });
       await storage.saveAiChat(answeredChat);
     } on LlmCancelledException {
       AppLogService.instance.info(
@@ -790,7 +837,13 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         messages: cancelledMessages,
         updatedAt: DateTime.now(),
       );
-      setState(() => _replaceChat(cancelledChat));
+      setState(() {
+        _clearStreamingAssistant(
+          chatId: chatId,
+          assistantCreatedAt: assistantMessage.createdAt,
+        );
+        _replaceChat(cancelledChat);
+      });
       await storage.saveAiChat(cancelledChat);
     } catch (e, stackTrace) {
       AppLogService.instance.error(
@@ -807,8 +860,21 @@ class _LlmChatScreenState extends State<LlmChatScreen>
             message.role == 'assistant' &&
             message.createdAt == assistantMessage.createdAt,
       );
-      if (assistantIndex >= 0 && errorMessages[assistantIndex].text.isEmpty) {
-        errorMessages.removeAt(assistantIndex);
+      if (assistantIndex >= 0) {
+        final partialText = answer.toString();
+        if (partialText.trim().isEmpty &&
+            errorMessages[assistantIndex].text.isEmpty) {
+          errorMessages.removeAt(assistantIndex);
+        } else if (partialText.isNotEmpty) {
+          errorMessages[assistantIndex] =
+              errorMessages[assistantIndex].copyWith(
+            text: partialText,
+            contextText: _contextTextForAssistant(
+              partialText,
+              traces: errorMessages[assistantIndex].traces,
+            ),
+          );
+        }
       }
       final errorChat = currentChat.copyWith(
         messages: [
@@ -821,11 +887,21 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         ],
         updatedAt: DateTime.now(),
       );
-      setState(() => _replaceChat(errorChat));
+      setState(() {
+        _clearStreamingAssistant(
+          chatId: chatId,
+          assistantCreatedAt: assistantMessage.createdAt,
+        );
+        _replaceChat(errorChat);
+      });
       await storage.saveAiChat(errorChat);
     } finally {
       if (mounted) {
         setState(() {
+          _clearStreamingAssistant(
+            chatId: chatId,
+            assistantCreatedAt: assistantMessage.createdAt,
+          );
           _sending = false;
           if (_pendingApproval?.chatId == chatId) {
             _pendingApproval = null;
@@ -847,6 +923,10 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     if (!mounted) {
       return Future.value(const AiToolApprovalDecision.rejected());
     }
+    _updateStreamingAssistantStatus(
+      _AiStrings(context.read<AppSettings>().language)
+          .assistantAwaitingApproval(request.connectionName),
+    );
     setState(() {
       _pendingApproval = _PendingToolApproval(
         chatId: chatId,
@@ -1883,10 +1963,21 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     for (final trace in traces) {
       buffer
         ..writeln('[${trace.kind}] ${trace.title}')
-        ..writeln(trace.content.trim())
+        ..writeln(_traceMemoryContent(trace))
         ..writeln();
     }
     return buffer.toString().trimRight();
+  }
+
+  String _traceMemoryContent(AiMessageTrace trace) {
+    final trimmed = trace.content.trim();
+    if (trimmed.length <= 2500) return trimmed;
+    final preview =
+        trimmed.replaceAll(RegExp(r'\s+'), ' ').trim().runes.take(900);
+    return '[Large ${trace.kind} output omitted from future context. '
+        'The full trace remains visible in chat history. '
+        'Length: ${trimmed.length} chars. '
+        'Preview: ${String.fromCharCodes(preview)}]';
   }
 
   String _slimAssistantBody(String trimmed) {
@@ -1996,6 +2087,97 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     return value.toString();
   }
 
+  ValueListenable<String>? _streamingTextFor(
+    String chatId,
+    AiChatMessageRecord message,
+  ) {
+    final target = _streamingAssistantTarget;
+    if (message.role != 'assistant' ||
+        target == null ||
+        target.chatId != chatId ||
+        target.assistantCreatedAt != message.createdAt) {
+      return null;
+    }
+    return _streamingAssistantText;
+  }
+
+  ValueListenable<String>? _streamingStatusFor(
+    String chatId,
+    AiChatMessageRecord message,
+  ) {
+    final target = _streamingAssistantTarget;
+    if (message.role != 'assistant' ||
+        target == null ||
+        target.chatId != chatId ||
+        target.assistantCreatedAt != message.createdAt) {
+      return null;
+    }
+    return _streamingAssistantStatus;
+  }
+
+  void _beginStreamingAssistant({
+    required String chatId,
+    required DateTime assistantCreatedAt,
+    required String status,
+  }) {
+    _streamingAssistantTarget = _StreamingAssistantTarget(
+      chatId: chatId,
+      assistantCreatedAt: assistantCreatedAt,
+    );
+    _streamingAssistantText.value = '';
+    _streamingAssistantStatus.value = status;
+  }
+
+  void _updateStreamingAssistant(String text) {
+    if (_streamingAssistantText.value == text) return;
+    _streamingAssistantText.value = text;
+  }
+
+  void _updateStreamingAssistantStatus(String status) {
+    if (!mounted || _streamingAssistantTarget == null) return;
+    if (_streamingAssistantStatus.value == status) return;
+    _streamingAssistantStatus.value = status;
+  }
+
+  String _assistantStatusForTrace(
+    LlmTraceEvent event,
+    _AiStrings strings,
+  ) {
+    switch (event.kind) {
+      case 'reasoning':
+        return strings.assistantThinking;
+      case 'tool_request':
+        return strings.assistantRunningTool(_traceToolName(event.title));
+      case 'tool_result':
+        return strings.assistantProcessingToolResult;
+      case 'approval':
+        return strings.assistantProcessingApproval;
+      default:
+        return strings.assistantPreparing;
+    }
+  }
+
+  String _traceToolName(String title) {
+    final index = title.indexOf(':');
+    if (index < 0 || index == title.length - 1) return title;
+    return title.substring(index + 1).trim();
+  }
+
+  void _clearStreamingAssistant({
+    required String chatId,
+    required DateTime assistantCreatedAt,
+  }) {
+    final target = _streamingAssistantTarget;
+    if (target == null ||
+        target.chatId != chatId ||
+        target.assistantCreatedAt != assistantCreatedAt) {
+      return;
+    }
+    _streamingAssistantTarget = null;
+    _streamingAssistantText.value = '';
+    _streamingAssistantStatus.value = '';
+  }
+
   void _scrollToBottom({bool jump = false}) {
     _pendingScrollJump = _pendingScrollJump || jump;
     if (_scrollToBottomScheduled) return;
@@ -2021,8 +2203,20 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   bool get wantKeepAlive => true;
 }
 
+class _StreamingAssistantTarget {
+  final String chatId;
+  final DateTime assistantCreatedAt;
+
+  const _StreamingAssistantTarget({
+    required this.chatId,
+    required this.assistantCreatedAt,
+  });
+}
+
 class _MessageBubble extends StatelessWidget {
   final AiChatMessageRecord message;
+  final ValueListenable<String>? streamingTextListenable;
+  final ValueListenable<String>? streamingStatusListenable;
   final bool canAct;
   final VoidCallback? onEditUser;
   final VoidCallback? onRegenerate;
@@ -2031,6 +2225,8 @@ class _MessageBubble extends StatelessWidget {
 
   const _MessageBubble({
     required this.message,
+    this.streamingTextListenable,
+    this.streamingStatusListenable,
     this.canAct = false,
     this.onEditUser,
     this.onRegenerate,
@@ -2078,30 +2274,10 @@ class _MessageBubble extends StatelessWidget {
                         height: 1.35,
                       ),
                     )
-                  : MarkdownBody(
-                      data: message.text.isEmpty ? '...' : message.text,
-                      selectable: true,
-                      styleSheet: MarkdownStyleSheet.fromTheme(
-                        Theme.of(context),
-                      ).copyWith(
-                        p: TextStyle(
-                          color: colorScheme.onSurface,
-                          height: 1.35,
-                        ),
-                        code: TextStyle(
-                          color: colorScheme.onSurface,
-                          backgroundColor:
-                              colorScheme.surfaceContainerHighest.withValues(
-                            alpha: 0.72,
-                          ),
-                        ),
-                        codeblockDecoration: BoxDecoration(
-                          color: colorScheme.surfaceContainerHighest.withValues(
-                            alpha: 0.72,
-                          ),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
+                  : _AssistantMarkdownBody(
+                      text: message.text,
+                      streamingTextListenable: streamingTextListenable,
+                      streamingStatusListenable: streamingStatusListenable,
                     ),
             ),
             if (canAct &&
@@ -2172,6 +2348,82 @@ class _MessageBubble extends StatelessWidget {
   String _formatElapsed(int ms) {
     if (ms < 1000) return '${ms}ms';
     return '${(ms / 1000).toStringAsFixed(1)}s';
+  }
+}
+
+class _AssistantMarkdownBody extends StatelessWidget {
+  final String text;
+  final ValueListenable<String>? streamingTextListenable;
+  final ValueListenable<String>? streamingStatusListenable;
+
+  const _AssistantMarkdownBody({
+    required this.text,
+    this.streamingTextListenable,
+    this.streamingStatusListenable,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final listenable = streamingTextListenable;
+    if (listenable == null) {
+      return _buildMarkdown(context, text);
+    }
+    return ValueListenableBuilder<String>(
+      valueListenable: listenable,
+      builder: (context, value, _) => ValueListenableBuilder<String>(
+        valueListenable: streamingStatusListenable ?? _emptyStringListenable,
+        builder: (context, status, _) {
+          final displayText = value.isEmpty ? text : value;
+          final hasText = displayText.trim().isNotEmpty;
+          final label = status.trim();
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (label.isNotEmpty || !hasText)
+                _AssistantRunIndicator(
+                  label: label.isEmpty ? '...' : label,
+                  compact: hasText,
+                ),
+              if (hasText)
+                Padding(
+                  padding: EdgeInsets.only(
+                    top: label.isNotEmpty ? 8 : 0,
+                  ),
+                  child: _buildMarkdown(context, displayText),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildMarkdown(BuildContext context, String value) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return MarkdownBody(
+      data: value.isEmpty ? '...' : value,
+      selectable: true,
+      styleSheet: MarkdownStyleSheet.fromTheme(
+        Theme.of(context),
+      ).copyWith(
+        p: TextStyle(
+          color: colorScheme.onSurface,
+          height: 1.35,
+        ),
+        code: TextStyle(
+          color: colorScheme.onSurface,
+          backgroundColor: colorScheme.surfaceContainerHighest.withValues(
+            alpha: 0.72,
+          ),
+        ),
+        codeblockDecoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHighest.withValues(
+            alpha: 0.72,
+          ),
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
+    );
   }
 }
 
@@ -3047,7 +3299,10 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final strings = _AiStrings(context.watch<AppSettings>().language);
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
+    final strings = _AiStrings(language);
     final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
