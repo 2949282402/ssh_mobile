@@ -98,6 +98,72 @@ class SshServerOverviewSnapshot {
 /// - output 通过 `StreamController<String>.broadcast()` 供 UI 层订阅
 /// - 输出缓存使用 `Queue<String> +` 字符计数实现环形淘汰，避免大字符串拼接
 /// - _cachedOutputText 惰性缓存，只在实际读取时构建完整文本
+abstract interface class SshClientAdapter {
+  List<SshSession> get sessions;
+  SshServerOverviewSnapshot get serverOverviewSnapshot;
+  bool get isConnected;
+  SshConnectionState get state;
+  String? get errorMessage;
+  SshSession? get currentSession;
+  String? get activeConnectionId;
+
+  SshSession? getSession(String sessionId);
+
+  Future<String> loadSessionHistoryText(String sessionId);
+
+  Future<List<TerminalHistoryRecord>> loadTerminalHistoryRecords();
+
+  Future<void> removeTerminalHistoryRecord(String sessionId);
+
+  bool hasConnectedSession(String connectionId);
+
+  SshSession? latestSessionForConnection(String connectionId);
+
+  int sessionCountForConnection(String connectionId);
+
+  Future<void> disconnectSessionsForConnection(String connectionId);
+
+  bool renameSession(String sessionId, String name);
+
+  void setSessionFontSize(String sessionId, double fontSize);
+
+  Future<void> restoreTmuxSessions();
+
+  Future<String?> openSession(
+    String connectionId, {
+    String? displayName,
+  });
+
+  Future<bool> ensureSessionConnected(
+    String sessionId,
+    String connectionId,
+  );
+
+  Future<bool> ensureConnected(String connectionId);
+
+  Future<void> connect(
+    String connectionId, {
+    String? sessionId,
+    String? displayName,
+  });
+
+  Future<void> disconnectSession(String sessionId);
+
+  Future<void> disconnect();
+
+  void resizeTerminal(String sessionId, int width, int height);
+
+  void sendData(String sessionId, String data);
+
+  void sendBytes(String sessionId, Uint8List data);
+
+  Future<RemoteCommandResult> runOneShotCommand({
+    required String connectionId,
+    required String command,
+    Duration timeout = const Duration(seconds: 15),
+  });
+}
+
 class SshSession {
   static const int maxOutputCacheChars = 200000;
   static const double defaultTerminalFontSize = 8.0;
@@ -195,7 +261,7 @@ class SshSession {
 ///
 /// tmux 集成：连接后自动创建或 attach 到指定 tmux session，服务端持久化。
 /// App 重启后通过 RestorableTmuxSession 列表自动恢复会话。
-class SshService extends ChangeNotifier {
+class SshService extends ChangeNotifier implements SshClientAdapter {
   final StorageService _storageService;
   late final SshClientFactory _clientFactory =
       SshClientFactory(_storageService);
@@ -235,40 +301,53 @@ class SshService extends ChangeNotifier {
             defaultTargetPlatform == TargetPlatform.iOS);
   }
 
+  @override
   List<SshSession> get sessions => _sessionsView;
+  @override
   SshServerOverviewSnapshot get serverOverviewSnapshot =>
       _serverOverviewSnapshot;
+  @override
   bool get isConnected =>
       _sessions.values.any((session) => session.isConnected);
+  @override
   SshConnectionState get state =>
       currentSession?.state ??
       (isConnected
           ? SshConnectionState.connected
           : SshConnectionState.disconnected);
+  @override
   String? get errorMessage => currentSession?.errorMessage ?? _lastErrorMessage;
+  @override
   SshSession? get currentSession => _lastSessionId == null
       ? null
       : _sessions[_lastSessionId] ?? _sessions.values.lastOrNull;
+  @override
   String? get activeConnectionId => currentSession?.connectionId;
 
+  @override
   SshSession? getSession(String sessionId) => _sessions[sessionId];
 
+  @override
   Future<String> loadSessionHistoryText(String sessionId) {
     return _historyService.readTail(sessionId);
   }
 
+  @override
   Future<List<TerminalHistoryRecord>> loadTerminalHistoryRecords() {
     return _storageService.loadTerminalHistoryRecords();
   }
 
+  @override
   Future<void> removeTerminalHistoryRecord(String sessionId) {
     return _storageService.removeTerminalHistoryRecord(sessionId);
   }
 
+  @override
   bool hasConnectedSession(String connectionId) {
     return _serverOverviewSnapshot.forConnection(connectionId).hasConnected;
   }
 
+  @override
   SshSession? latestSessionForConnection(String connectionId) {
     for (final session in _sessions.values.toList().reversed) {
       if (session.connectionId == connectionId) return session;
@@ -276,10 +355,12 @@ class SshService extends ChangeNotifier {
     return null;
   }
 
+  @override
   int sessionCountForConnection(String connectionId) {
     return _serverOverviewSnapshot.forConnection(connectionId).count;
   }
 
+  @override
   Future<void> disconnectSessionsForConnection(String connectionId) async {
     final sessionIds = _sessions.values
         .where((session) => session.connectionId == connectionId)
@@ -291,6 +372,7 @@ class SshService extends ChangeNotifier {
     }
   }
 
+  @override
   bool renameSession(String sessionId, String name) {
     final session = _sessions[sessionId];
     final nextName = name.trim();
@@ -304,6 +386,7 @@ class SshService extends ChangeNotifier {
     return true;
   }
 
+  @override
   void setSessionFontSize(String sessionId, double fontSize) {
     final session = _sessions[sessionId];
     if (session == null) return;
@@ -313,6 +396,7 @@ class SshService extends ChangeNotifier {
     _notifySessionMetadataChanged();
   }
 
+  @override
   Future<void> restoreTmuxSessions() async {
     if (_restoredTmuxSessions) return;
     _restoredTmuxSessions = true;
@@ -362,6 +446,7 @@ class SshService extends ChangeNotifier {
     }
   }
 
+  @override
   Future<String?> openSession(
     String connectionId, {
     String? displayName,
@@ -389,6 +474,7 @@ class SshService extends ChangeNotifier {
     return null;
   }
 
+  @override
   Future<bool> ensureSessionConnected(
     String sessionId,
     String connectionId,
@@ -403,6 +489,7 @@ class SshService extends ChangeNotifier {
     return _sessions[sessionId]?.isConnected == true;
   }
 
+  @override
   Future<bool> ensureConnected(String connectionId) async {
     final existing = latestSessionForConnection(connectionId);
     if (existing?.isConnected == true) {
@@ -414,6 +501,7 @@ class SshService extends ChangeNotifier {
     return sessionId != null;
   }
 
+  @override
   Future<void> connect(
     String connectionId, {
     String? sessionId,
@@ -555,6 +643,7 @@ class SshService extends ChangeNotifier {
     }
   }
 
+  @override
   Future<void> disconnectSession(String sessionId) async {
     AppLogService.instance
         .info('Disconnecting session', details: 'sessionId=$sessionId');
@@ -602,6 +691,7 @@ class SshService extends ChangeNotifier {
     _notifySessionMetadataChanged();
   }
 
+  @override
   Future<void> disconnect() async {
     AppLogService.instance.info(
       'Disconnecting all sessions',
@@ -631,6 +721,7 @@ class SshService extends ChangeNotifier {
     notifyListeners();
   }
 
+  @override
   void resizeTerminal(String sessionId, int width, int height) {
     final session = _sessions[sessionId];
     if (session?.isConnected == true) {
@@ -646,6 +737,7 @@ class SshService extends ChangeNotifier {
     }
   }
 
+  @override
   void sendData(String sessionId, String data) {
     final session = _sessions[sessionId];
     if (session?.isConnected == true) {
@@ -660,6 +752,7 @@ class SshService extends ChangeNotifier {
     }
   }
 
+  @override
   void sendBytes(String sessionId, Uint8List data) {
     sendData(sessionId, String.fromCharCodes(data));
   }
@@ -667,6 +760,7 @@ class SshService extends ChangeNotifier {
   /// 执行单次 SSH 命令并返回结果。
   /// AI 工具和诊断场景使用此方法，通过普通 SSH exec 执行（非 tmux）。
   /// 不复用交互式终端会话，每条命令独立连接，用完即关。
+  @override
   Future<RemoteCommandResult> runOneShotCommand({
     required String connectionId,
     required String command,

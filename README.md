@@ -23,6 +23,12 @@ Performance-sensitive changes should be checked against
 terminal large output, AI long streaming replies, SFTP large directories, and
 multi-server monitor sampling.
 
+Core SSH, SFTP, LLM, AI tool, chat storage, terminal-history, and backup flows
+now expose lightweight Dart interfaces so tests and future feature controllers
+can inject fake implementations without real network or platform credentials.
+Backup import/export remains credential-free: passwords, private keys, and AI
+API keys are never restored from backup JSON and must be reconfigured manually.
+
 ## Features
 
 - SSH 连接管理：保存多服务器配置，支持密码、私钥、私钥密码和可选跳板机。

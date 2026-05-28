@@ -11,6 +11,28 @@ import 'server_status_probe.dart';
 import 'ssh_service.dart';
 import 'storage_service.dart';
 
+abstract interface class AiToolExecutor {
+  Future<List<AiTool>> tools();
+
+  Future<List<Map<String, dynamic>>> toolDefinitions();
+
+  AiToolApprovalRequest? approvalRequestFor(
+    String name,
+    Map<String, dynamic> arguments,
+  );
+
+  Future<String> execute(
+    String name,
+    Map<String, dynamic> arguments, {
+    bool approvedWrite = false,
+  });
+
+  AiCommandReview reviewCommand(
+    String command, {
+    ServerPlatform? platform,
+  });
+}
+
 /// AI Function Calling（工具调用）定义与调度中心。
 ///
 /// 架构：
@@ -19,10 +41,10 @@ import 'storage_service.dart';
 ///   server 端工具（命令执行、OS 检测、SFTP）、诊断工具（性能、端口、进程、ops report）
 /// - 命令安全三级审查：只读(自动) → 需审批(弹窗) → 已拦截(拒绝)
 /// - 所有 server 工具使用一次性 SSH exec 连接（非 tmux），不与用户终端环境混合
-class AiToolService {
+class AiToolService implements AiToolExecutor {
   final StorageService storageService;
-  final SshService sshService;
-  final SftpService sftpService;
+  final SshClientAdapter sshService;
+  final SftpClientAdapter sftpService;
   final ClientSystemToolService clientSystemToolService;
   final ClientWebViewService clientWebViewService;
   final String? clientWebViewSessionId;
@@ -39,6 +61,7 @@ class AiToolService {
         clientWebViewService =
             clientWebViewService ?? ClientWebViewService.instance;
 
+  @override
   Future<List<AiTool>> tools() async {
     final searchSettings = await storageService.loadAiConnectionSettings();
     return [
@@ -246,10 +269,12 @@ class AiToolService {
     ];
   }
 
+  @override
   Future<List<Map<String, dynamic>>> toolDefinitions() async {
     return (await tools()).map((tool) => tool.definition).toList();
   }
 
+  @override
   AiToolApprovalRequest? approvalRequestFor(
     String name,
     Map<String, dynamic> arguments,
@@ -269,6 +294,7 @@ class AiToolService {
     );
   }
 
+  @override
   Future<String> execute(
     String name,
     Map<String, dynamic> arguments, {
@@ -939,6 +965,7 @@ class AiToolService {
   /// 3. 其余命令 → 需用户审批
   ///
   /// 同时做跨平台拦截：Linux 命令禁止在 Windows 执行，反之亦然。
+  @override
   AiCommandReview reviewCommand(
     String command, {
     ServerPlatform? platform,

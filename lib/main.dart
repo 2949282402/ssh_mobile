@@ -35,7 +35,7 @@ Future<void> main() async {
   await runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
-      appLogService.install();  // 替换 debugPrint / FlutterError.onError 等全局钩子
+      appLogService.install(); // 替换 debugPrint / FlutterError.onError 等全局钩子
       appLogService.info('Application bootstrap started');
 
       // --- 服务装配 ---
@@ -93,8 +93,6 @@ Future<void> main() async {
       appLogService.error(
         'Uncaught zone error',
         error: error,
-
-
         stackTrace: stackTrace,
       );
     },

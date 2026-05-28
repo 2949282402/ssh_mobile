@@ -9,6 +9,61 @@ import 'app_log_service.dart';
 import 'ssh_client_factory.dart';
 import 'storage_service.dart';
 
+abstract interface class SftpClientAdapter {
+  String? get connectionId;
+  String? get connectionName;
+  String get currentPath;
+  SftpConnectionState get state;
+  String? get errorMessage;
+  int get entriesRevision;
+  List<SftpEntry> get entries;
+  bool get isConnected;
+  bool get isBusy;
+
+  bool isConnectionBusy(String connectionId);
+
+  bool isConnectionOpen(String connectionId);
+
+  Future<void> connect(String connectionId);
+
+  Future<void> refresh();
+
+  Future<void> uploadBytes({
+    required String filename,
+    required Uint8List bytes,
+  });
+
+  Future<void> deleteEntry(
+    SftpEntry entry, {
+    required String confirmedName,
+  });
+
+  Future<List<SftpEntry>> listDirectoryForConnection(
+    String connectionId,
+    String path,
+  );
+
+  Future<String> readTextPathForConnection({
+    required String connectionId,
+    required String path,
+    int maxBytes = SftpService.maxTextPreviewBytes,
+  });
+
+  Future<void> openPath(String path);
+
+  Future<void> openParent();
+
+  Future<void> disconnect({bool notify = true});
+
+  Future<void> disconnectConnection(
+    String connectionId, {
+    bool notify = true,
+    bool forgetPath = false,
+  });
+
+  Future<void> disconnectAll({bool notify = true});
+}
+
 enum SftpConnectionState {
   disconnected,
   connecting,
@@ -49,7 +104,7 @@ class SftpEntry {
 /// 文件大小上限：文本编辑 512KB / 文本预览 2MB / 富预览 20MB / 上传 50MB / 下载 512MB。
 /// 多级缓存：SFTP 连接按 connectionId + host 缓存复用。
 /// 通知合并：调用 notifyListeners() 有 16ms 延迟合并窗口，防止高频操作导致 UI 卡顿。
-class SftpService extends ChangeNotifier {
+class SftpService extends ChangeNotifier implements SftpClientAdapter {
   static const int maxTextEditBytes = 512 * 1024;
   static const int maxTextPreviewBytes = 2 * 1024 * 1024;
   static const int maxRichPreviewBytes = 20 * 1024 * 1024;
@@ -74,29 +129,41 @@ class SftpService extends ChangeNotifier {
   _SftpSession? get _activeSession =>
       _activeConnectionId == null ? null : _sessions[_activeConnectionId];
 
+  @override
   String? get connectionId => _activeSession?.connectionId;
+  @override
   String? get connectionName => _activeSession?.connectionName;
+  @override
   String get currentPath => _activeSession?.currentPath ?? '.';
+  @override
   SftpConnectionState get state =>
       _activeSession?.state ?? SftpConnectionState.disconnected;
+  @override
   String? get errorMessage => _activeSession?.errorMessage;
+  @override
   int get entriesRevision => _activeSession?.entriesRevision ?? 0;
+  @override
   List<SftpEntry> get entries => _activeSession?.entries ?? const [];
+  @override
   bool get isConnected => _activeSession?.sftp != null;
+  @override
   bool get isBusy =>
       state == SftpConnectionState.connecting ||
       state == SftpConnectionState.loading;
 
+  @override
   bool isConnectionBusy(String connectionId) {
     final session = _sessions[connectionId];
     return session?.state == SftpConnectionState.connecting ||
         session?.state == SftpConnectionState.loading;
   }
 
+  @override
   bool isConnectionOpen(String connectionId) {
     return _sessions[connectionId]?.sftp != null;
   }
 
+  @override
   Future<void> connect(String connectionId) async {
     final config = _storageService.getConnection(connectionId);
     if (config == null) {
@@ -188,8 +255,10 @@ class SftpService extends ChangeNotifier {
     }
   }
 
+  @override
   Future<void> refresh() => openPath(currentPath);
 
+  @override
   Future<void> uploadBytes({
     required String filename,
     required Uint8List bytes,
@@ -234,6 +303,7 @@ class SftpService extends ChangeNotifier {
     }
   }
 
+  @override
   Future<void> deleteEntry(
     SftpEntry entry, {
     required String confirmedName,
@@ -378,12 +448,14 @@ class SftpService extends ChangeNotifier {
     }
   }
 
+  @override
   Future<void> openPath(String path) async {
     final session = _activeSession;
     if (session == null) return;
     return _openPath(session, path);
   }
 
+  @override
   Future<List<SftpEntry>> listDirectoryForConnection(
     String connectionId,
     String path,
@@ -404,6 +476,7 @@ class SftpService extends ChangeNotifier {
     });
   }
 
+  @override
   Future<String> readTextPathForConnection({
     required String connectionId,
     required String path,
@@ -462,6 +535,7 @@ class SftpService extends ChangeNotifier {
     }
   }
 
+  @override
   Future<void> openParent() {
     final path = currentPath;
     if (path == '/' || path.isEmpty) return refresh();
@@ -473,6 +547,7 @@ class SftpService extends ChangeNotifier {
     return openPath(trimmed.substring(0, slash));
   }
 
+  @override
   Future<void> disconnect({bool notify = true}) async {
     final connectionId = _activeConnectionId;
     if (connectionId == null) return;
@@ -486,6 +561,7 @@ class SftpService extends ChangeNotifier {
     if (notify) notifyListeners();
   }
 
+  @override
   Future<void> disconnectConnection(
     String connectionId, {
     bool notify = true,
@@ -506,6 +582,7 @@ class SftpService extends ChangeNotifier {
     if (notify) notifyListeners();
   }
 
+  @override
   Future<void> disconnectAll({bool notify = true}) async {
     _connectTasks.clear();
     for (final session in _sessions.values) {

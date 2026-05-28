@@ -36,7 +36,7 @@ class DataProtectionService {
     final key = await _getOrCreateKey();
     final secretBox = await _algorithm.encryptString(plaintext, secretKey: key);
     final payload = {
-      'n': base64Encode(secretBox.nonce),   // 随机 nonce（每次加密不同）
+      'n': base64Encode(secretBox.nonce), // 随机 nonce（每次加密不同）
       'm': base64Encode(secretBox.mac.bytes), // 认证标签，防篡改
       'c': base64Encode(secretBox.cipherText), // 密文
     };

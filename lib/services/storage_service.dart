@@ -70,7 +70,42 @@ List<AiSkillRecord> upsertAiSkillRecordsByUpdatedAt(
 ///
 /// 高频写操作（AI 聊天、tmux 会话、终端历史）使用 700ms 防抖批量写入，
 /// App 进入后台时调用 flushPendingWrites() 确保数据落盘。
-class StorageService extends ChangeNotifier {
+abstract interface class AiChatRepository {
+  Future<List<AiChatRecord>> loadAiChats();
+
+  Future<void> saveAiChat(AiChatRecord chat);
+
+  Future<void> deleteAiChat(String id);
+}
+
+abstract interface class AiSkillRepository {
+  Future<List<AiSkillRecord>> loadAiSkills();
+
+  Future<void> saveAiSkill(AiSkillRecord skill);
+
+  Future<void> deleteAiSkill(String id);
+}
+
+abstract interface class TerminalHistoryRepository {
+  Future<List<TerminalHistoryRecord>> loadTerminalHistoryRecords();
+
+  Future<void> saveTerminalHistoryRecord(TerminalHistoryRecord record);
+
+  Future<void> removeTerminalHistoryRecord(String sessionId);
+}
+
+abstract interface class AppBackupRepository {
+  Future<String> exportAppDataJson();
+
+  Future<void> importAppDataJson(String jsonText);
+}
+
+class StorageService extends ChangeNotifier
+    implements
+        AiChatRepository,
+        AiSkillRepository,
+        TerminalHistoryRepository,
+        AppBackupRepository {
   static const _connectionsKey = 'ssh_connections';
   static const _powerGuideSeenKey = 'power_guide_seen';
   static const _restorableTmuxSessionsKey = 'restorable_tmux_sessions';
@@ -471,7 +506,8 @@ class StorageService extends ChangeNotifier {
         }
         apiKeyUpdated = true;
       } else {
-        _secretCache.remove(_memoryAiApiKeyCacheKey);
+        await _clearAiApiKeySecret();
+        apiKeyUpdated = true;
       }
     }
     AppLogService.instance.info(
@@ -497,6 +533,12 @@ class StorageService extends ChangeNotifier {
     return trimmed;
   }
 
+  Future<void> _clearAiApiKeySecret() async {
+    _secretCache.remove(_memoryAiApiKeyCacheKey);
+    await _secureStorage.delete(key: _aiApiKeyKey);
+  }
+
+  @override
   Future<List<AiChatRecord>> loadAiChats() async {
     if (!_initialized || _prefs == null) return [];
     final cached = _aiChatsCache;
@@ -519,6 +561,7 @@ class StorageService extends ChangeNotifier {
     }
   }
 
+  @override
   Future<void> saveAiChat(AiChatRecord chat) async {
     if (!_initialized || _prefs == null) return;
     final chats = upsertAiChatRecordsByUpdatedAt(
@@ -530,6 +573,7 @@ class StorageService extends ChangeNotifier {
     notifyListeners();
   }
 
+  @override
   Future<void> deleteAiChat(String id) async {
     if (!_initialized || _prefs == null) return;
     final chats = (await loadAiChats())
@@ -539,6 +583,7 @@ class StorageService extends ChangeNotifier {
     notifyListeners();
   }
 
+  @override
   Future<List<AiSkillRecord>> loadAiSkills() async {
     if (!_initialized || _prefs == null) return [];
     final cached = _aiSkillsCache;
@@ -561,6 +606,7 @@ class StorageService extends ChangeNotifier {
     }
   }
 
+  @override
   Future<void> saveAiSkill(AiSkillRecord skill) async {
     if (!_initialized || _prefs == null) return;
     final skills = upsertAiSkillRecordsByUpdatedAt(
@@ -571,6 +617,7 @@ class StorageService extends ChangeNotifier {
     notifyListeners();
   }
 
+  @override
   Future<void> deleteAiSkill(String id) async {
     if (!_initialized || _prefs == null) return;
     final skills = (await loadAiSkills())
@@ -582,6 +629,7 @@ class StorageService extends ChangeNotifier {
 
   /// 导出所有用户数据为 JSON 格式。
   /// 注意：密码/私钥/API Key 置空，不包含在导出中。
+  @override
   Future<String> exportAppDataJson() async {
     if (!_initialized || _prefs == null) {
       throw StateError('Storage service is not initialized yet.');
@@ -635,6 +683,7 @@ class StorageService extends ChangeNotifier {
 
   /// 从 JSON 备份导入所有用户数据。
   /// 格式校验：必须包含 'ssh_mobile_backup' 标记。
+  @override
   Future<void> importAppDataJson(String jsonText) async {
     if (!_initialized || _prefs == null) {
       throw StateError('Storage service is not initialized yet.');
@@ -667,10 +716,8 @@ class StorageService extends ChangeNotifier {
 
     final aiSettings = decoded['aiSettings'];
     if (aiSettings is Map<String, dynamic>) {
-      final importedApiKey = aiSettings['apiKey'] as String?;
-      if (importedApiKey == null || importedApiKey.trim().isEmpty) {
-        await _secureStorage.delete(key: _aiApiKeyKey);
-      }
+      // Backups are not a credential transport. Clear any current cached key
+      // and ignore hand-edited or legacy apiKey values from imported files.
       await saveAiConnectionSettings(
         baseUrl: aiSettings['baseUrl'] as String? ?? 'https://api.deepseek.com',
         model: aiSettings['model'] as String? ?? 'deepseek-v4-flash',
@@ -685,8 +732,10 @@ class StorageService extends ChangeNotifier {
         webSearchBaseUrl: aiSettings['webSearchBaseUrl'] as String?,
         webSearchMaxResults:
             (aiSettings['webSearchMaxResults'] as num?)?.toInt(),
-        apiKey: importedApiKey,
+        apiKey: '',
       );
+    } else {
+      await _clearAiApiKeySecret();
     }
 
     await _saveRestorableTmuxSessions(
@@ -791,6 +840,7 @@ class StorageService extends ChangeNotifier {
     await _prefs!.remove(_restorableTmuxSessionsKey);
   }
 
+  @override
   Future<List<TerminalHistoryRecord>> loadTerminalHistoryRecords() async {
     if (!_initialized || _prefs == null) return [];
     final cached = _terminalHistoryRecordsCache;
@@ -817,6 +867,7 @@ class StorageService extends ChangeNotifier {
     }
   }
 
+  @override
   Future<void> saveTerminalHistoryRecord(TerminalHistoryRecord record) async {
     if (!_initialized || _prefs == null) return;
     final records = [...await loadTerminalHistoryRecords()];
@@ -826,6 +877,7 @@ class StorageService extends ChangeNotifier {
     notifyListeners();
   }
 
+  @override
   Future<void> removeTerminalHistoryRecord(String sessionId) async {
     if (!_initialized || _prefs == null) return;
     final records = [...await loadTerminalHistoryRecords()];

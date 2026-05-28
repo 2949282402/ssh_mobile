@@ -6,6 +6,33 @@ import 'ai_tool_service.dart';
 import 'app_log_service.dart';
 import 'storage_service.dart';
 
+abstract interface class LlmClientAdapter {
+  Future<List<String>> fetchModels({
+    required String baseUrl,
+    String? apiKey,
+  });
+
+  Future<String> send({
+    required List<Map<String, dynamic>> messages,
+    String? modelOverride,
+    Future<AiToolApprovalDecision> Function(AiToolApprovalRequest request)?
+        requestToolApproval,
+    void Function(LlmRunStats stats)? onStats,
+    void Function(LlmTraceEvent event)? onTrace,
+    LlmCancellationToken? cancellationToken,
+  });
+
+  Stream<String> stream({
+    required List<Map<String, dynamic>> messages,
+    String? modelOverride,
+    Future<AiToolApprovalDecision> Function(AiToolApprovalRequest request)?
+        requestToolApproval,
+    void Function(LlmRunStats stats)? onStats,
+    void Function(LlmTraceEvent event)? onTrace,
+    LlmCancellationToken? cancellationToken,
+  });
+}
+
 /// OpenAI 兼容 LLM 流式对话服务。
 ///
 /// 核心能力：
@@ -16,15 +43,16 @@ import 'storage_service.dart';
 ///
 /// 使用 dart:io HttpClient 而非第三方 HTTP 包，直接逐行读取 response body
 /// 实现真实流式渲染（而不是等待完整响应）。
-class LlmChatService {
+class LlmChatService implements LlmClientAdapter {
   final StorageService storageService;
-  final AiToolService toolService;
+  final AiToolExecutor toolService;
 
   LlmChatService({
     required this.storageService,
     required this.toolService,
   });
 
+  @override
   Future<List<String>> fetchModels({
     required String baseUrl,
     String? apiKey,
@@ -101,6 +129,7 @@ class LlmChatService {
     }
   }
 
+  @override
   Future<String> send({
     required List<Map<String, dynamic>> messages,
     String? modelOverride,
@@ -131,6 +160,7 @@ class LlmChatService {
   /// 2. 发送 SSE 请求并逐 chunk 产出文本
   /// 3. 如果 LLM 返回 tool_calls → 执行工具（含审批流程）→ 追加结果 → 回到步骤 2
   /// 4. 如果 LLM 返回普通文本 → 产出完整答案并返回
+  @override
   Stream<String> stream({
     required List<Map<String, dynamic>> messages,
     String? modelOverride,

@@ -65,3 +65,7 @@ across sessions.
   `usesCleartextTraffic=false`; debug/profile manifests override it for local
   provider testing only. Do not re-enable release cleartext unless a scoped
   network security config and README/ADR note are added.
+- 2026-05-28: Core SSH/SFTP/LLM/AI tool and storage flows expose small Dart
+  contracts for future fake injection. Backup imports intentionally clear any
+  cached AI API key and ignore credential fields from JSON; users must
+  reconfigure passwords, private keys, and API keys after importing.

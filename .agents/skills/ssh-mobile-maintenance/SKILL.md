@@ -48,6 +48,10 @@ or maintenance lesson should be shared across Codex and Claude Code sessions.
 - Preserve user work in the git tree. Do not revert unrelated dirty files.
 - Use UTF-8 for all source and data files. Avoid UTF-8 with BOM, and when writing or rewriting files, enforce UTF-8 (without BOM) encoding to prevent string corruption.
 - Prefer project services over duplicating protocol code.
+- Prefer the exposed service contracts (`SshClientAdapter`, `SftpClientAdapter`,
+  `LlmClientAdapter`, `AiToolExecutor`, and storage repository interfaces) when
+  adding controllers or tests so fake implementations can replace real network
+  and credential-backed services.
 - Write logs for SSH, SFTP, LLM requests, AI tools, and caught failures through
   `AppLogService` so the log page remains useful.
 - Log entries should include a source file/line location when possible, and log
