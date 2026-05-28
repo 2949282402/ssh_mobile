@@ -124,7 +124,7 @@ or maintenance lesson should be shared across Codex and Claude Code sessions.
   README build instructions aligned if MSI identity, output naming, shortcuts,
   or signing behavior changes.
 - Android release builds disable cleartext traffic by default. Keep debug and
-  profile cleartext allowances only for local provider/SearXNG testing, and do
+  profile cleartext allowances only for local provider testing, and do
   not re-enable release cleartext without a documented network-security reason.
 - When writing or changing code, add concise maintenance comments for non-obvious
   behavior, lifecycle constraints, protocol quirks, safety gates, or context
@@ -166,11 +166,14 @@ Use `lib/services/llm_chat_service.dart` for provider protocol behavior and
   controls; send those parameters only to DeepSeek API hosts, not to generic
   OpenAI-compatible aggregators.
 - Internet search for the LLM is exposed as an optional client-side
-  `web_search` function tool backed by a user-configured SearXNG instance. Keep
-  it disabled until the user enables it and provides an instance URL; return
-  cited result URLs in the tool result. Do not rely on DeepSeek Chat Completions
-  having hosted web search; its documented tools are function tools. OpenAI
-  hosted web search should be handled by a separate Responses API adapter.
+  `web_search` function tool backed by the current chat session's local
+  WebView. Keep it disabled until the user enables it; return cited result URLs
+  in the tool result. Do not rely on DeepSeek Chat Completions having hosted web
+  search; its documented tools are function tools. OpenAI hosted web search
+  should be handled by a separate Responses API adapter.
+- AI WebView browsing uses a per-chat operation token. While the token is
+  active, the WebView page is view-only and the user must tap Interrupt before
+  manual address-bar, navigation, refresh, or page-touch actions are enabled.
 - Client device tools must use the `client_` prefix, state clearly in their
   descriptions that they run on the SSH Mobile client device rather than a
   server, and return `execution: client`. Keep OS/device client tool logic in

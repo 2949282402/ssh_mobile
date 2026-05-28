@@ -1,5 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/models/connection.dart';
 import 'package:ssh_mobile/services/ai_tool_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
@@ -7,6 +11,8 @@ import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late StorageService storage;
   late SshService ssh;
   late SftpService sftp;
@@ -14,6 +20,8 @@ void main() {
 
   setUp(() {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    SharedPreferences.setMockInitialValues({});
+    FlutterSecureStorage.setMockInitialValues({});
     storage = StorageService();
     ssh = SshService(storage);
     sftp = SftpService(storage);
@@ -83,5 +91,34 @@ void main() {
 
     expect(review.blocked, isTrue);
     expect(review.reason, contains('explicit'));
+  });
+
+  test('exposes local web search when enabled without provider config',
+      () async {
+    await storage.init();
+    await storage.saveAiConnectionSettings(
+      baseUrl: 'https://api.example.com',
+      model: 'demo-model',
+      webSearchEnabled: true,
+    );
+
+    final names = (await tools.tools()).map((tool) => tool.name);
+
+    expect(names, contains('web_search'));
+  });
+
+  test('local web search reports missing chat session', () async {
+    await storage.init();
+    await storage.saveAiConnectionSettings(
+      baseUrl: 'https://api.example.com',
+      model: 'demo-model',
+      webSearchEnabled: true,
+    );
+
+    final raw = await tools.execute('web_search', {'query': 'flutter'});
+    final decoded = jsonDecode(raw) as Map<String, dynamic>;
+
+    expect(decoded['provider'], 'local_webview');
+    expect(decoded['error'], contains('No current chat session'));
   });
 }

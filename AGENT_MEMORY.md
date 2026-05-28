@@ -69,3 +69,9 @@ across sessions.
   contracts for future fake injection. Backup imports intentionally clear any
   cached AI API key and ignore credential fields from JSON; users must
   reconfigure passwords, private keys, and API keys after importing.
+- 2026-05-28: AI `web_search` is now local client WebView search only. It no
+  longer stores provider/base URL settings; keep search results client-side and
+  tied to the current chat's WebView session.
+- 2026-05-28: AI WebView browsing has a per-chat operation token. While active,
+  the WebView UI is view-only; user interruption clears the token so the tool
+  result reports interruption instead of continuing from a stale page.

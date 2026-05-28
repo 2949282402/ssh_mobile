@@ -1357,10 +1357,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     var deepSeekThinkingEnabled = settings.deepSeekThinkingEnabled;
     var deepSeekReasoningEffort = settings.deepSeekReasoningEffort;
     var webSearchEnabled = settings.webSearchEnabled;
-    var webSearchProvider = settings.webSearchProvider;
     var webSearchMaxResults = settings.webSearchMaxResults;
-    final webSearchBaseUrlController =
-        TextEditingController(text: settings.webSearchBaseUrl);
     var loadingModels = false;
     var savingSettings = false;
     String? modelLoadError;
@@ -1579,34 +1576,6 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                           },
                   ),
                   const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: AiWebSearchProvider.normalize(
-                      webSearchProvider,
-                    ),
-                    isExpanded: true,
-                    decoration:
-                        InputDecoration(labelText: strings.webSearchProvider),
-                    items: [
-                      for (final value in AiWebSearchProvider.values)
-                        DropdownMenuItem(
-                          value: value,
-                          child: Text(AiWebSearchProvider.label(value)),
-                        ),
-                    ],
-                    onChanged: savingSettings || !webSearchEnabled
-                        ? null
-                        : (value) {
-                            if (value != null) webSearchProvider = value;
-                          },
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: webSearchBaseUrlController,
-                    enabled: !savingSettings && webSearchEnabled,
-                    decoration:
-                        InputDecoration(labelText: strings.searxngBaseUrl),
-                  ),
-                  const SizedBox(height: 12),
                   DropdownButtonFormField<int>(
                     initialValue:
                         AiWebSearchMaxResults.normalize(webSearchMaxResults),
@@ -1658,8 +1627,6 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                         deepSeekThinkingEnabled: deepSeekThinkingEnabled,
                         deepSeekReasoningEffort: deepSeekReasoningEffort,
                         webSearchEnabled: webSearchEnabled,
-                        webSearchProvider: webSearchProvider,
-                        webSearchBaseUrl: webSearchBaseUrlController.text,
                         webSearchMaxResults: webSearchMaxResults,
                         apiKey: apiKeyController.text,
                       );
@@ -1678,8 +1645,6 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                           deepSeekReasoningEffort:
                               pending.deepSeekReasoningEffort,
                           webSearchEnabled: pending.webSearchEnabled,
-                          webSearchProvider: pending.webSearchProvider,
-                          webSearchBaseUrl: pending.webSearchBaseUrl,
                           webSearchMaxResults: pending.webSearchMaxResults,
                           apiKey: pending.apiKey,
                         );
@@ -1715,7 +1680,6 @@ class _LlmChatScreenState extends State<LlmChatScreen>
 
     baseUrlController.dispose();
     modelController.dispose();
-    webSearchBaseUrlController.dispose();
     apiKeyController.dispose();
 
     if (nextSettings == null) return;
@@ -3160,9 +3124,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   late bool _deepSeekThinkingEnabled;
   late String _deepSeekReasoningEffort;
   late bool _webSearchEnabled;
-  late String _webSearchProvider;
   late int _webSearchMaxResults;
-  late final TextEditingController _webSearchBaseUrlController;
   bool _loadingModels = false;
   bool _saving = false;
   String? _errorText;
@@ -3181,17 +3143,13 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _deepSeekThinkingEnabled = widget.initialSettings.deepSeekThinkingEnabled;
     _deepSeekReasoningEffort = widget.initialSettings.deepSeekReasoningEffort;
     _webSearchEnabled = widget.initialSettings.webSearchEnabled;
-    _webSearchProvider = widget.initialSettings.webSearchProvider;
     _webSearchMaxResults = widget.initialSettings.webSearchMaxResults;
-    _webSearchBaseUrlController =
-        TextEditingController(text: widget.initialSettings.webSearchBaseUrl);
   }
 
   @override
   void dispose() {
     _baseUrlController.dispose();
     _modelController.dispose();
-    _webSearchBaseUrlController.dispose();
     _apiKeyController.dispose();
     super.dispose();
   }
@@ -3256,8 +3214,6 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       deepSeekThinkingEnabled: _deepSeekThinkingEnabled,
       deepSeekReasoningEffort: _deepSeekReasoningEffort,
       webSearchEnabled: _webSearchEnabled,
-      webSearchProvider: _webSearchProvider,
-      webSearchBaseUrl: _webSearchBaseUrlController.text,
       webSearchMaxResults: _webSearchMaxResults,
       apiKey: _apiKeyController.text,
     );
@@ -3274,8 +3230,6 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         deepSeekThinkingEnabled: pending.deepSeekThinkingEnabled,
         deepSeekReasoningEffort: pending.deepSeekReasoningEffort,
         webSearchEnabled: pending.webSearchEnabled,
-        webSearchProvider: pending.webSearchProvider,
-        webSearchBaseUrl: pending.webSearchBaseUrl,
         webSearchMaxResults: pending.webSearchMaxResults,
         apiKey: pending.apiKey,
       );
@@ -3481,32 +3435,6 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                     },
             ),
             const SizedBox(height: 14),
-            DropdownButtonFormField<String>(
-              initialValue: AiWebSearchProvider.normalize(_webSearchProvider),
-              isExpanded: true,
-              decoration: InputDecoration(labelText: strings.webSearchProvider),
-              items: [
-                for (final value in AiWebSearchProvider.values)
-                  DropdownMenuItem(
-                    value: value,
-                    child: Text(AiWebSearchProvider.label(value)),
-                  ),
-              ],
-              onChanged: _saving || !_webSearchEnabled
-                  ? null
-                  : (value) {
-                      if (value != null) {
-                        setState(() => _webSearchProvider = value);
-                      }
-                    },
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: _webSearchBaseUrlController,
-              enabled: !_saving && _webSearchEnabled,
-              decoration: InputDecoration(labelText: strings.searxngBaseUrl),
-            ),
-            const SizedBox(height: 14),
             DropdownButtonFormField<int>(
               initialValue: AiWebSearchMaxResults.normalize(
                 _webSearchMaxResults,
@@ -3574,8 +3502,6 @@ class _PendingAiSettings {
   final bool deepSeekThinkingEnabled;
   final String deepSeekReasoningEffort;
   final bool webSearchEnabled;
-  final String webSearchProvider;
-  final String webSearchBaseUrl;
   final int webSearchMaxResults;
   final String apiKey;
 
@@ -3587,8 +3513,6 @@ class _PendingAiSettings {
     required this.deepSeekThinkingEnabled,
     required this.deepSeekReasoningEffort,
     required this.webSearchEnabled,
-    required this.webSearchProvider,
-    required this.webSearchBaseUrl,
     required this.webSearchMaxResults,
     required this.apiKey,
   });
@@ -3623,12 +3547,10 @@ class _AiStrings {
       : '仅在 DeepSeek API 地址下发送。关闭后简单回复会更快。';
   String get deepSeekReasoningEffort =>
       _en ? 'DeepSeek reasoning effort' : 'DeepSeek 思考强度';
-  String get webSearch => _en ? 'Open-source web search' : '开源网络搜索';
+  String get webSearch => _en ? 'Local web search' : '本地网络搜索';
   String get webSearchHint => _en
-      ? 'Expose a web_search tool through your own SearXNG instance. No paid search API key is required.'
-      : '通过自建 SearXNG 实例给模型提供 web_search 工具，不需要付费搜索 API Key。';
-  String get webSearchProvider => _en ? 'Search provider' : '搜索服务';
-  String get searxngBaseUrl => _en ? 'SearXNG base URL' : 'SearXNG 实例地址';
+      ? 'Expose a web_search tool that uses the current chat WebView on this device. No search API key is required.'
+      : '通过当前聊天绑定的本机 WebView 给模型提供 web_search 工具，不需要搜索 API Key。';
   String get webSearchMaxResults => _en ? 'Search results per call' : '每次搜索结果数';
   String get continueAfterTimeoutPrompt => _en
       ? 'Continue the previous answer. If a server command timed out, narrow the scope and continue with a smaller diagnostic step.'

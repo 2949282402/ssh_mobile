@@ -44,6 +44,9 @@ class _ClientWebViewScreenState extends State<ClientWebViewScreen> {
   }
 
   void _syncUrlText() {
+    if (_session.isAiBrowsing && _urlFocusNode.hasFocus) {
+      _urlFocusNode.unfocus();
+    }
     if (_urlFocusNode.hasFocus) return;
     final url = _session.url ?? '';
     if (url.isNotEmpty && _urlController.text != url) {
@@ -77,14 +80,21 @@ class _ClientWebViewScreenState extends State<ClientWebViewScreen> {
           ? _UnsupportedWebView(strings: strings)
           : Column(
               children: [
-                _WebAddressBar(
-                  controller: _urlController,
-                  focusNode: _urlFocusNode,
-                  strings: strings,
-                  onSubmitted: (value) => _service.load(widget.chatId, value),
-                  onBack: _goBack,
-                  onForward: _goForward,
-                  onRefresh: _refresh,
+                AnimatedBuilder(
+                  animation: _service,
+                  builder: (context, _) {
+                    return _WebAddressBar(
+                      controller: _urlController,
+                      focusNode: _urlFocusNode,
+                      strings: strings,
+                      enabled: !_session.isAiBrowsing,
+                      onSubmitted: (value) =>
+                          _service.load(widget.chatId, value),
+                      onBack: _goBack,
+                      onForward: _goForward,
+                      onRefresh: _refresh,
+                    );
+                  },
                 ),
                 AnimatedBuilder(
                   animation: _service,
@@ -102,7 +112,44 @@ class _ClientWebViewScreenState extends State<ClientWebViewScreen> {
                 Expanded(
                   child: Stack(
                     children: [
-                      WebViewWidget(controller: _session.controller!),
+                      AnimatedBuilder(
+                        animation: _service,
+                        child: WebViewWidget(controller: _session.controller!),
+                        builder: (context, child) {
+                          return AbsorbPointer(
+                            absorbing: _session.isAiBrowsing,
+                            child: child,
+                          );
+                        },
+                      ),
+                      AnimatedBuilder(
+                        animation: _service,
+                        builder: (context, _) {
+                          if (!_session.isAiBrowsing) {
+                            return const SizedBox.shrink();
+                          }
+                          return const Positioned.fill(
+                            child: ModalBarrier(
+                              dismissible: false,
+                              color: Colors.transparent,
+                            ),
+                          );
+                        },
+                      ),
+                      AnimatedBuilder(
+                        animation: _service,
+                        builder: (context, _) {
+                          if (!_session.isAiBrowsing) {
+                            return const SizedBox.shrink();
+                          }
+                          return _AiBrowsingBanner(
+                            strings: strings,
+                            label: _session.aiBrowsingLabel,
+                            onInterrupt: () =>
+                                _service.interruptAiBrowsing(widget.chatId),
+                          );
+                        },
+                      ),
                       AnimatedBuilder(
                         animation: _service,
                         builder: (context, _) {
@@ -149,6 +196,7 @@ class _ClientWebViewScreenState extends State<ClientWebViewScreen> {
   }
 
   Future<void> _goBack() async {
+    if (_session.isAiBrowsing) return;
     final controller = _session.controller;
     if (controller == null) return;
     if (await controller.canGoBack()) {
@@ -157,6 +205,7 @@ class _ClientWebViewScreenState extends State<ClientWebViewScreen> {
   }
 
   Future<void> _goForward() async {
+    if (_session.isAiBrowsing) return;
     final controller = _session.controller;
     if (controller == null) return;
     if (await controller.canGoForward()) {
@@ -165,6 +214,7 @@ class _ClientWebViewScreenState extends State<ClientWebViewScreen> {
   }
 
   Future<void> _refresh() async {
+    if (_session.isAiBrowsing) return;
     final controller = _session.controller;
     if (controller == null) return;
     await controller.reload();
@@ -175,6 +225,7 @@ class _WebAddressBar extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
   final _WebViewStrings strings;
+  final bool enabled;
   final ValueChanged<String> onSubmitted;
   final VoidCallback onBack;
   final VoidCallback onForward;
@@ -184,6 +235,7 @@ class _WebAddressBar extends StatelessWidget {
     required this.controller,
     required this.focusNode,
     required this.strings,
+    required this.enabled,
     required this.onSubmitted,
     required this.onBack,
     required this.onForward,
@@ -205,17 +257,18 @@ class _WebAddressBar extends StatelessWidget {
               IconButton(
                 tooltip: strings.back,
                 icon: const Icon(Icons.arrow_back_rounded),
-                onPressed: onBack,
+                onPressed: enabled ? onBack : null,
               ),
               IconButton(
                 tooltip: strings.forward,
                 icon: const Icon(Icons.arrow_forward_rounded),
-                onPressed: onForward,
+                onPressed: enabled ? onForward : null,
               ),
               Expanded(
                 child: TextField(
                   controller: controller,
                   focusNode: focusNode,
+                  enabled: enabled,
                   textInputAction: TextInputAction.go,
                   keyboardType: TextInputType.url,
                   autocorrect: false,
@@ -229,16 +282,86 @@ class _WebAddressBar extends StatelessWidget {
                     suffixIcon: IconButton(
                       tooltip: strings.go,
                       icon: const Icon(Icons.north_east_rounded, size: 18),
-                      onPressed: () => onSubmitted(controller.text),
+                      onPressed:
+                          enabled ? () => onSubmitted(controller.text) : null,
                     ),
                   ),
-                  onSubmitted: onSubmitted,
+                  onSubmitted: enabled ? onSubmitted : null,
                 ),
               ),
               IconButton(
                 tooltip: strings.refresh,
                 icon: const Icon(Icons.refresh_rounded),
-                onPressed: onRefresh,
+                onPressed: enabled ? onRefresh : null,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AiBrowsingBanner extends StatelessWidget {
+  final _WebViewStrings strings;
+  final String? label;
+  final VoidCallback onInterrupt;
+
+  const _AiBrowsingBanner({
+    required this.strings,
+    required this.label,
+    required this.onInterrupt,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final effectiveLabel = label?.trim();
+    return Align(
+      alignment: Alignment.topCenter,
+      child: SafeArea(
+        bottom: false,
+        child: Container(
+          width: double.infinity,
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.96),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: colorScheme.outlineVariant.withValues(alpha: 0.72),
+            ),
+          ),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: colorScheme.primary,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  effectiveLabel == null || effectiveLabel.isEmpty
+                      ? strings.aiBrowsing
+                      : '${strings.aiBrowsing}: $effectiveLabel',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              FilledButton.tonalIcon(
+                onPressed: onInterrupt,
+                icon: const Icon(Icons.stop_circle_rounded, size: 18),
+                label: Text(strings.interruptAiBrowsing),
               ),
             ],
           ),
@@ -301,6 +424,9 @@ class _WebViewStrings {
   String get back => _en ? 'Back' : '后退';
   String get forward => _en ? 'Forward' : '前进';
   String get refresh => _en ? 'Refresh' : '刷新';
+  String get aiBrowsing =>
+      _en ? 'AI is browsing' : 'AI \u6b63\u5728\u6d4f\u89c8';
+  String get interruptAiBrowsing => _en ? 'Interrupt' : '\u6253\u65ad';
   String get unsupported => _en
       ? 'Client WebView is currently available on Android and iOS.'
       : '客户端 WebView 当前支持 Android 和 iOS。';

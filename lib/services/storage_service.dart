@@ -117,8 +117,6 @@ class StorageService extends ChangeNotifier
   static const _aiDeepSeekThinkingEnabledKey = 'ai_deepseek_thinking_enabled';
   static const _aiDeepSeekReasoningEffortKey = 'ai_deepseek_reasoning_effort';
   static const _aiWebSearchEnabledKey = 'ai_web_search_enabled';
-  static const _aiWebSearchProviderKey = 'ai_web_search_provider';
-  static const _aiWebSearchBaseUrlKey = 'ai_web_search_base_url';
   static const _aiWebSearchMaxResultsKey = 'ai_web_search_max_results';
   static const _aiApiKeyKey = 'ai_api_key';
   static const _aiChatsKey = 'ai_chats';
@@ -373,10 +371,6 @@ class StorageService extends ChangeNotifier
     final reasoningEffort = DeepSeekReasoningEffort.normalize(
       _prefs?.getString(_aiDeepSeekReasoningEffortKey),
     );
-    final webSearchProvider = AiWebSearchProvider.normalize(
-      _prefs?.getString(_aiWebSearchProviderKey),
-    );
-    final webSearchBaseUrl = _prefs?.getString(_aiWebSearchBaseUrlKey)?.trim();
     final apiKey = await getAiApiKey();
     return AiConnectionSettings(
       baseUrl:
@@ -387,8 +381,6 @@ class StorageService extends ChangeNotifier
       deepSeekThinkingEnabled: thinkingEnabled,
       deepSeekReasoningEffort: reasoningEffort,
       webSearchEnabled: _prefs?.getBool(_aiWebSearchEnabledKey) ?? false,
-      webSearchProvider: webSearchProvider,
-      webSearchBaseUrl: webSearchBaseUrl ?? '',
       webSearchMaxResults: AiWebSearchMaxResults.normalize(
         _prefs?.getInt(_aiWebSearchMaxResultsKey),
       ),
@@ -433,8 +425,6 @@ class StorageService extends ChangeNotifier
     bool? deepSeekThinkingEnabled,
     String? deepSeekReasoningEffort,
     bool? webSearchEnabled,
-    String? webSearchProvider,
-    String? webSearchBaseUrl,
     int? webSearchMaxResults,
     String? apiKey,
   }) async {
@@ -466,18 +456,6 @@ class StorageService extends ChangeNotifier
     await _prefs!.setBool(
       _aiWebSearchEnabledKey,
       webSearchEnabled ?? (_prefs!.getBool(_aiWebSearchEnabledKey) ?? false),
-    );
-    await _prefs!.setString(
-      _aiWebSearchProviderKey,
-      AiWebSearchProvider.normalize(
-        webSearchProvider ?? _prefs!.getString(_aiWebSearchProviderKey),
-      ),
-    );
-    await _prefs!.setString(
-      _aiWebSearchBaseUrlKey,
-      webSearchBaseUrl?.trim() ??
-          _prefs!.getString(_aiWebSearchBaseUrlKey)?.trim() ??
-          '',
     );
     await _prefs!.setInt(
       _aiWebSearchMaxResultsKey,
@@ -513,7 +491,7 @@ class StorageService extends ChangeNotifier
     AppLogService.instance.info(
       'LLM settings saved',
       details:
-          'baseUrl=$normalizedBaseUrl model=$normalizedModel contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} timeoutSeconds=${AiRequestTimeout.normalize(timeoutSeconds)} deepSeekThinking=${deepSeekThinkingEnabled ?? (_prefs!.getBool(_aiDeepSeekThinkingEnabledKey) ?? true)} deepSeekEffort=${DeepSeekReasoningEffort.normalize(deepSeekReasoningEffort ?? _prefs!.getString(_aiDeepSeekReasoningEffortKey))} webSearch=${webSearchEnabled ?? (_prefs!.getBool(_aiWebSearchEnabledKey) ?? false)} webSearchProvider=${AiWebSearchProvider.normalize(webSearchProvider ?? _prefs!.getString(_aiWebSearchProviderKey))} apiKeyUpdated=$apiKeyUpdated',
+          'baseUrl=$normalizedBaseUrl model=$normalizedModel contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} timeoutSeconds=${AiRequestTimeout.normalize(timeoutSeconds)} deepSeekThinking=${deepSeekThinkingEnabled ?? (_prefs!.getBool(_aiDeepSeekThinkingEnabledKey) ?? true)} deepSeekEffort=${DeepSeekReasoningEffort.normalize(deepSeekReasoningEffort ?? _prefs!.getString(_aiDeepSeekReasoningEffortKey))} webSearch=${webSearchEnabled ?? (_prefs!.getBool(_aiWebSearchEnabledKey) ?? false)} apiKeyUpdated=$apiKeyUpdated',
     );
     // AI settings are loaded on demand by the chat page. Avoid notifying the
     // whole storage tree while the settings dialog is being dismissed; doing so
@@ -664,8 +642,6 @@ class StorageService extends ChangeNotifier
         'deepSeekThinkingEnabled': settings.deepSeekThinkingEnabled,
         'deepSeekReasoningEffort': settings.deepSeekReasoningEffort,
         'webSearchEnabled': settings.webSearchEnabled,
-        'webSearchProvider': settings.webSearchProvider,
-        'webSearchBaseUrl': settings.webSearchBaseUrl,
         'webSearchMaxResults': settings.webSearchMaxResults,
         'apiKey': '',
       },
@@ -728,8 +704,6 @@ class StorageService extends ChangeNotifier
         deepSeekReasoningEffort:
             aiSettings['deepSeekReasoningEffort'] as String?,
         webSearchEnabled: aiSettings['webSearchEnabled'] as bool?,
-        webSearchProvider: aiSettings['webSearchProvider'] as String?,
-        webSearchBaseUrl: aiSettings['webSearchBaseUrl'] as String?,
         webSearchMaxResults:
             (aiSettings['webSearchMaxResults'] as num?)?.toInt(),
         apiKey: '',
@@ -1124,8 +1098,6 @@ class AiConnectionSettings {
   final bool deepSeekThinkingEnabled;
   final String deepSeekReasoningEffort;
   final bool webSearchEnabled;
-  final String webSearchProvider;
-  final String webSearchBaseUrl;
   final int webSearchMaxResults;
   final bool hasApiKey;
 
@@ -1137,26 +1109,9 @@ class AiConnectionSettings {
     required this.deepSeekThinkingEnabled,
     required this.deepSeekReasoningEffort,
     required this.webSearchEnabled,
-    required this.webSearchProvider,
-    required this.webSearchBaseUrl,
     required this.webSearchMaxResults,
     required this.hasApiKey,
   });
-}
-
-class AiWebSearchProvider {
-  static const String searxng = 'searxng';
-  static const String defaultProvider = searxng;
-  static const List<String> values = [searxng];
-
-  static String normalize(String? value) {
-    final normalized = value?.trim().toLowerCase();
-    return values.contains(normalized) ? normalized! : defaultProvider;
-  }
-
-  static String label(String value) {
-    return normalize(value) == searxng ? 'SearXNG' : value;
-  }
 }
 
 class AiWebSearchMaxResults {

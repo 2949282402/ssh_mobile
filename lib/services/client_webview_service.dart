@@ -24,6 +24,7 @@ class ClientWebViewService extends ChangeNotifier {
 
   Future<void> load(String chatId, String input) async {
     final session = sessionFor(chatId);
+    if (session.isAiBrowsing) return;
     final controller = session.controller;
     if (controller == null) return;
     final uri = _normalizeInput(input);
@@ -57,6 +58,164 @@ class ClientWebViewService extends ChangeNotifier {
       notify: true,
       preferCachedOnFailure: true,
     );
+  }
+
+  Future<ClientWebViewSearchResult> searchWeb(
+    String chatId,
+    String query, {
+    int maxResults = 5,
+  }) async {
+    final trimmedQuery = query.trim();
+    final effectiveMaxResults = maxResults.clamp(1, 10).toInt();
+    if (trimmedQuery.isEmpty) {
+      return ClientWebViewSearchResult(
+        chatId: chatId,
+        supported: _supportsWebView,
+        query: trimmedQuery,
+        results: const [],
+        error: 'Search query is empty.',
+      );
+    }
+
+    final session = sessionFor(chatId);
+    final controller = session.controller;
+    if (!session.supported || controller == null) {
+      return ClientWebViewSearchResult(
+        chatId: chatId,
+        supported: false,
+        query: trimmedQuery,
+        results: const [],
+        error:
+            'Client WebView search is only available on supported mobile targets.',
+      );
+    }
+
+    final uri = _searchUri(trimmedQuery);
+    final token = _beginAiBrowsing(
+      session,
+      'Searching "$trimmedQuery"',
+    );
+    try {
+      final now = DateTime.now();
+      session
+        .._lastError = null
+        .._url = uri.toString()
+        .._isLoading = true
+        .._progress = 0
+        .._updatedAt = now;
+      notifyListeners();
+      await controller.loadRequest(uri);
+      if (!_isAiBrowsingCurrent(session, token)) {
+        return _interruptedSearchResult(session, trimmedQuery);
+      }
+      await _waitForPageReady(session, aiBrowsingToken: token);
+      if (!_isCurrentSession(session)) {
+        return ClientWebViewSearchResult(
+          chatId: chatId,
+          supported: true,
+          query: trimmedQuery,
+          results: const [],
+          error: 'WebView session was closed before search finished.',
+        );
+      }
+      if (!_isAiBrowsingCurrent(session, token)) {
+        return _interruptedSearchResult(session, trimmedQuery);
+      }
+
+      final raw = await controller.runJavaScriptReturningResult(
+        _searchResultsScript,
+      );
+      if (!_isCurrentSession(session)) {
+        return ClientWebViewSearchResult(
+          chatId: chatId,
+          supported: true,
+          query: trimmedQuery,
+          results: const [],
+          error: 'WebView session was closed before search results were read.',
+        );
+      }
+      if (!_isAiBrowsingCurrent(session, token)) {
+        return _interruptedSearchResult(session, trimmedQuery);
+      }
+      final payload = _decodeJavaScriptPayload(raw);
+      final title = (payload['title'] as String?)?.trim();
+      final url = (payload['url'] as String?)?.trim();
+      final rawResults = payload['results'];
+      final results = <ClientWebViewSearchItem>[];
+      if (rawResults is List) {
+        for (final item in rawResults) {
+          if (item is! Map) continue;
+          final result = ClientWebViewSearchItem.fromJson(item);
+          if (result.title.isEmpty || result.url.isEmpty) continue;
+          results.add(result);
+          if (results.length >= effectiveMaxResults) break;
+        }
+      }
+      final capturedAt = DateTime.now();
+      session
+        .._title = title?.isNotEmpty == true ? title : session.title
+        .._url = url?.isNotEmpty == true ? url : session.url
+        .._isLoading = false
+        .._progress = 100
+        .._lastError = null
+        .._updatedAt = capturedAt;
+      notifyListeners();
+      return ClientWebViewSearchResult(
+        chatId: chatId,
+        supported: true,
+        query: trimmedQuery,
+        searchUrl: session.url,
+        title: session.title,
+        results: results,
+        capturedAt: capturedAt,
+        error: results.isEmpty
+            ? 'No readable search results were found on the loaded page.'
+            : null,
+      );
+    } catch (e, stackTrace) {
+      if (!_isCurrentSession(session)) {
+        return ClientWebViewSearchResult(
+          chatId: chatId,
+          supported: true,
+          query: trimmedQuery,
+          results: const [],
+          error: 'WebView session was closed before search finished.',
+        );
+      }
+      AppLogService.instance.error(
+        'Client WebView search failed',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'chatId=${session.chatId} query=$trimmedQuery',
+      );
+      session
+        .._isLoading = false
+        .._lastError = e.toString()
+        .._updatedAt = DateTime.now();
+      notifyListeners();
+      return ClientWebViewSearchResult(
+        chatId: chatId,
+        supported: true,
+        query: trimmedQuery,
+        searchUrl: session.url,
+        title: session.title,
+        results: const [],
+        error: e.toString(),
+      );
+    } finally {
+      _endAiBrowsing(session, token);
+    }
+  }
+
+  void interruptAiBrowsing(String chatId) {
+    final session = _sessions[chatId];
+    if (session == null || !session.isAiBrowsing) return;
+    session
+      .._aiBrowsingToken = null
+      .._aiBrowsingLabel = null
+      .._aiBrowsingStartedAt = null
+      .._updatedAt = DateTime.now();
+    notifyListeners();
   }
 
   void clearSession(String chatId) {
@@ -290,6 +449,78 @@ class ClientWebViewService extends ChangeNotifier {
     if (_isCurrentSession(session)) notifyListeners();
   }
 
+  Future<void> _waitForPageReady(
+    ClientWebViewSession session, {
+    Duration timeout = const Duration(seconds: 12),
+    String? aiBrowsingToken,
+  }) async {
+    final controller = session.controller;
+    if (controller == null) return;
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      if (!_isCurrentSession(session)) return;
+      if (aiBrowsingToken != null &&
+          !_isAiBrowsingCurrent(session, aiBrowsingToken)) {
+        return;
+      }
+      try {
+        final raw = await controller
+            .runJavaScriptReturningResult('document.readyState')
+            .timeout(const Duration(seconds: 1));
+        final state = _decodeJavaScriptString(raw).toLowerCase();
+        if (state == 'complete' || state == 'interactive') {
+          await Future<void>.delayed(const Duration(milliseconds: 600));
+          return;
+        }
+      } catch (_) {
+        // The page may still be navigating; retry until the timeout.
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+  }
+
+  String _beginAiBrowsing(ClientWebViewSession session, String label) {
+    final token = '${DateTime.now().microsecondsSinceEpoch}';
+    session
+      .._aiBrowsingToken = token
+      .._aiBrowsingLabel = label
+      .._aiBrowsingStartedAt = DateTime.now()
+      .._updatedAt = DateTime.now();
+    notifyListeners();
+    return token;
+  }
+
+  void _endAiBrowsing(ClientWebViewSession session, String token) {
+    if (!_isCurrentSession(session) || session._aiBrowsingToken != token) {
+      return;
+    }
+    session
+      .._aiBrowsingToken = null
+      .._aiBrowsingLabel = null
+      .._aiBrowsingStartedAt = null
+      .._updatedAt = DateTime.now();
+    notifyListeners();
+  }
+
+  bool _isAiBrowsingCurrent(ClientWebViewSession session, String token) {
+    return _isCurrentSession(session) && session._aiBrowsingToken == token;
+  }
+
+  ClientWebViewSearchResult _interruptedSearchResult(
+    ClientWebViewSession session,
+    String query,
+  ) {
+    return ClientWebViewSearchResult(
+      chatId: session.chatId,
+      supported: session.supported,
+      query: query,
+      searchUrl: session.url,
+      title: session.title,
+      results: const [],
+      error: 'AI WebView browsing was interrupted by the user.',
+    );
+  }
+
   ClientWebViewSnapshot _closedSnapshot(
     ClientWebViewSession session,
     int maxChars,
@@ -323,6 +554,10 @@ class ClientWebViewService extends ChangeNotifier {
     return Uri.https('www.bing.com', '/search', {'q': trimmed});
   }
 
+  Uri _searchUri(String query) {
+    return Uri.https('www.bing.com', '/search', {'q': query});
+  }
+
   Map<String, dynamic> _decodeJavaScriptPayload(Object raw) {
     Object decoded = raw;
     if (decoded is String) {
@@ -338,6 +573,18 @@ class ClientWebViewService extends ChangeNotifier {
       return decoded.map((key, value) => MapEntry(key.toString(), value));
     }
     throw FormatException('Unexpected WebView text payload: $raw');
+  }
+
+  String _decodeJavaScriptString(Object raw) {
+    if (raw is String) {
+      final trimmed = raw.trim();
+      if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+        final decoded = jsonDecode(trimmed);
+        return decoded is String ? decoded : '$decoded';
+      }
+      return trimmed;
+    }
+    return '$raw';
   }
 
   _TruncatedText _truncate(String text, int maxChars) {
@@ -369,6 +616,9 @@ class ClientWebViewSession {
   int _lastTextLength = 0;
   bool _lastTextTruncated = false;
   DateTime? _lastTextCapturedAt;
+  String? _aiBrowsingToken;
+  String? _aiBrowsingLabel;
+  DateTime? _aiBrowsingStartedAt;
   DateTime _updatedAt;
 
   ClientWebViewSession._({
@@ -390,6 +640,9 @@ class ClientWebViewSession {
   int get lastTextLength => _lastTextLength;
   bool get lastTextTruncated => _lastTextTruncated;
   DateTime? get lastTextCapturedAt => _lastTextCapturedAt;
+  bool get isAiBrowsing => _aiBrowsingToken != null;
+  String? get aiBrowsingLabel => _aiBrowsingLabel;
+  DateTime? get aiBrowsingStartedAt => _aiBrowsingStartedAt;
   DateTime get updatedAt => _updatedAt;
 }
 
@@ -441,6 +694,76 @@ class ClientWebViewSnapshot {
   }
 }
 
+class ClientWebViewSearchResult {
+  final String chatId;
+  final bool supported;
+  final String query;
+  final String? searchUrl;
+  final String? title;
+  final List<ClientWebViewSearchItem> results;
+  final DateTime? capturedAt;
+  final String? error;
+
+  const ClientWebViewSearchResult({
+    required this.chatId,
+    required this.supported,
+    required this.query,
+    required this.results,
+    this.searchUrl,
+    this.title,
+    this.capturedAt,
+    this.error,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'execution': 'client',
+      'target': 'client_webview',
+      'provider': 'local_webview',
+      'engine': 'bing',
+      'chatSessionId': chatId,
+      'supported': supported,
+      'query': query,
+      'searchUrl': searchUrl,
+      'title': title,
+      'results': results.map((item) => item.toJson()).toList(),
+      'resultCount': results.length,
+      'capturedAtLocal': capturedAt?.toIso8601String(),
+      if (error != null) 'error': error,
+      'note':
+          'Search was performed by the SSH Mobile client WebView for the current chat session. Result extraction reads visible search-result titles, links, and snippets from the loaded search page.',
+    };
+  }
+}
+
+class ClientWebViewSearchItem {
+  final String title;
+  final String url;
+  final String snippet;
+
+  const ClientWebViewSearchItem({
+    required this.title,
+    required this.url,
+    required this.snippet,
+  });
+
+  factory ClientWebViewSearchItem.fromJson(Map<dynamic, dynamic> json) {
+    return ClientWebViewSearchItem(
+      title: '${json['title'] ?? ''}'.trim(),
+      url: '${json['url'] ?? ''}'.trim(),
+      snippet: '${json['snippet'] ?? ''}'.trim(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'title': title,
+      'url': url,
+      if (snippet.isNotEmpty) 'snippet': snippet,
+    };
+  }
+}
+
 class _TruncatedText {
   final String value;
   final bool truncated;
@@ -455,5 +778,106 @@ const String _pageTextScript = r'''
   const body = document.body;
   const text = body ? (body.innerText || '') : '';
   return JSON.stringify({ title, url, text });
+})()
+''';
+
+const String _searchResultsScript = r'''
+(() => {
+  const clean = (value) => (value || '').replace(/\s+/g, ' ').trim();
+  const visible = (el) => {
+    if (!el) return false;
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+  const unwrapUrl = (href) => {
+    try {
+      const parsed = new URL(href, window.location.href);
+      if (parsed.hostname.includes('bing.com') && parsed.pathname.includes('/ck/')) {
+        const encoded = parsed.searchParams.get('u');
+        if (encoded) {
+          let value = encoded;
+          if (value.startsWith('a1')) value = value.substring(2);
+          try {
+            const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+            return atob(normalized);
+          } catch (_) {
+            return decodeURIComponent(encoded);
+          }
+        }
+      }
+      return parsed.href;
+    } catch (_) {
+      return '';
+    }
+  };
+  const useful = (url, title) => {
+    if (!url || !title || title.length < 3) return false;
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (_) {
+      return false;
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    const lowerTitle = title.toLowerCase();
+    const junk = [
+      'images', 'videos', 'maps', 'news', 'shopping', 'settings', 'sign in',
+      'privacy', 'terms', 'next', 'previous', 'feedback'
+    ];
+    if (junk.includes(lowerTitle)) return false;
+    const host = parsed.hostname.replace(/^www\./, '');
+    const currentHost = window.location.hostname.replace(/^www\./, '');
+    if (host === currentHost) {
+      const path = parsed.pathname.toLowerCase();
+      if (path === '/' || path.includes('/search') || path.includes('/images')) {
+        return false;
+      }
+    }
+    return true;
+  };
+  const results = [];
+  const seen = new Set();
+  const addResult = (anchor, container) => {
+    if (!anchor || !visible(anchor)) return;
+    const url = unwrapUrl(anchor.href);
+    const title = clean(anchor.innerText || anchor.textContent);
+    if (!useful(url, title) || seen.has(url)) return;
+    seen.add(url);
+    const snippetNode = container ? container.querySelector(
+      '.b_caption p, .b_snippet, p, [class*="snippet"], [class*="content"]'
+    ) : null;
+    let snippet = clean(snippetNode && visible(snippetNode) ? snippetNode.innerText : '');
+    if (!snippet && container) {
+      snippet = clean(container.innerText).replace(title, '').trim();
+    }
+    if (snippet.length > 500) snippet = snippet.substring(0, 500);
+    results.push({ title, url, snippet });
+  };
+  const containers = Array.from(document.querySelectorAll([
+    'li.b_algo',
+    'ol#b_results > li',
+    '[data-testid="result"]',
+    'article',
+    '.result',
+    '.g'
+  ].join(',')));
+  for (const container of containers) {
+    const anchor = container.querySelector('h2 a[href], h3 a[href], a[href]');
+    addResult(anchor, container);
+    if (results.length >= 12) break;
+  }
+  if (results.length < 3) {
+    for (const anchor of Array.from(document.querySelectorAll('a[href]'))) {
+      addResult(anchor, anchor.closest('li, article, div') || anchor.parentElement);
+      if (results.length >= 12) break;
+    }
+  }
+  return JSON.stringify({
+    title: document.title || '',
+    url: window.location ? window.location.href : '',
+    results
+  });
 })()
 ''';

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import '../models/connection.dart';
 import 'app_log_service.dart';
@@ -65,11 +64,11 @@ class AiToolService implements AiToolExecutor {
   Future<List<AiTool>> tools() async {
     final searchSettings = await storageService.loadAiConnectionSettings();
     return [
-      if (_webSearchConfigured(searchSettings))
+      if (searchSettings.webSearchEnabled)
         AiTool(
           name: 'web_search',
           description:
-              'Search the public web through the user-configured open-source SearXNG instance. Return cited result URLs. Use this when the user asks for current or external information.',
+              'Search the public web from the SSH Mobile client WebView bound to the current chat session. Return cited result URLs. Use this when the user asks for current or external information.',
           properties: {
             'query': _string('Search query. Keep it concise.'),
             'limit': {
@@ -351,10 +350,23 @@ class AiToolService implements AiToolExecutor {
 
   Future<String> _webSearch(Map<String, dynamic> arguments) async {
     final settings = await storageService.loadAiConnectionSettings();
-    if (!_webSearchConfigured(settings)) {
+    if (!settings.webSearchEnabled) {
       return jsonEncode({
+        'execution': 'client',
+        'target': 'client_webview',
+        'provider': 'local_webview',
+        'error': 'Web search is not enabled in LLM settings.',
+      });
+    }
+    final chatId = clientWebViewSessionId;
+    if (chatId == null || chatId.trim().isEmpty) {
+      return jsonEncode({
+        'execution': 'client',
+        'target': 'client_webview',
+        'provider': 'local_webview',
+        'hasPage': false,
         'error':
-            'Web search is not configured. Enable SearXNG in LLM settings first.',
+            'No current chat session is bound to this tool call. Open or use the WebView from the current AI chat first.',
       });
     }
     final query = _arg(arguments, 'query');
@@ -362,72 +374,12 @@ class AiToolService implements AiToolExecutor {
     final limit = requestedLimit is num
         ? requestedLimit.toInt().clamp(1, settings.webSearchMaxResults)
         : settings.webSearchMaxResults;
-    final base = Uri.tryParse(settings.webSearchBaseUrl.trim());
-    if (base == null || !base.hasScheme || base.host.isEmpty) {
-      return jsonEncode({
-        'error': 'Invalid SearXNG base URL.',
-        'baseUrl': settings.webSearchBaseUrl,
-      });
-    }
-
-    final endpoint = _buildSearxngSearchUri(base, query);
-    final client = HttpClient();
-    try {
-      final request = await client.getUrl(endpoint).timeout(
-            const Duration(seconds: 8),
-          );
-      request.headers
-        ..set(HttpHeaders.acceptHeader, 'application/json')
-        ..set(HttpHeaders.userAgentHeader, 'SSH Mobile AI Search');
-      final response = await request.close().timeout(
-            const Duration(seconds: 12),
-          );
-      final body = await response.transform(utf8.decoder).join();
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        return jsonEncode({
-          'error': 'SearXNG search failed with HTTP ${response.statusCode}.',
-          'body': _truncate(body),
-        });
-      }
-      final decoded = jsonDecode(body);
-      if (decoded is! Map<String, dynamic>) {
-        return jsonEncode({'error': 'Unexpected SearXNG response format.'});
-      }
-      final rawResults = decoded['results'];
-      final results = <Map<String, dynamic>>[];
-      if (rawResults is List) {
-        for (final item in rawResults) {
-          if (item is! Map) continue;
-          final url = '${item['url'] ?? ''}'.trim();
-          final title = '${item['title'] ?? ''}'.trim();
-          if (url.isEmpty || title.isEmpty) continue;
-          results.add({
-            'title': title,
-            'url': url,
-            'snippet': '${item['content'] ?? item['snippet'] ?? ''}'.trim(),
-            'engine': '${item['engine'] ?? ''}'.trim(),
-            'publishedDate': '${item['publishedDate'] ?? ''}'.trim(),
-          });
-          if (results.length >= limit) break;
-        }
-      }
-      return jsonEncode({
-        'provider': settings.webSearchProvider,
-        'query': query,
-        'results': results,
-        'resultCount': results.length,
-        if (results.isEmpty)
-          'note':
-              'No results returned. Check the SearXNG instance, enabled engines, or JSON format support.',
-      });
-    } on TimeoutException {
-      return jsonEncode({
-        'error': 'SearXNG search timed out.',
-        'query': query,
-      });
-    } finally {
-      client.close(force: true);
-    }
+    final result = await clientWebViewService.searchWeb(
+      chatId,
+      query,
+      maxResults: limit,
+    );
+    return jsonEncode(result.toJson());
   }
 
   Future<String> _clientSetAlarm(Map<String, dynamic> arguments) async {
@@ -936,25 +888,6 @@ class AiToolService implements AiToolExecutor {
       'windowsStatus': parsed,
       if (result.stderr.trim().isNotEmpty) 'stderr': _truncate(result.stderr),
     });
-  }
-
-  bool _webSearchConfigured(AiConnectionSettings settings) {
-    return settings.webSearchEnabled &&
-        settings.webSearchProvider == AiWebSearchProvider.searxng &&
-        settings.webSearchBaseUrl.trim().isNotEmpty;
-  }
-
-  Uri _buildSearxngSearchUri(Uri base, String query) {
-    final basePath = base.path.endsWith('/')
-        ? base.path.substring(0, base.path.length - 1)
-        : base.path;
-    final searchPath = basePath.endsWith('/search')
-        ? basePath
-        : '$basePath/search'.replaceFirst(RegExp(r'^//+'), '/');
-    final params = Map<String, String>.from(base.queryParameters)
-      ..['q'] = query
-      ..['format'] = 'json';
-    return base.replace(path: searchPath, queryParameters: params);
   }
 
   /// 三级命令安全审查。
