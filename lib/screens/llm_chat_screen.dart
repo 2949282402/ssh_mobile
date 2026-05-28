@@ -3245,8 +3245,10 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   late String _deepSeekReasoningEffort;
   late bool _webSearchEnabled;
   late int _webSearchMaxResults;
+  late bool _hasSavedApiKey;
   bool _loadingModels = false;
   bool _saving = false;
+  bool _clearSavedApiKey = false;
   String? _errorText;
 
   @override
@@ -3264,6 +3266,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _deepSeekReasoningEffort = widget.initialSettings.deepSeekReasoningEffort;
     _webSearchEnabled = widget.initialSettings.webSearchEnabled;
     _webSearchMaxResults = widget.initialSettings.webSearchMaxResults;
+    _hasSavedApiKey = widget.initialSettings.hasApiKey;
   }
 
   @override
@@ -3337,6 +3340,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       webSearchMaxResults: _webSearchMaxResults,
       apiKey: _apiKeyController.text,
     );
+    final clearApiKey = _clearSavedApiKey && pending.apiKey.trim().isEmpty;
     setState(() {
       _saving = true;
       _errorText = null;
@@ -3352,6 +3356,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         webSearchEnabled: pending.webSearchEnabled,
         webSearchMaxResults: pending.webSearchMaxResults,
         apiKey: pending.apiKey,
+        clearApiKey: clearApiKey,
       );
       if (!mounted) return;
       Navigator.pop(context, pending);
@@ -3582,12 +3587,51 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
               controller: _apiKeyController,
               enabled: !_saving,
               obscureText: true,
+              onChanged: (value) {
+                if (_clearSavedApiKey && value.trim().isNotEmpty) {
+                  setState(() => _clearSavedApiKey = false);
+                }
+              },
               decoration: InputDecoration(
-                labelText: widget.initialSettings.hasApiKey
+                labelText: _hasSavedApiKey
                     ? strings.apiKeySaved
                     : strings.apiKeyRequired,
+                helperText: _hasSavedApiKey
+                    ? (_clearSavedApiKey
+                        ? strings.apiKeyClearPending
+                        : strings.apiKeyReplaceHint)
+                    : null,
+                helperMaxLines: 2,
               ),
             ),
+            if (_hasSavedApiKey) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _saving
+                      ? null
+                      : () {
+                          setState(() {
+                            _clearSavedApiKey = !_clearSavedApiKey;
+                            if (_clearSavedApiKey) {
+                              _apiKeyController.clear();
+                            }
+                          });
+                        },
+                  icon: Icon(
+                    _clearSavedApiKey
+                        ? Icons.undo_rounded
+                        : Icons.delete_outline_rounded,
+                  ),
+                  label: Text(
+                    _clearSavedApiKey
+                        ? strings.keepSavedApiKey
+                        : strings.clearSavedApiKey,
+                  ),
+                ),
+              ),
+            ],
             if (_errorText != null) ...[
               const SizedBox(height: 14),
               DecoratedBox(
@@ -3680,6 +3724,14 @@ class _AiStrings {
   String get apiKeySaved =>
       _en ? 'API Key (saved, leave blank)' : 'API Key（已保存，留空不改）';
   String get apiKeyRequired => _en ? 'API Key' : 'API Key';
+  String get apiKeyReplaceHint => _en
+      ? 'Leave this blank to keep the saved key, or enter a new key to replace it.'
+      : '留空会保留已保存的 Key，输入新 Key 会替换当前 Key。';
+  String get apiKeyClearPending => _en
+      ? 'The saved API key will be removed when you save.'
+      : '保存后会清除当前已保存的 API Key。';
+  String get clearSavedApiKey => _en ? 'Clear saved API key' : '清除已保存的 API Key';
+  String get keepSavedApiKey => _en ? 'Keep saved API key' : '保留已保存的 API Key';
   String get close => _en ? 'Close' : '关闭';
   String get cancel => _en ? 'Cancel' : '取消';
   String get save => _en ? 'Save' : '保存';

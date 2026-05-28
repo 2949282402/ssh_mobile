@@ -427,6 +427,7 @@ class StorageService extends ChangeNotifier
     bool? webSearchEnabled,
     int? webSearchMaxResults,
     String? apiKey,
+    bool clearApiKey = false,
   }) async {
     if (!_initialized || _prefs == null) return;
     final normalizedBaseUrl = baseUrl.trim();
@@ -464,29 +465,31 @@ class StorageService extends ChangeNotifier
       ),
     );
     var apiKeyUpdated = false;
-    if (apiKey != null) {
+    final hasReplacementApiKey = apiKey?.trim().isNotEmpty == true;
+    if (hasReplacementApiKey) {
+      final replacementApiKey = apiKey!;
       final normalizedApiKey = _normalizeAiApiKey(apiKey);
-      if (apiKey.trim().isNotEmpty && normalizedApiKey == null) {
+      if (normalizedApiKey == null) {
         AppLogService.instance.warning(
           'LLM settings rejected invalid API key',
           details:
-              'baseUrl=$normalizedBaseUrl model=$normalizedModel inputLength=${apiKey.length}',
+              'baseUrl=$normalizedBaseUrl model=$normalizedModel inputLength=${replacementApiKey.length}',
         );
         throw const FormatException('Invalid API key format.');
       }
-      if (normalizedApiKey != null) {
-        await _secureStorage.write(key: _aiApiKeyKey, value: normalizedApiKey);
-        if (_secretCacheEnabled) {
-          _secretCache[_memoryAiApiKeyCacheKey] = _MemorySecret(
-            value: normalizedApiKey,
-            loadedAt: DateTime.now(),
-          );
-        }
-        apiKeyUpdated = true;
-      } else {
-        await _clearAiApiKeySecret();
-        apiKeyUpdated = true;
+      await _secureStorage.write(key: _aiApiKeyKey, value: normalizedApiKey);
+      if (_secretCacheEnabled) {
+        _secretCache[_memoryAiApiKeyCacheKey] = _MemorySecret(
+          value: normalizedApiKey,
+          loadedAt: DateTime.now(),
+        );
       }
+      apiKeyUpdated = true;
+    } else if (clearApiKey) {
+      // The settings UI keeps this field blank when a secret already exists, so
+      // deletion must be an explicit action rather than an empty-string save.
+      await _clearAiApiKeySecret();
+      apiKeyUpdated = true;
     }
     AppLogService.instance.info(
       'LLM settings saved',
@@ -706,7 +709,7 @@ class StorageService extends ChangeNotifier
         webSearchEnabled: aiSettings['webSearchEnabled'] as bool?,
         webSearchMaxResults:
             (aiSettings['webSearchMaxResults'] as num?)?.toInt(),
-        apiKey: '',
+        clearApiKey: true,
       );
     } else {
       await _clearAiApiKeySecret();

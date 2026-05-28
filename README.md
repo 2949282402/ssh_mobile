@@ -461,7 +461,7 @@ SFTP 页支持：
 
 ### AI Assistant
 
-AI 页通过 OpenAI-compatible API 调用大模型。模型配置统一在“大模型设置”页面中完成，包括 Base URL、API Key、模型选择、上下文窗口大小和请求超时时间。请求超时默认 60 秒，可在 30 秒到 300 秒之间选择；超时后聊天页会保留错误消息，并提供“继续”按钮，让用户从当前上下文继续而不是重新生成。默认模型列表包含：
+AI 页通过 OpenAI-compatible API 调用大模型。模型配置统一在“大模型设置”页面中完成，包括 Base URL、API Key、模型选择、上下文窗口大小和请求超时时间。请求超时默认 60 秒，可在 30 秒到 300 秒之间选择；超时后聊天页会保留错误消息，并提供“继续”按钮，让用户从当前上下文继续而不是重新生成。If an API key is already saved, leaving the field blank keeps the current key unchanged; use the clear action in LLM settings when you intentionally want to remove it. 默认模型列表包含：
 
 - `deepseek-v4-flash`
 - `deepseek-v4-pro`

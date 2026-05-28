@@ -26,7 +26,7 @@ void main() {
     storage.dispose();
   });
 
-  test('blank API key clears secure storage and memory cache', () async {
+  test('blank API key preserves secure storage and memory cache', () async {
     storage = await initializedStorage();
 
     await storage.saveAiConnectionSettings(
@@ -40,6 +40,25 @@ void main() {
       baseUrl: 'https://api.example.com',
       model: 'demo-model',
       apiKey: '',
+    );
+
+    expect(await storage.getAiApiKey(), 'sk-existing');
+  });
+
+  test('clearApiKey clears secure storage and memory cache', () async {
+    storage = await initializedStorage();
+
+    await storage.saveAiConnectionSettings(
+      baseUrl: 'https://api.example.com',
+      model: 'demo-model',
+      apiKey: 'sk-existing',
+    );
+    expect(await storage.getAiApiKey(), 'sk-existing');
+
+    await storage.saveAiConnectionSettings(
+      baseUrl: 'https://api.example.com',
+      model: 'demo-model',
+      clearApiKey: true,
     );
 
     expect(await storage.getAiApiKey(), isNull);

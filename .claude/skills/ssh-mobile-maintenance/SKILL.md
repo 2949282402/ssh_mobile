@@ -93,6 +93,9 @@ or maintenance lesson should be shared across Codex and Claude Code sessions.
 - Keep model configuration in the LLM settings dialog. Do not add another model
   selector on the chat page. On mobile, prefer the dedicated settings page over
   an `AlertDialog` so saving API keys does not collide with route teardown.
+- In LLM settings, a blank API key field means "keep the saved key". Require an
+  explicit clear action before deleting the stored API key so model or base URL
+  changes cannot wipe credentials accidentally.
 - Keep AI server tools safe by default: read-only diagnostics run directly, any
   command that may write or change server state must pause for explicit human
   approval in the chat page, and credential exposure remains blocked.
