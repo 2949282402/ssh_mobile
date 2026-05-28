@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/models/connection.dart';
 import 'package:ssh_mobile/services/ai_tool_service.dart';
+import 'package:ssh_mobile/services/client_webview_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
@@ -122,5 +123,17 @@ void main() {
 
     expect(decoded['provider'], 'local_webview');
     expect(decoded['error'], contains('No current chat session'));
+  });
+
+  test('local web search payload identifies lightweight engine', () {
+    final payload = const ClientWebViewSearchResult(
+      chatId: 'chat-1',
+      supported: true,
+      query: 'flutter',
+      results: [],
+    ).toJson();
+
+    expect(payload['provider'], 'local_webview');
+    expect(payload['engine'], 'duckduckgo_html');
   });
 }

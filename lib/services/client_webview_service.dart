@@ -9,7 +9,7 @@ import 'app_log_service.dart';
 class ClientWebViewService extends ChangeNotifier {
   static final ClientWebViewService instance = ClientWebViewService._();
 
-  static const String defaultUrl = 'https://www.bing.com';
+  static const String defaultUrl = 'https://html.duckduckgo.com/html/';
   static const int defaultMaxChars = 40000;
 
   final Map<String, ClientWebViewSession> _sessions = {};
@@ -122,8 +122,9 @@ class ClientWebViewService extends ChangeNotifier {
         return _interruptedSearchResult(session, trimmedQuery);
       }
 
-      final raw = await controller.runJavaScriptReturningResult(
-        _searchResultsScript,
+      final payload = await _waitForSearchResults(
+        session,
+        aiBrowsingToken: token,
       );
       if (!_isCurrentSession(session)) {
         return ClientWebViewSearchResult(
@@ -137,7 +138,6 @@ class ClientWebViewService extends ChangeNotifier {
       if (!_isAiBrowsingCurrent(session, token)) {
         return _interruptedSearchResult(session, trimmedQuery);
       }
-      final payload = _decodeJavaScriptPayload(raw);
       final title = (payload['title'] as String?)?.trim();
       final url = (payload['url'] as String?)?.trim();
       final rawResults = payload['results'];
@@ -479,6 +479,36 @@ class ClientWebViewService extends ChangeNotifier {
     }
   }
 
+  Future<Map<String, dynamic>> _waitForSearchResults(
+    ClientWebViewSession session, {
+    required String aiBrowsingToken,
+    Duration timeout = const Duration(seconds: 14),
+  }) async {
+    final controller = session.controller;
+    if (controller == null) return const {};
+    final deadline = DateTime.now().add(timeout);
+    Map<String, dynamic>? lastPayload;
+    while (DateTime.now().isBefore(deadline)) {
+      if (!_isAiBrowsingCurrent(session, aiBrowsingToken)) return const {};
+      try {
+        final raw = await controller
+            .runJavaScriptReturningResult(_searchResultsScript)
+            .timeout(const Duration(seconds: 2));
+        if (!_isAiBrowsingCurrent(session, aiBrowsingToken)) return const {};
+        final payload = _decodeJavaScriptPayload(raw);
+        lastPayload = payload;
+        final rawResults = payload['results'];
+        if (rawResults is List && rawResults.isNotEmpty) {
+          return payload;
+        }
+      } catch (_) {
+        // The search page may still be settling or replacing its DOM.
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 550));
+    }
+    return lastPayload ?? const {};
+  }
+
   String _beginAiBrowsing(ClientWebViewSession session, String label) {
     final token = '${DateTime.now().microsecondsSinceEpoch}';
     session
@@ -551,11 +581,11 @@ class ClientWebViewService extends ChangeNotifier {
     if (!trimmed.contains(' ') && trimmed.contains('.')) {
       return Uri.parse('https://$trimmed');
     }
-    return Uri.https('www.bing.com', '/search', {'q': trimmed});
+    return _searchUri(trimmed);
   }
 
   Uri _searchUri(String query) {
-    return Uri.https('www.bing.com', '/search', {'q': query});
+    return Uri.https('html.duckduckgo.com', '/html/', {'q': query});
   }
 
   Map<String, dynamic> _decodeJavaScriptPayload(Object raw) {
@@ -720,7 +750,7 @@ class ClientWebViewSearchResult {
       'execution': 'client',
       'target': 'client_webview',
       'provider': 'local_webview',
-      'engine': 'bing',
+      'engine': 'duckduckgo_html',
       'chatSessionId': chatId,
       'supported': supported,
       'query': query,
@@ -731,7 +761,7 @@ class ClientWebViewSearchResult {
       'capturedAtLocal': capturedAt?.toIso8601String(),
       if (error != null) 'error': error,
       'note':
-          'Search was performed by the SSH Mobile client WebView for the current chat session. Result extraction reads visible search-result titles, links, and snippets from the loaded search page.',
+          'Search was performed by the SSH Mobile client WebView for the current chat session. Result extraction reads search-result titles, links, and snippets from a lightweight search page.',
     };
   }
 }
@@ -784,16 +814,23 @@ const String _pageTextScript = r'''
 const String _searchResultsScript = r'''
 (() => {
   const clean = (value) => (value || '').replace(/\s+/g, ' ').trim();
-  const visible = (el) => {
+  const notHidden = (el) => {
     if (!el) return false;
     const style = window.getComputedStyle(el);
-    if (style.display === 'none' || style.visibility === 'hidden') return false;
-    const rect = el.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
+    return style.display !== 'none' && style.visibility !== 'hidden';
   };
   const unwrapUrl = (href) => {
     try {
       const parsed = new URL(href, window.location.href);
+      const host = parsed.hostname.replace(/^www\./, '').toLowerCase();
+      const duckTarget = parsed.searchParams.get('uddg');
+      if (host.endsWith('duckduckgo.com') && duckTarget) {
+        try {
+          return decodeURIComponent(duckTarget);
+        } catch (_) {
+          return duckTarget;
+        }
+      }
       if (parsed.hostname.includes('bing.com') && parsed.pathname.includes('/ck/')) {
         const encoded = parsed.searchParams.get('u');
         if (encoded) {
@@ -824,13 +861,37 @@ const String _searchResultsScript = r'''
     const lowerTitle = title.toLowerCase();
     const junk = [
       'images', 'videos', 'maps', 'news', 'shopping', 'settings', 'sign in',
-      'privacy', 'terms', 'next', 'previous', 'feedback'
+      'privacy', 'privacy policy', 'terms', 'terms of service', 'next',
+      'previous', 'feedback', 'help', 'advertise', 'safe search',
+      'all regions', 'any time', 'past day', 'past week', 'past month',
+      'past year', 'more results'
     ];
     if (junk.includes(lowerTitle)) return false;
-    const host = parsed.hostname.replace(/^www\./, '');
-    const currentHost = window.location.hostname.replace(/^www\./, '');
+    const loweredUrl = url.toLowerCase();
+    if (
+      loweredUrl.includes('/y.js?') ||
+      loweredUrl.includes('ad_domain=') ||
+      loweredUrl.includes('/aclick?') ||
+      loweredUrl.includes('doubleclick.net')
+    ) {
+      return false;
+    }
+    const host = parsed.hostname.replace(/^www\./, '').toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    if (host.endsWith('duckduckgo.com')) {
+      if (
+        path === '/' ||
+        path.includes('/html') ||
+        path.includes('/l/') ||
+        path.includes('/settings') ||
+        path.includes('/feedback') ||
+        path.includes('/duckduckgo-help-pages')
+      ) {
+        return false;
+      }
+    }
+    const currentHost = window.location.hostname.replace(/^www\./, '').toLowerCase();
     if (host === currentHost) {
-      const path = parsed.pathname.toLowerCase();
       if (path === '/' || path.includes('/search') || path.includes('/images')) {
         return false;
       }
@@ -840,15 +901,21 @@ const String _searchResultsScript = r'''
   const results = [];
   const seen = new Set();
   const addResult = (anchor, container) => {
-    if (!anchor || !visible(anchor)) return;
+    if (!anchor || !notHidden(anchor)) return;
+    if (container && (
+      container.classList.contains('result--ad') ||
+      container.querySelector('.badge--ad, [class*="badge--ad"], [class*="ad_domain"]')
+    )) {
+      return;
+    }
     const url = unwrapUrl(anchor.href);
     const title = clean(anchor.innerText || anchor.textContent);
     if (!useful(url, title) || seen.has(url)) return;
     seen.add(url);
     const snippetNode = container ? container.querySelector(
-      '.b_caption p, .b_snippet, p, [class*="snippet"], [class*="content"]'
+      '.result__snippet, .result__body, .result__extras, .b_caption p, .b_snippet, p, [class*="snippet"], [class*="content"]'
     ) : null;
-    let snippet = clean(snippetNode && visible(snippetNode) ? snippetNode.innerText : '');
+    let snippet = clean(snippetNode && notHidden(snippetNode) ? snippetNode.innerText : '');
     if (!snippet && container) {
       snippet = clean(container.innerText).replace(title, '').trim();
     }
@@ -856,15 +923,20 @@ const String _searchResultsScript = r'''
     results.push({ title, url, snippet });
   };
   const containers = Array.from(document.querySelectorAll([
+    '.result.results_links',
+    '.results_links',
+    '.web-result',
+    '.result',
     'li.b_algo',
     'ol#b_results > li',
     '[data-testid="result"]',
     'article',
-    '.result',
     '.g'
   ].join(',')));
   for (const container of containers) {
-    const anchor = container.querySelector('h2 a[href], h3 a[href], a[href]');
+    const anchor = container.querySelector(
+      '.result__a[href], a.result__a[href], h2 a[href], h3 a[href], a[href]'
+    );
     addResult(anchor, container);
     if (results.length >= 12) break;
   }

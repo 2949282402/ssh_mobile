@@ -72,7 +72,9 @@ across sessions.
 - 2026-05-28: AI `web_search` is now local client WebView search only. It no
   longer stores provider/base URL settings, is enabled by default, and can be
   disabled by the user; keep search results client-side and tied to the current
-  chat's WebView session.
+  chat's WebView session. Prefer lightweight DuckDuckGo HTML results over Bing
+  SERP DOM parsing for stability, and avoid viewport-geometry visibility checks
+  in result extraction because AI browsing may run in a background WebView.
 - 2026-05-28: AI WebView browsing has a per-chat operation token. While active,
   the WebView UI is view-only; user interruption clears the token so the tool
   result reports interruption instead of continuing from a stale page.

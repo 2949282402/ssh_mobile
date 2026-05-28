@@ -68,7 +68,7 @@ class AiToolService implements AiToolExecutor {
         AiTool(
           name: 'web_search',
           description:
-              'Search the public web from the SSH Mobile client WebView bound to the current chat session. Return cited result URLs. Use this when the user asks for current or external information.',
+              'Search the public web from the SSH Mobile client WebView bound to the current chat session. Return cited result URLs. Use this before answering questions about current, latest, news, or external information.',
           properties: {
             'query': _string('Search query. Keep it concise.'),
             'limit': {
