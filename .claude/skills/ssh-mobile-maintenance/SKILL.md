@@ -96,6 +96,14 @@ or maintenance lesson should be shared across Codex and Claude Code sessions.
 - In LLM settings, a blank API key field means "keep the saved key". Require an
   explicit clear action before deleting the stored API key so model or base URL
   changes cannot wipe credentials accidentally.
+- Cache fetched LLM model lists locally per Base URL and reuse that cache when
+  reopening settings; the refresh button should update the cache explicitly
+  instead of forcing a network fetch on every visit.
+- Keep LLM settings provider-aware: Base URL history is local plain-text
+  history, API key history is stored in secure storage with masked previews,
+  DeepSeek thinking controls appear only for DeepSeek-like model ids, and
+  OpenAI reasoning effort controls appear only for supported OpenAI reasoning
+  model ids.
 - Keep AI server tools safe by default: read-only diagnostics run directly, any
   command that may write or change server state must pause for explicit human
   approval in the chat page, and credential exposure remains blocked.

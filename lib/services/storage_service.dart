@@ -111,14 +111,20 @@ class StorageService extends ChangeNotifier
   static const _restorableTmuxSessionsKey = 'restorable_tmux_sessions';
   static const _terminalHistoryRecordsKey = 'terminal_history_records';
   static const _aiBaseUrlKey = 'ai_base_url';
+  static const _aiBaseUrlHistoryKey = 'ai_base_url_history';
   static const _aiModelKey = 'ai_model';
   static const _aiContextWindowKey = 'ai_context_window';
   static const _aiTimeoutSecondsKey = 'ai_timeout_seconds';
   static const _aiDeepSeekThinkingEnabledKey = 'ai_deepseek_thinking_enabled';
   static const _aiDeepSeekReasoningEffortKey = 'ai_deepseek_reasoning_effort';
+  static const _aiOpenAiReasoningEffortKey = 'ai_openai_reasoning_effort';
   static const _aiWebSearchEnabledKey = 'ai_web_search_enabled';
   static const _aiWebSearchMaxResultsKey = 'ai_web_search_max_results';
+  static const _aiModelsCacheKey = 'ai_models_cache';
+  static const _aiApiKeyRefsKey = 'ai_api_key_refs';
+  static const _aiSelectedApiKeyIdKey = 'ai_selected_api_key_id';
   static const _aiApiKeyKey = 'ai_api_key';
+  static const _aiApiKeyEntryPrefix = 'ai_api_key_entry_';
   static const _aiChatsKey = 'ai_chats';
   static const _aiSkillsKey = 'ai_skills';
   static const _secretCacheEnabledKey = 'secret_cache_enabled';
@@ -371,7 +377,13 @@ class StorageService extends ChangeNotifier
     final reasoningEffort = DeepSeekReasoningEffort.normalize(
       _prefs?.getString(_aiDeepSeekReasoningEffortKey),
     );
+    final openAiReasoningEffort = OpenAiReasoningEffort.normalize(
+      _prefs?.getString(_aiOpenAiReasoningEffortKey),
+    );
     final apiKey = await getAiApiKey();
+    final activeApiKeyId = await getSelectedAiApiKeyId();
+    final activeApiKeyMasked =
+        apiKey?.isNotEmpty == true ? maskAiApiKey(apiKey!) : null;
     return AiConnectionSettings(
       baseUrl:
           baseUrl?.isNotEmpty == true ? baseUrl! : 'https://api.deepseek.com',
@@ -380,12 +392,159 @@ class StorageService extends ChangeNotifier
       timeoutSeconds: await getAiRequestTimeoutSeconds(),
       deepSeekThinkingEnabled: thinkingEnabled,
       deepSeekReasoningEffort: reasoningEffort,
+      openAiReasoningEffort: openAiReasoningEffort,
       webSearchEnabled: _prefs?.getBool(_aiWebSearchEnabledKey) ?? true,
       webSearchMaxResults: AiWebSearchMaxResults.normalize(
         _prefs?.getInt(_aiWebSearchMaxResultsKey),
       ),
       hasApiKey: apiKey?.isNotEmpty == true,
+      activeApiKeyId: activeApiKeyId,
+      activeApiKeyMasked: activeApiKeyMasked,
     );
+  }
+
+  Future<List<String>> loadCachedAiModels({String? baseUrl}) async {
+    if (!_initialized || _prefs == null) return const [];
+    final normalizedBaseUrl = _normalizeAiModelsCacheBaseUrl(
+      baseUrl?.trim().isNotEmpty == true
+          ? baseUrl!
+          : (_prefs!.getString(_aiBaseUrlKey) ?? 'https://api.deepseek.com'),
+    );
+    if (normalizedBaseUrl.isEmpty) return const [];
+    final cache = _readAiModelsCacheMap();
+    return List.unmodifiable(cache[normalizedBaseUrl] ?? const <String>[]);
+  }
+
+  Future<List<String>> loadAiBaseUrlHistory() async {
+    if (!_initialized || _prefs == null) return const [];
+    final currentBaseUrl = _prefs?.getString(_aiBaseUrlKey);
+    return List.unmodifiable(
+      _normalizeAiBaseUrlHistory(
+        _readStringListPref(_aiBaseUrlHistoryKey),
+        prependValue: currentBaseUrl,
+      ),
+    );
+  }
+
+  Future<void> removeAiBaseUrlHistoryEntry(String baseUrl) async {
+    if (!_initialized || _prefs == null) return;
+    final normalizedTarget = _normalizeAiModelsCacheBaseUrl(baseUrl);
+    if (normalizedTarget.isEmpty) return;
+    final nextHistory = _normalizeAiBaseUrlHistory(
+      _readStringListPref(_aiBaseUrlHistoryKey),
+    )..remove(normalizedTarget);
+    await _writeStringListPref(_aiBaseUrlHistoryKey, nextHistory);
+  }
+
+  Future<List<AiApiKeyHistoryEntry>> loadAiApiKeyHistory() async {
+    if (!_initialized || _prefs == null) return const [];
+    await _ensureAiApiKeyHistoryMigrated();
+    final selectedId = await getSelectedAiApiKeyId();
+    final ids = _readAiApiKeyRefIds();
+    final entries = <AiApiKeyHistoryEntry>[];
+    final staleIds = <String>[];
+    for (final id in ids) {
+      final value = await _secureStorage.read(key: _aiApiKeyStorageKey(id));
+      final normalized = _normalizeAiApiKey(value);
+      if (normalized == null) {
+        staleIds.add(id);
+        if (value != null && value.isNotEmpty) {
+          await _secureStorage.delete(key: _aiApiKeyStorageKey(id));
+        }
+        continue;
+      }
+      entries.add(
+        AiApiKeyHistoryEntry(
+          id: id,
+          maskedValue: maskAiApiKey(normalized),
+          isSelected: id == selectedId,
+        ),
+      );
+    }
+    if (staleIds.isNotEmpty) {
+      final nextIds = ids.where((id) => !staleIds.contains(id)).toList();
+      await _writeAiApiKeyRefIds(nextIds);
+      if (selectedId != null && staleIds.contains(selectedId)) {
+        await _setSelectedAiApiKeyId(nextIds.isNotEmpty ? nextIds.first : null);
+      }
+    }
+    return List.unmodifiable(entries);
+  }
+
+  Future<String?> getAiApiKeyById(String id) async {
+    if (!_initialized) return null;
+    await _ensureAiApiKeyHistoryMigrated();
+    final normalizedId = id.trim();
+    if (normalizedId.isEmpty) return null;
+    final value =
+        await _secureStorage.read(key: _aiApiKeyStorageKey(normalizedId));
+    return _normalizeAiApiKey(value);
+  }
+
+  Future<void> removeAiApiKeyHistoryEntry(String id) async {
+    if (!_initialized || _prefs == null) return;
+    await _ensureAiApiKeyHistoryMigrated();
+    final ids = _readAiApiKeyRefIds();
+    if (!ids.contains(id)) return;
+    final nextIds = ids.where((item) => item != id).toList();
+    await _secureStorage.delete(key: _aiApiKeyStorageKey(id));
+    await _writeAiApiKeyRefIds(nextIds);
+    final selectedId = _prefs?.getString(_aiSelectedApiKeyIdKey)?.trim();
+    if (selectedId == id) {
+      await _setSelectedAiApiKeyId(nextIds.isNotEmpty ? nextIds.first : null);
+    }
+    _secretCache.remove(_memoryAiApiKeyCacheKey);
+  }
+
+  Future<String?> getSelectedAiApiKeyId() async {
+    if (!_initialized || _prefs == null) return null;
+    await _ensureAiApiKeyHistoryMigrated();
+    final ids = _readAiApiKeyRefIds();
+    if (ids.isEmpty) {
+      await _setSelectedAiApiKeyId(null);
+      return null;
+    }
+    final selectedId = _prefs?.getString(_aiSelectedApiKeyIdKey)?.trim();
+    if (selectedId != null && ids.contains(selectedId)) {
+      return selectedId;
+    }
+    final fallbackId = ids.first;
+    await _setSelectedAiApiKeyId(fallbackId);
+    return fallbackId;
+  }
+
+  Future<void> saveCachedAiModels({
+    required String baseUrl,
+    required Iterable<String> models,
+  }) async {
+    if (!_initialized || _prefs == null) return;
+    final normalizedBaseUrl = _normalizeAiModelsCacheBaseUrl(baseUrl);
+    if (normalizedBaseUrl.isEmpty) return;
+    final normalizedModels = _normalizeAiModelList(models);
+    final cache = _readAiModelsCacheMap();
+    if (normalizedModels.isEmpty) {
+      cache.remove(normalizedBaseUrl);
+    } else {
+      cache[normalizedBaseUrl] = normalizedModels;
+    }
+    await _prefs!.setString(_aiModelsCacheKey, jsonEncode(cache));
+  }
+
+  Future<void> clearCachedAiModels({String? baseUrl}) async {
+    if (!_initialized || _prefs == null) return;
+    if (baseUrl == null) {
+      await _prefs!.remove(_aiModelsCacheKey);
+      return;
+    }
+    final normalizedBaseUrl = _normalizeAiModelsCacheBaseUrl(baseUrl);
+    if (normalizedBaseUrl.isEmpty) return;
+    final cache = _readAiModelsCacheMap();
+    cache.remove(normalizedBaseUrl);
+    if (cache.isEmpty) {
+      await _prefs!.remove(_aiModelsCacheKey);
+      return;
+    }
+    await _prefs!.setString(_aiModelsCacheKey, jsonEncode(cache));
   }
 
   Future<int> getAiRequestTimeoutSeconds() async {
@@ -394,27 +553,36 @@ class StorageService extends ChangeNotifier
 
   Future<String?> getAiApiKey() async {
     if (!_initialized) return null;
+    await _ensureAiApiKeyHistoryMigrated();
     final cache = _readCachedSecretEntry(_memoryAiApiKeyCacheKey);
     if (cache != null) return cache.value;
 
-    final value = await _secureStorage.read(key: _aiApiKeyKey);
-    final normalized = _normalizeAiApiKey(value);
-    if (value != null && value.isNotEmpty && normalized == null) {
-      await _secureStorage.delete(key: _aiApiKeyKey);
-      _secretCache.remove(_memoryAiApiKeyCacheKey);
-      AppLogService.instance.warning(
-        'Invalid LLM API key cleared',
-        details: 'Stored key contained characters that cannot be used safely.',
-      );
-      return null;
+    while (true) {
+      final selectedId = await getSelectedAiApiKeyId();
+      if (selectedId == null) {
+        _secretCache.remove(_memoryAiApiKeyCacheKey);
+        return null;
+      }
+      final value =
+          await _secureStorage.read(key: _aiApiKeyStorageKey(selectedId));
+      final normalized = _normalizeAiApiKey(value);
+      if (value != null && value.isNotEmpty && normalized == null) {
+        await removeAiApiKeyHistoryEntry(selectedId);
+        AppLogService.instance.warning(
+          'Invalid LLM API key cleared',
+          details:
+              'Stored key contained characters that cannot be used safely.',
+        );
+        continue;
+      }
+      if (_secretCacheEnabled) {
+        _secretCache[_memoryAiApiKeyCacheKey] = _MemorySecret(
+          value: normalized,
+          loadedAt: DateTime.now(),
+        );
+      }
+      return normalized;
     }
-    if (_secretCacheEnabled) {
-      _secretCache[_memoryAiApiKeyCacheKey] = _MemorySecret(
-        value: normalized,
-        loadedAt: DateTime.now(),
-      );
-    }
-    return normalized;
   }
 
   Future<void> saveAiConnectionSettings({
@@ -424,15 +592,18 @@ class StorageService extends ChangeNotifier
     int? timeoutSeconds,
     bool? deepSeekThinkingEnabled,
     String? deepSeekReasoningEffort,
+    String? openAiReasoningEffort,
     bool? webSearchEnabled,
     int? webSearchMaxResults,
     String? apiKey,
+    String? selectedApiKeyId,
     bool clearApiKey = false,
   }) async {
     if (!_initialized || _prefs == null) return;
     final normalizedBaseUrl = baseUrl.trim();
     final normalizedModel = model.trim();
     await _prefs!.setString(_aiBaseUrlKey, normalizedBaseUrl);
+    await _persistAiBaseUrlHistory(normalizedBaseUrl);
     await _prefs!.setString(_aiModelKey, normalizedModel);
     await _prefs!.setInt(
       _aiContextWindowKey,
@@ -454,6 +625,12 @@ class StorageService extends ChangeNotifier
             _prefs!.getString(_aiDeepSeekReasoningEffortKey),
       ),
     );
+    await _prefs!.setString(
+      _aiOpenAiReasoningEffortKey,
+      OpenAiReasoningEffort.normalize(
+        openAiReasoningEffort ?? _prefs!.getString(_aiOpenAiReasoningEffortKey),
+      ),
+    );
     await _prefs!.setBool(
       _aiWebSearchEnabledKey,
       webSearchEnabled ?? (_prefs!.getBool(_aiWebSearchEnabledKey) ?? true),
@@ -464,6 +641,7 @@ class StorageService extends ChangeNotifier
         webSearchMaxResults ?? _prefs!.getInt(_aiWebSearchMaxResultsKey),
       ),
     );
+    await _ensureAiApiKeyHistoryMigrated();
     var apiKeyUpdated = false;
     final hasReplacementApiKey = apiKey?.trim().isNotEmpty == true;
     if (hasReplacementApiKey) {
@@ -477,7 +655,8 @@ class StorageService extends ChangeNotifier
         );
         throw const FormatException('Invalid API key format.');
       }
-      await _secureStorage.write(key: _aiApiKeyKey, value: normalizedApiKey);
+      final selectedId = await _upsertAiApiKeyHistoryEntry(normalizedApiKey);
+      await _setSelectedAiApiKeyId(selectedId);
       if (_secretCacheEnabled) {
         _secretCache[_memoryAiApiKeyCacheKey] = _MemorySecret(
           value: normalizedApiKey,
@@ -485,16 +664,22 @@ class StorageService extends ChangeNotifier
         );
       }
       apiKeyUpdated = true;
+    } else if (selectedApiKeyId?.trim().isNotEmpty == true) {
+      await _setSelectedAiApiKeyId(selectedApiKeyId!.trim());
+      _secretCache.remove(_memoryAiApiKeyCacheKey);
     } else if (clearApiKey) {
-      // The settings UI keeps this field blank when a secret already exists, so
-      // deletion must be an explicit action rather than an empty-string save.
-      await _clearAiApiKeySecret();
+      final currentId = await getSelectedAiApiKeyId();
+      if (currentId != null) {
+        await removeAiApiKeyHistoryEntry(currentId);
+      } else {
+        await _clearLegacyAiApiKeySecret();
+      }
       apiKeyUpdated = true;
     }
     AppLogService.instance.info(
       'LLM settings saved',
       details:
-          'baseUrl=$normalizedBaseUrl model=$normalizedModel contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} timeoutSeconds=${AiRequestTimeout.normalize(timeoutSeconds)} deepSeekThinking=${deepSeekThinkingEnabled ?? (_prefs!.getBool(_aiDeepSeekThinkingEnabledKey) ?? true)} deepSeekEffort=${DeepSeekReasoningEffort.normalize(deepSeekReasoningEffort ?? _prefs!.getString(_aiDeepSeekReasoningEffortKey))} webSearch=${webSearchEnabled ?? (_prefs!.getBool(_aiWebSearchEnabledKey) ?? true)} apiKeyUpdated=$apiKeyUpdated',
+          'baseUrl=$normalizedBaseUrl model=$normalizedModel contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} timeoutSeconds=${AiRequestTimeout.normalize(timeoutSeconds)} deepSeekThinking=${deepSeekThinkingEnabled ?? (_prefs!.getBool(_aiDeepSeekThinkingEnabledKey) ?? true)} deepSeekEffort=${DeepSeekReasoningEffort.normalize(deepSeekReasoningEffort ?? _prefs!.getString(_aiDeepSeekReasoningEffortKey))} openAiEffort=${OpenAiReasoningEffort.normalize(openAiReasoningEffort ?? _prefs!.getString(_aiOpenAiReasoningEffortKey))} webSearch=${webSearchEnabled ?? (_prefs!.getBool(_aiWebSearchEnabledKey) ?? true)} apiKeyUpdated=$apiKeyUpdated',
     );
     // AI settings are loaded on demand by the chat page. Avoid notifying the
     // whole storage tree while the settings dialog is being dismissed; doing so
@@ -516,7 +701,182 @@ class StorageService extends ChangeNotifier
 
   Future<void> _clearAiApiKeySecret() async {
     _secretCache.remove(_memoryAiApiKeyCacheKey);
+    await _clearLegacyAiApiKeySecret();
+    final ids = _readAiApiKeyRefIds();
+    for (final id in ids) {
+      await _secureStorage.delete(key: _aiApiKeyStorageKey(id));
+    }
+    await _writeAiApiKeyRefIds(const []);
+    await _setSelectedAiApiKeyId(null);
+  }
+
+  Future<void> _clearLegacyAiApiKeySecret() async {
+    _secretCache.remove(_memoryAiApiKeyCacheKey);
     await _secureStorage.delete(key: _aiApiKeyKey);
+  }
+
+  Future<void> _ensureAiApiKeyHistoryMigrated() async {
+    if (!_initialized || _prefs == null) return;
+    if (_readAiApiKeyRefIds().isNotEmpty) return;
+    final legacyValue = await _secureStorage.read(key: _aiApiKeyKey);
+    final normalizedLegacy = _normalizeAiApiKey(legacyValue);
+    if (normalizedLegacy == null) {
+      if (legacyValue != null && legacyValue.isNotEmpty) {
+        await _secureStorage.delete(key: _aiApiKeyKey);
+      }
+      return;
+    }
+    final id = _traceUuid.v4();
+    await _secureStorage.write(
+      key: _aiApiKeyStorageKey(id),
+      value: normalizedLegacy,
+    );
+    await _writeAiApiKeyRefIds([id]);
+    await _setSelectedAiApiKeyId(id);
+    await _secureStorage.delete(key: _aiApiKeyKey);
+  }
+
+  Future<String> _upsertAiApiKeyHistoryEntry(String apiKey) async {
+    final normalizedApiKey = _normalizeAiApiKey(apiKey);
+    if (normalizedApiKey == null) {
+      throw const FormatException('Invalid API key format.');
+    }
+    final ids = _readAiApiKeyRefIds();
+    String? matchedId;
+    for (final id in ids) {
+      final value = await _secureStorage.read(key: _aiApiKeyStorageKey(id));
+      if (_normalizeAiApiKey(value) == normalizedApiKey) {
+        matchedId = id;
+        break;
+      }
+    }
+    final targetId = matchedId ?? _traceUuid.v4();
+    await _secureStorage.write(
+      key: _aiApiKeyStorageKey(targetId),
+      value: normalizedApiKey,
+    );
+    final nextIds = <String>[
+      targetId,
+      ...ids.where((id) => id != targetId),
+    ];
+    await _writeAiApiKeyRefIds(nextIds);
+    return targetId;
+  }
+
+  Future<void> _setSelectedAiApiKeyId(String? id) async {
+    if (_prefs == null) return;
+    final normalized = id?.trim();
+    if (normalized == null || normalized.isEmpty) {
+      await _prefs!.remove(_aiSelectedApiKeyIdKey);
+      return;
+    }
+    await _prefs!.setString(_aiSelectedApiKeyIdKey, normalized);
+  }
+
+  List<String> _readAiApiKeyRefIds() {
+    return _readStringListPref(_aiApiKeyRefsKey);
+  }
+
+  Future<void> _writeAiApiKeyRefIds(List<String> ids) async {
+    await _writeStringListPref(_aiApiKeyRefsKey, ids);
+  }
+
+  String _aiApiKeyStorageKey(String id) => '$_aiApiKeyEntryPrefix$id';
+
+  Future<void> _persistAiBaseUrlHistory(String currentBaseUrl) async {
+    await _writeStringListPref(
+      _aiBaseUrlHistoryKey,
+      _normalizeAiBaseUrlHistory(
+        _readStringListPref(_aiBaseUrlHistoryKey),
+        prependValue: currentBaseUrl,
+      ),
+    );
+  }
+
+  List<String> _readStringListPref(String key) {
+    final raw = _prefs?.getString(key);
+    if (raw == null || raw.trim().isEmpty) return <String>[];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return <String>[];
+      return decoded.whereType<String>().toList();
+    } catch (_) {
+      return <String>[];
+    }
+  }
+
+  Future<void> _writeStringListPref(String key, List<String> values) async {
+    if (_prefs == null) return;
+    if (values.isEmpty) {
+      await _prefs!.remove(key);
+      return;
+    }
+    await _prefs!.setString(key, jsonEncode(values));
+  }
+
+  List<String> _normalizeAiBaseUrlHistory(
+    Iterable<String> history, {
+    String? prependValue,
+  }) {
+    final seen = <String>{};
+    final normalized = <String>[];
+    void addValue(String value) {
+      final item = _normalizeAiModelsCacheBaseUrl(value);
+      if (item.isEmpty || !seen.add(item)) return;
+      normalized.add(item);
+    }
+
+    if (prependValue != null) {
+      addValue(prependValue);
+    }
+    for (final item in history) {
+      addValue(item);
+    }
+    return normalized;
+  }
+
+  Map<String, List<String>> _readAiModelsCacheMap() {
+    final raw = _prefs?.getString(_aiModelsCacheKey);
+    if (raw == null || raw.trim().isEmpty) {
+      return <String, List<String>>{};
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) {
+        return <String, List<String>>{};
+      }
+      final cache = <String, List<String>>{};
+      for (final entry in decoded.entries) {
+        final normalizedBaseUrl = _normalizeAiModelsCacheBaseUrl(entry.key);
+        if (normalizedBaseUrl.isEmpty || entry.value is! List) continue;
+        final normalizedModels = _normalizeAiModelList(
+          (entry.value as List).whereType<String>(),
+        );
+        if (normalizedModels.isNotEmpty) {
+          cache[normalizedBaseUrl] = normalizedModels;
+        }
+      }
+      return cache;
+    } catch (_) {
+      return <String, List<String>>{};
+    }
+  }
+
+  List<String> _normalizeAiModelList(Iterable<String> models) {
+    return models
+        .map((model) => model.trim())
+        .where((model) => model.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+  }
+
+  String _normalizeAiModelsCacheBaseUrl(String value) {
+    var normalized = value.trim();
+    while (normalized.endsWith('/')) {
+      normalized = normalized.substring(0, normalized.length - 1);
+    }
+    return normalized;
   }
 
   @override
@@ -644,6 +1004,7 @@ class StorageService extends ChangeNotifier
         'timeoutSeconds': settings.timeoutSeconds,
         'deepSeekThinkingEnabled': settings.deepSeekThinkingEnabled,
         'deepSeekReasoningEffort': settings.deepSeekReasoningEffort,
+        'openAiReasoningEffort': settings.openAiReasoningEffort,
         'webSearchEnabled': settings.webSearchEnabled,
         'webSearchMaxResults': settings.webSearchMaxResults,
         'apiKey': '',
@@ -692,6 +1053,8 @@ class StorageService extends ChangeNotifier
     _connections = importedConnections;
     _refreshConnectionsView();
     await _saveConnections();
+    await clearCachedAiModels();
+    await _writeStringListPref(_aiBaseUrlHistoryKey, const []);
 
     final aiSettings = decoded['aiSettings'];
     if (aiSettings is Map<String, dynamic>) {
@@ -706,11 +1069,12 @@ class StorageService extends ChangeNotifier
         deepSeekThinkingEnabled: aiSettings['deepSeekThinkingEnabled'] as bool?,
         deepSeekReasoningEffort:
             aiSettings['deepSeekReasoningEffort'] as String?,
+        openAiReasoningEffort: aiSettings['openAiReasoningEffort'] as String?,
         webSearchEnabled: aiSettings['webSearchEnabled'] as bool?,
         webSearchMaxResults:
             (aiSettings['webSearchMaxResults'] as num?)?.toInt(),
-        clearApiKey: true,
       );
+      await _clearAiApiKeySecret();
     } else {
       await _clearAiApiKeySecret();
     }
@@ -1100,9 +1464,12 @@ class AiConnectionSettings {
   final int timeoutSeconds;
   final bool deepSeekThinkingEnabled;
   final String deepSeekReasoningEffort;
+  final String openAiReasoningEffort;
   final bool webSearchEnabled;
   final int webSearchMaxResults;
   final bool hasApiKey;
+  final String? activeApiKeyId;
+  final String? activeApiKeyMasked;
 
   const AiConnectionSettings({
     required this.baseUrl,
@@ -1111,9 +1478,24 @@ class AiConnectionSettings {
     required this.timeoutSeconds,
     required this.deepSeekThinkingEnabled,
     required this.deepSeekReasoningEffort,
+    required this.openAiReasoningEffort,
     required this.webSearchEnabled,
     required this.webSearchMaxResults,
     required this.hasApiKey,
+    required this.activeApiKeyId,
+    required this.activeApiKeyMasked,
+  });
+}
+
+class AiApiKeyHistoryEntry {
+  final String id;
+  final String maskedValue;
+  final bool isSelected;
+
+  const AiApiKeyHistoryEntry({
+    required this.id,
+    required this.maskedValue,
+    required this.isSelected,
   });
 }
 
@@ -1144,6 +1526,61 @@ class DeepSeekReasoningEffort {
 }
 
 /// 内存中缓存一个秘密值及其加载时间，配合 TTL 用
+class OpenAiReasoningEffort {
+  static const String low = 'low';
+  static const String medium = 'medium';
+  static const String high = 'high';
+  static const String xhigh = 'xhigh';
+  static const String defaultEffort = medium;
+  static const List<String> values = [low, medium, high, xhigh];
+
+  static String normalize(String? value) {
+    final normalized = value?.trim().toLowerCase();
+    return values.contains(normalized) ? normalized! : defaultEffort;
+  }
+
+  static String label(String value) {
+    switch (normalize(value)) {
+      case low:
+        return 'Low';
+      case high:
+        return 'High';
+      case xhigh:
+        return 'Extra high';
+      case medium:
+      default:
+        return 'Medium';
+    }
+  }
+}
+
+bool isDeepSeekModelId(String model) {
+  return model.trim().toLowerCase().contains('deepseek');
+}
+
+bool supportsOpenAiReasoningEffort(String model) {
+  final normalized = model.trim().toLowerCase();
+  return normalized.startsWith('gpt-5') ||
+      normalized.startsWith('o1') ||
+      normalized.startsWith('o3') ||
+      normalized.startsWith('o4');
+}
+
+String maskAiApiKey(String value) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return '';
+  if (trimmed.length <= 4) return trimmed;
+  if (trimmed.length <= 6) {
+    final prefix = trimmed.substring(0, 4);
+    final suffix = trimmed.substring(trimmed.length - 2);
+    final hiddenCount = trimmed.length - prefix.length - suffix.length;
+    return '$prefix${'*' * hiddenCount}$suffix';
+  }
+  final prefix = trimmed.substring(0, 4);
+  final suffix = trimmed.substring(trimmed.length - 2);
+  return '$prefix${'*' * (trimmed.length - 6)}$suffix';
+}
+
 class _MemorySecret {
   final String? value;
   final DateTime loadedAt;

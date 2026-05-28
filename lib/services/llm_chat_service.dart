@@ -206,6 +206,7 @@ class LlmChatService implements LlmClientAdapter {
         timeoutSeconds: settings.timeoutSeconds,
         deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
         deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
+        openAiReasoningEffort: settings.openAiReasoningEffort,
       );
       compressed = true;
     }
@@ -233,6 +234,7 @@ class LlmChatService implements LlmClientAdapter {
             timeoutSeconds: settings.timeoutSeconds,
             deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
             deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
+            openAiReasoningEffort: settings.openAiReasoningEffort,
             cancellationToken: cancellationToken,
             onContent: (chunk) {
               cancellationToken?.throwIfCancelled();
@@ -468,10 +470,12 @@ class LlmChatService implements LlmClientAdapter {
     required int timeoutSeconds,
     required bool deepSeekThinkingEnabled,
     required String deepSeekReasoningEffort,
+    required String openAiReasoningEffort,
     required void Function(String chunk) onContent,
     LlmCancellationToken? cancellationToken,
     bool includeUsage = true,
     bool includeTools = true,
+    bool includeReasoningParams = true,
   }) async {
     final endpoint = Uri.parse(_joinUrl(baseUrl, '/chat/completions'));
     final client = HttpClient();
@@ -502,13 +506,17 @@ class LlmChatService implements LlmClientAdapter {
         },
         if (includeUsage) 'stream_options': {'include_usage': true},
       };
-      requestBody.addAll(
-        _deepSeekThinkingParams(
-          baseUrl: baseUrl,
-          enabled: deepSeekThinkingEnabled,
-          effort: deepSeekReasoningEffort,
-        ),
-      );
+      if (includeReasoningParams) {
+        requestBody.addAll(
+          _providerReasoningParams(
+            baseUrl: baseUrl,
+            model: model,
+            deepSeekThinkingEnabled: deepSeekThinkingEnabled,
+            deepSeekReasoningEffort: deepSeekReasoningEffort,
+            openAiReasoningEffort: openAiReasoningEffort,
+          ),
+        );
+      }
       final bodyBytes = utf8.encode(jsonEncode(requestBody));
       request.headers
         ..set(HttpHeaders.authorizationHeader, 'Bearer $apiKey')
@@ -537,10 +545,12 @@ class LlmChatService implements LlmClientAdapter {
             timeoutSeconds: timeoutSeconds,
             deepSeekThinkingEnabled: deepSeekThinkingEnabled,
             deepSeekReasoningEffort: deepSeekReasoningEffort,
+            openAiReasoningEffort: openAiReasoningEffort,
             onContent: onContent,
             cancellationToken: cancellationToken,
             includeUsage: false,
             includeTools: includeTools,
+            includeReasoningParams: includeReasoningParams,
           );
         }
         if (includeTools && _looksLikeToolUnsupportedError(body)) {
@@ -557,10 +567,35 @@ class LlmChatService implements LlmClientAdapter {
             timeoutSeconds: timeoutSeconds,
             deepSeekThinkingEnabled: deepSeekThinkingEnabled,
             deepSeekReasoningEffort: deepSeekReasoningEffort,
+            openAiReasoningEffort: openAiReasoningEffort,
             onContent: onContent,
             cancellationToken: cancellationToken,
             includeUsage: includeUsage,
             includeTools: false,
+            includeReasoningParams: includeReasoningParams,
+          );
+        }
+        if (includeReasoningParams &&
+            _looksLikeReasoningParamUnsupportedError(body)) {
+          AppLogService.instance.warning(
+            'LLM reasoning params unsupported, retrying without them',
+            details: 'endpoint=$endpoint model=$model bodyChars=${body.length}',
+          );
+          return _streamChatCompletion(
+            baseUrl: baseUrl,
+            apiKey: apiKey,
+            model: model,
+            messages: messages,
+            tools: tools,
+            timeoutSeconds: timeoutSeconds,
+            deepSeekThinkingEnabled: deepSeekThinkingEnabled,
+            deepSeekReasoningEffort: deepSeekReasoningEffort,
+            openAiReasoningEffort: openAiReasoningEffort,
+            onContent: onContent,
+            cancellationToken: cancellationToken,
+            includeUsage: includeUsage,
+            includeTools: includeTools,
+            includeReasoningParams: false,
           );
         }
         AppLogService.instance.warning(
@@ -790,6 +825,7 @@ class LlmChatService implements LlmClientAdapter {
     required int timeoutSeconds,
     required bool deepSeekThinkingEnabled,
     required String deepSeekReasoningEffort,
+    required String openAiReasoningEffort,
   }) async {
     final lastUserIndex =
         messages.lastIndexWhere((message) => message['role'] == 'user');
@@ -825,6 +861,7 @@ class LlmChatService implements LlmClientAdapter {
       timeoutSeconds: timeoutSeconds,
       deepSeekThinkingEnabled: deepSeekThinkingEnabled,
       deepSeekReasoningEffort: deepSeekReasoningEffort,
+      openAiReasoningEffort: openAiReasoningEffort,
     );
     final summary = _contentFromChatResponse(response);
     AppLogService.instance.info(
@@ -850,6 +887,8 @@ class LlmChatService implements LlmClientAdapter {
     required int timeoutSeconds,
     required bool deepSeekThinkingEnabled,
     required String deepSeekReasoningEffort,
+    required String openAiReasoningEffort,
+    bool includeReasoningParams = true,
   }) async {
     final endpoint = Uri.parse(_joinUrl(baseUrl, '/chat/completions'));
     final client = HttpClient();
@@ -861,13 +900,17 @@ class LlmChatService implements LlmClientAdapter {
         'model': model,
         'messages': messages,
       };
-      requestBody.addAll(
-        _deepSeekThinkingParams(
-          baseUrl: baseUrl,
-          enabled: deepSeekThinkingEnabled,
-          effort: deepSeekReasoningEffort,
-        ),
-      );
+      if (includeReasoningParams) {
+        requestBody.addAll(
+          _providerReasoningParams(
+            baseUrl: baseUrl,
+            model: model,
+            deepSeekThinkingEnabled: deepSeekThinkingEnabled,
+            deepSeekReasoningEffort: deepSeekReasoningEffort,
+            openAiReasoningEffort: openAiReasoningEffort,
+          ),
+        );
+      }
       final bodyBytes = utf8.encode(jsonEncode(requestBody));
       request.headers
         ..set(HttpHeaders.authorizationHeader, 'Bearer $apiKey')
@@ -879,6 +922,25 @@ class LlmChatService implements LlmClientAdapter {
           );
       final body = await response.transform(utf8.decoder).join();
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        if (includeReasoningParams &&
+            response.statusCode == 400 &&
+            _looksLikeReasoningParamUnsupportedError(body)) {
+          AppLogService.instance.warning(
+            'LLM compression reasoning params unsupported, retrying without them',
+            details: 'endpoint=$endpoint model=$model bodyChars=${body.length}',
+          );
+          return _chatCompletion(
+            baseUrl: baseUrl,
+            apiKey: apiKey,
+            model: model,
+            messages: messages,
+            timeoutSeconds: timeoutSeconds,
+            deepSeekThinkingEnabled: deepSeekThinkingEnabled,
+            deepSeekReasoningEffort: deepSeekReasoningEffort,
+            openAiReasoningEffort: openAiReasoningEffort,
+            includeReasoningParams: false,
+          );
+        }
         throw StateError(
           'LLM compression failed (${response.statusCode}): $body',
         );
@@ -909,19 +971,45 @@ class LlmChatService implements LlmClientAdapter {
     return 'No prior context summary was returned.';
   }
 
-  Map<String, dynamic> _deepSeekThinkingParams({
+  Map<String, dynamic> _providerReasoningParams({
     required String baseUrl,
-    required bool enabled,
-    required String effort,
+    required String model,
+    required bool deepSeekThinkingEnabled,
+    required String deepSeekReasoningEffort,
+    required String openAiReasoningEffort,
   }) {
-    if (!_isDeepSeekBaseUrl(baseUrl)) return const {};
-    final params = <String, dynamic>{
-      'thinking': {'type': enabled ? 'enabled' : 'disabled'},
-    };
-    if (enabled) {
-      params['reasoning_effort'] = DeepSeekReasoningEffort.normalize(effort);
+    if (isDeepSeekModelId(model) || _isDeepSeekBaseUrl(baseUrl)) {
+      final params = <String, dynamic>{
+        'thinking': {
+          'type': deepSeekThinkingEnabled ? 'enabled' : 'disabled',
+        },
+      };
+      if (deepSeekThinkingEnabled) {
+        params['reasoning_effort'] = DeepSeekReasoningEffort.normalize(
+          deepSeekReasoningEffort,
+        );
+      }
+      return params;
     }
-    return params;
+    if (supportsOpenAiReasoningEffort(model)) {
+      return {
+        'reasoning_effort': OpenAiReasoningEffort.normalize(
+          openAiReasoningEffort,
+        ),
+      };
+    }
+    return const {};
+  }
+
+  bool _looksLikeReasoningParamUnsupportedError(String text) {
+    final lower = text.toLowerCase();
+    return lower.contains('reasoning_effort') ||
+        lower.contains('xhigh') ||
+        lower.contains('"thinking"') ||
+        lower.contains("'thinking'") ||
+        lower.contains('unknown parameter') ||
+        lower.contains('unsupported parameter') ||
+        lower.contains('does not support reasoning');
   }
 
   bool _isDeepSeekBaseUrl(String baseUrl) {

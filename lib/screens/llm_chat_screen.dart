@@ -49,6 +49,23 @@ List<String> resolveFetchedModelOptions({
     ..sort();
 }
 
+@visibleForTesting
+List<String> buildInitialModelOptions({
+  required String currentModel,
+  required Iterable<String> cachedModels,
+}) {
+  final seededModels = resolveFetchedModelOptions(
+    fetchedModels: cachedModels,
+    fallbackModels: _defaultModels,
+  );
+  final normalizedCurrentModel = currentModel.trim();
+  return {
+    ...seededModels,
+    if (normalizedCurrentModel.isNotEmpty) normalizedCurrentModel,
+  }.toList()
+    ..sort();
+}
+
 class LlmChatScreen extends StatefulWidget {
   final bool active;
   final ValueChanged<bool>? onHistoryVisibilityChanged;
@@ -1336,6 +1353,11 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   Future<void> _showSettings(BuildContext context, _AiStrings strings) async {
     final storage = context.read<StorageService>();
     final settings = await storage.loadAiConnectionSettings();
+    final cachedModels = await storage.loadCachedAiModels(
+      baseUrl: settings.baseUrl,
+    );
+    final baseUrlHistory = await storage.loadAiBaseUrlHistory();
+    final apiKeyHistory = await storage.loadAiApiKeyHistory();
     if (!context.mounted) return;
     AppLogService.instance.info(
       'LLM settings page opened',
@@ -1347,7 +1369,15 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       final nextSettings = await Navigator.of(context).push<_PendingAiSettings>(
         MaterialPageRoute(
           fullscreenDialog: true,
-          builder: (_) => _LlmSettingsScreen(initialSettings: settings),
+          builder: (_) => _LlmSettingsScreen(
+            initialSettings: settings,
+            initialModels: buildInitialModelOptions(
+              currentModel: settings.model,
+              cachedModels: cachedModels,
+            ),
+            initialBaseUrlHistory: baseUrlHistory,
+            initialApiKeyHistory: apiKeyHistory,
+          ),
         ),
       );
       if (nextSettings == null) return;
@@ -1652,9 +1682,11 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                         timeoutSeconds: timeoutSeconds,
                         deepSeekThinkingEnabled: deepSeekThinkingEnabled,
                         deepSeekReasoningEffort: deepSeekReasoningEffort,
+                        openAiReasoningEffort: settings.openAiReasoningEffort,
                         webSearchEnabled: webSearchEnabled,
                         webSearchMaxResults: webSearchMaxResults,
                         apiKey: apiKeyController.text,
+                        selectedApiKeyId: settings.activeApiKeyId,
                       );
                       setDialogState(() {
                         savingSettings = true;
@@ -1670,9 +1702,11 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                               pending.deepSeekThinkingEnabled,
                           deepSeekReasoningEffort:
                               pending.deepSeekReasoningEffort,
+                          openAiReasoningEffort: pending.openAiReasoningEffort,
                           webSearchEnabled: pending.webSearchEnabled,
                           webSearchMaxResults: pending.webSearchMaxResults,
                           apiKey: pending.apiKey,
+                          selectedApiKeyId: pending.selectedApiKeyId,
                         );
                         if (!ctx.mounted) return;
                         Navigator.pop(ctx, pending);
@@ -3253,8 +3287,16 @@ class _ToolApprovalPanel extends StatelessWidget {
 
 class _LlmSettingsScreen extends StatefulWidget {
   final AiConnectionSettings initialSettings;
+  final List<String> initialModels;
+  final List<String> initialBaseUrlHistory;
+  final List<AiApiKeyHistoryEntry> initialApiKeyHistory;
 
-  const _LlmSettingsScreen({required this.initialSettings});
+  const _LlmSettingsScreen({
+    required this.initialSettings,
+    required this.initialModels,
+    required this.initialBaseUrlHistory,
+    required this.initialApiKeyHistory,
+  });
 
   @override
   State<_LlmSettingsScreen> createState() => _LlmSettingsScreenState();
@@ -3264,17 +3306,19 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   late final TextEditingController _baseUrlController;
   late final TextEditingController _modelController;
   late final TextEditingController _apiKeyController;
+  late List<String> _baseUrlHistory;
+  late List<AiApiKeyHistoryEntry> _apiKeyHistory;
   late List<String> _models;
   late int _contextWindowTokens;
   late int _timeoutSeconds;
   late bool _deepSeekThinkingEnabled;
   late String _deepSeekReasoningEffort;
+  late String _openAiReasoningEffort;
   late bool _webSearchEnabled;
   late int _webSearchMaxResults;
-  late bool _hasSavedApiKey;
+  String? _selectedApiKeyId;
   bool _loadingModels = false;
   bool _saving = false;
-  bool _clearSavedApiKey = false;
   String? _errorText;
 
   @override
@@ -3285,14 +3329,18 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _modelController =
         TextEditingController(text: widget.initialSettings.model);
     _apiKeyController = TextEditingController();
-    _models = _modelOptions(widget.initialSettings.model);
+    _baseUrlHistory = List<String>.from(widget.initialBaseUrlHistory);
+    _apiKeyHistory =
+        List<AiApiKeyHistoryEntry>.from(widget.initialApiKeyHistory);
+    _models = List<String>.from(widget.initialModels);
     _contextWindowTokens = widget.initialSettings.contextWindowTokens;
     _timeoutSeconds = widget.initialSettings.timeoutSeconds;
     _deepSeekThinkingEnabled = widget.initialSettings.deepSeekThinkingEnabled;
     _deepSeekReasoningEffort = widget.initialSettings.deepSeekReasoningEffort;
+    _openAiReasoningEffort = widget.initialSettings.openAiReasoningEffort;
     _webSearchEnabled = widget.initialSettings.webSearchEnabled;
     _webSearchMaxResults = widget.initialSettings.webSearchMaxResults;
-    _hasSavedApiKey = widget.initialSettings.hasApiKey;
+    _selectedApiKeyId = widget.initialSettings.activeApiKeyId;
   }
 
   @override
@@ -3307,6 +3355,157 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     return {..._defaultModels, if (model.trim().isNotEmpty) model.trim()}
         .toList()
       ..sort();
+  }
+
+  String? get _selectedApiKeyMasked {
+    for (final entry in _apiKeyHistory) {
+      if (entry.id == _selectedApiKeyId) {
+        return entry.maskedValue;
+      }
+    }
+    return null;
+  }
+
+  bool get _showsDeepSeekControls => isDeepSeekModelId(_modelController.text);
+
+  bool get _showsOpenAiReasoningControls =>
+      supportsOpenAiReasoningEffort(_modelController.text);
+
+  Future<void> _applyBaseUrlSelection(String baseUrl) async {
+    final storage = context.read<StorageService>();
+    _baseUrlController.text = baseUrl;
+    final cachedModels = await storage.loadCachedAiModels(baseUrl: baseUrl);
+    if (!mounted) return;
+    setState(() {
+      _models = buildInitialModelOptions(
+        currentModel: _modelController.text,
+        cachedModels: cachedModels,
+      );
+      if (_models.isNotEmpty && !_models.contains(_modelController.text)) {
+        _modelController.text = _models.first;
+      }
+    });
+  }
+
+  void _selectApiKeyHistoryEntry(String id) {
+    if (!_apiKeyHistory.any((entry) => entry.id == id)) return;
+    setState(() {
+      _selectedApiKeyId = id;
+      _apiKeyController.clear();
+      _apiKeyHistory = [
+        for (final entry in _apiKeyHistory)
+          AiApiKeyHistoryEntry(
+            id: entry.id,
+            maskedValue: entry.maskedValue,
+            isSelected: entry.id == id,
+          ),
+      ];
+    });
+  }
+
+  Future<void> _deleteBaseUrlHistoryEntry(String baseUrl) async {
+    final storage = context.read<StorageService>();
+    await storage.removeAiBaseUrlHistoryEntry(baseUrl);
+    if (!mounted) return;
+    setState(() {
+      _baseUrlHistory =
+          _baseUrlHistory.where((item) => item != baseUrl).toList();
+    });
+  }
+
+  Future<void> _deleteApiKeyHistoryEntry(String id) async {
+    final storage = context.read<StorageService>();
+    await storage.removeAiApiKeyHistoryEntry(id);
+    final refreshed = await storage.loadAiApiKeyHistory();
+    if (!mounted) return;
+    final preferredSelectedId = _selectedApiKeyId;
+    String? nextSelectedId = preferredSelectedId;
+    if (nextSelectedId != null &&
+        !refreshed.any((entry) => entry.id == nextSelectedId)) {
+      nextSelectedId = null;
+    }
+    if (nextSelectedId == null) {
+      for (final entry in refreshed) {
+        if (entry.isSelected) {
+          nextSelectedId = entry.id;
+          break;
+        }
+      }
+    }
+    setState(() {
+      _apiKeyHistory = [
+        for (final entry in refreshed)
+          AiApiKeyHistoryEntry(
+            id: entry.id,
+            maskedValue: entry.maskedValue,
+            isSelected: entry.id == nextSelectedId,
+          ),
+      ];
+      _selectedApiKeyId = nextSelectedId;
+    });
+  }
+
+  Future<void> _openBaseUrlHistory(_AiStrings strings) async {
+    final action = await showModalBottomSheet<_SettingsHistoryAction<String>>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: _HistoryActionSheet<String>(
+          title: strings.baseUrlHistory,
+          emptyText: strings.noBaseUrlHistory,
+          deleteTooltip: strings.delete,
+          items: _baseUrlHistory,
+          labelBuilder: (value) => value,
+          onSelect: (value) => Navigator.pop(
+            sheetContext,
+            _SettingsHistoryAction.select(value),
+          ),
+          onDelete: (value) => Navigator.pop(
+            sheetContext,
+            _SettingsHistoryAction.delete(value),
+          ),
+        ),
+      ),
+    );
+    if (action == null) return;
+    if (action.delete) {
+      await _deleteBaseUrlHistoryEntry(action.value);
+      return;
+    }
+    await _applyBaseUrlSelection(action.value);
+  }
+
+  Future<void> _openApiKeyHistory(_AiStrings strings) async {
+    final action = await showModalBottomSheet<
+        _SettingsHistoryAction<AiApiKeyHistoryEntry>>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: _HistoryActionSheet<AiApiKeyHistoryEntry>(
+          title: strings.apiKeyHistory,
+          emptyText: strings.noApiKeyHistory,
+          deleteTooltip: strings.delete,
+          items: _apiKeyHistory,
+          labelBuilder: (entry) => entry.maskedValue,
+          selectedValue: _selectedApiKeyId,
+          valueKeyBuilder: (entry) => entry.id,
+          onSelect: (entry) => Navigator.pop(
+            sheetContext,
+            _SettingsHistoryAction.select(entry),
+          ),
+          onDelete: (entry) => Navigator.pop(
+            sheetContext,
+            _SettingsHistoryAction.delete(entry),
+          ),
+        ),
+      ),
+    );
+    if (action == null) return;
+    if (action.delete) {
+      await _deleteApiKeyHistoryEntry(action.value.id);
+      return;
+    }
+    _selectApiKeyHistoryEntry(action.value.id);
   }
 
   Future<void> _refreshModels(_AiStrings strings) async {
@@ -3325,16 +3524,26 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         ),
       );
       final typedApiKey = _apiKeyController.text.trim();
+      final resolvedApiKey = typedApiKey.isNotEmpty
+          ? typedApiKey
+          : (_selectedApiKeyId == null
+              ? null
+              : await storage.getAiApiKeyById(_selectedApiKeyId!));
       final fetched = await service.fetchModels(
         baseUrl: _baseUrlController.text.trim(),
-        apiKey: typedApiKey.isEmpty ? null : typedApiKey,
+        apiKey: resolvedApiKey,
+      );
+      final resolvedModels = resolveFetchedModelOptions(
+        fetchedModels: fetched,
+        fallbackModels: _models,
+      );
+      await storage.saveCachedAiModels(
+        baseUrl: _baseUrlController.text.trim(),
+        models: resolvedModels,
       );
       if (!mounted) return;
       setState(() {
-        _models = resolveFetchedModelOptions(
-          fetchedModels: fetched,
-          fallbackModels: _models,
-        );
+        _models = resolvedModels;
         _loadingModels = false;
         if (_models.isNotEmpty && !_models.contains(_modelController.text)) {
           _modelController.text = _models.first;
@@ -3365,11 +3574,12 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       timeoutSeconds: _timeoutSeconds,
       deepSeekThinkingEnabled: _deepSeekThinkingEnabled,
       deepSeekReasoningEffort: _deepSeekReasoningEffort,
+      openAiReasoningEffort: _openAiReasoningEffort,
       webSearchEnabled: _webSearchEnabled,
       webSearchMaxResults: _webSearchMaxResults,
       apiKey: _apiKeyController.text,
+      selectedApiKeyId: _selectedApiKeyId,
     );
-    final clearApiKey = _clearSavedApiKey && pending.apiKey.trim().isEmpty;
     setState(() {
       _saving = true;
       _errorText = null;
@@ -3382,10 +3592,11 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         timeoutSeconds: pending.timeoutSeconds,
         deepSeekThinkingEnabled: pending.deepSeekThinkingEnabled,
         deepSeekReasoningEffort: pending.deepSeekReasoningEffort,
+        openAiReasoningEffort: pending.openAiReasoningEffort,
         webSearchEnabled: pending.webSearchEnabled,
         webSearchMaxResults: pending.webSearchMaxResults,
         apiKey: pending.apiKey,
-        clearApiKey: clearApiKey,
+        selectedApiKeyId: pending.selectedApiKeyId,
       );
       if (!mounted) return;
       Navigator.pop(context, pending);
@@ -3441,7 +3652,18 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
           children: [
             TextField(
               controller: _baseUrlController,
-              decoration: InputDecoration(labelText: strings.baseUrl),
+              decoration: InputDecoration(
+                labelText: strings.baseUrl,
+                helperText: _baseUrlHistory.isEmpty
+                    ? null
+                    : strings.savedCount(_baseUrlHistory.length),
+                suffixIcon: IconButton(
+                  tooltip: strings.baseUrlHistory,
+                  onPressed:
+                      _saving ? null : () => _openBaseUrlHistory(strings),
+                  icon: const Icon(Icons.arrow_drop_down_rounded),
+                ),
+              ),
             ),
             const SizedBox(height: 14),
             Row(
@@ -3481,7 +3703,9 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                     onChanged: _saving
                         ? null
                         : (value) {
-                            if (value != null) _modelController.text = value;
+                            if (value != null) {
+                              setState(() => _modelController.text = value);
+                            }
                           },
                   ),
                 ),
@@ -3541,41 +3765,70 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                       }
                     },
             ),
-            const SizedBox(height: 14),
-            SwitchListTile.adaptive(
-              contentPadding: EdgeInsets.zero,
-              title: Text(strings.deepSeekThinking),
-              subtitle: Text(strings.deepSeekThinkingHint),
-              value: _deepSeekThinkingEnabled,
-              onChanged: _saving
-                  ? null
-                  : (value) {
-                      setState(() => _deepSeekThinkingEnabled = value);
-                    },
-            ),
-            const SizedBox(height: 14),
-            DropdownButtonFormField<String>(
-              initialValue:
-                  DeepSeekReasoningEffort.normalize(_deepSeekReasoningEffort),
-              isExpanded: true,
-              decoration: InputDecoration(
-                labelText: strings.deepSeekReasoningEffort,
+            if (_showsDeepSeekControls) ...[
+              const SizedBox(height: 14),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: Text(strings.deepSeekThinking),
+                subtitle: Text(strings.deepSeekThinkingHint),
+                value: _deepSeekThinkingEnabled,
+                onChanged: _saving
+                    ? null
+                    : (value) {
+                        setState(() => _deepSeekThinkingEnabled = value);
+                      },
               ),
-              items: [
-                for (final value in DeepSeekReasoningEffort.values)
-                  DropdownMenuItem(
-                    value: value,
-                    child: Text(DeepSeekReasoningEffort.label(value)),
-                  ),
-              ],
-              onChanged: _saving || !_deepSeekThinkingEnabled
-                  ? null
-                  : (value) {
-                      if (value != null) {
-                        setState(() => _deepSeekReasoningEffort = value);
-                      }
-                    },
-            ),
+              const SizedBox(height: 14),
+              DropdownButtonFormField<String>(
+                initialValue:
+                    DeepSeekReasoningEffort.normalize(_deepSeekReasoningEffort),
+                isExpanded: true,
+                decoration: InputDecoration(
+                  labelText: strings.deepSeekReasoningEffort,
+                ),
+                items: [
+                  for (final value in DeepSeekReasoningEffort.values)
+                    DropdownMenuItem(
+                      value: value,
+                      child: Text(DeepSeekReasoningEffort.label(value)),
+                    ),
+                ],
+                onChanged: _saving || !_deepSeekThinkingEnabled
+                    ? null
+                    : (value) {
+                        if (value != null) {
+                          setState(() => _deepSeekReasoningEffort = value);
+                        }
+                      },
+              ),
+            ],
+            if (_showsOpenAiReasoningControls) ...[
+              const SizedBox(height: 14),
+              DropdownButtonFormField<String>(
+                initialValue: OpenAiReasoningEffort.normalize(
+                  _openAiReasoningEffort,
+                ),
+                isExpanded: true,
+                decoration: InputDecoration(
+                  labelText: strings.openAiReasoningEffort,
+                  helperText: strings.openAiReasoningHint,
+                ),
+                items: [
+                  for (final value in OpenAiReasoningEffort.values)
+                    DropdownMenuItem(
+                      value: value,
+                      child: Text(OpenAiReasoningEffort.label(value)),
+                    ),
+                ],
+                onChanged: _saving
+                    ? null
+                    : (value) {
+                        if (value != null) {
+                          setState(() => _openAiReasoningEffort = value);
+                        }
+                      },
+              ),
+            ],
             const SizedBox(height: 14),
             SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
@@ -3616,50 +3869,49 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
               controller: _apiKeyController,
               enabled: !_saving,
               obscureText: true,
-              onChanged: (value) {
-                if (_clearSavedApiKey && value.trim().isNotEmpty) {
-                  setState(() => _clearSavedApiKey = false);
-                }
-              },
               decoration: InputDecoration(
-                labelText: _hasSavedApiKey
+                labelText: _selectedApiKeyMasked != null
                     ? strings.apiKeySaved
                     : strings.apiKeyRequired,
-                helperText: _hasSavedApiKey
-                    ? (_clearSavedApiKey
-                        ? strings.apiKeyClearPending
-                        : strings.apiKeyReplaceHint)
-                    : null,
+                helperText: _selectedApiKeyMasked != null
+                    ? strings.apiKeySelected(_selectedApiKeyMasked!)
+                    : (_apiKeyHistory.isNotEmpty
+                        ? strings.apiKeyHistoryHint
+                        : strings.apiKeyReplaceHint),
                 helperMaxLines: 2,
-              ),
-            ),
-            if (_hasSavedApiKey) ...[
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: _saving
-                      ? null
-                      : () {
-                          setState(() {
-                            _clearSavedApiKey = !_clearSavedApiKey;
-                            if (_clearSavedApiKey) {
-                              _apiKeyController.clear();
-                            }
-                          });
-                        },
-                  icon: Icon(
-                    _clearSavedApiKey
-                        ? Icons.undo_rounded
-                        : Icons.delete_outline_rounded,
-                  ),
-                  label: Text(
-                    _clearSavedApiKey
-                        ? strings.keepSavedApiKey
-                        : strings.clearSavedApiKey,
-                  ),
+                suffixIcon: IconButton(
+                  tooltip: strings.apiKeyHistory,
+                  onPressed: _saving ? null : () => _openApiKeyHistory(strings),
+                  icon: const Icon(Icons.arrow_drop_down_rounded),
                 ),
               ),
+            ),
+            if (_apiKeyHistory.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final entry in _apiKeyHistory)
+                    ChoiceChip(
+                      label: Text(entry.maskedValue),
+                      selected: entry.id == _selectedApiKeyId,
+                      onSelected: _saving
+                          ? null
+                          : (_) => _selectApiKeyHistoryEntry(entry.id),
+                    ),
+                ],
+              ),
+              if (_selectedApiKeyMasked != null) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    strings.apiKeyMaskedPreview(_selectedApiKeyMasked!),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ],
             ],
             if (_errorText != null) ...[
               const SizedBox(height: 14),
@@ -3687,6 +3939,108 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   }
 }
 
+class _SettingsHistoryAction<T> {
+  final T value;
+  final bool delete;
+
+  const _SettingsHistoryAction._({
+    required this.value,
+    required this.delete,
+  });
+
+  factory _SettingsHistoryAction.select(T value) {
+    return _SettingsHistoryAction._(value: value, delete: false);
+  }
+
+  factory _SettingsHistoryAction.delete(T value) {
+    return _SettingsHistoryAction._(value: value, delete: true);
+  }
+}
+
+class _HistoryActionSheet<T> extends StatelessWidget {
+  final String title;
+  final String emptyText;
+  final String deleteTooltip;
+  final List<T> items;
+  final String Function(T value) labelBuilder;
+  final String? selectedValue;
+  final String Function(T value)? valueKeyBuilder;
+  final ValueChanged<T> onSelect;
+  final ValueChanged<T> onDelete;
+
+  const _HistoryActionSheet({
+    required this.title,
+    required this.emptyText,
+    required this.deleteTooltip,
+    required this.items,
+    required this.labelBuilder,
+    required this.onSelect,
+    required this.onDelete,
+    this.selectedValue,
+    this.valueKeyBuilder,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+            child: Text(title, style: Theme.of(context).textTheme.titleMedium),
+          ),
+          if (items.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                emptyText,
+                style: TextStyle(color: colorScheme.onSurfaceVariant),
+              ),
+            )
+          else
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: items.length,
+                itemBuilder: (context, index) {
+                  final item = items[index];
+                  final itemKey = valueKeyBuilder?.call(item);
+                  final selected = selectedValue != null &&
+                      itemKey != null &&
+                      itemKey == selectedValue;
+                  return ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                    leading: selected
+                        ? Icon(
+                            Icons.check_circle_rounded,
+                            color: colorScheme.primary,
+                          )
+                        : const Icon(Icons.history_rounded),
+                    title: Text(
+                      labelBuilder(item),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onTap: () => onSelect(item),
+                    trailing: IconButton(
+                      tooltip: deleteTooltip,
+                      onPressed: () => onDelete(item),
+                      icon: const Icon(Icons.delete_outline_rounded),
+                    ),
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _PendingAiSettings {
   final String baseUrl;
   final String model;
@@ -3694,9 +4048,11 @@ class _PendingAiSettings {
   final int timeoutSeconds;
   final bool deepSeekThinkingEnabled;
   final String deepSeekReasoningEffort;
+  final String openAiReasoningEffort;
   final bool webSearchEnabled;
   final int webSearchMaxResults;
   final String apiKey;
+  final String? selectedApiKeyId;
 
   const _PendingAiSettings({
     required this.baseUrl,
@@ -3705,9 +4061,11 @@ class _PendingAiSettings {
     required this.timeoutSeconds,
     required this.deepSeekThinkingEnabled,
     required this.deepSeekReasoningEffort,
+    required this.openAiReasoningEffort,
     required this.webSearchEnabled,
     required this.webSearchMaxResults,
     required this.apiKey,
+    required this.selectedApiKeyId,
   });
 }
 
@@ -3731,6 +4089,9 @@ class _AiStrings {
   String get stop => _en ? 'Stop' : '停止';
   String get stopped => _en ? '[Stopped by user]' : '[用户已终止]';
   String get baseUrl => _en ? 'Base URL' : 'Base URL';
+  String get baseUrlHistory => _en ? 'Base URL history' : 'Base URL 历史';
+  String get noBaseUrlHistory =>
+      _en ? 'No saved Base URLs yet' : '还没有保存过 Base URL';
   String get model => _en ? 'Model' : '模型';
   String get refreshModels => _en ? 'Refresh models' : '刷新模型';
   String get requestTimeout => _en ? 'Request timeout' : '请求超时';
@@ -3745,17 +4106,33 @@ class _AiStrings {
       ? 'Expose a web_search tool that uses the current chat WebView on this device. No search API key is required.'
       : '通过当前聊天绑定的本机 WebView 给模型提供 web_search 工具，不需要搜索 API Key。';
   String get webSearchMaxResults => _en ? 'Search results per call' : '每次搜索结果数';
+  String get openAiReasoningEffort =>
+      _en ? 'OpenAI reasoning effort' : 'OpenAI 思考强度';
+  String get openAiReasoningHint => _en
+      ? 'Used for supported OpenAI reasoning models such as GPT-5 and o-series.'
+      : '用于支持的 OpenAI 推理模型，例如 GPT-5 和 o 系列。';
   String get continueAfterTimeoutPrompt => _en
       ? 'Continue the previous answer. If a server command timed out, narrow the scope and continue with a smaller diagnostic step.'
       : '继续上一次回答。如果服务器命令超时，请缩小范围，用更小的诊断步骤继续。';
   String modelsFailed(String error) =>
       _en ? 'Unable to load models: $error' : '无法加载模型：$error';
+  String savedCount(int count) => _en ? '$count saved' : '已保存 $count 条';
   String get apiKeySaved =>
       _en ? 'API Key (saved, leave blank)' : 'API Key（已保存，留空不改）';
   String get apiKeyRequired => _en ? 'API Key' : 'API Key';
+  String get apiKeyHistory => _en ? 'API key history' : 'API Key 历史';
+  String get noApiKeyHistory =>
+      _en ? 'No saved API keys yet' : '还没有保存过 API Key';
   String get apiKeyReplaceHint => _en
       ? 'Leave this blank to keep the saved key, or enter a new key to replace it.'
       : '留空会保留已保存的 Key，输入新 Key 会替换当前 Key。';
+  String get apiKeyHistoryHint => _en
+      ? 'Choose a saved key from history, or enter a new one to add it.'
+      : '可从历史中选择已保存 Key，或输入新 Key 后保存新增。';
+  String apiKeySelected(String maskedValue) =>
+      _en ? 'Current saved key: $maskedValue' : '当前已保存 Key：$maskedValue';
+  String apiKeyMaskedPreview(String maskedValue) =>
+      _en ? 'Selected key: $maskedValue' : '当前选择的 Key：$maskedValue';
   String get apiKeyClearPending => _en
       ? 'The saved API key will be removed when you save.'
       : '保存后会清除当前已保存的 API Key。';

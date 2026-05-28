@@ -83,3 +83,10 @@ across sessions.
 - 2026-05-28: In LLM settings, leaving the API key field blank must preserve
   the saved secure-storage key. Only an explicit clear action should delete the
   stored key; otherwise model/base URL edits can silently break later chats.
+- 2026-05-28: Cache fetched LLM model lists in local settings per normalized
+  Base URL. Reopen the settings page from cache first, and treat manual refresh
+  as the action that replaces the cached list.
+- 2026-05-28: LLM settings are provider-aware now. Keep Base URL history in
+  plain preferences, keep multiple API keys in secure storage with masked
+  previews, show DeepSeek thinking controls only for DeepSeek-like models, and
+  show OpenAI reasoning effort only for supported OpenAI reasoning model ids.
