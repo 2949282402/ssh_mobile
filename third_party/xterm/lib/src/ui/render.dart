@@ -400,6 +400,14 @@ class RenderTerminal extends RenderBox with RelayoutWhenSystemFontsChangeMixin {
 
   void _paint(PaintingContext context, Offset offset) {
     final canvas = context.canvas;
+    final bounds = offset & size;
+
+    // Clear commands leave many cells in the terminal default state. Paint the
+    // full surface first so emptied cells cannot retain stale glyph pixels.
+    canvas.drawRect(
+      bounds,
+      Paint()..color = _painter.theme.background,
+    );
 
     final lines = _terminal.buffer.lines;
     final charHeight = _painter.cellSize.height;

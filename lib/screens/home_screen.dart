@@ -464,22 +464,25 @@ class _HomeScreenState extends State<HomeScreen> {
     Navigator.push(
       context,
       PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) =>
-            _SettingsPage(
+        pageBuilder: (context, animation, secondaryAnimation) => _SettingsPage(
           appTitle: _appTitle,
-          onExport: () => _exportAppData(context, AppStrings(
-            context.read<AppSettings>().language,
-          )),
-          onImport: () => _importAppData(context, AppStrings(
-            context.read<AppSettings>().language,
-          )),
+          onExport: () => _exportAppData(
+              context,
+              AppStrings(
+                context.read<AppSettings>().language,
+              )),
+          onImport: () => _importAppData(
+              context,
+              AppStrings(
+                context.read<AppSettings>().language,
+              )),
         ),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           const begin = Offset(-1.0, 0.0);
           const end = Offset.zero;
           const curve = Curves.easeOutCubic;
-          var tween = Tween(begin: begin, end: end)
-              .chain(CurveTween(curve: curve));
+          var tween =
+              Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
           return SlideTransition(
             position: animation.drive(tween),
             child: child,
@@ -512,8 +515,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   if (_aiHistoryVisible == visible) return;
                   setState(() => _aiHistoryVisible = visible);
                 },
-                onOpenSettingsDrawer: () =>
-                    _openSettings(context),
+                onOpenSettingsDrawer: () => _openSettings(context),
               );
             case _serverPage:
               return _buildServerPage(context, strings);
@@ -641,13 +643,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final connections = context.select<StorageService, List<ConnectionConfig>>(
       (storage) => storage.connections,
     );
-    final sessionSnapshot = context.select<SshService, _ServerSessionsSnapshot>(
-      _ServerSessionsSnapshot.from,
-    );
-    final healthByConnection = context
-        .select<PerformanceMonitorService, Map<String, ServerHealthSnapshot>>(
-      (monitor) => monitor.healthByConnection,
-    );
     return connections.isEmpty
         ? storageReady
             ? _buildEmptyState(context, strings)
@@ -655,8 +650,6 @@ class _HomeScreenState extends State<HomeScreen> {
         : _buildConnectionList(
             context,
             connections,
-            sessionSnapshot,
-            healthByConnection,
             strings,
           );
   }
@@ -715,8 +708,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildConnectionList(
     BuildContext context,
     List<ConnectionConfig> connections,
-    _ServerSessionsSnapshot sessions,
-    Map<String, ServerHealthSnapshot> healthByConnection,
     AppStrings strings,
   ) {
     return LayoutBuilder(
@@ -742,48 +733,36 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: _buildOverviewHeader(
                   context,
                   connections,
-                  sessions,
                   strings,
                 ),
               ),
               Expanded(
                 child: ReorderableListView.builder(
-                    buildDefaultDragHandles: false,
-                    padding: EdgeInsets.fromLTRB(
-                      horizontalPadding,
-                      0,
-                      horizontalPadding,
-                      88,
-                    ),
-                    itemCount: connections.length,
-                    itemBuilder: (context, index) => _buildConnectionCard(
-                      context,
-                      connections[index],
-                      sessions.forConnection(connections[index].id),
-                      healthByConnection[connections[index].id] ??
-                          ServerHealthSnapshot(
-                            connectionId: connections[index].id,
-                            level: ServerHealthLevel.unknown,
-                            score: 0,
-                            summary: 'No samples',
-                            details: const [],
-                            updatedAt: DateTime.now(),
-                          ),
-                      strings,
-                      connIndex: index,
-                    ),
-                    onReorder: (oldIndex, newIndex) {
-                      context
-                          .read<StorageService>()
-                          .reorderConnections(oldIndex, newIndex);
-                    },
+                  buildDefaultDragHandles: false,
+                  padding: EdgeInsets.fromLTRB(
+                    horizontalPadding,
+                    0,
+                    horizontalPadding,
+                    88,
                   ),
+                  itemCount: connections.length,
+                  itemBuilder: (context, index) => _buildConnectionCard(
+                    context,
+                    connections[index],
+                    strings,
+                    connIndex: index,
+                  ),
+                  onReorder: (oldIndex, newIndex) {
+                    context
+                        .read<StorageService>()
+                        .reorderConnections(oldIndex, newIndex);
+                  },
                 ),
-                if (_serverSelectionMode)
-                  _buildSelectionBar(context, strings),
-              ],
-            ),
-          );
+              ),
+              if (_serverSelectionMode) _buildSelectionBar(context, strings),
+            ],
+          ),
+        );
       },
     );
   }
@@ -839,10 +818,28 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildConnectionCard(
     BuildContext context,
     ConnectionConfig conn,
-    _ConnectionSessionSummary sessionSummary,
-    ServerHealthSnapshot health,
     AppStrings strings, {
     int connIndex = 0,
+  }) {
+    return Selector<SshService, SshConnectionOverview>(
+      key: ValueKey(conn.id),
+      selector: (_, ssh) => ssh.serverOverviewSnapshot.forConnection(conn.id),
+      builder: (context, sessionSummary, _) => _buildConnectionCardBody(
+        context,
+        conn,
+        sessionSummary,
+        strings,
+        connIndex: connIndex,
+      ),
+    );
+  }
+
+  Widget _buildConnectionCardBody(
+    BuildContext context,
+    ConnectionConfig conn,
+    SshConnectionOverview sessionSummary,
+    AppStrings strings, {
+    required int connIndex,
   }) {
     final isActive = sessionSummary.hasConnected;
     final sessionCount = sessionSummary.count;
@@ -861,7 +858,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final windowsExpanded = _expandedConnectionWindowIds.contains(conn.id);
 
     return Container(
-      key: ValueKey(conn.id),
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -962,7 +958,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 6),
                     SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
-                      child: _buildHealthChip(context, health, strings),
+                      child: Selector<PerformanceMonitorService,
+                          ServerHealthSnapshot>(
+                        selector: (_, monitor) => monitor.healthFor(conn.id),
+                        builder: (context, health, _) =>
+                            _buildHealthChip(context, health, strings),
+                      ),
                     ),
                   ],
                 ),
@@ -1121,7 +1122,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildOverviewHeader(
     BuildContext context,
     List<ConnectionConfig> connections,
-    _ServerSessionsSnapshot sessions,
     AppStrings strings,
   ) {
     final theme = Theme.of(context);
@@ -1129,10 +1129,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final cardColor = _panelColor(context);
     final textColor = _panelTextColor(context);
     final mutedTextColor = _panelMutedTextColor(context);
-    final activeCount = connections
-        .where((conn) => sessions.forConnection(conn.id).hasConnected)
-        .length;
-    final windowCount = sessions.windowCount;
+    final headerSnapshot = context.select<SshService, _ServerHeaderSnapshot>(
+      (ssh) =>
+          _ServerHeaderSnapshot.from(ssh.serverOverviewSnapshot, connections),
+    );
+    final activeCount = headerSnapshot.activeCount;
+    final windowCount = headerSnapshot.windowCount;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -1613,86 +1615,40 @@ class _DeferredNavPageState extends State<_DeferredNavPage> {
   }
 }
 
-class _ServerSessionsSnapshot {
-  static const _emptySummary = _ConnectionSessionSummary(
-    count: 0,
-    latestState: null,
-    hasConnected: false,
-  );
-
-  final Map<String, _ConnectionSessionSummary> byConnection;
+class _ServerHeaderSnapshot {
+  final int activeCount;
   final int windowCount;
 
-  const _ServerSessionsSnapshot({
-    required this.byConnection,
+  const _ServerHeaderSnapshot({
+    required this.activeCount,
     required this.windowCount,
   });
 
-  factory _ServerSessionsSnapshot.from(SshService ssh) {
-    final summaries = <String, _ConnectionSessionSummary>{};
-    for (final session in ssh.sessions) {
-      final previous = summaries[session.connectionId] ?? _emptySummary;
-      summaries[session.connectionId] = _ConnectionSessionSummary(
-        count: previous.count + 1,
-        latestState: session.state,
-        hasConnected: previous.hasConnected || session.isConnected,
-      );
+  factory _ServerHeaderSnapshot.from(
+    SshServerOverviewSnapshot sessions,
+    List<ConnectionConfig> connections,
+  ) {
+    var activeCount = 0;
+    for (final connection in connections) {
+      if (sessions.forConnection(connection.id).hasConnected) {
+        activeCount++;
+      }
     }
-    return _ServerSessionsSnapshot(
-      byConnection: Map.unmodifiable(summaries),
-      windowCount: ssh.sessions.length,
+    return _ServerHeaderSnapshot(
+      activeCount: activeCount,
+      windowCount: sessions.windowCount,
     );
   }
 
-  _ConnectionSessionSummary forConnection(String connectionId) {
-    return byConnection[connectionId] ?? _emptySummary;
-  }
-
   @override
   bool operator ==(Object other) {
-    if (other is! _ServerSessionsSnapshot ||
-        other.windowCount != windowCount ||
-        other.byConnection.length != byConnection.length) {
-      return false;
-    }
-    for (final entry in byConnection.entries) {
-      if (other.byConnection[entry.key] != entry.value) return false;
-    }
-    return true;
+    return other is _ServerHeaderSnapshot &&
+        other.activeCount == activeCount &&
+        other.windowCount == windowCount;
   }
 
   @override
-  int get hashCode => Object.hash(
-        windowCount,
-        Object.hashAllUnordered(
-          byConnection.entries.map(
-            (entry) => Object.hash(entry.key, entry.value),
-          ),
-        ),
-      );
-}
-
-class _ConnectionSessionSummary {
-  final int count;
-  final SshConnectionState? latestState;
-  final bool hasConnected;
-
-  const _ConnectionSessionSummary({
-    required this.count,
-    required this.latestState,
-    required this.hasConnected,
-  });
-
-  @override
-  bool operator ==(Object other) {
-    return other is _ConnectionSessionSummary &&
-        other.count == count &&
-        other.latestState == latestState &&
-        other.hasConnected == hasConnected;
-  }
-
-  @override
-  int get hashCode => Object.hash(count, latestState, hasConnected);
+  int get hashCode => Object.hash(activeCount, windowCount);
 }
 
 class _SettingsPanel extends StatefulWidget {
@@ -1826,280 +1782,274 @@ class _SettingsPanelState extends State<_SettingsPanel> {
         style: const TextStyle(fontSize: 13),
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+          children: [
+            Row(
               children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.settings_outlined,
-                      color: colorScheme.primary,
-                      size: 21,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            widget.appTitle,
-                            style: const TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          Text(
-                            strings.settings,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: colorScheme.onSurfaceVariant,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                Icon(
+                  Icons.settings_outlined,
+                  color: colorScheme.primary,
+                  size: 21,
                 ),
-                const SizedBox(height: 14),
-                _SettingsSection(
-                  title: strings.appearance,
-                  children: [
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.translate_rounded, size: 20),
-                      title: Text(
-                        settings.isEnglish
-                            ? strings.switchToChinese
-                            : strings.switchToEnglish,
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                      onTap: settings.toggleLanguage,
-                    ),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      secondary: Icon(
-                        settings.isDarkMode
-                            ? Icons.dark_mode
-                            : Icons.light_mode,
-                        size: 20,
-                      ),
-                      title: Text(
-                        settings.isDarkMode
-                            ? strings.switchToLightMode
-                            : strings.switchToDarkMode,
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                      value: settings.isDarkMode,
-                      onChanged: (_) => settings.toggleTheme(),
-                    ),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading:
-                          const Icon(Icons.font_download_outlined, size: 20),
-                      title: Text(
-                        strings.appFontFamily,
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                      subtitle: Text(
-                        strings.appFontFamilyNote,
-                        style: const TextStyle(fontSize: 11),
-                      ),
-                      trailing: SizedBox(
-                        width: 150,
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            value: settings.fontFamilyId,
-                            isExpanded: true,
-                            items: [
-                              for (final font in AppFontChoice.values)
-                                DropdownMenuItem(
-                                  value: font.id,
-                                  child: Text(
-                                    font.name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                            ],
-                            onChanged: (value) {
-                              if (value != null) {
-                                settings.setFontFamilyId(value);
-                              }
-                            },
-                          ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.appTitle,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                    _FontPreviewCard(
-                      currentFont: settings.fontChoice,
-                      isLikelyAvailable:
-                          settings.fontChoice.isLikelyAvailableOn(
-                        Theme.of(context).platform,
-                      ),
-                      strings: strings,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _SettingsSection(
-                  title: strings.sftpLimits,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: Text(
-                        strings.sftpLimitsHint,
+                      Text(
+                        strings.settings,
                         style: TextStyle(
+                          fontSize: 12,
                           color: colorScheme.onSurfaceVariant,
-                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                    ),
-                    _SftpLimitTile(
-                      icon: Icons.download_outlined,
-                      title: strings.sftpDownloadLimit,
-                      value: _formatLimitBytes(settings.sftpDownloadLimitBytes),
-                      onTap: () => _editSftpLimit(
-                        title: strings.sftpDownloadLimit,
-                        currentBytes: settings.sftpDownloadLimitBytes,
-                        onChanged: settings.setSftpDownloadLimitBytes,
-                      ),
-                    ),
-                    _SftpLimitTile(
-                      icon: Icons.article_outlined,
-                      title: strings.sftpTextPreviewLimit,
-                      value:
-                          _formatLimitBytes(settings.sftpTextPreviewLimitBytes),
-                      onTap: () => _editSftpLimit(
-                        title: strings.sftpTextPreviewLimit,
-                        currentBytes: settings.sftpTextPreviewLimitBytes,
-                        onChanged: settings.setSftpTextPreviewLimitBytes,
-                      ),
-                    ),
-                    _SftpLimitTile(
-                      icon: Icons.preview_outlined,
-                      title: strings.sftpRichPreviewLimit,
-                      value:
-                          _formatLimitBytes(settings.sftpRichPreviewLimitBytes),
-                      onTap: () => _editSftpLimit(
-                        title: strings.sftpRichPreviewLimit,
-                        currentBytes: settings.sftpRichPreviewLimitBytes,
-                        onChanged: settings.setSftpRichPreviewLimitBytes,
-                      ),
-                    ),
-                    _SftpLimitTile(
-                      icon: Icons.edit_note_outlined,
-                      title: strings.sftpEditLimit,
-                      value: _formatLimitBytes(settings.sftpTextEditLimitBytes),
-                      onTap: () => _editSftpLimit(
-                        title: strings.sftpEditLimit,
-                        currentBytes: settings.sftpTextEditLimitBytes,
-                        onChanged: settings.setSftpTextEditLimitBytes,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _SettingsSection(
-                  title: strings.security,
-                  children: [
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      secondary: const Icon(Icons.security, size: 20),
-                      title: Text(
-                        strings.credentialCache,
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                      subtitle: Text(
-                        strings.credentialCacheHint,
-                        style: const TextStyle(fontSize: 11),
-                      ),
-                      value: cacheEnabled,
-                      onChanged: (value) async {
-                        await storage.setSecretCacheEnabled(value);
-                        if (mounted) setState(() {});
-                      },
-                    ),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.timer_outlined, size: 20),
-                      title: Text(
-                        strings.credentialCacheTimeoutLabel(
-                          cacheTimeoutMinutes,
-                        ),
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                      trailing: SizedBox(
-                        width: 110,
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<int>(
-                            isDense: true,
-                            isExpanded: true,
-                            value: cacheTimeoutMinutes,
-                            items: [
-                              for (final minutes in cacheOptions)
-                                DropdownMenuItem(
-                                  value: minutes,
-                                  child: Text(
-                                    '${minutes}m',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                            ],
-                            onChanged: cacheEnabled
-                                ? (minutes) {
-                                    if (minutes == null) return;
-                                    storage.setSecretCacheTtl(
-                                      Duration(minutes: minutes),
-                                    );
-                                    if (mounted) setState(() {});
-                                  }
-                                : null,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _SettingsSection(
-                  title: strings.dataBackup,
-                  children: [
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.upload_file_outlined, size: 20),
-                      title: Text(
-                        strings.exportAppData,
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                      subtitle: Text(
-                        strings.backupContainsSecrets,
-                        style: const TextStyle(fontSize: 11),
-                      ),
-                      onTap: widget.onExport,
-                    ),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(
-                        Icons.download_for_offline_outlined,
-                        size: 20,
-                      ),
-                      title: Text(
-                        strings.importAppData,
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                      subtitle: Text(
-                        strings.importAppDataWarning,
-                        style: const TextStyle(fontSize: 11),
-                      ),
-                      onTap: widget.onImport,
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ],
             ),
-          ),
-        );
+            const SizedBox(height: 14),
+            _SettingsSection(
+              title: strings.appearance,
+              children: [
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.translate_rounded, size: 20),
+                  title: Text(
+                    settings.isEnglish
+                        ? strings.switchToChinese
+                        : strings.switchToEnglish,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  onTap: settings.toggleLanguage,
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  secondary: Icon(
+                    settings.isDarkMode ? Icons.dark_mode : Icons.light_mode,
+                    size: 20,
+                  ),
+                  title: Text(
+                    settings.isDarkMode
+                        ? strings.switchToLightMode
+                        : strings.switchToDarkMode,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  value: settings.isDarkMode,
+                  onChanged: (_) => settings.toggleTheme(),
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.font_download_outlined, size: 20),
+                  title: Text(
+                    strings.appFontFamily,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  subtitle: Text(
+                    strings.appFontFamilyNote,
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  trailing: SizedBox(
+                    width: 150,
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: settings.fontFamilyId,
+                        isExpanded: true,
+                        items: [
+                          for (final font in AppFontChoice.values)
+                            DropdownMenuItem(
+                              value: font.id,
+                              child: Text(
+                                font.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                        ],
+                        onChanged: (value) {
+                          if (value != null) {
+                            settings.setFontFamilyId(value);
+                          }
+                        },
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                _FontPreviewCard(
+                  currentFont: settings.fontChoice,
+                  isLikelyAvailable: settings.fontChoice.isLikelyAvailableOn(
+                    Theme.of(context).platform,
+                  ),
+                  strings: strings,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _SettingsSection(
+              title: strings.sftpLimits,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    strings.sftpLimitsHint,
+                    style: TextStyle(
+                      color: colorScheme.onSurfaceVariant,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+                _SftpLimitTile(
+                  icon: Icons.download_outlined,
+                  title: strings.sftpDownloadLimit,
+                  value: _formatLimitBytes(settings.sftpDownloadLimitBytes),
+                  onTap: () => _editSftpLimit(
+                    title: strings.sftpDownloadLimit,
+                    currentBytes: settings.sftpDownloadLimitBytes,
+                    onChanged: settings.setSftpDownloadLimitBytes,
+                  ),
+                ),
+                _SftpLimitTile(
+                  icon: Icons.article_outlined,
+                  title: strings.sftpTextPreviewLimit,
+                  value: _formatLimitBytes(settings.sftpTextPreviewLimitBytes),
+                  onTap: () => _editSftpLimit(
+                    title: strings.sftpTextPreviewLimit,
+                    currentBytes: settings.sftpTextPreviewLimitBytes,
+                    onChanged: settings.setSftpTextPreviewLimitBytes,
+                  ),
+                ),
+                _SftpLimitTile(
+                  icon: Icons.preview_outlined,
+                  title: strings.sftpRichPreviewLimit,
+                  value: _formatLimitBytes(settings.sftpRichPreviewLimitBytes),
+                  onTap: () => _editSftpLimit(
+                    title: strings.sftpRichPreviewLimit,
+                    currentBytes: settings.sftpRichPreviewLimitBytes,
+                    onChanged: settings.setSftpRichPreviewLimitBytes,
+                  ),
+                ),
+                _SftpLimitTile(
+                  icon: Icons.edit_note_outlined,
+                  title: strings.sftpEditLimit,
+                  value: _formatLimitBytes(settings.sftpTextEditLimitBytes),
+                  onTap: () => _editSftpLimit(
+                    title: strings.sftpEditLimit,
+                    currentBytes: settings.sftpTextEditLimitBytes,
+                    onChanged: settings.setSftpTextEditLimitBytes,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _SettingsSection(
+              title: strings.security,
+              children: [
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  secondary: const Icon(Icons.security, size: 20),
+                  title: Text(
+                    strings.credentialCache,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  subtitle: Text(
+                    strings.credentialCacheHint,
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  value: cacheEnabled,
+                  onChanged: (value) async {
+                    await storage.setSecretCacheEnabled(value);
+                    if (mounted) setState(() {});
+                  },
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.timer_outlined, size: 20),
+                  title: Text(
+                    strings.credentialCacheTimeoutLabel(
+                      cacheTimeoutMinutes,
+                    ),
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  trailing: SizedBox(
+                    width: 110,
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<int>(
+                        isDense: true,
+                        isExpanded: true,
+                        value: cacheTimeoutMinutes,
+                        items: [
+                          for (final minutes in cacheOptions)
+                            DropdownMenuItem(
+                              value: minutes,
+                              child: Text(
+                                '${minutes}m',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                        ],
+                        onChanged: cacheEnabled
+                            ? (minutes) {
+                                if (minutes == null) return;
+                                storage.setSecretCacheTtl(
+                                  Duration(minutes: minutes),
+                                );
+                                if (mounted) setState(() {});
+                              }
+                            : null,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _SettingsSection(
+              title: strings.dataBackup,
+              children: [
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.upload_file_outlined, size: 20),
+                  title: Text(
+                    strings.exportAppData,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  subtitle: Text(
+                    strings.backupContainsSecrets,
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  onTap: widget.onExport,
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(
+                    Icons.download_for_offline_outlined,
+                    size: 20,
+                  ),
+                  title: Text(
+                    strings.importAppData,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  subtitle: Text(
+                    strings.importAppDataWarning,
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  onTap: widget.onImport,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

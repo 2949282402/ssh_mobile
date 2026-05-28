@@ -3,6 +3,7 @@
 import 'dart:math';
 
 import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -822,6 +823,10 @@ class _MonitorContentState extends State<_MonitorContent> {
   int _serversPerChart = 1;
   Future<Map<String, List<PortProcessSnapshot>>>? _portsFuture;
   Future<Map<String, List<ApplicationMemorySnapshot>>>? _appsFuture;
+  String? _portsSelectionKey;
+  String? _appsSelectionKey;
+  String? _chartItemsCacheKey;
+  List<_MetricChartItem> _chartItemsCache = const [];
   final Set<String> _collapsedChartKeys = {};
 
   AppStrings get strings => widget.strings;
@@ -852,47 +857,79 @@ class _MonitorContentState extends State<_MonitorContent> {
 
   void _refreshSnapshotFutureForActiveTab() {
     if (widget.tabIndex == 1) {
-      _portsFuture = widget.selectedConnections.isEmpty ? null : _loadPorts();
+      _refreshPortsFuture();
     } else if (widget.tabIndex == 2) {
-      _appsFuture =
-          widget.selectedConnections.isEmpty ? null : _loadApplications();
+      _refreshApplicationsFuture();
     }
+  }
+
+  void _refreshPortsFuture({bool force = false}) {
+    final key = _connectionsCacheKey(widget.selectedConnections);
+    if (key == null) {
+      _portsSelectionKey = null;
+      _portsFuture = null;
+      return;
+    }
+    if (force || _portsFuture == null || _portsSelectionKey != key) {
+      _portsSelectionKey = key;
+      _portsFuture = _loadPorts();
+    }
+  }
+
+  void _refreshApplicationsFuture({bool force = false}) {
+    final key = _connectionsCacheKey(widget.selectedConnections);
+    if (key == null) {
+      _appsSelectionKey = null;
+      _appsFuture = null;
+      return;
+    }
+    if (force || _appsFuture == null || _appsSelectionKey != key) {
+      _appsSelectionKey = key;
+      _appsFuture = _loadApplications();
+    }
+  }
+
+  String? _connectionsCacheKey(List<ConnectionConfig> connections) {
+    if (connections.isEmpty) return null;
+    return connections.map((connection) => connection.id).join('|');
   }
 
   @override
   Widget build(BuildContext context) {
-    final monitor = widget.tabIndex == 0
-        ? context.watch<PerformanceMonitorService>()
-        : context.read<PerformanceMonitorService>();
-    if (monitor.isRunning && !_wasRunning) {
-      _configExpanded = false;
-    }
-    _wasRunning = monitor.isRunning;
-
     return Column(
       children: [
         if (widget.tabIndex == 0)
-          _MonitorConfigPanelV2(
-            strings: strings,
-            monitor: monitor,
-            serversPerChart: _serversPerChart,
-            onStartMonitoring: widget.onStartMonitoring,
-            expanded: _configExpanded,
-            onToggle: () => setState(() => _configExpanded = !_configExpanded),
-            onServersPerChartChanged: (value) {
-              setState(() => _serversPerChart = value);
+          Selector<PerformanceMonitorService, _MonitorConfigSnapshot>(
+            selector: (_, monitor) => _MonitorConfigSnapshot.from(monitor),
+            builder: (context, snapshot, _) {
+              if (snapshot.isRunning && !_wasRunning) {
+                _configExpanded = false;
+              }
+              _wasRunning = snapshot.isRunning;
+              return _MonitorConfigPanelV2(
+                strings: strings,
+                monitor: widget.monitor,
+                serversPerChart: _serversPerChart,
+                onStartMonitoring: widget.onStartMonitoring,
+                expanded: _configExpanded,
+                onToggle: () =>
+                    setState(() => _configExpanded = !_configExpanded),
+                onServersPerChartChanged: (value) {
+                  setState(() => _serversPerChart = value);
+                },
+                onCustomInterval: () => _showCustomDuration(
+                  title: _monitorText(strings, 'Interval', '刷新间隔'),
+                  initial: widget.monitor.interval,
+                  onChanged: widget.monitor.setInterval,
+                ),
+                onCustomWindow: () => _showCustomDuration(
+                  title: _monitorText(strings, 'Range', '时间范围'),
+                  initial: widget.monitor.historyWindow,
+                  max: PerformanceMonitorService.maxRetention,
+                  onChanged: widget.monitor.setHistoryWindow,
+                ),
+              );
             },
-            onCustomInterval: () => _showCustomDuration(
-              title: _monitorText(strings, 'Interval', '刷新间隔'),
-              initial: monitor.interval,
-              onChanged: monitor.setInterval,
-            ),
-            onCustomWindow: () => _showCustomDuration(
-              title: _monitorText(strings, 'Range', '时间范围'),
-              initial: monitor.historyWindow,
-              max: PerformanceMonitorService.maxRetention,
-              onChanged: monitor.setHistoryWindow,
-            ),
           ),
         Expanded(
           child: _buildActiveTab(context),
@@ -910,7 +947,7 @@ class _MonitorContentState extends State<_MonitorContent> {
           emptyText:
               _monitorText(strings, 'No listening ports found', '未发现监听端口'),
           future: _portsFuture,
-          onRefresh: () => setState(() => _portsFuture = _loadPorts()),
+          onRefresh: () => setState(() => _refreshPortsFuture(force: true)),
           itemBuilder: _buildPortItem,
         );
       case 2:
@@ -920,12 +957,19 @@ class _MonitorContentState extends State<_MonitorContent> {
           emptyText:
               _monitorText(strings, 'No application data found', '未发现应用数据'),
           future: _appsFuture,
-          onRefresh: () => setState(() => _appsFuture = _loadApplications()),
+          onRefresh: () =>
+              setState(() => _refreshApplicationsFuture(force: true)),
           itemBuilder: _buildApplicationItem,
         );
       case 0:
       default:
-        return _buildPerformanceTab(context);
+        return Selector<PerformanceMonitorService, _MonitorPerformanceSnapshot>(
+          selector: (_, monitor) => _MonitorPerformanceSnapshot.from(
+            monitor,
+            widget.monitoringConnections,
+          ),
+          builder: (context, _, __) => _buildPerformanceTab(context),
+        );
     }
   }
 
@@ -963,48 +1007,54 @@ class _MonitorContentState extends State<_MonitorContent> {
           itemCount: chartItems.length + 2,
           itemBuilder: (context, index) {
             if (index == 0) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: _HealthAlertPanel(
-                  strings: strings,
-                  connections: chartConnections,
-                  monitor: monitor,
+              return RepaintBoundary(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _HealthAlertPanel(
+                    strings: strings,
+                    connections: chartConnections,
+                    monitor: monitor,
+                  ),
                 ),
               );
             }
             if (index == 1) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: _DiskUsagePanel(
-                  strings: strings,
-                  connections: chartConnections,
-                  monitor: monitor,
-                  expanded: _diskExpanded,
-                  onToggle: () =>
-                      setState(() => _diskExpanded = !_diskExpanded),
+              return RepaintBoundary(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _DiskUsagePanel(
+                    strings: strings,
+                    connections: chartConnections,
+                    monitor: monitor,
+                    expanded: _diskExpanded,
+                    onToggle: () =>
+                        setState(() => _diskExpanded = !_diskExpanded),
+                  ),
                 ),
               );
             }
             final item = chartItems[index - 2];
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: _MetricChart(
-                title: item.title,
-                unit: item.spec.unit,
-                connections: item.connections,
-                samplesByConnection: samplesByConnection,
-                chartHeight: twoColumns ? 178 : 218,
-                maxY: item.spec.maxY,
-                valueFor: item.spec.valueFor,
-                latestTextFor: item.spec.latestTextFor,
-                expanded: !_collapsedChartKeys.contains(item.key),
-                onToggle: () {
-                  setState(() {
-                    if (!_collapsedChartKeys.remove(item.key)) {
-                      _collapsedChartKeys.add(item.key);
-                    }
-                  });
-                },
+            return RepaintBoundary(
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _MetricChart(
+                  title: item.title,
+                  unit: item.spec.unit,
+                  connections: item.connections,
+                  samplesByConnection: samplesByConnection,
+                  chartHeight: twoColumns ? 178 : 218,
+                  maxY: item.spec.maxY,
+                  valueFor: item.spec.valueFor,
+                  latestTextFor: item.spec.latestTextFor,
+                  expanded: !_collapsedChartKeys.contains(item.key),
+                  onToggle: () {
+                    setState(() {
+                      if (!_collapsedChartKeys.remove(item.key)) {
+                        _collapsedChartKeys.add(item.key);
+                      }
+                    });
+                  },
+                ),
               ),
             );
           },
@@ -1016,6 +1066,14 @@ class _MonitorContentState extends State<_MonitorContent> {
   List<_MetricChartItem> _metricChartItems(
     List<ConnectionConfig> chartConnections,
   ) {
+    final cacheKey = [
+      strings.language.name,
+      _serversPerChart,
+      for (final connection in chartConnections) connection.id,
+    ].join('|');
+    if (_chartItemsCacheKey == cacheKey) {
+      return _chartItemsCache;
+    }
     final specs = _metricSpecs();
     final items = <_MetricChartItem>[];
     final groupSize = _serversPerChart.clamp(1, 99);
@@ -1035,7 +1093,9 @@ class _MonitorContentState extends State<_MonitorContent> {
         );
       }
     }
-    return items;
+    _chartItemsCacheKey = cacheKey;
+    _chartItemsCache = List.unmodifiable(items);
+    return _chartItemsCache;
   }
 
   List<_MetricSpec> _metricSpecs() {
@@ -1213,6 +1273,184 @@ class _MonitorContentState extends State<_MonitorContent> {
     if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
     return '$bytes B';
   }
+}
+
+class _MonitorConfigSnapshot {
+  final bool isRunning;
+  final bool isSampling;
+  final Duration interval;
+  final Duration historyWindow;
+  final Duration effectiveInterval;
+  final DateTime? startedAt;
+  final int selectedCount;
+  final int monitoringCount;
+
+  const _MonitorConfigSnapshot({
+    required this.isRunning,
+    required this.isSampling,
+    required this.interval,
+    required this.historyWindow,
+    required this.effectiveInterval,
+    required this.startedAt,
+    required this.selectedCount,
+    required this.monitoringCount,
+  });
+
+  factory _MonitorConfigSnapshot.from(PerformanceMonitorService monitor) {
+    return _MonitorConfigSnapshot(
+      isRunning: monitor.isRunning,
+      isSampling: monitor.isSampling,
+      interval: monitor.interval,
+      historyWindow: monitor.historyWindow,
+      effectiveInterval: monitor.effectiveInterval,
+      startedAt: monitor.startedAt,
+      selectedCount: monitor.selectedConnectionIds.length,
+      monitoringCount: monitor.monitoringConnectionIds.length,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is _MonitorConfigSnapshot &&
+        other.isRunning == isRunning &&
+        other.isSampling == isSampling &&
+        other.interval == interval &&
+        other.historyWindow == historyWindow &&
+        other.effectiveInterval == effectiveInterval &&
+        other.startedAt == startedAt &&
+        other.selectedCount == selectedCount &&
+        other.monitoringCount == monitoringCount;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        isRunning,
+        isSampling,
+        interval,
+        historyWindow,
+        effectiveInterval,
+        startedAt,
+        selectedCount,
+        monitoringCount,
+      );
+}
+
+class _MonitorPerformanceSnapshot {
+  final bool isRunning;
+  final bool isSampling;
+  final Duration historyWindow;
+  final int alertCount;
+  final String? newestAlertId;
+  final List<_MonitorConnectionRenderToken> connections;
+
+  const _MonitorPerformanceSnapshot({
+    required this.isRunning,
+    required this.isSampling,
+    required this.historyWindow,
+    required this.alertCount,
+    required this.newestAlertId,
+    required this.connections,
+  });
+
+  factory _MonitorPerformanceSnapshot.from(
+    PerformanceMonitorService monitor,
+    List<ConnectionConfig> connections,
+  ) {
+    return _MonitorPerformanceSnapshot(
+      isRunning: monitor.isRunning,
+      isSampling: monitor.isSampling,
+      historyWindow: monitor.historyWindow,
+      alertCount: monitor.alerts.length,
+      newestAlertId: monitor.alerts.isEmpty ? null : monitor.alerts.first.id,
+      connections: [
+        for (final connection in connections)
+          _MonitorConnectionRenderToken.from(monitor, connection.id),
+      ],
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is _MonitorPerformanceSnapshot &&
+        other.isRunning == isRunning &&
+        other.isSampling == isSampling &&
+        other.historyWindow == historyWindow &&
+        other.alertCount == alertCount &&
+        other.newestAlertId == newestAlertId &&
+        listEquals(other.connections, connections);
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        isRunning,
+        isSampling,
+        historyWindow,
+        alertCount,
+        newestAlertId,
+        Object.hashAll(connections),
+      );
+}
+
+class _MonitorConnectionRenderToken {
+  final String connectionId;
+  final int visibleSampleCount;
+  final int latestVisibleSampleMicros;
+  final int diskUsageCount;
+  final int healthUpdatedAtMicros;
+  final int healthScore;
+  final ServerHealthLevel healthLevel;
+
+  const _MonitorConnectionRenderToken({
+    required this.connectionId,
+    required this.visibleSampleCount,
+    required this.latestVisibleSampleMicros,
+    required this.diskUsageCount,
+    required this.healthUpdatedAtMicros,
+    required this.healthScore,
+    required this.healthLevel,
+  });
+
+  factory _MonitorConnectionRenderToken.from(
+    PerformanceMonitorService monitor,
+    String connectionId,
+  ) {
+    final visibleSamples = monitor.visibleSamplesFor(connectionId);
+    final health = monitor.healthFor(connectionId);
+    return _MonitorConnectionRenderToken(
+      connectionId: connectionId,
+      visibleSampleCount: visibleSamples.length,
+      latestVisibleSampleMicros: visibleSamples.isEmpty
+          ? 0
+          : visibleSamples.last.time.microsecondsSinceEpoch,
+      diskUsageCount: monitor.diskUsageFor(connectionId).length,
+      healthUpdatedAtMicros: health.updatedAt.microsecondsSinceEpoch,
+      healthScore: health.score,
+      healthLevel: health.level,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is _MonitorConnectionRenderToken &&
+        other.connectionId == connectionId &&
+        other.visibleSampleCount == visibleSampleCount &&
+        other.latestVisibleSampleMicros == latestVisibleSampleMicros &&
+        other.diskUsageCount == diskUsageCount &&
+        other.healthUpdatedAtMicros == healthUpdatedAtMicros &&
+        other.healthScore == healthScore &&
+        other.healthLevel == healthLevel;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        connectionId,
+        visibleSampleCount,
+        latestVisibleSampleMicros,
+        diskUsageCount,
+        healthUpdatedAtMicros,
+        healthScore,
+        healthLevel,
+      );
 }
 
 class _MetricChart extends StatelessWidget {
@@ -2531,17 +2769,21 @@ class _ServerSnapshotTab<T> extends StatelessWidget {
                     );
                   }
                   final data = snapshot.data ?? const {};
-                  return ListView(
+                  return ListView.builder(
+                    cacheExtent: 900,
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
-                    children: [
-                      for (final connection in connections)
-                        _ServerSnapshotSection<T>(
+                    itemCount: connections.length,
+                    itemBuilder: (context, index) {
+                      final connection = connections[index];
+                      return RepaintBoundary(
+                        child: _ServerSnapshotSection<T>(
                           connection: connection,
                           items: data[connection.id] ?? const [],
                           emptyText: emptyText,
                           itemBuilder: itemBuilder,
                         ),
-                    ],
+                      );
+                    },
                   );
                 },
               ),

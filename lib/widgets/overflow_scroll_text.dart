@@ -20,13 +20,16 @@ class OverflowScrollText extends StatefulWidget {
 
 class _OverflowScrollTextState extends State<OverflowScrollText> {
   late final ScrollController _scrollController;
+  late final PageStorageBucket _pageStorageBucket;
 
   @override
   void initState() {
     super.initState();
+    _pageStorageBucket = PageStorageBucket();
     // These small horizontal inspectors live inside lists and expansion tiles.
-    // Do not persist their offset in PageStorage, or they can collide with
-    // nearby ExpansionTile bool state.
+    // Isolate their storage bucket as well: Flutter can still consult
+    // PageStorage during scrollable mount, and nearby ExpansionTile bool state
+    // otherwise collides with the horizontal scroll offset slot.
     _scrollController = ScrollController(keepScrollOffset: false);
   }
 
@@ -52,13 +55,16 @@ class _OverflowScrollTextState extends State<OverflowScrollText> {
             softWrap: false,
             style: widget.style,
           );
-    return Scrollbar(
-      controller: _scrollController,
-      thumbVisibility: false,
-      child: SingleChildScrollView(
+    return PageStorage(
+      bucket: _pageStorageBucket,
+      child: Scrollbar(
         controller: _scrollController,
-        scrollDirection: Axis.horizontal,
-        child: child,
+        thumbVisibility: false,
+        child: SingleChildScrollView(
+          controller: _scrollController,
+          scrollDirection: Axis.horizontal,
+          child: child,
+        ),
       ),
     );
   }

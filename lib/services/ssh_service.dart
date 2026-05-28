@@ -21,6 +21,76 @@ enum SshConnectionState {
   error,
 }
 
+class SshConnectionOverview {
+  static const empty = SshConnectionOverview(
+    count: 0,
+    latestState: null,
+    hasConnected: false,
+  );
+
+  final int count;
+  final SshConnectionState? latestState;
+  final bool hasConnected;
+
+  const SshConnectionOverview({
+    required this.count,
+    required this.latestState,
+    required this.hasConnected,
+  });
+
+  @override
+  bool operator ==(Object other) {
+    return other is SshConnectionOverview &&
+        other.count == count &&
+        other.latestState == latestState &&
+        other.hasConnected == hasConnected;
+  }
+
+  @override
+  int get hashCode => Object.hash(count, latestState, hasConnected);
+}
+
+class SshServerOverviewSnapshot {
+  final Map<String, SshConnectionOverview> byConnection;
+  final int windowCount;
+
+  const SshServerOverviewSnapshot({
+    required this.byConnection,
+    required this.windowCount,
+  });
+
+  const SshServerOverviewSnapshot.empty()
+      : byConnection = const {},
+        windowCount = 0;
+
+  SshConnectionOverview forConnection(String connectionId) {
+    return byConnection[connectionId] ?? SshConnectionOverview.empty;
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (other is! SshServerOverviewSnapshot ||
+        other.windowCount != windowCount ||
+        other.byConnection.length != byConnection.length) {
+      return false;
+    }
+    for (final entry in byConnection.entries) {
+      if (other.byConnection[entry.key] != entry.value) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        windowCount,
+        Object.hashAllUnordered(
+          byConnection.entries.map(
+            (entry) => Object.hash(entry.key, entry.value),
+          ),
+        ),
+      );
+}
+
 /// SSH 连接会话的核心状态。管理输出缓存（上限 200K 字符的环形缓冲区）、
 /// tmux 会话绑定、字体缩放等。
 ///
@@ -139,6 +209,8 @@ class SshService extends ChangeNotifier {
   final Set<String> _closingSessionIds = {};
   final Random _random = Random();
   List<SshSession> _sessionsView = const [];
+  SshServerOverviewSnapshot _serverOverviewSnapshot =
+      const SshServerOverviewSnapshot.empty();
   StreamSubscription<Map<String, dynamic>?>? _stateSub;
   StreamSubscription<Map<String, dynamic>?>? _outputSub;
   StreamSubscription<Map<String, dynamic>?>? _keepAliveSub;
@@ -164,6 +236,8 @@ class SshService extends ChangeNotifier {
   }
 
   List<SshSession> get sessions => _sessionsView;
+  SshServerOverviewSnapshot get serverOverviewSnapshot =>
+      _serverOverviewSnapshot;
   bool get isConnected =>
       _sessions.values.any((session) => session.isConnected);
   SshConnectionState get state =>
@@ -192,11 +266,7 @@ class SshService extends ChangeNotifier {
   }
 
   bool hasConnectedSession(String connectionId) {
-    return _sessions.values.any(
-      (session) =>
-          session.connectionId == connectionId &&
-          session.state == SshConnectionState.connected,
-    );
+    return _serverOverviewSnapshot.forConnection(connectionId).hasConnected;
   }
 
   SshSession? latestSessionForConnection(String connectionId) {
@@ -207,9 +277,7 @@ class SshService extends ChangeNotifier {
   }
 
   int sessionCountForConnection(String connectionId) {
-    return _sessions.values
-        .where((session) => session.connectionId == connectionId)
-        .length;
+    return _serverOverviewSnapshot.forConnection(connectionId).count;
   }
 
   Future<void> disconnectSessionsForConnection(String connectionId) async {
@@ -1057,6 +1125,27 @@ class SshService extends ChangeNotifier {
 
   void _refreshSessionsView() {
     _sessionsView = List.unmodifiable(_sessions.values);
+    _refreshServerOverviewSnapshot();
+  }
+
+  void _refreshServerOverviewSnapshot() {
+    final summaries = <String, SshConnectionOverview>{};
+    for (final session in _sessions.values) {
+      final previous =
+          summaries[session.connectionId] ?? SshConnectionOverview.empty;
+      summaries[session.connectionId] = SshConnectionOverview(
+        count: previous.count + 1,
+        latestState: session.state,
+        hasConnected: previous.hasConnected || session.isConnected,
+      );
+    }
+    final next = SshServerOverviewSnapshot(
+      byConnection: Map.unmodifiable(summaries),
+      windowCount: _sessions.length,
+    );
+    if (next != _serverOverviewSnapshot) {
+      _serverOverviewSnapshot = next;
+    }
   }
 
   void _notifySessionMetadataChanged() {

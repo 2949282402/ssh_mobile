@@ -4,10 +4,61 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 import '../models/connection.dart';
 import 'app_log_service.dart';
 import 'data_protection_service.dart';
+
+const Uuid _traceUuid = Uuid();
+
+List<AiChatRecord> upsertAiChatRecordsByUpdatedAt(
+  Iterable<AiChatRecord> chats,
+  AiChatRecord chat, {
+  int? limit,
+}) {
+  final ordered = <AiChatRecord>[];
+  var inserted = false;
+  for (final item in chats) {
+    if (item.id == chat.id) {
+      continue;
+    }
+    if (!inserted && !chat.updatedAt.isBefore(item.updatedAt)) {
+      ordered.add(chat);
+      inserted = true;
+    }
+    ordered.add(item);
+  }
+  if (!inserted) {
+    ordered.add(chat);
+  }
+  if (limit != null && ordered.length > limit) {
+    ordered.removeRange(limit, ordered.length);
+  }
+  return ordered;
+}
+
+List<AiSkillRecord> upsertAiSkillRecordsByUpdatedAt(
+  Iterable<AiSkillRecord> skills,
+  AiSkillRecord skill,
+) {
+  final ordered = <AiSkillRecord>[];
+  var inserted = false;
+  for (final item in skills) {
+    if (item.id == skill.id) {
+      continue;
+    }
+    if (!inserted && !skill.updatedAt.isBefore(item.updatedAt)) {
+      ordered.add(skill);
+      inserted = true;
+    }
+    ordered.add(item);
+  }
+  if (!inserted) {
+    ordered.add(skill);
+  }
+  return ordered;
+}
 
 /// 中央持久化服务。管理应用的所有数据持久化，采用三层存储策略：
 ///
@@ -40,7 +91,8 @@ class StorageService extends ChangeNotifier {
   static const _secretCacheEnabledKey = 'secret_cache_enabled';
   static const _secretCacheTtlSecondsKey = 'secret_cache_ttl_seconds';
   static const _defaultSecretCacheTtl = Duration(minutes: 15);
-  static const _protectedPrefWriteDebounce = Duration(milliseconds: 700); // 防抖窗口
+  static const _protectedPrefWriteDebounce =
+      Duration(milliseconds: 700); // 防抖窗口
   static const _passwordSecretKeyPrefix = 'pwd_';
   static const _privateKeySecretKeyPrefix = 'key_';
   static const _memoryAiApiKeyCacheKey = 'ai_api_key_cached';
@@ -472,18 +524,21 @@ class StorageService extends ChangeNotifier {
 
   Future<void> saveAiChat(AiChatRecord chat) async {
     if (!_initialized || _prefs == null) return;
-    final chats = [...await loadAiChats()];
-    chats.removeWhere((item) => item.id == chat.id);
-    chats.insert(0, chat);
-    await _saveAiChats(chats.take(80).toList());
+    final chats = upsertAiChatRecordsByUpdatedAt(
+      await loadAiChats(),
+      chat,
+      limit: 80,
+    );
+    await _saveAiChats(chats, alreadySorted: true);
     notifyListeners();
   }
 
   Future<void> deleteAiChat(String id) async {
     if (!_initialized || _prefs == null) return;
-    final chats = [...await loadAiChats()];
-    chats.removeWhere((item) => item.id == id);
-    await _saveAiChats(chats);
+    final chats = (await loadAiChats())
+        .where((item) => item.id != id)
+        .toList(growable: false);
+    await _saveAiChats(chats, alreadySorted: true);
     notifyListeners();
   }
 
@@ -512,18 +567,20 @@ class StorageService extends ChangeNotifier {
 
   Future<void> saveAiSkill(AiSkillRecord skill) async {
     if (!_initialized || _prefs == null) return;
-    final skills = [...await loadAiSkills()];
-    skills.removeWhere((item) => item.id == skill.id);
-    skills.insert(0, skill);
-    await _saveAiSkills(skills);
+    final skills = upsertAiSkillRecordsByUpdatedAt(
+      await loadAiSkills(),
+      skill,
+    );
+    await _saveAiSkills(skills, alreadySorted: true);
     notifyListeners();
   }
 
   Future<void> deleteAiSkill(String id) async {
     if (!_initialized || _prefs == null) return;
-    final skills = [...await loadAiSkills()];
-    skills.removeWhere((item) => item.id == id);
-    await _saveAiSkills(skills);
+    final skills = (await loadAiSkills())
+        .where((item) => item.id != id)
+        .toList(growable: false);
+    await _saveAiSkills(skills, alreadySorted: true);
     notifyListeners();
   }
 
@@ -814,11 +871,13 @@ class StorageService extends ChangeNotifier {
   Future<void> _saveAiChats(
     List<AiChatRecord> chats, {
     bool immediate = false,
+    bool alreadySorted = false,
   }) async {
-    final sorted = [...chats]
-      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-    _aiChatsCache = List.unmodifiable(sorted);
-    final jsonStr = jsonEncode(sorted.map((item) => item.toJson()).toList());
+    final ordered = alreadySorted
+        ? List<AiChatRecord>.from(chats, growable: false)
+        : ([...chats]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt)));
+    _aiChatsCache = List.unmodifiable(ordered);
+    final jsonStr = jsonEncode(ordered.map((item) => item.toJson()).toList());
     await _writeProtectedPrefBuffered(
       _aiChatsKey,
       jsonStr,
@@ -829,11 +888,13 @@ class StorageService extends ChangeNotifier {
   Future<void> _saveAiSkills(
     List<AiSkillRecord> skills, {
     bool immediate = false,
+    bool alreadySorted = false,
   }) async {
-    final sorted = [...skills]
-      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-    _aiSkillsCache = List.unmodifiable(sorted);
-    final jsonStr = jsonEncode(sorted.map((item) => item.toJson()).toList());
+    final ordered = alreadySorted
+        ? List<AiSkillRecord>.from(skills, growable: false)
+        : ([...skills]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt)));
+    _aiSkillsCache = List.unmodifiable(ordered);
+    final jsonStr = jsonEncode(ordered.map((item) => item.toJson()).toList());
     await _writeProtectedPrefBuffered(
       _aiSkillsKey,
       jsonStr,
@@ -1369,20 +1430,38 @@ class AiChatMessageRecord {
 
 /// 推理追踪数据：记录 tool 请求/响应、审批、思考过程等
 class AiMessageTrace {
+  final String id;
   final String kind;
   final String title;
   final String content;
   final DateTime createdAt;
 
   const AiMessageTrace({
+    required this.id,
     required this.kind,
     required this.title,
     required this.content,
     required this.createdAt,
   });
 
+  factory AiMessageTrace.create({
+    required String kind,
+    required String title,
+    required String content,
+    DateTime? createdAt,
+  }) {
+    return AiMessageTrace(
+      id: _traceUuid.v4(),
+      kind: kind,
+      title: title,
+      content: content,
+      createdAt: createdAt ?? DateTime.now(),
+    );
+  }
+
   Map<String, dynamic> toJson() {
     return {
+      'id': id,
       'kind': kind,
       'title': title,
       'content': content,
@@ -1391,7 +1470,9 @@ class AiMessageTrace {
   }
 
   factory AiMessageTrace.fromJson(Map<String, dynamic> json) {
+    final rawId = (json['id'] as String?)?.trim();
     return AiMessageTrace(
+      id: rawId?.isNotEmpty == true ? rawId! : _traceUuid.v4(),
       kind: json['kind'] as String? ?? 'info',
       title: json['title'] as String? ?? 'Details',
       content: json['content'] as String? ?? '',

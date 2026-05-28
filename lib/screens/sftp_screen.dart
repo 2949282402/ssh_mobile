@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 
@@ -46,12 +45,13 @@ class _SftpScreenState extends State<SftpScreen> {
     final connections = context.select<StorageService, List<ConnectionConfig>>(
       (storage) => storage.connections,
     );
-    final sftp = context.read<SftpService>();
-    final shellSnapshot = context.select<SftpService, _SftpShellSnapshot>(
-      (service) => _SftpShellSnapshot.from(service, connections),
+    final selectedConnectionId = context.select<SftpService, String?>(
+      (service) => service.connectionId,
     );
+    final sftp = context.read<SftpService>();
     final desktop = isDesktopLayout(context);
-    final selectedConnection = _selectedConnection(connections, shellSnapshot);
+    final selectedConnection =
+        _selectedConnection(connections, selectedConnectionId);
     final serversCollapsed = _serversCollapsed && connections.isNotEmpty;
 
     if (!storageReady) {
@@ -72,22 +72,24 @@ class _SftpScreenState extends State<SftpScreen> {
                 curve: Curves.easeOutCubic,
                 width: serversCollapsed ? 64 : 320,
                 child: serversCollapsed
-                    ? _CollapsedDesktopServerRail(
-                        selectedConnection: selectedConnection,
-                        busy: selectedConnection != null &&
-                            shellSnapshot
-                                .isConnectionBusy(selectedConnection.id),
-                        connected: selectedConnection != null &&
-                            shellSnapshot
-                                .isConnectionOpen(selectedConnection.id),
-                        strings: strings,
-                        onExpand: _expandServers,
+                    ? Selector<SftpService, _SftpConnectionStatusSnapshot>(
+                        selector: (_, service) =>
+                            _SftpConnectionStatusSnapshot.from(
+                          service,
+                          selectedConnection?.id,
+                        ),
+                        builder: (context, status, _) =>
+                            _CollapsedDesktopServerRail(
+                          selectedConnection: selectedConnection,
+                          busy: status.busy,
+                          connected: status.connected,
+                          strings: strings,
+                          onExpand: _expandServers,
+                        ),
                       )
                     : _ServerPane(
                         connections: connections,
                         strings: strings,
-                        sftp: sftp,
-                        snapshot: shellSnapshot,
                         onCollapse: _collapseServers,
                       ),
               ),
@@ -111,24 +113,26 @@ class _SftpScreenState extends State<SftpScreen> {
                 switchInCurve: Curves.easeOutCubic,
                 switchOutCurve: Curves.easeInCubic,
                 child: serversCollapsed
-                    ? _CollapsedMobileServerBar(
+                    ? Selector<SftpService, _SftpConnectionStatusSnapshot>(
                         key: const ValueKey('sftp-server-collapsed'),
-                        selectedConnection: selectedConnection,
-                        busy: selectedConnection != null &&
-                            shellSnapshot
-                                .isConnectionBusy(selectedConnection.id),
-                        connected: selectedConnection != null &&
-                            shellSnapshot
-                                .isConnectionOpen(selectedConnection.id),
-                        strings: strings,
-                        onExpand: _expandServers,
+                        selector: (_, service) =>
+                            _SftpConnectionStatusSnapshot.from(
+                          service,
+                          selectedConnection?.id,
+                        ),
+                        builder: (context, status, _) =>
+                            _CollapsedMobileServerBar(
+                          selectedConnection: selectedConnection,
+                          busy: status.busy,
+                          connected: status.connected,
+                          strings: strings,
+                          onExpand: _expandServers,
+                        ),
                       )
                     : _MobileServerStrip(
                         key: const ValueKey('sftp-server-expanded'),
                         connections: connections,
                         strings: strings,
-                        sftp: sftp,
-                        snapshot: shellSnapshot,
                         onCollapse: _collapseServers,
                       ),
               ),
@@ -167,12 +171,11 @@ class _SftpScreenState extends State<SftpScreen> {
 
   ConnectionConfig? _selectedConnection(
     List<ConnectionConfig> connections,
-    _SftpShellSnapshot snapshot,
+    String? activeConnectionId,
   ) {
-    final activeId = snapshot.connectionId;
-    if (activeId == null) return null;
+    if (activeConnectionId == null) return null;
     for (final connection in connections) {
-      if (connection.id == activeId) return connection;
+      if (connection.id == activeConnectionId) return connection;
     }
     return null;
   }
@@ -181,15 +184,11 @@ class _SftpScreenState extends State<SftpScreen> {
 class _ServerPane extends StatelessWidget {
   final List<ConnectionConfig> connections;
   final AppStrings strings;
-  final SftpService sftp;
-  final _SftpShellSnapshot snapshot;
   final VoidCallback onCollapse;
 
   const _ServerPane({
     required this.connections,
     required this.strings,
-    required this.sftp,
-    required this.snapshot,
     required this.onCollapse,
   });
 
@@ -238,12 +237,8 @@ class _ServerPane extends StatelessWidget {
                         ),
                       ),
                       Expanded(
-                        child: _ServerTile(
+                        child: _SftpServerTileBinding(
                           connection: connection,
-                          selected: snapshot.connectionId == connection.id,
-                          busy: snapshot.isConnectionBusy(connection.id),
-                          connected: snapshot.isConnectionOpen(connection.id),
-                          onTap: () => sftp.connect(connection.id),
                         ),
                       ),
                     ],
@@ -291,16 +286,12 @@ class _ServerPane extends StatelessWidget {
 class _MobileServerStrip extends StatelessWidget {
   final List<ConnectionConfig> connections;
   final AppStrings strings;
-  final SftpService sftp;
-  final _SftpShellSnapshot snapshot;
   final VoidCallback onCollapse;
 
   const _MobileServerStrip({
     super.key,
     required this.connections,
     required this.strings,
-    required this.sftp,
-    required this.snapshot,
     required this.onCollapse,
   });
 
@@ -333,13 +324,9 @@ class _MobileServerStrip extends StatelessWidget {
           final connection = connections[index - 1];
           return SizedBox(
             width: 210,
-            child: _ServerTile(
+            child: _SftpServerTileBinding(
               connection: connection,
-              selected: snapshot.connectionId == connection.id,
-              busy: snapshot.isConnectionBusy(connection.id),
-              connected: snapshot.isConnectionOpen(connection.id),
               compact: true,
-              onTap: () => sftp.connect(connection.id),
             ),
           );
         },
@@ -387,7 +374,6 @@ class _CollapsedMobileServerBar extends StatelessWidget {
   final VoidCallback onExpand;
 
   const _CollapsedMobileServerBar({
-    super.key,
     required this.selectedConnection,
     required this.busy,
     required this.connected,
@@ -1054,76 +1040,97 @@ class _FilePane extends StatelessWidget {
   }
 }
 
-class _SftpShellSnapshot {
-  final String? connectionId;
-  final Set<String> busyConnectionIds;
-  final Set<String> openConnectionIds;
+class _SftpServerTileBinding extends StatelessWidget {
+  final ConnectionConfig connection;
+  final bool compact;
 
-  const _SftpShellSnapshot({
-    required this.connectionId,
-    required this.busyConnectionIds,
-    required this.openConnectionIds,
+  const _SftpServerTileBinding({
+    required this.connection,
+    this.compact = false,
   });
 
-  factory _SftpShellSnapshot.from(
-    SftpService service,
-    List<ConnectionConfig> connections,
-  ) {
-    return _SftpShellSnapshot(
-      connectionId: service.connectionId,
-      busyConnectionIds: {
-        for (final connection in connections)
-          if (service.isConnectionBusy(connection.id)) connection.id,
-      },
-      openConnectionIds: {
-        for (final connection in connections)
-          if (service.isConnectionOpen(connection.id)) connection.id,
-      },
+  @override
+  Widget build(BuildContext context) {
+    return Selector<SftpService, _SftpConnectionStatusSnapshot>(
+      selector: (_, service) =>
+          _SftpConnectionStatusSnapshot.from(service, connection.id),
+      builder: (context, status, _) => _ServerTile(
+        connection: connection,
+        selected: status.selected,
+        busy: status.busy,
+        connected: status.connected,
+        compact: compact,
+        onTap: () => context.read<SftpService>().connect(connection.id),
+      ),
     );
   }
+}
 
-  bool isConnectionBusy(String connectionId) {
-    return busyConnectionIds.contains(connectionId);
-  }
+class _SftpConnectionStatusSnapshot {
+  final bool selected;
+  final bool busy;
+  final bool connected;
 
-  bool isConnectionOpen(String connectionId) {
-    return openConnectionIds.contains(connectionId);
+  const _SftpConnectionStatusSnapshot({
+    required this.selected,
+    required this.busy,
+    required this.connected,
+  });
+
+  factory _SftpConnectionStatusSnapshot.from(
+    SftpService service,
+    String? connectionId,
+  ) {
+    if (connectionId == null || connectionId.isEmpty) {
+      return const _SftpConnectionStatusSnapshot(
+        selected: false,
+        busy: false,
+        connected: false,
+      );
+    }
+    return _SftpConnectionStatusSnapshot(
+      selected: service.connectionId == connectionId,
+      busy: service.isConnectionBusy(connectionId),
+      connected: service.isConnectionOpen(connectionId),
+    );
   }
 
   @override
   bool operator ==(Object other) {
-    return other is _SftpShellSnapshot &&
-        other.connectionId == connectionId &&
-        setEquals(other.busyConnectionIds, busyConnectionIds) &&
-        setEquals(other.openConnectionIds, openConnectionIds);
+    return other is _SftpConnectionStatusSnapshot &&
+        other.selected == selected &&
+        other.busy == busy &&
+        other.connected == connected;
   }
 
   @override
-  int get hashCode => Object.hash(
-        connectionId,
-        Object.hashAllUnordered(busyConnectionIds),
-        Object.hashAllUnordered(openConnectionIds),
-      );
+  int get hashCode => Object.hash(selected, busy, connected);
 }
 
 class _SftpUiSnapshot {
+  final String? connectionId;
   final String currentPath;
   final SftpConnectionState state;
   final String? errorMessage;
+  final int entriesRevision;
   final List<SftpEntry> entries;
 
   const _SftpUiSnapshot({
+    required this.connectionId,
     required this.currentPath,
     required this.state,
     required this.errorMessage,
+    required this.entriesRevision,
     required this.entries,
   });
 
   factory _SftpUiSnapshot.from(SftpService service) {
     return _SftpUiSnapshot(
+      connectionId: service.connectionId,
       currentPath: service.currentPath,
       state: service.state,
       errorMessage: service.errorMessage,
+      entriesRevision: service.entriesRevision,
       entries: service.entries,
     );
   }
@@ -1135,18 +1142,20 @@ class _SftpUiSnapshot {
   @override
   bool operator ==(Object other) {
     return other is _SftpUiSnapshot &&
+        other.connectionId == connectionId &&
         other.currentPath == currentPath &&
         other.state == state &&
         other.errorMessage == errorMessage &&
-        listEquals(other.entries, entries);
+        other.entriesRevision == entriesRevision;
   }
 
   @override
   int get hashCode => Object.hash(
+        connectionId,
         currentPath,
         state,
         errorMessage,
-        Object.hashAll(entries),
+        entriesRevision,
       );
 }
 

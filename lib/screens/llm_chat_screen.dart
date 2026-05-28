@@ -773,11 +773,10 @@ class _LlmChatScreenState extends State<LlmChatScreen>
             : '${answer.toString()}\n\n${strings.stopped}';
         final traces = [
           ...cancelledMessages[assistantIndex].traces,
-          AiMessageTrace(
+          AiMessageTrace.create(
             kind: 'approval',
             title: 'Stopped by user',
             content: strings.stopped,
-            createdAt: DateTime.now(),
           ),
         ];
         cancelledMessages[assistantIndex] =
@@ -1677,11 +1676,10 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     messages[assistantIndex] = messages[assistantIndex].copyWith(
       traces: [
         ...messages[assistantIndex].traces,
-        AiMessageTrace(
+        AiMessageTrace.create(
           kind: event.kind,
           title: event.title,
           content: event.content,
-          createdAt: DateTime.now(),
         ),
       ],
     );
@@ -1691,6 +1689,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
           messages: messages,
           updatedAt: DateTime.now(),
         ),
+        sort: false,
       );
     });
     _scrollToBottom();
@@ -1746,29 +1745,36 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   }
 
   void _replaceChat(AiChatRecord chat, {bool sort = true}) {
-    final chats = [..._chats];
-    final index = chats.indexWhere((item) => item.id == chat.id);
-    if (index >= 0) {
-      chats[index] = chat;
-    } else {
-      chats.insert(0, chat);
-    }
-    if (sort) {
-      chats.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-    }
-    _chats = chats;
+    _chats = sort
+        ? upsertAiChatRecordsByUpdatedAt(_chats, chat)
+        : _replaceChatWithoutReordering(_chats, chat);
     if (chat.messages.isNotEmpty) {
-      final history = [..._savedHistoryChats];
-      final historyIndex = history.indexWhere((item) => item.id == chat.id);
-      if (historyIndex >= 0) {
-        history[historyIndex] = chat;
-      } else if (_historyLoadStarted) {
-        history.insert(0, chat);
-      }
-      history.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-      _savedHistoryChats = history;
+      _savedHistoryChats = sort && _historyLoadStarted
+          ? upsertAiChatRecordsByUpdatedAt(_savedHistoryChats, chat)
+          : _replaceChatWithoutReordering(
+              _savedHistoryChats,
+              chat,
+              insertIfMissing: false,
+            );
     }
     _activeChatId = chat.id;
+  }
+
+  List<AiChatRecord> _replaceChatWithoutReordering(
+    List<AiChatRecord> chats,
+    AiChatRecord chat, {
+    bool insertIfMissing = true,
+  }) {
+    final next = [...chats];
+    final index = next.indexWhere((item) => item.id == chat.id);
+    if (index >= 0) {
+      next[index] = chat;
+    } else if (insertIfMissing) {
+      // Streaming and trace updates can hit this path often; keep the chat in
+      // place instead of resorting the whole list on every partial change.
+      next.insert(0, chat);
+    }
+    return next;
   }
 
   AiChatRecord? _chatById(String id) {
@@ -2305,32 +2311,32 @@ class _HistoryPanelState extends State<_HistoryPanel> {
                         final chat = filtered[index];
                         final selected = chat.id == widget.activeChatId;
                         return ListTile(
-                      selected: selected,
-                      leading: Icon(
-                        selected
-                            ? Icons.chat_bubble_rounded
-                            : Icons.chat_bubble_outline_rounded,
-                        color: selected ? colorScheme.primary : null,
-                      ),
-                      title: Text(
-                        chat.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Text(
-                        widget.formatTime(chat.updatedAt),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: IconButton(
-                        tooltip: widget.strings.delete,
-                        icon: const Icon(Icons.delete_outline),
-                        onPressed: () => widget.onDeleteChat(chat.id),
-                      ),
-                      onTap: () => widget.onSelectChat(chat.id),
-                    );
-                  },
-                ),
+                          selected: selected,
+                          leading: Icon(
+                            selected
+                                ? Icons.chat_bubble_rounded
+                                : Icons.chat_bubble_outline_rounded,
+                            color: selected ? colorScheme.primary : null,
+                          ),
+                          title: Text(
+                            chat.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            widget.formatTime(chat.updatedAt),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: IconButton(
+                            tooltip: widget.strings.delete,
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () => widget.onDeleteChat(chat.id),
+                          ),
+                          onTap: () => widget.onSelectChat(chat.id),
+                        );
+                      },
+                    ),
         ),
       ],
     );
@@ -2632,10 +2638,13 @@ class _TracePanel extends StatelessWidget {
           ),
           children: [
             for (var i = 0; i < traces.length; i++)
+              // Stable trace ids keep the expanded SelectableText subtree bound
+              // to the same logical tool event while streaming appends rebuild.
               _TraceEntry(
+                key: ValueKey<String>('trace-entry-${traces[i].id}'),
                 trace: traces[i],
                 index: i + 1,
-                storageKey: '$storageKey-entry-$i',
+                storageKey: '$storageKey-entry-${traces[i].id}',
               ),
           ],
         ),
@@ -2650,6 +2659,7 @@ class _TraceEntry extends StatelessWidget {
   final String storageKey;
 
   const _TraceEntry({
+    super.key,
     required this.trace,
     required this.index,
     required this.storageKey,

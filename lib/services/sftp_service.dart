@@ -80,6 +80,7 @@ class SftpService extends ChangeNotifier {
   SftpConnectionState get state =>
       _activeSession?.state ?? SftpConnectionState.disconnected;
   String? get errorMessage => _activeSession?.errorMessage;
+  int get entriesRevision => _activeSession?.entriesRevision ?? 0;
   List<SftpEntry> get entries => _activeSession?.entries ?? const [];
   bool get isConnected => _activeSession?.sftp != null;
   bool get isBusy =>
@@ -434,6 +435,7 @@ class SftpService extends ChangeNotifier {
       session.currentPath = absolutePath;
       _lastPaths[session.connectionId] = absolutePath;
       session.entries = entries;
+      session.entriesRevision++;
       session.state = SftpConnectionState.connected;
       notifyListeners();
     } catch (e, stackTrace) {
@@ -668,6 +670,7 @@ class _SftpSession {
   SftpConnectionState state = SftpConnectionState.disconnected;
   String? errorMessage;
   List<SftpEntry> entries = const [];
+  int entriesRevision = 0;
   bool _closed = false;
 
   _SftpSession({
