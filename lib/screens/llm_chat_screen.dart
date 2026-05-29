@@ -804,6 +804,9 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     required String input,
     required _AiStrings strings,
   }) async {
+    if (!mounted) {
+      return false;
+    }
     final parsed = _parseSlashCommand(input);
     if (parsed == null || parsed.command.isEmpty) {
       _showCommandFeedback(strings.commandUnknown, context);
@@ -843,8 +846,14 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     required String arguments,
     required _AiStrings strings,
   }) async {
+    if (!mounted) {
+      return false;
+    }
     if (arguments.isEmpty) {
       final availableTools = await _loadAvailableTools(strings);
+      if (!mounted || !context.mounted) {
+        return false;
+      }
       if (availableTools == null) return false;
       final next = await _openToolsSelector(
         context: context,
@@ -852,6 +861,9 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         availableTools: availableTools,
         initialTools: _chatAllowedTools[chatId] ?? const {},
       );
+      if (!mounted || !context.mounted) {
+        return false;
+      }
       if (next == null) return false;
       _chatAllowedTools[chatId] = {...next};
       _showCommandFeedback(strings.commandToolsUpdated(next.length), context);
@@ -863,7 +875,13 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     }
 
     final requested = _parseToolList(arguments);
+    if (!mounted) {
+      return false;
+    }
     final availableTools = await _loadAvailableTools(strings);
+    if (!mounted || !context.mounted) {
+      return false;
+    }
     if (availableTools == null) return false;
     final availableMap = <String, String>{};
     for (final tool in availableTools) {
@@ -906,6 +924,9 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   }
 
   Future<List<_ToolOption>?> _loadAvailableTools(_AiStrings strings) async {
+    if (!mounted || !context.mounted) {
+      return null;
+    }
     try {
       final storage = context.read<StorageService>();
       final toolService = AiToolService(
@@ -937,6 +958,9 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       tools.sort((a, b) => a.name.compareTo(b.name));
       return tools;
     } catch (error, stackTrace) {
+      if (!mounted || !context.mounted) {
+        return null;
+      }
       AppLogService.instance.error(
         'Failed to load tools for slash command',
         error: error,
@@ -957,102 +981,109 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       _showCommandFeedback(strings.commandToolsNoTools, context);
       return null;
     }
+    if (!context.mounted) {
+      return null;
+    }
     final selected = {...initialTools};
     final searchTextController = TextEditingController();
-    final selectedSet = await showModalBottomSheet<Set<String>?>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (sheetContext, setSheetState) {
-            final query = searchTextController.text.trim().toLowerCase();
-            final filteredTools = availableTools
-                .where(
-                  (tool) =>
-                      tool.name.toLowerCase().contains(query) ||
-                      tool.description.toLowerCase().contains(query),
-                )
-                .toList();
-            return SafeArea(
-              child: SizedBox(
-                height:
-                    MediaQuery.sizeOf(sheetContext).height *
-                    (_maxToolSelectorHeightPercent / 100),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-                  child: Column(
-                    children: [
-                      TextField(
-                        controller: searchTextController,
-                        decoration: InputDecoration(
-                          isDense: true,
-                          hintText: strings.commandToolsSearch,
+    Set<String>? selectedSet;
+    try {
+      selectedSet = await showModalBottomSheet<Set<String>?>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (sheetContext) {
+          return StatefulBuilder(
+            builder: (sheetContext, setSheetState) {
+              final query = searchTextController.text.trim().toLowerCase();
+              final filteredTools = availableTools
+                  .where(
+                    (tool) =>
+                        tool.name.toLowerCase().contains(query) ||
+                        tool.description.toLowerCase().contains(query),
+                  )
+                  .toList();
+              return SafeArea(
+                child: SizedBox(
+                  height:
+                      MediaQuery.sizeOf(sheetContext).height *
+                      (_maxToolSelectorHeightPercent / 100),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                    child: Column(
+                      children: [
+                        TextField(
+                          controller: searchTextController,
+                          decoration: InputDecoration(
+                            isDense: true,
+                            hintText: strings.commandToolsSearch,
+                          ),
+                          onChanged: (_) => setSheetState(() {}),
                         ),
-                        onChanged: (_) => setSheetState(() {}),
-                      ),
-                      const SizedBox(height: 8),
-                      Expanded(
-                        child: filteredTools.isEmpty
-                            ? Center(
-                                child: Text(
-                                  strings.commandToolsNoResult,
-                                  style: TextStyle(
-                                    color: Theme.of(sheetContext)
-                                        .colorScheme
-                                        .onSurfaceVariant,
-                                  ),
-                                ),
-                              )
-                            : ListView.builder(
-                                itemCount: filteredTools.length,
-                                itemBuilder: (ctx, index) {
-                                  final tool = filteredTools[index];
-                                  final isSelected =
-                                      selected.contains(tool.name);
-                                  return CheckboxListTile(
-                                    value: isSelected,
-                                    title: Text(tool.name),
-                                    subtitle: Text(tool.description),
-                                    onChanged: (value) => setSheetState(
-                                      () {
-                                        if (value == true) {
-                                          selected.add(tool.name);
-                                        } else {
-                                          selected.remove(tool.name);
-                                        }
-                                      },
+                        const SizedBox(height: 8),
+                        Expanded(
+                          child: filteredTools.isEmpty
+                              ? Center(
+                                  child: Text(
+                                    strings.commandToolsNoResult,
+                                    style: TextStyle(
+                                      color: Theme.of(sheetContext)
+                                          .colorScheme
+                                          .onSurfaceVariant,
                                     ),
-                                  );
-                                },
-                              ),
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          TextButton(
-                            onPressed: () => Navigator.of(sheetContext).pop(),
-                            child: Text(strings.cancel),
-                          ),
-                          const SizedBox(width: 8),
-                          FilledButton(
-                            onPressed: () =>
-                                Navigator.of(sheetContext).pop(Set.from(selected)),
-                            child: Text(strings.save),
-                          ),
-                        ],
-                      ),
-                    ],
+                                  ),
+                                )
+                              : ListView.builder(
+                                  itemCount: filteredTools.length,
+                                  itemBuilder: (ctx, index) {
+                                    final tool = filteredTools[index];
+                                    final isSelected =
+                                        selected.contains(tool.name);
+                                    return CheckboxListTile(
+                                      value: isSelected,
+                                      title: Text(tool.name),
+                                      subtitle: Text(tool.description),
+                                      onChanged: (value) => setSheetState(
+                                        () {
+                                          if (value == true) {
+                                            selected.add(tool.name);
+                                          } else {
+                                            selected.remove(tool.name);
+                                          }
+                                        },
+                                      ),
+                                    );
+                                  },
+                                ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            TextButton(
+                              onPressed: () => Navigator.of(sheetContext).pop(),
+                              child: Text(strings.cancel),
+                            ),
+                            const SizedBox(width: 8),
+                            FilledButton(
+                              onPressed: () =>
+                                  Navigator.of(sheetContext).pop(Set.from(selected)),
+                              child: Text(strings.save),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            );
-          },
-        );
-      },
-    );
-    searchTextController.dispose();
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      searchTextController.dispose();
+    }
     return selectedSet;
   }
 
@@ -1089,6 +1120,9 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   }
 
   void _showCommandFeedback(String message, BuildContext context) {
+    if (!context.mounted) {
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -1150,6 +1184,9 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         input: normalizedText,
         strings: strings,
       );
+      if (!mounted) {
+        return;
+      }
       if (handled && clearInput) {
         setState(() => _inputController.clear());
       }
