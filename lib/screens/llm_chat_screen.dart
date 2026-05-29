@@ -1788,35 +1788,13 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     String text,
     _AiStrings strings,
   ) async {
-    final controller = TextEditingController(text: text);
-    final result = await showDialog<String>(
+    return showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(strings.editMessage),
-        content: SizedBox(
-          width: 520,
-          child: TextField(
-            controller: controller,
-            autofocus: true,
-            minLines: 3,
-            maxLines: 8,
-            decoration: const InputDecoration(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(strings.cancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text),
-            child: Text(strings.saveAndSend),
-          ),
-        ],
+      builder: (_) => _EditUserMessageDialog(
+        initialText: text,
+        strings: strings,
       ),
     );
-    controller.dispose();
-    return result;
   }
 
   Future<void> _branchFromAssistant(
@@ -3001,6 +2979,63 @@ class _MessageBubble extends StatelessWidget {
   String _formatElapsed(int ms) {
     if (ms < 1000) return '${ms}ms';
     return '${(ms / 1000).toStringAsFixed(1)}s';
+  }
+}
+
+class _EditUserMessageDialog extends StatefulWidget {
+  final String initialText;
+  final _AiStrings strings;
+
+  const _EditUserMessageDialog({
+    required this.initialText,
+    required this.strings,
+  });
+
+  @override
+  State<_EditUserMessageDialog> createState() =>
+      _EditUserMessageDialogState();
+}
+
+class _EditUserMessageDialogState extends State<_EditUserMessageDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialText);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.strings.editMessage),
+      content: SizedBox(
+        width: 520,
+        child: TextField(
+          controller: _controller,
+          autofocus: true,
+          minLines: 3,
+          maxLines: 8,
+          decoration: const InputDecoration(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(widget.strings.cancel),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _controller.text),
+          child: Text(widget.strings.saveAndSend),
+        ),
+      ],
+    );
   }
 }
 
