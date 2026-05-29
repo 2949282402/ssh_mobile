@@ -4874,8 +4874,8 @@ class _AiStrings {
   String failed(Object error) => _en ? 'Failed: $error' : '失败：$error';
   String get commands => _en ? 'Commands' : '命令';
   String get commandUnknownHint => _en
-      ? 'Type a command to use. Available: /compact, /tools.'
-      : '输入以 / 开头的命令，如 /compact 或 /tools';
+      ? 'Type a command to use. Available: /compact, /tools, /skills.'
+      : '输入以 / 开头的命令，如 /compact、/tools 或 /skills';
   String get commandUnknown => _en
       ? 'Unknown slash command.'
       : '未识别的斜杠命令。';
@@ -4899,9 +4899,6 @@ class _AiStrings {
   String get commandToolsNoTools => _en
       ? 'No tools are currently available.'
       : '当前无可用工具。';
-  String get commandUnknownHint => _en
-      ? 'Type a command to use. Available: /compact, /tools, /skills.'
-      : '输入以 / 开头的命令，如 /compact、/tools 或 /skills';
   String get commandToolsSearch => _en ? 'Search tools' : '搜索工具';
   String get commandToolsNoResult =>
       _en ? 'No tools match the search.' : '未找到匹配的工具。';
