@@ -171,7 +171,7 @@ class AiToolService implements AiToolExecutor {
             'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Save a summarized user experience into a local AI skill so it can be reused by future chats.',
         properties: {
           'summary': _string(
-            'Mandatory summarized experience text, usually 1-3 paragraphs.',
+            'Mandatory summarized experience text. Keep it concise, ideally 1-3 short lines.',
           ),
           'title': _string(
             'Optional short skill title. If omitted, a title is generated automatically.',
@@ -1302,16 +1302,17 @@ class AiToolService implements AiToolExecutor {
     Map<String, dynamic> arguments,
   ) async {
     final summary = _arg(arguments, 'summary');
+    final conciseSummary = _coerceConciseSkillSummary(summary);
     final title = _optionalString(arguments, 'title') ??
-        _defaultExperienceSkillTitle(summary);
+        _defaultExperienceSkillTitle(conciseSummary);
     final details = _optionalString(arguments, 'content');
     final now = DateTime.now();
     final record = AiSkillRecord(
       id: 'skill-${now.microsecondsSinceEpoch}',
       name: title,
-      description: summary,
+      description: conciseSummary,
       content: details == null || details.trim().isEmpty
-          ? summary
+          ? conciseSummary
           : '${summary}\n\n${details.trim()}',
       createdAt: now,
       updatedAt: now,
@@ -1342,6 +1343,19 @@ class AiToolService implements AiToolExecutor {
     final firstLine = lines.first;
     if (firstLine.length <= 30) return firstLine;
     return '${firstLine.substring(0, 27).trim()}...';
+  }
+
+  String _coerceConciseSkillSummary(String summary) {
+    final normalized = summary.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.length <= 140) {
+      return normalized;
+    }
+    final head = normalized.substring(0, 140).trim();
+    final lastWordBoundary = head.lastIndexOf(' ');
+    final truncated = lastWordBoundary >= 72
+        ? head.substring(0, lastWordBoundary).trim()
+        : head;
+    return '${truncated}…';
   }
 
   Future<String> _clientQueryLogs(Map<String, dynamic> arguments) async {
