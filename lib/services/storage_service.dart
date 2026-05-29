@@ -9,6 +9,7 @@ import 'package:uuid/uuid.dart';
 import '../models/connection.dart';
 import 'app_log_service.dart';
 import 'data_protection_service.dart';
+import 'multi_agent_coordinator.dart';
 
 const Uuid _traceUuid = Uuid();
 
@@ -120,6 +121,8 @@ class StorageService extends ChangeNotifier
   static const _aiOpenAiReasoningEffortKey = 'ai_openai_reasoning_effort';
   static const _aiWebSearchEnabledKey = 'ai_web_search_enabled';
   static const _aiWebSearchMaxResultsKey = 'ai_web_search_max_results';
+  static const _aiMultiAgentEnabledKey = 'ai_multi_agent_enabled';
+  static const _aiMultiAgentMaxAgentsKey = 'ai_multi_agent_max_agents';
   static const _aiModelsCacheKey = 'ai_models_cache';
   static const _aiApiKeyRefsKey = 'ai_api_key_refs';
   static const _aiSelectedApiKeyIdKey = 'ai_selected_api_key_id';
@@ -397,6 +400,10 @@ class StorageService extends ChangeNotifier
       webSearchMaxResults: AiWebSearchMaxResults.normalize(
         _prefs?.getInt(_aiWebSearchMaxResultsKey),
       ),
+      multiAgentEnabled: _prefs?.getBool(_aiMultiAgentEnabledKey) ?? true,
+      multiAgentMaxAgents: AiMultiAgentMaxAgents.normalize(
+        _prefs?.getInt(_aiMultiAgentMaxAgentsKey),
+      ),
       hasApiKey: apiKey?.isNotEmpty == true,
       activeApiKeyId: activeApiKeyId,
       activeApiKeyMasked: activeApiKeyMasked,
@@ -595,6 +602,8 @@ class StorageService extends ChangeNotifier
     String? openAiReasoningEffort,
     bool? webSearchEnabled,
     int? webSearchMaxResults,
+    bool? multiAgentEnabled,
+    int? multiAgentMaxAgents,
     String? apiKey,
     String? selectedApiKeyId,
     bool clearApiKey = false,
@@ -641,6 +650,16 @@ class StorageService extends ChangeNotifier
         webSearchMaxResults ?? _prefs!.getInt(_aiWebSearchMaxResultsKey),
       ),
     );
+    await _prefs!.setBool(
+      _aiMultiAgentEnabledKey,
+      multiAgentEnabled ?? (_prefs!.getBool(_aiMultiAgentEnabledKey) ?? true),
+    );
+    await _prefs!.setInt(
+      _aiMultiAgentMaxAgentsKey,
+      AiMultiAgentMaxAgents.normalize(
+        multiAgentMaxAgents ?? _prefs!.getInt(_aiMultiAgentMaxAgentsKey),
+      ),
+    );
     await _ensureAiApiKeyHistoryMigrated();
     var apiKeyUpdated = false;
     final hasReplacementApiKey = apiKey?.trim().isNotEmpty == true;
@@ -679,7 +698,7 @@ class StorageService extends ChangeNotifier
     AppLogService.instance.info(
       'LLM settings saved',
       details:
-          'baseUrl=$normalizedBaseUrl model=$normalizedModel contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} timeoutSeconds=${AiRequestTimeout.normalize(timeoutSeconds)} deepSeekThinking=${deepSeekThinkingEnabled ?? (_prefs!.getBool(_aiDeepSeekThinkingEnabledKey) ?? true)} deepSeekEffort=${DeepSeekReasoningEffort.normalize(deepSeekReasoningEffort ?? _prefs!.getString(_aiDeepSeekReasoningEffortKey))} openAiEffort=${OpenAiReasoningEffort.normalize(openAiReasoningEffort ?? _prefs!.getString(_aiOpenAiReasoningEffortKey))} webSearch=${webSearchEnabled ?? (_prefs!.getBool(_aiWebSearchEnabledKey) ?? true)} apiKeyUpdated=$apiKeyUpdated',
+          'baseUrl=$normalizedBaseUrl model=$normalizedModel contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} timeoutSeconds=${AiRequestTimeout.normalize(timeoutSeconds)} deepSeekThinking=${deepSeekThinkingEnabled ?? (_prefs!.getBool(_aiDeepSeekThinkingEnabledKey) ?? true)} deepSeekEffort=${DeepSeekReasoningEffort.normalize(deepSeekReasoningEffort ?? _prefs!.getString(_aiDeepSeekReasoningEffortKey))} openAiEffort=${OpenAiReasoningEffort.normalize(openAiReasoningEffort ?? _prefs!.getString(_aiOpenAiReasoningEffortKey))} webSearch=${webSearchEnabled ?? (_prefs!.getBool(_aiWebSearchEnabledKey) ?? true)} multiAgent=${multiAgentEnabled ?? (_prefs!.getBool(_aiMultiAgentEnabledKey) ?? true)} maxAgents=${AiMultiAgentMaxAgents.normalize(multiAgentMaxAgents ?? _prefs!.getInt(_aiMultiAgentMaxAgentsKey))} apiKeyUpdated=$apiKeyUpdated',
     );
     // AI settings are loaded on demand by the chat page. Avoid notifying the
     // whole storage tree while the settings dialog is being dismissed; doing so
@@ -1007,6 +1026,8 @@ class StorageService extends ChangeNotifier
         'openAiReasoningEffort': settings.openAiReasoningEffort,
         'webSearchEnabled': settings.webSearchEnabled,
         'webSearchMaxResults': settings.webSearchMaxResults,
+        'multiAgentEnabled': settings.multiAgentEnabled,
+        'multiAgentMaxAgents': settings.multiAgentMaxAgents,
         'apiKey': '',
       },
       'aiChats': (await loadAiChats()).map((item) => item.toJson()).toList(),
@@ -1073,6 +1094,9 @@ class StorageService extends ChangeNotifier
         webSearchEnabled: aiSettings['webSearchEnabled'] as bool?,
         webSearchMaxResults:
             (aiSettings['webSearchMaxResults'] as num?)?.toInt(),
+        multiAgentEnabled: aiSettings['multiAgentEnabled'] as bool?,
+        multiAgentMaxAgents:
+            (aiSettings['multiAgentMaxAgents'] as num?)?.toInt(),
       );
       await _clearAiApiKeySecret();
     } else {
@@ -1467,6 +1491,8 @@ class AiConnectionSettings {
   final String openAiReasoningEffort;
   final bool webSearchEnabled;
   final int webSearchMaxResults;
+  final bool multiAgentEnabled;
+  final int multiAgentMaxAgents;
   final bool hasApiKey;
   final String? activeApiKeyId;
   final String? activeApiKeyMasked;
@@ -1481,6 +1507,8 @@ class AiConnectionSettings {
     required this.openAiReasoningEffort,
     required this.webSearchEnabled,
     required this.webSearchMaxResults,
+    required this.multiAgentEnabled,
+    required this.multiAgentMaxAgents,
     required this.hasApiKey,
     required this.activeApiKeyId,
     required this.activeApiKeyMasked,

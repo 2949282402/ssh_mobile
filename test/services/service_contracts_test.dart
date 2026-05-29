@@ -4,6 +4,7 @@ import 'package:ssh_mobile/services/ai_tool_service.dart';
 import 'package:ssh_mobile/services/client_system_tool_service.dart';
 import 'package:ssh_mobile/services/client_webview_service.dart';
 import 'package:ssh_mobile/services/llm_chat_service.dart';
+import 'package:ssh_mobile/services/multi_agent_coordinator.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/performance_monitor_tool_service.dart';
 import 'package:ssh_mobile/services/server_catalog_service.dart';
@@ -75,5 +76,6 @@ void main() {
     expect(diagnostics, isA<ServerDiagnosticsAdapter>());
     expect(tools, isA<AiToolExecutor>());
     expect(llm, isA<LlmClientAdapter>());
+    expect(const MultiAgentCoordinator(), isA<MultiAgentCoordinatorAdapter>());
   });
 }

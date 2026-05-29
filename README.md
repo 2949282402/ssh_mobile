@@ -102,6 +102,15 @@ prompt tells enabled models to call it before answering current/latest/news or
 other external-information questions, and the tool definition embeds the
 current per-call result count setting. OpenAI hosted web search belongs in a
 separate Responses API adapter.
+Automatic multi-agent collaboration is enabled by default for complex AI chat
+requests such as troubleshooting, implementation planning, audits, performance
+work, reports, and multi-server operations. Helper agents run in parallel before
+the main assistant response, but they do not receive tool definitions and cannot
+execute SSH, SFTP, or client tools directly. Their redacted advisory summary is
+added as normal assistant memory, while the primary assistant remains
+responsible for tool calls, approval gates, cancellation, and the final answer.
+Users can disable this mode or choose the maximum helper-agent count in LLM
+settings.
 
 ## Tech Stack
 

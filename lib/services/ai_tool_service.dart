@@ -6,6 +6,7 @@ import 'app_log_service.dart';
 import 'app_settings.dart';
 import 'client_system_tool_service.dart';
 import 'client_webview_service.dart';
+import 'multi_agent_coordinator.dart';
 import 'performance_monitor_tool_service.dart';
 import 'server_catalog_service.dart';
 import 'server_diagnostics_service.dart';
@@ -806,14 +807,14 @@ class AiToolService implements AiToolExecutor {
       AiTool(
         name: 'app_get_operational_settings',
         description:
-            'Return app operational settings that affect tools and server operations, including SFTP limits, secret-cache settings, AI timeout, and web-search settings. Does not reveal API keys.',
+            'Return app operational settings that affect tools and server operations, including SFTP limits, secret-cache settings, AI timeout, web-search settings, and multi-agent settings. Does not reveal API keys.',
         properties: const {},
         handler: _appGetOperationalSettings,
       ),
       AiTool(
         name: 'app_update_operational_settings',
         description:
-            'Update app operational settings that affect tools and server operations, including SFTP limits, secret-cache settings, AI timeout, and web-search settings. This changes local app state and requires user approval.',
+            'Update app operational settings that affect tools and server operations, including SFTP limits, secret-cache settings, AI timeout, web-search settings, and multi-agent settings. This changes local app state and requires user approval.',
         properties: {
           'sftpDownloadLimitBytes':
               _int('Optional SFTP download limit in bytes.'),
@@ -829,6 +830,13 @@ class AiToolService implements AiToolExecutor {
           'webSearchEnabled': _bool('Optional AI web search enabled flag.'),
           'webSearchMaxResults': _int(
             'Optional AI web search max results setting.',
+          ),
+          'multiAgentEnabled':
+              _bool('Optional automatic multi-agent collaboration flag.'),
+          'multiAgentMaxAgents': _int(
+            'Optional maximum helper agents for automatic multi-agent collaboration.',
+            minimum: AiMultiAgentMaxAgents.values.first,
+            maximum: AiMultiAgentMaxAgents.values.last,
           ),
         },
         handler: (arguments) => _appUpdateOperationalSettings(
@@ -1313,7 +1321,7 @@ class AiToolService implements AiToolExecutor {
       description: conciseSummary,
       content: details == null || details.trim().isEmpty
           ? conciseSummary
-          : '${summary}\n\n${details.trim()}',
+          : '$summary\n\n${details.trim()}',
       createdAt: now,
       updatedAt: now,
     );
@@ -1355,7 +1363,7 @@ class AiToolService implements AiToolExecutor {
     final truncated = lastWordBoundary >= 72
         ? head.substring(0, lastWordBoundary).trim()
         : head;
-    return '${truncated}…';
+    return '$truncated…';
   }
 
   Future<String> _clientQueryLogs(Map<String, dynamic> arguments) async {
@@ -2177,9 +2185,14 @@ class AiToolService implements AiToolExecutor {
     final nextWebSearchEnabled = _optionalBool(arguments, 'webSearchEnabled');
     final nextWebSearchMaxResults =
         _optionalInt(arguments, 'webSearchMaxResults');
+    final nextMultiAgentEnabled = _optionalBool(arguments, 'multiAgentEnabled');
+    final nextMultiAgentMaxAgents =
+        _optionalInt(arguments, 'multiAgentMaxAgents');
     if (nextTimeout != null ||
         nextWebSearchEnabled != null ||
-        nextWebSearchMaxResults != null) {
+        nextWebSearchMaxResults != null ||
+        nextMultiAgentEnabled != null ||
+        nextMultiAgentMaxAgents != null) {
       await storageService.saveAiConnectionSettings(
         baseUrl: current.baseUrl,
         model: current.model,
@@ -2191,6 +2204,10 @@ class AiToolService implements AiToolExecutor {
         webSearchEnabled: nextWebSearchEnabled ?? current.webSearchEnabled,
         webSearchMaxResults:
             nextWebSearchMaxResults ?? current.webSearchMaxResults,
+        multiAgentEnabled:
+            nextMultiAgentEnabled ?? current.multiAgentEnabled,
+        multiAgentMaxAgents:
+            nextMultiAgentMaxAgents ?? current.multiAgentMaxAgents,
       );
     }
     return jsonEncode(await _readOperationalSettings());
@@ -2216,6 +2233,8 @@ class AiToolService implements AiToolExecutor {
       'aiRequestTimeoutSeconds': ai.timeoutSeconds,
       'webSearchEnabled': ai.webSearchEnabled,
       'webSearchMaxResults': ai.webSearchMaxResults,
+      'multiAgentEnabled': ai.multiAgentEnabled,
+      'multiAgentMaxAgents': ai.multiAgentMaxAgents,
       'hasApiKeyConfigured': ai.hasApiKey,
     };
   }

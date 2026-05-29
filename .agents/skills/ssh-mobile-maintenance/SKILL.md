@@ -186,6 +186,13 @@ Use `lib/services/llm_chat_service.dart` for provider protocol behavior and
   cited result URLs in the tool result. Do not rely on DeepSeek Chat Completions
   having hosted web search; its documented tools are function tools. OpenAI
   hosted web search should be handled by a separate Responses API adapter.
+- Automatic multi-agent collaboration lives in `LlmChatService` and should run
+  after context compression but before the primary answer for complex requests.
+  Helper agents may plan, suggest safe evidence/tool use, and review risk, but
+  they must not receive tool definitions or execute SSH/SFTP/client tools
+  directly. Keep their summaries short, redacted with `ToolSecretPolicy`, and
+  injected as normal assistant memory so the primary assistant remains
+  responsible for approvals, tool calls, cancellation, and final answers.
 - AI WebView browsing uses a per-chat operation token. While the token is
   active, the WebView page is view-only and the user must tap Interrupt before
   manual address-bar, navigation, refresh, or page-touch actions are enabled.

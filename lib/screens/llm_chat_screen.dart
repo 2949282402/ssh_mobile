@@ -14,6 +14,7 @@ import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../services/client_webview_service.dart';
 import '../services/llm_chat_service.dart';
+import '../services/multi_agent_coordinator.dart';
 import '../services/performance_monitor_service.dart';
 import '../services/performance_monitor_tool_service.dart';
 import '../services/sftp_service.dart';
@@ -176,6 +177,9 @@ extension _AiRunStatusStrings on _AiStrings {
   String get assistantProcessingApproval => language == AppLanguage.en
       ? 'Processing approval decision...'
       : '正在处理审批结果...';
+  String get assistantCollaborating => language == AppLanguage.en
+      ? 'Coordinating helper agents...'
+      : '正在协调多 Agent 协作...';
 
   String assistantRunningTool(String toolName) {
     final name = toolName.trim();
@@ -976,7 +980,6 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       final definitions = await toolService.toolDefinitions();
       final tools = <_ToolOption>[];
       for (final definition in definitions) {
-        if (definition is! Map<String, dynamic>) continue;
         final name = _toolNameFromDefinition(definition);
         if (name == null) continue;
         final function = definition['function'];
@@ -2004,6 +2007,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     var deepSeekReasoningEffort = settings.deepSeekReasoningEffort;
     var webSearchEnabled = settings.webSearchEnabled;
     var webSearchMaxResults = settings.webSearchMaxResults;
+    var multiAgentEnabled = settings.multiAgentEnabled;
+    var multiAgentMaxAgents = settings.multiAgentMaxAgents;
     var loadingModels = false;
     var savingSettings = false;
     String? modelLoadError;
@@ -2181,6 +2186,40 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                   const SizedBox(height: 12),
                   SwitchListTile.adaptive(
                     contentPadding: EdgeInsets.zero,
+                    title: Text(strings.multiAgent),
+                    subtitle: Text(strings.multiAgentHint),
+                    value: multiAgentEnabled,
+                    onChanged: savingSettings
+                        ? null
+                        : (value) {
+                            setDialogState(() => multiAgentEnabled = value);
+                          },
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int>(
+                    initialValue: AiMultiAgentMaxAgents.normalize(
+                      multiAgentMaxAgents,
+                    ),
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      labelText: strings.multiAgentMaxAgents,
+                    ),
+                    items: [
+                      for (final value in AiMultiAgentMaxAgents.values)
+                        DropdownMenuItem(
+                          value: value,
+                          child: Text('$value'),
+                        ),
+                    ],
+                    onChanged: savingSettings || !multiAgentEnabled
+                        ? null
+                        : (value) {
+                            if (value != null) multiAgentMaxAgents = value;
+                          },
+                  ),
+                  const SizedBox(height: 12),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
                     title: Text(strings.deepSeekThinking),
                     subtitle: Text(strings.deepSeekThinkingHint),
                     value: deepSeekThinkingEnabled,
@@ -2282,6 +2321,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                         openAiReasoningEffort: settings.openAiReasoningEffort,
                         webSearchEnabled: webSearchEnabled,
                         webSearchMaxResults: webSearchMaxResults,
+                        multiAgentEnabled: multiAgentEnabled,
+                        multiAgentMaxAgents: multiAgentMaxAgents,
                         apiKey: apiKeyController.text,
                         selectedApiKeyId: settings.activeApiKeyId,
                       );
@@ -2302,6 +2343,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                           openAiReasoningEffort: pending.openAiReasoningEffort,
                           webSearchEnabled: pending.webSearchEnabled,
                           webSearchMaxResults: pending.webSearchMaxResults,
+                          multiAgentEnabled: pending.multiAgentEnabled,
+                          multiAgentMaxAgents: pending.multiAgentMaxAgents,
                           apiKey: pending.apiKey,
                           selectedApiKeyId: pending.selectedApiKeyId,
                         );
@@ -2775,6 +2818,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         return strings.assistantProcessingToolResult;
       case 'approval':
         return strings.assistantProcessingApproval;
+      case 'multi_agent':
+        return strings.assistantCollaborating;
       default:
         return strings.assistantPreparing;
     }
@@ -4077,6 +4122,8 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   late String _openAiReasoningEffort;
   late bool _webSearchEnabled;
   late int _webSearchMaxResults;
+  late bool _multiAgentEnabled;
+  late int _multiAgentMaxAgents;
   String? _selectedApiKeyId;
   bool _loadingModels = false;
   bool _saving = false;
@@ -4101,6 +4148,8 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _openAiReasoningEffort = widget.initialSettings.openAiReasoningEffort;
     _webSearchEnabled = widget.initialSettings.webSearchEnabled;
     _webSearchMaxResults = widget.initialSettings.webSearchMaxResults;
+    _multiAgentEnabled = widget.initialSettings.multiAgentEnabled;
+    _multiAgentMaxAgents = widget.initialSettings.multiAgentMaxAgents;
     _selectedApiKeyId = widget.initialSettings.activeApiKeyId;
   }
 
@@ -4342,6 +4391,8 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       openAiReasoningEffort: _openAiReasoningEffort,
       webSearchEnabled: _webSearchEnabled,
       webSearchMaxResults: _webSearchMaxResults,
+      multiAgentEnabled: _multiAgentEnabled,
+      multiAgentMaxAgents: _multiAgentMaxAgents,
       apiKey: _apiKeyController.text,
       selectedApiKeyId: _selectedApiKeyId,
     );
@@ -4360,6 +4411,8 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         openAiReasoningEffort: pending.openAiReasoningEffort,
         webSearchEnabled: pending.webSearchEnabled,
         webSearchMaxResults: pending.webSearchMaxResults,
+        multiAgentEnabled: pending.multiAgentEnabled,
+        multiAgentMaxAgents: pending.multiAgentMaxAgents,
         apiKey: pending.apiKey,
         selectedApiKeyId: pending.selectedApiKeyId,
       );
@@ -4527,6 +4580,42 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                   : (value) {
                       if (value != null) {
                         setState(() => _timeoutSeconds = value);
+                      }
+                    },
+            ),
+            const SizedBox(height: 14),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: Text(strings.multiAgent),
+              subtitle: Text(strings.multiAgentHint),
+              value: _multiAgentEnabled,
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      setState(() => _multiAgentEnabled = value);
+                    },
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<int>(
+              initialValue: AiMultiAgentMaxAgents.normalize(
+                _multiAgentMaxAgents,
+              ),
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: strings.multiAgentMaxAgents,
+              ),
+              items: [
+                for (final value in AiMultiAgentMaxAgents.values)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text('$value'),
+                  ),
+              ],
+              onChanged: _saving || !_multiAgentEnabled
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        setState(() => _multiAgentMaxAgents = value);
                       }
                     },
             ),
@@ -4816,6 +4905,8 @@ class _PendingAiSettings {
   final String openAiReasoningEffort;
   final bool webSearchEnabled;
   final int webSearchMaxResults;
+  final bool multiAgentEnabled;
+  final int multiAgentMaxAgents;
   final String apiKey;
   final String? selectedApiKeyId;
 
@@ -4829,6 +4920,8 @@ class _PendingAiSettings {
     required this.openAiReasoningEffort,
     required this.webSearchEnabled,
     required this.webSearchMaxResults,
+    required this.multiAgentEnabled,
+    required this.multiAgentMaxAgents,
     required this.apiKey,
     required this.selectedApiKeyId,
   });
@@ -4871,6 +4964,13 @@ class _AiStrings {
       ? 'Expose a web_search tool that uses the current chat WebView on this device. No search API key is required.'
       : '通过当前聊天绑定的本机 WebView 给模型提供 web_search 工具，不需要搜索 API Key。';
   String get webSearchMaxResults => _en ? 'Search results per call' : '每次搜索结果数';
+  String get multiAgent =>
+      _en ? 'Multi-agent collaboration' : '多 Agent 协作';
+  String get multiAgentHint => _en
+      ? 'Automatically ask helper agents to plan, suggest safe operations, and review complex tasks before the main answer.'
+      : '复杂任务前自动让辅助 Agent 规划、建议安全操作并检查风险。';
+  String get multiAgentMaxAgents =>
+      _en ? 'Maximum helper agents' : '最大辅助 Agent 数';
   String get openAiReasoningEffort =>
       _en ? 'OpenAI reasoning effort' : 'OpenAI 思考强度';
   String get openAiReasoningHint => _en

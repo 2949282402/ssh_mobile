@@ -113,3 +113,8 @@ across sessions.
   expanded `SftpClientAdapter` helpers (`stat/upload/mkdir/rename/delete`).
   Keep new AI tool work on these adapters so tests can inject fakes and so
   secrets remain outside the model-visible layer.
+- 2026-05-29: AI chat now has automatic multi-agent collaboration for complex
+  requests. Helper agents run before the primary answer and never receive tool
+  definitions or execute SSH/SFTP/client tools directly; keep real tool calls,
+  approval gates, cancellation, and secret redaction under the primary
+  `LlmChatService`/`AiToolService` flow.

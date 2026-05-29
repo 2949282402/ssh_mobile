@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'ai_tool_service.dart';
 import 'app_log_service.dart';
+import 'multi_agent_coordinator.dart';
 import 'storage_service.dart';
 import 'tool_secret_policy.dart';
 
@@ -49,12 +50,15 @@ abstract interface class LlmClientAdapter {
 class LlmChatService implements LlmClientAdapter {
   final StorageService storageService;
   final AiToolExecutor toolService;
+  final MultiAgentCoordinatorAdapter multiAgentCoordinator;
   final ToolSecretPolicy _toolSecretPolicy = const ToolSecretPolicy();
 
   LlmChatService({
     required this.storageService,
     required this.toolService,
-  });
+    MultiAgentCoordinatorAdapter? multiAgentCoordinator,
+  }) : multiAgentCoordinator =
+            multiAgentCoordinator ?? const MultiAgentCoordinator();
 
   @override
   Future<List<String>> fetchModels({
@@ -237,9 +241,44 @@ class LlmChatService implements LlmClientAdapter {
       );
     } else {
       AppLogService.instance.info(
-        'LLM tool definitions filtered',
+          'LLM tool definitions filtered',
         details:
             'requestedTools=${normalizedAllowedTools.length} availableTools=${toolDefinitions.length} filteredTools=${filteredToolDefinitions.length}',
+      );
+    }
+
+    final multiAgentResult = await multiAgentCoordinator.run(
+      messages: workingMessages,
+      enabled: settings.multiAgentEnabled,
+      maxAgents: settings.multiAgentMaxAgents,
+      checkCancelled: cancellationToken?.throwIfCancelled,
+      complete: (role, roleMessages) async {
+        final response = await _chatCompletion(
+          baseUrl: settings.baseUrl,
+          apiKey: apiKey,
+          model: model,
+          messages: roleMessages,
+          timeoutSeconds: settings.timeoutSeconds,
+          deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
+          deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
+          openAiReasoningEffort: settings.openAiReasoningEffort,
+          cancellationToken: cancellationToken,
+          operationLabel: 'LLM multi-agent helper',
+        );
+        return _contentFromChatResponse(response);
+      },
+    );
+    if (multiAgentResult != null) {
+      workingMessages.add({
+        'role': 'assistant',
+        'content': multiAgentResult.memoryContent,
+      });
+      onTrace?.call(
+        LlmTraceEvent(
+          kind: 'multi_agent',
+          title: 'Multi-agent collaboration',
+          content: multiAgentResult.traceContent,
+        ),
       );
     }
 
@@ -931,6 +970,7 @@ class LlmChatService implements LlmClientAdapter {
       deepSeekThinkingEnabled: deepSeekThinkingEnabled,
       deepSeekReasoningEffort: deepSeekReasoningEffort,
       openAiReasoningEffort: openAiReasoningEffort,
+      operationLabel: 'LLM compression',
     );
     final summary = _contentFromChatResponse(response);
     AppLogService.instance.info(
@@ -958,9 +998,13 @@ class LlmChatService implements LlmClientAdapter {
     required String deepSeekReasoningEffort,
     required String openAiReasoningEffort,
     bool includeReasoningParams = true,
+    LlmCancellationToken? cancellationToken,
+    String operationLabel = 'LLM completion',
   }) async {
     final endpoint = Uri.parse(_joinUrl(baseUrl, '/chat/completions'));
     final client = HttpClient();
+    cancellationToken?.throwIfCancelled();
+    cancellationToken?.onCancel(() => client.close(force: true));
     try {
       final request = await client.postUrl(endpoint).timeout(
             Duration(seconds: timeoutSeconds),
@@ -995,7 +1039,7 @@ class LlmChatService implements LlmClientAdapter {
             response.statusCode == 400 &&
             _looksLikeReasoningParamUnsupportedError(body)) {
           AppLogService.instance.warning(
-            'LLM compression reasoning params unsupported, retrying without them',
+            '$operationLabel reasoning params unsupported, retrying without them',
             details: 'endpoint=$endpoint model=$model bodyChars=${body.length}',
           );
           return _chatCompletion(
@@ -1008,16 +1052,21 @@ class LlmChatService implements LlmClientAdapter {
             deepSeekReasoningEffort: deepSeekReasoningEffort,
             openAiReasoningEffort: openAiReasoningEffort,
             includeReasoningParams: false,
+            cancellationToken: cancellationToken,
+            operationLabel: operationLabel,
           );
         }
         throw StateError(
-          'LLM compression failed (${response.statusCode}): $body',
+          '$operationLabel failed (${response.statusCode}): $body',
         );
       }
       return jsonDecode(body) as Map<String, dynamic>;
     } catch (e, stackTrace) {
+      if (cancellationToken?.isCancelled == true) {
+        throw const LlmCancelledException();
+      }
       AppLogService.instance.error(
-        'LLM compression request error',
+        '$operationLabel request error',
         error: e,
         stackTrace: stackTrace,
         details:

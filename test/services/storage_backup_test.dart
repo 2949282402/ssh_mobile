@@ -64,6 +64,34 @@ void main() {
     expect(await storage.getAiApiKey(), isNull);
   });
 
+  test('multi-agent settings default and normalize on save', () async {
+    storage = await initializedStorage();
+
+    var settings = await storage.loadAiConnectionSettings();
+    expect(settings.multiAgentEnabled, isTrue);
+    expect(settings.multiAgentMaxAgents, 3);
+
+    await storage.saveAiConnectionSettings(
+      baseUrl: 'https://api.example.com',
+      model: 'demo-model',
+      multiAgentEnabled: false,
+      multiAgentMaxAgents: 99,
+    );
+    settings = await storage.loadAiConnectionSettings();
+    expect(settings.multiAgentEnabled, isFalse);
+    expect(settings.multiAgentMaxAgents, 4);
+
+    await storage.saveAiConnectionSettings(
+      baseUrl: 'https://api.example.com',
+      model: 'demo-model',
+      multiAgentEnabled: true,
+      multiAgentMaxAgents: 1,
+    );
+    settings = await storage.loadAiConnectionSettings();
+    expect(settings.multiAgentEnabled, isTrue);
+    expect(settings.multiAgentMaxAgents, 2);
+  });
+
   test('base URL history keeps newest first and deduplicated', () async {
     storage = await initializedStorage();
 
@@ -193,6 +221,8 @@ void main() {
       baseUrl: 'https://api.example.com',
       model: 'demo-model',
       apiKey: 'sk-secret',
+      multiAgentEnabled: false,
+      multiAgentMaxAgents: 4,
     );
 
     final jsonText = await storage.exportAppDataJson();
@@ -207,6 +237,8 @@ void main() {
     expect(connection['password'], '');
     expect(connection['privateKey'], '');
     expect(aiSettings['apiKey'], '');
+    expect(aiSettings['multiAgentEnabled'], isFalse);
+    expect(aiSettings['multiAgentMaxAgents'], 4);
   });
 
   test('import ignores credential fields and clears existing AI key', () async {
@@ -236,6 +268,8 @@ void main() {
         'baseUrl': 'https://api.example.com',
         'model': 'demo-model',
         'apiKey': 'sk-imported',
+        'multiAgentEnabled': false,
+        'multiAgentMaxAgents': 4,
       },
     });
 
@@ -247,5 +281,8 @@ void main() {
     expect(storage.connections.single.privateKey, isNull);
     expect(await storage.getPassword('server-1'), isNull);
     expect(await storage.getPrivateKey('server-1'), isNull);
+    final settings = await storage.loadAiConnectionSettings();
+    expect(settings.multiAgentEnabled, isFalse);
+    expect(settings.multiAgentMaxAgents, 4);
   });
 }

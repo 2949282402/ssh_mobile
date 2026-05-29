@@ -555,6 +555,27 @@ void main() {
     expect(decoded.containsKey('activeApiKeyMasked'), isFalse);
     expect(decoded.containsKey('apiKey'), isFalse);
     expect(decoded.containsKey('hasApiKeyConfigured'), isTrue);
+    expect(decoded['multiAgentEnabled'], isTrue);
+    expect(decoded['multiAgentMaxAgents'], 3);
+  });
+
+  test('app settings tool updates multi-agent settings with approval',
+      () async {
+    final raw = await tools.execute(
+      'app_update_operational_settings',
+      {
+        'multiAgentEnabled': false,
+        'multiAgentMaxAgents': 4,
+      },
+      approvedWrite: true,
+    );
+    final decoded = jsonDecode(raw) as Map<String, dynamic>;
+    final settings = await storage.loadAiConnectionSettings();
+
+    expect(decoded['multiAgentEnabled'], isFalse);
+    expect(decoded['multiAgentMaxAgents'], 4);
+    expect(settings.multiAgentEnabled, isFalse);
+    expect(settings.multiAgentMaxAgents, 4);
   });
 }
 
