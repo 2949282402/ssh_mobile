@@ -1666,8 +1666,20 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     if (target.role != 'user') return;
 
     final editedText = await _showEditUserDialog(target.text, strings);
-    if (editedText == null || editedText.trim().isEmpty) return;
     if (!mounted) return;
+    if (editedText == null) return;
+    final trimmedEditedText = editedText.trim();
+    if (trimmedEditedText.isEmpty) return;
+    if (!mounted) return;
+
+    final latestActiveChat = _activeChat;
+    if (latestActiveChat == null || latestActiveChat.id != activeChat.id) return;
+    final targetIndex = latestActiveChat.messages.indexWhere(
+      (message) =>
+          message.role == 'user' &&
+          message.createdAt == target.createdAt,
+    );
+    if (targetIndex < 0 || targetIndex >= latestActiveChat.messages.length) return;
 
     final storage = context.read<StorageService>();
     final settings = await storage.loadAiConnectionSettings();
@@ -1677,9 +1689,12 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     }
     if (!mounted) return;
 
+    final currentTarget = latestActiveChat.messages[targetIndex];
+    if (currentTarget.role != 'user') return;
+
     final now = DateTime.now();
-    final editedUser = target.copyWith(
-      text: editedText.trim(),
+    final editedUser = currentTarget.copyWith(
+      text: trimmedEditedText,
       createdAt: now,
     );
     final assistantMessage = AiChatMessageRecord(
@@ -1688,14 +1703,15 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       createdAt: now,
     );
     final nextMessages = [
-      ...activeChat.messages.take(messageIndex),
+      ...latestActiveChat.messages.take(targetIndex),
       editedUser,
       assistantMessage,
     ];
     final nextModel =
-        settings.model.trim().isNotEmpty ? settings.model : activeChat.model;
-    final nextChat = activeChat.copyWith(
-      title: messageIndex == 0 ? _titleFrom(editedText, strings) : null,
+        settings.model.trim().isNotEmpty ? settings.model : latestActiveChat.model;
+    final nextChat = latestActiveChat.copyWith(
+      title:
+          targetIndex == 0 ? _titleFrom(trimmedEditedText, strings) : null,
       model: nextModel,
       messages: nextMessages,
       updatedAt: now,
