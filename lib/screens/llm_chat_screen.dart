@@ -2336,6 +2336,12 @@ class _MessageBubble extends StatelessWidget {
           crossAxisAlignment:
               isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
           children: [
+            if (!isUser && !isError && message.traces.isNotEmpty)
+              _TracePanel(
+                traces: message.traces,
+                storageKey:
+                    'trace-panel-${message.createdAt.microsecondsSinceEpoch}',
+              ),
             Container(
               margin: const EdgeInsets.only(bottom: 4),
               padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
@@ -2383,12 +2389,6 @@ class _MessageBubble extends StatelessWidget {
                 onRegenerate: onRegenerate,
                 onBranch: onBranch,
                 onContinueTimeout: onContinueTimeout,
-              ),
-            if (!isUser && !isError && message.traces.isNotEmpty)
-              _TracePanel(
-                traces: message.traces,
-                storageKey:
-                    'trace-panel-${message.createdAt.microsecondsSinceEpoch}',
               ),
             if (!isUser && !isError && message.totalTokens != null)
               Padding(
@@ -2560,7 +2560,15 @@ class _HistoryPanelState extends State<_HistoryPanel> {
     if (_searchQuery.isEmpty) return widget.chats;
     final query = _searchQuery.toLowerCase();
     return widget.chats.where((chat) {
-      return chat.title.toLowerCase().contains(query);
+      if (chat.title.toLowerCase().contains(query)) {
+        return true;
+      }
+      return chat.messages.any((message) {
+        final text = message.text.toLowerCase();
+        if (text.contains(query)) return true;
+        final contextText = message.contextText;
+        return contextText != null && contextText.toLowerCase().contains(query);
+      });
     }).toList();
   }
 
