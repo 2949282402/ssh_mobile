@@ -28,6 +28,48 @@ const List<String> _defaultModels = [
   'deepseek-v4-pro',
 ];
 
+class _SlashCommandMeta {
+  final String command;
+  final String summary;
+  final String details;
+
+  const _SlashCommandMeta({
+    required this.command,
+    required this.summary,
+    required this.details,
+  });
+}
+
+class _ParsedSlashCommand {
+  final String command;
+  final String arguments;
+
+  const _ParsedSlashCommand(this.command, this.arguments);
+}
+
+class _ToolOption {
+  final String name;
+  final String description;
+
+  const _ToolOption({
+    required this.name,
+    required this.description,
+  });
+}
+
+const List<_SlashCommandMeta> _defaultSlashCommands = [
+  _SlashCommandMeta(
+    command: '/compact',
+    summary: 'Force compression on the next request.',
+    details: 'The next AI request will compress context before sending.',
+  ),
+  _SlashCommandMeta(
+    command: '/tools',
+    summary: 'Limit tools for this chat.',
+    details: 'Restrict which tools the model can call in the current chat.',
+  ),
+];
+
 @visibleForTesting
 List<String> resolveFetchedModelOptions({
   required Iterable<String> fetchedModels,
@@ -174,6 +216,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   bool _toolsExpanded = false;
   bool _isUserAtBottom = true;
   String? _selectedConnectionId;
+  final Map<String, Set<String>> _chatAllowedTools = {};
+  final Set<String> _pendingForceCompressionChats = {};
   String? _contextTokenCacheKey;
   String? _contextTokenCacheChatId;
   int _cachedContextTokens = 0;
@@ -523,6 +567,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        if (_shouldShowSlashCommandPanel)
+                          _buildSlashCommandPanel(context, strings),
                         Row(
                           children: [
                             Expanded(
@@ -537,6 +583,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                                 onSubmitted: _isDesktopPlatform
                                     ? null
                                     : (_) => _send(context, strings),
+                                onChanged: (_) => setState(() {}),
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -664,6 +711,394 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     await _sendText(context, strings, text: text, clearInput: true);
   }
 
+  bool get _shouldShowSlashCommandPanel {
+    return _inputController.text.trimLeft().startsWith('/');
+  }
+
+  List<_SlashCommandMeta> get _filteredSlashCommands {
+    final text = _inputController.text.trimLeft().toLowerCase();
+    if (!text.startsWith('/')) {
+      return const [];
+    }
+    final parts = text.substring(1).trimLeft().split(RegExp(r'\s+'));
+    final commandHint = parts.isNotEmpty ? parts.first : '';
+    if (commandHint.isEmpty) {
+      return _defaultSlashCommands;
+    }
+    return _defaultSlashCommands
+        .where((command) => command.command
+            .substring(1)
+            .toLowerCase()
+            .startsWith(commandHint))
+        .toList();
+  }
+
+  Widget _buildSlashCommandPanel(BuildContext context, _AiStrings strings) {
+    final suggestions = _filteredSlashCommands;
+    if (suggestions.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Theme.of(context)
+                .colorScheme
+                .surfaceContainerHighest
+                .withValues(alpha: 0.36),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Text(
+              strings.commandUnknownHint,
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+            ),
+          ),
+        ),
+      );
+    }
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 178),
+      child: SingleChildScrollView(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 10, 10, 6),
+                child: Text(
+                  strings.commands,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              for (final command in suggestions)
+                ListTile(
+                  dense: true,
+                  title: Text(command.command),
+                  subtitle: Text(
+                    command.summary,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  onTap: () {
+                    _inputController.text =
+                        command.command == '/tools' ? '/tools ' : command.command;
+                    setState(() => _inputController.selection =
+                        TextSelection.collapsed(offset: _inputController.text.length));
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<bool> _executeSlashCommand({
+    required String chatId,
+    required String input,
+    required _AiStrings strings,
+  }) async {
+    final parsed = _parseSlashCommand(input);
+    if (parsed == null || parsed.command.isEmpty) {
+      _showCommandFeedback(strings.commandUnknown, context);
+      return false;
+    }
+    switch (parsed.command) {
+      case 'compact':
+        _pendingForceCompressionChats.add(chatId);
+        AppLogService.instance.info(
+          'Slash command executed',
+          details:
+              'chatId=$chatId command=compact forceContextCompression=true',
+        );
+        _showCommandFeedback(strings.commandCompact, context);
+        return true;
+      case 'tools':
+        final handled = await _executeToolsCommand(
+          chatId: chatId,
+          arguments: parsed.arguments,
+          strings: strings,
+        );
+        if (handled) {
+          AppLogService.instance.info(
+            'Slash command executed',
+            details: 'chatId=$chatId command=tools',
+          );
+        }
+        return handled;
+      default:
+        _showCommandFeedback(strings.commandUnknownWithName(parsed.command), context);
+        return false;
+    }
+  }
+
+  Future<bool> _executeToolsCommand({
+    required String chatId,
+    required String arguments,
+    required _AiStrings strings,
+  }) async {
+    if (arguments.isEmpty) {
+      final availableTools = await _loadAvailableTools(strings);
+      if (availableTools == null) return false;
+      final next = await _openToolsSelector(
+        context: context,
+        strings: strings,
+        availableTools: availableTools,
+        initialTools: _chatAllowedTools[chatId] ?? const {},
+      );
+      if (next == null) return false;
+      _chatAllowedTools[chatId] = {...next};
+      _showCommandFeedback(strings.commandToolsUpdated(next.length), context);
+      AppLogService.instance.info(
+        'Slash /tools applied',
+        details: 'chatId=$chatId source=picker count=${next.length}',
+      );
+      return true;
+    }
+
+    final requested = _parseToolList(arguments);
+    final availableTools = await _loadAvailableTools(strings);
+    if (availableTools == null) return false;
+    final availableMap = <String, String>{};
+    for (final tool in availableTools) {
+      availableMap[tool.name.toLowerCase()] = tool.name;
+    }
+    final unknown = <String>[];
+    final selected = <String>{};
+    for (final raw in requested) {
+      final normalized = raw.toLowerCase();
+      final canonical = availableMap[normalized];
+      if (canonical == null) {
+        unknown.add(raw);
+      } else {
+        selected.add(canonical);
+      }
+    }
+    if (selected.isEmpty && unknown.isNotEmpty) {
+      _showCommandFeedback(
+        strings.commandToolsUnknown(unknown),
+        context,
+      );
+      return true;
+    }
+    if (selected.isNotEmpty) {
+      _chatAllowedTools[chatId] = selected;
+      _showCommandFeedback(strings.commandToolsUpdated(selected.length), context);
+    }
+    if (unknown.isNotEmpty) {
+      _showCommandFeedback(
+        strings.commandToolsUnknown(unknown),
+        context,
+      );
+    }
+    AppLogService.instance.info(
+      'Slash /tools applied',
+      details:
+          'chatId=$chatId source=inline requested=${requested.join(',')} accepted=${selected.join(',')} unknown=${unknown.join(',')}',
+    );
+    return selected.isNotEmpty || unknown.isNotEmpty;
+  }
+
+  Future<List<_ToolOption>?> _loadAvailableTools(_AiStrings strings) async {
+    try {
+      final storage = context.read<StorageService>();
+      final toolService = AiToolService(
+        storageService: storage,
+        sshService: context.read<SshService>(),
+        sftpService: context.read<SftpService>(),
+        performanceMonitorToolService: PerformanceMonitorToolService(
+          context.read<PerformanceMonitorService>(),
+        ),
+        appSettings: context.read<AppSettings>(),
+      );
+      final definitions = await toolService.toolDefinitions();
+      final tools = <_ToolOption>[];
+      for (final definition in definitions) {
+        if (definition is! Map<String, dynamic>) continue;
+        final name = _toolNameFromDefinition(definition);
+        if (name == null) continue;
+        final function = definition['function'];
+        final description = function is Map<String, dynamic>
+            ? function['description']
+            : null;
+        tools.add(
+          _ToolOption(
+            name: name,
+            description: description is String ? description : '',
+          ),
+        );
+      }
+      tools.sort((a, b) => a.name.compareTo(b.name));
+      return tools;
+    } catch (error, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to load tools for slash command',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      _showCommandFeedback(strings.commandToolsLoadFailed, context);
+      return null;
+    }
+  }
+
+  Future<Set<String>?> _openToolsSelector({
+    required BuildContext context,
+    required _AiStrings strings,
+    required List<_ToolOption> availableTools,
+    required Set<String> initialTools,
+  }) async {
+    if (availableTools.isEmpty) {
+      _showCommandFeedback(strings.commandToolsNoTools, context);
+      return null;
+    }
+    final selected = {...initialTools};
+    final searchTextController = TextEditingController();
+    final selectedSet = await showModalBottomSheet<Set<String>?>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            final query = searchTextController.text.trim().toLowerCase();
+            final filteredTools = availableTools
+                .where(
+                  (tool) =>
+                      tool.name.toLowerCase().contains(query) ||
+                      tool.description.toLowerCase().contains(query),
+                )
+                .toList();
+            return SafeArea(
+              child: SizedBox(
+                height:
+                    MediaQuery.sizeOf(sheetContext).height *
+                    (_maxToolSelectorHeightPercent / 100),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                  child: Column(
+                    children: [
+                      TextField(
+                        controller: searchTextController,
+                        decoration: InputDecoration(
+                          isDense: true,
+                          hintText: strings.commandToolsSearch,
+                        ),
+                        onChanged: (_) => setSheetState(() {}),
+                      ),
+                      const SizedBox(height: 8),
+                      Expanded(
+                        child: filteredTools.isEmpty
+                            ? Center(
+                                child: Text(
+                                  strings.commandToolsNoResult,
+                                  style: TextStyle(
+                                    color: Theme.of(sheetContext)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
+                                ),
+                              )
+                            : ListView.builder(
+                                itemCount: filteredTools.length,
+                                itemBuilder: (ctx, index) {
+                                  final tool = filteredTools[index];
+                                  final isSelected =
+                                      selected.contains(tool.name);
+                                  return CheckboxListTile(
+                                    value: isSelected,
+                                    title: Text(tool.name),
+                                    subtitle: Text(tool.description),
+                                    onChanged: (value) => setSheetState(
+                                      () {
+                                        if (value == true) {
+                                          selected.add(tool.name);
+                                        } else {
+                                          selected.remove(tool.name);
+                                        }
+                                      },
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.of(sheetContext).pop(),
+                            child: Text(strings.cancel),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton(
+                            onPressed: () =>
+                                Navigator.of(sheetContext).pop(Set.from(selected)),
+                            child: Text(strings.save),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+    searchTextController.dispose();
+    return selectedSet;
+  }
+
+  _ParsedSlashCommand? _parseSlashCommand(String input) {
+    final trimmed = input.trim();
+    if (!trimmed.startsWith('/')) return null;
+    if (trimmed == '/') return const _ParsedSlashCommand('', '');
+    final body = trimmed.substring(1).trimLeft();
+    if (body.isEmpty) return const _ParsedSlashCommand('', '');
+    final split = body.split(RegExp(r'\s+'));
+    if (split.isEmpty || split.first.isEmpty) return null;
+    final command = split.first.toLowerCase();
+    final arguments = split.length == 1 ? '' : body.substring(split.first.length).trim();
+    return _ParsedSlashCommand(command, arguments);
+  }
+
+  List<String> _parseToolList(String text) {
+    return text
+        .split(RegExp(r'[,\s]+'))
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+  }
+
+  bool _consumeContextCompression(String chatId) {
+    return _pendingForceCompressionChats.remove(chatId);
+  }
+
+  String? _toolNameFromDefinition(Map<String, dynamic> definition) {
+    final function = definition['function'];
+    if (function is! Map) return null;
+    final name = function['name'];
+    return name is String ? name : null;
+  }
+
+  void _showCommandFeedback(String message, BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  static const int _maxToolSelectorHeightPercent = 78;
+
   KeyEventResult _handleInputKeyEvent(FocusNode node, KeyEvent event) {
     if (!_isDesktopPlatform || event is! KeyDownEvent) {
       return KeyEventResult.ignored;
@@ -708,6 +1143,18 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   }) async {
     final activeChat = _activeChat;
     if (text.isEmpty || _sending || activeChat == null) return;
+    final normalizedText = text.trim();
+    if (normalizedText.startsWith('/')) {
+      final handled = await _executeSlashCommand(
+        chatId: activeChat.id,
+        input: normalizedText,
+        strings: strings,
+      );
+      if (handled && clearInput) {
+        setState(() => _inputController.clear());
+      }
+      return;
+    }
 
     final storage = context.read<StorageService>();
     final settings = await storage.loadAiConnectionSettings();
@@ -751,7 +1198,11 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     setState(() {
       _replaceChat(nextChat);
       _sending = true;
-      _isUserAtBottom = true;
+      if (_scrollController.hasClients) {
+        _isUserAtBottom = _isNearBottom(_scrollController.position);
+      } else {
+        _isUserAtBottom = true;
+      }
       if (clearInput) _inputController.clear();
     });
     await storage.saveAiChat(nextChat);
@@ -808,6 +1259,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     final cancellationToken = LlmCancellationToken();
     _activeCancellationToken = cancellationToken;
     final answer = StringBuffer();
+    final forceContextCompression = _consumeContextCompression(chatId);
+    final allowedTools = _chatAllowedTools[chatId];
     if (mounted) {
       setState(() {
         _beginStreamingAssistant(
@@ -840,6 +1293,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
             request: request,
           );
         },
+        allowedTools: allowedTools,
+        forceContextCompression: forceContextCompression,
         cancellationToken: cancellationToken,
         messages: _messagesForRequest(
           requestMessages,
@@ -1882,6 +2337,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     if (_chats.isEmpty && _savedHistoryChats.isEmpty) return;
     final storage = context.read<StorageService>();
     final deleted = _chatById(id);
+    _chatAllowedTools.remove(id);
+    _pendingForceCompressionChats.remove(id);
     final nextChats = _chats.where((chat) => chat.id != id).toList();
     if (nextChats.isEmpty) {
       final settings = await storage.loadAiConnectionSettings();
@@ -4311,4 +4768,31 @@ class _AiStrings {
   String get cancel => _en ? 'Cancel' : '取消';
   String get save => _en ? 'Save' : '保存';
   String failed(Object error) => _en ? 'Failed: $error' : '失败：$error';
+  String get commands => _en ? 'Commands' : '命令';
+  String get commandUnknownHint => _en
+      ? 'Type a command to use. Available: /compact, /tools.'
+      : '输入以 / 开头的命令，如 /compact 或 /tools';
+  String get commandUnknown => _en
+      ? 'Unknown slash command.'
+      : '未识别的斜杠命令。';
+  String commandUnknownWithName(String command) =>
+      _en ? 'Unknown command: /$command' : '未识别命令: /$command';
+  String get commandCompact => _en
+      ? 'Context compression is enabled for the next request.'
+      : '已为下一次请求启用上下文压缩。';
+  String commandToolsUpdated(int count) => _en
+      ? 'Tool whitelist updated: $count selected.'
+      : '工具白名单已更新：共选中 $count 个。';
+  String commandToolsUnknown(List<String> unknown) => _en
+      ? 'Unknown tool(s): ${unknown.join(', ')}'
+      : '未识别工具：${unknown.join(', ')}';
+  String get commandToolsLoadFailed => _en
+      ? 'Unable to load available tools.'
+      : '无法加载可用工具。';
+  String get commandToolsNoTools => _en
+      ? 'No tools are currently available.'
+      : '当前无可用工具。';
+  String get commandToolsSearch => _en ? 'Search tools' : '搜索工具';
+  String get commandToolsNoResult =>
+      _en ? 'No tools match the search.' : '未找到匹配的工具。';
 }

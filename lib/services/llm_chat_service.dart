@@ -31,6 +31,8 @@ abstract interface class LlmClientAdapter {
     void Function(LlmRunStats stats)? onStats,
     void Function(LlmTraceEvent event)? onTrace,
     LlmCancellationToken? cancellationToken,
+    Set<String>? allowedTools,
+    bool forceContextCompression = false,
   });
 }
 
@@ -171,6 +173,8 @@ class LlmChatService implements LlmClientAdapter {
     void Function(LlmRunStats stats)? onStats,
     void Function(LlmTraceEvent event)? onTrace,
     LlmCancellationToken? cancellationToken,
+    Set<String>? allowedTools,
+    bool forceContextCompression = false,
   }) async* {
     final settings = await storageService.loadAiConnectionSettings();
     final runStartedAt = DateTime.now();
@@ -186,7 +190,7 @@ class LlmChatService implements LlmClientAdapter {
     AppLogService.instance.info(
       'LLM chat started',
       details:
-          'baseUrl=${settings.baseUrl} model=$model userMessages=${messages.length} timeoutSeconds=${settings.timeoutSeconds}',
+          'baseUrl=${settings.baseUrl} model=$model userMessages=${messages.length} timeoutSeconds=${settings.timeoutSeconds} forceContextCompression=$forceContextCompression',
     );
 
     var workingMessages = <Map<String, dynamic>>[
@@ -198,7 +202,9 @@ class LlmChatService implements LlmClientAdapter {
     ];
     final estimatedBeforeCompression = estimateMessagesTokens(workingMessages);
     var compressed = false;
-    if (estimatedBeforeCompression >= settings.contextWindowTokens * 0.9) {
+    final shouldCompressFromUsageThreshold =
+        estimatedBeforeCompression >= settings.contextWindowTokens * 0.9;
+    if (shouldCompressFromUsageThreshold || forceContextCompression) {
       workingMessages = await _compressWorkingMessages(
         baseUrl: settings.baseUrl,
         apiKey: apiKey,
@@ -211,8 +217,31 @@ class LlmChatService implements LlmClientAdapter {
         openAiReasoningEffort: settings.openAiReasoningEffort,
       );
       compressed = true;
+      if (forceContextCompression && !shouldCompressFromUsageThreshold) {
+        AppLogService.instance.info(
+          'LLM context compression forced',
+          details:
+              'baseTokens=$estimatedBeforeCompression window=${settings.contextWindowTokens}',
+        );
+      }
     }
     final toolDefinitions = await toolService.toolDefinitions();
+    final normalizedAllowedTools = _normalizeToolNames(allowedTools);
+    final filteredToolDefinitions = normalizedAllowedTools == null
+        ? toolDefinitions
+        : _filterToolDefinitions(toolDefinitions, normalizedAllowedTools);
+    if (normalizedAllowedTools == null) {
+      AppLogService.instance.info(
+        'LLM tool filter skipped',
+        details: 'availableTools=${toolDefinitions.length}',
+      );
+    } else {
+      AppLogService.instance.info(
+        'LLM tool definitions filtered',
+        details:
+            'requestedTools=${normalizedAllowedTools.length} availableTools=${toolDefinitions.length} filteredTools=${filteredToolDefinitions.length}',
+      );
+    }
 
     final visibleOutput = StringBuffer();
     for (var round = 0;; round++) {
@@ -232,12 +261,13 @@ class LlmChatService implements LlmClientAdapter {
             apiKey: apiKey,
             model: model,
             messages: workingMessages,
-            tools: toolDefinitions,
+            tools: filteredToolDefinitions,
             timeoutSeconds: settings.timeoutSeconds,
             deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
             deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
             openAiReasoningEffort: settings.openAiReasoningEffort,
             cancellationToken: cancellationToken,
+            includeTools: filteredToolDefinitions.isNotEmpty,
             onContent: (chunk) {
               cancellationToken?.throwIfCancelled();
               content.write(chunk);
@@ -759,6 +789,38 @@ class LlmChatService implements LlmClientAdapter {
 
   bool _looksLikeToolUnsupportedError(String body) {
     return looksLikeToolUnsupportedError(body);
+  }
+
+  Set<String>? _normalizeToolNames(Set<String>? tools) {
+    if (tools == null) return null;
+    final normalized = <String>{};
+    for (final tool in tools) {
+      final name = tool.trim().toLowerCase();
+      if (name.isNotEmpty) normalized.add(name);
+    }
+    return normalized;
+  }
+
+  List<Map<String, dynamic>> _filterToolDefinitions(
+    List<Map<String, dynamic>> definitions,
+    Set<String> allowedTools,
+  ) {
+    if (allowedTools.isEmpty) return const [];
+    final filtered = <Map<String, dynamic>>[];
+    for (final definition in definitions) {
+      final name = _toolNameFromDefinition(definition);
+      if (name != null && allowedTools.contains(name.toLowerCase())) {
+        filtered.add(definition);
+      }
+    }
+    return filtered;
+  }
+
+  String? _toolNameFromDefinition(Map<String, dynamic> definition) {
+    final function = definition['function'];
+    if (function is! Map) return null;
+    final name = function['name'];
+    return name is String ? name : null;
   }
 
   static bool looksLikeToolUnsupportedError(String body) {
