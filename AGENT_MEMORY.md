@@ -90,3 +90,23 @@ across sessions.
   plain preferences, keep multiple API keys in secure storage with masked
   previews, show DeepSeek thinking controls only for DeepSeek-like models, and
   show OpenAI reasoning effort only for supported OpenAI reasoning model ids.
+- 2026-05-28: AI client tools now include permission status, redacted client
+  log queries, and chat-bound WebView state/navigation helpers behind
+  `ClientSystemToolService` and `ClientWebViewService` adapters. Keep client
+  file saves in the client-system adapter so SFTP downloads return save
+  metadata rather than raw file contents to the model.
+- 2026-05-28: `sftp_write_text` is a detached path-based SFTP tool that always
+  requires user approval. Reuse the app SFTP edit/download size settings in AI
+  tools, and keep the approval card showing server, remote path, byte count,
+  and a short content preview before any remote write executes.
+- 2026-05-28: AI tools now use a shared `ToolSecretPolicy` to redact tool
+  arguments/results/traces and to block likely secret-bearing paths and
+  environment-dump commands before the model sees them. Do not expose saved SSH
+  passwords, private keys, API keys, tokens, backup JSON, raw terminal
+  history, or secret-path file contents through any future tool.
+- 2026-05-28: Saved-server tool coverage now flows through
+  `ServerCatalogAdapter`, monitor coverage through
+  `PerformanceMonitorToolAdapter`, and detached SFTP path operations through
+  expanded `SftpClientAdapter` helpers (`stat/upload/mkdir/rename/delete`).
+  Keep new AI tool work on these adapters so tests can inject fakes and so
+  secrets remain outside the model-visible layer.

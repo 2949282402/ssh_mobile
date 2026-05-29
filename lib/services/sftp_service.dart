@@ -49,6 +49,47 @@ abstract interface class SftpClientAdapter {
     int maxBytes = SftpService.maxTextPreviewBytes,
   });
 
+  Future<Uint8List> downloadPathForConnection({
+    required String connectionId,
+    required String path,
+    int maxBytes = SftpService.maxDownloadBytes,
+  });
+
+  Future<SftpPathInfo> statPathForConnection({
+    required String connectionId,
+    required String path,
+  });
+
+  Future<void> writeTextPathForConnection({
+    required String connectionId,
+    required String path,
+    required String text,
+    int maxBytes = SftpService.maxTextEditBytes,
+  });
+
+  Future<void> uploadBytesPathForConnection({
+    required String connectionId,
+    required String path,
+    required Uint8List bytes,
+    int maxBytes = SftpService.maxUploadBytes,
+  });
+
+  Future<void> createDirectoryPathForConnection({
+    required String connectionId,
+    required String path,
+  });
+
+  Future<void> renamePathForConnection({
+    required String connectionId,
+    required String path,
+    required String newPath,
+  });
+
+  Future<void> deletePathForConnection({
+    required String connectionId,
+    required String path,
+  });
+
   Future<void> openPath(String path);
 
   Future<void> openParent();
@@ -96,6 +137,36 @@ class SftpEntry {
     this.modifiedAt,
     this.modifiedLabel,
   });
+}
+
+class SftpPathInfo {
+  final String path;
+  final bool isDirectory;
+  final bool isLink;
+  final int? size;
+  final String sizeLabel;
+  final DateTime? modifiedAt;
+
+  const SftpPathInfo({
+    required this.path,
+    required this.isDirectory,
+    required this.isLink,
+    required this.size,
+    required this.sizeLabel,
+    required this.modifiedAt,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'path': path,
+      'type': isDirectory ? 'directory' : 'file',
+      'isDirectory': isDirectory,
+      'isLink': isLink,
+      'size': size,
+      'sizeLabel': sizeLabel,
+      'modifiedAt': modifiedAt?.toIso8601String(),
+    };
+  }
 }
 
 /// SFTP 文件操作服务。
@@ -496,6 +567,174 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       } finally {
         await _closeFileQuietly(file);
       }
+    });
+  }
+
+  @override
+  Future<Uint8List> downloadPathForConnection({
+    required String connectionId,
+    required String path,
+    int maxBytes = maxDownloadBytes,
+  }) async {
+    return _withDetachedSftp(connectionId, (sftp, config) async {
+      final absolutePath = await sftp.absolute(path);
+      final attrs = await sftp.stat(absolutePath);
+      if (attrs.isDirectory) {
+        throw StateError('Directories cannot be downloaded');
+      }
+      _assertWithinMemoryLimit(attrs.size, 'download', maxBytes: maxBytes);
+
+      SftpFile? file;
+      try {
+        file = await sftp.open(absolutePath, mode: SftpFileOpenMode.read);
+        final bytes = await file.readBytes();
+        _assertWithinMemoryLimit(bytes.length, 'download', maxBytes: maxBytes);
+        AppLogService.instance.info(
+          'SFTP file downloaded for tool',
+          details:
+              'connection=${config.name} path=$absolutePath bytes=${bytes.length}',
+        );
+        return bytes;
+      } finally {
+        await _closeFileQuietly(file);
+      }
+    });
+  }
+
+  @override
+  Future<void> writeTextPathForConnection({
+    required String connectionId,
+    required String path,
+    required String text,
+    int maxBytes = maxTextEditBytes,
+  }) async {
+    final bytes = Uint8List.fromList(utf8.encode(text));
+    _assertWithinMemoryLimit(bytes.length, 'edit', maxBytes: maxBytes);
+    await _withDetachedSftp(connectionId, (sftp, config) async {
+      final absolutePath = await sftp.absolute(path);
+      SftpFile? file;
+      try {
+        file = await sftp.open(
+          absolutePath,
+          mode: SftpFileOpenMode.create |
+              SftpFileOpenMode.truncate |
+              SftpFileOpenMode.write,
+        );
+        await file.writeBytes(bytes);
+        AppLogService.instance.info(
+          'SFTP text file saved for tool',
+          details:
+              'connection=${config.name} path=$absolutePath bytes=${bytes.length}',
+        );
+      } finally {
+        await _closeFileQuietly(file);
+      }
+    });
+  }
+
+  @override
+  Future<SftpPathInfo> statPathForConnection({
+    required String connectionId,
+    required String path,
+  }) async {
+    return _withDetachedSftp(connectionId, (sftp, _) async {
+      final absolutePath = await sftp.absolute(path);
+      final attrs = await sftp.stat(absolutePath);
+      final modifiedAt = attrs.modifyTime == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(attrs.modifyTime! * 1000);
+      return SftpPathInfo(
+        path: absolutePath,
+        isDirectory: attrs.isDirectory,
+        isLink: attrs.isSymbolicLink,
+        size: attrs.size,
+        sizeLabel: _formatBytes(attrs.size),
+        modifiedAt: modifiedAt,
+      );
+    });
+  }
+
+  @override
+  Future<void> uploadBytesPathForConnection({
+    required String connectionId,
+    required String path,
+    required Uint8List bytes,
+    int maxBytes = maxUploadBytes,
+  }) async {
+    _assertWithinMemoryLimit(bytes.length, 'upload', maxBytes: maxBytes);
+    await _withDetachedSftp(connectionId, (sftp, config) async {
+      final absolutePath = await sftp.absolute(path);
+      SftpFile? file;
+      try {
+        file = await sftp.open(
+          absolutePath,
+          mode: SftpFileOpenMode.create |
+              SftpFileOpenMode.truncate |
+              SftpFileOpenMode.write,
+        );
+        await file.writeBytes(bytes);
+        AppLogService.instance.info(
+          'SFTP file uploaded for tool',
+          details:
+              'connection=${config.name} path=$absolutePath bytes=${bytes.length}',
+        );
+      } finally {
+        await _closeFileQuietly(file);
+      }
+    });
+  }
+
+  @override
+  Future<void> createDirectoryPathForConnection({
+    required String connectionId,
+    required String path,
+  }) async {
+    await _withDetachedSftp(connectionId, (sftp, config) async {
+      final absolutePath = await sftp.absolute(path);
+      await sftp.mkdir(absolutePath);
+      AppLogService.instance.info(
+        'SFTP directory created for tool',
+        details: 'connection=${config.name} path=$absolutePath',
+      );
+    });
+  }
+
+  @override
+  Future<void> renamePathForConnection({
+    required String connectionId,
+    required String path,
+    required String newPath,
+  }) async {
+    await _withDetachedSftp(connectionId, (sftp, config) async {
+      final absolutePath = await sftp.absolute(path);
+      final absoluteNewPath = await sftp.absolute(newPath);
+      await sftp.rename(absolutePath, absoluteNewPath);
+      AppLogService.instance.info(
+        'SFTP path renamed for tool',
+        details:
+            'connection=${config.name} from=$absolutePath to=$absoluteNewPath',
+      );
+    });
+  }
+
+  @override
+  Future<void> deletePathForConnection({
+    required String connectionId,
+    required String path,
+  }) async {
+    await _withDetachedSftp(connectionId, (sftp, config) async {
+      final absolutePath = await sftp.absolute(path);
+      final attrs = await sftp.stat(absolutePath);
+      if (attrs.isDirectory) {
+        await sftp.rmdir(absolutePath);
+      } else {
+        await sftp.remove(absolutePath);
+      }
+      AppLogService.instance.info(
+        'SFTP path deleted for tool',
+        details:
+            'connection=${config.name} path=$absolutePath directory=${attrs.isDirectory}',
+      );
     });
   }
 

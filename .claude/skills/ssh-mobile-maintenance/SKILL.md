@@ -194,15 +194,17 @@ Use `lib/services/llm_chat_service.dart` for provider protocol behavior and
   server, and return `execution: client`. Keep OS/device client tool logic in
   `ClientSystemToolService` instead of mixing it into SSH/SFTP code. Client
   tools currently cover time, device info, network info, battery status,
-  opening app settings, clipboard writes, reminders, and current-chat WebView
-  plain-text reading. Keep WebView session state in `ClientWebViewService`; it
-  is keyed by AI chat id, should survive returning from the WebView route, and
-  should be cleared when that chat history is deleted. Client reminders may use
-  in-memory local notifications; Android system alarms should go through the
-  native `ssh_mobile/client_system` MethodChannel and
-  `AlarmClock.ACTION_SET_ALARM`. Android-only client diagnostics such as
-  network and battery details should return a graceful unsupported payload on
-  other platforms.
+  permission status, opening app settings, clipboard writes, reminders, log
+  queries, and current-chat WebView plain-text/state/navigation helpers. Keep
+  WebView session state in `ClientWebViewService`; it is keyed by AI chat id,
+  should survive returning from the WebView route, and should be cleared when
+  that chat history is deleted. Client reminders may use in-memory local
+  notifications; Android system alarms should go through the native
+  `ssh_mobile/client_system` MethodChannel and `AlarmClock.ACTION_SET_ALARM`.
+  Android-only client diagnostics such as network and battery details should
+  return a graceful unsupported payload on other platforms. Local file saves
+  for tool-driven SFTP downloads should also stay in `ClientSystemToolService`
+  so the AI layer only receives save metadata rather than raw file bytes.
 - Track context window usage with the selected 259K, 512K, or 1M limit. When
   estimated usage reaches 90%, call the current model to summarize older
   history before continuing the user request. Keep token estimation out of the
@@ -241,11 +243,18 @@ Use `lib/services/llm_chat_service.dart` for provider protocol behavior and
   active HTTP stream, reject any pending tool approval, and save the partial
   assistant message with a cancellation trace.
 - If adding write-capable tools, preserve the approval gate: show the exact
-  server and command in the chat page, execute only after approval, and let
-  rejection abort the current operation so the user can give new instructions.
-- Write-command approval panels must keep their action buttons visible. Put
-  long commands in a bounded vertical/horizontal scroll area instead of letting
-  the command text determine the panel height.
+  server and remote write summary in the chat page, execute only after
+  approval, and let rejection abort the current operation so the user can give
+  new instructions.
+- Keep the approval model generic, not `run_command`-specific. Local log
+  deletion/clear, backup import, server metadata changes, monitor state
+  changes, SFTP uploads/mkdir/rename/delete/write, and operational setting
+  changes should all surface the same structured approval request shape with
+  non-secret summaries, destructive flags, and optional previews.
+- Remote-write approval panels must keep their action buttons visible. Put long
+  commands in a bounded vertical/horizontal scroll area instead of letting the
+  command text determine the panel height, and show remote path, byte count,
+  and a short content preview for SFTP text writes.
 - Keep AI command execution on the plain one-shot SSH exec path. Do not attach
   tmux or reuse interactive terminal sessions for LLM tools.
 - AI tools must handle Windows and Linux/Unix targets. Use the saved
@@ -255,6 +264,17 @@ Use `lib/services/llm_chat_service.dart` for provider protocol behavior and
   `netstat`, `ipconfig`, safe PowerShell `Get-*` queries), keep non-delete
   write operations behind the existing approval gate, and keep delete/remove
   operations blocked.
+- AI tool safety is now centralized in `lib/services/tool_secret_policy.dart`.
+  Route tool arguments, approval summaries, results, and trace payloads through
+  that policy. Block environment dumps and likely secret-bearing paths such as
+  `.ssh`, `.env`, `id_rsa`, `.pem`, `.key`, `.p12`, `.jks`, `.keystore`, and
+  filenames containing `token`, `secret`, `apikey`, or `credentials` before
+  the model can inspect them.
+- Keep saved-server metadata tools on `ServerCatalogAdapter`, performance
+  monitor tools on `PerformanceMonitorToolAdapter`, and detached SFTP path
+  operations on the expanded `SftpClientAdapter`. These adapters are the
+  intended seam for fake injection and for keeping credentials outside the
+  model-visible layer.
 - AI one-shot diagnostic commands may search slow paths on real servers, so
   their timeout should be user-configurable, shared with LLM request timeouts,
   and should return a tool result explaining the timeout instead of crashing the
@@ -337,10 +357,12 @@ service, but it should keep using lightweight snapshots outside Sliver item
 builders instead of watching the full service inside each card.
 
 The `get_server_status` AI tool should use `ServerStatusProbe` so LLM-accessible
-server status matches the monitor page parsers. Keep this tool read-only and on
-the one-shot SSH exec path. `generate_ops_report` should also stay read-only,
-reuse `ServerStatusProbe`, and return structured health, risk, port, and process
-data so the model can write a user-facing operations report.
+server status matches the monitor page parsers. Keep its public name stable,
+keep it read-only, and route its implementation through a reusable server
+diagnostics adapter on the one-shot SSH exec path. `generate_ops_report` should
+also keep its public name stable, stay read-only, reuse `ServerStatusProbe`
+through the same diagnostics adapter, and return structured health, risk, port,
+and process data so the model can write a user-facing operations report.
 
 ### Navigation and Chat UX
 

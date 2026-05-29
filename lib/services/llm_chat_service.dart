@@ -5,6 +5,7 @@ import 'dart:io';
 import 'ai_tool_service.dart';
 import 'app_log_service.dart';
 import 'storage_service.dart';
+import 'tool_secret_policy.dart';
 
 abstract interface class LlmClientAdapter {
   Future<List<String>> fetchModels({
@@ -33,19 +34,20 @@ abstract interface class LlmClientAdapter {
   });
 }
 
-/// OpenAI 兼容 LLM 流式对话服务。
+/// OpenAI 鍏煎 LLM 娴佸紡瀵硅瘽鏈嶅姟銆?
 ///
-/// 核心能力：
-/// 1. SSE 流式解析 — 手动解析 data: 行，累积 tool_calls delta
-/// 2. 多轮工具调用循环 — 自动执行工具并返回结果给 LLM
-/// 3. 上下文压缩 — Token 超过 90% 窗口时自动压缩中间轮次
-/// 4. DeepSeek 扩展 — reasoning_content 透传、thinking 参数
+/// 鏍稿績鑳藉姏锛?
+/// 1. SSE 娴佸紡瑙ｆ瀽 鈥?鎵嬪姩瑙ｆ瀽 data: 琛岋紝绱Н tool_calls delta
+/// 2. 澶氳疆宸ュ叿璋冪敤寰幆 鈥?鑷姩鎵ц宸ュ叿骞惰繑鍥炵粨鏋滅粰 LLM
+/// 3. 涓婁笅鏂囧帇缂?鈥?Token 瓒呰繃 90% 绐楀彛鏃惰嚜鍔ㄥ帇缂╀腑闂磋疆娆?
+/// 4. DeepSeek 鎵╁睍 鈥?reasoning_content 閫忎紶銆乼hinking 鍙傛暟
 ///
-/// 使用 dart:io HttpClient 而非第三方 HTTP 包，直接逐行读取 response body
-/// 实现真实流式渲染（而不是等待完整响应）。
+/// 浣跨敤 dart:io HttpClient 鑰岄潪绗笁鏂?HTTP 鍖咃紝鐩存帴閫愯璇诲彇 response body
+/// 瀹炵幇鐪熷疄娴佸紡娓叉煋锛堣€屼笉鏄瓑寰呭畬鏁村搷搴旓級銆?
 class LlmChatService implements LlmClientAdapter {
   final StorageService storageService;
   final AiToolExecutor toolService;
+  final ToolSecretPolicy _toolSecretPolicy = const ToolSecretPolicy();
 
   LlmChatService({
     required this.storageService,
@@ -153,13 +155,13 @@ class LlmChatService implements LlmClientAdapter {
     return buffer.toString();
   }
 
-  /// 流式聊天入口。返回 `Stream<String>` 实现打字机效果。
+  /// 娴佸紡鑱婂ぉ鍏ュ彛銆傝繑鍥?`Stream<String>` 瀹炵幇鎵撳瓧鏈烘晥鏋溿€?
   ///
-  /// 核心循环：
-  /// 1. 检查上下文窗口（>90% 则压缩）
-  /// 2. 发送 SSE 请求并逐 chunk 产出文本
-  /// 3. 如果 LLM 返回 tool_calls → 执行工具（含审批流程）→ 追加结果 → 回到步骤 2
-  /// 4. 如果 LLM 返回普通文本 → 产出完整答案并返回
+  /// 鏍稿績寰幆锛?
+  /// 1. 妫€鏌ヤ笂涓嬫枃绐楀彛锛?90% 鍒欏帇缂╋級
+  /// 2. 鍙戦€?SSE 璇锋眰骞堕€?chunk 浜у嚭鏂囨湰
+  /// 3. 濡傛灉 LLM 杩斿洖 tool_calls 鈫?鎵ц宸ュ叿锛堝惈瀹℃壒娴佺▼锛夆啋 杩藉姞缁撴灉 鈫?鍥炲埌姝ラ 2
+  /// 4. 濡傛灉 LLM 杩斿洖鏅€氭枃鏈?鈫?浜у嚭瀹屾暣绛旀骞惰繑鍥?
   @override
   Stream<String> stream({
     required List<Map<String, dynamic>> messages,
@@ -335,7 +337,7 @@ class LlmChatService implements LlmClientAdapter {
             title: 'Tool request: ${call.name}',
             content: _prettyJson({
               'tool': call.name,
-              'arguments': arguments,
+              'arguments': _toolSecretPolicy.redactValue(arguments),
             }),
           ),
         );
@@ -350,7 +352,7 @@ class LlmChatService implements LlmClientAdapter {
             if (requestToolApproval == null) {
               result = jsonEncode({
                 'error':
-                    'Write command requires user approval, but no approval UI is available.',
+                    'This tool action requires user approval, but no approval UI is available.',
                 'command': approvalRequest.command,
               });
               _emitToolResultTrace(onTrace, call.name, result);
@@ -376,7 +378,7 @@ class LlmChatService implements LlmClientAdapter {
                     'tool=${call.name} connection=${approvalRequest.connectionName} abort=${decision.abort}',
               );
               result = jsonEncode({
-                'error': 'User rejected the write command.',
+                'error': 'User rejected the requested tool action.',
                 'command': approvalRequest.command,
                 if (decision.feedback?.trim().isNotEmpty == true)
                   'feedback': decision.feedback!.trim(),
@@ -384,9 +386,10 @@ class LlmChatService implements LlmClientAdapter {
               onTrace?.call(
                 LlmTraceEvent(
                   kind: 'approval',
-                  title: 'Write command rejected',
+                  title: 'Tool action rejected',
                   content: _prettyJson({
                     'tool': call.name,
+                    'approvalType': approvalRequest.approvalType,
                     'server': approvalRequest.connectionName,
                     'command': approvalRequest.command,
                     'abort': decision.abort,
@@ -402,7 +405,7 @@ class LlmChatService implements LlmClientAdapter {
                 'content': result,
               });
               if (decision.abort) {
-                yield '\n\nWrite command rejected. Operation stopped. You can tell me what to do next.';
+                yield '\n\nTool action rejected. Operation stopped. You can tell me what to do next.';
                 return;
               }
               continue;
@@ -411,9 +414,10 @@ class LlmChatService implements LlmClientAdapter {
             onTrace?.call(
               LlmTraceEvent(
                 kind: 'approval',
-                title: 'Write command approved',
+                title: 'Tool action approved',
                 content: _prettyJson({
                   'tool': call.name,
+                  'approvalType': approvalRequest.approvalType,
                   'server': approvalRequest.connectionName,
                   'command': approvalRequest.command,
                 }),
@@ -434,7 +438,9 @@ class LlmChatService implements LlmClientAdapter {
         } on LlmCancelledException {
           rethrow;
         } catch (e) {
-          result = jsonEncode({'error': e.toString()});
+          result = jsonEncode({
+            'error': _toolSecretPolicy.redactText(e.toString()),
+          });
         }
         _emitToolResultTrace(onTrace, call.name, result);
         workingMessages.add({
@@ -451,16 +457,16 @@ class LlmChatService implements LlmClientAdapter {
     }
   }
 
-  /// 底层 SSE 流式请求。
+  /// 搴曞眰 SSE 娴佸紡璇锋眰銆?
   ///
-  /// HTTP POST -> SSE data: 行解析 -> 内容/tool_calls/reasoning 提取 -> 结果返回。
+  /// HTTP POST -> SSE data: 琛岃В鏋?-> 鍐呭/tool_calls/reasoning 鎻愬彇 -> 缁撴灉杩斿洖銆?
   ///
-  /// 关键设计：
-  /// - tool_calls 按 index 在 `Map<int, _StreamingToolCall>` 中累积
-  ///   （因为 function.arguments JSON 字符串分多个 delta 块传输）
-  /// - reasoning_content 使用 StringBuffer 累积
-  /// - stream_options.include_usage 在最后一个 chunk 后获取 token 用量
-  /// - 如果 stream_options 不受支持（400 错误），自动降级重试不带 usage 的请求
+  /// 鍏抽敭璁捐锛?
+  /// - tool_calls 鎸?index 鍦?`Map<int, _StreamingToolCall>` 涓疮绉?
+  ///   锛堝洜涓?function.arguments JSON 瀛楃涓插垎澶氫釜 delta 鍧椾紶杈擄級
+  /// - reasoning_content 浣跨敤 StringBuffer 绱Н
+  /// - stream_options.include_usage 鍦ㄦ渶鍚庝竴涓?chunk 鍚庤幏鍙?token 鐢ㄩ噺
+  /// - 濡傛灉 stream_options 涓嶅彈鏀寔锛?00 閿欒锛夛紝鑷姩闄嶇骇閲嶈瘯涓嶅甫 usage 鐨勮姹?
   Future<_StreamChatResult> _streamChatCompletion({
     required String baseUrl,
     required String apiKey,
@@ -796,14 +802,15 @@ class LlmChatService implements LlmClientAdapter {
 
   String _prettyJsonString(String text) {
     try {
-      return _prettyJson(jsonDecode(text));
+      return _prettyJson(_toolSecretPolicy.redactValue(jsonDecode(text)));
     } catch (_) {
-      return text;
+      return _toolSecretPolicy.redactText(text);
     }
   }
 
   String _prettyJson(Object? value) {
-    return const JsonEncoder.withIndent('  ').convert(value);
+    return const JsonEncoder.withIndent('  ')
+        .convert(_toolSecretPolicy.redactValue(value));
   }
 
   String _toolContinuationSeparator(String visibleText) {
@@ -813,9 +820,9 @@ class LlmChatService implements LlmClientAdapter {
     return '\n\n';
   }
 
-  /// 上下文压缩：当消息估算 Token 超过 contextWindow * 90% 时触发。
-  /// 将除最后一条 user 消息外的历史发给 LLM 做摘要，
-  /// 保留服务器名、路径、命令、决策等关键操作信息。
+  /// 涓婁笅鏂囧帇缂╋細褰撴秷鎭及绠?Token 瓒呰繃 contextWindow * 90% 鏃惰Е鍙戙€?
+  /// 灏嗛櫎鏈€鍚庝竴鏉?user 娑堟伅澶栫殑鍘嗗彶鍙戠粰 LLM 鍋氭憳瑕侊紝
+  /// 淇濈暀鏈嶅姟鍣ㄥ悕銆佽矾寰勩€佸懡浠ゃ€佸喅绛栫瓑鍏抽敭鎿嶄綔淇℃伅銆?
   Future<List<Map<String, dynamic>>> _compressWorkingMessages({
     required String baseUrl,
     required String apiKey,
@@ -1027,8 +1034,8 @@ class LlmChatService implements LlmClientAdapter {
     return total;
   }
 
-  /// 简单的 Token 估算：ASCII 4 字符 = 1 token，非 ASCII = 1 token 每字符
-  /// 精确度约 80-85%，不依赖 tiktoken（Dart 生态不成熟）
+  /// 绠€鍗曠殑 Token 浼扮畻锛欰SCII 4 瀛楃 = 1 token锛岄潪 ASCII = 1 token 姣忓瓧绗?
+  /// 绮剧‘搴︾害 80-85%锛屼笉渚濊禆 tiktoken锛圖art 鐢熸€佷笉鎴愮啛锛?
   static int estimateTextTokens(String text) {
     if (text.isEmpty) return 0;
     var asciiRunes = 0;
@@ -1055,8 +1062,8 @@ class LlmChatService implements LlmClientAdapter {
   }
 }
 
-/// 可取消令牌：调用 cancel() 后，所有 isCancelled/throwIfCancelled 点立即响应。
-/// onCancel 用于释放资源（关闭 HttpClient 连接）。
+/// 鍙彇娑堜护鐗岋細璋冪敤 cancel() 鍚庯紝鎵€鏈?isCancelled/throwIfCancelled 鐐圭珛鍗冲搷搴斻€?
+/// onCancel 鐢ㄤ簬閲婃斁璧勬簮锛堝叧闂?HttpClient 杩炴帴锛夈€?
 class LlmCancellationToken {
   final List<void Function()> _callbacks = [];
   bool _cancelled = false;
@@ -1196,16 +1203,24 @@ class _StreamingToolCall {
 
 const String _systemPrompt = '''
 You are an SSH Mobile assistant running inside the user's phone.
-You can request tools to inspect the user's saved servers and perform safe read-only server operations.
-Never ask for SSH passwords, private keys, or API keys.
-Tools whose names start with client_ execute on the user's phone/app, not on SSH servers. Use client tools for local time, client device/network/battery info, clipboard, app settings, client alarms/reminders, and the current chat's WebView plain-text page reading, and say clearly that the action happened on the client.
+You can request tools to inspect the user's saved servers and perform safe operational actions through the app.
+Never ask for, retrieve, echo, summarize, or store SSH passwords, private keys, tokens, API keys, environment dumps, or secret-bearing file contents.
+Tools whose names start with client_ execute on the user's phone/app, not on SSH servers. Use client tools for local time, client device/network/battery info, clipboard, logs, app backup export/import, app settings, client alarms/reminders, and the current chat's WebView plain-text page reading, and say clearly that the action happened on the client.
+Use client_get_permission_status when the user needs notification, background-run, or Android battery-optimization diagnostics on the client device.
+Use client_query_logs and client_get_log_counts to inspect recent redacted client logs for SSH, SFTP, LLM, AI tools, WebView, or background issues.
+Use get_server_details to inspect saved non-sensitive server metadata. Never ask for secrets because saved server credentials are not accessible to you.
 The web_search tool is also client-side: it uses the WebView bound to the current chat session to load a public search page and returns readable search result titles, URLs, and snippets.
 When web_search is available, use it before answering questions about current events, latest facts, news, prices, versions, schedules, or other external information, unless the user asks not to search.
 The client_webview_get_page_text tool only reads visible plain text from the WebView bound to the current chat session. It does not read images, hidden DOM data, passwords, or cross-origin iframe contents.
+Use client_webview_get_state and client_webview_navigate to inspect or navigate the WebView bound to the current chat session without interrupting an active AI-browsing lock.
 Before using a server tool, identify the target server by name or id. If unclear, ask the user.
 Servers may be Linux/Unix or Windows. Use the server's saved platform from list_servers/detect_os and never mix Linux commands with Windows commands. Use POSIX commands on Linux/Unix and explicit cmd /c or PowerShell read-only diagnostics on Windows.
-Delete/remove commands are not supported through tools. Do not ask run_command to delete files, directories, services, registry keys, containers, or other resources.
-Use run_command for read-only diagnostics by default. If the user explicitly asks for a server-changing command, request the command through run_command and wait for the app's human approval gate before it is executed.
+Delete/remove commands are not supported through run_command. Do not ask run_command to delete files, directories, services, registry keys, containers, or other resources.
+run_command is also blocked from reading environment dumps or secret-bearing paths. Use it for read-only diagnostics by default. If the user explicitly asks for a server-changing command, request the command through run_command and wait for the app's human approval gate before it is executed.
+Use the ssh_* tools for session lifecycle and terminal-history metadata. Do not expect to see raw terminal output history.
+Use the sftp_* tools for remote file operations. Secret-bearing paths are blocked. Use sftp_download_file when the user wants to save a remote file onto the client device. Use sftp_write_text, sftp_upload_local_file, sftp_create_directory, sftp_rename_entry, and sftp_delete_entry only when the user explicitly wants those remote changes, and expect the app to require approval before execution.
+Use the monitor_* tools for app-scoped server monitoring state, health snapshots, samples, alerts, ports, and application views instead of reimplementing monitoring with ad hoc commands.
+Use app_get_operational_settings and app_update_operational_settings for tool-related app settings. Never ask for API keys because you cannot read or manage them.
 Use generate_ops_report when the user asks for a health report, operations report, or broad server status review.
 Summarize tool results clearly and mention which server/path/command you used.
 ''';

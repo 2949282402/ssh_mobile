@@ -14,6 +14,8 @@ import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../services/client_webview_service.dart';
 import '../services/llm_chat_service.dart';
+import '../services/performance_monitor_service.dart';
+import '../services/performance_monitor_tool_service.dart';
 import '../services/sftp_service.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
@@ -140,10 +142,10 @@ extension _AiRunStatusStrings on _AiStrings {
     final name = serverName.trim();
     if (language == AppLanguage.en) {
       return name.isEmpty
-          ? 'Waiting for command approval...'
-          : 'Waiting for command approval on $name...';
+          ? 'Waiting for tool approval...'
+          : 'Waiting for tool approval on $name...';
     }
-    return name.isEmpty ? '等待确认服务器命令...' : '等待确认 $name 上的服务器命令...';
+    return name.isEmpty ? '等待确认工具操作...' : '等待确认 $name 上的工具操作...';
   }
 }
 
@@ -151,6 +153,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     with
         AutomaticKeepAliveClientMixin<LlmChatScreen>,
         SingleTickerProviderStateMixin {
+  static const double _scrollBottomDistance = 48;
   final TextEditingController _inputController = TextEditingController();
   late final FocusNode _inputFocusNode;
   final ScrollController _scrollController = ScrollController();
@@ -169,6 +172,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   bool _historyLoading = false;
   bool _sending = false;
   bool _toolsExpanded = false;
+  bool _isUserAtBottom = true;
   String? _selectedConnectionId;
   String? _contextTokenCacheKey;
   String? _contextTokenCacheChatId;
@@ -187,6 +191,33 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       if (chat.id == _activeChatId) return chat;
     }
     return _chats.isEmpty ? null : _chats.first;
+  }
+
+  void _setUserAtBottom(bool atBottom) {
+    if (_isUserAtBottom == atBottom) return;
+    if (!mounted) {
+      _isUserAtBottom = atBottom;
+      return;
+    }
+    setState(() => _isUserAtBottom = atBottom);
+  }
+
+  bool _isNearBottom(ScrollMetrics metrics) {
+    return (metrics.maxScrollExtent - metrics.pixels) <= _scrollBottomDistance;
+  }
+
+  void _updateUserScrollPosition(ScrollMetrics metrics) {
+    _setUserAtBottom(_isNearBottom(metrics));
+  }
+
+  bool _shouldShowJumpToBottomButton() {
+    if (!_sending) return false;
+    if (!_scrollController.hasClients) return false;
+    if (_isUserAtBottom) return false;
+    if (_scrollController.position.maxScrollExtent <= _scrollBottomDistance) {
+      return false;
+    }
+    return true;
   }
 
   @override
@@ -409,46 +440,57 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                       ),
                     );
                   },
-                  child: ListView.builder(
-                    controller: _scrollController,
-                    cacheExtent: 900,
-                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
-                    itemCount: visibleMessages.length,
-                    itemBuilder: (context, index) {
-                      final message = visibleMessages[index];
-                      final streamingTextListenable =
-                          _streamingTextFor(activeChat.id, message);
-                      final streamingStatusListenable =
-                          _streamingStatusFor(activeChat.id, message);
-                      return RepaintBoundary(
-                        key: ValueKey(
-                          '${message.role}-${message.createdAt.microsecondsSinceEpoch}',
-                        ),
-                        child: _MessageBubble(
-                          message: message,
-                          streamingTextListenable: streamingTextListenable,
-                          streamingStatusListenable: streamingStatusListenable,
-                          canAct: !_sending &&
-                              activeChat.messages == visibleMessages,
-                          onEditUser: message.role == 'user'
-                              ? () => _editUserMessage(index, strings)
-                              : null,
-                          onRegenerate: message.role == 'assistant'
-                              ? () =>
-                                  _confirmRegenerateAssistant(index, strings)
-                              : null,
-                          onBranch: message.role == 'assistant'
-                              ? () =>
-                                  _confirmBranchFromAssistant(index, strings)
-                              : null,
-                          onContinueTimeout: message.role == 'error' &&
-                                  index == visibleMessages.length - 1 &&
-                                  _isTimeoutError(message.text)
-                              ? () => _continueAfterTimeout(strings)
-                              : null,
-                        ),
-                      );
+                  child: NotificationListener<ScrollNotification>(
+                    onNotification: (notification) {
+                      if (notification.metrics.axis == Axis.vertical &&
+                          (notification is UserScrollNotification ||
+                              notification is ScrollEndNotification)) {
+                        _updateUserScrollPosition(notification.metrics);
+                      }
+                      return false;
                     },
+                    child: ListView.builder(
+                      controller: _scrollController,
+                      cacheExtent: 900,
+                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
+                      itemCount: visibleMessages.length,
+                      itemBuilder: (context, index) {
+                        final message = visibleMessages[index];
+                        final streamingTextListenable =
+                            _streamingTextFor(activeChat.id, message);
+                        final streamingStatusListenable =
+                            _streamingStatusFor(activeChat.id, message);
+                        return RepaintBoundary(
+                          key: ValueKey(
+                            '${message.role}-${message.createdAt.microsecondsSinceEpoch}',
+                          ),
+                          child: _MessageBubble(
+                            message: message,
+                            streamingTextListenable: streamingTextListenable,
+                            streamingStatusListenable: streamingStatusListenable,
+                            canAct: !_sending &&
+                                activeChat.messages == visibleMessages,
+                            onEditUser: message.role == 'user'
+                                ? () => _editUserMessage(index, strings)
+                                : null,
+                            onRegenerate: message.role == 'assistant'
+                                ? () =>
+                                    _confirmRegenerateAssistant(index, strings)
+                                : null,
+                            onBranch: message.role == 'assistant'
+                                ? () =>
+                                    _confirmBranchFromAssistant(index, strings)
+                                : null,
+                            onContinueTimeout:
+                                message.role == 'error' &&
+                                        index == visibleMessages.length - 1 &&
+                                        _isTimeoutError(message.text)
+                                    ? () => _continueAfterTimeout(strings)
+                                    : null,
+                          ),
+                        );
+                      },
+                    ),
                   ),
                 ),
               ),
@@ -555,6 +597,15 @@ class _LlmChatScreenState extends State<LlmChatScreen>
             ],
           ),
           _buildHistoryOverlay(context, strings),
+          if (_shouldShowJumpToBottomButton())
+            Positioned(
+              right: 14,
+              bottom: 106,
+              child: FloatingActionButton.small(
+                onPressed: () => _scrollToBottom(jump: true),
+                child: const Icon(Icons.keyboard_arrow_down_rounded),
+              ),
+            ),
         ],
       ),
     );
@@ -700,6 +751,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     setState(() {
       _replaceChat(nextChat);
       _sending = true;
+      _isUserAtBottom = true;
       if (clearInput) _inputController.clear();
     });
     await storage.saveAiChat(nextChat);
@@ -746,6 +798,10 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         storageService: storage,
         sshService: ssh,
         sftpService: sftp,
+        performanceMonitorToolService: PerformanceMonitorToolService(
+          context.read<PerformanceMonitorService>(),
+        ),
+        appSettings: context.read<AppSettings>(),
         clientWebViewSessionId: chatId,
       ),
     );
@@ -800,7 +856,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         }
         lastStreamUiUpdate = now;
         _updateStreamingAssistant(answer.toString());
-        _scrollToBottom(jump: true);
+        _scrollToBottom();
       }
       if (!mounted) return;
       final currentChat = _chatById(chatId) ?? initialChat;
@@ -1431,6 +1487,10 @@ class _LlmChatScreenState extends State<LlmChatScreen>
             storageService: storage,
             sshService: context.read<SshService>(),
             sftpService: context.read<SftpService>(),
+            performanceMonitorToolService: PerformanceMonitorToolService(
+              context.read<PerformanceMonitorService>(),
+            ),
+            appSettings: context.read<AppSettings>(),
           ),
         );
         final fetched = await service.fetchModels(
@@ -2211,10 +2271,13 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       final shouldJump = _pendingScrollJump;
       _pendingScrollJump = false;
       if (!_scrollController.hasClients) return;
+      if (!shouldJump && _sending && !_isUserAtBottom) return;
       if (shouldJump || _sending) {
         _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+        _setUserAtBottom(true);
         return;
       }
+      _setUserAtBottom(true);
       _scrollController.animateTo(
         _scrollController.position.maxScrollExtent,
         duration: const Duration(milliseconds: 220),
@@ -3121,7 +3184,7 @@ class _TraceEntry extends StatelessWidget {
       case 'tool_result':
         return '工具结果 - ${trace.title.replaceFirst('Tool result: ', '')}';
       case 'approval':
-        return trace.title.contains('approved') ? '写命令已同意' : '写命令已拒绝';
+        return trace.title.contains('approved') ? '工具操作已同意' : '工具操作已拒绝';
       default:
         return trace.title;
     }
@@ -3187,14 +3250,56 @@ class _ToolApprovalPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final en = strings.language == AppLanguage.en;
-    final title = en ? 'Approve server write command' : '确认执行服务器写命令';
+    final title = switch (pending.request.approvalType) {
+      'remote_delete' => en ? 'Approve remote delete' : '确认远端删除操作',
+      'server_metadata_change' =>
+        en ? 'Approve server metadata change' : '确认服务器元数据修改',
+      'monitor_state_change' =>
+        en ? 'Approve monitor state change' : '确认监控状态变更',
+      'local_import' => en ? 'Approve local import' : '确认本地导入操作',
+      'local_log_change' => en ? 'Approve local log change' : '确认本地日志变更',
+      'app_setting_change' => en ? 'Approve app settings change' : '确认应用设置变更',
+      _ => en ? 'Approve tool action' : '确认工具操作',
+    };
     final description = en
-        ? 'The model wants to run a command that may change server state on ${pending.request.connectionName}. Reason: ${pending.request.reason}'
-        : '模型想在 ${pending.request.connectionName} 上执行可能修改服务器状态的命令。原因：${pending.request.reason}';
+        ? 'The model wants to perform this action on ${pending.request.connectionName}. Reason: ${pending.request.reason}'
+        : '模型想在 ${pending.request.connectionName} 上执行该操作。原因：${pending.request.reason}';
     final reject = en ? 'Reject' : '拒绝';
     final approve = en ? 'Approve' : '同意';
     final maxCommandHeight =
         (MediaQuery.sizeOf(context).height * 0.24).clamp(96.0, 180.0);
+    final targetLabel = en ? 'Target' : '目标';
+    final pathLabel = en ? 'Path' : '路径';
+    final bytesLabel = en ? 'Bytes' : '字节';
+    final previewLabel = en ? 'Preview' : '预览';
+    final destructiveLabel = en ? 'This action is destructive.' : '这是一个破坏性操作。';
+    final preview = pending.request.contentPreview?.trim();
+
+    Widget metaRow(String label, String value) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 56,
+            child: Text(
+              label,
+              style: TextStyle(
+                color: colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: SelectableText(
+              value,
+              style: TextStyle(color: colorScheme.onSurface),
+            ),
+          ),
+        ],
+      );
+    }
+
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
@@ -3234,7 +3339,27 @@ class _ToolApprovalPanel extends StatelessWidget {
               height: 1.35,
             ),
           ),
+          if (pending.request.destructive) ...[
+            const SizedBox(height: 8),
+            Text(
+              destructiveLabel,
+              style: TextStyle(
+                color: colorScheme.error,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
+          metaRow(targetLabel, pending.request.connectionName),
+          const SizedBox(height: 8),
+          if (pending.request.targetPath != null) ...[
+            metaRow(pathLabel, pending.request.targetPath!),
+            const SizedBox(height: 8),
+          ],
+          if (pending.request.byteLength != null) ...[
+            metaRow(bytesLabel, '${pending.request.byteLength}'),
+            const SizedBox(height: 8),
+          ],
           ConstrainedBox(
             constraints: BoxConstraints(maxHeight: maxCommandHeight),
             child: Container(
@@ -3261,6 +3386,38 @@ class _ToolApprovalPanel extends StatelessWidget {
               ),
             ),
           ),
+          if (preview != null && preview.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              previewLabel,
+              style: TextStyle(
+                color: colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Container(
+              width: double.infinity,
+              constraints: const BoxConstraints(maxHeight: 120),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: colorScheme.surface.withValues(alpha: 0.62),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: colorScheme.outlineVariant),
+              ),
+              child: Scrollbar(
+                child: SingleChildScrollView(
+                  child: SelectableText(
+                    preview,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 10),
           Wrap(
             alignment: WrapAlignment.end,
@@ -3521,6 +3678,10 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
           storageService: storage,
           sshService: context.read<SshService>(),
           sftpService: context.read<SftpService>(),
+          performanceMonitorToolService: PerformanceMonitorToolService(
+            context.read<PerformanceMonitorService>(),
+          ),
+          appSettings: context.read<AppSettings>(),
         ),
       );
       final typedApiKey = _apiKeyController.text.trim();

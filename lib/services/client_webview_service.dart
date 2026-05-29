@@ -6,7 +6,33 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import 'app_log_service.dart';
 
-class ClientWebViewService extends ChangeNotifier {
+abstract interface class ClientWebViewAdapter {
+  Future<ClientWebViewSnapshot> readPlainText(
+    String chatId, {
+    int maxChars = ClientWebViewService.defaultMaxChars,
+  });
+
+  Future<ClientWebViewSearchResult> searchWeb(
+    String chatId,
+    String query, {
+    int maxResults = 5,
+  });
+
+  Future<ClientWebViewStateSnapshot> getState(String chatId);
+
+  Future<ClientWebViewNavigationResult> navigate(
+    String chatId, {
+    required String action,
+    String? input,
+  });
+
+  void interruptAiBrowsing(String chatId);
+
+  void clearSession(String chatId);
+}
+
+class ClientWebViewService extends ChangeNotifier
+    implements ClientWebViewAdapter {
   static final ClientWebViewService instance = ClientWebViewService._();
 
   static const String defaultUrl = 'https://html.duckduckgo.com/html/';
@@ -35,6 +61,7 @@ class ClientWebViewService extends ChangeNotifier {
     await controller.loadRequest(uri);
   }
 
+  @override
   Future<ClientWebViewSnapshot> readPlainText(
     String chatId, {
     int maxChars = defaultMaxChars,
@@ -60,6 +87,7 @@ class ClientWebViewService extends ChangeNotifier {
     );
   }
 
+  @override
   Future<ClientWebViewSearchResult> searchWeb(
     String chatId,
     String query, {
@@ -208,6 +236,7 @@ class ClientWebViewService extends ChangeNotifier {
     }
   }
 
+  @override
   void interruptAiBrowsing(String chatId) {
     final session = _sessions[chatId];
     if (session == null || !session.isAiBrowsing) return;
@@ -219,9 +248,202 @@ class ClientWebViewService extends ChangeNotifier {
     notifyListeners();
   }
 
+  @override
   void clearSession(String chatId) {
     if (_sessions.remove(chatId) != null) {
       notifyListeners();
+    }
+  }
+
+  @override
+  Future<ClientWebViewStateSnapshot> getState(String chatId) async {
+    final session = _sessions[chatId];
+    if (session == null) {
+      return ClientWebViewStateSnapshot(
+        chatId: chatId,
+        supported: _supportsWebView,
+        hasPage: false,
+        progress: 0,
+        isLoading: false,
+        isAiBrowsing: false,
+        canGoBack: false,
+        canGoForward: false,
+        lastTextLength: 0,
+        lastTextTruncated: false,
+        error: 'No WebView page is open for this chat session.',
+      );
+    }
+    final controller = session.controller;
+    bool canGoBack = false;
+    bool canGoForward = false;
+    if (session.supported && controller != null) {
+      try {
+        canGoBack = await controller.canGoBack();
+      } catch (_) {}
+      try {
+        canGoForward = await controller.canGoForward();
+      } catch (_) {}
+    }
+    return ClientWebViewStateSnapshot(
+      chatId: chatId,
+      supported: session.supported,
+      hasPage: session.url != null,
+      url: session.url,
+      title: session.title,
+      progress: session.progress,
+      isLoading: session.isLoading,
+      isAiBrowsing: session.isAiBrowsing,
+      aiBrowsingLabel: session.aiBrowsingLabel,
+      aiBrowsingStartedAt: session.aiBrowsingStartedAt,
+      lastError: session.lastError,
+      canGoBack: canGoBack,
+      canGoForward: canGoForward,
+      lastTextCapturedAt: session.lastTextCapturedAt,
+      lastTextLength: session.lastTextLength,
+      lastTextTruncated: session.lastTextTruncated,
+      updatedAt: session.updatedAt,
+      error: session.url == null
+          ? 'Open the WebView from the current AI chat first.'
+          : null,
+    );
+  }
+
+  @override
+  Future<ClientWebViewNavigationResult> navigate(
+    String chatId, {
+    required String action,
+    String? input,
+  }) async {
+    final normalizedAction = action.trim().toLowerCase();
+    final session = _sessions[chatId];
+    if (session == null) {
+      return ClientWebViewNavigationResult(
+        chatId: chatId,
+        supported: _supportsWebView,
+        action: normalizedAction,
+        input: input,
+        navigated: false,
+        blocked: false,
+        error:
+            'No WebView page is open for this chat session. Open the WebView from the current AI chat first.',
+      );
+    }
+    final controller = session.controller;
+    if (!session.supported || controller == null) {
+      return ClientWebViewNavigationResult(
+        chatId: chatId,
+        supported: false,
+        action: normalizedAction,
+        input: input,
+        navigated: false,
+        blocked: false,
+        error:
+            'Client WebView navigation is only available on supported mobile targets.',
+      );
+    }
+    if (session.isAiBrowsing) {
+      return ClientWebViewNavigationResult(
+        chatId: chatId,
+        supported: true,
+        action: normalizedAction,
+        input: input,
+        navigated: false,
+        blocked: true,
+        error:
+            'AI WebView browsing is active. Interrupt it before navigating manually.',
+        state: await getState(chatId),
+      );
+    }
+
+    try {
+      switch (normalizedAction) {
+        case 'open':
+          final trimmedInput = input?.trim();
+          if (trimmedInput == null || trimmedInput.isEmpty) {
+            return ClientWebViewNavigationResult(
+              chatId: chatId,
+              supported: true,
+              action: normalizedAction,
+              input: input,
+              navigated: false,
+              blocked: false,
+              error: 'Provide input when action=open.',
+              state: await getState(chatId),
+            );
+          }
+          await load(chatId, trimmedInput);
+          break;
+        case 'back':
+          if (!await controller.canGoBack()) {
+            return ClientWebViewNavigationResult(
+              chatId: chatId,
+              supported: true,
+              action: normalizedAction,
+              input: input,
+              navigated: false,
+              blocked: false,
+              error: 'The current page cannot go back.',
+              state: await getState(chatId),
+            );
+          }
+          await controller.goBack();
+          break;
+        case 'forward':
+          if (!await controller.canGoForward()) {
+            return ClientWebViewNavigationResult(
+              chatId: chatId,
+              supported: true,
+              action: normalizedAction,
+              input: input,
+              navigated: false,
+              blocked: false,
+              error: 'The current page cannot go forward.',
+              state: await getState(chatId),
+            );
+          }
+          await controller.goForward();
+          break;
+        case 'refresh':
+          await controller.reload();
+          break;
+        default:
+          return ClientWebViewNavigationResult(
+            chatId: chatId,
+            supported: true,
+            action: normalizedAction,
+            input: input,
+            navigated: false,
+            blocked: false,
+            error: 'Unsupported navigation action: $normalizedAction',
+            state: await getState(chatId),
+          );
+      }
+      return ClientWebViewNavigationResult(
+        chatId: chatId,
+        supported: true,
+        action: normalizedAction,
+        input: input,
+        navigated: true,
+        blocked: false,
+        state: await getState(chatId),
+      );
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Client WebView navigation failed',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'chatId=$chatId action=$normalizedAction input=${input ?? ''}',
+      );
+      return ClientWebViewNavigationResult(
+        chatId: chatId,
+        supported: true,
+        action: normalizedAction,
+        input: input,
+        navigated: false,
+        blocked: false,
+        error: e.toString(),
+        state: await getState(chatId),
+      );
     }
   }
 
@@ -735,6 +957,114 @@ class ClientWebViewSnapshot {
       if (error != null) 'error': error,
       'note':
           'This is visible plain text read from the WebView bound to the current chat session. It does not include images, hidden DOM data, passwords, or cross-origin iframe contents.',
+    };
+  }
+}
+
+class ClientWebViewStateSnapshot {
+  final String chatId;
+  final bool supported;
+  final bool hasPage;
+  final String? url;
+  final String? title;
+  final int progress;
+  final bool isLoading;
+  final bool isAiBrowsing;
+  final String? aiBrowsingLabel;
+  final DateTime? aiBrowsingStartedAt;
+  final String? lastError;
+  final bool canGoBack;
+  final bool canGoForward;
+  final DateTime? lastTextCapturedAt;
+  final int lastTextLength;
+  final bool lastTextTruncated;
+  final DateTime? updatedAt;
+  final String? error;
+
+  const ClientWebViewStateSnapshot({
+    required this.chatId,
+    required this.supported,
+    required this.hasPage,
+    required this.progress,
+    required this.isLoading,
+    required this.isAiBrowsing,
+    required this.canGoBack,
+    required this.canGoForward,
+    required this.lastTextLength,
+    required this.lastTextTruncated,
+    this.url,
+    this.title,
+    this.aiBrowsingLabel,
+    this.aiBrowsingStartedAt,
+    this.lastError,
+    this.lastTextCapturedAt,
+    this.updatedAt,
+    this.error,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'execution': 'client',
+      'target': 'client_webview',
+      'chatSessionId': chatId,
+      'supported': supported,
+      'hasPage': hasPage,
+      'url': url,
+      'title': title,
+      'progress': progress,
+      'isLoading': isLoading,
+      'isAiBrowsing': isAiBrowsing,
+      'aiBrowsingLabel': aiBrowsingLabel,
+      'aiBrowsingStartedAtLocal': aiBrowsingStartedAt?.toIso8601String(),
+      'lastError': lastError,
+      'canGoBack': canGoBack,
+      'canGoForward': canGoForward,
+      'lastTextCapturedAtLocal': lastTextCapturedAt?.toIso8601String(),
+      'lastTextLength': lastTextLength,
+      'lastTextTruncated': lastTextTruncated,
+      'updatedAtLocal': updatedAt?.toIso8601String(),
+      if (error != null) 'error': error,
+      'note':
+          'This describes the WebView bound to the current chat session on the client device.',
+    };
+  }
+}
+
+class ClientWebViewNavigationResult {
+  final String chatId;
+  final bool supported;
+  final String action;
+  final String? input;
+  final bool navigated;
+  final bool blocked;
+  final String? error;
+  final ClientWebViewStateSnapshot? state;
+
+  const ClientWebViewNavigationResult({
+    required this.chatId,
+    required this.supported,
+    required this.action,
+    required this.navigated,
+    required this.blocked,
+    this.input,
+    this.error,
+    this.state,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'execution': 'client',
+      'target': 'client_webview',
+      'chatSessionId': chatId,
+      'supported': supported,
+      'action': action,
+      'input': input,
+      'navigated': navigated,
+      'blocked': blocked,
+      if (error != null) 'error': error,
+      if (state != null) 'state': state!.toJson(),
+      'note':
+          'Navigation acts on the WebView bound to the current chat session on the client device.',
     };
   }
 }

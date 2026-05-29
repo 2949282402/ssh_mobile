@@ -522,6 +522,20 @@ AI tools 执行服务器命令时使用一次性 SSH exec 连接，不会 attach
 
 `client_*` tools 明确运行在客户端，也就是运行 SSH Mobile 的手机/桌面端，不会连接任何 SSH 服务器。网络和电池工具用于排查客户端侧导致的 SSH/SFTP 卡顿、后台断连和监控采样中断；剪贴板工具只写入客户端剪贴板。客户端提醒默认会创建应用内本地通知；Android 系统闹钟由系统 Clock 应用接收，部分厂商系统可能弹出确认界面或拒绝后台设置。
 
+Additional AI tool notes:
+
+- `AiToolService` now routes all tool arguments, approval summaries, tool results, and chat traces through a shared `ToolSecretPolicy`. Passwords, private keys, API keys, tokens, environment dumps, and likely secret-bearing path contents are blocked or redacted before the model can see them.
+- `client_get_permission_status` reports client notification permission, background-service support, and Android battery-optimization exemption state.
+- `client_query_logs` returns newest-first redacted app logs from the client device, with level/text filters and truncation metadata.
+- Client-side operational tools now also include log counts/delete/clear, credential-free backup export/import, and app operational settings or secret-cache helpers. Backup tools save or read local files through the normal client picker flow and never return raw backup JSON to the model.
+- `client_webview_get_state` and `client_webview_navigate` expose the current chat-bound WebView URL/title/loading state and support `open`, `back`, `forward`, and `refresh` without interrupting an active AI-browsing lock.
+- Server catalog and SSH lifecycle tools now expose non-sensitive saved-server details, metadata updates, delete/reorder actions, SSH session management, and terminal-history metadata without exposing raw terminal output or stored credentials.
+- `sftp_download_file` downloads a remote file through detached SFTP and then opens the normal client save dialog; the tool returns local save metadata instead of inlining file content into the model context.
+- Detached SFTP tools now cover stat/read/download/write/upload/mkdir/rename/delete. Secret-bearing paths such as `.ssh`, `.env`, `id_rsa`, `.pem`, `.key`, `.jks`, and similar credential files are blocked instead of being redacted and returned.
+- Approval-gated tool actions now cover state-changing `run_command`, remote SFTP mutations, saved-server metadata changes, monitor state changes, local backup import, local log deletion/clear, and operational settings updates. The approval card shows the target, remote path when relevant, byte count, destructive warnings, and a short preview when available.
+- `get_server_status` and `generate_ops_report` keep their existing public tool names while their diagnostics logic is shared through a reusable server diagnostics adapter.
+- App-scoped monitor tools now expose selected-server sets, start/stop/interval/history controls, health snapshots, samples, alerts, ports, and top applications through the existing performance monitor service instead of ad hoc command loops.
+
 ### Logs
 
 日志页记录开发日志、SSH/SFTP 状态、LLM 请求、tool 调用和异常。日志页不在导航栏中显示，可以通过页面切换进入；进入日志页时导航栏选中状态会消失。

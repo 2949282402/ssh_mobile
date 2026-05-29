@@ -2,14 +2,80 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import 'app_log_service.dart';
+import 'app_settings.dart';
+import 'background_service.dart';
 
-class ClientSystemToolService {
+abstract interface class ClientSystemToolAdapter {
+  Map<String, dynamic> getClientTime();
+
+  Map<String, dynamic> getClientDeviceInfo();
+
+  Future<Map<String, dynamic>> getNetworkInfo();
+
+  Future<Map<String, dynamic>> getBatteryStatus();
+
+  Future<Map<String, dynamic>> getPermissionStatus();
+
+  Future<Map<String, dynamic>> openAppSettings();
+
+  Future<Map<String, dynamic>> setClipboard(String text);
+
+  Future<Map<String, dynamic>> setAlarm({
+    String? triggerAt,
+    int? delaySeconds,
+    int? delayMinutes,
+    String? label,
+    bool useSystemAlarm = true,
+  });
+
+  Future<Map<String, dynamic>> listAlarms();
+
+  Future<Map<String, dynamic>> cancelAlarm(String alarmId);
+
+  Future<Map<String, dynamic>> queryLogs({
+    String? level,
+    String? contains,
+    int limit = 50,
+  });
+
+  Future<Map<String, dynamic>> getLogCounts();
+
+  Future<Map<String, dynamic>> deleteLogEntries(List<int> ids);
+
+  Future<Map<String, dynamic>> clearLogs();
+
+  Future<Map<String, dynamic>> saveBytesToFile({
+    required String fileName,
+    required List<int> bytes,
+    String? dialogTitle,
+  });
+
+  Future<ClientPickedFile?> pickFile({
+    List<String>? allowedExtensions,
+    String? dialogTitle,
+  });
+}
+
+class ClientPickedFile {
+  final String name;
+  final Uint8List bytes;
+  final String? localPath;
+
+  const ClientPickedFile({
+    required this.name,
+    required this.bytes,
+    this.localPath,
+  });
+}
+
+class ClientSystemToolService implements ClientSystemToolAdapter {
   static final ClientSystemToolService instance = ClientSystemToolService._();
 
   static const String _channelId = 'ssh_mobile_client_tools';
@@ -24,6 +90,7 @@ class ClientSystemToolService {
 
   ClientSystemToolService._();
 
+  @override
   Map<String, dynamic> getClientTime() {
     final now = DateTime.now();
     final utc = now.toUtc();
@@ -40,6 +107,7 @@ class ClientSystemToolService {
     };
   }
 
+  @override
   Map<String, dynamic> getClientDeviceInfo() {
     final now = DateTime.now();
     return {
@@ -61,6 +129,7 @@ class ClientSystemToolService {
     };
   }
 
+  @override
   Future<Map<String, dynamic>> getNetworkInfo() async {
     final base = <String, dynamic>{
       'execution': 'client',
@@ -94,6 +163,7 @@ class ClientSystemToolService {
     }
   }
 
+  @override
   Future<Map<String, dynamic>> getBatteryStatus() async {
     final base = <String, dynamic>{
       'execution': 'client',
@@ -127,6 +197,45 @@ class ClientSystemToolService {
     }
   }
 
+  @override
+  Future<Map<String, dynamic>> getPermissionStatus() async {
+    PermissionStatus notificationStatus;
+    try {
+      notificationStatus = await Permission.notification.status;
+    } catch (_) {
+      notificationStatus = PermissionStatus.denied;
+    }
+    final androidTarget =
+        !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+    final supportsBackgroundService = !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.android ||
+            defaultTargetPlatform == TargetPlatform.iOS);
+    bool? ignoringBatteryOptimizations;
+    if (androidTarget) {
+      try {
+        ignoringBatteryOptimizations =
+            await BackgroundServiceManager.isIgnoringBatteryOptimizations();
+      } catch (_) {
+        ignoringBatteryOptimizations = null;
+      }
+    }
+    return {
+      'execution': 'client',
+      'target': 'client_device',
+      'flutterPlatform': defaultTargetPlatform.name,
+      'dartOperatingSystem': Platform.operatingSystem,
+      'notificationPermission': notificationStatus.name,
+      'notificationGranted': notificationStatus.isGranted,
+      'supportsNativeBackgroundService': supportsBackgroundService,
+      'supportsBatteryOptimizationExemption': androidTarget,
+      'ignoringBatteryOptimizations': ignoringBatteryOptimizations,
+      'note': androidTarget
+          ? 'Notification and battery optimization status describe the client device and affect background SSH, monitoring, and reminders.'
+          : 'Detailed battery optimization status is currently Android-only.',
+    };
+  }
+
+  @override
   Future<Map<String, dynamic>> openAppSettings() async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
       return {
@@ -159,6 +268,7 @@ class ClientSystemToolService {
     }
   }
 
+  @override
   Future<Map<String, dynamic>> setClipboard(String text) async {
     await Clipboard.setData(ClipboardData(text: text));
     return {
@@ -171,6 +281,7 @@ class ClientSystemToolService {
     };
   }
 
+  @override
   Future<Map<String, dynamic>> setAlarm({
     String? triggerAt,
     int? delaySeconds,
@@ -239,6 +350,7 @@ class ClientSystemToolService {
     };
   }
 
+  @override
   Future<Map<String, dynamic>> listAlarms() async {
     final now = DateTime.now();
     return {
@@ -257,6 +369,7 @@ class ClientSystemToolService {
     };
   }
 
+  @override
   Future<Map<String, dynamic>> cancelAlarm(String alarmId) async {
     final alarm = _alarms.remove(alarmId);
     if (alarm == null) {
@@ -279,6 +392,144 @@ class ClientSystemToolService {
       'note':
           'Only the in-app reminder was cancelled. If Android system Clock created a separate alarm, cancel it in the Clock app.',
     };
+  }
+
+  @override
+  Future<Map<String, dynamic>> queryLogs({
+    String? level,
+    String? contains,
+    int limit = 50,
+  }) async {
+    final normalizedLimit = limit.clamp(1, 200).toInt();
+    final normalizedLevel = level?.trim().toLowerCase();
+    final needle = contains?.trim().toLowerCase();
+    final allEntries = normalizedLevel == null ||
+            normalizedLevel.isEmpty ||
+            normalizedLevel == AppLogLevel.all.name
+        ? AppLogService.instance.entries
+        : AppLogService.instance.entriesForLevel(
+            AppLogLevel.fromName(normalizedLevel),
+          );
+    final filtered = allEntries.where((entry) {
+      if (needle == null || needle.isEmpty) return true;
+      return entry.text.toLowerCase().contains(needle);
+    }).toList(growable: false);
+    final visible = filtered.take(normalizedLimit).toList(growable: false);
+    return {
+      'execution': 'client',
+      'target': 'client_logs',
+      'level': normalizedLevel ?? AppLogLevel.all.name,
+      'contains': contains?.trim(),
+      'limit': normalizedLimit,
+      'matched': filtered.length,
+      'truncated': filtered.length > visible.length,
+      'entries': [
+        for (final entry in visible)
+          {
+            'id': entry.id,
+            'timestampLocal': entry.time.toIso8601String(),
+            'level': entry.level,
+            'message': entry.message,
+            'sourceLocation': entry.sourceLocation,
+            'details': entry.details,
+            'stackTrace': entry.stackTrace,
+            'text': entry.text,
+          },
+      ],
+      'note':
+          'Returned log entries are already redacted by AppLogService before they are exposed to client tools.',
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> getLogCounts() async {
+    final counts = AppLogService.instance.levelCounts;
+    return {
+      'execution': 'client',
+      'target': 'client_logs',
+      'counts': {
+        for (final level in AppLogLevel.values) level.name: counts[level] ?? 0,
+      },
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> deleteLogEntries(List<int> ids) async {
+    final uniqueIds = ids.toSet();
+    final before = AppLogService.instance.entryIds;
+    final toDelete = before.intersection(uniqueIds).length;
+    AppLogService.instance.deleteEntriesById(uniqueIds);
+    return {
+      'execution': 'client',
+      'target': 'client_logs',
+      'deleted': toDelete,
+      'remaining': AppLogService.instance.entries.length,
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> clearLogs() async {
+    final cleared = AppLogService.instance.entries.length;
+    AppLogService.instance.clear();
+    return {
+      'execution': 'client',
+      'target': 'client_logs',
+      'cleared': cleared,
+      'remaining': 0,
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> saveBytesToFile({
+    required String fileName,
+    required List<int> bytes,
+    String? dialogTitle,
+  }) async {
+    final savedPath = await FilePicker.saveFile(
+      dialogTitle: dialogTitle ?? (AppStrings(AppLanguage.en).downloadFile),
+      fileName: fileName,
+      bytes: Uint8List.fromList(bytes),
+    );
+    return {
+      'execution': 'client',
+      'target': 'client_device',
+      'saved': savedPath != null,
+      'cancelled': savedPath == null,
+      'localPath': savedPath,
+      'fileName': fileName,
+      'bytes': bytes.length,
+      'note': savedPath == null
+          ? 'The user cancelled the local save dialog.'
+          : 'The file was saved on the client device running SSH Mobile.',
+    };
+  }
+
+  @override
+  Future<ClientPickedFile?> pickFile({
+    List<String>? allowedExtensions,
+    String? dialogTitle,
+  }) async {
+    final result = await FilePicker.pickFiles(
+      withData: true,
+      type: allowedExtensions == null || allowedExtensions.isEmpty
+          ? FileType.any
+          : FileType.custom,
+      allowedExtensions: allowedExtensions == null || allowedExtensions.isEmpty
+          ? null
+          : allowedExtensions,
+      dialogTitle: dialogTitle,
+    );
+    if (result == null || result.files.isEmpty) return null;
+    final file = result.files.single;
+    final bytes = file.bytes;
+    if (bytes == null) {
+      throw StateError('Unable to read the selected local file.');
+    }
+    return ClientPickedFile(
+      name: file.name,
+      bytes: bytes,
+      localPath: file.path,
+    );
   }
 
   Future<void> _ensureNotificationsInitialized() {
