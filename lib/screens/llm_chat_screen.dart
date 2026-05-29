@@ -68,6 +68,11 @@ const List<_SlashCommandMeta> _defaultSlashCommands = [
     summary: 'Limit tools for this chat.',
     details: 'Restrict which tools the model can call in the current chat.',
   ),
+  _SlashCommandMeta(
+    command: '/skills',
+    summary: 'Open and manage local AI skills.',
+    details: 'View saved Skills and enable or disable them.',
+  ),
 ];
 
 @visibleForTesting
@@ -835,10 +840,35 @@ class _LlmChatScreenState extends State<LlmChatScreen>
           );
         }
         return handled;
+      case 'skills':
+        final handled = await _executeSkillsCommand(
+          strings: strings,
+        );
+        if (handled) {
+          AppLogService.instance.info(
+            'Slash command executed',
+            details: 'chatId=$chatId command=skills',
+          );
+        }
+        return handled;
       default:
         _showCommandFeedback(strings.commandUnknownWithName(parsed.command), context);
         return false;
     }
+  }
+
+  Future<bool> _executeSkillsCommand({
+    required _AiStrings strings,
+  }) async {
+    if (!mounted) {
+      return false;
+    }
+    await Navigator.of(context).pushNamed('/ai-skills');
+    if (!mounted) {
+      return false;
+    }
+    _showCommandFeedback(strings.commandSkillsOpened, context);
+    return true;
   }
 
   Future<bool> _executeToolsCommand({
@@ -846,12 +876,15 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     required String arguments,
     required _AiStrings strings,
   }) async {
+    final commandChatId = chatId;
     if (!mounted) {
       return false;
     }
     if (arguments.isEmpty) {
       final availableTools = await _loadAvailableTools(strings);
-      if (!mounted || !context.mounted) {
+      if (!mounted ||
+          !context.mounted ||
+          _activeChat?.id != commandChatId) {
         return false;
       }
       if (availableTools == null) return false;
@@ -861,7 +894,9 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         availableTools: availableTools,
         initialTools: _chatAllowedTools[chatId] ?? const {},
       );
-      if (!mounted || !context.mounted) {
+      if (!mounted ||
+          !context.mounted ||
+          _activeChat?.id != commandChatId) {
         return false;
       }
       if (next == null) return false;
@@ -875,11 +910,11 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     }
 
     final requested = _parseToolList(arguments);
-    if (!mounted) {
+    if (!mounted || _activeChat?.id != commandChatId) {
       return false;
     }
     final availableTools = await _loadAvailableTools(strings);
-    if (!mounted || !context.mounted) {
+    if (!mounted || !context.mounted || _activeChat?.id != commandChatId) {
       return false;
     }
     if (availableTools == null) return false;
@@ -988,6 +1023,9 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     final searchTextController = TextEditingController();
     Set<String>? selectedSet;
     try {
+      if (!context.mounted) {
+        return null;
+      }
       selectedSet = await showModalBottomSheet<Set<String>?>(
         context: context,
         isScrollControlled: true,
@@ -1018,7 +1056,12 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                             isDense: true,
                             hintText: strings.commandToolsSearch,
                           ),
-                          onChanged: (_) => setSheetState(() {}),
+                          onChanged: (_) {
+                            if (!sheetContext.mounted) {
+                              return;
+                            }
+                            setSheetState(() {});
+                          },
                         ),
                         const SizedBox(height: 8),
                         Expanded(
@@ -1045,6 +1088,9 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                                       subtitle: Text(tool.description),
                                       onChanged: (value) => setSheetState(
                                         () {
+                                          if (!sheetContext.mounted) {
+                                            return;
+                                          }
                                           if (value == true) {
                                             selected.add(tool.name);
                                           } else {
@@ -1061,13 +1107,18 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: [
                             TextButton(
-                              onPressed: () => Navigator.of(sheetContext).pop(),
+                              onPressed: () {
+                                if (!sheetContext.mounted) return;
+                                Navigator.of(sheetContext).pop();
+                              },
                               child: Text(strings.cancel),
                             ),
                             const SizedBox(width: 8),
                             FilledButton(
-                              onPressed: () =>
-                                  Navigator.of(sheetContext).pop(Set.from(selected)),
+                              onPressed: () {
+                                if (!sheetContext.mounted) return;
+                                Navigator.of(sheetContext).pop(Set.from(selected));
+                              },
                               child: Text(strings.save),
                             ),
                           ],
@@ -4836,6 +4887,9 @@ class _AiStrings {
   String commandToolsUpdated(int count) => _en
       ? 'Tool whitelist updated: $count selected.'
       : '工具白名单已更新：共选中 $count 个。';
+  String get commandSkillsOpened => _en
+      ? 'Skills manager opened.'
+      : '已打开 Skills 管理。';
   String commandToolsUnknown(List<String> unknown) => _en
       ? 'Unknown tool(s): ${unknown.join(', ')}'
       : '未识别工具：${unknown.join(', ')}';
@@ -4845,6 +4899,9 @@ class _AiStrings {
   String get commandToolsNoTools => _en
       ? 'No tools are currently available.'
       : '当前无可用工具。';
+  String get commandUnknownHint => _en
+      ? 'Type a command to use. Available: /compact, /tools, /skills.'
+      : '输入以 / 开头的命令，如 /compact、/tools 或 /skills';
   String get commandToolsSearch => _en ? 'Search tools' : '搜索工具';
   String get commandToolsNoResult =>
       _en ? 'No tools match the search.' : '未找到匹配的工具。';

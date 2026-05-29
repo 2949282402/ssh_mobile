@@ -166,6 +166,24 @@ class AiToolService implements AiToolExecutor {
         handler: _clientSetClipboard,
       ),
       AiTool(
+        name: 'client_save_experience_skill',
+        description:
+            'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Save a summarized user experience into a local AI skill so it can be reused by future chats.',
+        properties: {
+          'summary': _string(
+            'Mandatory summarized experience text, usually 1-3 paragraphs.',
+          ),
+          'title': _string(
+            'Optional short skill title. If omitted, a title is generated automatically.',
+          ),
+          'content': _string(
+            'Optional detailed content such as steps, caveats, commands, and lessons.',
+          ),
+        },
+        required: const ['summary'],
+        handler: _clientSaveExperienceSkill,
+      ),
+      AiTool(
         name: 'client_set_alarm',
         description:
             'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Set a client-side alarm or reminder.',
@@ -1190,6 +1208,8 @@ class AiToolService implements AiToolExecutor {
               arguments,
               approvedWrite: approvedWrite,
             ),
+          'client_save_experience_skill' =>
+            await _clientSaveExperienceSkill(arguments),
           'app_update_operational_settings' =>
             await _appUpdateOperationalSettings(
               arguments,
@@ -1276,6 +1296,52 @@ class AiToolService implements AiToolExecutor {
     return jsonEncode(
       await clientSystemToolService.setClipboard(_arg(arguments, 'text')),
     );
+  }
+
+  Future<String> _clientSaveExperienceSkill(
+    Map<String, dynamic> arguments,
+  ) async {
+    final summary = _arg(arguments, 'summary');
+    final title = _optionalString(arguments, 'title') ??
+        _defaultExperienceSkillTitle(summary);
+    final details = _optionalString(arguments, 'content');
+    final now = DateTime.now();
+    final record = AiSkillRecord(
+      id: 'skill-${now.microsecondsSinceEpoch}',
+      name: title,
+      description: summary,
+      content: details == null || details.trim().isEmpty
+          ? summary
+          : '${summary}\n\n${details.trim()}',
+      createdAt: now,
+      updatedAt: now,
+    );
+    await storageService.saveAiSkill(record);
+    AppLogService.instance.info(
+      'AI experience skill saved',
+      details:
+          'skillId=${record.id} name=${secretPolicy.previewText(record.name)}',
+    );
+    return jsonEncode({
+      'execution': 'client',
+      'target': 'local_skill',
+      'saved': true,
+      'skillId': record.id,
+      'name': record.name,
+      'description': record.description,
+    });
+  }
+
+  String _defaultExperienceSkillTitle(String summary) {
+    final lines = summary
+        .split(RegExp(r'[\r\n]+'))
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+    if (lines.isEmpty) return 'Experience note';
+    final firstLine = lines.first;
+    if (firstLine.length <= 30) return firstLine;
+    return '${firstLine.substring(0, 27).trim()}...';
   }
 
   Future<String> _clientQueryLogs(Map<String, dynamic> arguments) async {

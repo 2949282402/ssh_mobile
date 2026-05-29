@@ -80,6 +80,9 @@ across sessions.
 - 2026-05-28: AI WebView browsing has a per-chat operation token. While active,
   the WebView UI is view-only; user interruption clears the token so the tool
   result reports interruption instead of continuing from a stale page.
+- 2026-05-29: Added `client_save_experience_skill` AI tool in
+  `AiToolService` so the model can write summarized experience records directly
+  into local `AiSkillRecord` storage when users ask to persist a skill.
 - 2026-05-28: In LLM settings, leaving the API key field blank must preserve
   the saved secure-storage key. Only an explicit clear action should delete the
   stored key; otherwise model/base URL edits can silently break later chats.
