@@ -66,4 +66,88 @@ void main() {
     expect(decoded.totalTokens, 15);
     expect(decoded.reasoningTokens, 2);
   });
+
+  test('AiChatAttachment round-trips toJson and fromJson', () {
+    final attachment = AiChatAttachment(
+      fileName: 'test.png',
+      mimeType: 'image/png',
+      sizeBytes: 1024,
+      dataBase64: 'dGVzdA==',
+    );
+
+    final decoded = AiChatAttachment.fromJson(attachment.toJson());
+
+    expect(decoded.fileName, 'test.png');
+    expect(decoded.mimeType, 'image/png');
+    expect(decoded.sizeBytes, 1024);
+    expect(decoded.dataBase64, 'dGVzdA==');
+    expect(decoded.isImage, isTrue);
+    expect(decoded.isTextFile, isFalse);
+  });
+
+  test(
+      'AiChatMessageRecord round-trips attachments and supports backward compatibility',
+      () {
+    final createdAt = DateTime.utc(2026, 1, 2, 3, 4, 5);
+    final attachment = AiChatAttachment(
+      fileName: 'notes.txt',
+      mimeType: 'text/plain',
+      sizeBytes: 15,
+      dataBase64: 'aGVsbG8gd29ybGQ=',
+    );
+    final message = AiChatMessageRecord(
+      role: 'user',
+      text: 'hello',
+      createdAt: createdAt,
+      attachments: [attachment],
+    );
+
+    // 1. Verify serialization round-trip with attachments
+    final decoded = AiChatMessageRecord.fromJson(message.toJson());
+    expect(decoded.attachments.length, 1);
+    expect(decoded.attachments[0].fileName, 'notes.txt');
+    expect(decoded.attachments[0].isTextFile, isTrue);
+
+    // 2. Verify backward compatibility: old JSON without attachments field
+    final oldJson = {
+      'role': 'user',
+      'text': 'hello legacy',
+      'createdAt': createdAt.toIso8601String(),
+    };
+    final legacyDecoded = AiChatMessageRecord.fromJson(oldJson);
+    expect(legacyDecoded.text, 'hello legacy');
+    expect(legacyDecoded.attachments, isEmpty);
+  });
+
+  test('AiUploadSizeLimit.normalize clamps and defaults correctly', () {
+    // Test default limits when null is passed
+    expect(AiUploadSizeLimit.normalizeImage(null),
+        AiUploadSizeLimit.defaultImageSizeBytes);
+    expect(AiUploadSizeLimit.normalizeFile(null),
+        AiUploadSizeLimit.defaultFileSizeBytes);
+
+    // Test values inside the allowed ranges
+    expect(AiUploadSizeLimit.normalizeImage(2 * 1024 * 1024), 2 * 1024 * 1024);
+    expect(AiUploadSizeLimit.normalizeFile(20 * 1024 * 1024), 20 * 1024 * 1024);
+
+    // Test values below the minimum range (clamp to first value)
+    expect(AiUploadSizeLimit.normalizeImage(0),
+        AiUploadSizeLimit.imageValues.first);
+    expect(AiUploadSizeLimit.normalizeImage(-100),
+        AiUploadSizeLimit.imageValues.first);
+    expect(
+        AiUploadSizeLimit.normalizeFile(0), AiUploadSizeLimit.fileValues.first);
+    expect(AiUploadSizeLimit.normalizeFile(-500),
+        AiUploadSizeLimit.fileValues.first);
+
+    // Test values above the maximum range (clamp to last value)
+    expect(AiUploadSizeLimit.normalizeImage(100 * 1024 * 1024),
+        AiUploadSizeLimit.imageValues.last);
+    expect(AiUploadSizeLimit.normalizeFile(500 * 1024 * 1024),
+        AiUploadSizeLimit.fileValues.last);
+
+    // Test label helper
+    expect(AiUploadSizeLimit.label(5 * 1024 * 1024), '5 MB');
+    expect(AiUploadSizeLimit.label(512 * 1024), '512 KB');
+  });
 }

@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 
 // ignore_for_file: unused_element
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -128,6 +130,13 @@ class LlmChatScreen extends StatefulWidget {
     this.onOpenSettingsDrawer,
   });
 
+  static List<Map<String, dynamic>> buildMultipartContent(
+    String textContent,
+    List<AiChatAttachment> attachments,
+  ) {
+    return _LlmChatScreenState.buildMultipartContent(textContent, attachments);
+  }
+
   @override
   State<LlmChatScreen> createState() => _LlmChatScreenState();
 }
@@ -148,6 +157,8 @@ extension _AiToolBarStrings on _AiStrings {
 extension _AiSkillToolbarStrings on _AiStrings {
   String get skills => language == AppLanguage.en ? 'Skills' : '技能';
   String get webView => language == AppLanguage.en ? 'WebView' : '网页';
+  String get attachImage => language == AppLanguage.en ? 'Image' : '图片';
+  String get attachFile => language == AppLanguage.en ? 'File' : '文件';
 }
 
 extension _AiToolbarActionStrings on _AiStrings {
@@ -227,6 +238,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   String? _selectedConnectionId;
   final Map<String, Set<String>> _chatAllowedTools = {};
   final Set<String> _pendingForceCompressionChats = {};
+  final List<AiChatAttachment> _pendingAttachments = [];
   String? _contextTokenCacheKey;
   String? _contextTokenCacheChatId;
   int _cachedContextTokens = 0;
@@ -520,7 +532,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                           child: _MessageBubble(
                             message: message,
                             streamingTextListenable: streamingTextListenable,
-                            streamingStatusListenable: streamingStatusListenable,
+                            streamingStatusListenable:
+                                streamingStatusListenable,
                             canAct: !_sending &&
                                 activeChat.messages == visibleMessages,
                             onEditUser: message.role == 'user'
@@ -534,12 +547,11 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                                 ? () =>
                                     _confirmBranchFromAssistant(index, strings)
                                 : null,
-                            onContinueTimeout:
-                                message.role == 'error' &&
-                                        index == visibleMessages.length - 1 &&
-                                        _isTimeoutError(message.text)
-                                    ? () => _continueAfterTimeout(strings)
-                                    : null,
+                            onContinueTimeout: message.role == 'error' &&
+                                    index == visibleMessages.length - 1 &&
+                                    _isTimeoutError(message.text)
+                                ? () => _continueAfterTimeout(strings)
+                                : null,
                           ),
                         );
                       },
@@ -578,6 +590,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                       children: [
                         if (_shouldShowSlashCommandPanel)
                           _buildSlashCommandPanel(context, strings),
+                        if (_pendingAttachments.isNotEmpty)
+                          _buildAttachmentPreview(),
                         Row(
                           children: [
                             Expanded(
@@ -633,6 +647,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                                     skillsLabel: strings.skills,
                                     serverLabel: _selectedServerLabel(strings),
                                     webViewLabel: strings.webView,
+                                    imageLabel: strings.attachImage,
+                                    fileLabel: strings.attachFile,
                                     onServerTap: () =>
                                         _selectTargetServer(strings),
                                     onSkillsTap: () {
@@ -641,6 +657,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                                     },
                                     onWebViewTap: () =>
                                         _openClientWebView(activeChat.id),
+                                    onImageTap: () => _pickImage(strings),
+                                    onFileTap: () => _pickFile(strings),
                                   ),
                                 )
                               : const SizedBox(width: double.infinity),
@@ -715,6 +733,145 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     );
   }
 
+  Widget _buildAttachmentPreview() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 6,
+        children: [
+          for (var i = 0; i < _pendingAttachments.length; i++)
+            _AttachmentChip(
+              attachment: _pendingAttachments[i],
+              onRemove: () {
+                setState(() => _pendingAttachments.removeAt(i));
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickImage(_AiStrings strings) async {
+    try {
+      final result = await FilePicker.pickFiles(
+        type: FileType.image,
+        withData: true,
+        allowMultiple: true,
+      );
+      if (result == null || result.files.isEmpty) return;
+      if (!mounted) return;
+      final storage = context.read<StorageService>();
+      final settings = await storage.loadAiConnectionSettings();
+      final maxBytes = settings.maxImageSizeBytes;
+      for (final file in result.files) {
+        if (file.bytes == null || file.size == 0) continue;
+        if (file.size > maxBytes) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(strings.imageTooLarge(
+                  file.name,
+                  AiUploadSizeLimit.label(maxBytes),
+                )),
+              ),
+            );
+          }
+          continue;
+        }
+        final mimeType = _guessMimeType(file.name, fallback: 'image/png');
+        setState(() {
+          _pendingAttachments.add(AiChatAttachment(
+            fileName: file.name,
+            mimeType: mimeType,
+            sizeBytes: file.size,
+            dataBase64: base64Encode(file.bytes!),
+          ));
+        });
+      }
+    } catch (e) {
+      AppLogService.instance.warning(
+        'Image pick failed',
+        details: '$e',
+      );
+    }
+  }
+
+  Future<void> _pickFile(_AiStrings strings) async {
+    try {
+      final result = await FilePicker.pickFiles(
+        withData: true,
+        allowMultiple: true,
+      );
+      if (result == null || result.files.isEmpty) return;
+      if (!mounted) return;
+      final storage = context.read<StorageService>();
+      final settings = await storage.loadAiConnectionSettings();
+      final maxBytes = settings.maxFileSizeBytes;
+      for (final file in result.files) {
+        if (file.bytes == null || file.size == 0) continue;
+        if (file.size > maxBytes) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(strings.fileTooLarge(
+                  file.name,
+                  AiUploadSizeLimit.label(maxBytes),
+                )),
+              ),
+            );
+          }
+          continue;
+        }
+        final mimeType = _guessMimeType(file.name);
+        setState(() {
+          _pendingAttachments.add(AiChatAttachment(
+            fileName: file.name,
+            mimeType: mimeType,
+            sizeBytes: file.size,
+            dataBase64: base64Encode(file.bytes!),
+          ));
+        });
+      }
+    } catch (e) {
+      AppLogService.instance.warning(
+        'File pick failed',
+        details: '$e',
+      );
+    }
+  }
+
+  static String _guessMimeType(String fileName,
+      {String fallback = 'application/octet-stream'}) {
+    final lower = fileName.toLowerCase();
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+    if (lower.endsWith('.gif')) return 'image/gif';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.bmp')) return 'image/bmp';
+    if (lower.endsWith('.svg')) return 'image/svg+xml';
+    if (lower.endsWith('.txt')) return 'text/plain';
+    if (lower.endsWith('.json')) return 'application/json';
+    if (lower.endsWith('.xml')) return 'text/xml';
+    if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'text/html';
+    if (lower.endsWith('.css')) return 'text/css';
+    if (lower.endsWith('.js')) return 'text/javascript';
+    if (lower.endsWith('.dart')) return 'text/plain';
+    if (lower.endsWith('.py')) return 'text/plain';
+    if (lower.endsWith('.md')) return 'text/markdown';
+    if (lower.endsWith('.csv')) return 'text/csv';
+    if (lower.endsWith('.yaml') || lower.endsWith('.yml')) return 'text/yaml';
+    if (lower.endsWith('.log')) return 'text/plain';
+    if (lower.endsWith('.sh') ||
+        lower.endsWith('.bat') ||
+        lower.endsWith('.ps1')) {
+      return 'text/plain';
+    }
+    if (lower.endsWith('.pdf')) return 'application/pdf';
+    if (lower.endsWith('.zip')) return 'application/zip';
+    return fallback;
+  }
+
   Future<void> _send(BuildContext context, _AiStrings strings) async {
     final text = (_inputController.text.trim());
     await _sendText(context, strings, text: text, clearInput: true);
@@ -735,10 +892,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       return _defaultSlashCommands;
     }
     return _defaultSlashCommands
-        .where((command) => command.command
-            .substring(1)
-            .toLowerCase()
-            .startsWith(commandHint))
+        .where((command) =>
+            command.command.substring(1).toLowerCase().startsWith(commandHint))
         .toList();
   }
 
@@ -754,13 +909,15 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                 .surfaceContainerHighest
                 .withValues(alpha: 0.36),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+            border:
+                Border.all(color: Theme.of(context).colorScheme.outlineVariant),
           ),
           child: Padding(
             padding: const EdgeInsets.all(10),
             child: Text(
               strings.commandUnknownHint,
-              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+              style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
           ),
         ),
@@ -771,9 +928,13 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       child: SingleChildScrollView(
         child: DecoratedBox(
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+            color: Theme.of(context)
+                .colorScheme
+                .surfaceContainerHighest
+                .withValues(alpha: 0.6),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+            border:
+                Border.all(color: Theme.of(context).colorScheme.outlineVariant),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -795,10 +956,12 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                     overflow: TextOverflow.ellipsis,
                   ),
                   onTap: () {
-                    _inputController.text =
-                        command.command == '/tools' ? '/tools ' : command.command;
+                    _inputController.text = command.command == '/tools'
+                        ? '/tools '
+                        : command.command;
                     setState(() => _inputController.selection =
-                        TextSelection.collapsed(offset: _inputController.text.length));
+                        TextSelection.collapsed(
+                            offset: _inputController.text.length));
                   },
                 ),
             ],
@@ -856,7 +1019,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         }
         return handled;
       default:
-        _showCommandFeedback(strings.commandUnknownWithName(parsed.command), context);
+        _showCommandFeedback(
+            strings.commandUnknownWithName(parsed.command), context);
         return false;
     }
   }
@@ -886,9 +1050,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     }
     if (arguments.isEmpty) {
       final availableTools = await _loadAvailableTools(strings);
-      if (!mounted ||
-          !context.mounted ||
-          _activeChat?.id != commandChatId) {
+      if (!mounted || !context.mounted || _activeChat?.id != commandChatId) {
         return false;
       }
       if (availableTools == null) return false;
@@ -898,9 +1060,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         availableTools: availableTools,
         initialTools: _chatAllowedTools[chatId] ?? const {},
       );
-      if (!mounted ||
-          !context.mounted ||
-          _activeChat?.id != commandChatId) {
+      if (!mounted || !context.mounted || _activeChat?.id != commandChatId) {
         return false;
       }
       if (next == null) return false;
@@ -946,7 +1106,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     }
     if (selected.isNotEmpty) {
       _chatAllowedTools[chatId] = selected;
-      _showCommandFeedback(strings.commandToolsUpdated(selected.length), context);
+      _showCommandFeedback(
+          strings.commandToolsUpdated(selected.length), context);
     }
     if (unknown.isNotEmpty) {
       _showCommandFeedback(
@@ -983,9 +1144,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         final name = _toolNameFromDefinition(definition);
         if (name == null) continue;
         final function = definition['function'];
-        final description = function is Map<String, dynamic>
-            ? function['description']
-            : null;
+        final description =
+            function is Map<String, dynamic> ? function['description'] : null;
         tools.add(
           _ToolOption(
             name: name,
@@ -1046,8 +1206,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                   .toList();
               return SafeArea(
                 child: SizedBox(
-                  height:
-                      MediaQuery.sizeOf(sheetContext).height *
+                  height: MediaQuery.sizeOf(sheetContext).height *
                       (_maxToolSelectorHeightPercent / 100),
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
@@ -1120,7 +1279,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                             FilledButton(
                               onPressed: () {
                                 if (!sheetContext.mounted) return;
-                                Navigator.of(sheetContext).pop(Set.from(selected));
+                                Navigator.of(sheetContext)
+                                    .pop(Set.from(selected));
                               },
                               child: Text(strings.save),
                             ),
@@ -1150,7 +1310,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     final split = body.split(RegExp(r'\s+'));
     if (split.isEmpty || split.first.isEmpty) return null;
     final command = split.first.toLowerCase();
-    final arguments = split.length == 1 ? '' : body.substring(split.first.length).trim();
+    final arguments =
+        split.length == 1 ? '' : body.substring(split.first.length).trim();
     return _ParsedSlashCommand(command, arguments);
   }
 
@@ -1263,10 +1424,12 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     final chatId = activeChat.id;
     final now = DateTime.now();
     final userContextText = await _contextTextForUser(text);
+    final attachments = List<AiChatAttachment>.from(_pendingAttachments);
     final userMessage = AiChatMessageRecord(
       role: 'user',
       text: text,
       contextText: userContextText,
+      attachments: attachments,
       createdAt: now,
     );
     final assistantMessage = AiChatMessageRecord(
@@ -1295,6 +1458,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         _isUserAtBottom = true;
       }
       if (clearInput) _inputController.clear();
+      _pendingAttachments.clear();
     });
     await storage.saveAiChat(nextChat);
     _scrollToBottom();
@@ -1727,13 +1891,14 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     if (!mounted) return;
 
     final latestActiveChat = _activeChat;
-    if (latestActiveChat == null || latestActiveChat.id != activeChat.id) return;
+    if (latestActiveChat == null || latestActiveChat.id != activeChat.id)
+      return;
     final targetIndex = latestActiveChat.messages.indexWhere(
       (message) =>
-          message.role == 'user' &&
-          message.createdAt == target.createdAt,
+          message.role == 'user' && message.createdAt == target.createdAt,
     );
-    if (targetIndex < 0 || targetIndex >= latestActiveChat.messages.length) return;
+    if (targetIndex < 0 || targetIndex >= latestActiveChat.messages.length)
+      return;
 
     final storage = context.read<StorageService>();
     final settings = await storage.loadAiConnectionSettings();
@@ -1761,11 +1926,11 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       editedUser,
       assistantMessage,
     ];
-    final nextModel =
-        settings.model.trim().isNotEmpty ? settings.model : latestActiveChat.model;
+    final nextModel = settings.model.trim().isNotEmpty
+        ? settings.model
+        : latestActiveChat.model;
     final nextChat = latestActiveChat.copyWith(
-      title:
-          targetIndex == 0 ? _titleFrom(trimmedEditedText, strings) : null,
+      title: targetIndex == 0 ? _titleFrom(trimmedEditedText, strings) : null,
       model: nextModel,
       messages: nextMessages,
       updatedAt: now,
@@ -2323,6 +2488,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                         webSearchMaxResults: webSearchMaxResults,
                         multiAgentEnabled: multiAgentEnabled,
                         multiAgentMaxAgents: multiAgentMaxAgents,
+                        maxImageSizeBytes: settings.maxImageSizeBytes,
+                        maxFileSizeBytes: settings.maxFileSizeBytes,
                         apiKey: apiKeyController.text,
                         selectedApiKeyId: settings.activeApiKeyId,
                       );
@@ -2570,15 +2737,75 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         .where((message) => message.role != 'error')
         .where((message) => message != placeholder)
         .map((message) {
-          final content = _contextContentFor(message);
-          if (content.trim().isEmpty) return null;
+          final textContent = _contextContentFor(message);
+          if (textContent.trim().isEmpty && message.attachments.isEmpty) {
+            return null;
+          }
+          final role = message.role == 'user' ? 'user' : 'assistant';
+          if (message.role == 'user' && message.attachments.isNotEmpty) {
+            return <String, dynamic>{
+              'role': role,
+              'content':
+                  buildMultipartContent(textContent, message.attachments),
+            };
+          }
           return <String, dynamic>{
-            'role': message.role == 'user' ? 'user' : 'assistant',
-            'content': content,
+            'role': role,
+            'content': textContent,
           };
         })
         .nonNulls
         .toList();
+  }
+
+  static List<Map<String, dynamic>> buildMultipartContent(
+    String textContent,
+    List<AiChatAttachment> attachments,
+  ) {
+    final textWithFiles = StringBuffer(textContent);
+    for (final attachment in attachments) {
+      if (!attachment.isImage) {
+        if (attachment.isTextFile && attachment.dataBase64.isNotEmpty) {
+          try {
+            final decoded = utf8.decode(base64Decode(attachment.dataBase64));
+            textWithFiles.write('\n\n[File: ${attachment.fileName}]\n$decoded');
+          } catch (_) {
+            textWithFiles.write(
+              '\n\n[Attached file: ${attachment.fileName} (${_formatAttachmentSize(attachment.sizeBytes)})]',
+            );
+          }
+        } else {
+          textWithFiles.write(
+            '\n\n[Attached file: ${attachment.fileName} (${_formatAttachmentSize(attachment.sizeBytes)})]',
+          );
+        }
+      }
+    }
+    final parts = <Map<String, dynamic>>[
+      {'type': 'text', 'text': textWithFiles.toString()},
+    ];
+    for (final attachment in attachments) {
+      if (attachment.isImage && attachment.dataBase64.isNotEmpty) {
+        parts.add({
+          'type': 'image_url',
+          'image_url': {
+            'url':
+                'data:${attachment.mimeType};base64,${attachment.dataBase64}',
+          },
+        });
+      }
+    }
+    return parts;
+  }
+
+  static String _formatAttachmentSize(int bytes) {
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    if (bytes >= 1024) {
+      return '${(bytes / 1024).toStringAsFixed(0)} KB';
+    }
+    return '$bytes B';
   }
 
   String _contextContentFor(AiChatMessageRecord message) {
@@ -2945,13 +3172,91 @@ class _MessageBubble extends StatelessWidget {
                 ),
               ),
               child: isUser || isError
-                  ? SelectableText(
-                      message.text.isEmpty ? '...' : message.text,
-                      style: TextStyle(
-                        color:
-                            isError ? colorScheme.error : colorScheme.onSurface,
-                        height: 1.35,
-                      ),
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (isUser && message.attachments.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: [
+                                for (final attachment in message.attachments)
+                                  if (attachment.isImage &&
+                                      attachment.dataBase64.isNotEmpty)
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: Image.memory(
+                                        base64Decode(attachment.dataBase64),
+                                        width: 120,
+                                        height: 120,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) => Container(
+                                          width: 120,
+                                          height: 40,
+                                          alignment: Alignment.center,
+                                          decoration: BoxDecoration(
+                                            color: colorScheme
+                                                .surfaceContainerHighest,
+                                            borderRadius:
+                                                BorderRadius.circular(6),
+                                          ),
+                                          child: Text(
+                                            attachment.fileName,
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color:
+                                                  colorScheme.onSurfaceVariant,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                  else
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color:
+                                            colorScheme.surfaceContainerHighest,
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.insert_drive_file_outlined,
+                                            size: 14,
+                                            color: colorScheme.onSurfaceVariant,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            attachment.fileName,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color:
+                                                  colorScheme.onSurfaceVariant,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                              ],
+                            ),
+                          ),
+                        SelectableText(
+                          message.text.isEmpty ? '...' : message.text,
+                          style: TextStyle(
+                            color: isError
+                                ? colorScheme.error
+                                : colorScheme.onSurface,
+                            height: 1.35,
+                          ),
+                        ),
+                      ],
                     )
                   : _AssistantMarkdownBody(
                       text: message.text,
@@ -3037,8 +3342,7 @@ class _EditUserMessageDialog extends StatefulWidget {
   });
 
   @override
-  State<_EditUserMessageDialog> createState() =>
-      _EditUserMessageDialogState();
+  State<_EditUserMessageDialog> createState() => _EditUserMessageDialogState();
 }
 
 class _EditUserMessageDialogState extends State<_EditUserMessageDialog> {
@@ -3340,17 +3644,25 @@ class _ChatToolsBar extends StatelessWidget {
   final String skillsLabel;
   final String serverLabel;
   final String webViewLabel;
+  final String imageLabel;
+  final String fileLabel;
   final VoidCallback onServerTap;
   final VoidCallback onSkillsTap;
   final VoidCallback onWebViewTap;
+  final VoidCallback onImageTap;
+  final VoidCallback onFileTap;
 
   const _ChatToolsBar({
     required this.skillsLabel,
     required this.serverLabel,
     required this.webViewLabel,
+    required this.imageLabel,
+    required this.fileLabel,
     required this.onServerTap,
     required this.onSkillsTap,
     required this.onWebViewTap,
+    required this.onImageTap,
+    required this.onFileTap,
   });
 
   @override
@@ -3392,6 +3704,18 @@ class _ChatToolsBar extends StatelessWidget {
                   icon: Icons.language_rounded,
                   label: Text(webViewLabel),
                   onPressed: onWebViewTap,
+                ),
+                _ChatToolTile(
+                  width: tileWidth,
+                  icon: Icons.image_outlined,
+                  label: Text(imageLabel),
+                  onPressed: onImageTap,
+                ),
+                _ChatToolTile(
+                  width: tileWidth,
+                  icon: Icons.attach_file_rounded,
+                  label: Text(fileLabel),
+                  onPressed: onFileTap,
                 ),
               ],
             );
@@ -3454,6 +3778,85 @@ class _ChatToolTile extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _AttachmentChip extends StatelessWidget {
+  final AiChatAttachment attachment;
+  final VoidCallback onRemove;
+
+  const _AttachmentChip({
+    required this.attachment,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isImage = attachment.isImage && attachment.dataBase64.isNotEmpty;
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 160),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: colorScheme.outlineVariant),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (isImage)
+            ClipRRect(
+              borderRadius:
+                  const BorderRadius.horizontal(left: Radius.circular(7)),
+              child: Image.memory(
+                base64Decode(attachment.dataBase64),
+                width: 36,
+                height: 36,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const SizedBox(
+                  width: 36,
+                  height: 36,
+                  child: Icon(Icons.broken_image_outlined, size: 18),
+                ),
+              ),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.only(left: 8),
+              child: Icon(
+                Icons.insert_drive_file_outlined,
+                size: 18,
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              attachment.fileName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 28,
+            height: 28,
+            child: IconButton(
+              padding: EdgeInsets.zero,
+              iconSize: 16,
+              icon: Icon(
+                Icons.close_rounded,
+                color: colorScheme.onSurfaceVariant,
+              ),
+              onPressed: onRemove,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -4124,6 +4527,8 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   late int _webSearchMaxResults;
   late bool _multiAgentEnabled;
   late int _multiAgentMaxAgents;
+  late int _maxImageSizeBytes;
+  late int _maxFileSizeBytes;
   String? _selectedApiKeyId;
   bool _loadingModels = false;
   bool _saving = false;
@@ -4150,6 +4555,8 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _webSearchMaxResults = widget.initialSettings.webSearchMaxResults;
     _multiAgentEnabled = widget.initialSettings.multiAgentEnabled;
     _multiAgentMaxAgents = widget.initialSettings.multiAgentMaxAgents;
+    _maxImageSizeBytes = widget.initialSettings.maxImageSizeBytes;
+    _maxFileSizeBytes = widget.initialSettings.maxFileSizeBytes;
     _selectedApiKeyId = widget.initialSettings.activeApiKeyId;
   }
 
@@ -4393,6 +4800,8 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       webSearchMaxResults: _webSearchMaxResults,
       multiAgentEnabled: _multiAgentEnabled,
       multiAgentMaxAgents: _multiAgentMaxAgents,
+      maxImageSizeBytes: _maxImageSizeBytes,
+      maxFileSizeBytes: _maxFileSizeBytes,
       apiKey: _apiKeyController.text,
       selectedApiKeyId: _selectedApiKeyId,
     );
@@ -4413,6 +4822,8 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         webSearchMaxResults: pending.webSearchMaxResults,
         multiAgentEnabled: pending.multiAgentEnabled,
         multiAgentMaxAgents: pending.multiAgentMaxAgents,
+        maxImageSizeBytes: pending.maxImageSizeBytes,
+        maxFileSizeBytes: pending.maxFileSizeBytes,
         apiKey: pending.apiKey,
         selectedApiKeyId: pending.selectedApiKeyId,
       );
@@ -4719,6 +5130,47 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                     },
             ),
             const SizedBox(height: 14),
+            DropdownButtonFormField<int>(
+              initialValue:
+                  AiUploadSizeLimit.normalizeImage(_maxImageSizeBytes),
+              isExpanded: true,
+              decoration: InputDecoration(labelText: strings.maxImageSize),
+              items: [
+                for (final value in AiUploadSizeLimit.imageValues)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text(AiUploadSizeLimit.label(value)),
+                  ),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        setState(() => _maxImageSizeBytes = value);
+                      }
+                    },
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<int>(
+              initialValue: AiUploadSizeLimit.normalizeFile(_maxFileSizeBytes),
+              isExpanded: true,
+              decoration: InputDecoration(labelText: strings.maxFileSize),
+              items: [
+                for (final value in AiUploadSizeLimit.fileValues)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text(AiUploadSizeLimit.label(value)),
+                  ),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        setState(() => _maxFileSizeBytes = value);
+                      }
+                    },
+            ),
+            const SizedBox(height: 14),
             TextField(
               controller: _apiKeyController,
               enabled: !_saving,
@@ -4907,6 +5359,8 @@ class _PendingAiSettings {
   final int webSearchMaxResults;
   final bool multiAgentEnabled;
   final int multiAgentMaxAgents;
+  final int maxImageSizeBytes;
+  final int maxFileSizeBytes;
   final String apiKey;
   final String? selectedApiKeyId;
 
@@ -4922,6 +5376,8 @@ class _PendingAiSettings {
     required this.webSearchMaxResults,
     required this.multiAgentEnabled,
     required this.multiAgentMaxAgents,
+    required this.maxImageSizeBytes,
+    required this.maxFileSizeBytes,
     required this.apiKey,
     required this.selectedApiKeyId,
   });
@@ -4964,13 +5420,19 @@ class _AiStrings {
       ? 'Expose a web_search tool that uses the current chat WebView on this device. No search API key is required.'
       : '通过当前聊天绑定的本机 WebView 给模型提供 web_search 工具，不需要搜索 API Key。';
   String get webSearchMaxResults => _en ? 'Search results per call' : '每次搜索结果数';
-  String get multiAgent =>
-      _en ? 'Multi-agent collaboration' : '多 Agent 协作';
+  String get multiAgent => _en ? 'Multi-agent collaboration' : '多 Agent 协作';
   String get multiAgentHint => _en
       ? 'Automatically ask helper agents to plan, suggest safe operations, and review complex tasks before the main answer.'
       : '复杂任务前自动让辅助 Agent 规划、建议安全操作并检查风险。';
   String get multiAgentMaxAgents =>
       _en ? 'Maximum helper agents' : '最大辅助 Agent 数';
+  String get maxImageSize => _en ? 'Image upload size limit' : '图片上传大小限制';
+  String get maxFileSize => _en ? 'File upload size limit' : '文件上传大小限制';
+  String imageTooLarge(String name, String limit) => _en
+      ? 'Image "$name" exceeds the $limit limit.'
+      : '图片「$name」超过 $limit 限制。';
+  String fileTooLarge(String name, String limit) =>
+      _en ? 'File "$name" exceeds the $limit limit.' : '文件「$name」超过 $limit 限制。';
   String get openAiReasoningEffort =>
       _en ? 'OpenAI reasoning effort' : 'OpenAI 思考强度';
   String get openAiReasoningHint => _en
@@ -5011,9 +5473,7 @@ class _AiStrings {
   String get commandUnknownHint => _en
       ? 'Type a command to use. Available: /compact, /tools, /skills.'
       : '输入以 / 开头的命令，如 /compact、/tools 或 /skills';
-  String get commandUnknown => _en
-      ? 'Unknown slash command.'
-      : '未识别的斜杠命令。';
+  String get commandUnknown => _en ? 'Unknown slash command.' : '未识别的斜杠命令。';
   String commandUnknownWithName(String command) =>
       _en ? 'Unknown command: /$command' : '未识别命令: /$command';
   String get commandCompact => _en
@@ -5022,18 +5482,15 @@ class _AiStrings {
   String commandToolsUpdated(int count) => _en
       ? 'Tool whitelist updated: $count selected.'
       : '工具白名单已更新：共选中 $count 个。';
-  String get commandSkillsOpened => _en
-      ? 'Skills manager opened.'
-      : '已打开 Skills 管理。';
+  String get commandSkillsOpened =>
+      _en ? 'Skills manager opened.' : '已打开 Skills 管理。';
   String commandToolsUnknown(List<String> unknown) => _en
       ? 'Unknown tool(s): ${unknown.join(', ')}'
       : '未识别工具：${unknown.join(', ')}';
-  String get commandToolsLoadFailed => _en
-      ? 'Unable to load available tools.'
-      : '无法加载可用工具。';
-  String get commandToolsNoTools => _en
-      ? 'No tools are currently available.'
-      : '当前无可用工具。';
+  String get commandToolsLoadFailed =>
+      _en ? 'Unable to load available tools.' : '无法加载可用工具。';
+  String get commandToolsNoTools =>
+      _en ? 'No tools are currently available.' : '当前无可用工具。';
   String get commandToolsSearch => _en ? 'Search tools' : '搜索工具';
   String get commandToolsNoResult =>
       _en ? 'No tools match the search.' : '未找到匹配的工具。';

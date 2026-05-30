@@ -123,6 +123,8 @@ class StorageService extends ChangeNotifier
   static const _aiWebSearchMaxResultsKey = 'ai_web_search_max_results';
   static const _aiMultiAgentEnabledKey = 'ai_multi_agent_enabled';
   static const _aiMultiAgentMaxAgentsKey = 'ai_multi_agent_max_agents';
+  static const _aiMaxImageSizeBytesKey = 'ai_max_image_size_bytes';
+  static const _aiMaxFileSizeBytesKey = 'ai_max_file_size_bytes';
   static const _aiModelsCacheKey = 'ai_models_cache';
   static const _aiApiKeyRefsKey = 'ai_api_key_refs';
   static const _aiSelectedApiKeyIdKey = 'ai_selected_api_key_id';
@@ -404,6 +406,12 @@ class StorageService extends ChangeNotifier
       multiAgentMaxAgents: AiMultiAgentMaxAgents.normalize(
         _prefs?.getInt(_aiMultiAgentMaxAgentsKey),
       ),
+      maxImageSizeBytes: AiUploadSizeLimit.normalizeImage(
+        _prefs?.getInt(_aiMaxImageSizeBytesKey),
+      ),
+      maxFileSizeBytes: AiUploadSizeLimit.normalizeFile(
+        _prefs?.getInt(_aiMaxFileSizeBytesKey),
+      ),
       hasApiKey: apiKey?.isNotEmpty == true,
       activeApiKeyId: activeApiKeyId,
       activeApiKeyMasked: activeApiKeyMasked,
@@ -604,6 +612,8 @@ class StorageService extends ChangeNotifier
     int? webSearchMaxResults,
     bool? multiAgentEnabled,
     int? multiAgentMaxAgents,
+    int? maxImageSizeBytes,
+    int? maxFileSizeBytes,
     String? apiKey,
     String? selectedApiKeyId,
     bool clearApiKey = false,
@@ -658,6 +668,18 @@ class StorageService extends ChangeNotifier
       _aiMultiAgentMaxAgentsKey,
       AiMultiAgentMaxAgents.normalize(
         multiAgentMaxAgents ?? _prefs!.getInt(_aiMultiAgentMaxAgentsKey),
+      ),
+    );
+    await _prefs!.setInt(
+      _aiMaxImageSizeBytesKey,
+      AiUploadSizeLimit.normalizeImage(
+        maxImageSizeBytes ?? _prefs!.getInt(_aiMaxImageSizeBytesKey),
+      ),
+    );
+    await _prefs!.setInt(
+      _aiMaxFileSizeBytesKey,
+      AiUploadSizeLimit.normalizeFile(
+        maxFileSizeBytes ?? _prefs!.getInt(_aiMaxFileSizeBytesKey),
       ),
     );
     await _ensureAiApiKeyHistoryMigrated();
@@ -1493,6 +1515,8 @@ class AiConnectionSettings {
   final int webSearchMaxResults;
   final bool multiAgentEnabled;
   final int multiAgentMaxAgents;
+  final int maxImageSizeBytes;
+  final int maxFileSizeBytes;
   final bool hasApiKey;
   final String? activeApiKeyId;
   final String? activeApiKeyMasked;
@@ -1509,6 +1533,8 @@ class AiConnectionSettings {
     required this.webSearchMaxResults,
     required this.multiAgentEnabled,
     required this.multiAgentMaxAgents,
+    required this.maxImageSizeBytes,
+    required this.maxFileSizeBytes,
     required this.hasApiKey,
     required this.activeApiKeyId,
     required this.activeApiKeyMasked,
@@ -1534,6 +1560,115 @@ class AiWebSearchMaxResults {
   static int normalize(int? value) {
     if (value == null) return defaultValue;
     return value.clamp(values.first, values.last).toInt();
+  }
+}
+
+class AiUploadSizeLimit {
+  static const int _mb = 1024 * 1024;
+  static const int defaultImageSizeBytes = 5 * _mb;
+  static const int defaultFileSizeBytes = 10 * _mb;
+  static const List<int> imageValues = [1 * _mb, 2 * _mb, 5 * _mb, 10 * _mb];
+  static const List<int> fileValues = [
+    1 * _mb,
+    5 * _mb,
+    10 * _mb,
+    20 * _mb,
+    50 * _mb,
+  ];
+
+  static int normalizeImage(int? value) {
+    if (value == null) return defaultImageSizeBytes;
+    return value.clamp(imageValues.first, imageValues.last);
+  }
+
+  static int normalizeFile(int? value) {
+    if (value == null) return defaultFileSizeBytes;
+    return value.clamp(fileValues.first, fileValues.last);
+  }
+
+  static String label(int bytes) {
+    if (bytes >= _mb) {
+      final mb = bytes ~/ _mb;
+      return '$mb MB';
+    }
+    return '${bytes ~/ 1024} KB';
+  }
+}
+
+class AiChatAttachment {
+  final String fileName;
+  final String mimeType;
+  final int sizeBytes;
+  final String dataBase64;
+
+  const AiChatAttachment({
+    required this.fileName,
+    required this.mimeType,
+    required this.sizeBytes,
+    required this.dataBase64,
+  });
+
+  bool get isImage => mimeType.startsWith('image/');
+
+  bool get isTextFile {
+    if (mimeType.startsWith('text/')) return true;
+    const textExtensions = [
+      '.json',
+      '.xml',
+      '.yaml',
+      '.yml',
+      '.md',
+      '.csv',
+      '.log',
+      '.sh',
+      '.py',
+      '.js',
+      '.dart',
+      '.ts',
+      '.html',
+      '.css',
+      '.sql',
+      '.ini',
+      '.conf',
+      '.cfg',
+      '.toml',
+      '.env',
+      '.bat',
+      '.ps1',
+      '.rb',
+      '.go',
+      '.rs',
+      '.c',
+      '.cpp',
+      '.h',
+      '.java',
+      '.kt',
+      '.swift',
+      '.r',
+      '.m',
+      '.php',
+      '.pl',
+    ];
+    final lower = fileName.toLowerCase();
+    return textExtensions.any((ext) => lower.endsWith(ext));
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'fileName': fileName,
+      'mimeType': mimeType,
+      'sizeBytes': sizeBytes,
+      'dataBase64': dataBase64,
+    };
+  }
+
+  factory AiChatAttachment.fromJson(Map<String, dynamic> json) {
+    return AiChatAttachment(
+      fileName: json['fileName'] as String? ?? '',
+      mimeType: json['mimeType'] as String? ?? 'application/octet-stream',
+      sizeBytes: json['sizeBytes'] as int? ?? 0,
+      dataBase64: json['dataBase64'] as String? ?? '',
+    );
   }
 }
 
@@ -1802,12 +1937,14 @@ class AiChatMessageRecord {
   final bool? tokenUsageEstimated;
   final int? promptCacheHitTokens;
   final int? promptCacheMissTokens;
+  final List<AiChatAttachment> attachments;
   final int? reasoningTokens;
 
   const AiChatMessageRecord({
     required this.role,
     required this.text,
     this.contextText,
+    this.attachments = const [],
     this.traces = const [],
     required this.createdAt,
     this.promptTokens,
@@ -1824,6 +1961,7 @@ class AiChatMessageRecord {
     String? role,
     String? text,
     String? contextText,
+    List<AiChatAttachment>? attachments,
     List<AiMessageTrace>? traces,
     DateTime? createdAt,
     int? promptTokens,
@@ -1839,6 +1977,7 @@ class AiChatMessageRecord {
       role: role ?? this.role,
       text: text ?? this.text,
       contextText: contextText ?? this.contextText,
+      attachments: attachments ?? this.attachments,
       traces: traces ?? this.traces,
       createdAt: createdAt ?? this.createdAt,
       promptTokens: promptTokens ?? this.promptTokens,
@@ -1858,6 +1997,8 @@ class AiChatMessageRecord {
       'role': role,
       'text': text,
       if (contextText != null) 'contextText': contextText,
+      if (attachments.isNotEmpty)
+        'attachments': attachments.map((a) => a.toJson()).toList(),
       if (traces.isNotEmpty)
         'traces': traces.map((trace) => trace.toJson()).toList(),
       'createdAt': createdAt.toIso8601String(),
@@ -1880,6 +2021,10 @@ class AiChatMessageRecord {
       role: json['role'] as String? ?? 'assistant',
       text: json['text'] as String? ?? '',
       contextText: json['contextText'] as String?,
+      attachments: ((json['attachments'] as List<dynamic>?) ?? const [])
+          .map(
+              (item) => AiChatAttachment.fromJson(item as Map<String, dynamic>))
+          .toList(),
       traces: ((json['traces'] as List<dynamic>?) ?? const [])
           .map((item) => AiMessageTrace.fromJson(item as Map<String, dynamic>))
           .toList(),

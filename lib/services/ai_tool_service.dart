@@ -2204,8 +2204,7 @@ class AiToolService implements AiToolExecutor {
         webSearchEnabled: nextWebSearchEnabled ?? current.webSearchEnabled,
         webSearchMaxResults:
             nextWebSearchMaxResults ?? current.webSearchMaxResults,
-        multiAgentEnabled:
-            nextMultiAgentEnabled ?? current.multiAgentEnabled,
+        multiAgentEnabled: nextMultiAgentEnabled ?? current.multiAgentEnabled,
         multiAgentMaxAgents:
             nextMultiAgentMaxAgents ?? current.multiAgentMaxAgents,
       );

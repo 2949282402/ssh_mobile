@@ -63,4 +63,73 @@ void main() {
         'sk-a***********************yz');
     expect(maskAiApiKey('abc123'), 'abc123');
   });
+
+  test(
+      'LlmChatScreen.buildMultipartContent handles pure text with no attachments',
+      () {
+    final result = LlmChatScreen.buildMultipartContent('hello world', []);
+    expect(result.length, 1);
+    expect(result[0]['type'], 'text');
+    expect(result[0]['text'], 'hello world');
+  });
+
+  test(
+      'LlmChatScreen.buildMultipartContent generates vision image_url format for images',
+      () {
+    final imageAttachment = AiChatAttachment(
+      fileName: 'photo.png',
+      mimeType: 'image/png',
+      sizeBytes: 256,
+      dataBase64:
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+    );
+
+    final result = LlmChatScreen.buildMultipartContent(
+        'check this image', [imageAttachment]);
+    expect(result.length, 2);
+    expect(result[0]['type'], 'text');
+    expect(result[0]['text'], 'check this image');
+
+    expect(result[1]['type'], 'image_url');
+    final imageUrlMap = result[1]['image_url'] as Map<String, dynamic>;
+    expect(imageUrlMap['url'],
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=');
+  });
+
+  test(
+      'LlmChatScreen.buildMultipartContent injects decodable text file content inlined',
+      () {
+    final textAttachment = AiChatAttachment(
+      fileName: 'notes.txt',
+      mimeType: 'text/plain',
+      sizeBytes: 15,
+      dataBase64: 'SGVsbG8gdGV4dCBmaWxl',
+    );
+
+    final result =
+        LlmChatScreen.buildMultipartContent('some question', [textAttachment]);
+    expect(result.length, 1);
+    expect(result[0]['type'], 'text');
+    expect(result[0]['text'], contains('some question'));
+    expect(result[0]['text'], contains('[File: notes.txt]'));
+    expect(result[0]['text'], contains('Hello text file'));
+  });
+
+  test('LlmChatScreen.buildMultipartContent appends binary file placeholders',
+      () {
+    final binAttachment = AiChatAttachment(
+      fileName: 'archive.zip',
+      mimeType: 'application/zip',
+      sizeBytes: 1024 * 1024 * 3,
+      dataBase64: 'UEsDBAoAAAAAA...',
+    );
+
+    final result =
+        LlmChatScreen.buildMultipartContent('sending archive', [binAttachment]);
+    expect(result.length, 1);
+    expect(result[0]['type'], 'text');
+    expect(result[0]['text'], contains('sending archive'));
+    expect(
+        result[0]['text'], contains('[Attached file: archive.zip (3.0 MB)]'));
+  });
 }

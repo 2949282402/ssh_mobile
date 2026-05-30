@@ -241,7 +241,7 @@ class LlmChatService implements LlmClientAdapter {
       );
     } else {
       AppLogService.instance.info(
-          'LLM tool definitions filtered',
+        'LLM tool definitions filtered',
         details:
             'requestedTools=${normalizedAllowedTools.length} availableTools=${toolDefinitions.length} filteredTools=${filteredToolDefinitions.length}',
       );
