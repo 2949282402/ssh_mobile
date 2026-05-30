@@ -29,6 +29,7 @@ dependencies:
   webview_flutter: ^4.13.1
   printing: ^5.14.3
   fl_chart: ^1.2.0
+  animations: ^2.2.0
 
 dev_dependencies:
   flutter_test:

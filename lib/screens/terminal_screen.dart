@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:xterm/xterm.dart';
+import 'package:animations/animations.dart';
 
 import '../services/app_settings.dart';
 import '../services/ssh_service.dart';
@@ -584,22 +585,17 @@ class _TerminalScreenState extends State<TerminalScreen>
 
   Route<void> _fadeTerminalRoute(SshSession session) {
     return PageRouteBuilder<void>(
-      transitionDuration: const Duration(milliseconds: 180),
-      reverseTransitionDuration: const Duration(milliseconds: 120),
-      pageBuilder: (_, __, ___) => TerminalScreen(
-        connectionId: session.connectionId,
-        sessionId: session.id,
+      transitionDuration: const Duration(milliseconds: 300),
+      reverseTransitionDuration: const Duration(milliseconds: 200),
+      pageBuilder: (context, animation, secondaryAnimation) => SharedAxisTransition(
+        animation: animation,
+        secondaryAnimation: secondaryAnimation,
+        transitionType: SharedAxisTransitionType.scaled,
+        child: TerminalScreen(
+          connectionId: session.connectionId,
+          sessionId: session.id,
+        ),
       ),
-      transitionsBuilder: (_, animation, __, child) {
-        final curved = CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeOutCubic,
-        );
-        return FadeTransition(
-          opacity: curved,
-          child: child,
-        );
-      },
     );
   }
 

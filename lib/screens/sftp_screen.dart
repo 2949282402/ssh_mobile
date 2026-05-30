@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
+import 'package:animations/animations.dart';
 
 import '../models/connection.dart';
 import '../services/app_settings.dart';
 import '../services/sftp_service.dart';
 import '../services/storage_service.dart';
 import '../utils/responsive.dart';
+import '../widgets/tactile_feedback.dart';
 import 'sftp_editor_screen.dart';
 import 'sftp_file_viewer_screen.dart';
 
@@ -549,8 +551,7 @@ class _ServerTile extends StatelessWidget {
 
     return Padding(
       padding: EdgeInsets.only(bottom: compact ? 0 : 8),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
+      child: TactileFeedback(
         onTap: busy ? null : onTap,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -776,8 +777,16 @@ class _FilePane extends StatelessWidget {
   Future<void> _viewFile(BuildContext context, SftpEntry entry) async {
     await Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => SftpFileViewerScreen(entry: entry),
+      PageRouteBuilder(
+        transitionDuration: const Duration(milliseconds: 300),
+        reverseTransitionDuration: const Duration(milliseconds: 200),
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            SharedAxisTransition(
+          animation: animation,
+          secondaryAnimation: secondaryAnimation,
+          transitionType: SharedAxisTransitionType.scaled,
+          child: SftpFileViewerScreen(entry: entry),
+        ),
       ),
     );
   }
@@ -899,8 +908,16 @@ class _FilePane extends StatelessWidget {
   Future<void> _editFile(BuildContext context, SftpEntry entry) async {
     final saved = await Navigator.push<bool>(
       context,
-      MaterialPageRoute(
-        builder: (_) => SftpEditorScreen(entry: entry),
+      PageRouteBuilder<bool>(
+        transitionDuration: const Duration(milliseconds: 300),
+        reverseTransitionDuration: const Duration(milliseconds: 200),
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            SharedAxisTransition(
+          animation: animation,
+          secondaryAnimation: secondaryAnimation,
+          transitionType: SharedAxisTransitionType.scaled,
+          child: SftpEditorScreen(entry: entry),
+        ),
       ),
     );
     if (saved == true && context.mounted) {
@@ -976,102 +993,110 @@ class _SftpEntryList extends StatelessWidget {
         final entry = entries[index];
         return RepaintBoundary(
           key: ValueKey('${entry.connectionId}:${entry.path}'),
-          child: ListTile(
-            minLeadingWidth: 28,
-            leading: Icon(
-              entry.isDirectory
-                  ? Icons.folder_rounded
-                  : entry.isLink
-                      ? Icons.shortcut_rounded
-                      : Icons.description_outlined,
-              color: entry.isDirectory
-                  ? colorScheme.primary
-                  : colorScheme.onSurface.withValues(alpha: 0.72),
-            ),
-            title: Text(
-              entry.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            subtitle: Text(
-              entryMeta(strings, entry),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (entry.isDirectory) const Icon(Icons.chevron_right_rounded),
-                PopupMenuButton<String>(
-                  onSelected: (action) => onEntryAction(
-                    context,
-                    action,
-                    entry,
+          child: TactileFeedback(
+            onTap: entry.isDirectory ? () => sftp.openPath(entry.path) : null,
+            child: ListTile(
+              minLeadingWidth: 28,
+              leading: Icon(
+                entry.isDirectory
+                    ? Icons.folder_rounded
+                    : entry.isLink
+                        ? Icons.shortcut_rounded
+                        : Icons.description_outlined,
+                color: entry.isDirectory
+                    ? colorScheme.primary
+                    : colorScheme.onSurface.withValues(alpha: 0.72),
+              ),
+              title: Hero(
+                tag: 'sftp_file_${entry.path}',
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: Text(
+                    entry.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  itemBuilder: (_) => [
-                    if (!entry.isDirectory)
-                      PopupMenuItem(
-                        value: 'view',
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.visibility_outlined,
-                              size: 18,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(strings.viewFile),
-                          ],
-                        ),
-                      ),
-                    if (!entry.isDirectory)
-                      PopupMenuItem(
-                        value: 'edit',
-                        child: Row(
-                          children: [
-                            const Icon(Icons.edit_outlined, size: 18),
-                            const SizedBox(width: 8),
-                            Text(strings.edit),
-                          ],
-                        ),
-                      ),
-                    if (!entry.isDirectory)
-                      PopupMenuItem(
-                        value: 'download',
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.download_rounded,
-                              size: 18,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(strings.downloadFile),
-                          ],
-                        ),
-                      ),
-                    PopupMenuItem(
-                      value: 'delete',
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.delete_outline,
-                            size: 18,
-                            color: Colors.redAccent,
+                ),
+              ),
+              subtitle: Text(
+                entryMeta(strings, entry),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (entry.isDirectory) const Icon(Icons.chevron_right_rounded),
+                  PopupMenuButton<String>(
+                    onSelected: (action) => onEntryAction(
+                      context,
+                      action,
+                      entry,
+                    ),
+                    itemBuilder: (_) => [
+                      if (!entry.isDirectory)
+                        PopupMenuItem(
+                          value: 'view',
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.visibility_outlined,
+                                size: 18,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(strings.viewFile),
+                            ],
                           ),
-                          const SizedBox(width: 8),
-                          Text(
-                            strings.delete,
-                            style: const TextStyle(
+                        ),
+                      if (!entry.isDirectory)
+                        PopupMenuItem(
+                          value: 'edit',
+                          child: Row(
+                            children: [
+                              const Icon(Icons.edit_outlined, size: 18),
+                              const SizedBox(width: 8),
+                              Text(strings.edit),
+                            ],
+                          ),
+                        ),
+                      if (!entry.isDirectory)
+                        PopupMenuItem(
+                          value: 'download',
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.download_rounded,
+                                size: 18,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(strings.downloadFile),
+                            ],
+                          ),
+                        ),
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.delete_outline,
+                              size: 18,
                               color: Colors.redAccent,
                             ),
-                          ),
-                        ],
+                            const SizedBox(width: 8),
+                            Text(
+                              strings.delete,
+                              style: const TextStyle(
+                                color: Colors.redAccent,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                ],
+              ),
             ),
-            onTap: entry.isDirectory ? () => sftp.openPath(entry.path) : null,
           ),
         );
       },

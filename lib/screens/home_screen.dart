@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 
+import 'package:animations/animations.dart';
+
 import '../models/connection.dart';
 import '../services/app_settings.dart';
 import '../services/sftp_service.dart';
@@ -13,6 +15,7 @@ import '../services/storage_service.dart';
 import '../services/playbook_service.dart';
 import '../utils/responsive.dart';
 import '../widgets/connection_progress_dialog.dart';
+import '../widgets/tactile_feedback.dart';
 import '../widgets/window_name_dialog.dart';
 import 'developer_log_screen.dart';
 import 'llm_chat_screen.dart';
@@ -501,17 +504,14 @@ class _HomeScreenState extends State<HomeScreen> {
               )),
         ),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          const begin = Offset(-1.0, 0.0);
-          const end = Offset.zero;
-          const curve = Curves.easeOutCubic;
-          var tween =
-              Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
-          return SlideTransition(
-            position: animation.drive(tween),
+          return SharedAxisTransition(
+            animation: animation,
+            secondaryAnimation: secondaryAnimation,
+            transitionType: SharedAxisTransitionType.scaled,
             child: child,
           );
         },
-        transitionDuration: const Duration(milliseconds: 260),
+        transitionDuration: const Duration(milliseconds: 300),
       ),
     );
   }
@@ -880,71 +880,72 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final windowsExpanded = _expandedConnectionWindowIds.contains(conn.id);
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: cardColor,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: isSelected ? colorScheme.primary : borderColor,
-          width: isSelected ? 1.5 : 1,
+    return TactileFeedback(
+      onTap: !_serverSelectionMode ? () => _openNewTerminal(context, conn) : null,
+      onLongPress: () {
+        if (!_serverSelectionMode) {
+          setState(() {
+            _serverSelectionMode = true;
+            _selectedServerIds.add(conn.id);
+          });
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: cardColor,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected ? colorScheme.primary : borderColor,
+            width: isSelected ? 1.5 : 1,
+          ),
+          boxShadow: _panelShadow(context),
         ),
-        boxShadow: _panelShadow(context),
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              if (!_serverSelectionMode)
-                ReorderableDragStartListener(
-                  index: connIndex,
-                  child: Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: Icon(
-                      Icons.drag_handle,
-                      size: 20,
-                      color: mutedTextColor.withValues(alpha: 0.5),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                if (!_serverSelectionMode)
+                  ReorderableDragStartListener(
+                    index: connIndex,
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: Icon(
+                        Icons.drag_handle,
+                        size: 20,
+                        color: mutedTextColor.withValues(alpha: 0.5),
+                      ),
                     ),
                   ),
+                if (_serverSelectionMode)
+                  Checkbox(
+                    value: isSelected,
+                    onChanged: (_) => _toggleServerSelection(conn.id),
+                  ),
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: isActive
+                        ? success.withValues(alpha: 0.15)
+                        : primary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    _getStatusIcon(conn, latestState),
+                    color: isActive ? success : primary,
+                    size: 24,
+                  ),
                 ),
-              if (_serverSelectionMode)
-                Checkbox(
-                  value: isSelected,
-                  onChanged: (_) => _toggleServerSelection(conn.id),
-                ),
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: isActive
-                      ? success.withValues(alpha: 0.15)
-                      : primary.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(
-                  _getStatusIcon(conn, latestState),
-                  color: isActive ? success : primary,
-                  size: 24,
-                ),
-              ),
-              if (!_serverSelectionMode) const SizedBox(width: 14),
-              if (_serverSelectionMode) const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    GestureDetector(
-                      onLongPress: () {
-                        if (!_serverSelectionMode) {
-                          setState(() {
-                            _serverSelectionMode = true;
-                            _selectedServerIds.add(conn.id);
-                          });
-                        }
-                      },
-                      child: Text(
+                if (!_serverSelectionMode) const SizedBox(width: 14),
+                if (_serverSelectionMode) const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
                         conn.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -954,153 +955,153 @@ class _HomeScreenState extends State<HomeScreen> {
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.dns_outlined,
-                          size: 13,
-                          color: mutedTextColor.withValues(alpha: 0.72),
-                        ),
-                        const SizedBox(width: 5),
-                        Flexible(
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Text(
-                              '${conn.username}@${conn.host}:${conn.port}',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: mutedTextColor,
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.dns_outlined,
+                            size: 13,
+                            color: mutedTextColor.withValues(alpha: 0.72),
+                          ),
+                          const SizedBox(width: 5),
+                          Flexible(
+                            child: SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: Text(
+                                '${conn.username}@${conn.host}:${conn.port}',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: mutedTextColor,
+                                ),
                               ),
                             ),
                           ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Selector<PerformanceMonitorService,
+                            ServerHealthSnapshot>(
+                          selector: (_, monitor) => monitor.healthFor(conn.id),
+                          builder: (context, health, _) =>
+                              _buildHealthChip(context, health, strings),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Selector<PerformanceMonitorService,
-                          ServerHealthSnapshot>(
-                        selector: (_, monitor) => monitor.healthFor(conn.id),
-                        builder: (context, health, _) =>
-                            _buildHealthChip(context, health, strings),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              if (!_serverSelectionMode && sessionCount > 0) ...[
-                const SizedBox(width: 8),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: success.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: success.withValues(alpha: 0.35)),
-                  ),
-                  child: Text(
-                    '$sessionCount',
-                    style: TextStyle(
-                      color: success,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
+                    ],
                   ),
                 ),
-              ],
-              if (!_serverSelectionMode && isConnecting)
-                const SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              else if (!_serverSelectionMode) ...[
-                IconButton(
-                  tooltip: strings.newWindow,
-                  icon: const Icon(Icons.add_to_photos_outlined),
-                  color: mutedTextColor,
-                  visualDensity: VisualDensity.compact,
-                  onPressed: () => _openNewTerminal(context, conn),
-                ),
-                PopupMenuButton<String>(
-                  icon: Icon(Icons.more_vert, color: mutedTextColor),
-                  onSelected: (action) => _handleAction(context, conn, action),
-                  itemBuilder: (_) => [
-                    PopupMenuItem(
-                      value: 'edit',
-                      child: Row(
-                        children: [
-                          const Icon(Icons.edit, size: 18),
-                          const SizedBox(width: 8),
-                          Text(strings.edit),
-                        ],
-                      ),
-                    ),
-                    PopupMenuItem(
-                      value: 'delete',
-                      child: Row(
-                        children: [
-                          const Icon(Icons.delete, size: 18, color: Colors.red),
-                          const SizedBox(width: 8),
-                          Text(
-                            strings.delete,
-                            style: const TextStyle(color: Colors.red),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ],
-          ),
-          const SizedBox(height: 10),
-          Divider(
-              height: 1, color: Theme.of(context).colorScheme.outlineVariant),
-          InkWell(
-            borderRadius: BorderRadius.circular(8),
-            onTap: () => _toggleConnectionWindows(conn.id),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(4, 9, 4, 0),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.tab_outlined,
-                    size: 17,
-                    color: mutedTextColor,
-                  ),
+                if (!_serverSelectionMode && sessionCount > 0) ...[
                   const SizedBox(width: 8),
-                  Expanded(
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: success.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: success.withValues(alpha: 0.35)),
+                    ),
                     child: Text(
-                      '${strings.terminalWindows} ($sessionCount)',
+                      '$sessionCount',
                       style: TextStyle(
-                        color: textColor,
-                        fontSize: 13,
+                        color: success,
+                        fontSize: 12,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                   ),
-                  Icon(
-                    windowsExpanded
-                        ? Icons.expand_less_rounded
-                        : Icons.expand_more_rounded,
+                ],
+                if (!_serverSelectionMode && isConnecting)
+                  const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else if (!_serverSelectionMode) ...[
+                  IconButton(
+                    tooltip: strings.newWindow,
+                    icon: const Icon(Icons.add_to_photos_outlined),
                     color: mutedTextColor,
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => _openNewTerminal(context, conn),
+                  ),
+                  PopupMenuButton<String>(
+                    icon: Icon(Icons.more_vert, color: mutedTextColor),
+                    onSelected: (action) => _handleAction(context, conn, action),
+                    itemBuilder: (_) => [
+                      PopupMenuItem(
+                        value: 'edit',
+                        child: Row(
+                          children: [
+                            const Icon(Icons.edit, size: 18),
+                            const SizedBox(width: 8),
+                            Text(strings.edit),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: Row(
+                          children: [
+                            const Icon(Icons.delete, size: 18, color: Colors.red),
+                            const SizedBox(width: 8),
+                            Text(
+                              strings.delete,
+                              style: const TextStyle(color: Colors.red),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ],
+              ],
+            ),
+            const SizedBox(height: 10),
+            Divider(
+                height: 1, color: Theme.of(context).colorScheme.outlineVariant),
+            InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => _toggleConnectionWindows(conn.id),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(4, 9, 4, 0),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.tab_outlined,
+                      size: 17,
+                      color: mutedTextColor,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '${strings.terminalWindows} ($sessionCount)',
+                        style: TextStyle(
+                          color: textColor,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      windowsExpanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      color: mutedTextColor,
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-          if (windowsExpanded)
-            TerminalWindowsPage(
-              key: PageStorageKey<String>('server-windows-${conn.id}'),
-              connectionId: conn.id,
-              showHeader: false,
-              embedded: true,
-            ),
-        ],
+            if (windowsExpanded)
+              TerminalWindowsPage(
+                key: PageStorageKey<String>('server-windows-${conn.id}'),
+                connectionId: conn.id,
+                showHeader: false,
+                embedded: true,
+              ),
+          ],
+        ),
       ),
     );
   }

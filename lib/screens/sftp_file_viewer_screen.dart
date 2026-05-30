@@ -63,11 +63,17 @@ class _SftpFileViewerScreenState extends State<SftpFileViewerScreen> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              widget.entry.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 15),
+            Hero(
+              tag: 'sftp_file_${widget.entry.path}',
+              child: Material(
+                type: MaterialType.transparency,
+                child: Text(
+                  widget.entry.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 15),
+                ),
+              ),
             ),
             Text(
               widget.entry.path,
