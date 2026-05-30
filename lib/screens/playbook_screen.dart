@@ -441,9 +441,11 @@ class _PlaybookScreenState extends State<PlaybookScreen>
   ) {
     return Form(
       key: _formKey,
-      child: ListView(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
-        children: [
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
           Text(
             _editingPlaybook?.name.isEmpty == true ? strings.newPlaybook : strings.editPlaybook,
             style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
@@ -497,6 +499,7 @@ class _PlaybookScreenState extends State<PlaybookScreen>
           ...List.generate(_stepControllers.length, (index) {
             final controllers = _stepControllers[index];
             return Card(
+              key: ValueKey(controllers.hashCode),
               margin: const EdgeInsets.only(bottom: 16),
               elevation: 0,
               shape: RoundedRectangleBorder(
@@ -596,6 +599,7 @@ class _PlaybookScreenState extends State<PlaybookScreen>
           const SizedBox(height: 48),
         ],
       ),
+      )
     );
   }
 
