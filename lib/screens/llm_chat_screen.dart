@@ -22,6 +22,7 @@ import '../services/performance_monitor_tool_service.dart';
 import '../services/sftp_service.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
+import '../services/playbook_service.dart';
 import '../widgets/overflow_scroll_text.dart';
 
 part 'llm_chat/assistant_run_indicator.dart';
@@ -122,12 +123,14 @@ class LlmChatScreen extends StatefulWidget {
   final bool active;
   final ValueChanged<bool>? onHistoryVisibilityChanged;
   final VoidCallback? onOpenSettingsDrawer;
+  final String? initialText;
 
   const LlmChatScreen({
     super.key,
     this.active = true,
     this.onHistoryVisibilityChanged,
     this.onOpenSettingsDrawer,
+    this.initialText,
   });
 
   static List<Map<String, dynamic>> buildMultipartContent(
@@ -285,9 +288,23 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     return true;
   }
 
+  void _checkPendingDiagnosticPrompt() {
+    try {
+      final playbookService = context.read<PlaybookService>();
+      if (playbookService.pendingDiagnosticPrompt != null) {
+        _inputController.text = playbookService.pendingDiagnosticPrompt!;
+        playbookService.pendingDiagnosticPrompt = null;
+      }
+    } catch (_) {}
+  }
+
   @override
   void initState() {
     super.initState();
+    if (widget.initialText != null && widget.initialText!.isNotEmpty) {
+      _inputController.text = widget.initialText!;
+    }
+    _checkPendingDiagnosticPrompt();
     _inputFocusNode = FocusNode(onKeyEvent: _handleInputKeyEvent);
     _historySlideController = AnimationController(
       vsync: this,
@@ -314,6 +331,9 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     }
     if (widget.active && !oldWidget.active) {
       _scrollToBottom(jump: true);
+    }
+    if (widget.active) {
+      _checkPendingDiagnosticPrompt();
     }
   }
 
@@ -1137,6 +1157,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
           context.read<PerformanceMonitorService>(),
         ),
         appSettings: context.read<AppSettings>(),
+        playbookService: context.read<PlaybookService>(),
       );
       final definitions = await toolService.toolDefinitions();
       final tools = <_ToolOption>[];
@@ -1508,6 +1529,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
           context.read<PerformanceMonitorService>(),
         ),
         appSettings: context.read<AppSettings>(),
+        playbookService: context.read<PlaybookService>(),
         clientWebViewSessionId: chatId,
       ),
     );
@@ -1891,14 +1913,16 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     if (!mounted) return;
 
     final latestActiveChat = _activeChat;
-    if (latestActiveChat == null || latestActiveChat.id != activeChat.id)
+    if (latestActiveChat == null || latestActiveChat.id != activeChat.id) {
       return;
+    }
     final targetIndex = latestActiveChat.messages.indexWhere(
       (message) =>
           message.role == 'user' && message.createdAt == target.createdAt,
     );
-    if (targetIndex < 0 || targetIndex >= latestActiveChat.messages.length)
+    if (targetIndex < 0 || targetIndex >= latestActiveChat.messages.length) {
       return;
+    }
 
     final storage = context.read<StorageService>();
     final settings = await storage.loadAiConnectionSettings();
@@ -2198,6 +2222,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
               context.read<PerformanceMonitorService>(),
             ),
             appSettings: context.read<AppSettings>(),
+            playbookService: context.read<PlaybookService>(),
           ),
         );
         final fetched = await service.fetchModels(
@@ -4742,6 +4767,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
             context.read<PerformanceMonitorService>(),
           ),
           appSettings: context.read<AppSettings>(),
+          playbookService: context.read<PlaybookService>(),
         ),
       );
       final typedApiKey = _apiKeyController.text.trim();

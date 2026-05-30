@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/connection.dart';
+import '../models/playbook.dart';
 import 'app_log_service.dart';
 import 'data_protection_service.dart';
 import 'multi_agent_coordinator.dart';
@@ -61,6 +62,28 @@ List<AiSkillRecord> upsertAiSkillRecordsByUpdatedAt(
   return ordered;
 }
 
+List<Playbook> upsertPlaybooksByUpdatedAt(
+  Iterable<Playbook> playbooks,
+  Playbook playbook,
+) {
+  final ordered = <Playbook>[];
+  var inserted = false;
+  for (final item in playbooks) {
+    if (item.id == playbook.id) {
+      continue;
+    }
+    if (!inserted && !playbook.updatedAt.isBefore(item.updatedAt)) {
+      ordered.add(playbook);
+      inserted = true;
+    }
+    ordered.add(item);
+  }
+  if (!inserted) {
+    ordered.add(playbook);
+  }
+  return ordered;
+}
+
 /// 中央持久化服务。管理应用的所有数据持久化，采用三层存储策略：
 ///
 /// | 数据类型            | 存储位置                              | 加密方式        |
@@ -95,6 +118,14 @@ abstract interface class TerminalHistoryRepository {
   Future<void> removeTerminalHistoryRecord(String sessionId);
 }
 
+abstract interface class PlaybookRepository {
+  Future<List<Playbook>> loadPlaybooks();
+
+  Future<void> savePlaybook(Playbook playbook);
+
+  Future<void> deletePlaybook(String id);
+}
+
 abstract interface class AppBackupRepository {
   Future<String> exportAppDataJson();
 
@@ -106,6 +137,7 @@ class StorageService extends ChangeNotifier
         AiChatRepository,
         AiSkillRepository,
         TerminalHistoryRepository,
+        PlaybookRepository,
         AppBackupRepository {
   static const _connectionsKey = 'ssh_connections';
   static const _powerGuideSeenKey = 'power_guide_seen';
@@ -132,6 +164,7 @@ class StorageService extends ChangeNotifier
   static const _aiApiKeyEntryPrefix = 'ai_api_key_entry_';
   static const _aiChatsKey = 'ai_chats';
   static const _aiSkillsKey = 'ai_skills';
+  static const _playbooksKey = 'custom_playbooks';
   static const _secretCacheEnabledKey = 'secret_cache_enabled';
   static const _secretCacheTtlSecondsKey = 'secret_cache_ttl_seconds';
   static const _defaultSecretCacheTtl = Duration(minutes: 15);
@@ -158,6 +191,7 @@ class StorageService extends ChangeNotifier
   List<ConnectionConfig> _connectionsView = const []; // 不可变视图暴露给外部
   List<AiChatRecord>? _aiChatsCache;
   List<AiSkillRecord>? _aiSkillsCache;
+  List<Playbook>? _playbooksCache;
   List<RestorableTmuxSession>? _restorableTmuxSessionsCache;
   List<TerminalHistoryRecord>? _terminalHistoryRecordsCache;
   bool _initialized = false;
@@ -1009,6 +1043,50 @@ class StorageService extends ChangeNotifier
     notifyListeners();
   }
 
+  @override
+  Future<List<Playbook>> loadPlaybooks() async {
+    if (!_initialized || _prefs == null) return [];
+    final cached = _playbooksCache;
+    if (cached != null) return cached;
+    final jsonStr = await _readProtectedPref(_playbooksKey);
+    if (jsonStr == null || jsonStr.isEmpty) {
+      return _playbooksCache = const [];
+    }
+
+    try {
+      final list = jsonDecode(jsonStr) as List<dynamic>;
+      final playbooks = list
+          .map((item) => Playbook.fromJson(item as Map<String, dynamic>))
+          .toList()
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      return _playbooksCache = List.unmodifiable(playbooks);
+    } catch (e) {
+      AppLogService.instance.error('Failed to load playbooks', error: e);
+      return _playbooksCache = const [];
+    }
+  }
+
+  @override
+  Future<void> savePlaybook(Playbook playbook) async {
+    if (!_initialized || _prefs == null) return;
+    final playbooks = upsertPlaybooksByUpdatedAt(
+      await loadPlaybooks(),
+      playbook,
+    );
+    await _savePlaybooks(playbooks, alreadySorted: true);
+    notifyListeners();
+  }
+
+  @override
+  Future<void> deletePlaybook(String id) async {
+    if (!_initialized || _prefs == null) return;
+    final playbooks = (await loadPlaybooks())
+        .where((item) => item.id != id)
+        .toList(growable: false);
+    await _savePlaybooks(playbooks, alreadySorted: true);
+    notifyListeners();
+  }
+
   /// 导出所有用户数据为 JSON 格式。
   /// 注意：密码/私钥/API Key 置空，不包含在导出中。
   @override
@@ -1054,12 +1132,13 @@ class StorageService extends ChangeNotifier
       },
       'aiChats': (await loadAiChats()).map((item) => item.toJson()).toList(),
       'aiSkills': (await loadAiSkills()).map((item) => item.toJson()).toList(),
+      'playbooks': (await loadPlaybooks()).map((item) => item.toJson()).toList(),
       'powerGuideSeen': _powerGuideSeen,
     };
     AppLogService.instance.info(
       'App data exported',
       details:
-          'connections=${connectionPayloads.length} chats=${(payload['aiChats'] as List).length} skills=${(payload['aiSkills'] as List).length} secrets=omitted',
+          'connections=${connectionPayloads.length} chats=${(payload['aiChats'] as List).length} skills=${(payload['aiSkills'] as List).length} playbooks=${(payload['playbooks'] as List).length} secrets=omitted',
     );
     return const JsonEncoder.withIndent('  ').convert(payload);
   }
@@ -1153,12 +1232,19 @@ class StorageService extends ChangeNotifier
           .toList(),
       immediate: true,
     );
+    await _savePlaybooks(
+      ((decoded['playbooks'] as List<dynamic>?) ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(Playbook.fromJson)
+          .toList(),
+      immediate: true,
+    );
     _powerGuideSeen = decoded['powerGuideSeen'] as bool? ?? _powerGuideSeen;
     await _prefs?.setBool(_powerGuideSeenKey, _powerGuideSeen);
     AppLogService.instance.info(
       'App data imported',
       details:
-          'connections=${_connections.length} chats=${((decoded['aiChats'] as List<dynamic>?) ?? const []).length} skills=${((decoded['aiSkills'] as List<dynamic>?) ?? const []).length}',
+          'connections=${_connections.length} chats=${((decoded['aiChats'] as List<dynamic>?) ?? const []).length} skills=${((decoded['aiSkills'] as List<dynamic>?) ?? const []).length} playbooks=${((decoded['playbooks'] as List<dynamic>?) ?? const []).length}',
     );
     notifyListeners();
   }
@@ -1330,6 +1416,23 @@ class StorageService extends ChangeNotifier
     final jsonStr = jsonEncode(ordered.map((item) => item.toJson()).toList());
     await _writeProtectedPrefBuffered(
       _aiSkillsKey,
+      jsonStr,
+      immediate: immediate,
+    );
+  }
+
+  Future<void> _savePlaybooks(
+    List<Playbook> playbooks, {
+    bool immediate = false,
+    bool alreadySorted = false,
+  }) async {
+    final ordered = alreadySorted
+        ? List<Playbook>.from(playbooks, growable: false)
+        : ([...playbooks]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt)));
+    _playbooksCache = List.unmodifiable(ordered);
+    final jsonStr = jsonEncode(ordered.map((item) => item.toJson()).toList());
+    await _writeProtectedPrefBuffered(
+      _playbooksKey,
       jsonStr,
       immediate: immediate,
     );

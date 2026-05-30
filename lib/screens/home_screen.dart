@@ -10,6 +10,7 @@ import '../services/app_settings.dart';
 import '../services/sftp_service.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
+import '../services/playbook_service.dart';
 import '../utils/responsive.dart';
 import '../widgets/connection_progress_dialog.dart';
 import '../widgets/window_name_dialog.dart';
@@ -23,6 +24,10 @@ import '../services/performance_monitor_service.dart';
 extension _HomeSettingsStrings on AppStrings {
   String get settings => language == AppLanguage.en ? 'Settings' : '设置';
   String get appearance => language == AppLanguage.en ? 'Appearance' : '外观';
+  String get toolsAndAutomation => language == AppLanguage.en ? 'Tools & Automation' : '工具与自动化';
+  String get playbookOrchestrator => language == AppLanguage.en ? 'Playbook Orchestrator' : '运维剧本与AI编排';
+  String get playbookOrchestratorHint => language == AppLanguage.en ? 'Run multi-step SSH tasks and use AI troubleshooting' : '自动化的顺序执行剧本，支持一键 AI 排障';
+  String get aiSkillsHint => language == AppLanguage.en ? 'Manage custom AI prompts, workflows, and references' : '管理自定义 AI 提示词、工作流及规则说明';
   String get appFontFamily => language == AppLanguage.en ? 'App font' : '应用字体';
   String get appFontFamilyNote => language == AppLanguage.en
       ? 'Applied across the app. Font files are not bundled.'
@@ -122,6 +127,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _appDataBusy = false;
   bool _serverSelectionMode = false;
   final Set<String> _selectedServerIds = {};
+  PlaybookService? _playbookService;
 
   @override
   void initState() {
@@ -129,12 +135,27 @@ class _HomeScreenState extends State<HomeScreen> {
     _selectedIndex = widget.initialIndex.clamp(_firstPage, _lastPage);
     _settledIndex = _selectedIndex;
     _pageController = PageController(initialPage: _selectedIndex);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _playbookService = context.read<PlaybookService>();
+      _playbookService?.addListener(_onPlaybookServiceChanged);
+    });
   }
 
   @override
   void dispose() {
+    _playbookService?.removeListener(_onPlaybookServiceChanged);
     _pageController.dispose();
     super.dispose();
+  }
+
+  void _onPlaybookServiceChanged() {
+    if (!mounted) return;
+    final prompt = _playbookService?.pendingDiagnosticPrompt;
+    if (prompt != null && prompt.isNotEmpty) {
+      _switchPage(_aiPage);
+    }
   }
 
   @override
@@ -1175,6 +1196,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 IconButton(
+                  tooltip: context.read<AppSettings>().isEnglish ? 'Playbooks' : '运维剧本',
+                  icon: const Icon(Icons.rocket_launch_outlined),
+                  color: mutedTextColor,
+                  onPressed: () => Navigator.pushNamed(context, '/playbooks'),
+                ),
+                IconButton(
                   tooltip: strings.connectionHistory,
                   icon: const Icon(Icons.history_rounded),
                   color: mutedTextColor,
@@ -1898,6 +1925,42 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                     Theme.of(context).platform,
                   ),
                   strings: strings,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _SettingsSection(
+              title: strings.toolsAndAutomation,
+              children: [
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.rocket_launch_outlined, size: 20),
+                  title: Text(
+                    strings.playbookOrchestrator,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  subtitle: Text(
+                    strings.playbookOrchestratorHint,
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  onTap: () {
+                    Navigator.pushNamed(context, '/playbooks');
+                  },
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.auto_awesome, size: 20),
+                  title: Text(
+                    strings.language == AppLanguage.en ? 'AI Skills' : 'AI Skills',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  subtitle: Text(
+                    strings.aiSkillsHint,
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  onTap: () {
+                    Navigator.pushNamed(context, '/ai-skills');
+                  },
                 ),
               ],
             ),

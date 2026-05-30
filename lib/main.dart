@@ -7,6 +7,7 @@ import 'screens/add_edit_screen.dart';
 import 'screens/ai_skills_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/performance_monitor_screen.dart';
+import 'screens/playbook_screen.dart';
 import 'screens/sftp_screen.dart';
 import 'screens/startup_screen.dart';
 import 'screens/terminal_history_screen.dart';
@@ -16,6 +17,7 @@ import 'services/background_service.dart';
 import 'services/app_settings.dart';
 import 'services/performance_monitor_service.dart';
 import 'services/shortcut_command_service.dart';
+import 'services/playbook_service.dart';
 import 'services/ssh_service.dart';
 import 'services/sftp_service.dart';
 import 'services/storage_service.dart';
@@ -47,8 +49,12 @@ Future<void> main() async {
           PerformanceMonitorService(sshService, storageService);
       final appSettings = AppSettings();
       final shortcutCommandService = ShortcutCommandService();
+      final playbookService = PlaybookService(
+        storageService: storageService,
+        sshService: sshService,
+      );
 
-      // 7 个 ChangeNotifier 通过 Provider 注入整棵 Widget 树
+      // 8 个 ChangeNotifier 通过 Provider 注入整棵 Widget 树
       runApp(
         MultiProvider(
           providers: [
@@ -59,6 +65,7 @@ Future<void> main() async {
             ChangeNotifierProvider.value(value: sshService),
             ChangeNotifierProvider.value(value: sftpService),
             ChangeNotifierProvider.value(value: performanceMonitorService),
+            ChangeNotifierProvider.value(value: playbookService),
           ],
           child: const SshMobileApp(),
         ),
@@ -191,6 +198,10 @@ class _SshMobileAppState extends State<SshMobileApp>
           case '/ai-skills':
             return MaterialPageRoute(
               builder: (_) => const AiSkillsScreen(),
+            );
+          case '/playbooks':
+            return MaterialPageRoute(
+              builder: (_) => const PlaybookScreen(),
             );
           case '/add':
             return MaterialPageRoute(
