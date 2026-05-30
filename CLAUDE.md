@@ -46,13 +46,13 @@ The `third_party/` directory is excluded from analysis (`analysis_options.yaml`)
 - `background_service.dart` — Android/iOS foreground service, notifications, WakeLock, power optimization checks. Platform-specific via `MethodChannel`.
 - `app_settings.dart` — Theme mode, language (zh/en), font family, SFTP size limits. Uses `SharedPreferences` directly.
 - `app_log_service.dart` — Application-wide structured logging with source file/line info.
-- `performance_monitor_service.dart` — Server CPU/memory/disk/network polling via SSH exec.
+- `performance_monitor_service.dart` — Server CPU/memory/disk/network/service status polling via SSH exec.
 - `shortcut_command_service.dart` — Terminal shortcut bar commands with user-defined order.
-- `server_status_probe.dart` — Read-only SSH exec probes for AI tools (performance, ports, applications).
+- `server_status_probe.dart` — Read-only SSH exec probes for AI tools (performance, ports, applications, services).
 - `client_system_tool_service.dart` — Client-side tool implementations (time, device info, network, battery, clipboard, alarms).
 
 **Main screens** (`lib/screens/`):
-- `home_screen.dart` — Bottom navigation hub (AI, Servers, SFTP, Monitor). Servers page includes embedded terminal window management.
+- `home_screen.dart` — Bottom navigation hub (AI, Servers, SFTP, Monitor - with Performance, Ports, Apps, and Services tabs). Servers page includes embedded terminal window management.
 - `llm_chat_screen.dart` — AI chat with multi-session, streaming Markdown, tool approval, context management, branching.
 - `terminal_screen.dart` — Full-screen xterm terminal with shortcut bar, font scaling, tmux session binding.
 - `sftp_screen.dart` — Remote file browser with upload/download/delete/edit/preview.

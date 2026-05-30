@@ -252,18 +252,33 @@ class LlmChatService implements LlmClientAdapter {
       enabled: settings.multiAgentEnabled,
       maxAgents: settings.multiAgentMaxAgents,
       checkCancelled: cancellationToken?.throwIfCancelled,
-      complete: (role, roleMessages) async {
+      classify: (classificationMessages) async {
+        final response = await _chatCompletion(
+          baseUrl: settings.baseUrl,
+          apiKey: apiKey,
+          model: model,
+          messages: classificationMessages,
+          timeoutSeconds: 5,
+          deepSeekThinkingEnabled: false,
+          deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
+          openAiReasoningEffort: 'low',
+          cancellationToken: cancellationToken,
+          operationLabel: 'LLM multi-agent classification',
+        );
+        return _contentFromChatResponse(response);
+      },
+      complete: (role, roleMessages, {required thinkingSettings}) async {
         final response = await _chatCompletion(
           baseUrl: settings.baseUrl,
           apiKey: apiKey,
           model: model,
           messages: roleMessages,
           timeoutSeconds: settings.timeoutSeconds,
-          deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
+          deepSeekThinkingEnabled: thinkingSettings.thinkingEnabled,
           deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
-          openAiReasoningEffort: settings.openAiReasoningEffort,
+          openAiReasoningEffort: thinkingSettings.reasoningEffort,
           cancellationToken: cancellationToken,
-          operationLabel: 'LLM multi-agent helper',
+          operationLabel: 'LLM multi-agent helper (${role.name})',
         );
         return _contentFromChatResponse(response);
       },

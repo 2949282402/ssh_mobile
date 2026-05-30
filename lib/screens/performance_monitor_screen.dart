@@ -60,6 +60,7 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
   int _selectionVersion = 0;
   String? _portConnectionId;
   String? _appConnectionId;
+  String? _serviceConnectionId;
 
   @override
   void didChangeDependencies() {
@@ -261,6 +262,10 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
         return _portConnectionId == null ? const {} : {_portConnectionId!};
       case 2:
         return _appConnectionId == null ? const {} : {_appConnectionId!};
+      case 3:
+        return _serviceConnectionId == null
+            ? const {}
+            : {_serviceConnectionId!};
       case 0:
       default:
         return monitorShell.selectedConnectionIds;
@@ -291,8 +296,10 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
     setState(() {
       if (_tabIndex == 1) {
         _portConnectionId = connectionId;
-      } else {
+      } else if (_tabIndex == 2) {
         _appConnectionId = connectionId;
+      } else {
+        _serviceConnectionId = connectionId;
       }
       _selectionVersion++;
     });
@@ -817,8 +824,10 @@ class _MonitorContentState extends State<_MonitorContent> {
   int _serversPerChart = 1;
   Future<Map<String, List<PortProcessSnapshot>>>? _portsFuture;
   Future<Map<String, List<ApplicationMemorySnapshot>>>? _appsFuture;
+  Future<Map<String, List<ServiceStatusSnapshot>>>? _servicesFuture;
   String? _portsSelectionKey;
   String? _appsSelectionKey;
+  String? _servicesSelectionKey;
   String? _chartItemsCacheKey;
   List<_MetricChartItem> _chartItemsCache = const [];
   final Set<String> _collapsedChartKeys = {};
@@ -854,6 +863,8 @@ class _MonitorContentState extends State<_MonitorContent> {
       _refreshPortsFuture();
     } else if (widget.tabIndex == 2) {
       _refreshApplicationsFuture();
+    } else if (widget.tabIndex == 3) {
+      _refreshServicesFuture();
     }
   }
 
@@ -880,6 +891,19 @@ class _MonitorContentState extends State<_MonitorContent> {
     if (force || _appsFuture == null || _appsSelectionKey != key) {
       _appsSelectionKey = key;
       _appsFuture = _loadApplications();
+    }
+  }
+
+  void _refreshServicesFuture({bool force = false}) {
+    final key = _connectionsCacheKey(widget.selectedConnections);
+    if (key == null) {
+      _servicesSelectionKey = null;
+      _servicesFuture = null;
+      return;
+    }
+    if (force || _servicesFuture == null || _servicesSelectionKey != key) {
+      _servicesSelectionKey = key;
+      _servicesFuture = _loadServices();
     }
   }
 
@@ -954,6 +978,16 @@ class _MonitorContentState extends State<_MonitorContent> {
           onRefresh: () =>
               setState(() => _refreshApplicationsFuture(force: true)),
           itemBuilder: _buildApplicationItem,
+        );
+      case 3:
+        return _ServerSnapshotTab<ServiceStatusSnapshot>(
+          strings: strings,
+          connections: activeConnections,
+          emptyText:
+              _monitorText(strings, 'No running services found', '未发现运行中的服务'),
+          future: _servicesFuture,
+          onRefresh: () => setState(() => _refreshServicesFuture(force: true)),
+          itemBuilder: _buildServiceItem,
         );
       case 0:
       default:
@@ -1147,6 +1181,14 @@ class _MonitorContentState extends State<_MonitorContent> {
     return result;
   }
 
+  Future<Map<String, List<ServiceStatusSnapshot>>> _loadServices() async {
+    final result = <String, List<ServiceStatusSnapshot>>{};
+    for (final connection in activeConnections) {
+      result[connection.id] = await monitor.fetchServices(connection.id);
+    }
+    return result;
+  }
+
   Widget _buildPortItem(BuildContext context, PortProcessSnapshot port) {
     return _PortProcessTile(
       strings: strings,
@@ -1175,6 +1217,14 @@ class _MonitorContentState extends State<_MonitorContent> {
         _formatBytes(app.rssBytes),
         style: const TextStyle(fontWeight: FontWeight.w800),
       ),
+    );
+  }
+
+  Widget _buildServiceItem(
+      BuildContext context, ServiceStatusSnapshot service) {
+    return _ServiceStatusTile(
+      strings: strings,
+      service: service,
     );
   }
 
@@ -1788,6 +1838,13 @@ class _MonitorTopTabs extends StatelessWidget {
                       icon: const Icon(Icons.apps_rounded),
                       label: Text(
                         _monitorText(strings, 'Applications', '应用监控'),
+                      ),
+                    ),
+                    ButtonSegment(
+                      value: 3,
+                      icon: const Icon(Icons.settings_suggest_outlined),
+                      label: Text(
+                        _monitorText(strings, 'Services', '服务监控'),
                       ),
                     ),
                   ],
@@ -2912,6 +2969,192 @@ class _PortProcessTileState extends State<_PortProcessTile> {
           sizeCurve: Curves.easeOutCubic,
         ),
       ],
+    );
+  }
+}
+
+class _ServiceStatusTile extends StatefulWidget {
+  final AppStrings strings;
+  final ServiceStatusSnapshot service;
+
+  const _ServiceStatusTile({
+    required this.strings,
+    required this.service,
+  });
+
+  @override
+  State<_ServiceStatusTile> createState() => _ServiceStatusTileState();
+}
+
+class _ServiceStatusTileState extends State<_ServiceStatusTile> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final service = widget.service;
+    final nameText = service.name.trim().isEmpty ? '-' : service.name.trim();
+    final displayNameText =
+        service.displayName.trim().isEmpty ? '-' : service.displayName.trim();
+
+    final isRunning = service.status.toLowerCase() == 'running' ||
+        service.activeState.toLowerCase() == 'active';
+    final statusColor = isRunning ? colorScheme.secondary : colorScheme.error;
+
+    return Column(
+      children: [
+        InkWell(
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Row(
+              children: [
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: statusColor,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        nameText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        displayNameText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: colorScheme.onSurfaceVariant,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: statusColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    service.status.toUpperCase(),
+                    style: TextStyle(
+                      color: statusColor,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  _expanded
+                      ? Icons.expand_less_rounded
+                      : Icons.expand_more_rounded,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ],
+            ),
+          ),
+        ),
+        AnimatedCrossFade(
+          firstChild: const SizedBox(width: double.infinity),
+          secondChild: Padding(
+            padding: const EdgeInsets.fromLTRB(34, 0, 12, 10),
+            child: Column(
+              children: [
+                _ServiceDetailLine(
+                  label: _monitorText(widget.strings, 'Service Name', '服务名称'),
+                  value: service.name,
+                ),
+                _ServiceDetailLine(
+                  label: _monitorText(widget.strings, 'Description', '描述'),
+                  value: service.displayName,
+                ),
+                _ServiceDetailLine(
+                  label: _monitorText(widget.strings, 'Status', '状态'),
+                  value: service.status,
+                ),
+                _ServiceDetailLine(
+                  label: _monitorText(widget.strings, 'Active State', '活动状态'),
+                  value: service.activeState,
+                ),
+                _ServiceDetailLine(
+                  label: _monitorText(widget.strings, 'Load State', '加载状态'),
+                  value: service.loadState,
+                ),
+              ],
+            ),
+          ),
+          crossFadeState:
+              _expanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+          duration: const Duration(milliseconds: 160),
+          sizeCurve: Curves.easeOutCubic,
+        ),
+      ],
+    );
+  }
+}
+
+class _ServiceDetailLine extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _ServiceDetailLine({
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 96,
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: colorScheme.onSurfaceVariant,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Text(
+                value,
+                maxLines: 1,
+                style: TextStyle(
+                  color: colorScheme.onSurface,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

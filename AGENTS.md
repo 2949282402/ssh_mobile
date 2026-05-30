@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This is a Flutter app for SSH, SFTP, server monitoring, logs, and OpenAI-compatible AI tools. Main Dart code lives in `lib/`: `screens/` for pages, `services/` for SSH/SFTP/storage/LLM logic, `models/` for connection data, `theme/` for shared styling, plus `utils/` and `widgets/`. Platform projects are in `android/`, `ios/`, `macos/`, and `windows/`. Static files belong in `assets/`, tests in `test/`, packaging scripts in `scripts/`, installer files in `installer/`, and longer design docs in `docs/`. The vendored terminal package under `third_party/xterm/` is excluded from the root analyzer.
+This is a Flutter app for SSH, SFTP, server monitoring (including general metrics, port usage, process application performance, and service status), logs, and OpenAI-compatible AI tools. Main Dart code lives in `lib/`: `screens/` for pages, `services/` for SSH/SFTP/storage/LLM logic, `models/` for connection data, `theme/` for shared styling, plus `utils/` and `widgets/`. Platform projects are in `android/`, `ios/`, `macos/`, and `windows/`. Static files belong in `assets/`, tests in `test/`, packaging scripts in `scripts/`, installer files in `installer/`, and longer design docs in `docs/`. The vendored terminal package under `third_party/xterm/` is excluded from the root analyzer.
 
 ## Build, Test, and Development Commands
 

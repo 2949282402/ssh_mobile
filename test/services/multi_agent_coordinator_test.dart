@@ -61,7 +61,7 @@ void main() {
 
   group('MultiAgentCoordinator execution', () {
     test('runs capped helper roles without tool definitions', () async {
-      const coordinator = MultiAgentCoordinator();
+      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
       final roles = <String>[];
       final roleMessages = <List<Map<String, dynamic>>>[];
 
@@ -71,7 +71,14 @@ void main() {
         messages: const [
           {'role': 'user', 'content': 'Implement and review an SSH fix'},
         ],
-        complete: (role, messages) async {
+        classify: (messages) async => jsonEncode({
+          "shouldCollaborate": true,
+          "reason": "complex fix",
+          "thinkingEnabled": false,
+          "reasoningEffort": "low",
+          "agentCount": 4
+        }),
+        complete: (role, messages, {required thinkingSettings}) async {
           roles.add(role.name);
           roleMessages.add(messages);
           return 'advice from ${role.label}';
@@ -91,7 +98,7 @@ void main() {
     });
 
     test('redacts helper output and degrades on partial failure', () async {
-      const coordinator = MultiAgentCoordinator();
+      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
 
       final result = await coordinator.run(
         enabled: true,
@@ -99,7 +106,14 @@ void main() {
         messages: const [
           {'role': 'user', 'content': 'debug logs and fix the server'},
         ],
-        complete: (role, messages) async {
+        classify: (messages) async => jsonEncode({
+          "shouldCollaborate": true,
+          "reason": "debug troubleshooting",
+          "thinkingEnabled": false,
+          "reasoningEffort": "low",
+          "agentCount": 3
+        }),
+        complete: (role, messages, {required thinkingSettings}) async {
           if (role.name == 'operator') {
             throw StateError('password=supersecret');
           }
@@ -115,7 +129,7 @@ void main() {
     });
 
     test('returns null when policy skips collaboration', () async {
-      const coordinator = MultiAgentCoordinator();
+      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
       var called = false;
 
       final result = await coordinator.run(
@@ -124,7 +138,14 @@ void main() {
         messages: const [
           {'role': 'user', 'content': 'hello'},
         ],
-        complete: (role, messages) async {
+        classify: (messages) async => jsonEncode({
+          "shouldCollaborate": false,
+          "reason": "simple greeting",
+          "thinkingEnabled": false,
+          "reasoningEffort": "low",
+          "agentCount": 2
+        }),
+        complete: (role, messages, {required thinkingSettings}) async {
           called = true;
           return jsonEncode({'role': role.name});
         },
@@ -132,6 +153,169 @@ void main() {
 
       expect(result, isNull);
       expect(called, isFalse);
+    });
+
+    test('retries failed helper roles up to 3 times with backoff', () async {
+      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
+      var operatorCalls = 0;
+
+      final result = await coordinator.run(
+        enabled: true,
+        maxAgents: 3,
+        messages: const [
+          {'role': 'user', 'content': 'debug logs and fix the server'},
+        ],
+        classify: (messages) async => jsonEncode({
+          "shouldCollaborate": true,
+          "reason": "complex fix",
+          "thinkingEnabled": false,
+          "reasoningEffort": "low",
+          "agentCount": 3
+        }),
+        complete: (role, messages, {required thinkingSettings}) async {
+          if (role.name == 'operator') {
+            operatorCalls++;
+            throw StateError('transient rate limit');
+          }
+          return 'advice from ${role.label}';
+        },
+      );
+
+      expect(result, isNotNull);
+      expect(operatorCalls, 4); // 1 initial attempt + 3 retries
+      expect(result!.traceContent, contains('transient rate limit'));
+    });
+
+    test('succeeds after retrying a transient failure', () async {
+      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
+      var operatorCalls = 0;
+
+      final result = await coordinator.run(
+        enabled: true,
+        maxAgents: 3,
+        messages: const [
+          {'role': 'user', 'content': 'debug logs and fix the server'},
+        ],
+        classify: (messages) async => jsonEncode({
+          "shouldCollaborate": true,
+          "reason": "complex fix",
+          "thinkingEnabled": false,
+          "reasoningEffort": "low",
+          "agentCount": 3
+        }),
+        complete: (role, messages, {required thinkingSettings}) async {
+          if (role.name == 'operator') {
+            operatorCalls++;
+            if (operatorCalls < 3) {
+              throw StateError('transient rate limit');
+            }
+            return 'resolved advice';
+          }
+          return 'advice from ${role.label}';
+        },
+      );
+
+      expect(result, isNotNull);
+      expect(operatorCalls, 3); // 2 failures + 1 success
+      expect(result!.memoryContent, contains('Operator: resolved advice'));
+    });
+
+    test('cancellation exits immediately without retrying', () async {
+      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
+      var operatorCalls = 0;
+      var cancelled = false;
+
+      try {
+        await coordinator.run(
+          enabled: true,
+          maxAgents: 3,
+          messages: const [
+            {'role': 'user', 'content': 'debug logs and fix the server'},
+          ],
+          classify: (messages) async => jsonEncode({
+            "shouldCollaborate": true,
+            "reason": "complex fix",
+            "thinkingEnabled": false,
+            "reasoningEffort": "low",
+            "agentCount": 3
+          }),
+          checkCancelled: () {
+            if (cancelled) {
+              throw StateError('cancelled');
+            }
+          },
+          complete: (role, messages, {required thinkingSettings}) async {
+            if (role.name == 'operator') {
+              operatorCalls++;
+              cancelled = true;
+              throw StateError('some error');
+            }
+            return 'advice';
+          },
+        );
+        fail('Should have thrown cancellation exception');
+      } catch (e) {
+        expect(e.toString(), contains('cancelled'));
+      }
+
+      expect(operatorCalls, 1); // Only 1 attempt before cancellation exit
+    });
+
+    test(
+        'propagates dynamic classification settings (thinking and reasoning effort)',
+        () async {
+      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
+      bool? propagatedThinking;
+      String? propagatedEffort;
+
+      final result = await coordinator.run(
+        enabled: true,
+        maxAgents: 3,
+        messages: const [
+          {'role': 'user', 'content': 'debug logs and fix the server'},
+        ],
+        classify: (messages) async => jsonEncode({
+          "shouldCollaborate": true,
+          "reason": "complex fix",
+          "thinkingEnabled": true,
+          "reasoningEffort": "medium",
+          "agentCount": 3
+        }),
+        complete: (role, messages, {required thinkingSettings}) async {
+          propagatedThinking = thinkingSettings.thinkingEnabled;
+          propagatedEffort = thinkingSettings.reasoningEffort;
+          return 'advice from ${role.label}';
+        },
+      );
+
+      expect(result, isNotNull);
+      expect(propagatedThinking, isTrue);
+      expect(propagatedEffort, 'medium');
+    });
+
+    test(
+        'gracefully falls back when classification returns invalid JSON or times out',
+        () async {
+      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
+      var completeCalled = false;
+
+      final result = await coordinator.run(
+        enabled: true,
+        maxAgents: 3,
+        messages: const [
+          {'role': 'user', 'content': 'debug logs and fix the server'},
+        ],
+        classify: (messages) async =>
+            'invalid markdown json ```json {invalid} ```',
+        complete: (role, messages, {required thinkingSettings}) async {
+          completeCalled = true;
+          return 'advice';
+        },
+      );
+
+      // Should fall back to shouldCollaborate: false, thus returning null and skipping sub-agents
+      expect(result, isNull);
+      expect(completeCalled, isFalse);
     });
   });
 

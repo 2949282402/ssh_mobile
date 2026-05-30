@@ -41,7 +41,7 @@ across sessions.
   directory panes, prefer a session-side `entriesRevision` over `listEquals`
   on every `Selector` pass so large directories do not pay repeated O(n)
   equality checks.
-- 2026-05-27: In the Performance Monitor page, keep Ports/Applications results
+- 2026-05-27: In the Performance Monitor page, keep Ports/Applications/Services results
   cached per selected-server key inside the page state so switching tabs does
   not refetch snapshots unless the selection changes or the user explicitly
   refreshes.

@@ -38,8 +38,17 @@ fi
 ps -eo pid,comm,rss,pmem,pcpu --sort=-rss | head -n 31
 ''';
 
+  static const servicesCommand = r'''
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl list-units --type=service --state=running --no-legend --no-pager
+else
+  echo "systemctl is not available" >&2
+  exit 127
+fi
+''';
+
   static const windowsStatusCommand = r'''
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $os=Get-CimInstance Win32_OperatingSystem; $cpu=(Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average; $diskBytes=0; try { $diskCounter=(Get-Counter '\PhysicalDisk(_Total)\Disk Bytes/sec' -ErrorAction Stop).CounterSamples | Measure-Object -Property CookedValue -Sum; $diskBytes=[double]$diskCounter.Sum } catch {}; $networkBytes=0; try { $networkCounter=(Get-Counter '\Network Interface(*)\Bytes Total/sec' -ErrorAction Stop).CounterSamples | Measure-Object -Property CookedValue -Sum; $networkBytes=[double]$networkCounter.Sum } catch {}; $disks=Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object { [pscustomobject]@{ name=$_.DeviceID; totalBytes=[int64]$_.Size; freeBytes=[int64]$_.FreeSpace; usedPercent= if ($_.Size) { [math]::Round((1-$_.FreeSpace/$_.Size)*100,1) } else { 0 } } }; $ports=Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object -First 200 LocalAddress,LocalPort,OwningProcess,State; $apps=Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 30 Id,ProcessName,CPU,WorkingSet64,@{Name='MemoryPercent';Expression={ if ($os.TotalVisibleMemorySize) { [math]::Round($_.WorkingSet64/($os.TotalVisibleMemorySize*1024)*100,2) } else { 0 } }}; [pscustomobject]@{ os='windows'; caption=$os.Caption; version=$os.Version; cpuPercent=[double]$cpu; memoryPercent=[math]::Round((1-$os.FreePhysicalMemory/$os.TotalVisibleMemorySize)*100,1); diskBytesPerSecond=$diskBytes; networkBytesPerSecond=$networkBytes; disks=$disks; ports=$ports; applications=$apps } | ConvertTo-Json -Depth 5 -Compress"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $os=Get-CimInstance Win32_OperatingSystem; $cpu=(Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average; $diskBytes=0; try { $diskCounter=(Get-Counter '\PhysicalDisk(_Total)\Disk Bytes/sec' -ErrorAction Stop).CounterSamples | Measure-Object -Property CookedValue -Sum; $diskBytes=[double]$diskCounter.Sum } catch {}; $networkBytes=0; try { $networkCounter=(Get-Counter '\Network Interface(*)\Bytes Total/sec' -ErrorAction Stop).CounterSamples | Measure-Object -Property CookedValue -Sum; $networkBytes=[double]$networkCounter.Sum } catch {}; $disks=Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object { [pscustomobject]@{ name=$_.DeviceID; totalBytes=[int64]$_.Size; freeBytes=[int64]$_.FreeSpace; usedPercent= if ($_.Size) { [math]::Round((1-$_.FreeSpace/$_.Size)*100,1) } else { 0 } } }; $ports=Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object -First 200 LocalAddress,LocalPort,OwningProcess,State; $apps=Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 30 Id,ProcessName,CPU,WorkingSet64,@{Name='MemoryPercent';Expression={ if ($os.TotalVisibleMemorySize) { [math]::Round($_.WorkingSet64/($os.TotalVisibleMemorySize*1024)*100,2) } else { 0 } }}; $services=Get-Service | Where-Object {$_.Status -eq 'Running'} | Select-Object -First 150 Name,DisplayName,@{Name='Status';Expression={$_.Status.ToString()}}; [pscustomobject]@{ os='windows'; caption=$os.Caption; version=$os.Version; cpuPercent=[double]$cpu; memoryPercent=[math]::Round((1-$os.FreePhysicalMemory/$os.TotalVisibleMemorySize)*100,1); diskBytesPerSecond=$diskBytes; networkBytesPerSecond=$networkBytes; disks=$disks; ports=$ports; applications=$apps; services=$services } | ConvertTo-Json -Depth 5 -Compress"
 ''';
 
   static RawServerCounters parsePerformanceOutput(String text) {
@@ -143,6 +152,32 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='
     return apps.take(30).toList(growable: false);
   }
 
+  static List<ServiceStatusSnapshot> parseServices(String text) {
+    final services = <ServiceStatusSnapshot>[];
+    for (final line in const LineSplitter().convert(text)) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      final fields = trimmed.split(RegExp(r'\s+'));
+      if (fields.length < 4) continue;
+      final name = fields[0];
+      final loadState = fields[1];
+      final activeState = fields[2];
+      final status = fields[3];
+      final displayName = fields.length > 4 ? fields.sublist(4).join(' ') : '';
+      services.add(
+        ServiceStatusSnapshot(
+          name: name,
+          displayName: displayName,
+          status: status,
+          activeState: activeState,
+          loadState: loadState,
+        ),
+      );
+    }
+    services.sort((a, b) => a.name.compareTo(b.name));
+    return services.toList(growable: false);
+  }
+
   static WindowsStatusSnapshot parseWindowsStatus(String text) {
     final decoded = jsonDecode(_extractJsonObject(text));
     if (decoded is! Map) {
@@ -161,6 +196,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='
       diskUsage: diskUsage,
       ports: _parseWindowsPorts(data['ports']),
       applications: _parseWindowsApplications(data['applications']),
+      services: _parseWindowsServices(data['services']),
     );
   }
 
@@ -375,6 +411,29 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='
     return apps.take(30).toList(growable: false);
   }
 
+  static List<ServiceStatusSnapshot> _parseWindowsServices(Object? value) {
+    final services = <ServiceStatusSnapshot>[];
+    for (final item in _asList(value)) {
+      if (item is! Map) continue;
+      final service = Map<String, dynamic>.from(item);
+      final name = _asString(service['Name']).trim();
+      if (name.isEmpty) continue;
+      final displayName = _asString(service['DisplayName']).trim();
+      final status = _asString(service['Status']).trim();
+      services.add(
+        ServiceStatusSnapshot(
+          name: name,
+          displayName: displayName,
+          status: status,
+          activeState: status,
+          loadState: 'loaded',
+        ),
+      );
+    }
+    services.sort((a, b) => a.name.compareTo(b.name));
+    return services.toList(growable: false);
+  }
+
   static bool _isPhysicalDisk(String name) {
     if (name.startsWith('loop') ||
         name.startsWith('ram') ||
@@ -454,6 +513,7 @@ class WindowsStatusSnapshot {
   final List<DiskUsageSnapshot> diskUsage;
   final List<PortProcessSnapshot> ports;
   final List<ApplicationMemorySnapshot> applications;
+  final List<ServiceStatusSnapshot> services;
 
   const WindowsStatusSnapshot({
     required this.cpuPercent,
@@ -463,6 +523,7 @@ class WindowsStatusSnapshot {
     required this.diskUsage,
     required this.ports,
     required this.applications,
+    required this.services,
   });
 }
 
@@ -556,5 +617,29 @@ class ApplicationMemorySnapshot {
         'rssBytes': rssBytes,
         'memoryPercent': memoryPercent,
         'cpuPercent': cpuPercent,
+      };
+}
+
+class ServiceStatusSnapshot {
+  final String name;
+  final String displayName;
+  final String status;
+  final String activeState;
+  final String loadState;
+
+  const ServiceStatusSnapshot({
+    required this.name,
+    required this.displayName,
+    required this.status,
+    required this.activeState,
+    required this.loadState,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'displayName': displayName,
+        'status': status,
+        'activeState': activeState,
+        'loadState': loadState,
       };
 }

@@ -41,7 +41,7 @@ PID COMMAND RSS %MEM %CPU
   test('parseWindowsStatus handles PowerShell JSON envelope', () {
     final snapshot = ServerStatusProbe.parseWindowsStatus('''
 noise before
-{"cpuPercent":42,"memoryPercent":66.6,"diskBytesPerSecond":1234,"networkBytesPerSecond":5678,"disks":[{"name":"C:","totalBytes":1000,"freeBytes":250,"usedPercent":75}],"ports":[{"LocalAddress":"0.0.0.0","LocalPort":3389,"OwningProcess":4321,"State":"Listen"}],"applications":[{"Id":7,"ProcessName":"powershell","CPU":1.5,"WorkingSet64":2048,"MemoryPercent":0.1}]}
+{"cpuPercent":42,"memoryPercent":66.6,"diskBytesPerSecond":1234,"networkBytesPerSecond":5678,"disks":[{"name":"C:","totalBytes":1000,"freeBytes":250,"usedPercent":75}],"ports":[{"LocalAddress":"0.0.0.0","LocalPort":3389,"OwningProcess":4321,"State":"Listen"}],"applications":[{"Id":7,"ProcessName":"powershell","CPU":1.5,"WorkingSet64":2048,"MemoryPercent":0.1}],"services":[{"Name":"wuauserv","DisplayName":"Windows Update","Status":"Running"}]}
 noise after
 ''');
 
@@ -49,5 +49,24 @@ noise after
     expect(snapshot.diskUsage.single.mount, 'C:');
     expect(snapshot.ports.single.port, 3389);
     expect(snapshot.applications.single.command, 'powershell');
+    expect(snapshot.services.single.name, 'wuauserv');
+    expect(snapshot.services.single.displayName, 'Windows Update');
+    expect(snapshot.services.single.status, 'Running');
+  });
+
+  test('parseServices handles systemctl active service rows', () {
+    final services = ServerStatusProbe.parseServices('''
+cron.service                           loaded active running Regular background program processing daemon
+dbus.service                           loaded active running D-Bus System Message Bus
+docker.service                         loaded active running Docker Application Container Engine
+''');
+
+    expect(services, hasLength(3));
+    expect(services.first.name, 'cron.service');
+    expect(services.first.loadState, 'loaded');
+    expect(services.first.activeState, 'active');
+    expect(services.first.status, 'running');
+    expect(services.first.displayName,
+        'Regular background program processing daemon');
   });
 }

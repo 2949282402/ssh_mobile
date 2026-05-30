@@ -531,6 +531,27 @@ class PerformanceMonitorService extends ChangeNotifier {
     return ServerStatusProbe.parseApplications(result.stdout);
   }
 
+  Future<List<ServiceStatusSnapshot>> fetchServices(
+    String connectionId,
+  ) async {
+    if (_platformFor(connectionId) == ServerPlatform.windows) {
+      return (await _fetchWindowsStatus(
+        connectionId,
+        const Duration(seconds: 20),
+      ))
+          .services;
+    }
+    final result = await _runOneShotWithRetry(
+      connectionId: connectionId,
+      command: ServerStatusProbe.servicesCommand,
+      timeout: const Duration(seconds: 12),
+    );
+    if (result.exitCode != 0 && result.stdout.trim().isEmpty) {
+      throw StateError(result.stderr.trim());
+    }
+    return ServerStatusProbe.parseServices(result.stdout);
+  }
+
   Future<WindowsStatusSnapshot> _fetchWindowsStatus(
     String connectionId,
     Duration timeout,
