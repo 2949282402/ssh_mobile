@@ -123,4 +123,9 @@ across sessions.
   zooming and transitions. Added queue limits in `TerminalScreen` to discard
   excess writes exceeding 200,000 characters, preventing memory leaks and UI
   freezes on massive runaway terminal streams.
+- 2026-05-31: Config export and import (version 2) now includes AppSettings
+  (theme, language, font, SFTP limits), ShortcutCommandService (usage, custom
+  commands, order), secret cache configs, and max AI upload sizes. Registered
+  callbacks in `StorageService` (`registerOnImportCallback`) allow high-level
+  ChangeNotifiers to automatically reload and refresh UI states post-import.
 

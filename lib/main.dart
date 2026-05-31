@@ -76,6 +76,10 @@ Future<void> main() async {
       unawaited(
         storageService.init().then((_) {
           appLogService.info('Storage initialized');
+          storageService.registerOnImportCallback(() {
+            unawaited(appSettings.init());
+            unawaited(shortcutCommandService.init());
+          });
           return sshService.restoreTmuxSessions(); // 从持久化状态恢复 tmux 会话
         }),
       );

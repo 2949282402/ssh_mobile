@@ -406,4 +406,100 @@ void main() {
     );
     expect(await storage.getQuarkApiKey(), isNull);
   });
+
+  test('custom settings, shortcuts, and secret cache persist, export, and import',
+      () async {
+    storage = await initializedStorage();
+
+    // 1. Setup mock initial settings in SharedPreferences directly
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('app_language', 'en');
+    await prefs.setString('theme_mode', 'dark');
+    await prefs.setBool('dark_mode', true);
+    await prefs.setString('font_family', 'Roboto');
+    await prefs.setInt('sftp_download_limit_bytes', 1024 * 1024);
+    await prefs.setInt('sftp_text_preview_limit_bytes', 2048);
+    await prefs.setInt('sftp_rich_preview_limit_bytes', 4096);
+    await prefs.setInt('sftp_text_edit_limit_bytes', 512);
+
+    await prefs.setString('shortcut_command_usage', '{"cmd1": 5}');
+    await prefs.setString('custom_shortcut_commands', '[{"id":"c1","label":"Custom","code":"ls","custom":true}]');
+    await prefs.setString('shortcut_command_order', '["c1"]');
+
+    await storage.setSecretCacheEnabled(false);
+    await storage.setSecretCacheTtl(const Duration(minutes: 5));
+
+    await storage.saveAiConnectionSettings(
+      baseUrl: 'https://api.example.com',
+      model: 'demo-model',
+      maxImageSizeBytes: 5 * 1024 * 1024,
+      maxFileSizeBytes: 50 * 1024 * 1024,
+    );
+
+    // 2. Verify settings are correctly exported
+    final jsonText = await storage.exportAppDataJson();
+    final decoded = jsonDecode(jsonText) as Map<String, dynamic>;
+
+    expect(decoded['version'], 2);
+
+    final appSettings = decoded['appSettings'] as Map<String, dynamic>;
+    expect(appSettings['language'], 'en');
+    expect(appSettings['themeMode'], 'dark');
+    expect(appSettings['darkMode'], isTrue);
+    expect(appSettings['fontFamily'], 'Roboto');
+    expect(appSettings['sftpDownloadLimitBytes'], 1024 * 1024);
+    expect(appSettings['sftpTextPreviewLimitBytes'], 2048);
+    expect(appSettings['sftpRichPreviewLimitBytes'], 4096);
+    expect(appSettings['sftpTextEditLimitBytes'], 512);
+
+    final shortcutCommands = decoded['shortcutCommands'] as Map<String, dynamic>;
+    expect(shortcutCommands['usage'], '{"cmd1": 5}');
+    expect(shortcutCommands['customCommands'], '[{"id":"c1","label":"Custom","code":"ls","custom":true}]');
+    expect(shortcutCommands['order'], '["c1"]');
+
+    final secretCache = decoded['secretCache'] as Map<String, dynamic>;
+    expect(secretCache['enabled'], isFalse);
+    expect(secretCache['ttlSeconds'], 300);
+
+    final aiSettings = decoded['aiSettings'] as Map<String, dynamic>;
+    expect(aiSettings['maxImageSizeBytes'], 5 * 1024 * 1024);
+    expect(aiSettings['maxFileSizeBytes'], 50 * 1024 * 1024);
+
+    // 3. Clear settings/create a fresh storage and verify import and callback
+    final newStorage = await initializedStorage();
+
+    // Register import callback
+    var callbackTriggered = false;
+    newStorage.registerOnImportCallback(() {
+      callbackTriggered = true;
+    });
+
+    await newStorage.importAppDataJson(jsonText);
+
+    expect(callbackTriggered, isTrue);
+
+    // Verify imported values in new storage
+    final newPrefs = await SharedPreferences.getInstance();
+    expect(newPrefs.getString('app_language'), 'en');
+    expect(newPrefs.getString('theme_mode'), 'dark');
+    expect(newPrefs.getBool('dark_mode'), isTrue);
+    expect(newPrefs.getString('font_family'), 'Roboto');
+    expect(newPrefs.getInt('sftp_download_limit_bytes'), 1024 * 1024);
+    expect(newPrefs.getInt('sftp_text_preview_limit_bytes'), 2048);
+    expect(newPrefs.getInt('sftp_rich_preview_limit_bytes'), 4096);
+    expect(newPrefs.getInt('sftp_text_edit_limit_bytes'), 512);
+
+    expect(newPrefs.getString('shortcut_command_usage'), '{"cmd1": 5}');
+    expect(newPrefs.getString('custom_shortcut_commands'), '[{"id":"c1","label":"Custom","code":"ls","custom":true}]');
+    expect(newPrefs.getString('shortcut_command_order'), '["c1"]');
+
+    expect(newStorage.isSecretCacheEnabled, isFalse);
+    expect(newStorage.secretCacheTtlMinutes, 5);
+
+    final newAiSettings = await newStorage.loadAiConnectionSettings();
+    expect(newAiSettings.maxImageSizeBytes, 5 * 1024 * 1024);
+    expect(newAiSettings.maxFileSizeBytes, 50 * 1024 * 1024);
+
+    newStorage.dispose();
+  });
 }
