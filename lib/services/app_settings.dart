@@ -21,6 +21,7 @@ class AppSettings extends ChangeNotifier {
   static const _fontFamilyKey = 'font_family';
   static const _ragEnabledKey = 'rag_enabled';
   static const _ragSearchModeKey = 'rag_search_mode';
+  static const _ragTopNKey = 'rag_top_n';
   static const _sftpDownloadLimitBytesKey = 'sftp_download_limit_bytes';
   static const _sftpTextPreviewLimitBytesKey = 'sftp_text_preview_limit_bytes';
   static const _sftpRichPreviewLimitBytesKey = 'sftp_rich_preview_limit_bytes';
@@ -41,6 +42,7 @@ class AppSettings extends ChangeNotifier {
   int _sftpTextEditLimitBytes = defaultSftpTextEditLimitBytes;
   bool _ragEnabled = false;
   String _ragSearchMode = 'bm25'; // 'bm25', 'vector', 'hybrid'
+  int _ragTopN = 3;
   bool _initialized = false;
   Future<void> _themeWrite = Future.value();
 
@@ -51,6 +53,7 @@ class AppSettings extends ChangeNotifier {
   bool get isDarkMode => _themeMode == ThemeMode.dark;
   bool get ragEnabled => _ragEnabled;
   String get ragSearchMode => _ragSearchMode;
+  int get ragTopN => _ragTopN;
   String get fontFamilyId => _fontFamilyId;
   String? get fontFamily => AppFontChoice.byId(_fontFamilyId).fontFamily;
   AppFontChoice get fontChoice => AppFontChoice.byId(_fontFamilyId);
@@ -87,6 +90,7 @@ class AppSettings extends ChangeNotifier {
       );
       _ragEnabled = prefs.getBool(_ragEnabledKey) ?? false;
       _ragSearchMode = prefs.getString(_ragSearchModeKey) ?? 'bm25';
+      _ragTopN = prefs.getInt(_ragTopNKey) ?? 3;
     } catch (_) {
       _language = AppLanguage.zh;
       _themeMode = ThemeMode.light;
@@ -97,6 +101,7 @@ class AppSettings extends ChangeNotifier {
       _sftpTextEditLimitBytes = defaultSftpTextEditLimitBytes;
       _ragEnabled = false;
       _ragSearchMode = 'bm25';
+      _ragTopN = 3;
     } finally {
       _initialized = true;
       notifyListeners();
@@ -125,6 +130,14 @@ class AppSettings extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_ragSearchModeKey, mode);
+  }
+
+  Future<void> setRagTopN(int value) async {
+    if (_ragTopN == value) return;
+    _ragTopN = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_ragTopNKey, value);
   }
 
   void toggleTheme() {

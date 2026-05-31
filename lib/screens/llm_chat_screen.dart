@@ -671,6 +671,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                                     webViewLabel: strings.webView,
                                     imageLabel: strings.attachImage,
                                     fileLabel: strings.attachFile,
+                                    ragLabel: strings.ragTitle,
                                     onServerTap: () =>
                                         _selectTargetServer(strings),
                                     onSkillsTap: () {
@@ -681,6 +682,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                                         _openClientWebView(activeChat.id),
                                     onImageTap: () => _pickImage(strings),
                                     onFileTap: () => _pickFile(strings),
+                                    onRagTap: () =>
+                                        _showRagBottomSheet(context, strings),
                                   ),
                                 )
                               : const SizedBox(width: double.infinity),
@@ -2315,469 +2318,154 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       }
       return;
     }
+  }
 
-    final baseUrlController = TextEditingController(text: settings.baseUrl);
-    final modelController = TextEditingController(text: settings.model);
-    final apiKeyController = TextEditingController();
-    final quarkApiKeyController = TextEditingController();
-    final quarkEndpointController =
-        TextEditingController(text: settings.quarkSearchEndpoint);
-    var models = _modelOptions(settings.model);
-    var contextWindowTokens = settings.contextWindowTokens;
-    var timeoutSeconds = settings.timeoutSeconds;
-    var deepSeekThinkingEnabled = settings.deepSeekThinkingEnabled;
-    var deepSeekReasoningEffort = settings.deepSeekReasoningEffort;
-    var webSearchEnabled = settings.webSearchEnabled;
-    var webSearchMaxResults = settings.webSearchMaxResults;
-    var webSearchEngine = settings.webSearchEngine;
-    var multiAgentEnabled = settings.multiAgentEnabled;
-    var multiAgentMaxAgents = settings.multiAgentMaxAgents;
-    var loadingModels = false;
-    var savingSettings = false;
-    String? modelLoadError;
+  Future<void> _showRagBottomSheet(BuildContext context, _AiStrings strings) async {
+    final appSettings = context.read<AppSettings>();
+    final storage = context.read<StorageService>();
+    final aliyunKey = await storage.getAliyunApiKey();
+    final hasAliyunKey = aliyunKey != null && aliyunKey.isNotEmpty;
 
-    Future<void> refreshModels(
-      BuildContext ctx,
-      void Function(void Function()) setDialogState,
-    ) async {
-      final typedApiKey = apiKeyController.text.trim();
-      setDialogState(() {
-        loadingModels = true;
-        modelLoadError = null;
-      });
-      try {
-        final service = LlmChatService(
-          storageService: storage,
-          toolService: AiToolService(
-            storageService: storage,
-            sshService: context.read<SshService>(),
-            sftpService: context.read<SftpService>(),
-            performanceMonitorToolService: PerformanceMonitorToolService(
-              context.read<PerformanceMonitorService>(),
-            ),
-            appSettings: context.read<AppSettings>(),
-            playbookService: context.read<PlaybookService>(),
-          ),
-        );
-        final fetched = await service.fetchModels(
-          baseUrl: baseUrlController.text.trim(),
-          apiKey: typedApiKey.isEmpty ? null : typedApiKey,
-        );
-        if (!ctx.mounted) return;
-        setDialogState(() {
-          models = resolveFetchedModelOptions(
-            fetchedModels: fetched,
-            fallbackModels: models,
-          );
-          loadingModels = false;
-          if (models.isNotEmpty && !models.contains(modelController.text)) {
-            modelController.text = models.first;
-          }
-        });
-      } catch (e, stackTrace) {
-        AppLogService.instance.error(
-          'LLM model refresh failed in settings',
-          error: e,
-          stackTrace: stackTrace,
-          details: 'baseUrl=${baseUrlController.text.trim()}',
-        );
-        if (!ctx.mounted) return;
-        setDialogState(() {
-          loadingModels = false;
-          modelLoadError = e.toString();
-        });
-      }
-    }
+    if (!context.mounted) return;
 
-    final nextSettings = await showDialog<_PendingAiSettings>(
+    await showModalBottomSheet(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: Text(strings.settings),
-          content: SizedBox(
-            width: 520,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: baseUrlController,
-                    decoration: InputDecoration(labelText: strings.baseUrl),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: apiKeyController,
-                    obscureText: true,
-                    decoration: InputDecoration(
-                      labelText: settings.hasApiKey
-                          ? strings.apiKeySaved
-                          : strings.apiKeyRequired,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) {
+          final theme = Theme.of(context);
+          final ragEnabled = appSettings.ragEnabled;
+          final searchMode = appSettings.ragSearchMode;
+          final topN = appSettings.ragTopN;
+
+          return Padding(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              16,
+              16,
+              MediaQuery.of(context).viewInsets.bottom + 24,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.auto_stories, color: theme.colorScheme.primary),
+                        const SizedBox(width: 8),
+                        Text(
+                          strings.ragTitle,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: DropdownButtonFormField<String>(
-                          initialValue: models.contains(modelController.text)
-                              ? modelController.text
-                              : models.first,
-                          isExpanded: true,
-                          decoration: InputDecoration(labelText: strings.model),
-                          selectedItemBuilder: (context) => [
-                            for (final model in models)
-                              Align(
-                                alignment: Alignment.centerLeft,
-                                child: Text(
-                                  model,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  softWrap: false,
-                                ),
-                              ),
-                          ],
-                          items: [
-                            for (final model in models)
-                              DropdownMenuItem(
-                                value: model,
-                                child: Text(
-                                  model,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  softWrap: false,
-                                ),
-                              ),
-                          ],
-                          onChanged: (value) {
-                            if (value != null) modelController.text = value;
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        tooltip: strings.refreshModels,
-                        icon: loadingModels
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.sync_rounded),
-                        onPressed: loadingModels
-                            ? null
-                            : () => refreshModels(ctx, setDialogState),
-                      ),
-                    ],
-                  ),
-                  if (modelLoadError != null) ...[
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        strings.modelsFailed(modelLoadError!),
-                        style: TextStyle(
-                          color: Theme.of(ctx).colorScheme.error,
-                          fontSize: 12,
-                        ),
-                      ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(context),
                     ),
                   ],
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<int>(
-                    initialValue: contextWindowTokens,
-                    isExpanded: true,
-                    decoration:
-                        const InputDecoration(labelText: 'Context window'),
-                    items: [
-                      for (final value in AiContextWindowSize.values)
-                        DropdownMenuItem(
-                          value: value,
-                          child: Text(AiContextWindowSize.label(value)),
-                        ),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) contextWindowTokens = value;
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<int>(
-                    initialValue: timeoutSeconds,
-                    isExpanded: true,
-                    decoration:
-                        InputDecoration(labelText: strings.requestTimeout),
-                    items: [
-                      for (final value in AiRequestTimeout.values)
-                        DropdownMenuItem(
-                          value: value,
-                          child: Text(AiRequestTimeout.label(value)),
-                        ),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) timeoutSeconds = value;
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  SwitchListTile.adaptive(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(strings.multiAgent),
-                    subtitle: Text(strings.multiAgentHint),
-                    value: multiAgentEnabled,
-                    onChanged: savingSettings
-                        ? null
-                        : (value) {
-                            setDialogState(() => multiAgentEnabled = value);
-                          },
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<int>(
-                    initialValue: AiMultiAgentMaxAgents.normalize(
-                      multiAgentMaxAgents,
-                    ),
-                    isExpanded: true,
-                    decoration: InputDecoration(
-                      labelText: strings.multiAgentMaxAgents,
-                    ),
-                    items: [
-                      for (final value in AiMultiAgentMaxAgents.values)
-                        DropdownMenuItem(
-                          value: value,
-                          child: Text('$value'),
-                        ),
-                    ],
-                    onChanged: savingSettings || !multiAgentEnabled
-                        ? null
-                        : (value) {
-                            if (value != null) multiAgentMaxAgents = value;
-                          },
-                  ),
-                  const SizedBox(height: 12),
-                  SwitchListTile.adaptive(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(strings.deepSeekThinking),
-                    subtitle: Text(strings.deepSeekThinkingHint),
-                    value: deepSeekThinkingEnabled,
-                    onChanged: savingSettings
-                        ? null
-                        : (value) {
-                            setDialogState(
-                              () => deepSeekThinkingEnabled = value,
-                            );
-                          },
-                  ),
+                ),
+                const Divider(),
+                const SizedBox(height: 8),
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(strings.ragTitle),
+                  subtitle: Text(strings.ragHint),
+                  value: ragEnabled,
+                  onChanged: (value) async {
+                    await appSettings.setRagEnabled(value);
+                    setState(() {});
+                  },
+                ),
+                if (ragEnabled) ...[
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
-                    initialValue: DeepSeekReasoningEffort.normalize(
-                      deepSeekReasoningEffort,
-                    ),
+                    initialValue: searchMode,
                     isExpanded: true,
                     decoration: InputDecoration(
-                      labelText: strings.deepSeekReasoningEffort,
+                      labelText: strings.ragSearchMode,
+                      isDense: true,
                     ),
                     items: [
-                      for (final value in DeepSeekReasoningEffort.values)
-                        DropdownMenuItem(
-                          value: value,
-                          child: Text(DeepSeekReasoningEffort.label(value)),
-                        ),
-                    ],
-                    onChanged: savingSettings || !deepSeekThinkingEnabled
-                        ? null
-                        : (value) {
-                            if (value != null) {
-                              deepSeekReasoningEffort = value;
-                            }
-                          },
-                  ),
-                  const SizedBox(height: 12),
-                  SwitchListTile.adaptive(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(strings.webSearch),
-                    subtitle: Text(strings.webSearchHint),
-                    value: webSearchEnabled,
-                    onChanged: savingSettings
-                        ? null
-                        : (value) {
-                            setDialogState(() => webSearchEnabled = value);
-                          },
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: webSearchEngine,
-                    isExpanded: true,
-                    decoration: InputDecoration(
-                      labelText: strings.webSearchEngine,
-                    ),
-                    items: [
-                      for (final value in AiWebSearchEngine.values)
-                        DropdownMenuItem(
-                          value: value,
-                          child: Text(strings.webSearchEngineLabel(value)),
-                        ),
-                    ],
-                    onChanged: savingSettings || !webSearchEnabled
-                        ? null
-                        : (value) {
-                            if (value != null) {
-                              setDialogState(() => webSearchEngine = value);
-                            }
-                          },
-                  ),
-                  if (webSearchEnabled &&
-                      webSearchEngine == AiWebSearchEngine.quark) ...[
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: quarkApiKeyController,
-                      obscureText: true,
-                      decoration: InputDecoration(
-                        labelText: settings.hasQuarkApiKey
-                            ? strings.quarkApiKeySaved
-                            : strings.quarkApiKeyRequired,
-                        helperText: strings.quarkApiKeyReplaceHint,
+                      DropdownMenuItem(
+                        value: 'bm25',
+                        child: Text(strings.ragSearchModeBm25),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: quarkEndpointController,
-                      decoration: InputDecoration(
-                        labelText: strings.quarkSearchEndpoint,
-                        helperText: strings.quarkSearchEndpointHint,
+                      DropdownMenuItem(
+                        value: 'vector',
+                        child: Text(strings.ragSearchModeVector),
                       ),
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<int>(
-                    initialValue:
-                        AiWebSearchMaxResults.normalize(webSearchMaxResults),
-                    isExpanded: true,
-                    decoration:
-                        InputDecoration(labelText: strings.webSearchMaxResults),
-                    items: [
-                      for (final value in AiWebSearchMaxResults.values)
-                        DropdownMenuItem(
-                          value: value,
-                          child: Text('$value'),
-                        ),
+                      DropdownMenuItem(
+                        value: 'hybrid',
+                        child: Text(strings.ragSearchModeHybrid),
+                      ),
                     ],
-                    onChanged: savingSettings || !webSearchEnabled
-                        ? null
-                        : (value) {
-                            if (value != null) webSearchMaxResults = value;
-                          },
-                  ),
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: savingSettings ? null : () => Navigator.pop(ctx),
-              child: Text(strings.cancel),
-            ),
-            FilledButton(
-              onPressed: savingSettings
-                  ? null
-                  : () async {
-                      FocusScope.of(ctx).unfocus();
-                      final pending = _PendingAiSettings(
-                        baseUrl: baseUrlController.text,
-                        model: modelController.text,
-                        contextWindowTokens: contextWindowTokens,
-                        timeoutSeconds: timeoutSeconds,
-                        deepSeekThinkingEnabled: deepSeekThinkingEnabled,
-                        deepSeekReasoningEffort: deepSeekReasoningEffort,
-                        openAiReasoningEffort: settings.openAiReasoningEffort,
-                        webSearchEnabled: webSearchEnabled,
-                        webSearchMaxResults: webSearchMaxResults,
-                        webSearchEngine: webSearchEngine,
-                        quarkSearchEndpoint: quarkEndpointController.text,
-                        quarkApiKey: quarkApiKeyController.text,
-                        multiAgentEnabled: multiAgentEnabled,
-                        multiAgentMaxAgents: multiAgentMaxAgents,
-                        maxImageSizeBytes: settings.maxImageSizeBytes,
-                        maxFileSizeBytes: settings.maxFileSizeBytes,
-                        apiKey: apiKeyController.text,
-                        selectedApiKeyId: settings.activeApiKeyId,
-                      );
-                      setDialogState(() {
-                        savingSettings = true;
-                        modelLoadError = null;
-                      });
-                      try {
-                        await storage.saveAiConnectionSettings(
-                          baseUrl: pending.baseUrl,
-                          model: pending.model,
-                          contextWindowTokens: pending.contextWindowTokens,
-                          timeoutSeconds: pending.timeoutSeconds,
-                          deepSeekThinkingEnabled:
-                              pending.deepSeekThinkingEnabled,
-                          deepSeekReasoningEffort:
-                              pending.deepSeekReasoningEffort,
-                          openAiReasoningEffort: pending.openAiReasoningEffort,
-                          webSearchEnabled: pending.webSearchEnabled,
-                          webSearchMaxResults: pending.webSearchMaxResults,
-                          webSearchEngine: pending.webSearchEngine,
-                          quarkSearchEndpoint: pending.quarkSearchEndpoint,
-                          quarkApiKey: pending.quarkApiKey,
-                          multiAgentEnabled: pending.multiAgentEnabled,
-                          multiAgentMaxAgents: pending.multiAgentMaxAgents,
-                          apiKey: pending.apiKey,
-                          selectedApiKeyId: pending.selectedApiKeyId,
-                        );
-                        if (!ctx.mounted) return;
-                        Navigator.pop(ctx, pending);
-                      } catch (e, stackTrace) {
-                        AppLogService.instance.error(
-                          'LLM settings save failed',
-                          error: e,
-                          stackTrace: stackTrace,
-                          details:
-                              'baseUrl=${pending.baseUrl.trim()} model=${pending.model.trim()} apiKeyProvided=${pending.apiKey.trim().isNotEmpty}',
-                        );
-                        if (!ctx.mounted) return;
-                        setDialogState(() {
-                          savingSettings = false;
-                          modelLoadError = e.toString();
-                        });
+                    onChanged: (value) async {
+                      if (value != null) {
+                        await appSettings.setRagSearchMode(value);
+                        setState(() {});
                       }
                     },
-              child: savingSettings
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Text(strings.save),
+                  ),
+                  const SizedBox(height: 14),
+                  DropdownButtonFormField<int>(
+                    initialValue: topN,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      labelText: strings.ragTopN,
+                      isDense: true,
+                    ),
+                    items: [
+                      for (final value in [1, 2, 3, 4, 5, 6, 8, 10])
+                        DropdownMenuItem(
+                          value: value,
+                          child: Text(strings.ragTopNValue(value)),
+                        ),
+                    ],
+                    onChanged: (value) async {
+                      if (value != null) {
+                        await appSettings.setRagTopN(value);
+                        setState(() {});
+                      }
+                    },
+                  ),
+                  if ((searchMode == 'vector' || searchMode == 'hybrid') && !hasAliyunKey) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      strings.ragSearchModeNeedKey,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: theme.colorScheme.error,
+                      ),
+                    ),
+                  ],
+                ],
+                const SizedBox(height: 20),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.folder_shared_outlined),
+                  label: Text(strings.ragManage),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  onPressed: () {
+                    Navigator.pop(context);
+                    Navigator.pushNamed(context, '/rag-knowledge');
+                  },
+                ),
+              ],
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
-
-    baseUrlController.dispose();
-    modelController.dispose();
-    apiKeyController.dispose();
-    quarkApiKeyController.dispose();
-    quarkEndpointController.dispose();
-
-    if (nextSettings == null) return;
-    if (!mounted) return;
-    setState(() => _contextWindowTokens = nextSettings.contextWindowTokens);
-    final activeChat = _activeChat;
-    final nextModel = nextSettings.model.trim();
-    if (activeChat != null &&
-        nextModel.isNotEmpty &&
-        activeChat.model != nextModel) {
-      final updatedChat = activeChat.copyWith(
-        model: nextModel,
-        updatedAt: DateTime.now(),
-      );
-      if (activeChat.messages.isEmpty) {
-        setState(() => _replaceChat(updatedChat));
-      } else {
-        await _updateActiveChat(updatedChat);
-      }
-    }
   }
 
   void _appendTraceToAssistant({
@@ -3883,11 +3571,13 @@ class _ChatToolsBar extends StatelessWidget {
   final String webViewLabel;
   final String imageLabel;
   final String fileLabel;
+  final String ragLabel;
   final VoidCallback onServerTap;
   final VoidCallback onSkillsTap;
   final VoidCallback onWebViewTap;
   final VoidCallback onImageTap;
   final VoidCallback onFileTap;
+  final VoidCallback onRagTap;
 
   const _ChatToolsBar({
     required this.skillsLabel,
@@ -3895,11 +3585,13 @@ class _ChatToolsBar extends StatelessWidget {
     required this.webViewLabel,
     required this.imageLabel,
     required this.fileLabel,
+    required this.ragLabel,
     required this.onServerTap,
     required this.onSkillsTap,
     required this.onWebViewTap,
     required this.onImageTap,
     required this.onFileTap,
+    required this.onRagTap,
   });
 
   @override
@@ -3958,6 +3650,12 @@ class _ChatToolsBar extends StatelessWidget {
                   icon: Icons.attach_file_rounded,
                   label: Text(fileLabel),
                   onPressed: onFileTap,
+                ),
+                _ChatToolTile(
+                  width: tileWidth,
+                  icon: Icons.auto_stories_outlined,
+                  label: Text(ragLabel),
+                  onPressed: onRagTap,
                 ),
               ],
             );
@@ -5819,6 +5517,8 @@ class _AiStrings {
   String get ragSearchModeNeedKey => _en
       ? '⚠️ Semantic & Hybrid modes require Aliyun API Key configured in Knowledge Base settings.'
       : '⚠️ 语义向量与混合检索模式需要在下方“管理运维知识库”中配置阿里云 API 密钥。';
+  String get ragTopN => _en ? 'Retrieval Context Count (Top N)' : '知识库参考段数 (Top N)';
+  String ragTopNValue(int value) => _en ? '$value chunks' : '$value 个参考段';
   String get webSearchMaxResults => _en ? 'Search results per call' : '每次搜索结果数';
   String get webSearchEngine => _en ? 'Web search engine' : '搜索引擎';
 
