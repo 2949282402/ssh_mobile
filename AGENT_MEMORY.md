@@ -118,3 +118,9 @@ across sessions.
   definitions or execute SSH/SFTP/client tools directly; keep real tool calls,
   approval gates, cancellation, and secret redaction under the primary
   `LlmChatService`/`AiToolService` flow.
+- 2026-05-31: Removed unnecessary dynamic ValueKey from RepaintBoundary in
+  `TerminalViewArea` to prevent element disposal and subtree recreation during
+  zooming and transitions. Added queue limits in `TerminalScreen` to discard
+  excess writes exceeding 200,000 characters, preventing memory leaks and UI
+  freezes on massive runaway terminal streams.
+

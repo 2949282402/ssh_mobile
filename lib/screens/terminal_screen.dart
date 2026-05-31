@@ -270,6 +270,15 @@ class _TerminalScreenState extends State<TerminalScreen>
     if (!mounted || data.isEmpty) return;
     _pendingTerminalWrites.add(data);
     _pendingTerminalWriteChars += data.length;
+
+    // Guard against massive streams causing Out Of Memory (OOM) or long UI freezes.
+    // Since the scrollback is capped at 4000 lines, caching and processing
+    // more than 200,000 characters of pending output is redundant and laggy.
+    while (_pendingTerminalWriteChars > 200000 && _pendingTerminalWrites.length > 1) {
+      final removed = _pendingTerminalWrites.removeFirst();
+      _pendingTerminalWriteChars -= removed.length;
+    }
+
     if (_terminalWriteScheduled) return;
     _terminalWriteScheduled = true;
     WidgetsBinding.instance.scheduleFrameCallback((_) {

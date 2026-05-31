@@ -245,11 +245,6 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
   @override
   Widget build(BuildContext context) {
     _scheduleMetricsUpdate();
-    final terminalPaintKey = Object.hash(
-      widget.fontSize.toStringAsFixed(2),
-      widget.theme.background,
-      widget.theme.foreground,
-    );
 
     return Stack(
       children: [
@@ -267,7 +262,6 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
                 child: NotificationListener<ScrollNotification>(
                   onNotification: _handleScrollNotification,
                   child: RepaintBoundary(
-                    key: ValueKey<int>(terminalPaintKey),
                     child: ClipRect(
                       child: TerminalView(
                         key: widget.terminalViewKey,
