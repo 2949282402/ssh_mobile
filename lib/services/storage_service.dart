@@ -156,6 +156,7 @@ class StorageService extends ChangeNotifier
   static const _aiWebSearchEngineKey = 'ai_web_search_engine';
   static const _aiQuarkSearchEndpointKey = 'ai_quark_search_endpoint';
   static const _quarkApiKeySecureKey = 'ai_quark_api_key';
+  static const _aliyunApiKeySecureKey = 'ai_aliyun_api_key';
   static const _aiMultiAgentEnabledKey = 'ai_multi_agent_enabled';
   static const _aiMultiAgentMaxAgentsKey = 'ai_multi_agent_max_agents';
   static const _aiMaxImageSizeBytesKey = 'ai_max_image_size_bytes';
@@ -662,6 +663,22 @@ class StorageService extends ChangeNotifier
     if (!_initialized) return null;
     final value = await _secureStorage.read(key: _quarkApiKeySecureKey);
     return value?.trim();
+  }
+
+  Future<String?> getAliyunApiKey() async {
+    if (!_initialized) return null;
+    final value = await _secureStorage.read(key: _aliyunApiKeySecureKey);
+    return value?.trim();
+  }
+
+  Future<void> saveAliyunApiKey(String key) async {
+    if (!_initialized) return;
+    final trimmed = key.trim();
+    if (trimmed.isEmpty) {
+      await _secureStorage.delete(key: _aliyunApiKeySecureKey);
+    } else {
+      await _secureStorage.write(key: _aliyunApiKeySecureKey, value: trimmed);
+    }
   }
 
   Future<void> saveAiConnectionSettings({

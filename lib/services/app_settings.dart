@@ -19,6 +19,8 @@ class AppSettings extends ChangeNotifier {
   static const _darkModeKey = 'dark_mode';
   static const _themeModeKey = 'theme_mode';
   static const _fontFamilyKey = 'font_family';
+  static const _ragEnabledKey = 'rag_enabled';
+  static const _ragSearchModeKey = 'rag_search_mode';
   static const _sftpDownloadLimitBytesKey = 'sftp_download_limit_bytes';
   static const _sftpTextPreviewLimitBytesKey = 'sftp_text_preview_limit_bytes';
   static const _sftpRichPreviewLimitBytesKey = 'sftp_rich_preview_limit_bytes';
@@ -37,6 +39,8 @@ class AppSettings extends ChangeNotifier {
   int _sftpTextPreviewLimitBytes = defaultSftpTextPreviewLimitBytes;
   int _sftpRichPreviewLimitBytes = defaultSftpRichPreviewLimitBytes;
   int _sftpTextEditLimitBytes = defaultSftpTextEditLimitBytes;
+  bool _ragEnabled = false;
+  String _ragSearchMode = 'bm25'; // 'bm25', 'vector', 'hybrid'
   bool _initialized = false;
   Future<void> _themeWrite = Future.value();
 
@@ -45,6 +49,8 @@ class AppSettings extends ChangeNotifier {
   bool get initialized => _initialized;
   bool get isEnglish => _language == AppLanguage.en;
   bool get isDarkMode => _themeMode == ThemeMode.dark;
+  bool get ragEnabled => _ragEnabled;
+  String get ragSearchMode => _ragSearchMode;
   String get fontFamilyId => _fontFamilyId;
   String? get fontFamily => AppFontChoice.byId(_fontFamilyId).fontFamily;
   AppFontChoice get fontChoice => AppFontChoice.byId(_fontFamilyId);
@@ -79,6 +85,8 @@ class AppSettings extends ChangeNotifier {
         prefs.getInt(_sftpTextEditLimitBytesKey),
         defaultSftpTextEditLimitBytes,
       );
+      _ragEnabled = prefs.getBool(_ragEnabledKey) ?? false;
+      _ragSearchMode = prefs.getString(_ragSearchModeKey) ?? 'bm25';
     } catch (_) {
       _language = AppLanguage.zh;
       _themeMode = ThemeMode.light;
@@ -87,6 +95,8 @@ class AppSettings extends ChangeNotifier {
       _sftpTextPreviewLimitBytes = defaultSftpTextPreviewLimitBytes;
       _sftpRichPreviewLimitBytes = defaultSftpRichPreviewLimitBytes;
       _sftpTextEditLimitBytes = defaultSftpTextEditLimitBytes;
+      _ragEnabled = false;
+      _ragSearchMode = 'bm25';
     } finally {
       _initialized = true;
       notifyListeners();
@@ -99,6 +109,22 @@ class AppSettings extends ChangeNotifier {
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_languageKey, _language.name);
+  }
+
+  Future<void> setRagEnabled(bool value) async {
+    if (_ragEnabled == value) return;
+    _ragEnabled = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_ragEnabledKey, value);
+  }
+
+  Future<void> setRagSearchMode(String mode) async {
+    if (_ragSearchMode == mode) return;
+    _ragSearchMode = mode;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_ragSearchModeKey, mode);
   }
 
   void toggleTheme() {

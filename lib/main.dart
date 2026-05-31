@@ -12,6 +12,7 @@ import 'screens/sftp_screen.dart';
 import 'screens/startup_screen.dart';
 import 'screens/terminal_history_screen.dart';
 import 'screens/terminal_screen.dart';
+import 'screens/rag_knowledge_screen.dart';
 import 'services/app_log_service.dart';
 import 'services/background_service.dart';
 import 'services/app_settings.dart';
@@ -21,6 +22,7 @@ import 'services/playbook_service.dart';
 import 'services/ssh_service.dart';
 import 'services/sftp_service.dart';
 import 'services/storage_service.dart';
+import 'services/rag_service.dart';
 import 'theme/app_theme.dart';
 import 'utils/responsive.dart';
 
@@ -53,8 +55,9 @@ Future<void> main() async {
         storageService: storageService,
         sshService: sshService,
       );
+      final ragService = RagService(storageService: storageService);
 
-      // 8 个 ChangeNotifier 通过 Provider 注入整棵 Widget 树
+      // 9 个 ChangeNotifier 通过 Provider 注入整棵 Widget 树
       runApp(
         MultiProvider(
           providers: [
@@ -66,6 +69,7 @@ Future<void> main() async {
             ChangeNotifierProvider.value(value: sftpService),
             ChangeNotifierProvider.value(value: performanceMonitorService),
             ChangeNotifierProvider.value(value: playbookService),
+            ChangeNotifierProvider.value(value: ragService),
           ],
           child: const SshMobileApp(),
         ),
@@ -76,9 +80,11 @@ Future<void> main() async {
       unawaited(
         storageService.init().then((_) {
           appLogService.info('Storage initialized');
+          unawaited(ragService.init()); // 初始化 RAG 索引
           storageService.registerOnImportCallback(() {
             unawaited(appSettings.init());
             unawaited(shortcutCommandService.init());
+            unawaited(ragService.init());
           });
           return sshService.restoreTmuxSessions(); // 从持久化状态恢复 tmux 会话
         }),
@@ -215,6 +221,10 @@ class _SshMobileAppState extends State<SshMobileApp>
             final id = settings.arguments as String;
             return MaterialPageRoute(
               builder: (_) => AddEditScreen(editId: id),
+            );
+          case '/rag-knowledge':
+            return MaterialPageRoute(
+              builder: (_) => const RagKnowledgeScreen(),
             );
           default:
             return MaterialPageRoute(

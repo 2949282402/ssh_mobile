@@ -23,6 +23,8 @@ import '../services/sftp_service.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
 import '../services/playbook_service.dart';
+import '../services/rag_service.dart';
+import '../utils/text_chunker.dart';
 import '../widgets/overflow_scroll_text.dart';
 
 part 'llm_chat/assistant_run_indicator.dart';
@@ -1519,6 +1521,9 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     }
 
     final storage = context.read<StorageService>();
+    final appSettings = context.read<AppSettings>();
+    final ragService = context.read<RagService>();
+
     final settings = await storage.loadAiConnectionSettings();
     final currentModel = settings.model.trim();
     if (!settings.hasApiKey) {
@@ -1533,7 +1538,18 @@ class _LlmChatScreenState extends State<LlmChatScreen>
 
     final chatId = activeChat.id;
     final now = DateTime.now();
-    final userContextText = await _contextTextForUser(text);
+
+    // RAG 知识库检索
+    List<RagChunk> ragChunks = const [];
+    if (appSettings.ragEnabled) {
+      try {
+        ragChunks = await ragService.retrieve(normalizedText);
+      } catch (e) {
+        AppLogService.instance.warning('RAG retrieval failed in sendText: $e');
+      }
+    }
+
+    final userContextText = await _contextTextForUser(text, ragChunks: ragChunks);
     final attachments = List<AiChatAttachment>.from(_pendingAttachments);
     final userMessage = AiChatMessageRecord(
       role: 'user',
@@ -1542,9 +1558,33 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       attachments: attachments,
       createdAt: now,
     );
+
+    // 构建 RAG 的 UI 引用痕迹 (Citation Traces)
+    final assistantTraces = <AiMessageTrace>[];
+    if (ragChunks.isNotEmpty) {
+      final traceContent = StringBuffer();
+      final isEn = appSettings.isEnglish;
+      for (final chunk in ragChunks) {
+        traceContent.writeln(isEn
+            ? 'Source: [${chunk.documentName}] (Chunk #${chunk.metadata['chunkIndex'] ?? 0})'
+            : '来源: [${chunk.documentName}] (分块 #${chunk.metadata['chunkIndex'] ?? 0})');
+        traceContent.writeln('---');
+        traceContent.writeln(chunk.text);
+        traceContent.writeln('========================================\n');
+      }
+      assistantTraces.add(AiMessageTrace(
+        id: 'rag-${now.microsecondsSinceEpoch}',
+        kind: 'rag_context',
+        title: isEn ? 'Knowledge Base Retrieval (RAG)' : '知识库检索 (RAG)',
+        content: traceContent.toString(),
+        createdAt: now,
+      ));
+    }
+
     final assistantMessage = AiChatMessageRecord(
       role: 'assistant',
       text: '',
+      traces: assistantTraces,
       createdAt: now,
     );
     final nextMessages = [
@@ -2990,7 +3030,10 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     return message.text;
   }
 
-  Future<String?> _contextTextForUser(String text) async {
+  Future<String?> _contextTextForUser(
+    String text, {
+    List<RagChunk> ragChunks = const [],
+  }) async {
     final lines = <String>[];
     if (_selectedConnectionIds.isNotEmpty) {
       final storage = context.read<StorageService>();
@@ -3009,6 +3052,22 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         );
       }
     }
+
+    if (ragChunks.isNotEmpty) {
+      final isEn = context.read<AppSettings>().isEnglish;
+      final ragLines = <String>[];
+      ragLines.add(isEn ? '【Ops Knowledge Base Reference Information】:' : '【运维知识库参考信息】：');
+      for (final chunk in ragChunks) {
+        ragLines.add('---');
+        ragLines.add(isEn
+            ? 'Source: [${chunk.documentName}] (Chunk #${chunk.metadata['chunkIndex'] ?? 0})'
+            : '来源: [${chunk.documentName}] (分块 #${chunk.metadata['chunkIndex'] ?? 0})');
+        ragLines.add('${isEn ? 'Content' : '内容'}:\n${chunk.text}');
+      }
+      ragLines.add('---');
+      lines.add(ragLines.join('\n'));
+    }
+
     if (lines.isEmpty) return null;
     return '${lines.join('\n\n')}\n\nUser request:\n$text';
   }
@@ -4429,6 +4488,8 @@ class _TraceEntry extends StatelessWidget {
     switch (kind) {
       case 'reasoning':
         return Icons.psychology_alt_outlined;
+      case 'rag_context':
+        return Icons.auto_stories_outlined;
       case 'tool_request':
         return Icons.build_circle_outlined;
       case 'tool_result':
@@ -4444,6 +4505,8 @@ class _TraceEntry extends StatelessWidget {
     switch (kind) {
       case 'reasoning':
         return colorScheme.secondary;
+      case 'rag_context':
+        return colorScheme.tertiary;
       case 'tool_request':
         return colorScheme.primary;
       case 'tool_result':
@@ -4711,6 +4774,8 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   late bool _webSearchEnabled;
   late int _webSearchMaxResults;
   late String _webSearchEngine;
+  late bool _ragEnabled;
+  late String _ragSearchMode;
   late bool _multiAgentEnabled;
   late int _multiAgentMaxAgents;
   late int _maxImageSizeBytes;
@@ -4743,6 +4808,8 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _webSearchEnabled = widget.initialSettings.webSearchEnabled;
     _webSearchMaxResults = widget.initialSettings.webSearchMaxResults;
     _webSearchEngine = widget.initialSettings.webSearchEngine;
+    _ragEnabled = context.read<AppSettings>().ragEnabled;
+    _ragSearchMode = context.read<AppSettings>().ragSearchMode;
     _multiAgentEnabled = widget.initialSettings.multiAgentEnabled;
     _multiAgentMaxAgents = widget.initialSettings.multiAgentMaxAgents;
     _maxImageSizeBytes = widget.initialSettings.maxImageSizeBytes;
@@ -4981,6 +5048,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   Future<void> _save(_AiStrings strings) async {
     FocusScope.of(context).unfocus();
     final storage = context.read<StorageService>();
+    final appSettings = context.read<AppSettings>();
     final pending = _PendingAiSettings(
       baseUrl: _baseUrlController.text,
       model: _modelController.text,
@@ -5026,6 +5094,10 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         apiKey: pending.apiKey,
         selectedApiKeyId: pending.selectedApiKeyId,
       );
+      if (mounted) {
+        await appSettings.setRagEnabled(_ragEnabled);
+        await appSettings.setRagSearchMode(_ragSearchMode);
+      }
       if (!mounted) return;
       Navigator.pop(context, pending);
     } catch (e, stackTrace) {
@@ -5426,6 +5498,69 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                     },
             ),
             const SizedBox(height: 14),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: Text(strings.ragTitle),
+              subtitle: Text(strings.ragHint),
+              value: _ragEnabled,
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      setState(() => _ragEnabled = value);
+                    },
+            ),
+            if (_ragEnabled) ...[
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                initialValue: _ragSearchMode,
+                isExpanded: true,
+                decoration: InputDecoration(
+                  labelText: strings.ragSearchMode,
+                ),
+                items: [
+                  DropdownMenuItem(
+                    value: 'bm25',
+                    child: Text(strings.ragSearchModeBm25),
+                  ),
+                  DropdownMenuItem(
+                    value: 'vector',
+                    child: Text(strings.ragSearchModeVector),
+                  ),
+                  DropdownMenuItem(
+                    value: 'hybrid',
+                    child: Text(strings.ragSearchModeHybrid),
+                  ),
+                ],
+                onChanged: _saving
+                    ? null
+                    : (value) {
+                        if (value != null) {
+                          setState(() => _ragSearchMode = value);
+                        }
+                      },
+              ),
+              if (_ragSearchMode == 'vector' || _ragSearchMode == 'hybrid') ...[
+                const SizedBox(height: 8),
+                Text(
+                  strings.ragSearchModeNeedKey,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+              ],
+            ],
+            const SizedBox(height: 8),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.auto_stories),
+              label: Text(strings.ragManage),
+              onPressed: _saving
+                  ? null
+                  : () {
+                      Navigator.pushNamed(context, '/rag-knowledge');
+                    },
+            ),
+            const SizedBox(height: 14),
             DropdownButtonFormField<int>(
               initialValue:
                   AiUploadSizeLimit.normalizeImage(_maxImageSizeBytes),
@@ -5672,6 +5807,18 @@ class _AiStrings {
   String get webSearchHint => _en
       ? 'Expose a web_search tool that uses the current chat WebView on this device. No search API key is required.'
       : '通过当前聊天绑定的本机 WebView 给模型提供 web_search 工具，不需要搜索 API Key。';
+  String get ragTitle => _en ? 'RAG Ops Knowledge Base' : 'RAG 运维知识库';
+  String get ragHint => _en
+      ? 'Locally retrieve relevant context from uploaded operational manuals based on your query.'
+      : '根据问题自动在本地检索运维手册与文档，并作为参考上下文喂给 AI 助手。';
+  String get ragManage => _en ? 'Manage Knowledge Base' : '管理运维知识库';
+  String get ragSearchMode => _en ? 'Retrieval Mode' : '检索模式';
+  String get ragSearchModeBm25 => _en ? 'Keywords (BM25 - Offline)' : '本地关键词检索 (BM25 - 完全离线)';
+  String get ragSearchModeVector => _en ? 'Semantic Vector (Aliyun DashScope)' : '语义向量检索 (Vector - 通义向量)';
+  String get ragSearchModeHybrid => _en ? 'Hybrid RRF (Recommended)' : '双模混合检索 (Hybrid - 推荐效果最好)';
+  String get ragSearchModeNeedKey => _en
+      ? '⚠️ Semantic & Hybrid modes require Aliyun API Key configured in Knowledge Base settings.'
+      : '⚠️ 语义向量与混合检索模式需要在下方“管理运维知识库”中配置阿里云 API 密钥。';
   String get webSearchMaxResults => _en ? 'Search results per call' : '每次搜索结果数';
   String get webSearchEngine => _en ? 'Web search engine' : '搜索引擎';
 
