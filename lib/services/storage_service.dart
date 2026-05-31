@@ -154,6 +154,8 @@ class StorageService extends ChangeNotifier
   static const _aiWebSearchEnabledKey = 'ai_web_search_enabled';
   static const _aiWebSearchMaxResultsKey = 'ai_web_search_max_results';
   static const _aiWebSearchEngineKey = 'ai_web_search_engine';
+  static const _aiQuarkSearchEndpointKey = 'ai_quark_search_endpoint';
+  static const _quarkApiKeySecureKey = 'ai_quark_api_key';
   static const _aiMultiAgentEnabledKey = 'ai_multi_agent_enabled';
   static const _aiMultiAgentMaxAgentsKey = 'ai_multi_agent_max_agents';
   static const _aiMaxImageSizeBytesKey = 'ai_max_image_size_bytes';
@@ -423,6 +425,11 @@ class StorageService extends ChangeNotifier
     final webSearchEngine = AiWebSearchEngine.normalize(
       _prefs?.getString(_aiWebSearchEngineKey),
     );
+    final quarkSearchEndpoint =
+        _prefs?.getString(_aiQuarkSearchEndpointKey)?.trim() ??
+            'https://dashscope.aliyuncs.com/api/v1/services/search/quark';
+    final quarkApiKey = await getQuarkApiKey();
+    final hasQuarkApiKey = quarkApiKey?.isNotEmpty == true;
     final apiKey = await getAiApiKey();
     final activeApiKeyId = await getSelectedAiApiKeyId();
     final activeApiKeyMasked =
@@ -441,6 +448,8 @@ class StorageService extends ChangeNotifier
         _prefs?.getInt(_aiWebSearchMaxResultsKey),
       ),
       webSearchEngine: webSearchEngine,
+      quarkSearchEndpoint: quarkSearchEndpoint,
+      hasQuarkApiKey: hasQuarkApiKey,
       multiAgentEnabled: _prefs?.getBool(_aiMultiAgentEnabledKey) ?? true,
       multiAgentMaxAgents: AiMultiAgentMaxAgents.normalize(
         _prefs?.getInt(_aiMultiAgentMaxAgentsKey),
@@ -639,6 +648,12 @@ class StorageService extends ChangeNotifier
     }
   }
 
+  Future<String?> getQuarkApiKey() async {
+    if (!_initialized) return null;
+    final value = await _secureStorage.read(key: _quarkApiKeySecureKey);
+    return value?.trim();
+  }
+
   Future<void> saveAiConnectionSettings({
     required String baseUrl,
     required String model,
@@ -657,6 +672,9 @@ class StorageService extends ChangeNotifier
     String? apiKey,
     String? selectedApiKeyId,
     bool clearApiKey = false,
+    String? quarkSearchEndpoint,
+    String? quarkApiKey,
+    bool clearQuarkApiKey = false,
   }) async {
     if (!_initialized || _prefs == null) return;
     final normalizedBaseUrl = baseUrl.trim();
@@ -706,6 +724,10 @@ class StorageService extends ChangeNotifier
         webSearchEngine ?? _prefs!.getString(_aiWebSearchEngineKey),
       ),
     );
+    if (quarkSearchEndpoint != null) {
+      await _prefs!
+          .setString(_aiQuarkSearchEndpointKey, quarkSearchEndpoint.trim());
+    }
     await _prefs!.setBool(
       _aiMultiAgentEnabledKey,
       multiAgentEnabled ?? (_prefs!.getBool(_aiMultiAgentEnabledKey) ?? true),
@@ -763,10 +785,25 @@ class StorageService extends ChangeNotifier
       }
       apiKeyUpdated = true;
     }
+
+    var quarkApiKeyUpdated = false;
+    if (quarkApiKey != null) {
+      final trimmed = quarkApiKey.trim();
+      if (trimmed.isNotEmpty) {
+        await _secureStorage.write(key: _quarkApiKeySecureKey, value: trimmed);
+        quarkApiKeyUpdated = true;
+      } else {
+        await _secureStorage.delete(key: _quarkApiKeySecureKey);
+        quarkApiKeyUpdated = true;
+      }
+    } else if (clearQuarkApiKey) {
+      await _secureStorage.delete(key: _quarkApiKeySecureKey);
+      quarkApiKeyUpdated = true;
+    }
     AppLogService.instance.info(
       'LLM settings saved',
       details:
-          'baseUrl=$normalizedBaseUrl model=$normalizedModel contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} timeoutSeconds=${AiRequestTimeout.normalize(timeoutSeconds)} deepSeekThinking=${deepSeekThinkingEnabled ?? (_prefs!.getBool(_aiDeepSeekThinkingEnabledKey) ?? true)} deepSeekEffort=${DeepSeekReasoningEffort.normalize(deepSeekReasoningEffort ?? _prefs!.getString(_aiDeepSeekReasoningEffortKey))} openAiEffort=${OpenAiReasoningEffort.normalize(openAiReasoningEffort ?? _prefs!.getString(_aiOpenAiReasoningEffortKey))} webSearch=${webSearchEnabled ?? (_prefs!.getBool(_aiWebSearchEnabledKey) ?? true)} webSearchEngine=${AiWebSearchEngine.normalize(webSearchEngine ?? _prefs!.getString(_aiWebSearchEngineKey))} multiAgent=${multiAgentEnabled ?? (_prefs!.getBool(_aiMultiAgentEnabledKey) ?? true)} maxAgents=${AiMultiAgentMaxAgents.normalize(multiAgentMaxAgents ?? _prefs!.getInt(_aiMultiAgentMaxAgentsKey))} apiKeyUpdated=$apiKeyUpdated',
+          'baseUrl=$normalizedBaseUrl model=$normalizedModel contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} timeoutSeconds=${AiRequestTimeout.normalize(timeoutSeconds)} deepSeekThinking=${deepSeekThinkingEnabled ?? (_prefs!.getBool(_aiDeepSeekThinkingEnabledKey) ?? true)} deepSeekEffort=${DeepSeekReasoningEffort.normalize(deepSeekReasoningEffort ?? _prefs!.getString(_aiDeepSeekReasoningEffortKey))} openAiEffort=${OpenAiReasoningEffort.normalize(openAiReasoningEffort ?? _prefs!.getString(_aiOpenAiReasoningEffortKey))} webSearch=${webSearchEnabled ?? (_prefs!.getBool(_aiWebSearchEnabledKey) ?? true)} webSearchEngine=${AiWebSearchEngine.normalize(webSearchEngine ?? _prefs!.getString(_aiWebSearchEngineKey))} quarkSearchEndpoint=${_prefs!.getString(_aiQuarkSearchEndpointKey)} quarkApiKeyUpdated=$quarkApiKeyUpdated multiAgent=${multiAgentEnabled ?? (_prefs!.getBool(_aiMultiAgentEnabledKey) ?? true)} maxAgents=${AiMultiAgentMaxAgents.normalize(multiAgentMaxAgents ?? _prefs!.getInt(_aiMultiAgentMaxAgentsKey))} apiKeyUpdated=$apiKeyUpdated',
     );
     // AI settings are loaded on demand by the chat page. Avoid notifying the
     // whole storage tree while the settings dialog is being dismissed; doing so
@@ -1139,6 +1176,7 @@ class StorageService extends ChangeNotifier
         'webSearchEnabled': settings.webSearchEnabled,
         'webSearchMaxResults': settings.webSearchMaxResults,
         'webSearchEngine': settings.webSearchEngine,
+        'quarkSearchEndpoint': settings.quarkSearchEndpoint,
         'multiAgentEnabled': settings.multiAgentEnabled,
         'multiAgentMaxAgents': settings.multiAgentMaxAgents,
         'apiKey': '',
@@ -1210,13 +1248,16 @@ class StorageService extends ChangeNotifier
         webSearchMaxResults:
             (aiSettings['webSearchMaxResults'] as num?)?.toInt(),
         webSearchEngine: aiSettings['webSearchEngine'] as String?,
+        quarkSearchEndpoint: aiSettings['quarkSearchEndpoint'] as String?,
         multiAgentEnabled: aiSettings['multiAgentEnabled'] as bool?,
         multiAgentMaxAgents:
             (aiSettings['multiAgentMaxAgents'] as num?)?.toInt(),
       );
       await _clearAiApiKeySecret();
+      await _secureStorage.delete(key: _quarkApiKeySecureKey);
     } else {
       await _clearAiApiKeySecret();
+      await _secureStorage.delete(key: _quarkApiKeySecureKey);
     }
 
     await _saveRestorableTmuxSessions(
@@ -1632,6 +1673,8 @@ class AiConnectionSettings {
   final bool webSearchEnabled;
   final int webSearchMaxResults;
   final String webSearchEngine;
+  final String quarkSearchEndpoint;
+  final bool hasQuarkApiKey;
   final bool multiAgentEnabled;
   final int multiAgentMaxAgents;
   final int maxImageSizeBytes;
@@ -1651,6 +1694,8 @@ class AiConnectionSettings {
     required this.webSearchEnabled,
     required this.webSearchMaxResults,
     required this.webSearchEngine,
+    required this.quarkSearchEndpoint,
+    required this.hasQuarkApiKey,
     required this.multiAgentEnabled,
     required this.multiAgentMaxAgents,
     required this.maxImageSizeBytes,
@@ -1688,10 +1733,11 @@ class AiWebSearchEngine {
   static const String bing = 'bing';
   static const String baidu = 'baidu';
   static const String duckDuckGo = 'duckduckgo';
+  static const String quark = 'quark';
 
   static const String defaultValue = duckDuckGo;
 
-  static const List<String> values = [google, bing, baidu, duckDuckGo];
+  static const List<String> values = [google, bing, baidu, duckDuckGo, quark];
 
   static String normalize(String? value) {
     if (value == null) return defaultValue;

@@ -337,4 +337,73 @@ void main() {
     settings = await storage.loadAiConnectionSettings();
     expect(settings.webSearchEngine, 'bing');
   });
+
+  test('quark search settings and API key persist, export, and import',
+      () async {
+    storage = await initializedStorage();
+
+    // 1. Verify default values
+    var settings = await storage.loadAiConnectionSettings();
+    expect(settings.quarkSearchEndpoint,
+        'https://dashscope.aliyuncs.com/api/v1/services/search/quark');
+    expect(settings.hasQuarkApiKey, isFalse);
+    expect(await storage.getQuarkApiKey(), isNull);
+
+    // 2. Save custom endpoint and API Key
+    await storage.saveAiConnectionSettings(
+      baseUrl: 'https://api.example.com',
+      model: 'demo-model',
+      quarkSearchEndpoint: 'https://custom-quark.example.com/api',
+      quarkApiKey: 'quark-secret-key-123',
+    );
+
+    settings = await storage.loadAiConnectionSettings();
+    expect(
+        settings.quarkSearchEndpoint, 'https://custom-quark.example.com/api');
+    expect(settings.hasQuarkApiKey, isTrue);
+    expect(await storage.getQuarkApiKey(), 'quark-secret-key-123');
+
+    // 3. Export verifies endpoint is present but key is omitted/empty
+    final jsonText = await storage.exportAppDataJson();
+    final decoded = jsonDecode(jsonText) as Map<String, dynamic>;
+    final aiSettings = decoded['aiSettings'] as Map<String, dynamic>;
+    expect(aiSettings['quarkSearchEndpoint'],
+        'https://custom-quark.example.com/api');
+    expect(jsonText, isNot(contains('quark-secret-key-123')));
+
+    // 4. Import restores endpoint and clears existing key
+    final backup = jsonEncode({
+      'format': 'ssh_mobile_backup',
+      'version': 1,
+      'connections': const [],
+      'aiSettings': {
+        'baseUrl': 'https://api.example.com',
+        'model': 'demo-model',
+        'quarkSearchEndpoint': 'https://imported-quark.example.com',
+        'quarkApiKey': 'quark-secret-imported-should-be-ignored',
+      },
+    });
+
+    await storage.importAppDataJson(backup);
+    settings = await storage.loadAiConnectionSettings();
+    expect(settings.quarkSearchEndpoint, 'https://imported-quark.example.com');
+    // Secret key is ignored during import (should be null / cleared)
+    expect(settings.hasQuarkApiKey, isFalse);
+    expect(await storage.getQuarkApiKey(), isNull);
+
+    // 5. Clear API key explicitly
+    await storage.saveAiConnectionSettings(
+      baseUrl: 'https://api.example.com',
+      model: 'demo-model',
+      quarkApiKey: 'quark-secret-key-456',
+    );
+    expect(await storage.getQuarkApiKey(), 'quark-secret-key-456');
+
+    await storage.saveAiConnectionSettings(
+      baseUrl: 'https://api.example.com',
+      model: 'demo-model',
+      clearQuarkApiKey: true,
+    );
+    expect(await storage.getQuarkApiKey(), isNull);
+  });
 }

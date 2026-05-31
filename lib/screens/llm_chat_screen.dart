@@ -2279,6 +2279,9 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     final baseUrlController = TextEditingController(text: settings.baseUrl);
     final modelController = TextEditingController(text: settings.model);
     final apiKeyController = TextEditingController();
+    final quarkApiKeyController = TextEditingController();
+    final quarkEndpointController =
+        TextEditingController(text: settings.quarkSearchEndpoint);
     var models = _modelOptions(settings.model);
     var contextWindowTokens = settings.contextWindowTokens;
     var timeoutSeconds = settings.timeoutSeconds;
@@ -2580,6 +2583,28 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                             }
                           },
                   ),
+                  if (webSearchEnabled &&
+                      webSearchEngine == AiWebSearchEngine.quark) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: quarkApiKeyController,
+                      obscureText: true,
+                      decoration: InputDecoration(
+                        labelText: settings.hasQuarkApiKey
+                            ? strings.quarkApiKeySaved
+                            : strings.quarkApiKeyRequired,
+                        helperText: strings.quarkApiKeyReplaceHint,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: quarkEndpointController,
+                      decoration: InputDecoration(
+                        labelText: strings.quarkSearchEndpoint,
+                        helperText: strings.quarkSearchEndpointHint,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   DropdownButtonFormField<int>(
                     initialValue:
@@ -2625,6 +2650,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                         webSearchEnabled: webSearchEnabled,
                         webSearchMaxResults: webSearchMaxResults,
                         webSearchEngine: webSearchEngine,
+                        quarkSearchEndpoint: quarkEndpointController.text,
+                        quarkApiKey: quarkApiKeyController.text,
                         multiAgentEnabled: multiAgentEnabled,
                         multiAgentMaxAgents: multiAgentMaxAgents,
                         maxImageSizeBytes: settings.maxImageSizeBytes,
@@ -2650,6 +2677,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                           webSearchEnabled: pending.webSearchEnabled,
                           webSearchMaxResults: pending.webSearchMaxResults,
                           webSearchEngine: pending.webSearchEngine,
+                          quarkSearchEndpoint: pending.quarkSearchEndpoint,
+                          quarkApiKey: pending.quarkApiKey,
                           multiAgentEnabled: pending.multiAgentEnabled,
                           multiAgentMaxAgents: pending.multiAgentMaxAgents,
                           apiKey: pending.apiKey,
@@ -2688,6 +2717,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     baseUrlController.dispose();
     modelController.dispose();
     apiKeyController.dispose();
+    quarkApiKeyController.dispose();
+    quarkEndpointController.dispose();
 
     if (nextSettings == null) return;
     if (!mounted) return;
@@ -4667,6 +4698,8 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   late final TextEditingController _baseUrlController;
   late final TextEditingController _modelController;
   late final TextEditingController _apiKeyController;
+  late final TextEditingController _quarkApiKeyController;
+  late final TextEditingController _quarkEndpointController;
   late List<String> _baseUrlHistory;
   late List<AiApiKeyHistoryEntry> _apiKeyHistory;
   late List<String> _models;
@@ -4695,6 +4728,9 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _modelController =
         TextEditingController(text: widget.initialSettings.model);
     _apiKeyController = TextEditingController();
+    _quarkApiKeyController = TextEditingController();
+    _quarkEndpointController =
+        TextEditingController(text: widget.initialSettings.quarkSearchEndpoint);
     _baseUrlHistory = List<String>.from(widget.initialBaseUrlHistory);
     _apiKeyHistory =
         List<AiApiKeyHistoryEntry>.from(widget.initialApiKeyHistory);
@@ -4719,6 +4755,8 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _baseUrlController.dispose();
     _modelController.dispose();
     _apiKeyController.dispose();
+    _quarkApiKeyController.dispose();
+    _quarkEndpointController.dispose();
     super.dispose();
   }
 
@@ -4954,6 +4992,8 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       webSearchEnabled: _webSearchEnabled,
       webSearchMaxResults: _webSearchMaxResults,
       webSearchEngine: _webSearchEngine,
+      quarkSearchEndpoint: _quarkEndpointController.text,
+      quarkApiKey: _quarkApiKeyController.text,
       multiAgentEnabled: _multiAgentEnabled,
       multiAgentMaxAgents: _multiAgentMaxAgents,
       maxImageSizeBytes: _maxImageSizeBytes,
@@ -4977,6 +5017,8 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         webSearchEnabled: pending.webSearchEnabled,
         webSearchMaxResults: pending.webSearchMaxResults,
         webSearchEngine: pending.webSearchEngine,
+        quarkSearchEndpoint: pending.quarkSearchEndpoint,
+        quarkApiKey: pending.quarkApiKey,
         multiAgentEnabled: pending.multiAgentEnabled,
         multiAgentMaxAgents: pending.multiAgentMaxAgents,
         maxImageSizeBytes: pending.maxImageSizeBytes,
@@ -5334,6 +5376,32 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                       }
                     },
             ),
+            if (_webSearchEnabled &&
+                _webSearchEngine == AiWebSearchEngine.quark) ...[
+              const SizedBox(height: 14),
+              TextField(
+                controller: _quarkApiKeyController,
+                enabled: !_saving,
+                obscureText: true,
+                decoration: InputDecoration(
+                  labelText: widget.initialSettings.hasQuarkApiKey
+                      ? strings.quarkApiKeySaved
+                      : strings.quarkApiKeyRequired,
+                  helperText: strings.quarkApiKeyReplaceHint,
+                  helperMaxLines: 2,
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _quarkEndpointController,
+                enabled: !_saving,
+                decoration: InputDecoration(
+                  labelText: strings.quarkSearchEndpoint,
+                  helperText: strings.quarkSearchEndpointHint,
+                  helperMaxLines: 2,
+                ),
+              ),
+            ],
             const SizedBox(height: 14),
             DropdownButtonFormField<int>(
               initialValue: AiWebSearchMaxResults.normalize(
@@ -5537,6 +5605,8 @@ class _PendingAiSettings {
   final bool webSearchEnabled;
   final int webSearchMaxResults;
   final String webSearchEngine;
+  final String quarkSearchEndpoint;
+  final String quarkApiKey;
   final bool multiAgentEnabled;
   final int multiAgentMaxAgents;
   final int maxImageSizeBytes;
@@ -5555,6 +5625,8 @@ class _PendingAiSettings {
     required this.webSearchEnabled,
     required this.webSearchMaxResults,
     required this.webSearchEngine,
+    required this.quarkSearchEndpoint,
+    required this.quarkApiKey,
     required this.multiAgentEnabled,
     required this.multiAgentMaxAgents,
     required this.maxImageSizeBytes,
@@ -5611,11 +5683,25 @@ class _AiStrings {
         return _en ? 'Bing' : '必应 (Bing)';
       case 'baidu':
         return _en ? 'Baidu' : '百度 (Baidu)';
+      case 'quark':
+        return _en ? 'Quark Cloud (Aliyun)' : '阿里云夸克 (Quark Cloud)';
       case 'duckduckgo':
       default:
         return _en ? 'DuckDuckGo' : 'DuckDuckGo';
     }
   }
+
+  String get quarkApiKeySaved =>
+      _en ? 'Quark API Key (saved, leave blank)' : '夸克 API Key（已保存，留空不改）';
+  String get quarkApiKeyRequired => _en ? 'Quark API Key' : '夸克 API Key';
+  String get quarkApiKeyReplaceHint => _en
+      ? 'Enter Aliyun Quark Search API Key to replace the saved one.'
+      : '输入阿里云夸克搜索 API Key。留空保留已保存的 Key。';
+  String get quarkSearchEndpoint =>
+      _en ? 'Quark Search Endpoint' : '夸克搜索 API 地址';
+  String get quarkSearchEndpointHint => _en
+      ? 'Alibaba Cloud DashScope or Model Studio Quark search API endpoint.'
+      : '阿里云百炼/DashScope 夸克搜索服务接口地址。';
 
   String get multiAgent => _en ? 'Multi-agent collaboration' : '多 Agent 协作';
   String get multiAgentHint => _en

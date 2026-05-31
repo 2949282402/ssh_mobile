@@ -159,7 +159,9 @@ class PlaybookService extends ChangeNotifier {
   Future<void> skipCurrentStep(String connectionId) async {
     if (_activePlaybook == null ||
         _currentStepIndex < 0 ||
-        _currentStepIndex >= _activePlaybook!.steps.length) return;
+        _currentStepIndex >= _activePlaybook!.steps.length) {
+      return;
+    }
 
     final steps = [..._activePlaybook!.steps];
     steps[_currentStepIndex] = steps[_currentStepIndex].copyWith(
