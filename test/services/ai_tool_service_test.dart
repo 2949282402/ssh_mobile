@@ -804,12 +804,14 @@ class _FakeClientWebViewAdapter implements ClientWebViewAdapter {
     String chatId,
     String query, {
     int maxResults = 5,
+    String? engine,
   }) async {
     return ClientWebViewSearchResult(
       chatId: chatId,
       supported: true,
       query: query,
       results: const [],
+      engine: engine ?? 'duckduckgo',
     );
   }
 

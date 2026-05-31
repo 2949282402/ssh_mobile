@@ -868,7 +868,8 @@ class AiToolService implements AiToolExecutor {
             'CLIENT tool. Create a new visual sequential task playbook in storage. This updates local client data and requires user approval.',
         properties: {
           'name': _string('The display name for the playbook.'),
-          'description': _string('A short description of what this playbook does.'),
+          'description':
+              _string('A short description of what this playbook does.'),
           'steps': {
             'type': 'array',
             'description': 'The ordered list of steps to execute.',
@@ -877,15 +878,18 @@ class AiToolService implements AiToolExecutor {
               'properties': {
                 'name': _string('The step display name.'),
                 'description': _string('What this step accomplishes.'),
-                'command': _string('The multiline shell command/script to run via SSH exec.'),
-                'expectedOutcomeRegex': _string('Optional regex pattern that the stdout must match to succeed.'),
+                'command': _string(
+                    'The multiline shell command/script to run via SSH exec.'),
+                'expectedOutcomeRegex': _string(
+                    'Optional regex pattern that the stdout must match to succeed.'),
               },
               'required': const ['name', 'description', 'command'],
             },
           },
         },
         required: const ['name', 'description', 'steps'],
-        handler: (arguments) => _createPlaybookTool(arguments, approvedWrite: false),
+        handler: (arguments) =>
+            _createPlaybookTool(arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'run_playbook',
@@ -896,7 +900,8 @@ class AiToolService implements AiToolExecutor {
           'connectionId': _string('The remote SSH server connection ID.'),
         },
         required: const ['playbookId', 'connectionId'],
-        handler: (arguments) => _runPlaybookTool(arguments, approvedWrite: false),
+        handler: (arguments) =>
+            _runPlaybookTool(arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'get_playbook_status',
@@ -1174,7 +1179,8 @@ class AiToolService implements AiToolExecutor {
           connectionId: connectionId,
           connectionName: config?.name ?? connectionId,
           command: 'RUN PLAYBOOK ID: $playbookId',
-          reason: 'Executing sequential commands on a server requires user approval.',
+          reason:
+              'Executing sequential commands on a server requires user approval.',
         );
       default:
         return null;
@@ -1358,6 +1364,7 @@ class AiToolService implements AiToolExecutor {
       chatId,
       query,
       maxResults: limit,
+      engine: settings.webSearchEngine,
     );
     return jsonEncode(result.toJson());
   }
@@ -2350,17 +2357,21 @@ class AiToolService implements AiToolExecutor {
   Future<String> _listPlaybooksTool(Map<String, dynamic> arguments) async {
     final list = await storageService.loadPlaybooks();
     return jsonEncode({
-      'playbooks': list.map((p) => {
-        'id': p.id,
-        'name': p.name,
-        'description': p.description,
-        'stepsCount': p.steps.length,
-        'steps': p.steps.map((s) => {
-          'name': s.name,
-          'command': s.command,
-          'description': s.description,
-        }).toList(),
-      }).toList(),
+      'playbooks': list
+          .map((p) => {
+                'id': p.id,
+                'name': p.name,
+                'description': p.description,
+                'stepsCount': p.steps.length,
+                'steps': p.steps
+                    .map((s) => {
+                          'name': s.name,
+                          'command': s.command,
+                          'description': s.description,
+                        })
+                    .toList(),
+              })
+          .toList(),
     });
   }
 
@@ -2439,7 +2450,8 @@ class AiToolService implements AiToolExecutor {
       'started': true,
       'playbookId': playbookId,
       'connectionId': connectionId,
-      'message': 'Playbook execution has started sequentially. Query status via get_playbook_status.',
+      'message':
+          'Playbook execution has started sequentially. Query status via get_playbook_status.',
     });
   }
 
@@ -2455,14 +2467,16 @@ class AiToolService implements AiToolExecutor {
           'isRunning': false,
           'isPaused': false,
           'currentStepIndex': -1,
-          'steps': p.steps.map((s) => {
-            'id': s.id,
-            'name': s.name,
-            'status': s.status.name,
-            'exitCode': s.exitCode,
-            'stdout': s.stdout,
-            'stderr': s.stderr,
-          }).toList(),
+          'steps': p.steps
+              .map((s) => {
+                    'id': s.id,
+                    'name': s.name,
+                    'status': s.status.name,
+                    'exitCode': s.exitCode,
+                    'stdout': s.stdout,
+                    'stderr': s.stderr,
+                  })
+              .toList(),
         });
       } catch (_) {
         return jsonEncode({
@@ -2484,14 +2498,16 @@ class AiToolService implements AiToolExecutor {
           'isRunning': false,
           'isPaused': false,
           'currentStepIndex': -1,
-          'steps': p.steps.map((s) => {
-            'id': s.id,
-            'name': s.name,
-            'status': s.status.name,
-            'exitCode': s.exitCode,
-            'stdout': s.stdout,
-            'stderr': s.stderr,
-          }).toList(),
+          'steps': p.steps
+              .map((s) => {
+                    'id': s.id,
+                    'name': s.name,
+                    'status': s.status.name,
+                    'exitCode': s.exitCode,
+                    'stdout': s.stdout,
+                    'stderr': s.stderr,
+                  })
+              .toList(),
         });
       } catch (_) {
         return jsonEncode({
@@ -2506,14 +2522,16 @@ class AiToolService implements AiToolExecutor {
       'isRunning': playbookService!.isRunning,
       'isPaused': playbookService!.isPaused,
       'currentStepIndex': playbookService!.currentStepIndex,
-      'steps': active.steps.map((s) => {
-        'id': s.id,
-        'name': s.name,
-        'status': s.status.name,
-        'exitCode': s.exitCode,
-        'stdout': s.stdout,
-        'stderr': s.stderr,
-      }).toList(),
+      'steps': active.steps
+          .map((s) => {
+                'id': s.id,
+                'name': s.name,
+                'status': s.status.name,
+                'exitCode': s.exitCode,
+                'stdout': s.stdout,
+                'stderr': s.stderr,
+              })
+          .toList(),
     });
   }
 

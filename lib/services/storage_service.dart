@@ -153,6 +153,7 @@ class StorageService extends ChangeNotifier
   static const _aiOpenAiReasoningEffortKey = 'ai_openai_reasoning_effort';
   static const _aiWebSearchEnabledKey = 'ai_web_search_enabled';
   static const _aiWebSearchMaxResultsKey = 'ai_web_search_max_results';
+  static const _aiWebSearchEngineKey = 'ai_web_search_engine';
   static const _aiMultiAgentEnabledKey = 'ai_multi_agent_enabled';
   static const _aiMultiAgentMaxAgentsKey = 'ai_multi_agent_max_agents';
   static const _aiMaxImageSizeBytesKey = 'ai_max_image_size_bytes';
@@ -419,6 +420,9 @@ class StorageService extends ChangeNotifier
     final openAiReasoningEffort = OpenAiReasoningEffort.normalize(
       _prefs?.getString(_aiOpenAiReasoningEffortKey),
     );
+    final webSearchEngine = AiWebSearchEngine.normalize(
+      _prefs?.getString(_aiWebSearchEngineKey),
+    );
     final apiKey = await getAiApiKey();
     final activeApiKeyId = await getSelectedAiApiKeyId();
     final activeApiKeyMasked =
@@ -436,6 +440,7 @@ class StorageService extends ChangeNotifier
       webSearchMaxResults: AiWebSearchMaxResults.normalize(
         _prefs?.getInt(_aiWebSearchMaxResultsKey),
       ),
+      webSearchEngine: webSearchEngine,
       multiAgentEnabled: _prefs?.getBool(_aiMultiAgentEnabledKey) ?? true,
       multiAgentMaxAgents: AiMultiAgentMaxAgents.normalize(
         _prefs?.getInt(_aiMultiAgentMaxAgentsKey),
@@ -644,6 +649,7 @@ class StorageService extends ChangeNotifier
     String? openAiReasoningEffort,
     bool? webSearchEnabled,
     int? webSearchMaxResults,
+    String? webSearchEngine,
     bool? multiAgentEnabled,
     int? multiAgentMaxAgents,
     int? maxImageSizeBytes,
@@ -692,6 +698,12 @@ class StorageService extends ChangeNotifier
       _aiWebSearchMaxResultsKey,
       AiWebSearchMaxResults.normalize(
         webSearchMaxResults ?? _prefs!.getInt(_aiWebSearchMaxResultsKey),
+      ),
+    );
+    await _prefs!.setString(
+      _aiWebSearchEngineKey,
+      AiWebSearchEngine.normalize(
+        webSearchEngine ?? _prefs!.getString(_aiWebSearchEngineKey),
       ),
     );
     await _prefs!.setBool(
@@ -754,7 +766,7 @@ class StorageService extends ChangeNotifier
     AppLogService.instance.info(
       'LLM settings saved',
       details:
-          'baseUrl=$normalizedBaseUrl model=$normalizedModel contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} timeoutSeconds=${AiRequestTimeout.normalize(timeoutSeconds)} deepSeekThinking=${deepSeekThinkingEnabled ?? (_prefs!.getBool(_aiDeepSeekThinkingEnabledKey) ?? true)} deepSeekEffort=${DeepSeekReasoningEffort.normalize(deepSeekReasoningEffort ?? _prefs!.getString(_aiDeepSeekReasoningEffortKey))} openAiEffort=${OpenAiReasoningEffort.normalize(openAiReasoningEffort ?? _prefs!.getString(_aiOpenAiReasoningEffortKey))} webSearch=${webSearchEnabled ?? (_prefs!.getBool(_aiWebSearchEnabledKey) ?? true)} multiAgent=${multiAgentEnabled ?? (_prefs!.getBool(_aiMultiAgentEnabledKey) ?? true)} maxAgents=${AiMultiAgentMaxAgents.normalize(multiAgentMaxAgents ?? _prefs!.getInt(_aiMultiAgentMaxAgentsKey))} apiKeyUpdated=$apiKeyUpdated',
+          'baseUrl=$normalizedBaseUrl model=$normalizedModel contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} timeoutSeconds=${AiRequestTimeout.normalize(timeoutSeconds)} deepSeekThinking=${deepSeekThinkingEnabled ?? (_prefs!.getBool(_aiDeepSeekThinkingEnabledKey) ?? true)} deepSeekEffort=${DeepSeekReasoningEffort.normalize(deepSeekReasoningEffort ?? _prefs!.getString(_aiDeepSeekReasoningEffortKey))} openAiEffort=${OpenAiReasoningEffort.normalize(openAiReasoningEffort ?? _prefs!.getString(_aiOpenAiReasoningEffortKey))} webSearch=${webSearchEnabled ?? (_prefs!.getBool(_aiWebSearchEnabledKey) ?? true)} webSearchEngine=${AiWebSearchEngine.normalize(webSearchEngine ?? _prefs!.getString(_aiWebSearchEngineKey))} multiAgent=${multiAgentEnabled ?? (_prefs!.getBool(_aiMultiAgentEnabledKey) ?? true)} maxAgents=${AiMultiAgentMaxAgents.normalize(multiAgentMaxAgents ?? _prefs!.getInt(_aiMultiAgentMaxAgentsKey))} apiKeyUpdated=$apiKeyUpdated',
     );
     // AI settings are loaded on demand by the chat page. Avoid notifying the
     // whole storage tree while the settings dialog is being dismissed; doing so
@@ -1126,13 +1138,15 @@ class StorageService extends ChangeNotifier
         'openAiReasoningEffort': settings.openAiReasoningEffort,
         'webSearchEnabled': settings.webSearchEnabled,
         'webSearchMaxResults': settings.webSearchMaxResults,
+        'webSearchEngine': settings.webSearchEngine,
         'multiAgentEnabled': settings.multiAgentEnabled,
         'multiAgentMaxAgents': settings.multiAgentMaxAgents,
         'apiKey': '',
       },
       'aiChats': (await loadAiChats()).map((item) => item.toJson()).toList(),
       'aiSkills': (await loadAiSkills()).map((item) => item.toJson()).toList(),
-      'playbooks': (await loadPlaybooks()).map((item) => item.toJson()).toList(),
+      'playbooks':
+          (await loadPlaybooks()).map((item) => item.toJson()).toList(),
       'powerGuideSeen': _powerGuideSeen,
     };
     AppLogService.instance.info(
@@ -1195,6 +1209,7 @@ class StorageService extends ChangeNotifier
         webSearchEnabled: aiSettings['webSearchEnabled'] as bool?,
         webSearchMaxResults:
             (aiSettings['webSearchMaxResults'] as num?)?.toInt(),
+        webSearchEngine: aiSettings['webSearchEngine'] as String?,
         multiAgentEnabled: aiSettings['multiAgentEnabled'] as bool?,
         multiAgentMaxAgents:
             (aiSettings['multiAgentMaxAgents'] as num?)?.toInt(),
@@ -1616,6 +1631,7 @@ class AiConnectionSettings {
   final String openAiReasoningEffort;
   final bool webSearchEnabled;
   final int webSearchMaxResults;
+  final String webSearchEngine;
   final bool multiAgentEnabled;
   final int multiAgentMaxAgents;
   final int maxImageSizeBytes;
@@ -1634,6 +1650,7 @@ class AiConnectionSettings {
     required this.openAiReasoningEffort,
     required this.webSearchEnabled,
     required this.webSearchMaxResults,
+    required this.webSearchEngine,
     required this.multiAgentEnabled,
     required this.multiAgentMaxAgents,
     required this.maxImageSizeBytes,
@@ -1666,11 +1683,36 @@ class AiWebSearchMaxResults {
   }
 }
 
+class AiWebSearchEngine {
+  static const String google = 'google';
+  static const String bing = 'bing';
+  static const String baidu = 'baidu';
+  static const String duckDuckGo = 'duckduckgo';
+
+  static const String defaultValue = duckDuckGo;
+
+  static const List<String> values = [google, bing, baidu, duckDuckGo];
+
+  static String normalize(String? value) {
+    if (value == null) return defaultValue;
+    final normalized = value.trim().toLowerCase();
+    if (values.contains(normalized)) return normalized;
+    return defaultValue;
+  }
+}
+
 class AiUploadSizeLimit {
   static const int _mb = 1024 * 1024;
-  static const int defaultImageSizeBytes = 5 * _mb;
-  static const int defaultFileSizeBytes = 10 * _mb;
-  static const List<int> imageValues = [1 * _mb, 2 * _mb, 5 * _mb, 10 * _mb];
+  static const int defaultImageSizeBytes = 50 * _mb;
+  static const int defaultFileSizeBytes = 50 * _mb;
+  static const List<int> imageValues = [
+    1 * _mb,
+    2 * _mb,
+    5 * _mb,
+    10 * _mb,
+    20 * _mb,
+    50 * _mb,
+  ];
   static const List<int> fileValues = [
     1 * _mb,
     5 * _mb,

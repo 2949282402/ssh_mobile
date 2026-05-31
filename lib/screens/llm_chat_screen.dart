@@ -238,7 +238,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   bool _sending = false;
   bool _toolsExpanded = false;
   bool _isUserAtBottom = true;
-  String? _selectedConnectionId;
+  final Set<String> _selectedConnectionIds = {};
   final Map<String, Set<String>> _chatAllowedTools = {};
   final Set<String> _pendingForceCompressionChats = {};
   final List<AiChatAttachment> _pendingAttachments = [];
@@ -706,43 +706,129 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   }
 
   String _selectedServerLabel(_AiStrings strings) {
-    final id = _selectedConnectionId;
-    if (id == null) return strings.serverTarget;
-    final connection = context.read<StorageService>().getConnection(id);
-    return connection == null ? strings.serverTarget : connection.name;
+    if (_selectedConnectionIds.isEmpty) return strings.serverTarget;
+    if (_selectedConnectionIds.length == 1) {
+      final id = _selectedConnectionIds.first;
+      final connection = context.read<StorageService>().getConnection(id);
+      return connection == null ? strings.serverTarget : connection.name;
+    }
+    return strings.language == AppLanguage.en
+        ? '${_selectedConnectionIds.length} Servers'
+        : '${_selectedConnectionIds.length} 台服务器';
   }
 
   Future<void> _selectTargetServer(_AiStrings strings) async {
     final storage = context.read<StorageService>();
-    final selected = await showModalBottomSheet<String?>(
+    if (storage.connections.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(strings.language == AppLanguage.en
+                ? 'No configured servers.'
+                : '没有配置服务器。'),
+          ),
+        );
+      }
+      return;
+    }
+
+    final selected = Set<String>.from(_selectedConnectionIds);
+    final result = await showModalBottomSheet<Set<String>?>(
       context: context,
       showDragHandle: true,
-      builder: (ctx) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.clear_rounded),
-              title: Text(strings.noDefaultServer),
-              onTap: () => Navigator.pop(ctx, null),
-            ),
-            for (final connection in storage.connections)
-              ListTile(
-                leading: Icon(
-                  connection.id == _selectedConnectionId
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_off,
-                ),
-                title: Text(connection.name),
-                subtitle: Text('${connection.username}@${connection.host}'),
-                onTap: () => Navigator.pop(ctx, connection.id),
+      isScrollControlled: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) {
+          return SafeArea(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.7,
               ),
-          ],
-        ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            strings.language == AppLanguage.en
+                                ? 'Select target servers'
+                                : '选择目标服务器',
+                            style: Theme.of(sheetContext)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        if (selected.isNotEmpty)
+                          TextButton(
+                            onPressed: () {
+                              setSheetState(() => selected.clear());
+                            },
+                            child: Text(strings.language == AppLanguage.en
+                                ? 'Clear all'
+                                : '清空全部'),
+                          ),
+                      ],
+                    ),
+                    const Divider(),
+                    Flexible(
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: [
+                          for (final connection in storage.connections)
+                            CheckboxListTile(
+                              value: selected.contains(connection.id),
+                              title: Text(connection.name),
+                              subtitle: Text(
+                                  '${connection.username}@${connection.host}:${connection.port}'),
+                              onChanged: (val) {
+                                setSheetState(() {
+                                  if (val == true) {
+                                    selected.add(connection.id);
+                                  } else {
+                                    selected.remove(connection.id);
+                                  }
+                                });
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(sheetContext),
+                          child: Text(strings.cancel),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton(
+                          onPressed: () =>
+                              Navigator.pop(sheetContext, selected),
+                          child: Text(strings.save),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
+
     if (!mounted) return;
-    setState(() => _selectedConnectionId = selected);
+    if (result != null) {
+      setState(() {
+        _selectedConnectionIds.clear();
+        _selectedConnectionIds.addAll(result);
+      });
+    }
   }
 
   Future<void> _openClientWebView(String chatId) async {
@@ -1424,7 +1510,10 @@ class _LlmChatScreenState extends State<LlmChatScreen>
         return;
       }
       if (handled && clearInput) {
-        setState(() => _inputController.clear());
+        setState(() {
+          _inputController.clear();
+          _toolsExpanded = false;
+        });
       }
       return;
     }
@@ -1480,6 +1569,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       }
       if (clearInput) _inputController.clear();
       _pendingAttachments.clear();
+      _toolsExpanded = false;
     });
     await storage.saveAiChat(nextChat);
     _scrollToBottom();
@@ -2196,6 +2286,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     var deepSeekReasoningEffort = settings.deepSeekReasoningEffort;
     var webSearchEnabled = settings.webSearchEnabled;
     var webSearchMaxResults = settings.webSearchMaxResults;
+    var webSearchEngine = settings.webSearchEngine;
     var multiAgentEnabled = settings.multiAgentEnabled;
     var multiAgentMaxAgents = settings.multiAgentMaxAgents;
     var loadingModels = false;
@@ -2269,6 +2360,16 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                   TextField(
                     controller: baseUrlController,
                     decoration: InputDecoration(labelText: strings.baseUrl),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: apiKeyController,
+                    obscureText: true,
+                    decoration: InputDecoration(
+                      labelText: settings.hasApiKey
+                          ? strings.apiKeySaved
+                          : strings.apiKeyRequired,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   Row(
@@ -2458,6 +2559,28 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                           },
                   ),
                   const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: webSearchEngine,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      labelText: strings.webSearchEngine,
+                    ),
+                    items: [
+                      for (final value in AiWebSearchEngine.values)
+                        DropdownMenuItem(
+                          value: value,
+                          child: Text(strings.webSearchEngineLabel(value)),
+                        ),
+                    ],
+                    onChanged: savingSettings || !webSearchEnabled
+                        ? null
+                        : (value) {
+                            if (value != null) {
+                              setDialogState(() => webSearchEngine = value);
+                            }
+                          },
+                  ),
+                  const SizedBox(height: 12),
                   DropdownButtonFormField<int>(
                     initialValue:
                         AiWebSearchMaxResults.normalize(webSearchMaxResults),
@@ -2476,16 +2599,6 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                         : (value) {
                             if (value != null) webSearchMaxResults = value;
                           },
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: apiKeyController,
-                    obscureText: true,
-                    decoration: InputDecoration(
-                      labelText: settings.hasApiKey
-                          ? strings.apiKeySaved
-                          : strings.apiKeyRequired,
-                    ),
                   ),
                 ],
               ),
@@ -2511,6 +2624,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                         openAiReasoningEffort: settings.openAiReasoningEffort,
                         webSearchEnabled: webSearchEnabled,
                         webSearchMaxResults: webSearchMaxResults,
+                        webSearchEngine: webSearchEngine,
                         multiAgentEnabled: multiAgentEnabled,
                         multiAgentMaxAgents: multiAgentMaxAgents,
                         maxImageSizeBytes: settings.maxImageSizeBytes,
@@ -2535,6 +2649,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                           openAiReasoningEffort: pending.openAiReasoningEffort,
                           webSearchEnabled: pending.webSearchEnabled,
                           webSearchMaxResults: pending.webSearchMaxResults,
+                          webSearchEngine: pending.webSearchEngine,
                           multiAgentEnabled: pending.multiAgentEnabled,
                           multiAgentMaxAgents: pending.multiAgentMaxAgents,
                           apiKey: pending.apiKey,
@@ -2846,13 +2961,20 @@ class _LlmChatScreenState extends State<LlmChatScreen>
 
   Future<String?> _contextTextForUser(String text) async {
     final lines = <String>[];
-    final connectionId = _selectedConnectionId;
-    if (connectionId != null) {
-      final connection =
-          context.read<StorageService>().getConnection(connectionId);
-      if (connection != null) {
+    if (_selectedConnectionIds.isNotEmpty) {
+      final storage = context.read<StorageService>();
+      final serverInfos = <String>[];
+      for (final id in _selectedConnectionIds) {
+        final connection = storage.getConnection(id);
+        if (connection != null) {
+          serverInfos.add(
+            '- ${connection.name} (id: ${connection.id}, host: ${connection.username}@${connection.host}:${connection.port})',
+          );
+        }
+      }
+      if (serverInfos.isNotEmpty) {
         lines.add(
-          'Default target server: ${connection.name} (id: ${connection.id}, host: ${connection.username}@${connection.host}:${connection.port})',
+          'Target servers:\n${serverInfos.join('\n')}',
         );
       }
     }
@@ -3695,7 +3817,7 @@ class _ChatToolsBar extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     return Container(
       width: double.infinity,
-      constraints: const BoxConstraints(minHeight: 100, maxHeight: 164),
+      constraints: const BoxConstraints(minHeight: 100, maxHeight: 200),
       padding: const EdgeInsets.fromLTRB(10, 12, 10, 10),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
@@ -3706,8 +3828,13 @@ class _ChatToolsBar extends StatelessWidget {
         physics: const ClampingScrollPhysics(),
         child: LayoutBuilder(
           builder: (context, constraints) {
+            final isMobile = defaultTargetPlatform == TargetPlatform.android ||
+                defaultTargetPlatform == TargetPlatform.iOS;
+            final itemsPerRow = isMobile ? 4 : 2;
             final spacing = 10.0;
-            final tileWidth = (constraints.maxWidth - spacing) / 2;
+            final tileWidth =
+                (constraints.maxWidth - (spacing * (itemsPerRow - 1))) /
+                    itemsPerRow;
             return Wrap(
               spacing: spacing,
               runSpacing: spacing,
@@ -4550,6 +4677,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   late String _openAiReasoningEffort;
   late bool _webSearchEnabled;
   late int _webSearchMaxResults;
+  late String _webSearchEngine;
   late bool _multiAgentEnabled;
   late int _multiAgentMaxAgents;
   late int _maxImageSizeBytes;
@@ -4578,6 +4706,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _openAiReasoningEffort = widget.initialSettings.openAiReasoningEffort;
     _webSearchEnabled = widget.initialSettings.webSearchEnabled;
     _webSearchMaxResults = widget.initialSettings.webSearchMaxResults;
+    _webSearchEngine = widget.initialSettings.webSearchEngine;
     _multiAgentEnabled = widget.initialSettings.multiAgentEnabled;
     _multiAgentMaxAgents = widget.initialSettings.multiAgentMaxAgents;
     _maxImageSizeBytes = widget.initialSettings.maxImageSizeBytes;
@@ -4824,6 +4953,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       openAiReasoningEffort: _openAiReasoningEffort,
       webSearchEnabled: _webSearchEnabled,
       webSearchMaxResults: _webSearchMaxResults,
+      webSearchEngine: _webSearchEngine,
       multiAgentEnabled: _multiAgentEnabled,
       multiAgentMaxAgents: _multiAgentMaxAgents,
       maxImageSizeBytes: _maxImageSizeBytes,
@@ -4846,6 +4976,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         openAiReasoningEffort: pending.openAiReasoningEffort,
         webSearchEnabled: pending.webSearchEnabled,
         webSearchMaxResults: pending.webSearchMaxResults,
+        webSearchEngine: pending.webSearchEngine,
         multiAgentEnabled: pending.multiAgentEnabled,
         multiAgentMaxAgents: pending.multiAgentMaxAgents,
         maxImageSizeBytes: pending.maxImageSizeBytes,
@@ -4920,6 +5051,55 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                 ),
               ),
             ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _apiKeyController,
+              enabled: !_saving,
+              obscureText: true,
+              decoration: InputDecoration(
+                labelText: _selectedApiKeyMasked != null
+                    ? strings.apiKeySaved
+                    : strings.apiKeyRequired,
+                helperText: _selectedApiKeyMasked != null
+                    ? strings.apiKeySelected(_selectedApiKeyMasked!)
+                    : (_apiKeyHistory.isNotEmpty
+                        ? strings.apiKeyHistoryHint
+                        : strings.apiKeyReplaceHint),
+                helperMaxLines: 2,
+                suffixIcon: IconButton(
+                  tooltip: strings.apiKeyHistory,
+                  onPressed: _saving ? null : () => _openApiKeyHistory(strings),
+                  icon: const Icon(Icons.arrow_drop_down_rounded),
+                ),
+              ),
+            ),
+            if (_apiKeyHistory.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final entry in _apiKeyHistory)
+                    ChoiceChip(
+                      label: Text(entry.maskedValue),
+                      selected: entry.id == _selectedApiKeyId,
+                      onSelected: _saving
+                          ? null
+                          : (_) => _selectApiKeyHistoryEntry(entry.id),
+                    ),
+                ],
+              ),
+              if (_selectedApiKeyMasked != null) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    strings.apiKeyMaskedPreview(_selectedApiKeyMasked!),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ],
             const SizedBox(height: 14),
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -5133,6 +5313,28 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                     },
             ),
             const SizedBox(height: 14),
+            DropdownButtonFormField<String>(
+              initialValue: _webSearchEngine,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: strings.webSearchEngine,
+              ),
+              items: [
+                for (final value in AiWebSearchEngine.values)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text(strings.webSearchEngineLabel(value)),
+                  ),
+              ],
+              onChanged: _saving || !_webSearchEnabled
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        setState(() => _webSearchEngine = value);
+                      }
+                    },
+            ),
+            const SizedBox(height: 14),
             DropdownButtonFormField<int>(
               initialValue: AiWebSearchMaxResults.normalize(
                 _webSearchMaxResults,
@@ -5196,55 +5398,6 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                       }
                     },
             ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: _apiKeyController,
-              enabled: !_saving,
-              obscureText: true,
-              decoration: InputDecoration(
-                labelText: _selectedApiKeyMasked != null
-                    ? strings.apiKeySaved
-                    : strings.apiKeyRequired,
-                helperText: _selectedApiKeyMasked != null
-                    ? strings.apiKeySelected(_selectedApiKeyMasked!)
-                    : (_apiKeyHistory.isNotEmpty
-                        ? strings.apiKeyHistoryHint
-                        : strings.apiKeyReplaceHint),
-                helperMaxLines: 2,
-                suffixIcon: IconButton(
-                  tooltip: strings.apiKeyHistory,
-                  onPressed: _saving ? null : () => _openApiKeyHistory(strings),
-                  icon: const Icon(Icons.arrow_drop_down_rounded),
-                ),
-              ),
-            ),
-            if (_apiKeyHistory.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final entry in _apiKeyHistory)
-                    ChoiceChip(
-                      label: Text(entry.maskedValue),
-                      selected: entry.id == _selectedApiKeyId,
-                      onSelected: _saving
-                          ? null
-                          : (_) => _selectApiKeyHistoryEntry(entry.id),
-                    ),
-                ],
-              ),
-              if (_selectedApiKeyMasked != null) ...[
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    strings.apiKeyMaskedPreview(_selectedApiKeyMasked!),
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-              ],
-            ],
             if (_errorText != null) ...[
               const SizedBox(height: 14),
               DecoratedBox(
@@ -5383,6 +5536,7 @@ class _PendingAiSettings {
   final String openAiReasoningEffort;
   final bool webSearchEnabled;
   final int webSearchMaxResults;
+  final String webSearchEngine;
   final bool multiAgentEnabled;
   final int multiAgentMaxAgents;
   final int maxImageSizeBytes;
@@ -5400,6 +5554,7 @@ class _PendingAiSettings {
     required this.openAiReasoningEffort,
     required this.webSearchEnabled,
     required this.webSearchMaxResults,
+    required this.webSearchEngine,
     required this.multiAgentEnabled,
     required this.multiAgentMaxAgents,
     required this.maxImageSizeBytes,
@@ -5446,6 +5601,22 @@ class _AiStrings {
       ? 'Expose a web_search tool that uses the current chat WebView on this device. No search API key is required.'
       : '通过当前聊天绑定的本机 WebView 给模型提供 web_search 工具，不需要搜索 API Key。';
   String get webSearchMaxResults => _en ? 'Search results per call' : '每次搜索结果数';
+  String get webSearchEngine => _en ? 'Web search engine' : '搜索引擎';
+
+  String webSearchEngineLabel(String value) {
+    switch (value) {
+      case 'google':
+        return _en ? 'Google' : '谷歌 (Google)';
+      case 'bing':
+        return _en ? 'Bing' : '必应 (Bing)';
+      case 'baidu':
+        return _en ? 'Baidu' : '百度 (Baidu)';
+      case 'duckduckgo':
+      default:
+        return _en ? 'DuckDuckGo' : 'DuckDuckGo';
+    }
+  }
+
   String get multiAgent => _en ? 'Multi-agent collaboration' : '多 Agent 协作';
   String get multiAgentHint => _en
       ? 'Automatically ask helper agents to plan, suggest safe operations, and review complex tasks before the main answer.'

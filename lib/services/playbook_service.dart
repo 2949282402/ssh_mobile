@@ -86,12 +86,14 @@ class PlaybookService extends ChangeNotifier {
     if (index == -1) return;
 
     final original = _playbooks[index];
-    final resetSteps = original.steps.map((s) => s.copyWith(
-      status: StepStatus.pending,
-      stdout: null,
-      stderr: null,
-      exitCode: null,
-    )).toList();
+    final resetSteps = original.steps
+        .map((s) => s.copyWith(
+              status: StepStatus.pending,
+              stdout: null,
+              stderr: null,
+              exitCode: null,
+            ))
+        .toList();
 
     final resetPlaybook = original.copyWith(
       steps: resetSteps,
@@ -119,12 +121,14 @@ class PlaybookService extends ChangeNotifier {
     notifyListeners();
 
     // Reset status of all steps to pending before starting
-    final cleanSteps = _activePlaybook!.steps.map((s) => s.copyWith(
-      status: StepStatus.pending,
-      stdout: null,
-      stderr: null,
-      exitCode: null,
-    )).toList();
+    final cleanSteps = _activePlaybook!.steps
+        .map((s) => s.copyWith(
+              status: StepStatus.pending,
+              stdout: null,
+              stderr: null,
+              exitCode: null,
+            ))
+        .toList();
     _activePlaybook = _activePlaybook!.copyWith(
       steps: cleanSteps,
       lastConnectionId: connectionId,
@@ -153,7 +157,9 @@ class PlaybookService extends ChangeNotifier {
   }
 
   Future<void> skipCurrentStep(String connectionId) async {
-    if (_activePlaybook == null || _currentStepIndex < 0 || _currentStepIndex >= _activePlaybook!.steps.length) return;
+    if (_activePlaybook == null ||
+        _currentStepIndex < 0 ||
+        _currentStepIndex >= _activePlaybook!.steps.length) return;
 
     final steps = [..._activePlaybook!.steps];
     steps[_currentStepIndex] = steps[_currentStepIndex].copyWith(
@@ -190,7 +196,8 @@ class PlaybookService extends ChangeNotifier {
 
       // Update step status to running
       final stepsBefore = [..._activePlaybook!.steps];
-      stepsBefore[_currentStepIndex] = step.copyWith(status: StepStatus.running);
+      stepsBefore[_currentStepIndex] =
+          step.copyWith(status: StepStatus.running);
       _activePlaybook = _activePlaybook!.copyWith(steps: stepsBefore);
       await updatePlaybook(_activePlaybook!);
       notifyListeners();
@@ -213,7 +220,8 @@ class PlaybookService extends ChangeNotifier {
         StepStatus finalStatus = StepStatus.success;
         if (exitCode != 0) {
           finalStatus = StepStatus.failed;
-        } else if (step.expectedOutcomeRegex != null && step.expectedOutcomeRegex!.isNotEmpty) {
+        } else if (step.expectedOutcomeRegex != null &&
+            step.expectedOutcomeRegex!.isNotEmpty) {
           try {
             final reg = RegExp(step.expectedOutcomeRegex!);
             if (!reg.hasMatch(stdout)) {
@@ -239,7 +247,8 @@ class PlaybookService extends ChangeNotifier {
           _isPaused = true;
           AppLogService.instance.warning(
             'Playbook Step Failed',
-            details: 'playbook=$playbookId step=${step.id} name=${step.name} exitCode=$exitCode',
+            details:
+                'playbook=$playbookId step=${step.id} name=${step.name} exitCode=$exitCode',
           );
           notifyListeners();
           break;

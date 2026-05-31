@@ -74,7 +74,8 @@ class _PlaybookScreenState extends State<PlaybookScreen>
         'name': TextEditingController(text: step.name),
         'command': TextEditingController(text: step.command),
         'description': TextEditingController(text: step.description),
-        'expectedOutcomeRegex': TextEditingController(text: step.expectedOutcomeRegex ?? ''),
+        'expectedOutcomeRegex':
+            TextEditingController(text: step.expectedOutcomeRegex ?? ''),
       });
     }
   }
@@ -133,7 +134,8 @@ class _PlaybookScreenState extends State<PlaybookScreen>
     });
   }
 
-  Future<void> _savePlaybook(PlaybookService service, _PlaybookStrings strings) async {
+  Future<void> _savePlaybook(
+      PlaybookService service, _PlaybookStrings strings) async {
     if (!_formKey.currentState!.validate() || _editingPlaybook == null) return;
 
     final steps = <PlaybookStep>[];
@@ -154,9 +156,15 @@ class _PlaybookScreenState extends State<PlaybookScreen>
         status: i < _editingPlaybook!.steps.length
             ? _editingPlaybook!.steps[i].status
             : StepStatus.pending,
-        stdout: i < _editingPlaybook!.steps.length ? _editingPlaybook!.steps[i].stdout : null,
-        stderr: i < _editingPlaybook!.steps.length ? _editingPlaybook!.steps[i].stderr : null,
-        exitCode: i < _editingPlaybook!.steps.length ? _editingPlaybook!.steps[i].exitCode : null,
+        stdout: i < _editingPlaybook!.steps.length
+            ? _editingPlaybook!.steps[i].stdout
+            : null,
+        stderr: i < _editingPlaybook!.steps.length
+            ? _editingPlaybook!.steps[i].stderr
+            : null,
+        exitCode: i < _editingPlaybook!.steps.length
+            ? _editingPlaybook!.steps[i].exitCode
+            : null,
       ));
     }
 
@@ -213,7 +221,8 @@ class _PlaybookScreenState extends State<PlaybookScreen>
     // Resolve active selection
     final activePlaybook = playbookService.activePlaybook;
     if (_selectedConnectionId == null && connections.isNotEmpty) {
-      _selectedConnectionId = activePlaybook?.lastConnectionId ?? connections.first.id;
+      _selectedConnectionId =
+          activePlaybook?.lastConnectionId ?? connections.first.id;
     }
 
     return Scaffold(
@@ -243,10 +252,12 @@ class _PlaybookScreenState extends State<PlaybookScreen>
       body: LayoutBuilder(
         builder: (context, constraints) {
           final wide = constraints.maxWidth >= 760;
-          final listWidget = _buildPlaybooksList(playbookService, strings, colorScheme);
+          final listWidget =
+              _buildPlaybooksList(playbookService, strings, colorScheme);
           final rightWidget = _isEditing
               ? _buildPlaybookEditor(playbookService, strings, colorScheme)
-              : _buildExecutionDashboard(playbookService, connections, strings, colorScheme);
+              : _buildExecutionDashboard(
+                  playbookService, connections, strings, colorScheme);
 
           if (wide) {
             return Row(
@@ -266,7 +277,10 @@ class _PlaybookScreenState extends State<PlaybookScreen>
                   controller: _mobileTabs,
                   tabs: [
                     Tab(text: strings.playbooksList),
-                    Tab(text: _isEditing ? strings.editPlaybook : strings.execution),
+                    Tab(
+                        text: _isEditing
+                            ? strings.editPlaybook
+                            : strings.execution),
                   ],
                 ),
               ),
@@ -298,7 +312,8 @@ class _PlaybookScreenState extends State<PlaybookScreen>
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Icon(Icons.auto_awesome_motion_outlined, size: 64, color: colorScheme.primary.withValues(alpha: 0.5)),
+            Icon(Icons.auto_awesome_motion_outlined,
+                size: 64, color: colorScheme.primary.withValues(alpha: 0.5)),
             const SizedBox(height: 16),
             Text(
               strings.emptyTitle,
@@ -308,7 +323,10 @@ class _PlaybookScreenState extends State<PlaybookScreen>
             const SizedBox(height: 8),
             Text(
               strings.emptyHint,
-              style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 13, height: 1.35),
+              style: TextStyle(
+                  color: colorScheme.onSurfaceVariant,
+                  fontSize: 13,
+                  height: 1.35),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 24),
@@ -335,11 +353,14 @@ class _PlaybookScreenState extends State<PlaybookScreen>
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(8),
             side: BorderSide(
-              color: isSelected ? colorScheme.primary : colorScheme.outlineVariant,
+              color:
+                  isSelected ? colorScheme.primary : colorScheme.outlineVariant,
               width: isSelected ? 1.5 : 1,
             ),
           ),
-          color: isSelected ? colorScheme.primaryContainer.withValues(alpha: 0.1) : colorScheme.surface,
+          color: isSelected
+              ? colorScheme.primaryContainer.withValues(alpha: 0.1)
+              : colorScheme.surface,
           child: InkWell(
             borderRadius: BorderRadius.circular(8),
             onTap: () {
@@ -365,7 +386,9 @@ class _PlaybookScreenState extends State<PlaybookScreen>
                     children: [
                       Icon(
                         Icons.rocket_launch_outlined,
-                        color: isSelected ? colorScheme.primary : colorScheme.onSurfaceVariant,
+                        color: isSelected
+                            ? colorScheme.primary
+                            : colorScheme.onSurfaceVariant,
                         size: 20,
                       ),
                       const SizedBox(width: 8),
@@ -375,7 +398,9 @@ class _PlaybookScreenState extends State<PlaybookScreen>
                           style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.bold,
-                            color: isSelected ? colorScheme.primary : colorScheme.onSurface,
+                            color: isSelected
+                                ? colorScheme.primary
+                                : colorScheme.onSurface,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -387,7 +412,8 @@ class _PlaybookScreenState extends State<PlaybookScreen>
                     const SizedBox(height: 6),
                     Text(
                       playbook.description,
-                      style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
+                      style: TextStyle(
+                          fontSize: 12, color: colorScheme.onSurfaceVariant),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -409,16 +435,19 @@ class _PlaybookScreenState extends State<PlaybookScreen>
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             IconButton(
-                              icon: const Icon(Icons.edit_note_outlined, size: 18),
+                              icon: const Icon(Icons.edit_note_outlined,
+                                  size: 18),
                               visualDensity: VisualDensity.compact,
                               padding: EdgeInsets.zero,
                               onPressed: () => _startEditing(playbook),
                             ),
                             IconButton(
-                              icon: const Icon(Icons.delete_outline_rounded, size: 18, color: Colors.red),
+                              icon: const Icon(Icons.delete_outline_rounded,
+                                  size: 18, color: Colors.red),
                               visualDensity: VisualDensity.compact,
                               padding: EdgeInsets.zero,
-                              onPressed: () => _confirmDeletePlaybook(service, playbook, strings),
+                              onPressed: () => _confirmDeletePlaybook(
+                                  service, playbook, strings),
                             ),
                           ],
                         ),
@@ -440,167 +469,182 @@ class _PlaybookScreenState extends State<PlaybookScreen>
     ColorScheme colorScheme,
   ) {
     return Form(
-      key: _formKey,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-          Text(
-            _editingPlaybook?.name.isEmpty == true ? strings.newPlaybook : strings.editPlaybook,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 16),
-          TextFormField(
-            controller: _nameController,
-            decoration: InputDecoration(
-              labelText: strings.name,
-              hintText: 'e.g. Deploy Web Service',
-              border: const OutlineInputBorder(),
-            ),
-            validator: (v) => v == null || v.trim().isEmpty ? 'Name is required' : null,
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _descriptionController,
-            decoration: InputDecoration(
-              labelText: strings.description,
-              hintText: 'Describe what this playbook does...',
-              border: const OutlineInputBorder(),
-            ),
-            minLines: 2,
-            maxLines: 4,
-          ),
-          const SizedBox(height: 24),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        key: _formKey,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                strings.steps,
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                _editingPlaybook?.name.isEmpty == true
+                    ? strings.newPlaybook
+                    : strings.editPlaybook,
+                style:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
-              OutlinedButton.icon(
-                onPressed: _addStepToEditing,
-                icon: const Icon(Icons.add_rounded, size: 16),
-                label: Text(strings.addStep),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _nameController,
+                decoration: InputDecoration(
+                  labelText: strings.name,
+                  hintText: 'e.g. Deploy Web Service',
+                  border: const OutlineInputBorder(),
+                ),
+                validator: (v) =>
+                    v == null || v.trim().isEmpty ? 'Name is required' : null,
               ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          if (_stepControllers.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 24),
-              child: Text(
-                'Please add at least one step.',
-                style: TextStyle(color: colorScheme.error, fontStyle: FontStyle.italic),
-                textAlign: TextAlign.center,
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _descriptionController,
+                decoration: InputDecoration(
+                  labelText: strings.description,
+                  hintText: 'Describe what this playbook does...',
+                  border: const OutlineInputBorder(),
+                ),
+                minLines: 2,
+                maxLines: 4,
               ),
-            ),
-          ...List.generate(_stepControllers.length, (index) {
-            final controllers = _stepControllers[index];
-            return Card(
-              key: ValueKey(controllers.hashCode),
-              margin: const EdgeInsets.only(bottom: 16),
-              elevation: 0,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-                side: BorderSide(color: colorScheme.outlineVariant),
+              const SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    strings.steps,
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _addStepToEditing,
+                    icon: const Icon(Icons.add_rounded, size: 16),
+                    label: Text(strings.addStep),
+                  ),
+                ],
               ),
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              const SizedBox(height: 12),
+              if (_stepControllers.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 24),
+                  child: Text(
+                    'Please add at least one step.',
+                    style: TextStyle(
+                        color: colorScheme.error, fontStyle: FontStyle.italic),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ...List.generate(_stepControllers.length, (index) {
+                final controllers = _stepControllers[index];
+                return Card(
+                  key: ValueKey(controllers.hashCode),
+                  margin: const EdgeInsets.only(bottom: 16),
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    side: BorderSide(color: colorScheme.outlineVariant),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        CircleAvatar(
-                          radius: 12,
-                          backgroundColor: colorScheme.primary,
-                          child: Text(
-                            '${index + 1}',
-                            style: TextStyle(color: colorScheme.onPrimary, fontSize: 11, fontWeight: FontWeight.bold),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            CircleAvatar(
+                              radius: 12,
+                              backgroundColor: colorScheme.primary,
+                              child: Text(
+                                '${index + 1}',
+                                style: TextStyle(
+                                    color: colorScheme.onPrimary,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              '${strings.step} ${index + 1}',
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            const Spacer(),
+                            if (_stepControllers.length > 1)
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline,
+                                    color: Colors.red, size: 20),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                onPressed: () => _removeStepFromEditing(index),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: controllers['name'],
+                          decoration: InputDecoration(
+                            labelText: strings.stepName,
+                            hintText: 'e.g. Check system status',
+                            isDense: true,
+                          ),
+                          validator: (v) => v == null || v.trim().isEmpty
+                              ? 'Step name is required'
+                              : null,
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: controllers['command'],
+                          decoration: InputDecoration(
+                            labelText: strings.stepCommand,
+                            hintText: 'e.g. systemctl status nginx',
+                            isDense: true,
+                          ),
+                          validator: (v) => v == null || v.trim().isEmpty
+                              ? 'Command is required'
+                              : null,
+                          style: const TextStyle(
+                              fontFamily: 'monospace', fontSize: 13),
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: controllers['description'],
+                          decoration: InputDecoration(
+                            labelText: strings.stepDesc,
+                            hintText: 'What does this step do?',
+                            isDense: true,
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        Text(
-                          '${strings.step} ${index + 1}',
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                        const Spacer(),
-                        if (_stepControllers.length > 1)
-                          IconButton(
-                            icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                            onPressed: () => _removeStepFromEditing(index),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: controllers['expectedOutcomeRegex'],
+                          decoration: InputDecoration(
+                            labelText: strings.expectedRegex,
+                            hintText: 'e.g. active \\(running\\)',
+                            isDense: true,
                           ),
+                        ),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: controllers['name'],
-                      decoration: InputDecoration(
-                        labelText: strings.stepName,
-                        hintText: 'e.g. Check system status',
-                        isDense: true,
-                      ),
-                      validator: (v) => v == null || v.trim().isEmpty ? 'Step name is required' : null,
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: controllers['command'],
-                      decoration: InputDecoration(
-                        labelText: strings.stepCommand,
-                        hintText: 'e.g. systemctl status nginx',
-                        isDense: true,
-                      ),
-                      validator: (v) => v == null || v.trim().isEmpty ? 'Command is required' : null,
-                      style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: controllers['description'],
-                      decoration: InputDecoration(
-                        labelText: strings.stepDesc,
-                        hintText: 'What does this step do?',
-                        isDense: true,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: controllers['expectedOutcomeRegex'],
-                      decoration: InputDecoration(
-                        labelText: strings.expectedRegex,
-                        hintText: 'e.g. active \\(running\\)',
-                        isDense: true,
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                );
+              }),
+              const SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  OutlinedButton(
+                    onPressed: () => _cancelEditing(service),
+                    child: Text(strings.cancel),
+                  ),
+                  const SizedBox(width: 12),
+                  FilledButton(
+                    onPressed: () => _savePlaybook(service, strings),
+                    child: Text(strings.save),
+                  ),
+                ],
               ),
-            );
-          }),
-          const SizedBox(height: 24),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              OutlinedButton(
-                onPressed: () => _cancelEditing(service),
-                child: Text(strings.cancel),
-              ),
-              const SizedBox(width: 12),
-              FilledButton(
-                onPressed: () => _savePlaybook(service, strings),
-                child: Text(strings.save),
-              ),
+              const SizedBox(height: 48),
             ],
           ),
-          const SizedBox(height: 48),
-        ],
-      ),
-      )
-    );
+        ));
   }
 
   Widget _buildExecutionDashboard(
@@ -615,7 +659,9 @@ class _PlaybookScreenState extends State<PlaybookScreen>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.rocket_launch_outlined, size: 64, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
+            Icon(Icons.rocket_launch_outlined,
+                size: 64,
+                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
             const SizedBox(height: 16),
             Text(
               strings.selectPlaybookPrompt,
@@ -626,7 +672,8 @@ class _PlaybookScreenState extends State<PlaybookScreen>
       );
     }
 
-    final hasConnectedServer = connections.any((c) => c.id == _selectedConnectionId);
+    final hasConnectedServer =
+        connections.any((c) => c.id == _selectedConnectionId);
 
     return Column(
       children: [
@@ -650,12 +697,14 @@ class _PlaybookScreenState extends State<PlaybookScreen>
                     children: [
                       Text(
                         strings.selectServer,
-                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                        style: const TextStyle(
+                            fontSize: 11, fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 4),
                       DropdownButtonHideUnderline(
                         child: DropdownButton<String>(
-                          value: connections.any((c) => c.id == _selectedConnectionId)
+                          value: connections
+                                  .any((c) => c.id == _selectedConnectionId)
                               ? _selectedConnectionId
                               : null,
                           hint: Text(strings.selectServerHint),
@@ -699,13 +748,15 @@ class _PlaybookScreenState extends State<PlaybookScreen>
                   children: [
                     Text(
                       playbook.name,
-                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      style: const TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.bold),
                     ),
                     if (playbook.description.isNotEmpty) ...[
                       const SizedBox(height: 4),
                       Text(
                         playbook.description,
-                        style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant),
+                        style: TextStyle(
+                            fontSize: 13, color: colorScheme.onSurfaceVariant),
                       ),
                     ],
                   ],
@@ -726,7 +777,8 @@ class _PlaybookScreenState extends State<PlaybookScreen>
             itemBuilder: (context, index) {
               final step = playbook.steps[index];
               final isCurrent = service.currentStepIndex == index;
-              return _buildStepCard(index, step, isCurrent, playbook, service, strings, colorScheme);
+              return _buildStepCard(index, step, isCurrent, playbook, service,
+                  strings, colorScheme);
             },
           ),
         ),
@@ -790,7 +842,9 @@ class _PlaybookScreenState extends State<PlaybookScreen>
         side: BorderSide(
           color: isCurrent
               ? colorScheme.primary
-              : (step.status == StepStatus.failed ? colorScheme.error : colorScheme.outlineVariant),
+              : (step.status == StepStatus.failed
+                  ? colorScheme.error
+                  : colorScheme.outlineVariant),
           width: isCurrent ? 1.5 : 1,
         ),
       ),
@@ -819,7 +873,8 @@ class _PlaybookScreenState extends State<PlaybookScreen>
                   Padding(
                     padding: const EdgeInsets.only(top: 2),
                     child: step.status == StepStatus.running
-                        ? (trailingWidget ?? Icon(statusIcon, color: statusColor, size: 20))
+                        ? (trailingWidget ??
+                            Icon(statusIcon, color: statusColor, size: 20))
                         : Icon(statusIcon, color: statusColor, size: 20),
                   ),
                   const SizedBox(width: 12),
@@ -835,13 +890,16 @@ class _PlaybookScreenState extends State<PlaybookScreen>
                               '${strings.step} ${index + 1}: ',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
-                                color: isCurrent ? colorScheme.primary : colorScheme.onSurface,
+                                color: isCurrent
+                                    ? colorScheme.primary
+                                    : colorScheme.onSurface,
                               ),
                             ),
                             Expanded(
                               child: Text(
                                 step.name,
-                                style: const TextStyle(fontWeight: FontWeight.bold),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -854,7 +912,8 @@ class _PlaybookScreenState extends State<PlaybookScreen>
                           style: TextStyle(
                             fontFamily: 'monospace',
                             fontSize: 12,
-                            backgroundColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                            backgroundColor: colorScheme.surfaceContainerHighest
+                                .withValues(alpha: 0.5),
                             color: colorScheme.onSurface,
                           ),
                         ),
@@ -862,7 +921,9 @@ class _PlaybookScreenState extends State<PlaybookScreen>
                           const SizedBox(height: 6),
                           Text(
                             step.description,
-                            style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: colorScheme.onSurfaceVariant),
                           ),
                         ],
                         if (step.expectedOutcomeRegex != null) ...[
@@ -872,7 +933,8 @@ class _PlaybookScreenState extends State<PlaybookScreen>
                             style: TextStyle(
                               fontSize: 11,
                               fontStyle: FontStyle.italic,
-                              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
+                              color: colorScheme.onSurfaceVariant
+                                  .withValues(alpha: 0.8),
                             ),
                           ),
                         ],
@@ -884,7 +946,9 @@ class _PlaybookScreenState extends State<PlaybookScreen>
                   if (hasOutput) ...[
                     const SizedBox(width: 8),
                     Icon(
-                      isExpanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                      isExpanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
                       color: colorScheme.onSurfaceVariant,
                     ),
                   ],
@@ -902,12 +966,15 @@ class _PlaybookScreenState extends State<PlaybookScreen>
                 child: FilledButton.tonalIcon(
                   style: FilledButton.styleFrom(
                     foregroundColor: colorScheme.primary,
-                    backgroundColor: colorScheme.primaryContainer.withValues(alpha: 0.3),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    backgroundColor:
+                        colorScheme.primaryContainer.withValues(alpha: 0.3),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   ),
                   icon: const Icon(Icons.smart_toy_outlined, size: 16),
                   label: Text(strings.aiDiagnostic),
-                  onPressed: () => _requestAiDiagnostic(playbook, step, strings),
+                  onPressed: () =>
+                      _requestAiDiagnostic(playbook, step, strings),
                 ),
               ),
             ),
@@ -930,28 +997,45 @@ class _PlaybookScreenState extends State<PlaybookScreen>
                       padding: const EdgeInsets.only(bottom: 4),
                       child: Text(
                         '${strings.exitCode}: ${step.exitCode}',
-                        style: const TextStyle(color: Colors.yellowAccent, fontFamily: 'monospace', fontSize: 11),
+                        style: const TextStyle(
+                            color: Colors.yellowAccent,
+                            fontFamily: 'monospace',
+                            fontSize: 11),
                       ),
                     ),
                   if (step.stdout != null && step.stdout!.isNotEmpty) ...[
                     const Text(
                       'STDOUT:',
-                      style: TextStyle(color: Colors.greenAccent, fontFamily: 'monospace', fontSize: 10, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                          color: Colors.greenAccent,
+                          fontFamily: 'monospace',
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold),
                     ),
                     Text(
                       step.stdout!,
-                      style: const TextStyle(color: Colors.white70, fontFamily: 'monospace', fontSize: 11),
+                      style: const TextStyle(
+                          color: Colors.white70,
+                          fontFamily: 'monospace',
+                          fontSize: 11),
                     ),
                     const SizedBox(height: 6),
                   ],
                   if (step.stderr != null && step.stderr!.isNotEmpty) ...[
                     const Text(
                       'STDERR:',
-                      style: TextStyle(color: Colors.redAccent, fontFamily: 'monospace', fontSize: 10, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                          color: Colors.redAccent,
+                          fontFamily: 'monospace',
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold),
                     ),
                     Text(
                       step.stderr!,
-                      style: const TextStyle(color: Colors.red, fontFamily: 'monospace', fontSize: 11),
+                      style: const TextStyle(
+                          color: Colors.red,
+                          fontFamily: 'monospace',
+                          fontSize: 11),
                     ),
                   ],
                 ],
@@ -1014,7 +1098,8 @@ class _PlaybookScreenState extends State<PlaybookScreen>
                     onPressed: _selectedConnectionId == null
                         ? null
                         : () {
-                            service.startExecution(activePlaybook.id, _selectedConnectionId!);
+                            service.startExecution(
+                                activePlaybook.id, _selectedConnectionId!);
                           },
                   );
                 }
@@ -1052,8 +1137,10 @@ class _PlaybookScreenState extends State<PlaybookScreen>
     );
   }
 
-  void _requestAiDiagnostic(Playbook playbook, PlaybookStep step, _PlaybookStrings strings) {
-    final prompt = """My playbook step failed. Please diagnose and help me fix it!
+  void _requestAiDiagnostic(
+      Playbook playbook, PlaybookStep step, _PlaybookStrings strings) {
+    final prompt =
+        """My playbook step failed. Please diagnose and help me fix it!
 
 Playbook: ${playbook.name}
 Step Index: ${playbook.steps.indexOf(step) + 1}
@@ -1154,16 +1241,19 @@ class _PlaybookStrings {
   String get stepName => _en ? 'Step Name' : '步骤名称';
   String get stepCommand => _en ? 'Execution Command' : '执行命令';
   String get stepDesc => _en ? 'Step Description' : '步骤描述';
-  String get expectedRegex => _en ? 'Expected Outcome Regex (Optional)' : '预期输出正则 (可选)';
+  String get expectedRegex =>
+      _en ? 'Expected Outcome Regex (Optional)' : '预期输出正则 (可选)';
 
   String get emptyTitle => _en ? 'No Playbooks Yet' : '暂无运维剧本';
   String get emptyHint => _en
       ? 'Create automated sequential task playbooks to run multiple SSH commands with step-by-step control, status tracking, and AI-assisted troubleshooting.'
       : '创建自动化的顺序执行剧本，一键运行多个服务器命令。支持分步追踪、执行失败自动暂停、一键拉起 AI 诊断及排障。';
 
-  String get selectPlaybookPrompt => _en ? 'Please select a playbook from the list' : '请先从左侧列表选择一个剧本';
+  String get selectPlaybookPrompt =>
+      _en ? 'Please select a playbook from the list' : '请先从左侧列表选择一个剧本';
   String get selectServer => _en ? 'Target Server' : '目标服务器';
-  String get selectServerHint => _en ? 'Please select a server connection' : '请选择执行该剧本的服务器';
+  String get selectServerHint =>
+      _en ? 'Please select a server connection' : '请选择执行该剧本的服务器';
 
   String get start => _en ? 'Start Execution' : '开始执行';
   String get pause => _en ? 'Pause' : '暂停';

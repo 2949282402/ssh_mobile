@@ -32,7 +32,8 @@ class _TactileFeedbackState extends State<TactileFeedback>
       vsync: this,
       duration: widget.duration,
     );
-    _scaleAnimation = Tween<double>(begin: 1.0, end: widget.scaleDownTo).animate(
+    _scaleAnimation =
+        Tween<double>(begin: 1.0, end: widget.scaleDownTo).animate(
       CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
     );
   }
@@ -57,7 +58,7 @@ class _TactileFeedbackState extends State<TactileFeedback>
   void _onTapCancel() {
     _controller.reverse();
   }
-  
+
   void _onLongPress() {
     _controller.reverse();
     widget.onLongPress?.call();

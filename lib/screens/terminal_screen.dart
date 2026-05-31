@@ -274,7 +274,8 @@ class _TerminalScreenState extends State<TerminalScreen>
     // Guard against massive streams causing Out Of Memory (OOM) or long UI freezes.
     // Since the scrollback is capped at 4000 lines, caching and processing
     // more than 200,000 characters of pending output is redundant and laggy.
-    while (_pendingTerminalWriteChars > 200000 && _pendingTerminalWrites.length > 1) {
+    while (_pendingTerminalWriteChars > 200000 &&
+        _pendingTerminalWrites.length > 1) {
       final removed = _pendingTerminalWrites.removeFirst();
       _pendingTerminalWriteChars -= removed.length;
     }
@@ -596,7 +597,8 @@ class _TerminalScreenState extends State<TerminalScreen>
     return PageRouteBuilder<void>(
       transitionDuration: const Duration(milliseconds: 300),
       reverseTransitionDuration: const Duration(milliseconds: 200),
-      pageBuilder: (context, animation, secondaryAnimation) => SharedAxisTransition(
+      pageBuilder: (context, animation, secondaryAnimation) =>
+          SharedAxisTransition(
         animation: animation,
         secondaryAnimation: secondaryAnimation,
         transitionType: SharedAxisTransitionType.scaled,

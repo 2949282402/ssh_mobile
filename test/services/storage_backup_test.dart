@@ -285,4 +285,56 @@ void main() {
     expect(settings.multiAgentEnabled, isFalse);
     expect(settings.multiAgentMaxAgents, 4);
   });
+
+  test('web search engine settings persist, export, and import', () async {
+    storage = await initializedStorage();
+
+    // 1. Verify default value is duckduckgo
+    var settings = await storage.loadAiConnectionSettings();
+    expect(settings.webSearchEngine, 'duckduckgo');
+
+    // 2. Save custom search engine
+    await storage.saveAiConnectionSettings(
+      baseUrl: 'https://api.example.com',
+      model: 'demo-model',
+      webSearchEngine: 'baidu',
+    );
+    settings = await storage.loadAiConnectionSettings();
+    expect(settings.webSearchEngine, 'baidu');
+
+    // 3. Normalize invalid search engine
+    await storage.saveAiConnectionSettings(
+      baseUrl: 'https://api.example.com',
+      model: 'demo-model',
+      webSearchEngine: 'invalid-engine-name',
+    );
+    settings = await storage.loadAiConnectionSettings();
+    expect(settings.webSearchEngine, 'duckduckgo');
+
+    // 4. Export verifies webSearchEngine is present
+    await storage.saveAiConnectionSettings(
+      baseUrl: 'https://api.example.com',
+      model: 'demo-model',
+      webSearchEngine: 'google',
+    );
+    final jsonText = await storage.exportAppDataJson();
+    final decoded = jsonDecode(jsonText) as Map<String, dynamic>;
+    final aiSettings = decoded['aiSettings'] as Map<String, dynamic>;
+    expect(aiSettings['webSearchEngine'], 'google');
+
+    // 5. Import restores search engine setting
+    final backup = jsonEncode({
+      'format': 'ssh_mobile_backup',
+      'version': 1,
+      'connections': const [],
+      'aiSettings': {
+        'baseUrl': 'https://api.example.com',
+        'model': 'demo-model',
+        'webSearchEngine': 'bing',
+      },
+    });
+    await storage.importAppDataJson(backup);
+    settings = await storage.loadAiConnectionSettings();
+    expect(settings.webSearchEngine, 'bing');
+  });
 }

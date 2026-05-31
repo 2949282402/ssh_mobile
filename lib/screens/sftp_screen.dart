@@ -1026,7 +1026,8 @@ class _SftpEntryList extends StatelessWidget {
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (entry.isDirectory) const Icon(Icons.chevron_right_rounded),
+                  if (entry.isDirectory)
+                    const Icon(Icons.chevron_right_rounded),
                   PopupMenuButton<String>(
                     onSelected: (action) => onEntryAction(
                       context,

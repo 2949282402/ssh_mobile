@@ -23,12 +23,15 @@ class FakeSshService extends SshService {
     callCount++;
 
     if (command == 'invalid_command') {
-      return RemoteCommandResult(stdout: '', stderr: 'command not found', exitCode: 127);
+      return RemoteCommandResult(
+          stdout: '', stderr: 'command not found', exitCode: 127);
     }
     if (command == 'regex_mismatch') {
-      return RemoteCommandResult(stdout: 'not what we want', stderr: '', exitCode: 0);
+      return RemoteCommandResult(
+          stdout: 'not what we want', stderr: '', exitCode: 0);
     }
-    return RemoteCommandResult(stdout: 'success_output', stderr: '', exitCode: 0);
+    return RemoteCommandResult(
+        stdout: 'success_output', stderr: '', exitCode: 0);
   }
 }
 
@@ -133,7 +136,11 @@ void main() {
         name: 'Test Playbook',
         description: 'Testing',
         steps: [
-          PlaybookStep(id: 's_test', name: 'Step 1', command: 'echo 1', description: 's1')
+          PlaybookStep(
+              id: 's_test',
+              name: 'Step 1',
+              command: 'echo 1',
+              description: 's1')
         ],
         createdAt: now,
         updatedAt: now,
@@ -149,7 +156,8 @@ void main() {
       expect(service.activePlaybook?.id, 'p_test');
 
       // Update
-      final updated = playbook.copyWith(name: 'Updated Name', updatedAt: DateTime.now());
+      final updated =
+          playbook.copyWith(name: 'Updated Name', updatedAt: DateTime.now());
       await service.updatePlaybook(updated);
       expect(service.playbooks.first.name, 'Updated Name');
       expect(service.activePlaybook?.name, 'Updated Name');
@@ -170,8 +178,10 @@ void main() {
         name: 'Run Playbook',
         description: 'Run',
         steps: [
-          PlaybookStep(id: 's1', name: 'S1', command: 'echo 1', description: 's1'),
-          PlaybookStep(id: 's2', name: 'S2', command: 'echo 2', description: 's2'),
+          PlaybookStep(
+              id: 's1', name: 'S1', command: 'echo 1', description: 's1'),
+          PlaybookStep(
+              id: 's2', name: 'S2', command: 'echo 2', description: 's2'),
         ],
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
@@ -202,9 +212,15 @@ void main() {
         name: 'Run Playbook',
         description: 'Run',
         steps: [
-          PlaybookStep(id: 's1', name: 'S1', command: 'echo 1', description: 's1'),
-          PlaybookStep(id: 's2', name: 'S2', command: 'invalid_command', description: 's2'),
-          PlaybookStep(id: 's3', name: 'S3', command: 'echo 3', description: 's3'),
+          PlaybookStep(
+              id: 's1', name: 'S1', command: 'echo 1', description: 's1'),
+          PlaybookStep(
+              id: 's2',
+              name: 'S2',
+              command: 'invalid_command',
+              description: 's2'),
+          PlaybookStep(
+              id: 's3', name: 'S3', command: 'echo 3', description: 's3'),
         ],
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
@@ -246,8 +262,13 @@ void main() {
         name: 'Run Playbook',
         description: 'Run',
         steps: [
-          PlaybookStep(id: 's1', name: 'S1', command: 'invalid_command', description: 's1'),
-          PlaybookStep(id: 's2', name: 'S2', command: 'echo 2', description: 's2'),
+          PlaybookStep(
+              id: 's1',
+              name: 'S1',
+              command: 'invalid_command',
+              description: 's1'),
+          PlaybookStep(
+              id: 's2', name: 'S2', command: 'echo 2', description: 's2'),
         ],
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
@@ -313,8 +334,10 @@ void main() {
         name: 'Run Playbook',
         description: 'Run',
         steps: [
-          PlaybookStep(id: 's1', name: 'S1', command: 'echo 1', description: 's1'),
-          PlaybookStep(id: 's2', name: 'S2', command: 'echo 2', description: 's2'),
+          PlaybookStep(
+              id: 's1', name: 'S1', command: 'echo 1', description: 's1'),
+          PlaybookStep(
+              id: 's2', name: 'S2', command: 'echo 2', description: 's2'),
         ],
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),

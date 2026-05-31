@@ -16,6 +16,7 @@ abstract interface class ClientWebViewAdapter {
     String chatId,
     String query, {
     int maxResults = 5,
+    String? engine,
   });
 
   Future<ClientWebViewStateSnapshot> getState(String chatId);
@@ -92,6 +93,7 @@ class ClientWebViewService extends ChangeNotifier
     String chatId,
     String query, {
     int maxResults = 5,
+    String? engine,
   }) async {
     final trimmedQuery = query.trim();
     final effectiveMaxResults = maxResults.clamp(1, 10).toInt();
@@ -101,6 +103,7 @@ class ClientWebViewService extends ChangeNotifier
         supported: _supportsWebView,
         query: trimmedQuery,
         results: const [],
+        engine: engine ?? 'duckduckgo',
         error: 'Search query is empty.',
       );
     }
@@ -113,12 +116,13 @@ class ClientWebViewService extends ChangeNotifier
         supported: false,
         query: trimmedQuery,
         results: const [],
+        engine: engine ?? 'duckduckgo',
         error:
             'Client WebView search is only available on supported mobile targets.',
       );
     }
 
-    final uri = _searchUri(trimmedQuery);
+    final uri = _searchUri(trimmedQuery, engine: engine);
     final token = _beginAiBrowsing(
       session,
       'Searching "$trimmedQuery"',
@@ -134,7 +138,7 @@ class ClientWebViewService extends ChangeNotifier
       notifyListeners();
       await controller.loadRequest(uri);
       if (!_isAiBrowsingCurrent(session, token)) {
-        return _interruptedSearchResult(session, trimmedQuery);
+        return _interruptedSearchResult(session, trimmedQuery, engine: engine);
       }
       await _waitForPageReady(session, aiBrowsingToken: token);
       if (!_isCurrentSession(session)) {
@@ -143,11 +147,12 @@ class ClientWebViewService extends ChangeNotifier
           supported: true,
           query: trimmedQuery,
           results: const [],
+          engine: engine ?? 'duckduckgo',
           error: 'WebView session was closed before search finished.',
         );
       }
       if (!_isAiBrowsingCurrent(session, token)) {
-        return _interruptedSearchResult(session, trimmedQuery);
+        return _interruptedSearchResult(session, trimmedQuery, engine: engine);
       }
 
       final payload = await _waitForSearchResults(
@@ -161,11 +166,12 @@ class ClientWebViewService extends ChangeNotifier
           supported: true,
           query: trimmedQuery,
           results: const [],
+          engine: engine ?? 'duckduckgo',
           error: 'WebView session was closed before search results were read.',
         );
       }
       if (!_isAiBrowsingCurrent(session, token)) {
-        return _interruptedSearchResult(session, trimmedQuery);
+        return _interruptedSearchResult(session, trimmedQuery, engine: engine);
       }
       final title = (payload['title'] as String?)?.trim();
       final url = (payload['url'] as String?)?.trim();
@@ -197,6 +203,7 @@ class ClientWebViewService extends ChangeNotifier
         title: session.title,
         results: results,
         capturedAt: capturedAt,
+        engine: engine ?? 'duckduckgo',
         error: results.isEmpty
             ? 'No readable search results were found on the loaded page.'
             : null,
@@ -208,6 +215,7 @@ class ClientWebViewService extends ChangeNotifier
           supported: true,
           query: trimmedQuery,
           results: const [],
+          engine: engine ?? 'duckduckgo',
           error: 'WebView session was closed before search finished.',
         );
       }
@@ -229,6 +237,7 @@ class ClientWebViewService extends ChangeNotifier
         searchUrl: session.url,
         title: session.title,
         results: const [],
+        engine: engine ?? 'duckduckgo',
         error: e.toString(),
       );
     } finally {
@@ -775,8 +784,9 @@ class ClientWebViewService extends ChangeNotifier
 
   ClientWebViewSearchResult _interruptedSearchResult(
     ClientWebViewSession session,
-    String query,
-  ) {
+    String query, {
+    String? engine,
+  }) {
     return ClientWebViewSearchResult(
       chatId: session.chatId,
       supported: session.supported,
@@ -784,6 +794,7 @@ class ClientWebViewService extends ChangeNotifier
       searchUrl: session.url,
       title: session.title,
       results: const [],
+      engine: engine ?? 'duckduckgo',
       error: 'AI WebView browsing was interrupted by the user.',
     );
   }
@@ -821,8 +832,19 @@ class ClientWebViewService extends ChangeNotifier
     return _searchUri(trimmed);
   }
 
-  Uri _searchUri(String query) {
-    return Uri.https('html.duckduckgo.com', '/html/', {'q': query});
+  Uri _searchUri(String query, {String? engine}) {
+    final effectiveEngine = engine?.trim().toLowerCase() ?? 'duckduckgo';
+    switch (effectiveEngine) {
+      case 'google':
+        return Uri.https('www.google.com', '/search', {'q': query});
+      case 'bing':
+        return Uri.https('www.bing.com', '/search', {'q': query});
+      case 'baidu':
+        return Uri.https('www.baidu.com', '/s', {'wd': query});
+      case 'duckduckgo':
+      default:
+        return Uri.https('html.duckduckgo.com', '/html/', {'q': query});
+    }
   }
 
   Map<String, dynamic> _decodeJavaScriptPayload(Object raw) {
@@ -1073,6 +1095,7 @@ class ClientWebViewSearchResult {
   final String chatId;
   final bool supported;
   final String query;
+  final String engine;
   final String? searchUrl;
   final String? title;
   final List<ClientWebViewSearchItem> results;
@@ -1084,6 +1107,7 @@ class ClientWebViewSearchResult {
     required this.supported,
     required this.query,
     required this.results,
+    this.engine = 'duckduckgo',
     this.searchUrl,
     this.title,
     this.capturedAt,
@@ -1095,7 +1119,7 @@ class ClientWebViewSearchResult {
       'execution': 'client',
       'target': 'client_webview',
       'provider': 'local_webview',
-      'engine': 'duckduckgo_html',
+      'engine': '${engine}_html',
       'chatSessionId': chatId,
       'supported': supported,
       'query': query,
@@ -1237,7 +1261,12 @@ const String _searchResultsScript = r'''
     }
     const currentHost = window.location.hostname.replace(/^www\./, '').toLowerCase();
     if (host === currentHost) {
-      if (path === '/' || path.includes('/search') || path.includes('/images')) {
+      if (
+        path === '/' ||
+        path.includes('/search') ||
+        path.includes('/images') ||
+        path === '/s'
+      ) {
         return false;
       }
     }
