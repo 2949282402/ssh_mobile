@@ -128,4 +128,5 @@ across sessions.
   commands, order), secret cache configs, and max AI upload sizes. Registered
   callbacks in `StorageService` (`registerOnImportCallback`) allow high-level
   ChangeNotifiers to automatically reload and refresh UI states post-import.
+- 2026-06-01: Modularized `LlmChatService` (split into `llm_chat_types.dart`, `llm_system_prompt.dart`, and `llm_context_compressor.dart`) and `LlmChatScreen` (split into `llm_settings_screen.dart`, `message_bubble.dart`, `history_panel.dart`, `chat_tools_bar.dart`, `tool_approval_panel.dart`, and `ai_strings.dart`) using Dart's native `part`/`part of` pattern. This dramatically reduced the massive single-file complexity (screen down from 5600 lines to 3000 lines; service down from 1350 lines to 800 lines) while maintaining full feature coverage, same private/package access, and passing 100% of unit tests.
 
