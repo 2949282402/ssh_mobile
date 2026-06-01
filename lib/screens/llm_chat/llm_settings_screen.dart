@@ -1,0 +1,1027 @@
+part of '../llm_chat_screen.dart';
+
+class _LlmSettingsScreen extends StatefulWidget {
+  final AiConnectionSettings initialSettings;
+  final List<String> initialModels;
+  final List<String> initialBaseUrlHistory;
+  final List<AiApiKeyHistoryEntry> initialApiKeyHistory;
+
+  const _LlmSettingsScreen({
+    required this.initialSettings,
+    required this.initialModels,
+    required this.initialBaseUrlHistory,
+    required this.initialApiKeyHistory,
+  });
+
+  @override
+  State<_LlmSettingsScreen> createState() => _LlmSettingsScreenState();
+}
+
+class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
+  late final TextEditingController _baseUrlController;
+  late final TextEditingController _modelController;
+  late final TextEditingController _apiKeyController;
+  late final TextEditingController _quarkApiKeyController;
+  late final TextEditingController _quarkEndpointController;
+  late List<String> _baseUrlHistory;
+  late List<AiApiKeyHistoryEntry> _apiKeyHistory;
+  late List<String> _models;
+  late int _contextWindowTokens;
+  late int _timeoutSeconds;
+  late bool _deepSeekThinkingEnabled;
+  late String _deepSeekReasoningEffort;
+  late String _openAiReasoningEffort;
+  late bool _webSearchEnabled;
+  late int _webSearchMaxResults;
+  late String _webSearchEngine;
+  late bool _ragEnabled;
+  late String _ragSearchMode;
+  late bool _multiAgentEnabled;
+  late int _multiAgentMaxAgents;
+  late int _maxImageSizeBytes;
+  late int _maxFileSizeBytes;
+  String? _selectedApiKeyId;
+  bool _loadingModels = false;
+  bool _saving = false;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    _baseUrlController =
+        TextEditingController(text: widget.initialSettings.baseUrl);
+    _modelController =
+        TextEditingController(text: widget.initialSettings.model);
+    _apiKeyController = TextEditingController();
+    _quarkApiKeyController = TextEditingController();
+    _quarkEndpointController =
+        TextEditingController(text: widget.initialSettings.quarkSearchEndpoint);
+    _baseUrlHistory = List<String>.from(widget.initialBaseUrlHistory);
+    _apiKeyHistory =
+        List<AiApiKeyHistoryEntry>.from(widget.initialApiKeyHistory);
+    _models = List<String>.from(widget.initialModels);
+    _contextWindowTokens = widget.initialSettings.contextWindowTokens;
+    _timeoutSeconds = widget.initialSettings.timeoutSeconds;
+    _deepSeekThinkingEnabled = widget.initialSettings.deepSeekThinkingEnabled;
+    _deepSeekReasoningEffort = widget.initialSettings.deepSeekReasoningEffort;
+    _openAiReasoningEffort = widget.initialSettings.openAiReasoningEffort;
+    _webSearchEnabled = widget.initialSettings.webSearchEnabled;
+    _webSearchMaxResults = widget.initialSettings.webSearchMaxResults;
+    _webSearchEngine = widget.initialSettings.webSearchEngine;
+    _ragEnabled = context.read<AppSettings>().ragEnabled;
+    _ragSearchMode = context.read<AppSettings>().ragSearchMode;
+    _multiAgentEnabled = widget.initialSettings.multiAgentEnabled;
+    _multiAgentMaxAgents = widget.initialSettings.multiAgentMaxAgents;
+    _maxImageSizeBytes = widget.initialSettings.maxImageSizeBytes;
+    _maxFileSizeBytes = widget.initialSettings.maxFileSizeBytes;
+    _selectedApiKeyId = widget.initialSettings.activeApiKeyId;
+  }
+
+  @override
+  void dispose() {
+    _baseUrlController.dispose();
+    _modelController.dispose();
+    _apiKeyController.dispose();
+    _quarkApiKeyController.dispose();
+    _quarkEndpointController.dispose();
+    super.dispose();
+  }
+
+
+  String? get _selectedApiKeyMasked {
+    for (final entry in _apiKeyHistory) {
+      if (entry.id == _selectedApiKeyId) {
+        return entry.maskedValue;
+      }
+    }
+    return null;
+  }
+
+  bool get _showsDeepSeekControls => isDeepSeekModelId(_modelController.text);
+
+  bool get _showsOpenAiReasoningControls =>
+      supportsOpenAiReasoningEffort(_modelController.text);
+
+  Future<void> _applyBaseUrlSelection(String baseUrl) async {
+    final storage = context.read<StorageService>();
+    _baseUrlController.text = baseUrl;
+    final cachedModels = await storage.loadCachedAiModels(baseUrl: baseUrl);
+    if (!mounted) return;
+    setState(() {
+      _models = buildInitialModelOptions(
+        currentModel: _modelController.text,
+        cachedModels: cachedModels,
+      );
+      if (_models.isNotEmpty && !_models.contains(_modelController.text)) {
+        _modelController.text = _models.first;
+      }
+    });
+  }
+
+  void _selectApiKeyHistoryEntry(String id) {
+    if (!_apiKeyHistory.any((entry) => entry.id == id)) return;
+    setState(() {
+      _selectedApiKeyId = id;
+      _apiKeyController.clear();
+      _apiKeyHistory = [
+        for (final entry in _apiKeyHistory)
+          AiApiKeyHistoryEntry(
+            id: entry.id,
+            maskedValue: entry.maskedValue,
+            isSelected: entry.id == id,
+          ),
+      ];
+    });
+  }
+
+  Future<void> _deleteBaseUrlHistoryEntry(String baseUrl) async {
+    final storage = context.read<StorageService>();
+    await storage.removeAiBaseUrlHistoryEntry(baseUrl);
+    if (!mounted) return;
+    setState(() {
+      _baseUrlHistory =
+          _baseUrlHistory.where((item) => item != baseUrl).toList();
+    });
+  }
+
+  Future<void> _deleteApiKeyHistoryEntry(String id) async {
+    final storage = context.read<StorageService>();
+    await storage.removeAiApiKeyHistoryEntry(id);
+    final refreshed = await storage.loadAiApiKeyHistory();
+    if (!mounted) return;
+    final preferredSelectedId = _selectedApiKeyId;
+    String? nextSelectedId = preferredSelectedId;
+    if (nextSelectedId != null &&
+        !refreshed.any((entry) => entry.id == nextSelectedId)) {
+      nextSelectedId = null;
+    }
+    if (nextSelectedId == null) {
+      for (final entry in refreshed) {
+        if (entry.isSelected) {
+          nextSelectedId = entry.id;
+          break;
+        }
+      }
+    }
+    setState(() {
+      _apiKeyHistory = [
+        for (final entry in refreshed)
+          AiApiKeyHistoryEntry(
+            id: entry.id,
+            maskedValue: entry.maskedValue,
+            isSelected: entry.id == nextSelectedId,
+          ),
+      ];
+      _selectedApiKeyId = nextSelectedId;
+    });
+  }
+
+  Future<void> _openBaseUrlHistory(_AiStrings strings) async {
+    final action = await showModalBottomSheet<_SettingsHistoryAction<String>>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: _HistoryActionSheet<String>(
+          title: strings.baseUrlHistory,
+          emptyText: strings.noBaseUrlHistory,
+          deleteTooltip: strings.delete,
+          items: _baseUrlHistory,
+          labelBuilder: (value) => value,
+          onSelect: (value) => Navigator.pop(
+            sheetContext,
+            _SettingsHistoryAction.select(value),
+          ),
+          onDelete: (value) => Navigator.pop(
+            sheetContext,
+            _SettingsHistoryAction.delete(value),
+          ),
+        ),
+      ),
+    );
+    if (action == null) return;
+    if (action.delete) {
+      await _deleteBaseUrlHistoryEntry(action.value);
+      return;
+    }
+    await _applyBaseUrlSelection(action.value);
+  }
+
+  Future<void> _openApiKeyHistory(_AiStrings strings) async {
+    final action = await showModalBottomSheet<
+        _SettingsHistoryAction<AiApiKeyHistoryEntry>>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: _HistoryActionSheet<AiApiKeyHistoryEntry>(
+          title: strings.apiKeyHistory,
+          emptyText: strings.noApiKeyHistory,
+          deleteTooltip: strings.delete,
+          items: _apiKeyHistory,
+          labelBuilder: (entry) => entry.maskedValue,
+          selectedValue: _selectedApiKeyId,
+          valueKeyBuilder: (entry) => entry.id,
+          onSelect: (entry) => Navigator.pop(
+            sheetContext,
+            _SettingsHistoryAction.select(entry),
+          ),
+          onDelete: (entry) => Navigator.pop(
+            sheetContext,
+            _SettingsHistoryAction.delete(entry),
+          ),
+        ),
+      ),
+    );
+    if (action == null) return;
+    if (action.delete) {
+      await _deleteApiKeyHistoryEntry(action.value.id);
+      return;
+    }
+    _selectApiKeyHistoryEntry(action.value.id);
+  }
+
+  Future<void> _refreshModels(_AiStrings strings) async {
+    final storage = context.read<StorageService>();
+    setState(() {
+      _loadingModels = true;
+      _errorText = null;
+    });
+    try {
+      final service = LlmChatService(
+        storageService: storage,
+        toolService: AiToolService(
+          storageService: storage,
+          sshService: context.read<SshService>(),
+          sftpService: context.read<SftpService>(),
+          performanceMonitorToolService: PerformanceMonitorToolService(
+            context.read<PerformanceMonitorService>(),
+          ),
+          appSettings: context.read<AppSettings>(),
+          playbookService: context.read<PlaybookService>(),
+        ),
+      );
+      final typedApiKey = _apiKeyController.text.trim();
+      final resolvedApiKey = typedApiKey.isNotEmpty
+          ? typedApiKey
+          : (_selectedApiKeyId == null
+              ? null
+              : await storage.getAiApiKeyById(_selectedApiKeyId!));
+      final fetched = await service.fetchModels(
+        baseUrl: _baseUrlController.text.trim(),
+        apiKey: resolvedApiKey,
+      );
+      final resolvedModels = resolveFetchedModelOptions(
+        fetchedModels: fetched,
+        fallbackModels: _models,
+      );
+      await storage.saveCachedAiModels(
+        baseUrl: _baseUrlController.text.trim(),
+        models: resolvedModels,
+      );
+      if (!mounted) return;
+      setState(() {
+        _models = resolvedModels;
+        _loadingModels = false;
+        if (_models.isNotEmpty && !_models.contains(_modelController.text)) {
+          _modelController.text = _models.first;
+        }
+      });
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'LLM model refresh failed in settings',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'baseUrl=${_baseUrlController.text.trim()}',
+      );
+      if (!mounted) return;
+      setState(() {
+        _loadingModels = false;
+        _errorText = strings.modelsFailed(e.toString());
+      });
+    }
+  }
+
+  Future<void> _save(_AiStrings strings) async {
+    FocusScope.of(context).unfocus();
+    final storage = context.read<StorageService>();
+    final appSettings = context.read<AppSettings>();
+    final pending = _PendingAiSettings(
+      baseUrl: _baseUrlController.text,
+      model: _modelController.text,
+      contextWindowTokens: _contextWindowTokens,
+      timeoutSeconds: _timeoutSeconds,
+      deepSeekThinkingEnabled: _deepSeekThinkingEnabled,
+      deepSeekReasoningEffort: _deepSeekReasoningEffort,
+      openAiReasoningEffort: _openAiReasoningEffort,
+      webSearchEnabled: _webSearchEnabled,
+      webSearchMaxResults: _webSearchMaxResults,
+      webSearchEngine: _webSearchEngine,
+      quarkSearchEndpoint: _quarkEndpointController.text,
+      quarkApiKey: _quarkApiKeyController.text,
+      multiAgentEnabled: _multiAgentEnabled,
+      multiAgentMaxAgents: _multiAgentMaxAgents,
+      maxImageSizeBytes: _maxImageSizeBytes,
+      maxFileSizeBytes: _maxFileSizeBytes,
+      apiKey: _apiKeyController.text,
+      selectedApiKeyId: _selectedApiKeyId,
+    );
+    setState(() {
+      _saving = true;
+      _errorText = null;
+    });
+    try {
+      await storage.saveAiConnectionSettings(
+        baseUrl: pending.baseUrl,
+        model: pending.model,
+        contextWindowTokens: pending.contextWindowTokens,
+        timeoutSeconds: pending.timeoutSeconds,
+        deepSeekThinkingEnabled: pending.deepSeekThinkingEnabled,
+        deepSeekReasoningEffort: pending.deepSeekReasoningEffort,
+        openAiReasoningEffort: pending.openAiReasoningEffort,
+        webSearchEnabled: pending.webSearchEnabled,
+        webSearchMaxResults: pending.webSearchMaxResults,
+        webSearchEngine: pending.webSearchEngine,
+        quarkSearchEndpoint: pending.quarkSearchEndpoint,
+        quarkApiKey: pending.quarkApiKey,
+        multiAgentEnabled: pending.multiAgentEnabled,
+        multiAgentMaxAgents: pending.multiAgentMaxAgents,
+        maxImageSizeBytes: pending.maxImageSizeBytes,
+        maxFileSizeBytes: pending.maxFileSizeBytes,
+        apiKey: pending.apiKey,
+        selectedApiKeyId: pending.selectedApiKeyId,
+      );
+      if (mounted) {
+        await appSettings.setRagEnabled(_ragEnabled);
+        await appSettings.setRagSearchMode(_ragSearchMode);
+      }
+      if (!mounted) return;
+      Navigator.pop(context, pending);
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'LLM settings save failed',
+        error: e,
+        stackTrace: stackTrace,
+        details:
+            'baseUrl=${pending.baseUrl.trim()} model=${pending.model.trim()} apiKeyProvided=${pending.apiKey.trim().isNotEmpty}',
+      );
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _errorText = strings.failed(e);
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
+    final strings = _AiStrings(language);
+    final colorScheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(strings.settings),
+        actions: [
+          TextButton(
+            onPressed: _saving ? null : () => Navigator.pop(context),
+            child: Text(strings.cancel),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: FilledButton(
+              onPressed: _saving ? null : () => _save(strings),
+              child: _saving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Text(strings.save),
+            ),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
+          children: [
+            TextField(
+              controller: _baseUrlController,
+              decoration: InputDecoration(
+                labelText: strings.baseUrl,
+                helperText: _baseUrlHistory.isEmpty
+                    ? null
+                    : strings.savedCount(_baseUrlHistory.length),
+                suffixIcon: IconButton(
+                  tooltip: strings.baseUrlHistory,
+                  onPressed:
+                      _saving ? null : () => _openBaseUrlHistory(strings),
+                  icon: const Icon(Icons.arrow_drop_down_rounded),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _apiKeyController,
+              enabled: !_saving,
+              obscureText: true,
+              decoration: InputDecoration(
+                labelText: _selectedApiKeyMasked != null
+                    ? strings.apiKeySaved
+                    : strings.apiKeyRequired,
+                helperText: _selectedApiKeyMasked != null
+                    ? strings.apiKeySelected(_selectedApiKeyMasked!)
+                    : (_apiKeyHistory.isNotEmpty
+                        ? strings.apiKeyHistoryHint
+                        : strings.apiKeyReplaceHint),
+                helperMaxLines: 2,
+                suffixIcon: IconButton(
+                  tooltip: strings.apiKeyHistory,
+                  onPressed: _saving ? null : () => _openApiKeyHistory(strings),
+                  icon: const Icon(Icons.arrow_drop_down_rounded),
+                ),
+              ),
+            ),
+            if (_apiKeyHistory.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final entry in _apiKeyHistory)
+                    ChoiceChip(
+                      label: Text(entry.maskedValue),
+                      selected: entry.id == _selectedApiKeyId,
+                      onSelected: _saving
+                          ? null
+                          : (_) => _selectApiKeyHistoryEntry(entry.id),
+                    ),
+                ],
+              ),
+              if (_selectedApiKeyMasked != null) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    strings.apiKeyMaskedPreview(_selectedApiKeyMasked!),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ],
+            const SizedBox(height: 14),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _models.contains(_modelController.text)
+                        ? _modelController.text
+                        : _models.first,
+                    isExpanded: true,
+                    decoration: InputDecoration(labelText: strings.model),
+                    selectedItemBuilder: (context) => [
+                      for (final model in _models)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            model,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            softWrap: false,
+                          ),
+                        ),
+                    ],
+                    items: [
+                      for (final model in _models)
+                        DropdownMenuItem(
+                          value: model,
+                          child: Text(
+                            model,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            softWrap: false,
+                          ),
+                        ),
+                    ],
+                    onChanged: _saving
+                        ? null
+                        : (value) {
+                            if (value != null) {
+                              setState(() => _modelController.text = value);
+                            }
+                          },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filledTonal(
+                  tooltip: strings.refreshModels,
+                  onPressed: _loadingModels || _saving
+                      ? null
+                      : () => _refreshModels(strings),
+                  icon: _loadingModels
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.sync_rounded),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<int>(
+              initialValue: _contextWindowTokens,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Context window'),
+              items: [
+                for (final value in AiContextWindowSize.values)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text(AiContextWindowSize.label(value)),
+                  ),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        setState(() => _contextWindowTokens = value);
+                      }
+                    },
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<int>(
+              initialValue: _timeoutSeconds,
+              isExpanded: true,
+              decoration: InputDecoration(labelText: strings.requestTimeout),
+              items: [
+                for (final value in AiRequestTimeout.values)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text(AiRequestTimeout.label(value)),
+                  ),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        setState(() => _timeoutSeconds = value);
+                      }
+                    },
+            ),
+            const SizedBox(height: 14),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: Text(strings.multiAgent),
+              subtitle: Text(strings.multiAgentHint),
+              value: _multiAgentEnabled,
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      setState(() => _multiAgentEnabled = value);
+                    },
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<int>(
+              initialValue: AiMultiAgentMaxAgents.normalize(
+                _multiAgentMaxAgents,
+              ),
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: strings.multiAgentMaxAgents,
+              ),
+              items: [
+                for (final value in AiMultiAgentMaxAgents.values)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text('$value'),
+                  ),
+              ],
+              onChanged: _saving || !_multiAgentEnabled
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        setState(() => _multiAgentMaxAgents = value);
+                      }
+                    },
+            ),
+            if (_showsDeepSeekControls) ...[
+              const SizedBox(height: 14),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: Text(strings.deepSeekThinking),
+                subtitle: Text(strings.deepSeekThinkingHint),
+                value: _deepSeekThinkingEnabled,
+                onChanged: _saving
+                    ? null
+                    : (value) {
+                        setState(() => _deepSeekThinkingEnabled = value);
+                      },
+              ),
+              const SizedBox(height: 14),
+              DropdownButtonFormField<String>(
+                initialValue:
+                    DeepSeekReasoningEffort.normalize(_deepSeekReasoningEffort),
+                isExpanded: true,
+                decoration: InputDecoration(
+                  labelText: strings.deepSeekReasoningEffort,
+                ),
+                items: [
+                  for (final value in DeepSeekReasoningEffort.values)
+                    DropdownMenuItem(
+                      value: value,
+                      child: Text(DeepSeekReasoningEffort.label(value)),
+                    ),
+                ],
+                onChanged: _saving || !_deepSeekThinkingEnabled
+                    ? null
+                    : (value) {
+                        if (value != null) {
+                          setState(() => _deepSeekReasoningEffort = value);
+                        }
+                      },
+              ),
+            ],
+            if (_showsOpenAiReasoningControls) ...[
+              const SizedBox(height: 14),
+              DropdownButtonFormField<String>(
+                initialValue: OpenAiReasoningEffort.normalize(
+                  _openAiReasoningEffort,
+                ),
+                isExpanded: true,
+                decoration: InputDecoration(
+                  labelText: strings.openAiReasoningEffort,
+                  helperText: strings.openAiReasoningHint,
+                ),
+                items: [
+                  for (final value in OpenAiReasoningEffort.values)
+                    DropdownMenuItem(
+                      value: value,
+                      child: Text(OpenAiReasoningEffort.label(value)),
+                    ),
+                ],
+                onChanged: _saving
+                    ? null
+                    : (value) {
+                        if (value != null) {
+                          setState(() => _openAiReasoningEffort = value);
+                        }
+                      },
+              ),
+            ],
+            const SizedBox(height: 14),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: Text(strings.webSearch),
+              subtitle: Text(strings.webSearchHint),
+              value: _webSearchEnabled,
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      setState(() => _webSearchEnabled = value);
+                    },
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<String>(
+              initialValue: _webSearchEngine,
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: strings.webSearchEngine,
+              ),
+              items: [
+                for (final value in AiWebSearchEngine.values)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text(strings.webSearchEngineLabel(value)),
+                  ),
+              ],
+              onChanged: _saving || !_webSearchEnabled
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        setState(() => _webSearchEngine = value);
+                      }
+                    },
+            ),
+            if (_webSearchEnabled &&
+                _webSearchEngine == AiWebSearchEngine.quark) ...[
+              const SizedBox(height: 14),
+              TextField(
+                controller: _quarkApiKeyController,
+                enabled: !_saving,
+                obscureText: true,
+                decoration: InputDecoration(
+                  labelText: widget.initialSettings.hasQuarkApiKey
+                      ? strings.quarkApiKeySaved
+                      : strings.quarkApiKeyRequired,
+                  helperText: strings.quarkApiKeyReplaceHint,
+                  helperMaxLines: 2,
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _quarkEndpointController,
+                enabled: !_saving,
+                decoration: InputDecoration(
+                  labelText: strings.quarkSearchEndpoint,
+                  helperText: strings.quarkSearchEndpointHint,
+                  helperMaxLines: 2,
+                ),
+              ),
+            ],
+            const SizedBox(height: 14),
+            DropdownButtonFormField<int>(
+              initialValue: AiWebSearchMaxResults.normalize(
+                _webSearchMaxResults,
+              ),
+              isExpanded: true,
+              decoration:
+                  InputDecoration(labelText: strings.webSearchMaxResults),
+              items: [
+                for (final value in AiWebSearchMaxResults.values)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text('$value'),
+                  ),
+              ],
+              onChanged: _saving || !_webSearchEnabled
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        setState(() => _webSearchMaxResults = value);
+                      }
+                    },
+            ),
+            const SizedBox(height: 14),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: Text(strings.ragTitle),
+              subtitle: Text(strings.ragHint),
+              value: _ragEnabled,
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      setState(() => _ragEnabled = value);
+                    },
+            ),
+            if (_ragEnabled) ...[
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                initialValue: _ragSearchMode,
+                isExpanded: true,
+                decoration: InputDecoration(
+                  labelText: strings.ragSearchMode,
+                ),
+                items: [
+                  DropdownMenuItem(
+                    value: 'bm25',
+                    child: Text(strings.ragSearchModeBm25),
+                  ),
+                  DropdownMenuItem(
+                    value: 'vector',
+                    child: Text(strings.ragSearchModeVector),
+                  ),
+                  DropdownMenuItem(
+                    value: 'hybrid',
+                    child: Text(strings.ragSearchModeHybrid),
+                  ),
+                ],
+                onChanged: _saving
+                    ? null
+                    : (value) {
+                        if (value != null) {
+                          setState(() => _ragSearchMode = value);
+                        }
+                      },
+              ),
+              if (_ragSearchMode == 'vector' || _ragSearchMode == 'hybrid') ...[
+                const SizedBox(height: 8),
+                Text(
+                  strings.ragSearchModeNeedKey,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+              ],
+            ],
+            const SizedBox(height: 8),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.auto_stories),
+              label: Text(strings.ragManage),
+              onPressed: _saving
+                  ? null
+                  : () {
+                      Navigator.pushNamed(context, '/rag-knowledge');
+                    },
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<int>(
+              initialValue:
+                  AiUploadSizeLimit.normalizeImage(_maxImageSizeBytes),
+              isExpanded: true,
+              decoration: InputDecoration(labelText: strings.maxImageSize),
+              items: [
+                for (final value in AiUploadSizeLimit.imageValues)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text(AiUploadSizeLimit.label(value)),
+                  ),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        setState(() => _maxImageSizeBytes = value);
+                      }
+                    },
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<int>(
+              initialValue: AiUploadSizeLimit.normalizeFile(_maxFileSizeBytes),
+              isExpanded: true,
+              decoration: InputDecoration(labelText: strings.maxFileSize),
+              items: [
+                for (final value in AiUploadSizeLimit.fileValues)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text(AiUploadSizeLimit.label(value)),
+                  ),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        setState(() => _maxFileSizeBytes = value);
+                      }
+                    },
+            ),
+            if (_errorText != null) ...[
+              const SizedBox(height: 14),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: colorScheme.errorContainer.withValues(alpha: 0.36),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: colorScheme.error.withValues(alpha: 0.42),
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Text(
+                    _errorText!,
+                    style: TextStyle(color: colorScheme.error),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingsHistoryAction<T> {
+  final T value;
+  final bool delete;
+
+  const _SettingsHistoryAction._({
+    required this.value,
+    required this.delete,
+  });
+
+  factory _SettingsHistoryAction.select(T value) {
+    return _SettingsHistoryAction._(value: value, delete: false);
+  }
+
+  factory _SettingsHistoryAction.delete(T value) {
+    return _SettingsHistoryAction._(value: value, delete: true);
+  }
+}
+
+class _HistoryActionSheet<T> extends StatelessWidget {
+  final String title;
+  final String emptyText;
+  final String deleteTooltip;
+  final List<T> items;
+  final String Function(T value) labelBuilder;
+  final String? selectedValue;
+  final String Function(T value)? valueKeyBuilder;
+  final ValueChanged<T> onSelect;
+  final ValueChanged<T> onDelete;
+
+  const _HistoryActionSheet({
+    required this.title,
+    required this.emptyText,
+    required this.deleteTooltip,
+    required this.items,
+    required this.labelBuilder,
+    required this.onSelect,
+    required this.onDelete,
+    this.selectedValue,
+    this.valueKeyBuilder,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+            child: Text(title, style: Theme.of(context).textTheme.titleMedium),
+          ),
+          if (items.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                emptyText,
+                style: TextStyle(color: colorScheme.onSurfaceVariant),
+              ),
+            )
+          else
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: items.length,
+                itemBuilder: (context, index) {
+                  final item = items[index];
+                  final itemKey = valueKeyBuilder?.call(item);
+                  final selected = selectedValue != null &&
+                      itemKey != null &&
+                      itemKey == selectedValue;
+                  return ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                    leading: selected
+                        ? Icon(
+                            Icons.check_circle_rounded,
+                            color: colorScheme.primary,
+                          )
+                        : const Icon(Icons.history_rounded),
+                    title: Text(
+                      labelBuilder(item),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onTap: () => onSelect(item),
+                    trailing: IconButton(
+                      tooltip: deleteTooltip,
+                      onPressed: () => onDelete(item),
+                      icon: const Icon(Icons.delete_outline_rounded),
+                    ),
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PendingAiSettings {
+  final String baseUrl;
+  final String model;
+  final int contextWindowTokens;
+  final int timeoutSeconds;
+  final bool deepSeekThinkingEnabled;
+  final String deepSeekReasoningEffort;
+  final String openAiReasoningEffort;
+  final bool webSearchEnabled;
+  final int webSearchMaxResults;
+  final String webSearchEngine;
+  final String quarkSearchEndpoint;
+  final String quarkApiKey;
+  final bool multiAgentEnabled;
+  final int multiAgentMaxAgents;
+  final int maxImageSizeBytes;
+  final int maxFileSizeBytes;
+  final String apiKey;
+  final String? selectedApiKeyId;
+
+  const _PendingAiSettings({
+    required this.baseUrl,
+    required this.model,
+    required this.contextWindowTokens,
+    required this.timeoutSeconds,
+    required this.deepSeekThinkingEnabled,
+    required this.deepSeekReasoningEffort,
+    required this.openAiReasoningEffort,
+    required this.webSearchEnabled,
+    required this.webSearchMaxResults,
+    required this.webSearchEngine,
+    required this.quarkSearchEndpoint,
+    required this.quarkApiKey,
+    required this.multiAgentEnabled,
+    required this.multiAgentMaxAgents,
+    required this.maxImageSizeBytes,
+    required this.maxFileSizeBytes,
+    required this.apiKey,
+    required this.selectedApiKeyId,
+  });
+}

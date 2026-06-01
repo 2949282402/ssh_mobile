@@ -1,0 +1,743 @@
+part of '../llm_chat_screen.dart';
+
+class _StreamingAssistantTarget {
+  final String chatId;
+  final DateTime assistantCreatedAt;
+
+  const _StreamingAssistantTarget({
+    required this.chatId,
+    required this.assistantCreatedAt,
+  });
+}
+
+class _MessageBubble extends StatelessWidget {
+  final AiChatMessageRecord message;
+  final ValueListenable<String>? streamingTextListenable;
+  final ValueListenable<String>? streamingStatusListenable;
+  final bool canAct;
+  final VoidCallback? onEditUser;
+  final VoidCallback? onRegenerate;
+  final VoidCallback? onBranch;
+  final VoidCallback? onContinueTimeout;
+
+  const _MessageBubble({
+    required this.message,
+    this.streamingTextListenable,
+    this.streamingStatusListenable,
+    this.canAct = false,
+    this.onEditUser,
+    this.onRegenerate,
+    this.onBranch,
+    this.onContinueTimeout,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isUser = message.role == 'user';
+    final isError = message.role == 'error';
+    final isAssistant = !isUser && !isError;
+    final canCopyAssistant = isAssistant && message.text.trim().isNotEmpty;
+    return Align(
+      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760),
+        child: Column(
+          crossAxisAlignment:
+              isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          children: [
+            if (!isUser && !isError && message.traces.isNotEmpty)
+              _TracePanel(
+                traces: message.traces,
+                storageKey:
+                    'trace-panel-${message.createdAt.microsecondsSinceEpoch}',
+              ),
+            Container(
+              margin: const EdgeInsets.only(bottom: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+              decoration: BoxDecoration(
+                color: isError
+                    ? colorScheme.error.withValues(alpha: 0.1)
+                    : isUser
+                        ? colorScheme.primary.withValues(alpha: 0.12)
+                        : colorScheme.surface,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: isError
+                      ? colorScheme.error.withValues(alpha: 0.38)
+                      : isUser
+                          ? colorScheme.primary.withValues(alpha: 0.10)
+                          : colorScheme.outlineVariant.withValues(alpha: 0.78),
+                ),
+              ),
+              child: isUser || isError
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (isUser && message.attachments.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: [
+                                for (final attachment in message.attachments)
+                                  if (attachment.isImage &&
+                                      attachment.dataBase64.isNotEmpty)
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: Image.memory(
+                                        base64Decode(attachment.dataBase64),
+                                        width: 120,
+                                        height: 120,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) => Container(
+                                          width: 120,
+                                          height: 40,
+                                          alignment: Alignment.center,
+                                          decoration: BoxDecoration(
+                                            color: colorScheme
+                                                .surfaceContainerHighest,
+                                            borderRadius:
+                                                BorderRadius.circular(6),
+                                          ),
+                                          child: Text(
+                                            attachment.fileName,
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color:
+                                                  colorScheme.onSurfaceVariant,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                  else
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color:
+                                            colorScheme.surfaceContainerHighest,
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.insert_drive_file_outlined,
+                                            size: 14,
+                                            color: colorScheme.onSurfaceVariant,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            attachment.fileName,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color:
+                                                  colorScheme.onSurfaceVariant,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                              ],
+                            ),
+                          ),
+                        SelectableText(
+                          message.text.isEmpty ? '...' : message.text,
+                          style: TextStyle(
+                            color: isError
+                                ? colorScheme.error
+                                : colorScheme.onSurface,
+                            height: 1.35,
+                          ),
+                        ),
+                      ],
+                    )
+                  : _AssistantMarkdownBody(
+                      text: message.text,
+                      streamingTextListenable: streamingTextListenable,
+                      streamingStatusListenable: streamingStatusListenable,
+                    ),
+            ),
+            if (canAct &&
+                (onEditUser != null ||
+                    onRegenerate != null ||
+                    onBranch != null ||
+                    onContinueTimeout != null ||
+                    canCopyAssistant))
+              _MessageActions(
+                isUser: isUser,
+                isError: isError,
+                assistantText: isAssistant ? message.text : null,
+                onEditUser: onEditUser,
+                onRegenerate: onRegenerate,
+                onBranch: onBranch,
+                onContinueTimeout: onContinueTimeout,
+              ),
+            if (!isUser && !isError && message.totalTokens != null)
+              Padding(
+                padding: const EdgeInsets.only(left: 4, bottom: 8),
+                child: Text(
+                  _messageStats(message),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.72),
+                    height: 1.2,
+                  ),
+                ),
+              )
+            else
+              const SizedBox(height: 6),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _messageStats(AiChatMessageRecord message) {
+    final parts = <String>[];
+    if (message.totalTokens != null) {
+      parts.add(
+        '${message.tokenUsageEstimated == true ? 'est.' : 'API'} tokens ${message.totalTokens}',
+      );
+    }
+    if (message.promptTokens != null || message.completionTokens != null) {
+      parts.add(
+        'in ${message.promptTokens ?? '-'} / out ${message.completionTokens ?? '-'}',
+      );
+    }
+    if (message.elapsedMs != null) {
+      parts.add('time ${_formatElapsed(message.elapsedMs!)}');
+    }
+    if (message.promptCacheHitTokens != null ||
+        message.promptCacheMissTokens != null) {
+      parts.add(
+        'cache ${message.promptCacheHitTokens ?? 0}/${message.promptCacheMissTokens ?? 0}',
+      );
+    }
+    if (message.reasoningTokens != null && message.reasoningTokens! > 0) {
+      parts.add('reasoning ${message.reasoningTokens}');
+    }
+    return parts.join(' · ');
+  }
+
+  String _formatElapsed(int ms) {
+    if (ms < 1000) return '${ms}ms';
+    return '${(ms / 1000).toStringAsFixed(1)}s';
+  }
+}
+
+class _EditUserMessageDialog extends StatefulWidget {
+  final String initialText;
+  final _AiStrings strings;
+
+  const _EditUserMessageDialog({
+    required this.initialText,
+    required this.strings,
+  });
+
+  @override
+  State<_EditUserMessageDialog> createState() => _EditUserMessageDialogState();
+}
+
+class _EditUserMessageDialogState extends State<_EditUserMessageDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialText);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.strings.editMessage),
+      content: SizedBox(
+        width: 520,
+        child: TextField(
+          controller: _controller,
+          autofocus: true,
+          minLines: 3,
+          maxLines: 8,
+          decoration: const InputDecoration(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(widget.strings.cancel),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _controller.text),
+          child: Text(widget.strings.saveAndSend),
+        ),
+      ],
+    );
+  }
+}
+
+class _AssistantMarkdownBody extends StatelessWidget {
+  final String text;
+  final ValueListenable<String>? streamingTextListenable;
+  final ValueListenable<String>? streamingStatusListenable;
+
+  const _AssistantMarkdownBody({
+    required this.text,
+    this.streamingTextListenable,
+    this.streamingStatusListenable,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final listenable = streamingTextListenable;
+    if (listenable == null) {
+      return _buildMarkdown(context, text);
+    }
+    return ValueListenableBuilder<String>(
+      valueListenable: listenable,
+      builder: (context, value, _) => ValueListenableBuilder<String>(
+        valueListenable: streamingStatusListenable ?? _emptyStringListenable,
+        builder: (context, status, _) {
+          final displayText = value.isEmpty ? text : value;
+          final hasText = displayText.trim().isNotEmpty;
+          final label = status.trim();
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (label.isNotEmpty || !hasText)
+                _AssistantRunIndicator(
+                  label: label.isEmpty ? '...' : label,
+                  compact: hasText,
+                ),
+              if (hasText)
+                Padding(
+                  padding: EdgeInsets.only(
+                    top: label.isNotEmpty ? 8 : 0,
+                  ),
+                  child: _buildMarkdown(context, displayText),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildMarkdown(BuildContext context, String value) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return MarkdownBody(
+      data: value.isEmpty ? '...' : value,
+      selectable: false,
+      styleSheet: MarkdownStyleSheet.fromTheme(
+        Theme.of(context),
+      ).copyWith(
+        p: TextStyle(
+          color: colorScheme.onSurface,
+          height: 1.35,
+        ),
+        code: TextStyle(
+          color: colorScheme.onSurface,
+          backgroundColor: colorScheme.surfaceContainerHighest.withValues(
+            alpha: 0.72,
+          ),
+        ),
+        codeblockDecoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHighest.withValues(
+            alpha: 0.72,
+          ),
+          borderRadius: BorderRadius.circular(8),
+        ),
+      ),
+    );
+  }
+}
+
+class _MessageActions extends StatelessWidget {
+  final bool isUser;
+  final bool isError;
+  final String? assistantText;
+  final VoidCallback? onEditUser;
+  final VoidCallback? onRegenerate;
+  final VoidCallback? onBranch;
+  final VoidCallback? onContinueTimeout;
+
+  const _MessageActions({
+    required this.isUser,
+    required this.isError,
+    this.assistantText,
+    this.onEditUser,
+    this.onRegenerate,
+    this.onBranch,
+    this.onContinueTimeout,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final en = context.read<AppSettings>().language == AppLanguage.en;
+    final colorScheme = Theme.of(context).colorScheme;
+    final copyText =
+        assistantText?.trim().isNotEmpty == true ? assistantText!.trim() : null;
+    final children = <Widget>[
+      if (copyText != null)
+        _actionButton(
+          context,
+          tooltip: en ? 'Copy reply' : '复制回复',
+          icon: Icons.content_copy_rounded,
+          onPressed: () => _copyAssistantText(context, copyText, en),
+        ),
+      if (copyText != null)
+        _actionButton(
+          context,
+          tooltip: en ? 'Select and copy' : '选择复制',
+          icon: Icons.select_all_rounded,
+          onPressed: () => _showSelectableCopySheet(context, copyText, en),
+        ),
+      if (onEditUser != null)
+        _actionButton(
+          context,
+          tooltip: 'Edit and resend',
+          icon: Icons.edit_outlined,
+          onPressed: onEditUser,
+        ),
+      if (onRegenerate != null)
+        _actionButton(
+          context,
+          tooltip: en ? 'Regenerate' : '重新生成',
+          icon: Icons.refresh_rounded,
+          onPressed: onRegenerate,
+        ),
+      if (onBranch != null)
+        _actionButton(
+          context,
+          tooltip: en ? 'Create branch' : '创建分支',
+          icon: Icons.call_split_rounded,
+          onPressed: onBranch,
+        ),
+      if (onContinueTimeout != null)
+        _actionButton(
+          context,
+          tooltip: 'Continue',
+          icon: Icons.play_arrow_rounded,
+          onPressed: onContinueTimeout,
+        ),
+    ];
+    return Padding(
+      padding: const EdgeInsets.only(left: 2, right: 2, bottom: 4),
+      child: Row(
+        mainAxisAlignment: isUser && !isError
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
+        children: [
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color:
+                  colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.72),
+              ),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: children),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _copyAssistantText(
+    BuildContext context,
+    String text,
+    bool en,
+  ) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(en ? 'Reply copied' : '已复制回复'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<void> _showSelectableCopySheet(
+    BuildContext context,
+    String text,
+    bool en,
+  ) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        final colorScheme = Theme.of(sheetContext).colorScheme;
+        final maxHeight = MediaQuery.sizeOf(sheetContext).height * 0.78;
+        return SafeArea(
+          child: SizedBox(
+            height: maxHeight,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          en ? 'Select and copy' : '选择复制',
+                          style: Theme.of(sheetContext)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: en ? 'Copy all' : '复制全文',
+                        icon: const Icon(Icons.content_copy_rounded),
+                        onPressed: () =>
+                            _copyAssistantText(sheetContext, text, en),
+                      ),
+                      IconButton(
+                        tooltip: en ? 'Close' : '关闭',
+                        icon: const Icon(Icons.close_rounded),
+                        onPressed: () => Navigator.pop(sheetContext),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: colorScheme.surfaceContainerHighest
+                            .withValues(alpha: 0.36),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: colorScheme.outlineVariant
+                              .withValues(alpha: 0.72),
+                        ),
+                      ),
+                      child: Scrollbar(
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.all(12),
+                          child: SelectableText(
+                            text,
+                            style: TextStyle(
+                              color: colorScheme.onSurface,
+                              height: 1.38,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _actionButton(
+    BuildContext context, {
+    required String tooltip,
+    required IconData icon,
+    required VoidCallback? onPressed,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: 32,
+      height: 32,
+      child: IconButton(
+        tooltip: tooltip,
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        iconSize: 17,
+        color: colorScheme.onSurfaceVariant,
+        icon: Icon(icon),
+        onPressed: onPressed,
+      ),
+    );
+  }
+}
+
+class _TracePanel extends StatelessWidget {
+  final List<AiMessageTrace> traces;
+  final String storageKey;
+
+  const _TracePanel({
+    required this.traces,
+    required this.storageKey,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(left: 4, right: 4, bottom: 6),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.34),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.72),
+        ),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          key: PageStorageKey<String>(storageKey),
+          tilePadding: const EdgeInsets.symmetric(horizontal: 10),
+          childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+          dense: true,
+          visualDensity: VisualDensity.compact,
+          leading: Icon(
+            Icons.account_tree_outlined,
+            size: 17,
+            color: colorScheme.onSurfaceVariant,
+          ),
+          title: Text(
+            '执行详情 (${traces.length})',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+          children: [
+            for (var i = 0; i < traces.length; i++)
+              _TraceEntry(
+                key: ValueKey<String>('trace-entry-${traces[i].id}'),
+                trace: traces[i],
+                index: i + 1,
+                storageKey: '$storageKey-entry-${traces[i].id}',
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TraceEntry extends StatelessWidget {
+  final AiMessageTrace trace;
+  final int index;
+  final String storageKey;
+
+  const _TraceEntry({
+    super.key,
+    required this.trace,
+    required this.index,
+    required this.storageKey,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      decoration: BoxDecoration(
+        color: colorScheme.surface.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: colorScheme.outlineVariant),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          key: PageStorageKey<String>(storageKey),
+          tilePadding: const EdgeInsets.symmetric(horizontal: 10),
+          childrenPadding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+          dense: true,
+          visualDensity: VisualDensity.compact,
+          leading: Icon(
+            _traceIcon(trace.kind),
+            size: 16,
+            color: _traceColor(colorScheme, trace.kind),
+          ),
+          title: Text(
+            '$index. ${_traceTitle(trace)}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OverflowScrollText(
+                trace.content.isEmpty ? '-' : trace.content,
+                style: TextStyle(
+                  fontSize: 11,
+                  height: 1.3,
+                  color: colorScheme.onSurface.withValues(alpha: 0.82),
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _traceTitle(AiMessageTrace trace) {
+    switch (trace.kind) {
+      case 'reasoning':
+        return '深度思考';
+      case 'tool_request':
+        return '工具调用 - ${trace.title.replaceFirst('Tool request: ', '')}';
+      case 'tool_result':
+        return '工具结果 - ${trace.title.replaceFirst('Tool result: ', '')}';
+      case 'approval':
+        return trace.title.contains('approved') ? '工具操作已同意' : '工具操作已拒绝';
+      default:
+        return trace.title;
+    }
+  }
+
+  IconData _traceIcon(String kind) {
+    switch (kind) {
+      case 'reasoning':
+        return Icons.psychology_alt_outlined;
+      case 'rag_context':
+        return Icons.auto_stories_outlined;
+      case 'tool_request':
+        return Icons.build_circle_outlined;
+      case 'tool_result':
+        return Icons.fact_check_outlined;
+      case 'approval':
+        return Icons.verified_user_outlined;
+      default:
+        return Icons.info_outline;
+    }
+  }
+
+  Color _traceColor(ColorScheme colorScheme, String kind) {
+    switch (kind) {
+      case 'reasoning':
+        return colorScheme.secondary;
+      case 'rag_context':
+        return colorScheme.tertiary;
+      case 'tool_request':
+        return colorScheme.primary;
+      case 'tool_result':
+        return colorScheme.tertiary;
+      case 'approval':
+        return colorScheme.error;
+      default:
+        return colorScheme.onSurfaceVariant;
+    }
+  }
+}
