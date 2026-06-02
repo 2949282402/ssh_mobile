@@ -44,6 +44,58 @@ void main() {
       expect(optedOut.reason, 'user_opted_out');
     });
 
+    test(
+        'triggers and closes correctly for Chinese complex requests and explicit close scenarios',
+        () {
+      const coordinator = MultiAgentCoordinator();
+
+      // Test triggers for Chinese complex requests
+      final complexTrigger1 = coordinator.shouldCollaborate(
+        enabled: true,
+        messages: const [
+          {'role': 'user', 'content': '系统崩溃了，帮我看一下数据库故障'},
+        ],
+      );
+      final complexTrigger2 = coordinator.shouldCollaborate(
+        enabled: true,
+        messages: const [
+          {'role': 'user', 'content': '如何配置多智能体自动运维 and 安全部署？'},
+        ],
+      );
+
+      expect(complexTrigger1.enabled, isTrue);
+      expect(complexTrigger1.reason, 'complex_signal');
+      expect(complexTrigger2.enabled, isTrue);
+      expect(complexTrigger2.reason, 'complex_signal');
+
+      // Test explicit opt-out in Chinese
+      final explicitClose1 = coordinator.shouldCollaborate(
+        enabled: true,
+        messages: const [
+          {'role': 'user', 'content': '禁用多agent，快速回答即可'},
+        ],
+      );
+      final explicitClose2 = coordinator.shouldCollaborate(
+        enabled: true,
+        messages: const [
+          {'role': 'user', 'content': '不要多智能体，用单智能体回答'},
+        ],
+      );
+      final explicitClose3 = coordinator.shouldCollaborate(
+        enabled: true,
+        messages: const [
+          {'role': 'user', 'content': '关闭多智能体，谢谢'},
+        ],
+      );
+
+      expect(explicitClose1.enabled, isFalse);
+      expect(explicitClose1.reason, 'user_opted_out');
+      expect(explicitClose2.enabled, isFalse);
+      expect(explicitClose2.reason, 'user_opted_out');
+      expect(explicitClose3.enabled, isFalse);
+      expect(explicitClose3.reason, 'user_opted_out');
+    });
+
     test('honors disabled settings', () {
       const coordinator = MultiAgentCoordinator();
 
@@ -318,7 +370,8 @@ void main() {
       expect(completeCalled, isFalse);
     });
 
-    test('cancellation inside classification phase is propagated immediately', () async {
+    test('cancellation inside classification phase is propagated immediately',
+        () async {
       const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
       var checkCancelledCalled = 0;
       var completeCalled = false;
@@ -347,7 +400,8 @@ void main() {
         fail('Should have thrown cancellation exception');
       } catch (e) {
         expect(e.toString(), contains('cancelled'));
-        expect(e.toString(), isNot(contains('cancelled exception during classify')));
+        expect(e.toString(),
+            isNot(contains('cancelled exception during classify')));
       }
 
       expect(completeCalled, isFalse);

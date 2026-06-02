@@ -180,6 +180,15 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
       '单agent',
       '单 agent',
       '快速回答',
+      '关闭多agent',
+      '关闭多 agent',
+      '禁用多agent',
+      '禁用多 agent',
+      '不要多智能体',
+      '不用多智能体',
+      '关闭多智能体',
+      '禁用多智能体',
+      '单智能体',
     ];
     if (optOut.any(latestUser.contains)) {
       return const MultiAgentDecision.disabled('user_opted_out');
@@ -237,6 +246,15 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
       '监控',
       '服务器',
       '运维',
+      '故障',
+      '异常',
+      '崩溃',
+      '配置',
+      '安全',
+      '多智能体',
+      '部署',
+      '数据库',
+      '自动运维',
     ];
     if (complexSignals.any(latestUser.contains)) {
       return const MultiAgentDecision.enabled('complex_signal');
