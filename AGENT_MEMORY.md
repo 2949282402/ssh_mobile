@@ -129,4 +129,6 @@ across sessions.
   callbacks in `StorageService` (`registerOnImportCallback`) allow high-level
   ChangeNotifiers to automatically reload and refresh UI states post-import.
 - 2026-06-01: Modularized `LlmChatService` (split into `llm_chat_types.dart`, `llm_system_prompt.dart`, and `llm_context_compressor.dart`) and `LlmChatScreen` (split into `llm_settings_screen.dart`, `message_bubble.dart`, `history_panel.dart`, `chat_tools_bar.dart`, `tool_approval_panel.dart`, and `ai_strings.dart`) using Dart's native `part`/`part of` pattern. This dramatically reduced the massive single-file complexity (screen down from 5600 lines to 3000 lines; service down from 1350 lines to 800 lines) while maintaining full feature coverage, same private/package access, and passing 100% of unit tests.
+- 2026-06-02: Modularized `HomeScreen` (split into `home_settings_strings.dart` and `settings_panel.dart` under `lib/screens/home/`) using Dart's native `part`/`part of` pattern. This reduced the single-file complexity of the home page by over 800 lines (from ~2450 lines to ~1615 lines) while maintaining library-private access and passing all 118 unit and widget tests.
+
 
