@@ -4,7 +4,8 @@ extension SettingsOps on StorageService {
   /// 从 SharedPreferences 读取密钥缓存开关和 TTL
   Future<void> _loadSecretCacheSettings() async {
     if (_prefs == null) return;
-    _secretCacheEnabled = _prefs!.getBool(StorageService._secretCacheEnabledKey) ?? true;
+    _secretCacheEnabled =
+        _prefs!.getBool(StorageService._secretCacheEnabledKey) ?? true;
 
     final ttlSeconds = _prefs!.getInt(StorageService._secretCacheTtlSecondsKey);
     if (ttlSeconds != null && ttlSeconds > 0) {
@@ -40,7 +41,8 @@ extension SettingsOps on StorageService {
     final normalized = _normalizeSecretCacheTtl(ttl);
     if (_secretCacheTtl == normalized) return;
     _secretCacheTtl = normalized;
-    await _prefs!.setInt(StorageService._secretCacheTtlSecondsKey, normalized.inSeconds);
+    await _prefs!
+        .setInt(StorageService._secretCacheTtlSecondsKey, normalized.inSeconds);
     notifyStorageListeners();
   }
 
@@ -90,14 +92,16 @@ extension SettingsOps on StorageService {
       deepSeekThinkingEnabled: thinkingEnabled,
       deepSeekReasoningEffort: reasoningEffort,
       openAiReasoningEffort: openAiReasoningEffort,
-      webSearchEnabled: _prefs?.getBool(StorageService._aiWebSearchEnabledKey) ?? true,
+      webSearchEnabled:
+          _prefs?.getBool(StorageService._aiWebSearchEnabledKey) ?? true,
       webSearchMaxResults: AiWebSearchMaxResults.normalize(
         _prefs?.getInt(StorageService._aiWebSearchMaxResultsKey),
       ),
       webSearchEngine: webSearchEngine,
       quarkSearchEndpoint: quarkSearchEndpoint,
       hasQuarkApiKey: hasQuarkApiKey,
-      multiAgentEnabled: _prefs?.getBool(StorageService._aiMultiAgentEnabledKey) ?? true,
+      multiAgentEnabled:
+          _prefs?.getBool(StorageService._aiMultiAgentEnabledKey) ?? true,
       multiAgentMaxAgents: AiMultiAgentMaxAgents.normalize(
         _prefs?.getInt(StorageService._aiMultiAgentMaxAgentsKey),
       ),
@@ -118,7 +122,8 @@ extension SettingsOps on StorageService {
     final normalizedBaseUrl = _normalizeAiModelsCacheBaseUrl(
       baseUrl?.trim().isNotEmpty == true
           ? baseUrl!
-          : (_prefs!.getString(StorageService._aiBaseUrlKey) ?? 'https://api.deepseek.com'),
+          : (_prefs!.getString(StorageService._aiBaseUrlKey) ??
+              'https://api.deepseek.com'),
     );
     if (normalizedBaseUrl.isEmpty) return const [];
     final cache = _readAiModelsCacheMap();
@@ -143,7 +148,8 @@ extension SettingsOps on StorageService {
     final nextHistory = _normalizeAiBaseUrlHistory(
       _readStringListPref(StorageService._aiBaseUrlHistoryKey),
     )..remove(normalizedTarget);
-    await _writeStringListPref(StorageService._aiBaseUrlHistoryKey, nextHistory);
+    await _writeStringListPref(
+        StorageService._aiBaseUrlHistoryKey, nextHistory);
   }
 
   Future<List<AiApiKeyHistoryEntry>> loadAiApiKeyHistory() async {
@@ -182,7 +188,8 @@ extension SettingsOps on StorageService {
   }
 
   /// Alias for loadAiApiKeyHistory to support getAiApiKeyHistory
-  Future<List<AiApiKeyHistoryEntry>> getAiApiKeyHistory() => loadAiApiKeyHistory();
+  Future<List<AiApiKeyHistoryEntry>> getAiApiKeyHistory() =>
+      loadAiApiKeyHistory();
 
   Future<String?> getAiApiKeyById(String id) async {
     if (!_initialized) return null;
@@ -202,7 +209,8 @@ extension SettingsOps on StorageService {
     final nextIds = ids.where((item) => item != id).toList();
     await _secureStorage.delete(key: _aiApiKeyStorageKey(id));
     await _writeAiApiKeyRefIds(nextIds);
-    final selectedId = _prefs?.getString(StorageService._aiSelectedApiKeyIdKey)?.trim();
+    final selectedId =
+        _prefs?.getString(StorageService._aiSelectedApiKeyIdKey)?.trim();
     if (selectedId == id) {
       await _setSelectedAiApiKeyId(nextIds.isNotEmpty ? nextIds.first : null);
     }
@@ -220,7 +228,8 @@ extension SettingsOps on StorageService {
       await _setSelectedAiApiKeyId(null);
       return null;
     }
-    final selectedId = _prefs?.getString(StorageService._aiSelectedApiKeyIdKey)?.trim();
+    final selectedId =
+        _prefs?.getString(StorageService._aiSelectedApiKeyIdKey)?.trim();
     if (selectedId != null && ids.contains(selectedId)) {
       return selectedId;
     }
@@ -246,7 +255,8 @@ extension SettingsOps on StorageService {
     } else {
       cache[normalizedBaseUrl] = normalizedModels;
     }
-    await _prefs!.setString(StorageService._aiModelsCacheKey, jsonEncode(cache));
+    await _prefs!
+        .setString(StorageService._aiModelsCacheKey, jsonEncode(cache));
   }
 
   Future<void> clearCachedAiModels({String? baseUrl}) async {
@@ -263,17 +273,20 @@ extension SettingsOps on StorageService {
       await _prefs!.remove(StorageService._aiModelsCacheKey);
       return;
     }
-    await _prefs!.setString(StorageService._aiModelsCacheKey, jsonEncode(cache));
+    await _prefs!
+        .setString(StorageService._aiModelsCacheKey, jsonEncode(cache));
   }
 
   Future<int> getAiRequestTimeoutSeconds() async {
-    return AiRequestTimeout.normalize(_prefs?.getInt(StorageService._aiTimeoutSecondsKey));
+    return AiRequestTimeout.normalize(
+        _prefs?.getInt(StorageService._aiTimeoutSecondsKey));
   }
 
   Future<String?> getAiApiKey() async {
     if (!_initialized) return null;
     await _ensureAiApiKeyHistoryMigrated();
-    final cache = _readCachedSecretEntry(StorageService._memoryAiApiKeyCacheKey);
+    final cache =
+        _readCachedSecretEntry(StorageService._memoryAiApiKeyCacheKey);
     if (cache != null) return cache.value;
 
     while (true) {
@@ -306,7 +319,8 @@ extension SettingsOps on StorageService {
 
   Future<String?> getQuarkApiKey() async {
     if (!_initialized) return null;
-    final value = await _secureStorage.read(key: StorageService._quarkApiKeySecureKey);
+    final value =
+        await _secureStorage.read(key: StorageService._quarkApiKeySecureKey);
     return value?.trim();
   }
 
@@ -316,7 +330,8 @@ extension SettingsOps on StorageService {
     if (trimmed.isEmpty) {
       await _secureStorage.delete(key: StorageService._quarkApiKeySecureKey);
     } else {
-      await _secureStorage.write(key: StorageService._quarkApiKeySecureKey, value: trimmed);
+      await _secureStorage.write(
+          key: StorageService._quarkApiKeySecureKey, value: trimmed);
     }
   }
 
@@ -327,7 +342,8 @@ extension SettingsOps on StorageService {
 
   Future<String?> getAliyunApiKey() async {
     if (!_initialized) return null;
-    final value = await _secureStorage.read(key: StorageService._aliyunApiKeySecureKey);
+    final value =
+        await _secureStorage.read(key: StorageService._aliyunApiKeySecureKey);
     return value?.trim();
   }
 
@@ -337,7 +353,8 @@ extension SettingsOps on StorageService {
     if (trimmed.isEmpty) {
       await _secureStorage.delete(key: StorageService._aliyunApiKeySecureKey);
     } else {
-      await _secureStorage.write(key: StorageService._aliyunApiKeySecureKey, value: trimmed);
+      await _secureStorage.write(
+          key: StorageService._aliyunApiKeySecureKey, value: trimmed);
     }
   }
 
@@ -380,7 +397,8 @@ extension SettingsOps on StorageService {
     await _prefs!.setBool(
       StorageService._aiDeepSeekThinkingEnabledKey,
       deepSeekThinkingEnabled ??
-          (_prefs!.getBool(StorageService._aiDeepSeekThinkingEnabledKey) ?? true),
+          (_prefs!.getBool(StorageService._aiDeepSeekThinkingEnabledKey) ??
+              true),
     );
     await _prefs!.setString(
       StorageService._aiDeepSeekReasoningEffortKey,
@@ -392,49 +410,57 @@ extension SettingsOps on StorageService {
     await _prefs!.setString(
       StorageService._aiOpenAiReasoningEffortKey,
       OpenAiReasoningEffort.normalize(
-        openAiReasoningEffort ?? _prefs!.getString(StorageService._aiOpenAiReasoningEffortKey),
+        openAiReasoningEffort ??
+            _prefs!.getString(StorageService._aiOpenAiReasoningEffortKey),
       ),
     );
     await _prefs!.setBool(
       StorageService._aiWebSearchEnabledKey,
-      webSearchEnabled ?? (_prefs!.getBool(StorageService._aiWebSearchEnabledKey) ?? true),
+      webSearchEnabled ??
+          (_prefs!.getBool(StorageService._aiWebSearchEnabledKey) ?? true),
     );
     await _prefs!.setInt(
       StorageService._aiWebSearchMaxResultsKey,
       AiWebSearchMaxResults.normalize(
-        webSearchMaxResults ?? _prefs!.getInt(StorageService._aiWebSearchMaxResultsKey),
+        webSearchMaxResults ??
+            _prefs!.getInt(StorageService._aiWebSearchMaxResultsKey),
       ),
     );
     await _prefs!.setString(
       StorageService._aiWebSearchEngineKey,
       AiWebSearchEngine.normalize(
-        webSearchEngine ?? _prefs!.getString(StorageService._aiWebSearchEngineKey),
+        webSearchEngine ??
+            _prefs!.getString(StorageService._aiWebSearchEngineKey),
       ),
     );
     if (quarkSearchEndpoint != null) {
-      await _prefs!
-          .setString(StorageService._aiQuarkSearchEndpointKey, quarkSearchEndpoint.trim());
+      await _prefs!.setString(
+          StorageService._aiQuarkSearchEndpointKey, quarkSearchEndpoint.trim());
     }
     await _prefs!.setBool(
       StorageService._aiMultiAgentEnabledKey,
-      multiAgentEnabled ?? (_prefs!.getBool(StorageService._aiMultiAgentEnabledKey) ?? true),
+      multiAgentEnabled ??
+          (_prefs!.getBool(StorageService._aiMultiAgentEnabledKey) ?? true),
     );
     await _prefs!.setInt(
       StorageService._aiMultiAgentMaxAgentsKey,
       AiMultiAgentMaxAgents.normalize(
-        multiAgentMaxAgents ?? _prefs!.getInt(StorageService._aiMultiAgentMaxAgentsKey),
+        multiAgentMaxAgents ??
+            _prefs!.getInt(StorageService._aiMultiAgentMaxAgentsKey),
       ),
     );
     await _prefs!.setInt(
       StorageService._aiMaxImageSizeBytesKey,
       AiUploadSizeLimit.normalizeImage(
-        maxImageSizeBytes ?? _prefs!.getInt(StorageService._aiMaxImageSizeBytesKey),
+        maxImageSizeBytes ??
+            _prefs!.getInt(StorageService._aiMaxImageSizeBytesKey),
       ),
     );
     await _prefs!.setInt(
       StorageService._aiMaxFileSizeBytesKey,
       AiUploadSizeLimit.normalizeFile(
-        maxFileSizeBytes ?? _prefs!.getInt(StorageService._aiMaxFileSizeBytesKey),
+        maxFileSizeBytes ??
+            _prefs!.getInt(StorageService._aiMaxFileSizeBytesKey),
       ),
     );
     await _ensureAiApiKeyHistoryMigrated();
@@ -477,7 +503,8 @@ extension SettingsOps on StorageService {
     if (quarkApiKey != null) {
       final trimmed = quarkApiKey.trim();
       if (trimmed.isNotEmpty) {
-        await _secureStorage.write(key: StorageService._quarkApiKeySecureKey, value: trimmed);
+        await _secureStorage.write(
+            key: StorageService._quarkApiKeySecureKey, value: trimmed);
         quarkApiKeyUpdated = true;
       } else {
         await _secureStorage.delete(key: StorageService._quarkApiKeySecureKey);
@@ -526,7 +553,8 @@ extension SettingsOps on StorageService {
   Future<void> _ensureAiApiKeyHistoryMigrated() async {
     if (!_initialized || _prefs == null) return;
     if (_readAiApiKeyRefIds().isNotEmpty) return;
-    final legacyValue = await _secureStorage.read(key: StorageService._aiApiKeyKey);
+    final legacyValue =
+        await _secureStorage.read(key: StorageService._aiApiKeyKey);
     final normalizedLegacy = _normalizeAiApiKey(legacyValue);
     if (normalizedLegacy == null) {
       if (legacyValue != null && legacyValue.isNotEmpty) {
@@ -589,7 +617,8 @@ extension SettingsOps on StorageService {
     await _writeStringListPref(StorageService._aiApiKeyRefsKey, ids);
   }
 
-  String _aiApiKeyStorageKey(String id) => '${StorageService._aiApiKeyEntryPrefix}$id';
+  String _aiApiKeyStorageKey(String id) =>
+      '${StorageService._aiApiKeyEntryPrefix}$id';
 
   Future<void> _persistAiBaseUrlHistory(String currentBaseUrl) async {
     await _writeStringListPref(
@@ -746,6 +775,7 @@ extension SettingsOps on StorageService {
     required bool immediate,
   }) async {
     if (_prefs == null) return;
-    await _writeProtectedPrefBuffered(key, jsonEncode(values), immediate: immediate);
+    await _writeProtectedPrefBuffered(key, jsonEncode(values),
+        immediate: immediate);
   }
 }

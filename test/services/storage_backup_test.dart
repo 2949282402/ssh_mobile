@@ -407,7 +407,8 @@ void main() {
     expect(await storage.getQuarkApiKey(), isNull);
   });
 
-  test('custom settings, shortcuts, and secret cache persist, export, and import',
+  test(
+      'custom settings, shortcuts, and secret cache persist, export, and import',
       () async {
     storage = await initializedStorage();
 
@@ -423,7 +424,8 @@ void main() {
     await prefs.setInt('sftp_text_edit_limit_bytes', 512);
 
     await prefs.setString('shortcut_command_usage', '{"cmd1": 5}');
-    await prefs.setString('custom_shortcut_commands', '[{"id":"c1","label":"Custom","code":"ls","custom":true}]');
+    await prefs.setString('custom_shortcut_commands',
+        '[{"id":"c1","label":"Custom","code":"ls","custom":true}]');
     await prefs.setString('shortcut_command_order', '["c1"]');
 
     await storage.setSecretCacheEnabled(false);
@@ -452,9 +454,11 @@ void main() {
     expect(appSettings['sftpRichPreviewLimitBytes'], 4096);
     expect(appSettings['sftpTextEditLimitBytes'], 512);
 
-    final shortcutCommands = decoded['shortcutCommands'] as Map<String, dynamic>;
+    final shortcutCommands =
+        decoded['shortcutCommands'] as Map<String, dynamic>;
     expect(shortcutCommands['usage'], '{"cmd1": 5}');
-    expect(shortcutCommands['customCommands'], '[{"id":"c1","label":"Custom","code":"ls","custom":true}]');
+    expect(shortcutCommands['customCommands'],
+        '[{"id":"c1","label":"Custom","code":"ls","custom":true}]');
     expect(shortcutCommands['order'], '["c1"]');
 
     final secretCache = decoded['secretCache'] as Map<String, dynamic>;
@@ -490,7 +494,8 @@ void main() {
     expect(newPrefs.getInt('sftp_text_edit_limit_bytes'), 512);
 
     expect(newPrefs.getString('shortcut_command_usage'), '{"cmd1": 5}');
-    expect(newPrefs.getString('custom_shortcut_commands'), '[{"id":"c1","label":"Custom","code":"ls","custom":true}]');
+    expect(newPrefs.getString('custom_shortcut_commands'),
+        '[{"id":"c1","label":"Custom","code":"ls","custom":true}]');
     expect(newPrefs.getString('shortcut_command_order'), '["c1"]');
 
     expect(newStorage.isSecretCacheEnabled, isFalse);

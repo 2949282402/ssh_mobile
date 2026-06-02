@@ -113,7 +113,8 @@ class StorageService extends ChangeNotifier
     mOptions: MacOsOptions(usesDataProtectionKeychain: false),
   );
   final DataProtectionService _dataProtection = DataProtectionService.instance;
-  final Map<String, _PendingProtectedPrefWrite> _pendingProtectedPrefWrites = {};
+  final Map<String, _PendingProtectedPrefWrite> _pendingProtectedPrefWrites =
+      {};
 
   List<ConnectionConfig> _connections = [];
   List<ConnectionConfig> _connectionsView = const [];

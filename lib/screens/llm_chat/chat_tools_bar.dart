@@ -236,4 +236,3 @@ class _AttachmentChip extends StatelessWidget {
     );
   }
 }
-

@@ -10,7 +10,8 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   // Mock path_provider MethodChannel
-  const MethodChannel channel = MethodChannel('plugins.flutter.io/path_provider');
+  const MethodChannel channel =
+      MethodChannel('plugins.flutter.io/path_provider');
 
   late StorageService storage;
 
@@ -45,7 +46,8 @@ void main() {
       expect(service.documents.isEmpty, true);
     });
 
-    test('Add, search, and delete document works perfectly with persistence', () async {
+    test('Add, search, and delete document works perfectly with persistence',
+        () async {
       final service = RagService(storageService: storage);
       await service.init();
 

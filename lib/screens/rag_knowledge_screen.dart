@@ -13,7 +13,9 @@ class _RagStrings {
 
   String get title => isEn ? 'Ops Knowledge Base' : '运维知识库';
   String get noDocuments => isEn ? 'No documents uploaded yet' : '暂无上传的运维文档';
-  String get uploadHint => isEn ? 'Tap + to upload a document (PDF, Markdown, Txt, Log)' : '点击右下角 + 按钮上传本地 PDF、Markdown 或文本日志文档';
+  String get uploadHint => isEn
+      ? 'Tap + to upload a document (PDF, Markdown, Txt, Log)'
+      : '点击右下角 + 按钮上传本地 PDF、Markdown 或文本日志文档';
   String get documentName => isEn ? 'Document Name' : '文档名称';
   String get uploadTime => isEn ? 'Uploaded At' : '上传时间';
   String get size => isEn ? 'Size' : '大小';
@@ -25,16 +27,20 @@ class _RagStrings {
   String get delete => isEn ? 'Delete' : '删除';
   String get cancel => isEn ? 'Cancel' : '取消';
   String get uploading => isEn ? 'Uploading & indexing...' : '正在上传并构建索引...';
-  String get errorNoText => isEn ? 'No valid text found in this document.' : '未在文档中提取到有效文本内容。';
-  String get successAdded => isEn ? 'Document indexed successfully' : '文档上传并构建索引成功';
+  String get errorNoText =>
+      isEn ? 'No valid text found in this document.' : '未在文档中提取到有效文本内容。';
+  String get successAdded =>
+      isEn ? 'Document indexed successfully' : '文档上传并构建索引成功';
   String get errorAdd => isEn ? 'Failed to process document' : '上传/处理文档失败';
-  String get aliyunSettings => isEn ? 'Aliyun DashScope Settings' : '阿里云 DashScope 设置';
+  String get aliyunSettings =>
+      isEn ? 'Aliyun DashScope Settings' : '阿里云 DashScope 设置';
   String get aliyunHint => isEn
       ? 'Configure the API Key to enable semantic vector and hybrid search. DashScope keys start with "sk-".'
       : '配置 API 密钥以启用语义向量与双模混合检索。通义千问 DashScope 密钥通常以 "sk-" 开头。';
   String get save => isEn ? 'Save' : '保存';
   String chunkCount(int count) => isEn ? '$count chunks' : '$count 个分块';
-  String uploadedAtLabel(String date) => isEn ? 'Uploaded at $date' : '上传于 $date';
+  String uploadedAtLabel(String date) =>
+      isEn ? 'Uploaded at $date' : '上传于 $date';
 }
 
 class RagKnowledgeScreen extends StatefulWidget {
@@ -56,7 +62,8 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
     });
   }
 
-  Future<void> _showAliyunSettings(BuildContext context, _RagStrings strings) async {
+  Future<void> _showAliyunSettings(
+      BuildContext context, _RagStrings strings) async {
     final storage = context.read<StorageService>();
     final currentKey = await storage.getAliyunApiKey() ?? '';
     final controller = TextEditingController(text: currentKey);
@@ -121,7 +128,16 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
     try {
       final result = await FilePicker.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['pdf', 'md', 'txt', 'log', 'json', 'yaml', 'yml', 'csv'],
+        allowedExtensions: [
+          'pdf',
+          'md',
+          'txt',
+          'log',
+          'json',
+          'yaml',
+          'yml',
+          'csv'
+        ],
         withData: true,
       );
 
@@ -264,7 +280,8 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
               itemBuilder: (context, index) {
                 final doc = ragService.documents[index];
                 final isPdf = doc.name.toLowerCase().endsWith('.pdf');
-                final dateStr = DateFormat('yyyy-MM-dd HH:mm').format(doc.uploadedAt);
+                final dateStr =
+                    DateFormat('yyyy-MM-dd HH:mm').format(doc.uploadedAt);
 
                 return Card(
                   margin: const EdgeInsets.only(bottom: 12),

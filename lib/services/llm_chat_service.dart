@@ -941,7 +941,6 @@ class LlmChatService implements LlmClientAdapter {
     return '\n\n';
   }
 
-
   Map<String, dynamic> _providerReasoningParams({
     required String baseUrl,
     required String model,
@@ -1009,4 +1008,3 @@ class LlmChatService implements LlmClientAdapter {
     }
   }
 }
-

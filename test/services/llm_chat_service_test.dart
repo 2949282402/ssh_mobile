@@ -97,16 +97,19 @@ void main() {
     test('LlmCancellationToken propagates cancellation immediately', () {
       final token = LlmCancellationToken();
       expect(token.isCancelled, isFalse);
-      
+
       token.cancel();
       expect(token.isCancelled, isTrue);
-      expect(() => token.throwIfCancelled(), throwsA(isA<LlmCancelledException>()));
+      expect(() => token.throwIfCancelled(),
+          throwsA(isA<LlmCancelledException>()));
     });
 
-    test('stream with cancelled token during compression throws LlmCancelledException', () async {
+    test(
+        'stream with cancelled token during compression throws LlmCancelledException',
+        () async {
       final storage = StorageService();
       await storage.init();
-      
+
       await storage.saveAiConnectionSettings(
         baseUrl: 'https://api.example.com',
         model: 'demo-model',
@@ -141,14 +144,16 @@ void main() {
       ];
 
       expect(
-        () => llm.stream(
-          messages: messages,
-          cancellationToken: token,
-          forceContextCompression: true,
-        ).toList(),
+        () => llm
+            .stream(
+              messages: messages,
+              cancellationToken: token,
+              forceContextCompression: true,
+            )
+            .toList(),
         throwsA(isA<LlmCancelledException>()),
       );
-      
+
       storage.dispose();
     });
   });

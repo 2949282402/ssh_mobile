@@ -69,7 +69,8 @@ class AliyunEmbeddingClient {
 
       final rawEmbeddings = output['embeddings'] as List<dynamic>?;
       if (rawEmbeddings == null) {
-        throw StateError('Invalid DashScope response: missing "embeddings" list.');
+        throw StateError(
+            'Invalid DashScope response: missing "embeddings" list.');
       }
 
       // 提取并转换向量（按原文本顺序 text_index 对应排列）
@@ -78,7 +79,8 @@ class AliyunEmbeddingClient {
         if (item is Map<String, dynamic>) {
           final textIndex = item['text_index'] as int? ?? 0;
           final rawVector = item['embedding'] as List<dynamic>? ?? [];
-          final vector = rawVector.map((val) => (val as num).toDouble()).toList();
+          final vector =
+              rawVector.map((val) => (val as num).toDouble()).toList();
 
           if (textIndex >= 0 && textIndex < embeddings.length) {
             embeddings[textIndex] = vector;

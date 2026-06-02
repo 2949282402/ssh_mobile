@@ -42,13 +42,17 @@ class _AiStrings {
       : '根据问题自动在本地检索运维手册与文档，并作为参考上下文喂给 AI 助手。';
   String get ragManage => _en ? 'Manage Knowledge Base' : '管理运维知识库';
   String get ragSearchMode => _en ? 'Retrieval Mode' : '检索模式';
-  String get ragSearchModeBm25 => _en ? 'Keywords (BM25 - Offline)' : '本地关键词检索 (BM25 - 完全离线)';
-  String get ragSearchModeVector => _en ? 'Semantic Vector (Aliyun DashScope)' : '语义向量检索 (Vector - 通义向量)';
-  String get ragSearchModeHybrid => _en ? 'Hybrid RRF (Recommended)' : '双模混合检索 (Hybrid - 推荐效果最好)';
+  String get ragSearchModeBm25 =>
+      _en ? 'Keywords (BM25 - Offline)' : '本地关键词检索 (BM25 - 完全离线)';
+  String get ragSearchModeVector =>
+      _en ? 'Semantic Vector (Aliyun DashScope)' : '语义向量检索 (Vector - 通义向量)';
+  String get ragSearchModeHybrid =>
+      _en ? 'Hybrid RRF (Recommended)' : '双模混合检索 (Hybrid - 推荐效果最好)';
   String get ragSearchModeNeedKey => _en
       ? '⚠️ Semantic & Hybrid modes require Aliyun API Key configured in Knowledge Base settings.'
       : '⚠️ 语义向量与混合检索模式需要在下方“管理运维知识库”中配置阿里云 API 密钥。';
-  String get ragTopN => _en ? 'Retrieval Context Count (Top N)' : '知识库参考段数 (Top N)';
+  String get ragTopN =>
+      _en ? 'Retrieval Context Count (Top N)' : '知识库参考段数 (Top N)';
   String ragTopNValue(int value) => _en ? '$value chunks' : '$value 个参考段';
   String get webSearchMaxResults => _en ? 'Search results per call' : '每次搜索结果数';
   String get webSearchEngine => _en ? 'Web search engine' : '搜索引擎';

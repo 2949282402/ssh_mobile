@@ -47,7 +47,8 @@ class RagDocumentMetadata {
       name: json['name'] as String? ?? '',
       mimeType: json['mimeType'] as String? ?? 'application/octet-stream',
       sizeBytes: json['sizeBytes'] as int? ?? 0,
-      uploadedAt: DateTime.tryParse(json['uploadedAt'] as String? ?? '') ?? DateTime.now(),
+      uploadedAt: DateTime.tryParse(json['uploadedAt'] as String? ?? '') ??
+          DateTime.now(),
       chunkCount: json['chunkCount'] as int? ?? 0,
     );
   }
@@ -110,7 +111,8 @@ class RagService extends ChangeNotifier {
 
         AppLogService.instance.info(
           'RAG service initialized',
-          details: 'loadedDocs=${_documents.length} loadedChunks=${_searchEngine.totalDocs}',
+          details:
+              'loadedDocs=${_documents.length} loadedChunks=${_searchEngine.totalDocs}',
         );
       }
     } catch (e, stackTrace) {
@@ -177,9 +179,12 @@ class RagService extends ChangeNotifier {
           // 通义千问 Embedding API 限制每次调用最多 25 个 texts
           const batchSize = 20;
           for (var i = 0; i < chunkTexts.length; i += batchSize) {
-            final endIdx = i + batchSize > chunkTexts.length ? chunkTexts.length : i + batchSize;
+            final endIdx = i + batchSize > chunkTexts.length
+                ? chunkTexts.length
+                : i + batchSize;
             final batch = chunkTexts.sublist(i, endIdx);
-            final batchEmbeddings = await client.getEmbeddings(batch, textType: 'document');
+            final batchEmbeddings =
+                await client.getEmbeddings(batch, textType: 'document');
             embeddings.addAll(batchEmbeddings);
           }
 
@@ -189,9 +194,11 @@ class RagService extends ChangeNotifier {
               chunks[i].metadata['embedding'] = embeddings[i];
             }
           }
-          AppLogService.instance.info('RAG: Generated embeddings successfully via Aliyun');
+          AppLogService.instance
+              .info('RAG: Generated embeddings successfully via Aliyun');
         } catch (e) {
-          AppLogService.instance.warning('RAG: Failed to generate vectors via Aliyun: $e. Falling back to pure BM25 index.');
+          AppLogService.instance.warning(
+              'RAG: Failed to generate vectors via Aliyun: $e. Falling back to pure BM25 index.');
         }
       }
 
@@ -287,7 +294,8 @@ class RagService extends ChangeNotifier {
       }
 
       if (searchMode == 'vector') {
-        return await _retrieveVector(query, aliyunKey, limit, filterDocumentIds);
+        return await _retrieveVector(
+            query, aliyunKey, limit, filterDocumentIds);
       }
 
       // 混合搜索模式 (Hybrid Search using RRF)
@@ -305,10 +313,12 @@ class RagService extends ChangeNotifier {
   }
 
   /// 纯本地 BM25 关键词检索
-  List<RagChunk> _retrieveBm25(String query, int limit, Set<String>? filterDocumentIds) {
-    final searchLimit = filterDocumentIds != null && filterDocumentIds.isNotEmpty
-        ? limit * 3
-        : limit;
+  List<RagChunk> _retrieveBm25(
+      String query, int limit, Set<String>? filterDocumentIds) {
+    final searchLimit =
+        filterDocumentIds != null && filterDocumentIds.isNotEmpty
+            ? limit * 3
+            : limit;
 
     final results = _searchEngine.search(query, limit: searchLimit);
     final filtered = <RagChunk>[];
@@ -355,7 +365,8 @@ class RagService extends ChangeNotifier {
       if (chunkEmbedding == null || chunkEmbedding.isEmpty) continue;
 
       // 转换为双精度浮点数
-      final vector = chunkEmbedding.map((val) => (val as num).toDouble()).toList();
+      final vector =
+          chunkEmbedding.map((val) => (val as num).toDouble()).toList();
       final score = VectorMath.dotProduct(queryVector, vector);
       scoredList.add(ScoredRagChunk(chunk: chunk, score: score));
     }
@@ -376,13 +387,15 @@ class RagService extends ChangeNotifier {
     final bm25Rank = bm25Chunks.map((c) => c.id).toList();
 
     // 2. 获取向量检索的排名结果
-    final vectorChunks = await _retrieveVector(query, apiKey, limit * 4, filterDocumentIds);
+    final vectorChunks =
+        await _retrieveVector(query, apiKey, limit * 4, filterDocumentIds);
     final vectorRank = vectorChunks.map((c) => c.id).toList();
 
     if (bm25Rank.isEmpty && vectorRank.isEmpty) return const [];
 
     // 3. 使用 RRF 合并两种排名的得分
-    final fusedIds = RrfMerger.merge(bm25Rank: bm25Rank, vectorRank: vectorRank);
+    final fusedIds =
+        RrfMerger.merge(bm25Rank: bm25Rank, vectorRank: vectorRank);
 
     // 4. 根据融合排名重组实体，取 Top-K
     final allChunksMap = <String, RagChunk>{};
@@ -425,7 +438,8 @@ class RagService extends ChangeNotifier {
       final file = await _getDatabaseFile();
       final data = {
         'documents': _documents.map((doc) => doc.toJson()).toList(),
-        'documentChunks': _documentChunks.map((k, v) => MapEntry(k, v.map((c) => c.toJson()).toList())),
+        'documentChunks': _documentChunks
+            .map((k, v) => MapEntry(k, v.map((c) => c.toJson()).toList())),
         'searchEngine': _searchEngine.toJson(),
       };
       await file.writeAsString(jsonEncode(data));

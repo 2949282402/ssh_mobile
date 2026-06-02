@@ -12,7 +12,8 @@ class PdfTextExtractor {
         bytes[0] != 0x25 || // %
         bytes[1] != 0x50 || // P
         bytes[2] != 0x44 || // D
-        bytes[3] != 0x46) { // F
+        bytes[3] != 0x46) {
+      // F
       throw ArgumentError('Invalid PDF file header.');
     }
 
@@ -20,7 +21,17 @@ class PdfTextExtractor {
 
     // 寻找 PDF 中的数据流
     final streamPattern = [115, 116, 114, 101, 97, 109]; // "stream"
-    final endStreamPattern = [101, 110, 100, 115, 116, 114, 101, 97, 109]; // "endstream"
+    final endStreamPattern = [
+      101,
+      110,
+      100,
+      115,
+      116,
+      114,
+      101,
+      97,
+      109
+    ]; // "endstream"
 
     int start = 0;
     while (true) {
@@ -32,8 +43,10 @@ class PdfTextExtractor {
 
       // 确定流数据的真实起始位置（跳过 stream 之后的换行符 \r\n 或 \n）
       int streamStart = streamIdx + 6;
-      if (streamStart < bytes.length && bytes[streamStart] == 13) streamStart++; // \r
-      if (streamStart < bytes.length && bytes[streamStart] == 10) streamStart++; // \n
+      if (streamStart < bytes.length && bytes[streamStart] == 13)
+        streamStart++; // \r
+      if (streamStart < bytes.length && bytes[streamStart] == 10)
+        streamStart++; // \n
 
       int streamEnd = endStreamIdx;
       // 剔除 endstream 前面的换行符
@@ -106,7 +119,11 @@ class PdfTextExtractor {
     if (text.length <= 2) {
       // 大部分纯控制指令如 BT, ET, Td, Tj, TJ, g, RG 很短
       final lower = text.toLowerCase();
-      if (lower == 'bt' || lower == 'et' || lower == 'q' || lower == 'q' || lower == 'cm') {
+      if (lower == 'bt' ||
+          lower == 'et' ||
+          lower == 'q' ||
+          lower == 'q' ||
+          lower == 'cm') {
         return true;
       }
     }
@@ -217,7 +234,8 @@ class PdfTextExtractor {
             decodedStr.codeUnitAt(0) == 0xFE &&
             decodedStr.codeUnitAt(1) == 0xFF)) {
       final bytes = <int>[];
-      final startIdx = (decodedStr.startsWith('þÿ') || decodedStr.startsWith('þÿ')) ? 2 : 2;
+      final startIdx =
+          (decodedStr.startsWith('þÿ') || decodedStr.startsWith('þÿ')) ? 2 : 2;
       for (var idx = startIdx; idx < decodedStr.length; idx++) {
         bytes.add(decodedStr.codeUnitAt(idx) & 0xFF);
       }

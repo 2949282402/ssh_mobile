@@ -87,7 +87,6 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     super.dispose();
   }
 
-
   String? get _selectedApiKeyMasked {
     for (final entry in _apiKeyHistory) {
       if (entry.id == _selectedApiKeyId) {

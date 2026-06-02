@@ -60,7 +60,8 @@ class MockHttpHeaders implements HttpHeaders {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-class MockHttpClientResponse extends Stream<List<int>> implements HttpClientResponse {
+class MockHttpClientResponse extends Stream<List<int>>
+    implements HttpClientResponse {
   @override
   int get statusCode => 200;
 
@@ -72,23 +73,16 @@ class MockHttpClientResponse extends Stream<List<int>> implements HttpClientResp
     bool? cancelOnError,
   }) {
     // 模拟通义千问 Embedding API 向量数据 (1024 维，全 0.1 和 0.2 以对应测试)
-    final fakeVector = List<double>.generate(1024, (idx) => idx % 2 == 0 ? 0.01 : -0.01);
+    final fakeVector =
+        List<double>.generate(1024, (idx) => idx % 2 == 0 ? 0.01 : -0.01);
     final fakeResponse = {
       'output': {
         'embeddings': [
-          {
-            'embedding': fakeVector,
-            'text_index': 0
-          },
-          {
-            'embedding': fakeVector,
-            'text_index': 1
-          }
+          {'embedding': fakeVector, 'text_index': 0},
+          {'embedding': fakeVector, 'text_index': 1}
         ]
       },
-      'usage': {
-        'total_tokens': 10
-      }
+      'usage': {'total_tokens': 10}
     };
     final bytes = utf8.encode(jsonEncode(fakeResponse));
     return Stream<List<int>>.fromIterable([bytes]).listen(
@@ -106,7 +100,8 @@ class MockHttpClientResponse extends Stream<List<int>> implements HttpClientResp
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  const MethodChannel pathChannel = MethodChannel('plugins.flutter.io/path_provider');
+  const MethodChannel pathChannel =
+      MethodChannel('plugins.flutter.io/path_provider');
 
   late StorageService storage;
 
@@ -140,7 +135,8 @@ void main() {
   });
 
   group('RagService Hybrid Search Tests', () {
-    test('addDocument generates embeddings and retrieve uses RRF fusion', () async {
+    test('addDocument generates embeddings and retrieve uses RRF fusion',
+        () async {
       final service = RagService(storageService: storage);
       await service.init();
 

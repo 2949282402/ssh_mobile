@@ -58,8 +58,7 @@ class Bm25SearchEngine {
     // 按标点符号和空格分块，但保留特殊字符（如中文字符，英文单词，数字）
     // RegExp 匹配中文字符：[一-龥]
     // 匹配英文和数字单词：[a-z0-9_-]+ (允许中划线/下划线作为命令一部分，例如 `apt-get`, `systemctl`)
-    final matches = RegExp(r'[a-z0-9_\-\.]+|(?:[一-龥]+)')
-        .allMatches(cleanText);
+    final matches = RegExp(r'[a-z0-9_\-\.]+|(?:[一-龥]+)').allMatches(cleanText);
 
     for (final match in matches) {
       final part = match.group(0);
@@ -78,7 +77,10 @@ class Bm25SearchEngine {
         // 英文及命令部分
         var token = part;
         // 清理末尾的点或逗号等标点符号（例如句子结尾的 "context." 应该识别为 "context"）
-        while (token.endsWith('.') || token.endsWith(',') || token.endsWith(';') || token.endsWith(':')) {
+        while (token.endsWith('.') ||
+            token.endsWith(',') ||
+            token.endsWith(';') ||
+            token.endsWith(':')) {
           if (token.length <= 1) break;
           token = token.substring(0, token.length - 1);
         }

@@ -6,7 +6,8 @@ import 'package:ssh_mobile/utils/pdf_text_extractor.dart';
 void main() {
   group('TextChunker Tests', () {
     test('Splits standard English text into chunks with sliding window', () {
-      const text = 'This is a long test document. It contains multiple sentences. '
+      const text =
+          'This is a long test document. It contains multiple sentences. '
           'We want to chunk it. Sliding window is important. Let us verify.';
       final chunks = TextChunker.split(
         text: text,
@@ -57,7 +58,8 @@ void main() {
         id: 'c1',
         documentId: 'doc-1',
         documentName: 'nginx.txt',
-        text: 'Nginx is a web server. To restart it, run systemctl restart nginx. It listens on port 80.',
+        text:
+            'Nginx is a web server. To restart it, run systemctl restart nginx. It listens on port 80.',
         charStartIndex: 0,
         charEndIndex: 85,
       );
@@ -66,7 +68,8 @@ void main() {
         id: 'c2',
         documentId: 'doc-1',
         documentName: 'nginx.txt',
-        text: 'The nginx configuration file is located at /etc/nginx/nginx.conf.',
+        text:
+            'The nginx configuration file is located at /etc/nginx/nginx.conf.',
         charStartIndex: 86,
         charEndIndex: 145,
       );
@@ -75,7 +78,8 @@ void main() {
         id: 'c3',
         documentId: 'doc-2',
         documentName: 'docker.txt',
-        text: 'Docker is a container platform. Run docker run to start a container.',
+        text:
+            'Docker is a container platform. Run docker run to start a container.',
         charStartIndex: 0,
         charEndIndex: 70,
       );
@@ -111,7 +115,8 @@ void main() {
       engine2.loadFromJson(json);
 
       expect(engine2.totalDocs, 1);
-      expect(engine2.search('context').first.chunk.text, 'Hello test document context.');
+      expect(engine2.search('context').first.chunk.text,
+          'Hello test document context.');
     });
   });
 

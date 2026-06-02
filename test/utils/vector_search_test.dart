@@ -56,7 +56,8 @@ class MockHttpHeaders implements HttpHeaders {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-class MockHttpClientResponse extends Stream<List<int>> implements HttpClientResponse {
+class MockHttpClientResponse extends Stream<List<int>>
+    implements HttpClientResponse {
   @override
   int get statusCode => 200;
 
@@ -81,9 +82,7 @@ class MockHttpClientResponse extends Stream<List<int>> implements HttpClientResp
           }
         ]
       },
-      'usage': {
-        'total_tokens': 15
-      }
+      'usage': {'total_tokens': 15}
     };
     final bytes = utf8.encode(jsonEncode(fakeResponse));
     return Stream<List<int>>.fromIterable([bytes]).listen(
