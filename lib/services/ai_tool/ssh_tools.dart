@@ -243,4 +243,103 @@ extension _SshTools on AiToolService {
 
   String get _windowsPermissionMessage =>
       'Windows permission denied: the current account does not have enough privileges for this operation. Use an Administrator or elevated account, or grant the required permission and try again.';
+
+  List<AiTool> _getSshTools() {
+    return [
+      AiTool(
+        name: 'ssh_list_sessions',
+        description:
+            'List current SSH terminal sessions and their metadata without exposing raw terminal output.',
+        properties: {
+          'connectionId': _string('Optional server connection id filter.'),
+        },
+        handler: _sshListSessions,
+      ),
+      AiTool(
+        name: 'ssh_open_session',
+        description:
+            'Open a new SSH terminal session using the saved server credentials. Returns session metadata only.',
+        properties: {
+          'connectionId': _string('Server connection id.'),
+          'displayName': _string('Optional display name for the new session.'),
+        },
+        required: const ['connectionId'],
+        handler: _sshOpenSession,
+      ),
+      AiTool(
+        name: 'ssh_ensure_session_connected',
+        description:
+            'Ensure an existing SSH terminal session is connected. Returns session metadata only.',
+        properties: {
+          'sessionId': _string('Existing session id.'),
+          'connectionId': _string('Server connection id for that session.'),
+        },
+        required: const ['sessionId', 'connectionId'],
+        handler: _sshEnsureSessionConnected,
+      ),
+      AiTool(
+        name: 'ssh_rename_session',
+        description:
+            'Rename an SSH terminal session display name. Returns session metadata only.',
+        properties: {
+          'sessionId': _string('Existing session id.'),
+          'name': _string('New display name.'),
+        },
+        required: const ['sessionId', 'name'],
+        handler: _sshRenameSession,
+      ),
+      AiTool(
+        name: 'ssh_close_session',
+        description:
+            'Close one SSH terminal session. Returns session metadata only.',
+        properties: {
+          'sessionId': _string('Existing session id.'),
+        },
+        required: const ['sessionId'],
+        handler: _sshCloseSession,
+      ),
+      AiTool(
+        name: 'ssh_close_server_sessions',
+        description:
+            'Close all SSH terminal sessions for one server connection id.',
+        properties: {
+          'connectionId': _string('Server connection id.'),
+        },
+        required: const ['connectionId'],
+        handler: _sshCloseServerSessions,
+      ),
+      AiTool(
+        name: 'ssh_restore_tmux_sessions',
+        description:
+            'Restore saved tmux-backed SSH sessions after an app restart. Returns summary metadata only.',
+        properties: const {},
+        handler: _sshRestoreTmuxSessions,
+      ),
+      AiTool(
+        name: 'ssh_list_terminal_history',
+        description:
+            'List saved terminal history records by metadata only. Does not expose raw terminal output.',
+        properties: {
+          'connectionId': _string('Optional server connection id filter.'),
+          'limit': _int(
+            'Maximum number of records to return. Defaults to 50.',
+            minimum: 1,
+            maximum: 200,
+            defaultValue: 50,
+          ),
+        },
+        handler: _sshListTerminalHistory,
+      ),
+      AiTool(
+        name: 'ssh_delete_terminal_history_record',
+        description:
+            'Delete one saved terminal history record by session id. Does not access raw terminal output.',
+        properties: {
+          'sessionId': _string('Terminal history session id.'),
+        },
+        required: const ['sessionId'],
+        handler: _sshDeleteTerminalHistoryRecord,
+      ),
+    ];
+  }
 }

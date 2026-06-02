@@ -272,4 +272,67 @@ extension _PlaybookTools on AiToolService {
           .toList(),
     });
   }
+
+  List<AiTool> _getPlaybookTools() {
+    return [
+      AiTool(
+        name: 'list_playbooks',
+        description:
+            'CLIENT tool. List all saved custom sequential task playbooks/scripts, including step names and commands.',
+        properties: const {},
+        handler: _listPlaybooksTool,
+      ),
+      AiTool(
+        name: 'create_playbook',
+        description:
+            'CLIENT tool. Create a new visual sequential task playbook in storage. This updates local client data and requires user approval.',
+        properties: {
+          'name': _string('The display name for the playbook.'),
+          'description':
+              _string('A short description of what this playbook does.'),
+          'steps': {
+            'type': 'array',
+            'description': 'The ordered list of steps to execute.',
+            'items': {
+              'type': 'object',
+              'properties': {
+                'name': _string('The step display name.'),
+                'description': _string('What this step accomplishes.'),
+                'command': _string(
+                    'The multiline shell command/script to run via SSH exec.'),
+                'expectedOutcomeRegex': _string(
+                    'Optional regex pattern that the stdout must match to succeed.'),
+              },
+              'required': const ['name', 'description', 'command'],
+            },
+          },
+        },
+        required: const ['name', 'description', 'steps'],
+        handler: (arguments) =>
+            _createPlaybookTool(arguments, approvedWrite: false),
+      ),
+      AiTool(
+        name: 'run_playbook',
+        description:
+            'CLIENT tool. Trigger the async sequential execution of a saved playbook on a remote SSH server connection. This changes server state and requires user approval.',
+        properties: {
+          'playbookId': _string('The saved playbook ID.'),
+          'connectionId': _string('The remote SSH server connection ID.'),
+        },
+        required: const ['playbookId', 'connectionId'],
+        handler: (arguments) =>
+            _runPlaybookTool(arguments, approvedWrite: false),
+      ),
+      AiTool(
+        name: 'get_playbook_status',
+        description:
+            'CLIENT tool. Query the active or latest execution status of a playbook, including live step results, exit codes, and stdout/stderr.',
+        properties: {
+          'playbookId': _string('The playbook ID to query.'),
+        },
+        required: const ['playbookId'],
+        handler: _getPlaybookStatusTool,
+      ),
+    ];
+  }
 }

@@ -176,3 +176,34 @@ class _UnavailablePerformanceMonitorToolService
   Map<String, dynamic> stopForConnection(String connectionId) =>
       {'supported': false, 'error': _message};
 }
+
+Map<String, dynamic> _string(String description) =>
+    AiToolService._string(description);
+
+Map<String, dynamic> _int(
+  String description, {
+  int? minimum,
+  int? maximum,
+  int? defaultValue,
+}) =>
+    AiToolService._int(
+      description,
+      minimum: minimum,
+      maximum: maximum,
+      defaultValue: defaultValue,
+    );
+
+Map<String, dynamic> _bool(String description) =>
+    AiToolService._bool(description);
+
+Map<String, dynamic> _stringArray(
+  String description, {
+  int? minimumItems,
+}) =>
+    AiToolService._stringArray(description, minimumItems: minimumItems);
+
+Map<String, dynamic> _intArray(
+  String description, {
+  int? minimumItems,
+}) =>
+    AiToolService._intArray(description, minimumItems: minimumItems);

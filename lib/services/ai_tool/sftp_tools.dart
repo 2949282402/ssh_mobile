@@ -229,4 +229,124 @@ extension _SftpTools on AiToolService {
     if (trimmed.endsWith('/')) return '$trimmed$pickedName';
     return trimmed;
   }
+
+  List<AiTool> _getSftpTools() {
+    return [
+      AiTool(
+        name: 'sftp_list_dir',
+        description:
+            'List a remote directory through detached SFTP. Secret-bearing paths are blocked by the tool secret policy.',
+        properties: {
+          'connectionId': _string('Server connection id.'),
+          'path': _string('Remote directory path. Defaults to ".".'),
+        },
+        required: const ['connectionId'],
+        handler: _listDir,
+      ),
+      AiTool(
+        name: 'sftp_get_entry_info',
+        description:
+            'Get detached SFTP metadata for one remote path. Secret-bearing paths are blocked by the tool secret policy.',
+        properties: {
+          'connectionId': _string('Server connection id.'),
+          'path': _string('Remote path.'),
+        },
+        required: const ['connectionId', 'path'],
+        handler: _sftpGetEntryInfo,
+      ),
+      AiTool(
+        name: 'sftp_read_text',
+        description:
+            'Read a small remote text file through detached SFTP. Binary and large files are rejected. Secret-bearing paths are blocked.',
+        properties: {
+          'connectionId': _string('Server connection id.'),
+          'path': _string('Remote text file path.'),
+        },
+        required: const ['connectionId', 'path'],
+        handler: _readText,
+      ),
+      AiTool(
+        name: 'sftp_download_file',
+        description:
+            'Download a remote file through detached SFTP and save it to the client device running SSH Mobile. The tool returns save metadata, not file content. Secret-bearing paths are blocked.',
+        properties: {
+          'connectionId': _string('Server connection id.'),
+          'path': _string('Remote file path.'),
+        },
+        required: const ['connectionId', 'path'],
+        handler: _sftpDownloadFile,
+      ),
+      AiTool(
+        name: 'sftp_write_text',
+        description:
+            'Write a text file through detached SFTP by replacing or creating the remote file. This changes remote state, requires user approval, and is blocked on secret-bearing paths.',
+        properties: {
+          'connectionId': _string('Server connection id.'),
+          'path': _string('Remote text file path.'),
+          'content': _string('Full text content to write to the remote file.'),
+        },
+        required: const ['connectionId', 'path', 'content'],
+        handler: (arguments) => _sftpWriteText(arguments, approvedWrite: false),
+      ),
+      AiTool(
+        name: 'sftp_upload_local_file',
+        description:
+            'Pick a local client file and upload it to a remote path through detached SFTP. This changes remote state, requires user approval, and is blocked on secret-bearing paths.',
+        properties: {
+          'connectionId': _string('Server connection id.'),
+          'path': _string(
+            'Remote destination path. If it ends with "/" the picked local filename is appended.',
+          ),
+        },
+        required: const ['connectionId', 'path'],
+        handler: (arguments) => _sftpUploadLocalFile(
+          arguments,
+          approvedWrite: false,
+        ),
+      ),
+      AiTool(
+        name: 'sftp_create_directory',
+        description:
+            'Create a remote directory through detached SFTP. This changes remote state, requires user approval, and is blocked on secret-bearing paths.',
+        properties: {
+          'connectionId': _string('Server connection id.'),
+          'path': _string('Remote directory path to create.'),
+        },
+        required: const ['connectionId', 'path'],
+        handler: (arguments) => _sftpCreateDirectory(
+          arguments,
+          approvedWrite: false,
+        ),
+      ),
+      AiTool(
+        name: 'sftp_rename_entry',
+        description:
+            'Rename or move a remote file or directory through detached SFTP. This changes remote state, requires user approval, and is blocked on secret-bearing paths.',
+        properties: {
+          'connectionId': _string('Server connection id.'),
+          'path': _string('Current remote path.'),
+          'newPath': _string('New remote path.'),
+        },
+        required: const ['connectionId', 'path', 'newPath'],
+        handler: (arguments) => _sftpRenameEntry(
+          arguments,
+          approvedWrite: false,
+        ),
+      ),
+      AiTool(
+        name: 'sftp_delete_entry',
+        description:
+            'Delete a remote file or empty directory through detached SFTP. This is destructive, requires user approval, and is blocked on secret-bearing paths.',
+        properties: {
+          'connectionId': _string('Server connection id.'),
+          'path': _string('Remote file or directory path.'),
+        },
+        required: const ['connectionId', 'path'],
+        handler: (arguments) => _sftpDeleteEntry(
+          arguments,
+          approvedWrite: false,
+        ),
+      ),
+    ];
+  }
 }
