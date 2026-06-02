@@ -14,7 +14,9 @@ extension LlmContextCompressor on LlmChatService {
     required bool deepSeekThinkingEnabled,
     required String deepSeekReasoningEffort,
     required String openAiReasoningEffort,
+    LlmCancellationToken? cancellationToken,
   }) async {
+    cancellationToken?.throwIfCancelled();
     final lastUserIndex =
         messages.lastIndexWhere((message) => message['role'] == 'user');
     if (lastUserIndex <= 0) {
@@ -50,8 +52,10 @@ extension LlmContextCompressor on LlmChatService {
       deepSeekThinkingEnabled: deepSeekThinkingEnabled,
       deepSeekReasoningEffort: deepSeekReasoningEffort,
       openAiReasoningEffort: openAiReasoningEffort,
+      cancellationToken: cancellationToken,
       operationLabel: 'LLM compression',
     );
+    cancellationToken?.throwIfCancelled();
     final summary = _contentFromChatResponse(response);
     AppLogService.instance.info(
       'LLM context compression completed',

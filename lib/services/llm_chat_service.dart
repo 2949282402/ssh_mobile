@@ -223,6 +223,7 @@ class LlmChatService implements LlmClientAdapter {
         deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
         deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
         openAiReasoningEffort: settings.openAiReasoningEffort,
+        cancellationToken: cancellationToken,
       );
       compressed = true;
       if (forceContextCompression && !shouldCompressFromUsageThreshold) {

@@ -317,6 +317,41 @@ void main() {
       expect(result, isNull);
       expect(completeCalled, isFalse);
     });
+
+    test('cancellation inside classification phase is propagated immediately', () async {
+      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
+      var checkCancelledCalled = 0;
+      var completeCalled = false;
+
+      try {
+        await coordinator.run(
+          enabled: true,
+          maxAgents: 3,
+          messages: const [
+            {'role': 'user', 'content': 'debug logs and fix the server'},
+          ],
+          classify: (messages) async {
+            throw StateError('cancelled exception during classify');
+          },
+          checkCancelled: () {
+            checkCancelledCalled++;
+            if (checkCancelledCalled >= 2) {
+              throw StateError('cancelled');
+            }
+          },
+          complete: (role, messages, {required thinkingSettings}) async {
+            completeCalled = true;
+            return 'advice';
+          },
+        );
+        fail('Should have thrown cancellation exception');
+      } catch (e) {
+        expect(e.toString(), contains('cancelled'));
+        expect(e.toString(), isNot(contains('cancelled exception during classify')));
+      }
+
+      expect(completeCalled, isFalse);
+    });
   });
 
   test('normalizes max agent count', () {

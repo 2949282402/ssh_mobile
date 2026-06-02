@@ -78,6 +78,7 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
       messages: messages,
       classify: classify,
       maxAgents: maxAgents,
+      checkCancelled: checkCancelled,
     );
 
     checkCancelled?.call();
@@ -413,8 +414,10 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     required List<Map<String, dynamic>> messages,
     required MultiAgentClassificationCompletion classify,
     required int maxAgents,
+    void Function()? checkCancelled,
   }) async {
     try {
+      checkCancelled?.call();
       final latestUser = _latestUserContent(messages);
       final contextText = _recentConversationText(messages);
 
@@ -441,6 +444,8 @@ Return JSON only:
       final rawResult = await classify(classificationMessages)
           .timeout(const Duration(seconds: 5));
 
+      checkCancelled?.call();
+
       var cleaned = rawResult.trim();
       if (cleaned.startsWith('```')) {
         cleaned = cleaned.replaceFirst(RegExp(r'^```(?:json)?\n?'), '');
@@ -458,6 +463,11 @@ Return JSON only:
             (decoded['agentCount'] as num?)?.toInt().clamp(2, maxAgents) ?? 2,
       );
     } catch (e) {
+      try {
+        checkCancelled?.call();
+      } catch (_) {
+        rethrow;
+      }
       AppLogService.instance.warning(
         'LLM multi-agent classification failed or timed out. Falling back to single-agent execution.',
         details: e.toString(),
