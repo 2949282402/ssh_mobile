@@ -98,14 +98,12 @@ List<String> buildInitialModelOptions({
 class LlmChatScreen extends StatefulWidget {
   final bool active;
   final ValueChanged<bool>? onHistoryVisibilityChanged;
-  final VoidCallback? onOpenSettingsDrawer;
   final String? initialText;
 
   const LlmChatScreen({
     super.key,
     this.active = true,
     this.onHistoryVisibilityChanged,
-    this.onOpenSettingsDrawer,
     this.initialText,
   });
 
@@ -470,11 +468,6 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                       icon: const Icon(Icons.add_comment_outlined),
                       onPressed:
                           _sending ? null : () => _createChatFromSettings(),
-                    ),
-                    IconButton(
-                      tooltip: strings.appSettings,
-                      icon: const Icon(Icons.settings_outlined),
-                      onPressed: widget.onOpenSettingsDrawer,
                     ),
                     IconButton(
                       tooltip: strings.settings,

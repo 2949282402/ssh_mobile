@@ -482,7 +482,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   if (_aiHistoryVisible == visible) return;
                   setState(() => _aiHistoryVisible = visible);
                 },
-                onOpenSettingsDrawer: () => _openSettings(context),
               );
             case _serverPage:
               return _buildServerPage(context, strings);
@@ -1161,6 +1160,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   icon: const Icon(Icons.history_rounded),
                   color: mutedTextColor,
                   onPressed: () => Navigator.pushNamed(context, '/history'),
+                ),
+                IconButton(
+                  tooltip: strings.settings,
+                  icon: const Icon(Icons.settings_outlined),
+                  color: mutedTextColor,
+                  onPressed: () => _openSettings(context),
                 ),
               ],
             ),
