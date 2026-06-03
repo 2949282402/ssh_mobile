@@ -875,14 +875,24 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       throw StateError('Connection config not found');
     }
 
-    final client = await _clientFactory.connectClient(config);
-    SftpClient? sftp;
     try {
-      sftp = await client.sftp().timeout(const Duration(seconds: 15));
-      return await action(sftp, config);
-    } finally {
-      sftp?.close();
-      client.close();
+      final client = await _clientFactory.connectClient(config);
+      SftpClient? sftp;
+      try {
+        sftp = await client.sftp().timeout(const Duration(seconds: 15));
+        return await action(sftp, config);
+      } finally {
+        sftp?.close();
+        client.close();
+      }
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'SFTP detached operation failed',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'connection=${config.name} connectionId=$connectionId',
+      );
+      rethrow;
     }
   }
 

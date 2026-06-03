@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'app_log_service.dart';
+
 class ShortcutCommand {
   final String id;
   final String label;
@@ -68,7 +70,13 @@ class ShortcutCommandService extends ChangeNotifier {
                 (key, value) => MapEntry(key, (value as num).toInt()),
               ),
             );
-        } catch (_) {}
+        } catch (e, stackTrace) {
+          AppLogService.instance.add(
+            'warning',
+            'Failed to decode shortcut usage data: $e',
+            stackTrace: stackTrace,
+          );
+        }
       }
 
       final orderJson = prefs.getString(_orderKey);
@@ -78,7 +86,13 @@ class ShortcutCommandService extends ChangeNotifier {
           _orderIds
             ..clear()
             ..addAll(decoded.whereType<String>());
-        } catch (_) {}
+        } catch (e, stackTrace) {
+          AppLogService.instance.add(
+            'warning',
+            'Failed to decode shortcut order data: $e',
+            stackTrace: stackTrace,
+          );
+        }
       }
 
       final customJson = prefs.getString(_customKey);
@@ -95,9 +109,20 @@ class ShortcutCommandService extends ChangeNotifier {
               ),
             );
           _refreshCustomCommandsView();
-        } catch (_) {}
+        } catch (e, stackTrace) {
+          AppLogService.instance.add(
+            'warning',
+            'Failed to decode custom shortcut commands data: $e',
+            stackTrace: stackTrace,
+          );
+        }
       }
-    } catch (_) {
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to initialize ShortcutCommandService',
+        error: e,
+        stackTrace: stackTrace,
+      );
       _usage.clear();
       _orderIds.clear();
       _customCommands.clear();
@@ -156,6 +181,10 @@ class ShortcutCommandService extends ChangeNotifier {
     _orderVersion++;
     _refreshCustomCommandsView();
     notifyListeners();
+    AppLogService.instance.info(
+      'Custom shortcut command added',
+      details: 'label=$trimmedLabel code=$code',
+    );
     await _saveOrder();
     await _saveCustomCommands();
   }
@@ -168,6 +197,10 @@ class ShortcutCommandService extends ChangeNotifier {
     _refreshCustomCommandsView();
     notifyListeners();
 
+    AppLogService.instance.info(
+      'Custom shortcut command removed',
+      details: 'id=$id',
+    );
     await _saveUsage();
     await _saveOrder();
     await _saveCustomCommands();
@@ -186,21 +219,45 @@ class ShortcutCommandService extends ChangeNotifier {
   }
 
   Future<void> _saveUsage() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_usageKey, jsonEncode(_usage));
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_usageKey, jsonEncode(_usage));
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to save shortcut usage data',
+        error: e,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   Future<void> _saveOrder() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_orderKey, jsonEncode(_orderIds));
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_orderKey, jsonEncode(_orderIds));
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to save shortcut order data',
+        error: e,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   Future<void> _saveCustomCommands() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      _customKey,
-      jsonEncode(_customCommands.map((item) => item.toJson()).toList()),
-    );
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _customKey,
+        jsonEncode(_customCommands.map((item) => item.toJson()).toList()),
+      );
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to save custom shortcut commands',
+        error: e,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   @override

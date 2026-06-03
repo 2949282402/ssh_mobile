@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/connection.dart';
+import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../services/ssh_client_factory.dart';
 import '../services/ssh_service.dart';
@@ -558,12 +559,13 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
     setState(() => _isSaving = true);
 
+    ConnectionConfig? config;
     try {
       final storage = context.read<StorageService>();
       final effectiveLaunchMode = _serverPlatform == ServerPlatform.windows
           ? TerminalLaunchMode.ssh
           : _launchMode;
-      final config = ConnectionConfig(
+      config = ConnectionConfig(
         id: isEditing ? widget.editId! : const Uuid().v4(),
         name: _nameController.text.trim(),
         host: _hostController.text.trim(),
@@ -609,7 +611,15 @@ class _AddEditScreenState extends State<AddEditScreen> {
       }
 
       if (mounted) Navigator.pop(context, config.id);
-    } catch (e) {
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to save connection config or verify SSH login',
+        error: e,
+        stackTrace: stackTrace,
+        details: config == null
+            ? null
+            : 'host=${config.host} port=${config.port} user=${config.username} authMethod=${config.authMethod.name}',
+      );
       if (mounted) {
         await _showSaveError(e);
       }

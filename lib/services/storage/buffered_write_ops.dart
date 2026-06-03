@@ -78,7 +78,17 @@ extension BufferedWriteOps on StorageService {
     final value = pending.value;
     final previous = pending.writeChain;
     final next = previous.catchError((_) {}).then((_) async {
-      await _writeProtectedPref(key, value);
+      try {
+        await _writeProtectedPref(key, value);
+      } catch (e, stackTrace) {
+        AppLogService.instance.error(
+          'Failed to flush buffered write',
+          error: e,
+          stackTrace: stackTrace,
+          details: 'key=$key',
+        );
+        rethrow;
+      }
     });
     pending.writeChain = next.whenComplete(() {
       final current = _pendingProtectedPrefWrites[key];

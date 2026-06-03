@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'app_log_service.dart';
+
 /// AES-256-GCM 加密/解密层，用于保护持久化到 SharedPreferences 的敏感数据。
 ///
 /// 架构：密钥生成 → 存入平台 Keychain → 内存缓存 → 加解密。
@@ -33,14 +35,24 @@ class DataProtectionService {
   /// 空字符串直接返回特化格式 '$encryptedPrefix.' 以保持判据一致性。
   Future<String> encryptString(String plaintext) async {
     if (plaintext.isEmpty) return '$encryptedPrefix.';
-    final key = await _getOrCreateKey();
-    final secretBox = await _algorithm.encryptString(plaintext, secretKey: key);
-    final payload = {
-      'n': base64Encode(secretBox.nonce), // 随机 nonce（每次加密不同）
-      'm': base64Encode(secretBox.mac.bytes), // 认证标签，防篡改
-      'c': base64Encode(secretBox.cipherText), // 密文
-    };
-    return '$encryptedPrefix${base64Encode(utf8.encode(jsonEncode(payload)))}';
+    try {
+      final key = await _getOrCreateKey();
+      final secretBox =
+          await _algorithm.encryptString(plaintext, secretKey: key);
+      final payload = {
+        'n': base64Encode(secretBox.nonce), // 随机 nonce（每次加密不同）
+        'm': base64Encode(secretBox.mac.bytes), // 认证标签，防篡改
+        'c': base64Encode(secretBox.cipherText), // 密文
+      };
+      return '$encryptedPrefix${base64Encode(utf8.encode(jsonEncode(payload)))}';
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to encrypt string',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
   }
 
   /// 解密密文。如果输入不以 encryptedPrefix 开头，视为未加密直接返回。
@@ -49,16 +61,25 @@ class DataProtectionService {
     final body = value.substring(encryptedPrefix.length);
     if (body == '.') return '';
 
-    final decoded = utf8.decode(base64Decode(body));
-    final payload = jsonDecode(decoded) as Map<String, dynamic>;
-    final key = await _getOrCreateKey();
-    // 重建 SecretBox（nonce + ciphertext + mac）
-    final box = SecretBox(
-      base64Decode(payload['c'] as String),
-      nonce: base64Decode(payload['n'] as String),
-      mac: Mac(base64Decode(payload['m'] as String)),
-    );
-    return _algorithm.decryptString(box, secretKey: key);
+    try {
+      final decoded = utf8.decode(base64Decode(body));
+      final payload = jsonDecode(decoded) as Map<String, dynamic>;
+      final key = await _getOrCreateKey();
+      // 重建 SecretBox（nonce + ciphertext + mac）
+      final box = SecretBox(
+        base64Decode(payload['c'] as String),
+        nonce: base64Decode(payload['n'] as String),
+        mac: Mac(base64Decode(payload['m'] as String)),
+      );
+      return _algorithm.decryptString(box, secretKey: key);
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to decrypt string',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
   }
 
   /// 判断字符串是否已加密（以 'ssh-mobile-v1:' 开头）
@@ -71,17 +92,27 @@ class DataProtectionService {
     final existing = _cachedKey;
     if (existing != null) return existing;
 
-    final stored = await _secureStorage.read(key: _keyStorageKey);
-    if (stored?.isNotEmpty == true) {
-      final key = SecretKey(base64Decode(stored!));
+    try {
+      final stored = await _secureStorage.read(key: _keyStorageKey);
+      if (stored?.isNotEmpty == true) {
+        final key = SecretKey(base64Decode(stored!));
+        _cachedKey = key;
+        return key;
+      }
+
+      final key = await _algorithm.newSecretKey();
+      final bytes = await key.extractBytes();
+      await _secureStorage.write(
+          key: _keyStorageKey, value: base64Encode(bytes));
       _cachedKey = key;
       return key;
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to read or generate data protection key from secure storage',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
     }
-
-    final key = await _algorithm.newSecretKey();
-    final bytes = await key.extractBytes();
-    await _secureStorage.write(key: _keyStorageKey, value: base64Encode(bytes));
-    _cachedKey = key;
-    return key;
   }
 }

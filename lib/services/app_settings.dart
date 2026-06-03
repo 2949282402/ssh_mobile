@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'app_log_service.dart';
+
 enum AppLanguage {
   zh,
   en,
@@ -91,7 +93,12 @@ class AppSettings extends ChangeNotifier {
       _ragEnabled = prefs.getBool(_ragEnabledKey) ?? false;
       _ragSearchMode = prefs.getString(_ragSearchModeKey) ?? 'bm25';
       _ragTopN = prefs.getInt(_ragTopNKey) ?? 3;
-    } catch (_) {
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to initialize AppSettings',
+        error: e,
+        stackTrace: stackTrace,
+      );
       _language = AppLanguage.zh;
       _themeMode = ThemeMode.light;
       _fontFamilyId = AppFontChoice.systemId;
@@ -114,6 +121,10 @@ class AppSettings extends ChangeNotifier {
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_languageKey, _language.name);
+    AppLogService.instance.info(
+      'Language setting updated',
+      details: 'language=${_language.name}',
+    );
   }
 
   Future<void> setRagEnabled(bool value) async {
@@ -122,6 +133,10 @@ class AppSettings extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_ragEnabledKey, value);
+    AppLogService.instance.info(
+      'RAG setting updated: enabled',
+      details: 'enabled=$value',
+    );
   }
 
   Future<void> setRagSearchMode(String mode) async {
@@ -130,6 +145,10 @@ class AppSettings extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_ragSearchModeKey, mode);
+    AppLogService.instance.info(
+      'RAG setting updated: searchMode',
+      details: 'searchMode=$mode',
+    );
   }
 
   Future<void> setRagTopN(int value) async {
@@ -138,6 +157,10 @@ class AppSettings extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_ragTopNKey, value);
+    AppLogService.instance.info(
+      'RAG setting updated: topN',
+      details: 'topN=$value',
+    );
   }
 
   void toggleTheme() {
@@ -155,6 +178,10 @@ class AppSettings extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_themeModeKey, _themeModeToName(mode));
       await prefs.setBool(_darkModeKey, mode == ThemeMode.dark);
+      AppLogService.instance.info(
+        'Theme setting updated',
+        details: 'themeMode=${mode.name}',
+      );
     });
   }
 
@@ -166,6 +193,10 @@ class AppSettings extends ChangeNotifier {
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_fontFamilyKey, normalized);
+    AppLogService.instance.info(
+      'Font family setting updated',
+      details: 'fontFamilyId=$normalized',
+    );
   }
 
   Future<void> setSftpDownloadLimitBytes(int bytes) {
@@ -222,6 +253,10 @@ class AppSettings extends ChangeNotifier {
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(key, normalized);
+    AppLogService.instance.info(
+      'SFTP size limit setting updated',
+      details: 'key=$key value=$normalized bytes',
+    );
   }
 
   int _normalizeSftpLimit(int? bytes, int fallback) {

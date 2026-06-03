@@ -104,15 +104,15 @@ extension BackupOps on StorageService {
       final config = ConnectionConfig.fromJson(item);
       importedConnections.add(config);
       _clearSecretCacheForConnection(config.id);
-      await _secureStorage.delete(key: 'pwd_${config.id}');
-      await _secureStorage.delete(key: 'key_${config.id}');
+      await _deleteSecure('pwd_${config.id}');
+      await _deleteSecure('key_${config.id}');
     }
 
     for (final old in _connections) {
       if (importedConnections.any((item) => item.id == old.id)) continue;
       _clearSecretCacheForConnection(old.id);
-      await _secureStorage.delete(key: 'pwd_${old.id}');
-      await _secureStorage.delete(key: 'key_${old.id}');
+      await _deleteSecure('pwd_${old.id}');
+      await _deleteSecure('key_${old.id}');
     }
     _connections = importedConnections;
     _refreshConnectionsView();
@@ -146,10 +146,10 @@ extension BackupOps on StorageService {
         maxFileSizeBytes: (aiSettings['maxFileSizeBytes'] as num?)?.toInt(),
       );
       await _clearAiApiKeySecret();
-      await _secureStorage.delete(key: StorageService._quarkApiKeySecureKey);
+      await _deleteSecure(StorageService._quarkApiKeySecureKey);
     } else {
       await _clearAiApiKeySecret();
-      await _secureStorage.delete(key: StorageService._quarkApiKeySecureKey);
+      await _deleteSecure(StorageService._quarkApiKeySecureKey);
     }
 
     final appSettings = decoded['appSettings'];

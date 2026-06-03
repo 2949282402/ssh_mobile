@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'data_protection_service.dart';
+import 'app_log_service.dart';
 
 class TerminalHistoryService {
   static const int defaultLoadBytes = 2 * 1024 * 1024;
@@ -95,8 +96,12 @@ class TerminalHistoryService {
       if (!_dataProtection.isEncrypted(trimmed)) continue;
       try {
         buffer.write(await _dataProtection.decryptString(trimmed));
-      } catch (_) {
-        // Ignore incomplete or damaged tail chunks.
+      } catch (e, stackTrace) {
+        AppLogService.instance.add(
+          'warning',
+          'Failed to decrypt terminal history chunk: $e',
+          stackTrace: stackTrace,
+        );
       }
     }
     return buffer.toString();
@@ -124,9 +129,19 @@ class TerminalHistoryService {
   }
 
   Future<void> _appendNow(String sessionId, String data) async {
-    final file = await _historyFile(sessionId);
-    await _migratePlainHistoryIfNeeded(file);
-    await _writeEncryptedChunks(file, data, mode: FileMode.append);
+    try {
+      final file = await _historyFile(sessionId);
+      await _migratePlainHistoryIfNeeded(file);
+      await _writeEncryptedChunks(file, data, mode: FileMode.append);
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to append terminal history',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'sessionId=$sessionId',
+      );
+      rethrow;
+    }
   }
 
   Future<File> _historyFile(String sessionId) async {
@@ -171,8 +186,22 @@ class TerminalHistoryService {
       await raf.close();
     }
 
-    final plaintext = await file.readAsString();
-    await _writeEncryptedChunks(file, plaintext, mode: FileMode.write);
+    try {
+      final plaintext = await file.readAsString();
+      await _writeEncryptedChunks(file, plaintext, mode: FileMode.write);
+      AppLogService.instance.info(
+        'Migrated plain-text terminal history to encrypted format',
+        details: 'path=${file.path}',
+      );
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to migrate plain-text terminal history',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'path=${file.path}',
+      );
+      rethrow;
+    }
   }
 
   Future<void> _writeEncryptedChunks(

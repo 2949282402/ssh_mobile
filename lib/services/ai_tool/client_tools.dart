@@ -126,7 +126,13 @@ extension _ClientTools on AiToolService {
         engine: 'quark',
         error: results.isEmpty ? '夸克搜索未返回 any 结果。' : null,
       );
-    } catch (e) {
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Quark cloud search request failed',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'query=$query',
+      );
       return ClientWebViewSearchResult(
         chatId: clientWebViewSessionId ?? 'cloud',
         supported: true,

@@ -1,6 +1,7 @@
 import 'package:dartssh2/dartssh2.dart';
 
 import '../models/connection.dart';
+import 'app_log_service.dart';
 import 'storage_service.dart';
 
 class SshCredentials {
@@ -40,6 +41,11 @@ class SshClientFactory {
       password: resolvedCredentials.password,
       privateKey: resolvedCredentials.privateKey,
     );
+    AppLogService.instance.info(
+      'SshClientFactory: connecting socket',
+      details:
+          'connection=${config.name} host=${config.host}:${config.port} user=${config.username} authMethod=${config.authMethod.name}',
+    );
     final socket = await SSHSocket.connect(
       config.host,
       config.port,
@@ -56,7 +62,13 @@ class SshClientFactory {
           return resolvedCredentials.password!;
         },
       );
-    } catch (_) {
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'SshClientFactory: client setup failed',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'connection=${config.name}',
+      );
       socket.close();
       rethrow;
     }
@@ -82,10 +94,21 @@ class SshClientFactory {
     final hasPassword = password?.isNotEmpty == true;
     final hasPrivateKey = privateKey?.isNotEmpty == true;
 
+    StateError missingError(String message) {
+      final error = StateError(message);
+      AppLogService.instance.add(
+        'warning',
+        'SshClientFactory: credential validation failed: $message',
+        details:
+            'connection=${config.name} authMethod=${config.authMethod.name}',
+      );
+      return error;
+    }
+
     switch (config.authMethod) {
       case AuthMethod.password:
         if (!hasPassword) {
-          throw StateError(
+          throw missingError(
             'Password is missing for this connection. Please edit the server '
             'configuration and save the password again on this device.',
           );
@@ -93,7 +116,7 @@ class SshClientFactory {
         break;
       case AuthMethod.privateKey:
         if (!hasPrivateKey) {
-          throw StateError(
+          throw missingError(
             'Private key is missing for this connection. Please edit the '
             'server configuration and save the private key again on this device.',
           );
@@ -101,7 +124,7 @@ class SshClientFactory {
         break;
       case AuthMethod.both:
         if (!hasPrivateKey || !hasPassword) {
-          throw StateError(
+          throw missingError(
             'Password or private key is missing for this connection. Please '
             'edit the server configuration and save both credentials again on '
             'this device.',

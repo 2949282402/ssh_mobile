@@ -113,6 +113,48 @@ class StorageService extends ChangeNotifier
     mOptions: MacOsOptions(usesDataProtectionKeychain: false),
   );
   final DataProtectionService _dataProtection = DataProtectionService.instance;
+
+  Future<String?> _readSecure(String key) async {
+    try {
+      return await _secureStorage.read(key: key);
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Secure storage read failed',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'key=$key',
+      );
+      rethrow;
+    }
+  }
+
+  Future<void> _writeSecure(String key, String value) async {
+    try {
+      await _secureStorage.write(key: key, value: value);
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Secure storage write failed',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'key=$key',
+      );
+      rethrow;
+    }
+  }
+
+  Future<void> _deleteSecure(String key) async {
+    try {
+      await _secureStorage.delete(key: key);
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Secure storage delete failed',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'key=$key',
+      );
+      rethrow;
+    }
+  }
   final Map<String, _PendingProtectedPrefWrite> _pendingProtectedPrefWrites =
       {};
 

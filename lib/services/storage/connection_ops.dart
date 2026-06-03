@@ -69,8 +69,8 @@ extension ConnectionOps on StorageService {
     _connections.removeWhere((item) => item.id == id);
     _refreshConnectionsView();
     _clearSecretCacheForConnection(id);
-    await _secureStorage.delete(key: 'pwd_$id');
-    await _secureStorage.delete(key: 'key_$id');
+    await _deleteSecure('pwd_$id');
+    await _deleteSecure('key_$id');
     await removeRestorableTmuxSessionsForConnection(id);
     await _saveConnections();
     notifyStorageListeners();
@@ -81,8 +81,8 @@ extension ConnectionOps on StorageService {
     for (final id in ids) {
       _connections.removeWhere((item) => item.id == id);
       _clearSecretCacheForConnection(id);
-      await _secureStorage.delete(key: 'pwd_$id');
-      await _secureStorage.delete(key: 'key_$id');
+      await _deleteSecure('pwd_$id');
+      await _deleteSecure('key_$id');
       await removeRestorableTmuxSessionsForConnection(id);
     }
     _refreshConnectionsView();
@@ -146,12 +146,12 @@ extension ConnectionOps on StorageService {
   }
 
   Future<String?> _readSecretWithCache(String key) async {
-    if (!_secretCacheEnabled) return _secureStorage.read(key: key);
+    if (!_secretCacheEnabled) return _readSecure(key);
     final cached = _readCachedSecretEntry(key);
     if (cached != null) {
       return cached.value;
     }
-    final value = await _secureStorage.read(key: key);
+    final value = await _readSecure(key);
     _secretCache[key] = _MemorySecret(value: value, loadedAt: DateTime.now());
     return value;
   }
@@ -161,15 +161,15 @@ extension ConnectionOps on StorageService {
     final passwordKey = _cacheKeyPassword(config.id);
     final privateKeyKey = _cacheKeyPrivateKey(config.id);
     if (config.password != null && config.password!.isNotEmpty) {
-      await _secureStorage.write(key: passwordKey, value: config.password);
+      await _writeSecure(passwordKey, config.password!);
     } else {
-      await _secureStorage.delete(key: passwordKey);
+      await _deleteSecure(passwordKey);
     }
 
     if (config.privateKey != null && config.privateKey!.isNotEmpty) {
-      await _secureStorage.write(key: privateKeyKey, value: config.privateKey);
+      await _writeSecure(privateKeyKey, config.privateKey!);
     } else {
-      await _secureStorage.delete(key: privateKeyKey);
+      await _deleteSecure(privateKeyKey);
     }
   }
 }

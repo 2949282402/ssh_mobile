@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:animations/animations.dart';
 
 import '../models/connection.dart';
+import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../services/sftp_service.dart';
 import '../services/ssh_service.dart';
@@ -528,7 +529,12 @@ class _HomeScreenState extends State<HomeScreen> {
       messenger.showSnackBar(
         SnackBar(content: Text(strings.exportComplete)),
       );
-    } catch (e) {
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Export app data failed',
+        error: e,
+        stackTrace: stackTrace,
+      );
       if (!context.mounted) return;
       messenger.showSnackBar(
         SnackBar(content: Text(strings.exportFailed(e))),
@@ -581,7 +587,12 @@ class _HomeScreenState extends State<HomeScreen> {
         SnackBar(content: Text(strings.importComplete)),
       );
       _switchPage(_serverPage);
-    } catch (e) {
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Import app data failed',
+        error: e,
+        stackTrace: stackTrace,
+      );
       if (!context.mounted) return;
       messenger.showSnackBar(
         SnackBar(content: Text(strings.importFailed(e))),

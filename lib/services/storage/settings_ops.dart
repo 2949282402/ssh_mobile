@@ -160,12 +160,12 @@ extension SettingsOps on StorageService {
     final entries = <AiApiKeyHistoryEntry>[];
     final staleIds = <String>[];
     for (final id in ids) {
-      final value = await _secureStorage.read(key: _aiApiKeyStorageKey(id));
+      final value = await _readSecure(_aiApiKeyStorageKey(id));
       final normalized = _normalizeAiApiKey(value);
       if (normalized == null) {
         staleIds.add(id);
         if (value != null && value.isNotEmpty) {
-          await _secureStorage.delete(key: _aiApiKeyStorageKey(id));
+          await _deleteSecure(_aiApiKeyStorageKey(id));
         }
         continue;
       }
@@ -197,7 +197,7 @@ extension SettingsOps on StorageService {
     final normalizedId = id.trim();
     if (normalizedId.isEmpty) return null;
     final value =
-        await _secureStorage.read(key: _aiApiKeyStorageKey(normalizedId));
+        await _readSecure(_aiApiKeyStorageKey(normalizedId));
     return _normalizeAiApiKey(value);
   }
 
@@ -207,7 +207,7 @@ extension SettingsOps on StorageService {
     final ids = _readAiApiKeyRefIds();
     if (!ids.contains(id)) return;
     final nextIds = ids.where((item) => item != id).toList();
-    await _secureStorage.delete(key: _aiApiKeyStorageKey(id));
+    await _deleteSecure(_aiApiKeyStorageKey(id));
     await _writeAiApiKeyRefIds(nextIds);
     final selectedId =
         _prefs?.getString(StorageService._aiSelectedApiKeyIdKey)?.trim();
@@ -296,7 +296,7 @@ extension SettingsOps on StorageService {
         return null;
       }
       final value =
-          await _secureStorage.read(key: _aiApiKeyStorageKey(selectedId));
+          await _readSecure(_aiApiKeyStorageKey(selectedId));
       final normalized = _normalizeAiApiKey(value);
       if (value != null && value.isNotEmpty && normalized == null) {
         await removeAiApiKeyHistoryEntry(selectedId);
@@ -320,7 +320,7 @@ extension SettingsOps on StorageService {
   Future<String?> getQuarkApiKey() async {
     if (!_initialized) return null;
     final value =
-        await _secureStorage.read(key: StorageService._quarkApiKeySecureKey);
+        await _readSecure(StorageService._quarkApiKeySecureKey);
     return value?.trim();
   }
 
@@ -328,22 +328,21 @@ extension SettingsOps on StorageService {
     if (!_initialized) return;
     final trimmed = key.trim();
     if (trimmed.isEmpty) {
-      await _secureStorage.delete(key: StorageService._quarkApiKeySecureKey);
+      await _deleteSecure(StorageService._quarkApiKeySecureKey);
     } else {
-      await _secureStorage.write(
-          key: StorageService._quarkApiKeySecureKey, value: trimmed);
+      await _writeSecure(StorageService._quarkApiKeySecureKey, trimmed);
     }
   }
 
   Future<void> clearQuarkApiKey() async {
     if (!_initialized) return;
-    await _secureStorage.delete(key: StorageService._quarkApiKeySecureKey);
+    await _deleteSecure(StorageService._quarkApiKeySecureKey);
   }
 
   Future<String?> getAliyunApiKey() async {
     if (!_initialized) return null;
     final value =
-        await _secureStorage.read(key: StorageService._aliyunApiKeySecureKey);
+        await _readSecure(StorageService._aliyunApiKeySecureKey);
     return value?.trim();
   }
 
@@ -351,10 +350,9 @@ extension SettingsOps on StorageService {
     if (!_initialized) return;
     final trimmed = key.trim();
     if (trimmed.isEmpty) {
-      await _secureStorage.delete(key: StorageService._aliyunApiKeySecureKey);
+      await _deleteSecure(StorageService._aliyunApiKeySecureKey);
     } else {
-      await _secureStorage.write(
-          key: StorageService._aliyunApiKeySecureKey, value: trimmed);
+      await _writeSecure(StorageService._aliyunApiKeySecureKey, trimmed);
     }
   }
 
@@ -503,15 +501,14 @@ extension SettingsOps on StorageService {
     if (quarkApiKey != null) {
       final trimmed = quarkApiKey.trim();
       if (trimmed.isNotEmpty) {
-        await _secureStorage.write(
-            key: StorageService._quarkApiKeySecureKey, value: trimmed);
+        await _writeSecure(StorageService._quarkApiKeySecureKey, trimmed);
         quarkApiKeyUpdated = true;
       } else {
-        await _secureStorage.delete(key: StorageService._quarkApiKeySecureKey);
+        await _deleteSecure(StorageService._quarkApiKeySecureKey);
         quarkApiKeyUpdated = true;
       }
     } else if (clearQuarkApiKey) {
-      await _secureStorage.delete(key: StorageService._quarkApiKeySecureKey);
+      await _deleteSecure(StorageService._quarkApiKeySecureKey);
       quarkApiKeyUpdated = true;
     }
     AppLogService.instance.info(
@@ -539,7 +536,7 @@ extension SettingsOps on StorageService {
     await _clearLegacyAiApiKeySecret();
     final ids = _readAiApiKeyRefIds();
     for (final id in ids) {
-      await _secureStorage.delete(key: _aiApiKeyStorageKey(id));
+      await _deleteSecure(_aiApiKeyStorageKey(id));
     }
     await _writeAiApiKeyRefIds(const []);
     await _setSelectedAiApiKeyId(null);
@@ -547,29 +544,26 @@ extension SettingsOps on StorageService {
 
   Future<void> _clearLegacyAiApiKeySecret() async {
     _secretCache.remove(StorageService._memoryAiApiKeyCacheKey);
-    await _secureStorage.delete(key: StorageService._aiApiKeyKey);
+    await _deleteSecure(StorageService._aiApiKeyKey);
   }
 
   Future<void> _ensureAiApiKeyHistoryMigrated() async {
     if (!_initialized || _prefs == null) return;
     if (_readAiApiKeyRefIds().isNotEmpty) return;
     final legacyValue =
-        await _secureStorage.read(key: StorageService._aiApiKeyKey);
+        await _readSecure(StorageService._aiApiKeyKey);
     final normalizedLegacy = _normalizeAiApiKey(legacyValue);
     if (normalizedLegacy == null) {
       if (legacyValue != null && legacyValue.isNotEmpty) {
-        await _secureStorage.delete(key: StorageService._aiApiKeyKey);
+        await _deleteSecure(StorageService._aiApiKeyKey);
       }
       return;
     }
     final id = _traceUuid.v4();
-    await _secureStorage.write(
-      key: _aiApiKeyStorageKey(id),
-      value: normalizedLegacy,
-    );
+    await _writeSecure(_aiApiKeyStorageKey(id), normalizedLegacy);
     await _writeAiApiKeyRefIds([id]);
     await _setSelectedAiApiKeyId(id);
-    await _secureStorage.delete(key: StorageService._aiApiKeyKey);
+    await _deleteSecure(StorageService._aiApiKeyKey);
   }
 
   Future<String> _upsertAiApiKeyHistoryEntry(String apiKey) async {
@@ -580,17 +574,14 @@ extension SettingsOps on StorageService {
     final ids = _readAiApiKeyRefIds();
     String? matchedId;
     for (final id in ids) {
-      final value = await _secureStorage.read(key: _aiApiKeyStorageKey(id));
+      final value = await _readSecure(_aiApiKeyStorageKey(id));
       if (_normalizeAiApiKey(value) == normalizedApiKey) {
         matchedId = id;
         break;
       }
     }
     final targetId = matchedId ?? _traceUuid.v4();
-    await _secureStorage.write(
-      key: _aiApiKeyStorageKey(targetId),
-      value: normalizedApiKey,
-    );
+    await _writeSecure(_aiApiKeyStorageKey(targetId), normalizedApiKey);
     final nextIds = <String>[
       targetId,
       ...ids.where((id) => id != targetId),
