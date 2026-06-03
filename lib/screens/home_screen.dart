@@ -21,6 +21,7 @@ import 'developer_log_screen.dart';
 import 'llm_chat_screen.dart';
 import 'performance_monitor_screen.dart';
 import 'sftp_screen.dart';
+import 'system_admin_screen.dart';
 import 'terminal_windows_screen.dart';
 import '../services/performance_monitor_service.dart';
 
@@ -43,7 +44,8 @@ class _HomeScreenState extends State<HomeScreen> {
   static const int _serverPage = 1;
   static const int _sftpPage = 2;
   static const int _performancePage = 3;
-  static const int _logPage = 4;
+  static const int _adminPage = 4;
+  static const int _logPage = 5;
   static const int _firstPage = _aiPage;
   static const int _lastPage = _logPage;
 
@@ -198,6 +200,11 @@ class _HomeScreenState extends State<HomeScreen> {
               label: Text(strings.performanceMonitor),
             ),
             NavigationRailDestination(
+              icon: const Icon(Icons.admin_panel_settings_outlined),
+              selectedIcon: const Icon(Icons.admin_panel_settings_rounded),
+              label: Text(strings.systemAdmin),
+            ),
+            NavigationRailDestination(
               icon: const Icon(Icons.article_outlined),
               selectedIcon: const Icon(Icons.article_rounded),
               label: Text(strings.logs),
@@ -261,6 +268,13 @@ class _HomeScreenState extends State<HomeScreen> {
               _bottomNavItem(
                 context,
                 index: 4,
+                icon: const Icon(Icons.admin_panel_settings_outlined),
+                selectedIcon: const Icon(Icons.admin_panel_settings_rounded),
+                label: strings.systemAdmin,
+              ),
+              _bottomNavItem(
+                context,
+                index: 5,
                 icon: const Icon(Icons.article_outlined),
                 selectedIcon: const Icon(Icons.article_rounded),
                 label: strings.logs,
@@ -366,8 +380,10 @@ class _HomeScreenState extends State<HomeScreen> {
         return 2;
       case _performancePage:
         return 3;
-      case _logPage:
+      case _adminPage:
         return 4;
+      case _logPage:
+        return 5;
       case _aiPage:
       default:
         return 0;
@@ -389,6 +405,9 @@ class _HomeScreenState extends State<HomeScreen> {
         _switchPage(_performancePage);
         break;
       case 4:
+        _switchPage(_adminPage);
+        break;
+      case 5:
         _switchPage(_logPage);
         break;
       default:
@@ -471,6 +490,8 @@ class _HomeScreenState extends State<HomeScreen> {
               return const SftpScreen();
             case _performancePage:
               return const PerformanceMonitorScreen();
+            case _adminPage:
+              return const SystemAdminScreen();
             case _logPage:
             default:
               return const DeveloperLogPage();

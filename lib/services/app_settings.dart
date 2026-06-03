@@ -606,6 +606,46 @@ class AppStrings {
   String tmuxMissingHint(String text) => _en
       ? 'Connection failed: $text\nPlease install tmux manually on the server and try again.'
       : '连接失败：$text\n请先在服务器上手动安装 tmux 后再重试。';
+
+  String get systemAdmin => _en ? 'Admin' : '系统管理';
+  String get selectConnectedServer => _en ? 'Select a connected server' : '选择已连接的服务器';
+  String get noConnectedServers => _en ? 'No active server connections' : '暂无活跃的服务器连接';
+  String get rootRequiredMsg => _en ? 'This page requires root privileges. Currently you are not logged in as root.' : '此功能需要 root 权限。当前登录账户不是 root 权限。';
+  String get nonLinuxMsg => _en ? 'Only Linux servers are supported for system admin tools.' : '系统管理工具目前仅支持 Linux 服务器。';
+  String get activeSessions => _en ? 'Active Sessions' : '活动会话';
+  String get userAccounts => _en ? 'User Accounts' : '用户账号';
+  String get systemServices => _en ? 'Services' : '系统服务';
+  String get listeningPorts => _en ? 'Ports' : '监听端口';
+  String get systemPower => _en ? 'Power' : '系统电源';
+  String get lockUser => _en ? 'Lock User' : '禁用账号';
+  String get unlockUser => _en ? 'Unlock User' : '启用账号';
+  String get changePassword => _en ? 'Change Password' : '修改密码';
+  String get viewHomeDir => _en ? 'Home Directory' : '主目录文件';
+  String get usageStats => _en ? 'Resource Usage' : '资源占用';
+  String get storageUsed => _en ? 'Storage Used' : '存储空间';
+  String get memoryUsed => _en ? 'Memory Used' : '内存占用';
+  String get activeProcesses => _en ? 'Active Processes' : '活跃进程';
+  String get changePasswordTitle => _en ? 'Change Password' : '修改用户密码';
+  String get enterNewPassword => _en ? 'Enter new password' : '输入新密码';
+  String get passwordChangedSuccess => _en ? 'Password updated successfully' : '密码更新成功';
+  String get actionConfirm => _en ? 'Are you sure?' : '确定要执行此操作吗？';
+  String get serviceStart => _en ? 'Start' : '启动';
+  String get serviceStop => _en ? 'Stop' : '停止';
+  String get serviceRestart => _en ? 'Restart' : '重启';
+  String get serviceEnable => _en ? 'Enable' : '启用';
+  String get serviceDisable => _en ? 'Disable' : '禁用';
+  String get rebootServer => _en ? 'Reboot Server' : '重启服务器';
+  String get shutdownServer => _en ? 'Shutdown Server' : '关闭服务器';
+  String get powerConfirmContent => _en ? 'Are you absolutely sure? This will disconnect your terminal session and perform the operation.' : '你确定要执行此操作吗？这将断开所有的终端会话并执行此动作。';
+
+  String get createUser => _en ? 'Create User' : '新建账号';
+  String get grantSudo => _en ? 'Grant Admin (Sudo)' : '授予管理员权限 (Sudo)';
+  String get revokeSudo => _en ? 'Revoke Admin (Sudo)' : '取消管理员权限 (Sudo)';
+  String get loginShell => _en ? 'Login Shell' : '登录 Shell';
+  String get userCreatedSuccess => _en ? 'User account created successfully' : '用户账号创建成功';
+  String get sudoStatus => _en ? 'Privilege Level' : '特权级别';
+  String get normalUser => _en ? 'Normal User' : '普通用户';
+  String get administrator => _en ? 'Administrator' : '管理员 (sudo/wheel)';
 }
 
 class TerminalStrings {

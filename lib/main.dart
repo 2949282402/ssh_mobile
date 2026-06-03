@@ -23,6 +23,7 @@ import 'services/ssh_service.dart';
 import 'services/sftp_service.dart';
 import 'services/storage_service.dart';
 import 'services/rag_service.dart';
+import 'services/system_admin_service.dart';
 import 'theme/app_theme.dart';
 import 'utils/responsive.dart';
 
@@ -56,8 +57,9 @@ Future<void> main() async {
         sshService: sshService,
       );
       final ragService = RagService(storageService: storageService);
+      final systemAdminService = SystemAdminService(storageService);
 
-      // 9 个 ChangeNotifier 通过 Provider 注入整棵 Widget 树
+      // 10 个 ChangeNotifier 通过 Provider 注入整棵 Widget 树
       runApp(
         MultiProvider(
           providers: [
@@ -70,6 +72,7 @@ Future<void> main() async {
             ChangeNotifierProvider.value(value: performanceMonitorService),
             ChangeNotifierProvider.value(value: playbookService),
             ChangeNotifierProvider.value(value: ragService),
+            ChangeNotifierProvider.value(value: systemAdminService),
           ],
           child: const SshMobileApp(),
         ),
