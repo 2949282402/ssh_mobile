@@ -252,7 +252,7 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
                     Icon(
                       Icons.auto_stories,
                       size: 80,
-                      color: theme.colorScheme.primary.withOpacity(0.3),
+                      color: theme.colorScheme.primary.withValues(alpha: 0.3),
                     ),
                     const SizedBox(height: 20),
                     Text(
@@ -360,7 +360,7 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
             ),
           if (_isProcessing || ragService.isLoading)
             Container(
-              color: Colors.black.withOpacity(0.3),
+              color: Colors.black.withValues(alpha: 0.3),
               child: Center(
                 child: Card(
                   child: Padding(

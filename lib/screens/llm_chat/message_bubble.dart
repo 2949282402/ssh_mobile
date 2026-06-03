@@ -54,20 +54,29 @@ class _MessageBubble extends StatelessWidget {
               ),
             Container(
               margin: const EdgeInsets.only(bottom: 4),
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
                 color: isError
-                    ? colorScheme.error.withValues(alpha: 0.1)
+                    ? colorScheme.error.withValues(alpha: 0.08)
                     : isUser
-                        ? colorScheme.primary.withValues(alpha: 0.12)
+                        ? colorScheme.primary.withValues(alpha: 0.14)
                         : colorScheme.surface,
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(12),
+                  topRight: isUser
+                      ? const Radius.circular(3)
+                      : const Radius.circular(12),
+                  bottomLeft: const Radius.circular(12),
+                  bottomRight: isUser
+                      ? const Radius.circular(12)
+                      : const Radius.circular(3),
+                ),
                 border: Border.all(
                   color: isError
-                      ? colorScheme.error.withValues(alpha: 0.38)
+                      ? colorScheme.error.withValues(alpha: 0.3)
                       : isUser
-                          ? colorScheme.primary.withValues(alpha: 0.10)
-                          : colorScheme.outlineVariant.withValues(alpha: 0.78),
+                          ? colorScheme.primary.withValues(alpha: 0.2)
+                          : colorScheme.outlineVariant,
                 ),
               ),
               child: isUser || isError

@@ -205,6 +205,7 @@ class _SftpEditorScreenState extends State<SftpEditorScreen> {
       textAlignVertical: TextAlignVertical.top,
       decoration: const InputDecoration(
         border: InputBorder.none,
+        filled: false,
         contentPadding: EdgeInsets.all(14),
       ),
       style: TextStyle(

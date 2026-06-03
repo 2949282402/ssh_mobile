@@ -49,10 +49,10 @@ class _FilePane extends StatelessWidget {
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(color: colorScheme.outlineVariant),
                   ),
-                  child: Text(
+                  child: OverflowScrollText(
                     snapshot.currentPath,
+                    selectable: false,
                     maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
                 ),
@@ -278,7 +278,9 @@ class _FilePane extends StatelessWidget {
                 }
                 Navigator.pop(ctx, typedName);
               },
-              style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+              style: TextButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.error,
+              ),
               child: Text(strings.delete),
             ),
           ],
@@ -468,16 +470,16 @@ class _SftpEntryList extends StatelessWidget {
                         value: 'delete',
                         child: Row(
                           children: [
-                            const Icon(
+                            Icon(
                               Icons.delete_outline,
                               size: 18,
-                              color: Colors.redAccent,
+                              color: Theme.of(context).colorScheme.error,
                             ),
                             const SizedBox(width: 8),
                             Text(
                               strings.delete,
-                              style: const TextStyle(
-                                color: Colors.redAccent,
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.error,
                               ),
                             ),
                           ],

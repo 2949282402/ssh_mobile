@@ -10,7 +10,8 @@ import 'app_log_service.dart';
 
 class SystemAdminService extends ChangeNotifier {
   final StorageService _storageService;
-  late final SshClientFactory _clientFactory = SshClientFactory(_storageService);
+  late final SshClientFactory _clientFactory =
+      SshClientFactory(_storageService);
 
   String? _activeConnectionId;
   SSHClient? _activeClient;
@@ -42,7 +43,9 @@ class SystemAdminService extends ChangeNotifier {
       return;
     }
 
-    if (_activeConnectionId == connectionId && _isConnected && _activeClient != null) {
+    if (_activeConnectionId == connectionId &&
+        _isConnected &&
+        _activeClient != null) {
       return; // Already connected
     }
 
@@ -61,11 +64,14 @@ class SystemAdminService extends ChangeNotifier {
         throw Exception('Connection config not found');
       }
 
-      AppLogService.instance.info('System Admin connecting to ${config.name}...');
+      AppLogService.instance
+          .info('System Admin connecting to ${config.name}...');
       final client = await _clientFactory.connectClient(config);
 
       // Verify privilege level
-      final result = await client.runWithResult('id -u').timeout(const Duration(seconds: 10));
+      final result = await client
+          .runWithResult('id -u')
+          .timeout(const Duration(seconds: 10));
       final uid = utf8.decode(result.stdout, allowMalformed: true).trim();
       final isRoot = uid == '0';
 
@@ -78,7 +84,8 @@ class SystemAdminService extends ChangeNotifier {
       _isRoot = true;
       _isConnected = true;
       _isConnecting = false;
-      AppLogService.instance.info('System Admin connected to ${config.name} as root');
+      AppLogService.instance
+          .info('System Admin connected to ${config.name} as root');
       notifyListeners();
     } catch (e, stack) {
       _isConnecting = false;
@@ -141,7 +148,8 @@ class SystemAdminService extends ChangeNotifier {
     try {
       final result = await _runCommand('who');
       if (result.exitCode != 0) {
-        throw Exception('Command "who" exited with code ${result.exitCode}: ${result.stderr}');
+        throw Exception(
+            'Command "who" exited with code ${result.exitCode}: ${result.stderr}');
       }
 
       final sessions = <ActiveSession>[];
@@ -156,14 +164,18 @@ class SystemAdminService extends ChangeNotifier {
 
         final username = parts[0];
         final tty = parts[1];
-        
+
         // loginTime is usually date + time
         String loginTime = '';
         String ipAddress = '';
         if (parts.length >= 4) {
           loginTime = '${parts[2]} ${parts[3]}';
           if (parts.length >= 5) {
-            ipAddress = parts.sublist(4).join(' ').replaceAll('(', '').replaceAll(')', '');
+            ipAddress = parts
+                .sublist(4)
+                .join(' ')
+                .replaceAll('(', '')
+                .replaceAll(')', '');
           }
         } else {
           loginTime = parts.sublist(2).join(' ');
@@ -193,8 +205,10 @@ class SystemAdminService extends ChangeNotifier {
       // Remove '/dev/' prefix if present
       final cleanTty = tty.startsWith('/dev/') ? tty.substring(5) : tty;
       final result = await _runCommand('pkill -9 -t $cleanTty');
-      if (result.exitCode != 0 && result.exitCode != 1) { // 1 means no processes matched
-        throw Exception('pkill failed with code ${result.exitCode}: ${result.stderr}');
+      if (result.exitCode != 0 && result.exitCode != 1) {
+        // 1 means no processes matched
+        throw Exception(
+            'pkill failed with code ${result.exitCode}: ${result.stderr}');
       }
       AppLogService.instance.info('Killed session on TTY: $cleanTty');
     } catch (e, stack) {
@@ -211,7 +225,8 @@ class SystemAdminService extends ChangeNotifier {
   Future<List<LinuxUserAccount>> getUserAccounts(String connectionId) async {
     try {
       // We combine reading passwd and passwd status to minimize SSH connections
-      final result = await _runCommand('cat /etc/passwd; echo "===STATUS==="; for u in \$(cut -d: -f1 /etc/passwd); do passwd -S "\$u" 2>/dev/null; done');
+      final result = await _runCommand(
+          'cat /etc/passwd; echo "===STATUS==="; for u in \$(cut -d: -f1 /etc/passwd); do passwd -S "\$u" 2>/dev/null; done');
 
       if (result.exitCode != 0) {
         throw Exception('Failed to query passwd: ${result.stderr}');
@@ -296,14 +311,16 @@ class SystemAdminService extends ChangeNotifier {
   }) async {
     try {
       // 1. Create user with home directory and login shell
-      final createResult = await _runCommand('useradd -m -s "$shell" "$username"');
+      final createResult =
+          await _runCommand('useradd -m -s "$shell" "$username"');
       if (createResult.exitCode != 0) {
         throw Exception('User creation failed: ${createResult.stderr}');
       }
 
       // 2. Set password
       final escapedPwd = password.replaceAll("'", "'\"'\"'");
-      final pwdResult = await _runCommand('echo "$username:$escapedPwd" | chpasswd');
+      final pwdResult =
+          await _runCommand('echo "$username:$escapedPwd" | chpasswd');
       if (pwdResult.exitCode != 0) {
         // Cleanup created user to be clean
         await _runCommand('userdel -r "$username"');
@@ -336,18 +353,21 @@ class SystemAdminService extends ChangeNotifier {
   }
 
   /// Grant or revoke admin (sudo/wheel) privileges for a user
-  Future<void> setUserSudo(String connectionId, String username, bool grant) async {
+  Future<void> setUserSudo(
+      String connectionId, String username, bool grant) async {
     try {
       if (grant) {
         // Try adding to sudo first, fall back to wheel
-        final result = await _runCommand('usermod -aG sudo "$username" || usermod -aG wheel "$username"');
+        final result = await _runCommand(
+            'usermod -aG sudo "$username" || usermod -aG wheel "$username"');
         if (result.exitCode != 0) {
           throw Exception('Failed to grant sudo: ${result.stderr}');
         }
         AppLogService.instance.info('Granted sudo privileges to $username');
       } else {
         // Try removing from sudo and wheel
-        final result = await _runCommand('gpasswd -d "$username" sudo || gpasswd -d "$username" wheel || deluser "$username" sudo || deluser "$username" wheel');
+        final result = await _runCommand(
+            'gpasswd -d "$username" sudo || gpasswd -d "$username" wheel || deluser "$username" sudo || deluser "$username" wheel');
         if (result.exitCode != 0) {
           throw Exception('Failed to revoke sudo: ${result.stderr}');
         }
@@ -408,7 +428,8 @@ class SystemAdminService extends ChangeNotifier {
     try {
       // Escape single quotes for safety
       final escapedPwd = newPassword.replaceAll("'", "'\"'\"'");
-      final result = await _runCommand('echo \'$username:$escapedPwd\' | chpasswd');
+      final result =
+          await _runCommand('echo \'$username:$escapedPwd\' | chpasswd');
       if (result.exitCode != 0) {
         throw Exception('Change password failed: ${result.stderr}');
       }
@@ -449,7 +470,8 @@ class SystemAdminService extends ChangeNotifier {
     String username,
   ) async {
     try {
-      final result = await _runCommand('ps -u $username -o pid,rss,%cpu,%mem,args --no-headers 2>/dev/null');
+      final result = await _runCommand(
+          'ps -u $username -o pid,rss,%cpu,%mem,args --no-headers 2>/dev/null');
       if (result.exitCode != 0) {
         return [];
       }
@@ -494,7 +516,8 @@ class SystemAdminService extends ChangeNotifier {
   /// Get running and overall systemd services
   Future<List<SystemdService>> getSystemdServices(String connectionId) async {
     try {
-      final result = await _runCommand('systemctl list-units --type=service --all --no-pager --no-legend 2>/dev/null');
+      final result = await _runCommand(
+          'systemctl list-units --type=service --all --no-pager --no-legend 2>/dev/null');
       if (result.exitCode != 0) {
         throw Exception('systemctl command failed: ${result.stderr}');
       }
@@ -549,9 +572,11 @@ class SystemAdminService extends ChangeNotifier {
 
       final result = await _runCommand('systemctl $action "$serviceName"');
       if (result.exitCode != 0) {
-        throw Exception('Failed to $action service $serviceName: ${result.stderr}');
+        throw Exception(
+            'Failed to $action service $serviceName: ${result.stderr}');
       }
-      AppLogService.instance.info('Performed service action: systemctl $action $serviceName');
+      AppLogService.instance
+          .info('Performed service action: systemctl $action $serviceName');
     } catch (e, stack) {
       AppLogService.instance.error(
         'Failed to perform service action $action on $serviceName',
@@ -575,21 +600,24 @@ class SystemAdminService extends ChangeNotifier {
       final lines = const LineSplitter().convert(result.stdout);
       for (final line in lines) {
         final trimmed = line.trim();
-        if (trimmed.isEmpty || trimmed.startsWith('Netid') || trimmed.startsWith('Active')) continue;
+        if (trimmed.isEmpty ||
+            trimmed.startsWith('Netid') ||
+            trimmed.startsWith('Active')) continue;
 
         // Split line fields
         final fields = trimmed.split(RegExp(r'\s+'));
         if (fields.length < 5) continue;
 
         final protocol = fields[0];
-        
+
         // Extract local address and port dynamically based on command output format (ss vs netstat)
         // ss has state at index 1 ("LISTEN" / "UNCONN"), while netstat has numeric Queue size.
         final isNetstat = fields.length > 2 && int.tryParse(fields[1]) != null;
         final localAddrIndex = isNetstat ? 3 : 4;
-        
+
         if (fields.length <= localAddrIndex) continue;
-        final localAddressFull = fields[localAddrIndex]; // e.g. 0.0.0.0:22 or [::]:22 or *:22
+        final localAddressFull =
+            fields[localAddrIndex]; // e.g. 0.0.0.0:22 or [::]:22 or *:22
         final lastColon = localAddressFull.lastIndexOf(':');
         if (lastColon == -1) continue;
 

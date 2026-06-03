@@ -6,6 +6,7 @@ import '../models/playbook.dart';
 import '../services/app_settings.dart';
 import '../services/playbook_service.dart';
 import '../services/storage_service.dart';
+import '../theme/app_theme.dart';
 
 class PlaybookScreen extends StatefulWidget {
   const PlaybookScreen({super.key});
@@ -984,34 +985,39 @@ class _PlaybookScreenState extends State<PlaybookScreen>
             Container(
               width: double.infinity,
               margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              padding: const EdgeInsets.all(8),
+              padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: Colors.black,
-                borderRadius: BorderRadius.circular(6),
+                color: AppTheme.terminalBg,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                ),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   if (step.exitCode != null)
                     Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
+                      padding: const EdgeInsets.only(bottom: 6),
                       child: Text(
                         '${strings.exitCode}: ${step.exitCode}',
                         style: const TextStyle(
-                            color: Colors.yellowAccent,
+                            color: AppTheme.terminalAmber,
                             fontFamily: 'monospace',
-                            fontSize: 11),
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold),
                       ),
                     ),
                   if (step.stdout != null && step.stdout!.isNotEmpty) ...[
                     const Text(
                       'STDOUT:',
                       style: TextStyle(
-                          color: Colors.greenAccent,
+                          color: AppTheme.terminalGreen,
                           fontFamily: 'monospace',
                           fontSize: 10,
                           fontWeight: FontWeight.bold),
                     ),
+                    const SizedBox(height: 2),
                     Text(
                       step.stdout!,
                       style: const TextStyle(
@@ -1019,21 +1025,25 @@ class _PlaybookScreenState extends State<PlaybookScreen>
                           fontFamily: 'monospace',
                           fontSize: 11),
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 8),
                   ],
                   if (step.stderr != null && step.stderr!.isNotEmpty) ...[
-                    const Text(
+                    Text(
                       'STDERR:',
                       style: TextStyle(
-                          color: Colors.redAccent,
+                          color: Theme.of(context).colorScheme.error,
                           fontFamily: 'monospace',
                           fontSize: 10,
                           fontWeight: FontWeight.bold),
                     ),
+                    const SizedBox(height: 2),
                     Text(
                       step.stderr!,
-                      style: const TextStyle(
-                          color: Colors.red,
+                      style: TextStyle(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .error
+                              .withValues(alpha: 0.9),
                           fontFamily: 'monospace',
                           fontSize: 11),
                     ),

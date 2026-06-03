@@ -18,7 +18,8 @@ class LinuxUserAccount {
   final int gid;
   final String homeDir;
   final String shell;
-  final String status; // 'L' (Locked), 'P' (Password set), 'NP' (No password), or 'Unknown'
+  final String
+      status; // 'L' (Locked), 'P' (Password set), 'NP' (No password), or 'Unknown'
 
   const LinuxUserAccount({
     required this.username,

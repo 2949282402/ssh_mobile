@@ -68,6 +68,7 @@ extension _TerminalDialogs on _TerminalScreenState {
     String connectionId,
     String windowName,
   ) async {
+    final colorScheme = Theme.of(context).colorScheme;
     final strings = _strings(context);
     final ssh = context.read<SshService>();
     final storage = context.read<StorageService>();
@@ -103,7 +104,7 @@ extension _TerminalDialogs on _TerminalScreenState {
               ssh.errorMessage,
             ),
           ),
-          backgroundColor: Colors.redAccent,
+          backgroundColor: colorScheme.error,
         ),
       );
       return;
@@ -161,7 +162,7 @@ extension _TerminalDialogs on _TerminalScreenState {
                 session.isConnected ? Icons.link : Icons.link_off,
                 color: session.isConnected
                     ? AppTheme.terminalGreen
-                    : Colors.redAccent,
+                    : Theme.of(context).colorScheme.error,
               ),
               title: Text(session.displayName),
               subtitle: Text(
@@ -176,7 +177,7 @@ extension _TerminalDialogs on _TerminalScreenState {
                   if (current) const Icon(Icons.check),
                   IconButton(
                     icon: const Icon(Icons.close),
-                    color: Colors.redAccent,
+                    color: Theme.of(context).colorScheme.error,
                     tooltip: session.isConnected
                         ? strings.disconnect
                         : strings.closeDisconnected,

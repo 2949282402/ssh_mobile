@@ -271,7 +271,9 @@ class _AdminCollapsedMobileServerBar extends StatelessWidget {
                 Expanded(
                   child: Text(
                     connection == null
-                        ? (strings.switchToChinese == '中文' ? 'O&M Servers' : '运维服务器')
+                        ? (strings.switchToChinese == '中文'
+                            ? 'O&M Servers'
+                            : '运维服务器')
                         : '${connection.name}  ${connection.username}@${connection.host}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

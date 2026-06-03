@@ -26,6 +26,7 @@ import '../services/playbook_service.dart';
 import '../services/rag_service.dart';
 import '../utils/text_chunker.dart';
 import '../widgets/overflow_scroll_text.dart';
+import '../widgets/glass_container.dart';
 
 part 'llm_chat/assistant_run_indicator.dart';
 part 'llm_chat/llm_settings_screen.dart';
@@ -923,9 +924,14 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                 left: extent - width,
                 width: width,
                 child: SafeArea(
-                  child: Material(
-                    color: colorScheme.surface,
-                    elevation: 16,
+                  child: GlassmorphicContainer(
+                    borderRadius: 0,
+                    blurX: 16,
+                    blurY: 16,
+                    backgroundColor:
+                        colorScheme.surface.withValues(alpha: 0.72),
+                    borderColor: colorScheme.outlineVariant,
+                    borderWidth: 1,
                     child: _HistoryPanel(
                       chats: _savedHistoryChats,
                       activeChatId: _activeChatId,

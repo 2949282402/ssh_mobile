@@ -992,12 +992,14 @@ class _HomeScreenState extends State<HomeScreen> {
                         value: 'delete',
                         child: Row(
                           children: [
-                            const Icon(Icons.delete,
-                                size: 18, color: Colors.red),
+                            Icon(Icons.delete,
+                                size: 18,
+                                color: Theme.of(context).colorScheme.error),
                             const SizedBox(width: 8),
                             Text(
                               strings.delete,
-                              style: const TextStyle(color: Colors.red),
+                              style: TextStyle(
+                                  color: Theme.of(context).colorScheme.error),
                             ),
                           ],
                         ),
@@ -1365,7 +1367,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(_formatConnectionFailure(ssh.errorMessage)),
-          backgroundColor: Colors.redAccent,
+          backgroundColor: Theme.of(context).colorScheme.error,
         ),
       );
     }
@@ -1446,7 +1448,9 @@ class _HomeScreenState extends State<HomeScreen> {
               performance.stopForConnection(conn.id);
               await storage.deleteConnection(conn.id);
             },
-            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
             child: Text(strings.delete),
           ),
         ],
@@ -1493,7 +1497,9 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
             child: Text(strings.delete),
           ),
         ],

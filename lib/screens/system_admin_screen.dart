@@ -40,7 +40,8 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
   List<SystemdService> _services = [];
   List<SystemdService> _filteredServices = [];
   bool _loadingServices = false;
-  final TextEditingController _serviceSearchController = TextEditingController();
+  final TextEditingController _serviceSearchController =
+      TextEditingController();
 
   // Listening ports
   List<ListeningPort> _ports = [];
@@ -359,9 +360,10 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
     }
 
     if (errorMessage != null) {
-      final isPrivilegeError = errorMessage.toLowerCase().contains('privilege') ||
-          errorMessage.toLowerCase().contains('root required') ||
-          errorMessage.toLowerCase().contains('insufficient');
+      final isPrivilegeError =
+          errorMessage.toLowerCase().contains('privilege') ||
+              errorMessage.toLowerCase().contains('root required') ||
+              errorMessage.toLowerCase().contains('insufficient');
 
       return Padding(
         padding: const EdgeInsets.all(24),
@@ -376,9 +378,12 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
               ),
               const SizedBox(height: 16),
               Text(
-                isPrivilegeError ? strings.rootRequiredMsg : 'Connection Failed',
+                isPrivilegeError
+                    ? strings.rootRequiredMsg
+                    : 'Connection Failed',
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
               Text(
@@ -418,7 +423,8 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
               Text(
                 strings.rootRequiredMsg,
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
               Text(
@@ -444,10 +450,16 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
             tabAlignment: !desktop ? TabAlignment.center : TabAlignment.fill,
             tabs: [
               Tab(text: strings.userAccounts, icon: const Icon(Icons.people)),
-              Tab(text: strings.activeSessions, icon: const Icon(Icons.co_present)),
-              Tab(text: strings.systemServices, icon: const Icon(Icons.settings_suggest)),
+              Tab(
+                  text: strings.activeSessions,
+                  icon: const Icon(Icons.co_present)),
+              Tab(
+                  text: strings.systemServices,
+                  icon: const Icon(Icons.settings_suggest)),
               Tab(text: strings.listeningPorts, icon: const Icon(Icons.lan)),
-              Tab(text: strings.systemPower, icon: const Icon(Icons.power_settings_new)),
+              Tab(
+                  text: strings.systemPower,
+                  icon: const Icon(Icons.power_settings_new)),
             ],
           ),
           Expanded(
@@ -467,7 +479,8 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
   }
 
   // --- Users Tab Implementation ---
-  Widget _buildUsersTab(AppStrings strings, ColorScheme colorScheme, String connectionId) {
+  Widget _buildUsersTab(
+      AppStrings strings, ColorScheme colorScheme, String connectionId) {
     if (_loadingAccounts) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -481,7 +494,8 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
             children: [
               Text(
                 strings.switchToChinese == '中文' ? 'Local Accounts' : '本地账号列表',
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                style:
+                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
               ),
               FilledButton.icon(
                 icon: const Icon(Icons.person_add),
@@ -521,8 +535,9 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                                       fontWeight: FontWeight.bold)),
                               const SizedBox(width: 8),
                               Text('(${account.uid}/${account.gid})',
-                                  style: const TextStyle(
-                                      fontSize: 12, color: Colors.grey)),
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      color: colorScheme.onSurfaceVariant)),
                               const Spacer(),
                               if (account.isLocked)
                                 Container(
@@ -583,7 +598,8 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
   }
 
   // --- Sessions Tab Implementation ---
-  Widget _buildSessionsTab(AppStrings strings, ColorScheme colorScheme, String connectionId) {
+  Widget _buildSessionsTab(
+      AppStrings strings, ColorScheme colorScheme, String connectionId) {
     if (_loadingSessions) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -604,23 +620,30 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
               leading: const CircleAvatar(child: Icon(Icons.computer)),
               title: Row(
                 children: [
-                  Text(s.username, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  Text(s.username,
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(width: 12),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
                       color: colorScheme.secondaryContainer,
                       borderRadius: BorderRadius.circular(4),
                     ),
-                    child: Text(s.tty, style: TextStyle(color: colorScheme.onSecondaryContainer, fontSize: 11)),
+                    child: Text(s.tty,
+                        style: TextStyle(
+                            color: colorScheme.onSecondaryContainer,
+                            fontSize: 11)),
                   ),
                 ],
               ),
-              subtitle: Text('${s.loginTime} ${s.ipAddress.isNotEmpty ? '(${s.ipAddress})' : ''}'),
+              subtitle: Text(
+                  '${s.loginTime} ${s.ipAddress.isNotEmpty ? '(${s.ipAddress})' : ''}'),
               trailing: IconButton(
                 icon: const Icon(Icons.login_outlined),
                 color: colorScheme.error,
-                tooltip: strings.switchToChinese == '中文' ? 'Kill Session' : '断开会话',
+                tooltip:
+                    strings.switchToChinese == '中文' ? 'Kill Session' : '断开会话',
                 onPressed: () => _confirmKillSession(s, connectionId),
               ),
             ),
@@ -630,7 +653,8 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
     );
   }
 
-  Future<void> _confirmKillSession(ActiveSession session, String connectionId) async {
+  Future<void> _confirmKillSession(
+      ActiveSession session, String connectionId) async {
     final language = context.read<AppSettings>().language;
     final strings = AppStrings(language);
     final confirm = await showDialog<bool>(
@@ -658,18 +682,22 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
     if (!mounted) return;
     if (confirm == true) {
       try {
-        await context.read<SystemAdminService>().killActiveSession(connectionId, session.tty);
+        await context
+            .read<SystemAdminService>()
+            .killActiveSession(connectionId, session.tty);
         if (!mounted) return;
         _fetchSessions(connectionId);
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Failed: $e')));
       }
     }
   }
 
   // --- Services Tab Implementation ---
-  Widget _buildServicesTab(AppStrings strings, ColorScheme colorScheme, String connectionId) {
+  Widget _buildServicesTab(
+      AppStrings strings, ColorScheme colorScheme, String connectionId) {
     if (_loadingServices) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -683,7 +711,9 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
             child: TextField(
               controller: _serviceSearchController,
               decoration: InputDecoration(
-                hintText: strings.switchToChinese == '中文' ? 'Search services...' : '搜索服务...',
+                hintText: strings.switchToChinese == '中文'
+                    ? 'Search services...'
+                    : '搜索服务...',
                 prefixIcon: const Icon(Icons.search),
                 border: const OutlineInputBorder(),
                 contentPadding: const EdgeInsets.symmetric(horizontal: 12),
@@ -700,18 +730,31 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                   child: ListTile(
                     leading: Icon(
                       service.isRunning ? Icons.play_circle : Icons.stop_circle,
-                      color: service.isRunning ? Colors.green : Colors.grey,
+                      color: service.isRunning
+                          ? colorScheme.secondary
+                          : colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
                     ),
-                    title: Text(service.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Text('${service.activeState} (${service.subState}) • ${service.description}'),
+                    title: Text(service.name,
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Text(
+                        '${service.activeState} (${service.subState}) • ${service.description}'),
                     trailing: PopupMenuButton<String>(
-                      onSelected: (action) => _manageService(service.name, action, connectionId),
+                      onSelected: (action) =>
+                          _manageService(service.name, action, connectionId),
                       itemBuilder: (context) => [
-                        PopupMenuItem(value: 'start', child: Text(strings.serviceStart)),
-                        PopupMenuItem(value: 'stop', child: Text(strings.serviceStop)),
-                        PopupMenuItem(value: 'restart', child: Text(strings.serviceRestart)),
-                        PopupMenuItem(value: 'enable', child: Text(strings.serviceEnable)),
-                        PopupMenuItem(value: 'disable', child: Text(strings.serviceDisable)),
+                        PopupMenuItem(
+                            value: 'start', child: Text(strings.serviceStart)),
+                        PopupMenuItem(
+                            value: 'stop', child: Text(strings.serviceStop)),
+                        PopupMenuItem(
+                            value: 'restart',
+                            child: Text(strings.serviceRestart)),
+                        PopupMenuItem(
+                            value: 'enable',
+                            child: Text(strings.serviceEnable)),
+                        PopupMenuItem(
+                            value: 'disable',
+                            child: Text(strings.serviceDisable)),
                       ],
                     ),
                   ),
@@ -724,10 +767,11 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
     );
   }
 
-  Future<void> _manageService(String name, String action, String connectionId) async {
+  Future<void> _manageService(
+      String name, String action, String connectionId) async {
     final language = context.read<AppSettings>().language;
     final strings = AppStrings(language);
-    
+
     // Double confirmation for stopping or disabling service
     if (action == 'stop' || action == 'disable') {
       final confirm = await showDialog<bool>(
@@ -752,17 +796,21 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
     }
 
     try {
-      await context.read<SystemAdminService>().manageSystemdService(connectionId, name, action);
+      await context
+          .read<SystemAdminService>()
+          .manageSystemdService(connectionId, name, action);
       if (!mounted) return;
       _fetchServices(connectionId);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Action failed: $e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Action failed: $e')));
     }
   }
 
   // --- Ports Tab Implementation ---
-  Widget _buildPortsTab(AppStrings strings, ColorScheme colorScheme, String connectionId) {
+  Widget _buildPortsTab(
+      AppStrings strings, ColorScheme colorScheme, String connectionId) {
     if (_loadingPorts) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -781,27 +829,35 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
           return Card(
             child: ListTile(
               leading: Icon(
-                p.protocol.contains('udp') ? Icons.radio_button_checked : Icons.swap_horizontal_circle,
+                p.protocol.contains('udp')
+                    ? Icons.radio_button_checked
+                    : Icons.swap_horizontal_circle,
                 color: colorScheme.secondary,
               ),
               title: Row(
                 children: [
-                  Text('${p.protocol.toUpperCase()}  :${p.localPort}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  Text('${p.protocol.toUpperCase()}  :${p.localPort}',
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
                   const Spacer(),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
                       color: colorScheme.surfaceContainerHighest,
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
                       p.processName,
-                      style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.bold, fontSize: 12),
+                      style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12),
                     ),
                   ),
                 ],
               ),
-              subtitle: Text('Address: ${p.localAddress} ${p.pid != null ? '• PID: ${p.pid}' : ''}'),
+              subtitle: Text(
+                  'Address: ${p.localAddress} ${p.pid != null ? '• PID: ${p.pid}' : ''}'),
             ),
           );
         },
@@ -810,7 +866,8 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
   }
 
   // --- Power Tab Implementation ---
-  Widget _buildPowerTab(AppStrings strings, ColorScheme colorScheme, String connectionId) {
+  Widget _buildPowerTab(
+      AppStrings strings, ColorScheme colorScheme, String connectionId) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -838,7 +895,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                 icon: const Icon(Icons.cached),
                 label: Text(strings.rebootServer),
                 style: FilledButton.styleFrom(
-                  backgroundColor: Colors.orange,
+                  backgroundColor: colorScheme.tertiary,
                   padding: const EdgeInsets.all(16),
                 ),
                 onPressed: () => _confirmPowerAction('reboot', connectionId),
@@ -851,8 +908,8 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                 icon: const Icon(Icons.power_off),
                 label: Text(strings.shutdownServer),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.red,
-                  side: const BorderSide(color: Colors.red),
+                  foregroundColor: colorScheme.error,
+                  side: BorderSide(color: colorScheme.error),
                   padding: const EdgeInsets.all(16),
                 ),
                 onPressed: () => _confirmPowerAction('shutdown', connectionId),
@@ -865,12 +922,14 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
   }
 
   Future<void> _confirmPowerAction(String action, String connectionId) async {
+    final colorScheme = Theme.of(context).colorScheme;
     final language = context.read<AppSettings>().language;
     final strings = AppStrings(language);
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(action == 'reboot' ? strings.rebootServer : strings.shutdownServer),
+        title: Text(
+            action == 'reboot' ? strings.rebootServer : strings.shutdownServer),
         content: Text(strings.powerConfirmContent),
         actions: [
           TextButton(
@@ -878,7 +937,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
             onPressed: () => Navigator.pop(context, false),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            style: FilledButton.styleFrom(backgroundColor: colorScheme.error),
             onPressed: () => Navigator.pop(context, true),
             child: Text(strings.switchToChinese == '中文' ? 'Confirm' : '确定'),
           ),
@@ -954,7 +1013,8 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
 
   Future<void> _loadStorageInfo() async {
     final adminService = context.read<SystemAdminService>();
-    final size = await adminService.getUserHomeStorageUsage(widget.connectionId, widget.account.homeDir);
+    final size = await adminService.getUserHomeStorageUsage(
+        widget.connectionId, widget.account.homeDir);
     if (!mounted) return;
     setState(() {
       _storageUsed = size;
@@ -963,7 +1023,8 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
 
   Future<void> _loadSudoInfo() async {
     final adminService = context.read<SystemAdminService>();
-    final isAdmin = await adminService.checkUserSudo(widget.connectionId, widget.account.username);
+    final isAdmin = await adminService.checkUserSudo(
+        widget.connectionId, widget.account.username);
     if (!mounted) return;
     setState(() {
       _isAdmin = isAdmin;
@@ -975,12 +1036,14 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
     setState(() => _loadingSudo = true);
     try {
       final admin = context.read<SystemAdminService>();
-      await admin.setUserSudo(widget.connectionId, widget.account.username, !_isAdmin);
+      await admin.setUserSudo(
+          widget.connectionId, widget.account.username, !_isAdmin);
       await _loadSudoInfo();
     } catch (e) {
       if (!mounted) return;
       setState(() => _loadingSudo = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Failed: $e')));
     }
   }
 
@@ -993,13 +1056,20 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
         children: [
           Row(
             children: [
-              Text('${widget.strings.storageUsed}: ', style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text('${widget.strings.storageUsed}: ',
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
               Text(_storageUsed),
               const SizedBox(width: 24),
-              Text('${widget.strings.sudoStatus}: ', style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text('${widget.strings.sudoStatus}: ',
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
               _loadingSudo
-                  ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 1.5))
-                  : Text(_isAdmin ? widget.strings.administrator : widget.strings.normalUser),
+                  ? const SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(strokeWidth: 1.5))
+                  : Text(_isAdmin
+                      ? widget.strings.administrator
+                      : widget.strings.normalUser),
             ],
           ),
           const SizedBox(height: 16),
@@ -1008,8 +1078,11 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
             runSpacing: 8,
             children: [
               ElevatedButton.icon(
-                icon: Icon(widget.account.isLocked ? Icons.lock_open : Icons.lock),
-                label: Text(widget.account.isLocked ? widget.strings.unlockUser : widget.strings.lockUser),
+                icon: Icon(
+                    widget.account.isLocked ? Icons.lock_open : Icons.lock),
+                label: Text(widget.account.isLocked
+                    ? widget.strings.unlockUser
+                    : widget.strings.lockUser),
                 onPressed: _toggleUserLock,
               ),
               ElevatedButton.icon(
@@ -1030,7 +1103,9 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
               if (!_loadingSudo)
                 ElevatedButton.icon(
                   icon: Icon(_isAdmin ? Icons.gpp_bad : Icons.verified_user),
-                  label: Text(_isAdmin ? widget.strings.revokeSudo : widget.strings.grantSudo),
+                  label: Text(_isAdmin
+                      ? widget.strings.revokeSudo
+                      : widget.strings.grantSudo),
                   onPressed: _toggleSudoPrivilege,
                 ),
             ],
@@ -1051,7 +1126,8 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
       widget.onStatusChanged();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Failed: $e')));
     }
   }
 
@@ -1129,7 +1205,10 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
         FilledButton(
           onPressed: _busy ? null : _savePassword,
           child: _busy
-              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2))
               : Text(widget.strings.save),
         ),
       ],
@@ -1143,10 +1222,10 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
     setState(() => _busy = true);
     try {
       await context.read<SystemAdminService>().changePassword(
-        widget.connectionId,
-        widget.username,
-        newPwd,
-      );
+            widget.connectionId,
+            widget.username,
+            newPwd,
+          );
       if (!mounted) return;
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1175,10 +1254,12 @@ class _HomeDirectoryExplorerDialog extends StatefulWidget {
   });
 
   @override
-  State<_HomeDirectoryExplorerDialog> createState() => _HomeDirectoryExplorerDialogState();
+  State<_HomeDirectoryExplorerDialog> createState() =>
+      _HomeDirectoryExplorerDialogState();
 }
 
-class _HomeDirectoryExplorerDialogState extends State<_HomeDirectoryExplorerDialog> {
+class _HomeDirectoryExplorerDialogState
+    extends State<_HomeDirectoryExplorerDialog> {
   late String _currentPath;
   List<SftpEntry> _entries = [];
   bool _loading = false;
@@ -1199,7 +1280,8 @@ class _HomeDirectoryExplorerDialogState extends State<_HomeDirectoryExplorerDial
 
     try {
       final sftpService = context.read<SftpService>();
-      final items = await sftpService.listDirectoryForConnection(widget.connectionId, path);
+      final items = await sftpService.listDirectoryForConnection(
+          widget.connectionId, path);
       if (!mounted) return;
       setState(() {
         _currentPath = path;
@@ -1228,7 +1310,10 @@ class _HomeDirectoryExplorerDialogState extends State<_HomeDirectoryExplorerDial
             scrollDirection: Axis.horizontal,
             child: Text(
               _currentPath,
-              style: const TextStyle(fontSize: 12, fontFamily: 'monospace', fontWeight: FontWeight.normal),
+              style: const TextStyle(
+                  fontSize: 12,
+                  fontFamily: 'monospace',
+                  fontWeight: FontWeight.normal),
             ),
           ),
         ],
@@ -1241,7 +1326,9 @@ class _HomeDirectoryExplorerDialogState extends State<_HomeDirectoryExplorerDial
       actions: [
         if (_currentPath != widget.homeDir)
           TextButton(
-            child: Text(widget.strings.switchToChinese == '中文' ? 'Back to Home' : '返回主目录'),
+            child: Text(widget.strings.switchToChinese == '中文'
+                ? 'Back to Home'
+                : '返回主目录'),
             onPressed: () => _loadDirectory(widget.homeDir),
           ),
         TextButton(
@@ -1253,6 +1340,7 @@ class _HomeDirectoryExplorerDialogState extends State<_HomeDirectoryExplorerDial
   }
 
   Widget _buildContent() {
+    final colorScheme = Theme.of(context).colorScheme;
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -1262,7 +1350,7 @@ class _HomeDirectoryExplorerDialogState extends State<_HomeDirectoryExplorerDial
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.error_outline, color: Colors.red, size: 48),
+            Icon(Icons.error_outline, color: colorScheme.error, size: 48),
             const SizedBox(height: 12),
             Text('Error listing files:\n$_error', textAlign: TextAlign.center),
           ],
@@ -1285,9 +1373,10 @@ class _HomeDirectoryExplorerDialogState extends State<_HomeDirectoryExplorerDial
           dense: true,
           leading: Icon(
             entry.isDirectory ? Icons.folder : Icons.insert_drive_file,
-            color: entry.isDirectory ? Colors.amber : Colors.blue,
+            color: entry.isDirectory ? Colors.amber : colorScheme.primary,
           ),
-          title: Text(entry.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+          title: Text(entry.name,
+              style: const TextStyle(fontWeight: FontWeight.bold)),
           subtitle: entry.isDirectory ? null : Text(entry.sizeLabel),
           onTap: () {
             if (entry.isDirectory) {
@@ -1311,7 +1400,8 @@ class _HomeDirectoryExplorerDialogState extends State<_HomeDirectoryExplorerDial
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Size: ${entry.sizeLabel}'),
-            if (entry.modifiedLabel != null) Text('Last Modified: ${entry.modifiedLabel}'),
+            if (entry.modifiedLabel != null)
+              Text('Last Modified: ${entry.modifiedLabel}'),
             const SizedBox(height: 16),
             const Text(
               'Files can be full-edited, downloaded, or renamed from the SFTP tab.',
@@ -1360,14 +1450,15 @@ class _UserProcessesDialogState extends State<_UserProcessesDialog> {
   Future<void> _loadProcesses() async {
     setState(() => _loading = true);
     final admin = context.read<SystemAdminService>();
-    final list = await admin.getUserProcessesAndMemory(widget.connectionId, widget.username);
-    
+    final list = await admin.getUserProcessesAndMemory(
+        widget.connectionId, widget.username);
+
     // Sum memory
     int totalBytes = 0;
     for (final p in list) {
       totalBytes += p.rssBytes;
     }
-    
+
     if (!mounted) return;
     setState(() {
       _processes = list;
@@ -1401,7 +1492,9 @@ class _UserProcessesDialogState extends State<_UserProcessesDialog> {
                       children: [
                         Text(
                           '${widget.strings.memoryUsed}:',
-                          style: TextStyle(color: colorScheme.onSecondaryContainer, fontWeight: FontWeight.bold),
+                          style: TextStyle(
+                              color: colorScheme.onSecondaryContainer,
+                              fontWeight: FontWeight.bold),
                         ),
                         Text(
                           '${_totalMemoryMB.toStringAsFixed(2)} MB',
@@ -1435,10 +1528,13 @@ class _UserProcessesDialogState extends State<_UserProcessesDialog> {
                                     p.command,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                                    style: const TextStyle(
+                                        fontFamily: 'monospace', fontSize: 12),
                                   ),
-                                  subtitle: Text('PID: ${p.pid}  •  CPU: ${p.cpuPercent}%  •  RAM: ${p.memPercent}%'),
-                                  trailing: Text('${memMB.toStringAsFixed(1)} M'),
+                                  subtitle: Text(
+                                      'PID: ${p.pid}  •  CPU: ${p.cpuPercent}%  •  RAM: ${p.memPercent}%'),
+                                  trailing:
+                                      Text('${memMB.toStringAsFixed(1)} M'),
                                 ),
                               );
                             },
@@ -1533,7 +1629,10 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
         FilledButton(
           onPressed: _busy ? null : _submit,
           child: _busy
-              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2))
               : Text(widget.strings.save),
         ),
       ],
@@ -1603,7 +1702,9 @@ class _AdminEmptyState extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Text(
-              strings.switchToChinese == '中文' ? 'System O&M Administration' : '系统运维管理',
+              strings.switchToChinese == '中文'
+                  ? 'System O&M Administration'
+                  : '系统运维管理',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: colorScheme.onSurface,
