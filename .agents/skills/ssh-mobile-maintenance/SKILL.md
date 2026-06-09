@@ -8,9 +8,11 @@ description: Use when modifying or debugging this SSH Mobile Flutter project, es
 ## Quick Start
 
 Before changing code, inspect the existing pattern in `lib/screens/` and
-`lib/services/`. Keep changes narrow and run validation afterward. Resolve the
-local Flutter SDK dynamically; different machines may use different SDK
-locations:
+`lib/services/`. Most large screens and services are split with `part` files
+under feature folders, so follow the nearest feature's composition style rather
+than adding new flat files. Keep changes narrow and run validation afterward.
+Resolve the local Flutter SDK dynamically; different machines may use different
+SDK locations:
 
 ```powershell
 $env:PUB_HOSTED_URL='https://pub.flutter-io.cn'
@@ -291,7 +293,7 @@ Use `lib/services/llm_chat_service.dart` for provider protocol behavior and
 ### SFTP
 
 Use `lib/services/sftp_service.dart` for connection/session behavior and
-`lib/screens/sftp_*.dart` for UI.
+`lib/screens/sftp_screen.dart` plus `lib/screens/sftp/` for UI.
 
 - Keep multi-server switching warm when possible.
 - Remember the last remote path per connection and restore it after reconnect.
@@ -315,9 +317,10 @@ Use `lib/services/sftp_service.dart` for connection/session behavior and
 ### Performance Monitor
 
 Use `lib/services/performance_monitor_service.dart` for sampling,
-`lib/services/server_status_probe.dart` for read-only Linux status commands and
-parsers, and `lib/screens/performance_monitor_screen.dart` for UI. The monitor
-page uses the same server selector/collapse pattern as SFTP, supports
+`lib/services/server_status_probe.dart` for platform-aware read-only status
+commands and parsers, and `lib/screens/performance_monitor_screen.dart` plus
+`lib/screens/performance_monitor/` for UI. The monitor page uses the same
+server selector/collapse pattern as SFTP, supports
 multi-select on the Performance tab, and must stay silent until the user taps
 Start. Starting monitoring freezes the selected server set for that run,
 collapses the server selector, clears previous samples, and creates fresh

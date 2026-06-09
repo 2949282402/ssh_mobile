@@ -48,6 +48,7 @@ API keys are never restored from backup JSON and must be reconfigured manually.
 - 聊天历史与多窗口：AI 页支持多会话历史、新建聊天、切换动画和当前会话保活。
 - 消息编辑与分支：用户消息可编辑后重新发送，AI 回复可重新生成，也可从某条 AI 回复创建新分支继续追问。
 - 开发日志：日志页记录 SSH、SFTP、LLM、tool 调用和错误信息，日志包含来源文件/行号，支持筛选、复制、长按多选和批量删除。
+- 辅助页面：服务器新增/编辑、系统管理、Playbook、RAG 知识、AI Skills、终端历史、客户端 WebView 和启动页都保留为独立页面，供主流程复用而不是塞进底部导航。
 - 设置面板与备份：在 AI 页顶部点击“应用设置”按钮打开设置抽屉，支持主题/语言/全局字体切换，以及一键导出/导入服务器、窗口历史、AI 聊天和自定义 Skills；密码、私钥和 API Key 不会导出。
 - 主题与语言：默认使用浅色主题和中文界面，支持黑白主题和中英文界面切换；全局视觉系统统一了色彩、圆角、输入框、按钮和导航样式。
 - 移动端导航优化：底部导航栏默认常驻显示；手机端会按 1.5K 到 2K 物理短边做轻量字号和组件密度适配，避免低分辨率机型 UI 过大。
@@ -131,40 +132,60 @@ settings.
 
 ## Project Structure
 
+Most large screens and services are split with Dart `part` files under feature
+folders. The tree below shows the current entry points and feature layout that
+the docs and skill files should track.
+
 ```text
 ssh_mobile/
 ├── android/                         # Android 工程和权限配置
+├── assets/                          # 静态资源
+├── docs/                            # 设计文档和维护指南
 ├── ios/                             # iOS 工程
 ├── macos/                           # macOS 桌面工程和沙盒权限配置
 ├── windows/                         # Windows 工程
-├── assets/                          # 静态资源
 ├── lib/
 │   ├── main.dart                    # 应用入口、Provider、路由
 │   ├── models/
 │   │   └── connection.dart          # SSH 连接配置模型
 │   ├── screens/
-│   │   ├── home_screen.dart         # 主页面、导航、服务器与窗口合并入口
-│   │   ├── llm_chat_screen.dart     # AI 聊天、历史、多会话、设置
+│   │   ├── add_edit_screen.dart     # 服务器新增/编辑
 │   │   ├── ai_skills_screen.dart    # 自定义 AI Skills 管理
-│   │   ├── sftp_screen.dart         # SFTP 文件管理
+│   │   ├── client_webview_screen.dart # 聊天绑定的客户端 WebView
+│   │   ├── developer_log_screen.dart # 开发日志
+│   │   ├── home_screen.dart         # 主导航和设置入口
+│   │   ├── llm_chat_screen.dart      # AI 聊天、历史、多会话、设置
+│   │   ├── performance_monitor_screen.dart # 性能/端口/应用/服务监控入口
+│   │   ├── playbook_screen.dart     # Playbook 页面
+│   │   ├── rag_knowledge_screen.dart # RAG 知识库
 │   │   ├── sftp_editor_screen.dart  # 远程文本编辑
-│   │   ├── sftp_viewer_screen.dart  # 文件预览
+│   │   ├── sftp_file_viewer_screen.dart # 文件预览
+│   │   ├── sftp_screen.dart         # SFTP 文件管理
+│   │   ├── startup_screen.dart      # 启动页
+│   │   ├── system_admin_screen.dart  # 系统管理
+│   │   ├── terminal_copy_screen.dart # 终端复制视图
+│   │   ├── terminal_history_screen.dart # 终端历史
 │   │   ├── terminal_screen.dart     # 终端窗口状态和生命周期
-│   │   ├── terminal_windows_screen.dart
-│   │   ├── terminal_history_screen.dart
-│   │   └── developer_log_screen.dart
+│   │   ├── terminal_windows_screen.dart # 终端窗口总览
+│   │   ├── home/
+│   │   ├── llm_chat/
+│   │   ├── performance_monitor/
+│   │   ├── sftp/
+│   │   ├── system_admin/
+│   │   └── terminal/
 │   ├── services/
-│   │   ├── ssh_service.dart         # 多 SSH 会话管理
-│   │   ├── sftp_service.dart        # SFTP 连接、缓存和文件操作
-│   │   ├── llm_chat_service.dart    # OpenAI-compatible 聊天、流式输出、tools
-│   │   ├── ai_tool_service.dart     # AI 可调用工具定义与执行
-│   │   ├── storage_service.dart     # 配置、凭据、历史和 AI 设置
-│   │   ├── app_log_service.dart     # 应用日志
-│   │   └── app_settings.dart        # 主题、语言和界面文案
-│   └── theme/
-│       └── app_theme.dart
+│   │   ├── core SSH / SFTP / LLM / AI / monitoring / storage services
+│   │   ├── ai_tool/
+│   │   ├── llm_chat/
+│   │   └── storage/
+│   ├── theme/
+│   │   └── app_theme.dart
+│   ├── utils/
+│   └── widgets/
 ├── pubspec.yaml
-└── README.md
+├── scripts/
+├── test/
+└── third_party/
 ```
 
 ## Agent Collaboration

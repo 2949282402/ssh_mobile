@@ -34,7 +34,7 @@ D:/coding/ssh_mobile_android/
 ssh-mobile-native/
 ```
 
-当前 Flutter 项目只作为功能参考。你主要对照这些文件理解业务：
+当前 Flutter 项目只作为功能参考。很多大页面已经拆成 `part` 结构，所以你主要对照这些当前入口页和服务文件理解业务：
 
 | 当前 Flutter 文件 | 你要在 Android 原生版实现的功能 |
 | --- | --- |
@@ -43,16 +43,32 @@ ssh-mobile-native/
 | `lib/services/ssh_service.dart` | SSH 会话、多窗口、tmux |
 | `lib/services/sftp_service.dart` | SFTP 文件管理 |
 | `lib/services/performance_monitor_service.dart` | 性能监控 |
-| `lib/services/server_status_probe.dart` | 服务器状态命令和解析 |
+| `lib/services/server_status_probe.dart` | Linux / Windows 只读状态命令和解析 |
 | `lib/services/llm_chat_service.dart` | AI 流式聊天 |
 | `lib/services/ai_tool_service.dart` | AI tools 和命令审批 |
 | `lib/services/client_system_tool_service.dart` | 手机本机工具 |
+| `lib/services/client_webview_service.dart` | 聊天绑定的客户端 WebView 状态 |
+| `lib/services/playbook_service.dart` | Playbook |
+| `lib/services/rag_service.dart` | RAG 知识库 |
+| `lib/services/system_admin_service.dart` | 系统管理 |
 | `lib/services/app_log_service.dart` | 开发日志 |
 | `lib/screens/home_screen.dart` | 主导航和设置 |
+| `lib/screens/add_edit_screen.dart` | 服务器新增/编辑 |
+| `lib/screens/startup_screen.dart` | 启动页 |
 | `lib/screens/terminal_screen.dart` | 终端页 |
+| `lib/screens/terminal_windows_screen.dart` | 终端窗口总览 |
+| `lib/screens/terminal_history_screen.dart` | 终端历史 |
 | `lib/screens/sftp_screen.dart` | SFTP 页 |
+| `lib/screens/sftp_editor_screen.dart` | 远程文本编辑 |
+| `lib/screens/sftp_file_viewer_screen.dart` | 文件预览 |
 | `lib/screens/performance_monitor_screen.dart` | 性能页 |
 | `lib/screens/llm_chat_screen.dart` | AI 页 |
+| `lib/screens/ai_skills_screen.dart` | 自定义 AI Skills 管理 |
+| `lib/screens/client_webview_screen.dart` | 聊天绑定的客户端 WebView |
+| `lib/screens/developer_log_screen.dart` | 开发日志 |
+| `lib/screens/playbook_screen.dart` | Playbook |
+| `lib/screens/rag_knowledge_screen.dart` | RAG 知识库 |
+| `lib/screens/system_admin_screen.dart` | 系统管理 |
 
 ## 1. 你现在的知识怎么迁移
 
