@@ -218,17 +218,17 @@ class _PortProcessTileState extends State<_PortProcessTile> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
+                      OverflowScrollText(
                         processText,
+                        selectable: false,
                         maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                       const SizedBox(height: 2),
-                      Text(
+                      OverflowScrollText(
                         '${port.protocol.toUpperCase()} $stateText  ${port.localAddress}',
+                        selectable: false,
                         maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: colorScheme.onSurfaceVariant,
                           fontSize: 12,
@@ -383,17 +383,17 @@ class _ServiceStatusTileState extends State<_ServiceStatusTile> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
+                      OverflowScrollText(
                         nameText,
+                        selectable: false,
                         maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                       const SizedBox(height: 2),
-                      Text(
+                      OverflowScrollText(
                         displayNameText,
+                        selectable: false,
                         maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: colorScheme.onSurfaceVariant,
                           fontSize: 12,

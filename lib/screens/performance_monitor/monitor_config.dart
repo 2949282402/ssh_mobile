@@ -57,17 +57,17 @@ class _MonitorConfigPanelV2 extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
+                        OverflowScrollText(
                           _headerTitle,
+                          selectable: false,
                           maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontWeight: FontWeight.w800),
                         ),
                         const SizedBox(height: 2),
-                        Text(
+                        OverflowScrollText(
                           _headerSubtitle,
+                          selectable: false,
                           maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             color: colorScheme.onSurfaceVariant,
                             fontSize: 12,
@@ -382,7 +382,7 @@ class _MonitorConfigCard extends StatelessWidget {
                   Icon(Icons.tune_rounded, color: colorScheme.primary),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text(
+                    child: OverflowScrollText(
                       monitor.isRunning
                           ? _monitorText(
                               strings,
@@ -392,8 +392,8 @@ class _MonitorConfigCard extends StatelessWidget {
                               strings,
                               '${monitor.selectedConnectionIds.length} selected',
                               '已选择 ${monitor.selectedConnectionIds.length} 台'),
+                      selectable: false,
                       maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontWeight: FontWeight.w800),
                     ),
                   ),

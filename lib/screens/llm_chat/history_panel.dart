@@ -151,15 +151,20 @@ class _HistoryPanelState extends State<_HistoryPanel> {
                                 : Icons.chat_bubble_outline_rounded,
                             color: selected ? colorScheme.primary : null,
                           ),
-                          title: Text(
+                          title: OverflowScrollText(
                             chat.title,
+                            selectable: false,
                             maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
                           ),
-                          subtitle: Text(
+                          subtitle: OverflowScrollText(
                             widget.formatTime(chat.updatedAt),
+                            selectable: false,
                             maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color:
+                                  colorScheme.onSurface.withValues(alpha: 0.58),
+                            ),
                           ),
                           trailing: IconButton(
                             tooltip: widget.strings.delete,

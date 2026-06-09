@@ -16,6 +16,7 @@ import '../services/storage_service.dart';
 import '../services/playbook_service.dart';
 import '../utils/responsive.dart';
 import '../widgets/connection_progress_dialog.dart';
+import '../widgets/overflow_scroll_text.dart';
 import '../widgets/tactile_feedback.dart';
 import '../widgets/window_name_dialog.dart';
 import 'developer_log_screen.dart';
@@ -902,10 +903,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
+                      OverflowScrollText(
                         conn.name,
+                        selectable: false,
                         maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: textColor,
                           fontSize: 16,

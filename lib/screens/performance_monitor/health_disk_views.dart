@@ -92,10 +92,10 @@ class _DiskUsageServerBlock extends StatelessWidget {
                   children: [
                     SizedBox(
                       width: 82,
-                      child: Text(
+                      child: OverflowScrollText(
                         disk.mount,
+                        selectable: false,
                         maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontSize: 12),
                       ),
                     ),
@@ -224,20 +224,20 @@ class _HealthBadge extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
+                  OverflowScrollText(
                     '${connection.name} · ${health.score}',
+                    selectable: false,
                     maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: color,
                       fontWeight: FontWeight.w800,
                       fontSize: 12,
                     ),
                   ),
-                  Text(
+                  OverflowScrollText(
                     detail,
+                    selectable: false,
                     maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: color, fontSize: 11),
                   ),
                 ],

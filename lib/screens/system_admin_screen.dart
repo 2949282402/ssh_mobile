@@ -576,8 +576,16 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                                 ),
                             ],
                           ),
-                          subtitle:
-                              Text('${account.homeDir}  •  ${account.shell}'),
+                          subtitle: OverflowScrollText(
+                            '${account.homeDir}  •  ${account.shell}',
+                            selectable: false,
+                            maxLines: 1,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color:
+                                  colorScheme.onSurface.withValues(alpha: 0.58),
+                            ),
+                          ),
                           children: [
                             _UserDetailActions(
                               connectionId: connectionId,
@@ -638,8 +646,15 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                   ),
                 ],
               ),
-              subtitle: Text(
-                  '${s.loginTime} ${s.ipAddress.isNotEmpty ? '(${s.ipAddress})' : ''}'),
+              subtitle: OverflowScrollText(
+                '${s.loginTime} ${s.ipAddress.isNotEmpty ? '(${s.ipAddress})' : ''}',
+                selectable: false,
+                maxLines: 1,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: colorScheme.onSurface.withValues(alpha: 0.58),
+                ),
+              ),
               trailing: IconButton(
                 icon: const Icon(Icons.login_outlined),
                 color: colorScheme.error,
@@ -735,10 +750,21 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                           ? colorScheme.secondary
                           : colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
                     ),
-                    title: Text(service.name,
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Text(
-                        '${service.activeState} (${service.subState}) • ${service.description}'),
+                    title: OverflowScrollText(
+                      service.name,
+                      selectable: false,
+                      maxLines: 1,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: OverflowScrollText(
+                      '${service.activeState} (${service.subState}) • ${service.description}',
+                      selectable: false,
+                      maxLines: 1,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colorScheme.onSurface.withValues(alpha: 0.58),
+                      ),
+                    ),
                     trailing: PopupMenuButton<String>(
                       onSelected: (action) =>
                           _manageService(service.name, action, connectionId),
@@ -839,26 +865,40 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                 children: [
                   Text('${p.protocol.toUpperCase()}  :${p.localPort}',
                       style: const TextStyle(fontWeight: FontWeight.bold)),
-                  const Spacer(),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      p.processName,
-                      style: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: OverflowScrollText(
+                          p.processName,
+                          selectable: false,
+                          maxLines: 1,
+                          style: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12),
+                        ),
+                      ),
                     ),
                   ),
                 ],
               ),
-              subtitle: Text(
-                  'Address: ${p.localAddress} ${p.pid != null ? '• PID: ${p.pid}' : ''}'),
+              subtitle: OverflowScrollText(
+                'Address: ${p.localAddress} ${p.pid != null ? '• PID: ${p.pid}' : ''}',
+                selectable: false,
+                maxLines: 1,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: colorScheme.onSurface.withValues(alpha: 0.58),
+                ),
+              ),
             ),
           );
         },

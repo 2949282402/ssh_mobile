@@ -269,14 +269,14 @@ class _AdminCollapsedMobileServerBar extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text(
+                  child: OverflowScrollText(
                     connection == null
                         ? (strings.switchToChinese == '中文'
                             ? 'O&M Servers'
                             : '运维服务器')
                         : '${connection.name}  ${connection.username}@${connection.host}',
+                    selectable: false,
                     maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: colorScheme.onSurface,
                       fontWeight: FontWeight.w700,
@@ -439,20 +439,20 @@ class _AdminServerTile extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
+                    OverflowScrollText(
                       connection.name,
+                      selectable: false,
                       maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: colorScheme.onSurface,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                     const SizedBox(height: 3),
-                    Text(
+                    OverflowScrollText(
                       '${connection.username}@${connection.host}',
+                      selectable: false,
                       maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: colorScheme.onSurface.withValues(alpha: 0.62),
                         fontSize: 12,

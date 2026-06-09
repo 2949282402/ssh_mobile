@@ -13,6 +13,7 @@ import '../services/performance_monitor_service.dart';
 import '../services/server_status_probe.dart';
 import '../services/storage_service.dart';
 import '../utils/responsive.dart';
+import '../widgets/overflow_scroll_text.dart';
 
 part 'performance_monitor/monitor_strings.dart';
 part 'performance_monitor/monitor_models.dart';
@@ -709,10 +710,10 @@ class _MonitorContentState extends State<_MonitorContent> {
     return ListTile(
       dense: true,
       leading: const Icon(Icons.apps_rounded),
-      title: Text(
+      title: OverflowScrollText(
         app.command,
+        selectable: false,
         maxLines: 1,
-        overflow: TextOverflow.ellipsis,
       ),
       subtitle: Text(
         'PID ${app.pid}  CPU ${app.cpuPercent.toStringAsFixed(1)}%',

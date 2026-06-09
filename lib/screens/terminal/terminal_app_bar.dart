@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../services/app_settings.dart';
+import '../../widgets/overflow_scroll_text.dart';
 
 class TerminalScreenAppBar extends StatelessWidget
     implements PreferredSizeWidget {
@@ -56,9 +57,10 @@ class TerminalScreenAppBar extends StatelessWidget
             mainAxisSize: MainAxisSize.min,
             children: [
               Flexible(
-                child: Text(
+                child: OverflowScrollText(
                   displayName ?? serverName ?? strings.defaultTerminal,
-                  overflow: TextOverflow.ellipsis,
+                  selectable: false,
+                  maxLines: 1,
                   style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w700,

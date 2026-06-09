@@ -164,12 +164,25 @@ extension _TerminalDialogs on _TerminalScreenState {
                     ? AppTheme.terminalGreen
                     : Theme.of(context).colorScheme.error,
               ),
-              title: Text(session.displayName),
-              subtitle: Text(
+              title: OverflowScrollText(
+                session.displayName,
+                selectable: false,
+                maxLines: 1,
+              ),
+              subtitle: OverflowScrollText(
                 current
                     ? strings.currentWindow
                     : '${session.connectionName} - '
                         '${session.isConnected ? strings.connected : session.errorMessage ?? strings.disconnected}',
+                selectable: false,
+                maxLines: 1,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurface
+                      .withValues(alpha: 0.58),
+                ),
               ),
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,

@@ -436,23 +436,23 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
+                            OverflowScrollText(
                               activeChat.title,
+                              selectable: false,
                               maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.w800,
                               ),
                             ),
-                            Text(
+                            OverflowScrollText(
                               _contextUsage(
                                 contextTokens,
                                 _contextWindowTokens,
                                 contextPercent,
                               ),
+                              selectable: false,
                               maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 color: colorScheme.onSurface
                                     .withValues(alpha: 0.62),

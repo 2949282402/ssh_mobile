@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../services/app_settings.dart';
 import '../services/storage_service.dart';
+import '../widgets/overflow_scroll_text.dart';
 
 class AiSkillsScreen extends StatefulWidget {
   const AiSkillsScreen({super.key});
@@ -173,10 +174,10 @@ class _AiSkillsScreenState extends State<AiSkillsScreen>
                 ? (selected ? Icons.auto_awesome : Icons.auto_awesome_outlined)
                 : Icons.visibility_off_outlined,
           ),
-          title: Text(
+          title: OverflowScrollText(
             skill.name,
+            selectable: false,
             maxLines: 1,
-            overflow: TextOverflow.ellipsis,
           ),
           subtitle: Text(
             '${skill.enabled ? strings.enabled : strings.disabled} · ${skill.description.isEmpty ? strings.noDescription : skill.description}',

@@ -403,17 +403,21 @@ class _SftpEntryList extends StatelessWidget {
                 tag: 'sftp_file_${entry.path}',
                 child: Material(
                   type: MaterialType.transparency,
-                  child: Text(
+                  child: OverflowScrollText(
                     entry.name,
+                    selectable: false,
                     maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ),
-              subtitle: Text(
+              subtitle: OverflowScrollText(
                 entryMeta(strings, entry),
+                selectable: false,
                 maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: colorScheme.onSurface.withValues(alpha: 0.58),
+                ),
               ),
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
