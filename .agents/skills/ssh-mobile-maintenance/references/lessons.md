@@ -200,3 +200,10 @@
   or canceled installation. Check USB install permission, debug authorization,
   OEM security prompts, and install restrictions.
 - This error is different from Gradle build failure; the APK already exists.
+
+## Testing and Linting
+
+- When writing tests for features that persist files (such as partitioned RAG databases), make sure to clean up all temporary and database files in both `setUp` and `tearDown`. Failure to do so will leak state across different test suites run in the same environment, leading to flaky test failures.
+- If importing transitively available packages (such as `package:crypto`) that are not explicitly defined in `pubspec.yaml`, Flutter static analysis will raise a `depend_on_referenced_packages` warning. Add `// ignore: depend_on_referenced_packages` directly above the import to bypass this if modifying `pubspec.yaml` is not desired.
+- Follow strict Dart string interpolation rules: local variable names inside string interpolations followed by non-alphanumeric characters (like `_`) do not require curly braces unless followed by an underscore or other alphanumeric character that would merge with the identifier name. Use `$variable` instead of `${variable}` in such cases to prevent static analysis warnings.
+

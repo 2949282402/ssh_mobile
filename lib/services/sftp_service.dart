@@ -1,8 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
+// ignore: depend_on_referenced_packages
+import 'package:crypto/crypto.dart';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import '../models/connection.dart';
 import 'app_log_service.dart';
@@ -191,6 +196,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   final Map<String, _SftpSession> _sessions = {};
   final Map<String, String> _lastPaths = {};
   final Map<String, Future<void>> _connectTasks = {};
+  final SftpDirectoryCache _directoryCache = SftpDirectoryCache();
   Timer? _notifyTimer;
   String? _activeConnectionId;
   bool _disposed = false;
@@ -353,6 +359,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
             SftpFileOpenMode.write,
       );
       await file.writeBytes(bytes);
+      _directoryCache.invalidate(session.connectionId);
+      await SftpFileCache.invalidate(session.connectionId, remotePath);
       AppLogService.instance.info(
         'SFTP file uploaded',
         details: 'path=$remotePath bytes=${bytes.length}',
@@ -396,6 +404,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       } else {
         await sftp.remove(entry.path);
       }
+      _directoryCache.invalidate(entry.connectionId);
+      await SftpFileCache.invalidate(entry.connectionId, entry.path);
       AppLogService.instance.info(
         'SFTP entry deleted',
         details: 'path=${entry.path} directory=${entry.isDirectory}',
@@ -424,6 +434,13 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     if (sftp == null) throw StateError('SFTP is not connected');
     if (entry.isDirectory) throw StateError('Directories cannot be downloaded');
     _assertWithinMemoryLimit(entry.size, 'download', maxBytes: maxBytes);
+
+    final cachedBytes = await SftpFileCache.get(
+        entry.connectionId, entry.path, entry.size, entry.modifiedAt);
+    if (cachedBytes != null) {
+      return cachedBytes;
+    }
+
     if (updateState) {
       session.state = SftpConnectionState.loading;
       session.errorMessage = null;
@@ -439,6 +456,10 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
         'SFTP file downloaded',
         details: 'path=${entry.path} bytes=${bytes.length}',
       );
+
+      await SftpFileCache.put(
+          entry.connectionId, entry.path, entry.size, entry.modifiedAt, bytes);
+
       if (updateState) {
         session.state = SftpConnectionState.connected;
         notifyListeners();
@@ -533,17 +554,25 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   ) async {
     return _withDetachedSftp(connectionId, (sftp, config) async {
       final absolutePath = await sftp.absolute(path);
+
+      final cached = _directoryCache.get(connectionId, absolutePath);
+      if (cached != null) {
+        return cached;
+      }
+
       final names = await sftp.listdir(absolutePath);
       final entries = _buildEntries(
         connectionId: config.id,
         absolutePath: absolutePath,
         names: names,
       );
+      final unmodifiableEntries = List<SftpEntry>.unmodifiable(entries);
+      _directoryCache.set(connectionId, absolutePath, unmodifiableEntries);
       AppLogService.instance.info(
         'SFTP directory listed for tool',
         details: 'connection=${config.name} path=$absolutePath',
       );
-      return List.unmodifiable(entries);
+      return unmodifiableEntries;
     });
   }
 
@@ -554,15 +583,32 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     int maxBytes = maxTextPreviewBytes,
   }) async {
     return _withDetachedSftp(connectionId, (sftp, config) async {
+      final absolutePath = await sftp.absolute(path);
+      final attrs = await sftp.stat(absolutePath);
+      final modifiedAt = attrs.modifyTime == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(attrs.modifyTime! * 1000);
+
+      final cachedBytes = await SftpFileCache.get(
+          connectionId, absolutePath, attrs.size, modifiedAt);
+      if (cachedBytes != null) {
+        return utf8.decode(cachedBytes, allowMalformed: true);
+      }
+
       SftpFile? file;
       try {
-        file = await sftp.open(path, mode: SftpFileOpenMode.read);
+        file = await sftp.open(absolutePath, mode: SftpFileOpenMode.read);
         final bytes = await file.readBytes();
         _assertWithinMemoryLimit(bytes.length, 'read', maxBytes: maxBytes);
         AppLogService.instance.info(
           'SFTP file read for tool',
-          details: 'connection=${config.name} path=$path bytes=${bytes.length}',
+          details:
+              'connection=${config.name} path=$absolutePath bytes=${bytes.length}',
         );
+
+        await SftpFileCache.put(
+            connectionId, absolutePath, attrs.size, modifiedAt, bytes);
+
         return utf8.decode(bytes, allowMalformed: true);
       } finally {
         await _closeFileQuietly(file);
@@ -584,6 +630,16 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       }
       _assertWithinMemoryLimit(attrs.size, 'download', maxBytes: maxBytes);
 
+      final modifiedAt = attrs.modifyTime == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(attrs.modifyTime! * 1000);
+
+      final cachedBytes = await SftpFileCache.get(
+          connectionId, absolutePath, attrs.size, modifiedAt);
+      if (cachedBytes != null) {
+        return cachedBytes;
+      }
+
       SftpFile? file;
       try {
         file = await sftp.open(absolutePath, mode: SftpFileOpenMode.read);
@@ -594,6 +650,10 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
           details:
               'connection=${config.name} path=$absolutePath bytes=${bytes.length}',
         );
+
+        await SftpFileCache.put(
+            connectionId, absolutePath, attrs.size, modifiedAt, bytes);
+
         return bytes;
       } finally {
         await _closeFileQuietly(file);
@@ -621,6 +681,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
               SftpFileOpenMode.write,
         );
         await file.writeBytes(bytes);
+        _directoryCache.invalidate(connectionId);
+        await SftpFileCache.invalidate(connectionId, absolutePath);
         AppLogService.instance.info(
           'SFTP text file saved for tool',
           details:
@@ -673,6 +735,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
               SftpFileOpenMode.write,
         );
         await file.writeBytes(bytes);
+        _directoryCache.invalidate(connectionId);
+        await SftpFileCache.invalidate(connectionId, absolutePath);
         AppLogService.instance.info(
           'SFTP file uploaded for tool',
           details:
@@ -692,6 +756,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     await _withDetachedSftp(connectionId, (sftp, config) async {
       final absolutePath = await sftp.absolute(path);
       await sftp.mkdir(absolutePath);
+      _directoryCache.invalidate(connectionId);
       AppLogService.instance.info(
         'SFTP directory created for tool',
         details: 'connection=${config.name} path=$absolutePath',
@@ -709,6 +774,9 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       final absolutePath = await sftp.absolute(path);
       final absoluteNewPath = await sftp.absolute(newPath);
       await sftp.rename(absolutePath, absoluteNewPath);
+      _directoryCache.invalidate(connectionId);
+      await SftpFileCache.invalidate(connectionId, absolutePath);
+      await SftpFileCache.invalidate(connectionId, absoluteNewPath);
       AppLogService.instance.info(
         'SFTP path renamed for tool',
         details:
@@ -730,6 +798,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       } else {
         await sftp.remove(absolutePath);
       }
+      _directoryCache.invalidate(connectionId);
+      await SftpFileCache.invalidate(connectionId, absolutePath);
       AppLogService.instance.info(
         'SFTP path deleted for tool',
         details:
@@ -748,12 +818,27 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
 
     try {
       final absolutePath = await sftp.absolute(path);
+
+      // Check directory cache
+      final cached = _directoryCache.get(session.connectionId, absolutePath);
+      if (cached != null) {
+        session.currentPath = absolutePath;
+        _lastPaths[session.connectionId] = absolutePath;
+        session.entries = cached;
+        session.entriesRevision++;
+        session.state = SftpConnectionState.connected;
+        notifyListeners();
+        return;
+      }
+
       final names = await sftp.listdir(absolutePath);
       final entries = _buildEntries(
         connectionId: session.connectionId,
         absolutePath: absolutePath,
         names: names,
       );
+
+      _directoryCache.set(session.connectionId, absolutePath, entries);
 
       session.currentPath = absolutePath;
       _lastPaths[session.connectionId] = absolutePath;
@@ -847,6 +932,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   void dispose() {
     _disposed = true;
     _notifyTimer?.cancel();
+    _directoryCache.clear();
     unawaited(disconnectAll(notify: false));
     super.dispose();
   }
@@ -1016,5 +1102,135 @@ class _SftpSession {
 
   bool isCurrent(Map<String, _SftpSession> sessions) {
     return !_closed && identical(sessions[connectionId], this);
+  }
+}
+
+class SftpDirectoryCacheEntry {
+  final List<SftpEntry> entries;
+  final DateTime cachedAt;
+
+  SftpDirectoryCacheEntry(this.entries) : cachedAt = DateTime.now();
+
+  bool get isExpired {
+    return DateTime.now().difference(cachedAt) > const Duration(seconds: 30);
+  }
+}
+
+class SftpDirectoryCache {
+  final Map<String, SftpDirectoryCacheEntry> _cache = {};
+
+  List<SftpEntry>? get(String connectionId, String path) {
+    final key = '$connectionId:$path';
+    final entry = _cache[key];
+    if (entry == null) return null;
+    if (entry.isExpired) {
+      _cache.remove(key);
+      return null;
+    }
+    return entry.entries;
+  }
+
+  void set(String connectionId, String path, List<SftpEntry> entries) {
+    final key = '$connectionId:$path';
+    _cache[key] = SftpDirectoryCacheEntry(entries);
+  }
+
+  void invalidate(String connectionId, [String? path]) {
+    if (path != null) {
+      _cache.remove('$connectionId:$path');
+    } else {
+      _cache.removeWhere((key, _) => key.startsWith('$connectionId:'));
+    }
+  }
+
+  void clear() {
+    _cache.clear();
+  }
+}
+
+class SftpFileCache {
+  const SftpFileCache._();
+
+  static String _getPathHash(String connectionId, String path) {
+    final key = '$connectionId:$path';
+    return sha256.convert(utf8.encode(key)).toString();
+  }
+
+  static Future<File?> _findCachedFile(String connectionId, String path) async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final hash = _getPathHash(connectionId, path);
+      final prefix = 'sftp_cache_${hash}_';
+      final list = tempDir.listSync();
+      for (final entity in list) {
+        if (entity is File && p.basename(entity.path).startsWith(prefix)) {
+          return entity;
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+    return null;
+  }
+
+  static Future<Uint8List?> get(
+      String connectionId, String path, int? size, DateTime? modifiedAt) async {
+    try {
+      final cachedFile = await _findCachedFile(connectionId, path);
+      if (cachedFile != null) {
+        final filename = p.basename(cachedFile.path);
+        final parts = filename.split('_');
+        if (parts.length >= 5) {
+          final cachedSize = int.tryParse(parts[3]);
+          final cachedTime = int.tryParse(parts[4]);
+          if (cachedSize == size &&
+              cachedTime == (modifiedAt?.millisecondsSinceEpoch ?? 0)) {
+            final bytes = await cachedFile.readAsBytes();
+            AppLogService.instance.info('SFTP preview Cache hit',
+                details: 'path=$path size=${bytes.length}');
+            return bytes;
+          }
+        }
+        await cachedFile.delete();
+      }
+    } catch (e) {
+      AppLogService.instance.warning('SFTP Cache read failed: $e');
+    }
+    return null;
+  }
+
+  static Future<void> put(String connectionId, String path, int? size,
+      DateTime? modifiedAt, Uint8List bytes) async {
+    try {
+      final stale = await _findCachedFile(connectionId, path);
+      if (stale != null) {
+        await stale.delete();
+      }
+
+      final tempDir = await getTemporaryDirectory();
+      final hash = _getPathHash(connectionId, path);
+      final sizeStr = (size ?? 0).toString();
+      final timeStr = (modifiedAt?.millisecondsSinceEpoch ?? 0).toString();
+      final file =
+          File(p.join(tempDir.path, 'sftp_cache_${hash}_${sizeStr}_$timeStr'));
+      await file.writeAsBytes(bytes);
+      AppLogService.instance.info('SFTP preview Cache written',
+          details: 'path=$path size=${bytes.length}');
+    } catch (e) {
+      AppLogService.instance.warning('SFTP Cache write failed: $e');
+    }
+  }
+
+  static Future<void> invalidate(String connectionId, String path) async {
+    try {
+      final cachedFile = await _findCachedFile(connectionId, path);
+      if (cachedFile != null) {
+        await cachedFile.delete();
+        AppLogService.instance
+            .info('SFTP preview Cache invalidated', details: 'path=$path');
+      }
+    } catch (e) {
+      // ignore
+    }
   }
 }

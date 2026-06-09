@@ -36,8 +36,8 @@ API keys are never restored from backup JSON and must be reconfigured manually.
 - SSH + tmux：默认推荐模式，适合 `codex`、编辑器、构建任务和长时间脚本。
 - tmux 恢复与清理：断连后可回到原会话，也可配置无客户端自动清理旧会话。
 - 导航顺序：AI 页、服务器页、SFTP 页、性能监控页和日志页；窗口管理合并到服务器页，应用启动默认进入服务器页，日志页不显示在导航栏中。
-- SFTP 文件管理：支持多服务器切换、保持连接、路径记忆、上传、下载、输入名称确认删除、文本编辑和文件预览。
-- 性能监控：可多选服务器，点击开始后实时绘制 CPU、内存、磁盘 IO 和网络折线图，默认 10 秒刷新一次，最多保留本轮监控启动后的近 10 分钟数据，并给出健康评分与内存告警。
+- SFTP 文件管理：支持多服务器切换、保持连接、路径记忆、目录列表缓存（30秒 TTL）、下载预览与缩略图 SHA-256 临时缓存（自动比对大小与修改时间校验）、上传、下载、输入名称确认删除、文本编辑和文件预览。
+- 性能监控：可多选服务器，点击开始后实时绘制 CPU、内存、磁盘 IO 和网络折线图，默认 10 秒刷新一次，最多保留本轮监控启动后的近 10 分钟数据，历史采样超过 5 分钟的数据自动进行 10 秒分组降采样平均处理，并给出健康评分与内存告警。
 - 文件预览：支持文本、Markdown、HTML、PDF 等常见文档类型的查看。
 - AI 大模型聊天页：通过 API Key 接入 OpenAI-compatible 接口，默认支持 DeepSeek 模型。
 - AI Tools：模型可调用工具列出服务器、执行只读诊断命令、浏览 SFTP 目录、读取小文本文件、生成服务器运维报告，也可调用客户端工具查看本机时间/设备/网络/电池状态、打开应用设置、复制文本和设置客户端提醒；写命令必须先经过人工同意。
@@ -47,8 +47,8 @@ API keys are never restored from backup JSON and must be reconfigured manually.
 - 上下文管理：AI 页显示上下文窗口用量，可选择 259K、512K、1M，长文档输出只保留精简记忆进入后续上下文，达到 90% 自动调用模型压缩上下文。
 - 聊天历史与多窗口：AI 页支持多会话历史、新建聊天、切换动画和当前会话保活。
 - 消息编辑与分支：用户消息可编辑后重新发送，AI 回复可重新生成，也可从某条 AI 回复创建新分支继续追问。
-- 开发日志：日志页记录 SSH、SFTP、LLM、tool 调用和错误信息，日志包含来源文件/行号，支持筛选、复制、长按多选和批量删除。
-- 辅助页面：服务器新增/编辑、系统管理、Playbook、RAG 知识、AI Skills、终端历史、客户端 WebView 和启动页都保留为独立页面，供主流程复用而不是塞进底部导航。
+- 开发日志：日志页记录 SSH、SFTP、LLM、tool 调用和错误信息，日志包含来源文件/行号，支持筛选、复制、长按多选和批量删除。日志写入使用异步队列，并实施大小自动轮转（单个日志上限 5MB，最多保留 3 个历史归档，共 20MB 上限）。
+- 辅助页面：服务器新增/编辑、系统管理、Playbook、RAG 知识（采用分区存储结构：轻量级 metadata 与独立文档 JSON，并在后台 Isolate 中进行向量相似度和 BM25 检索计算）、AI Skills、终端历史、客户端 WebView 和启动页都保留为独立页面，供主流程复用而不是塞进底部导航。
 - 设置面板与备份：在 AI 页顶部点击“应用设置”按钮打开设置抽屉，支持主题/语言/全局字体切换，以及一键导出/导入服务器、窗口历史、AI 聊天和自定义 Skills；密码、私钥和 API Key 不会导出。
 - 主题与语言：默认使用浅色主题和中文界面，支持黑白主题和中英文界面切换；全局视觉系统统一了色彩、圆角、输入框、按钮和导航样式。
 - 移动端导航优化：底部导航栏默认常驻显示；手机端会按 1.5K 到 2K 物理短边做轻量字号和组件密度适配，避免低分辨率机型 UI 过大。
@@ -93,7 +93,7 @@ mobile smoothness, while the full raw stream remains available through
 encrypted terminal history.
 Port/Application monitor refresh controls are disabled while a fetch is in
 flight, port detail rows stay collapsed by default, and performance probes
-retry with a fresh one-shot SSH connection after transient interruptions.
+retry with a fresh one-shot SSH connection after transient interruptions. RAG storage is optimized through JSON database partitioning, and heavy calculations (cosine similarity, BM25 indexing, and JSON encoding/decoding) are offloaded to background Isolates via `compute()`. SFTP directory lists are cached in-memory with a 30s TTL, while file previews/thumbnails are temporarily cached with SHA-256 keys and validated against remote size and timestamp metadata. Performance Monitor history data points older than 5 minutes are grouped and averaged into 10-second intervals to prevent UI rendering lag. Developer logs are managed via an asynchronous queue with auto-rotation capped at 5MB per file (max 3 archive files).
 LLM settings include DeepSeek-only thinking controls. For DeepSeek API hosts the
 client can send `thinking.enabled/disabled` and `reasoning_effort` (`high` or
 `max`); generic OpenAI-compatible providers are left untouched. Local web search

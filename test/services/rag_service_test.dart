@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
@@ -15,7 +16,27 @@ void main() {
 
   late StorageService storage;
 
+  Future<void> cleanRagFiles() async {
+    final dir = Directory('.');
+    if (await dir.exists()) {
+      await for (final entity in dir.list()) {
+        if (entity is File) {
+          final name = p.basename(entity.path);
+          if (name == 'rag_database.json' ||
+              name == 'rag_metadata.json' ||
+              name.startsWith('rag_doc_')) {
+            try {
+              await entity.delete();
+            } catch (_) {}
+          }
+        }
+      }
+    }
+  }
+
   setUp(() async {
+    await cleanRagFiles();
+
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
       return '.'; // 返回当前测试运行根目录作为 support 目录
@@ -30,11 +51,7 @@ void main() {
 
   tearDown(() async {
     storage.dispose();
-    // 清理测试生成的数据库文件
-    final file = File('rag_database.json');
-    if (await file.exists()) {
-      await file.delete();
-    }
+    await cleanRagFiles();
   });
 
   group('RagService Core Tests', () {

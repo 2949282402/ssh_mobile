@@ -142,6 +142,11 @@ or maintenance lesson should be shared across Codex and Claude Code sessions.
 - When writing or changing code, add concise maintenance comments for non-obvious
   behavior, lifecycle constraints, protocol quirks, safety gates, or context
   management decisions. Avoid noisy comments that only restate the code.
+- Optimize RAG storage by partitioning the database: keep document lists and lightweight metadata in `rag_metadata.json` and store heavy text chunks and embeddings in separate document-specific files (`rag_doc_[docId].json`). Always offload heavy operations (such as similarity calculations, BM25 indexing, and JSON encoding/decoding) to background Isolates via `compute()`.
+- Implement caching for SFTP directory entries with an appropriate Time-To-Live (TTL, e.g., 30 seconds) to avoid redundant network fetch on frequent navigation. Downloaded files and image thumbnails should be cached using SHA-256 keyed temporary files, and checked against remote file size/modified timestamp before reusing them.
+- Avoid memory growth and UI chart lag in Performance Monitor by downsampling historical metrics data. Group and average samples (e.g. into 10-second averages) when data points grow older than a threshold (e.g. 5 minutes).
+- Limit the size of developer logs using an auto-rotation strategy (e.g. max 5MB per file, rotating up to 3 archive files) to prevent local storage bloat, and perform log file writes asynchronously using a queue.
+
 
 ## Common Workflows
 
