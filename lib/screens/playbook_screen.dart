@@ -7,6 +7,7 @@ import '../services/app_settings.dart';
 import '../services/playbook_service.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/overflow_scroll_text.dart';
 
 class PlaybookScreen extends StatefulWidget {
   const PlaybookScreen({super.key});
@@ -908,8 +909,10 @@ class _PlaybookScreenState extends State<PlaybookScreen>
                           ],
                         ),
                         const SizedBox(height: 4),
-                        Text(
+                        OverflowScrollText(
                           step.command,
+                          selectable: false,
+                          maxLines: 1,
                           style: TextStyle(
                             fontFamily: 'monospace',
                             fontSize: 12,

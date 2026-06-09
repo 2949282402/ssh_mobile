@@ -9,6 +9,7 @@ import '../services/storage_service.dart';
 import '../services/system_admin_service.dart';
 import '../utils/responsive.dart';
 import '../widgets/tactile_feedback.dart';
+import '../widgets/overflow_scroll_text.dart';
 
 part 'system_admin/system_admin_server_pane.dart';
 
@@ -1524,10 +1525,10 @@ class _UserProcessesDialogState extends State<_UserProcessesDialog> {
                               return Card(
                                 child: ListTile(
                                   dense: true,
-                                  title: Text(
+                                  title: OverflowScrollText(
                                     p.command,
+                                    selectable: false,
                                     maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(
                                         fontFamily: 'monospace', fontSize: 12),
                                   ),

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../services/app_settings.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
+import '../widgets/overflow_scroll_text.dart';
 
 class TerminalHistoryScreen extends StatelessWidget {
   const TerminalHistoryScreen({super.key});
@@ -199,10 +200,10 @@ class _HistoryItem extends StatelessWidget {
                     ),
                     const SizedBox(width: 6),
                     Expanded(
-                      child: Text(
+                      child: OverflowScrollText(
                         command,
+                        selectable: false,
                         maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontFamily: 'monospace',
                           fontSize: 11,

@@ -305,30 +305,32 @@ class TerminalShortcutPanel extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(strings.addShortcut),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              decoration: InputDecoration(
-                labelText: strings.label,
-                hintText: 'e.g. LS',
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                decoration: InputDecoration(
+                  labelText: strings.label,
+                  hintText: 'e.g. LS',
+                ),
+                textInputAction: TextInputAction.next,
+                onChanged: (value) => label = value,
               ),
-              textInputAction: TextInputAction.next,
-              onChanged: (value) => label = value,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              decoration: InputDecoration(
-                labelText: strings.command,
-                hintText: 'e.g. ls -la',
-                alignLabelWithHint: true,
+              const SizedBox(height: 12),
+              TextField(
+                decoration: InputDecoration(
+                  labelText: strings.command,
+                  hintText: 'e.g. ls -la',
+                  alignLabelWithHint: true,
+                ),
+                keyboardType: TextInputType.multiline,
+                minLines: 2,
+                maxLines: 4,
+                onChanged: (value) => command = value,
               ),
-              keyboardType: TextInputType.multiline,
-              minLines: 2,
-              maxLines: 4,
-              onChanged: (value) => command = value,
-            ),
-          ],
+            ],
+          ),
         ),
         actions: [
           TextButton(

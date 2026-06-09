@@ -76,32 +76,34 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
           title: Text(strings.aliyunSettings),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                strings.aliyunHint,
-                style: const TextStyle(fontSize: 12),
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                controller: controller,
-                obscureText: isObscured,
-                decoration: InputDecoration(
-                  labelText: 'Aliyun DashScope API Key',
-                  hintText: 'apiKey (e.g. sk-...)',
-                  suffixIcon: IconButton(
-                    icon: Icon(
-                      isObscured ? Icons.visibility : Icons.visibility_off,
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  strings.aliyunHint,
+                  style: const TextStyle(fontSize: 12),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: controller,
+                  obscureText: isObscured,
+                  decoration: InputDecoration(
+                    labelText: 'Aliyun DashScope API Key',
+                    hintText: 'apiKey (e.g. sk-...)',
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        isObscured ? Icons.visibility : Icons.visibility_off,
+                      ),
+                      onPressed: () {
+                        setState(() => isObscured = !isObscured);
+                      },
                     ),
-                    onPressed: () {
-                      setState(() => isObscured = !isObscured);
-                    },
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           actions: [
             TextButton(
