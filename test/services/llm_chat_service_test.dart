@@ -202,6 +202,43 @@ void main() {
       expect(controller.currentLimit, 40);
       expect(controller.checkBeforeToolCall().requiresAudit, isFalse);
     });
+
+    test('auditCount increments and tracks triggers properly', () {
+      final controller = LlmToolBudgetController(baseBudget: 10);
+      expect(controller.auditCount, 0);
+
+      // 第一阶段：用满 baseBudget 并自动扩充至 15
+      for (var i = 0; i < 9; i++) {
+        controller.recordAcceptedToolCall();
+      }
+      expect(controller.checkBeforeToolCall().requiresAudit, isFalse);
+      controller.recordAcceptedToolCall(); // 这一步 usedCalls = 10，自动扩充 limit 到 15
+
+      // 第二阶段：用满 15，并触发第 1 次安全审计
+      for (var i = 0; i < 4; i++) {
+        controller.recordAcceptedToolCall();
+      }
+      expect(controller.checkBeforeToolCall().requiresAudit, isFalse);
+      controller.recordAcceptedToolCall(); // usedCalls = 15
+
+      expect(controller.checkBeforeToolCall().requiresAudit, isTrue);
+      controller.recordAuditTriggered();
+      expect(controller.auditCount, 1);
+
+      controller.approveAuditExtension(); // limit 增加到 20
+      expect(controller.checkBeforeToolCall().requiresAudit, isFalse);
+
+      // 第三阶段：用满 20，并触发第 2 次安全审计
+      for (var i = 0; i < 4; i++) {
+        controller.recordAcceptedToolCall();
+      }
+      expect(controller.checkBeforeToolCall().requiresAudit, isFalse);
+      controller.recordAcceptedToolCall(); // usedCalls = 20
+
+      expect(controller.checkBeforeToolCall().requiresAudit, isTrue);
+      controller.recordAuditTriggered();
+      expect(controller.auditCount, 2);
+    });
   });
 
   group('LlmToolUsageSignals', () {

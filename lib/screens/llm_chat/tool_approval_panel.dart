@@ -29,6 +29,7 @@ class _ToolApprovalPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final en = strings.language == AppLanguage.en;
+    final isBudgetAudit = pending.request.approvalType == 'budget_audit';
     final title = switch (pending.request.approvalType) {
       'remote_delete' => en ? 'Approve remote delete' : '确认远端删除操作',
       'server_metadata_change' =>
@@ -41,11 +42,14 @@ class _ToolApprovalPanel extends StatelessWidget {
       'local_import' => en ? 'Approve local import' : '确认本地导入操作',
       'local_log_change' => en ? 'Approve local log change' : '确认本地日志变更',
       'app_setting_change' => en ? 'Approve app settings change' : '确认应用设置变更',
+      'budget_audit' => strings.budgetAuditTitle,
       _ => en ? 'Approve tool action' : '确认工具操作',
     };
-    final description = en
-        ? 'The model wants to perform this action on ${pending.request.connectionName}. Reason: ${pending.request.reason}'
-        : '模型想在 ${pending.request.connectionName} 上执行该操作。原因：${pending.request.reason}';
+    final description = isBudgetAudit
+        ? strings.budgetAuditReason
+        : (en
+            ? 'The model wants to perform this action on ${pending.request.connectionName}. Reason: ${pending.request.reason}'
+            : '模型想在 ${pending.request.connectionName} 上执行该操作。原因：${pending.request.reason}');
     final reject = en ? 'Reject' : '拒绝';
     final approve = en ? 'Approve' : '同意';
     final maxCommandHeight =
@@ -134,8 +138,10 @@ class _ToolApprovalPanel extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 8),
-          metaRow(targetLabel, pending.request.connectionName),
-          const SizedBox(height: 8),
+          if (!isBudgetAudit) ...[
+            metaRow(targetLabel, pending.request.connectionName),
+            const SizedBox(height: 8),
+          ],
           if (pending.request.targetPath != null) ...[
             metaRow(pathLabel, pending.request.targetPath!),
             const SizedBox(height: 8),
@@ -144,32 +150,33 @@ class _ToolApprovalPanel extends StatelessWidget {
             metaRow(bytesLabel, '${pending.request.byteLength}'),
             const SizedBox(height: 8),
           ],
-          ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: maxCommandHeight),
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: colorScheme.surface.withValues(alpha: 0.78),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: colorScheme.outlineVariant),
-              ),
-              child: Scrollbar(
-                child: SingleChildScrollView(
+          if (!isBudgetAudit)
+            ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: maxCommandHeight),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: colorScheme.surface.withValues(alpha: 0.78),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: colorScheme.outlineVariant),
+                ),
+                child: Scrollbar(
                   child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: SelectableText(
-                      pending.request.command,
-                      style: TextStyle(
-                        fontFamily: 'monospace',
-                        color: colorScheme.onSurface,
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: SelectableText(
+                        pending.request.command,
+                        style: TextStyle(
+                          fontFamily: 'monospace',
+                          color: colorScheme.onSurface,
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
           if (preview != null && preview.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(

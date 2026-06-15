@@ -95,6 +95,11 @@ class _AiStrings {
   String get toolCallBudgetHint => _en
       ? 'Per request, the first budget hit auto-extends by half. Later extensions require an internal safety audit.'
       : '按单次请求计数，首次达到预算会自动增加一半；后续每次扩容都需要内部安全审计。';
+  String get budgetAuditTitle =>
+      _en ? 'Confirm continued tool use' : '确认连续调用工具授权';
+  String get budgetAuditReason => _en
+      ? 'The AI assistant has performed 3 automated safety audits. Do you want to allow it to continue using tools?'
+      : 'AI 助手已自动进行了 3 次安全审计。您是否允许其继续调用工具？';
   String get maxImageSize => _en ? 'Image upload size limit' : '图片上传大小限制';
   String get maxFileSize => _en ? 'File upload size limit' : '文件上传大小限制';
   String imageTooLarge(String name, String limit) => _en

@@ -98,6 +98,7 @@ class LlmToolBudgetController {
   int _usedCalls;
   int _currentLimit;
   bool _initialExtensionGranted;
+  int _auditCount;
 
   LlmToolBudgetController({
     required int baseBudget,
@@ -105,11 +106,17 @@ class LlmToolBudgetController {
         extensionSize = AiToolCallBudget.normalize(baseBudget) ~/ 2,
         _usedCalls = 0,
         _currentLimit = AiToolCallBudget.normalize(baseBudget),
-        _initialExtensionGranted = false;
+        _initialExtensionGranted = false,
+        _auditCount = 0;
 
   int get usedCalls => _usedCalls;
   int get currentLimit => _currentLimit;
   bool get initialExtensionGranted => _initialExtensionGranted;
+  int get auditCount => _auditCount;
+
+  void recordAuditTriggered() {
+    _auditCount += 1;
+  }
   bool get requiresAuditBeforeNextCall =>
       _initialExtensionGranted && _usedCalls >= _currentLimit;
 
@@ -154,6 +161,7 @@ class LlmToolBudgetController {
       'usedCalls': _usedCalls,
       'currentLimit': _currentLimit,
       'initialExtensionGranted': _initialExtensionGranted,
+      'auditCount': _auditCount,
     };
   }
 }

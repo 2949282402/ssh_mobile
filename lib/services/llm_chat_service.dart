@@ -439,6 +439,85 @@ class LlmChatService implements LlmClientAdapter {
         );
         final budgetCheck = toolBudget.checkBeforeToolCall();
         if (budgetCheck.requiresAudit) {
+          bool humanApproved = true;
+          if (toolBudget.auditCount >= 3) {
+            if (requestToolApproval != null) {
+              _emitBudgetTrace(
+                onTrace,
+                title: 'Requesting human approval for safety audit extension',
+                content: _prettyJson({
+                  'message':
+                      'AI tool usage requires additional human confirmation after 3 automated safety audits.',
+                  'budget': toolBudget.toJson(),
+                  'auditCount': toolBudget.auditCount,
+                  'nextTool': call.name,
+                }),
+              );
+
+              final humanDecision = await requestToolApproval(
+                const AiToolApprovalRequest(
+                  toolName: 'budget_audit',
+                  approvalType: 'budget_audit',
+                  connectionId: 'local',
+                  connectionName: 'System',
+                  command: 'Request permission to extend tool usage budget',
+                  reason:
+                      'The assistant has performed 3 automated safety audits. Continue using tools?',
+                ),
+              );
+              humanApproved = humanDecision.approved;
+            } else {
+              humanApproved = false;
+            }
+          }
+
+          if (!humanApproved) {
+            currentToolDefinitions = const [];
+            final auditResult = LlmToolSafetyAuditResult.blocked(
+              summary: 'The user rejected the request to continue tool usage.',
+              issues: ['Human safety approval was denied.'],
+              suspectedLoop: false,
+              goalDrift: false,
+              recommendedNextAction:
+                  'Finish the conversation without more tools.',
+            );
+            _emitBudgetTrace(
+              onTrace,
+              title: 'Tool budget safety audit rejected by user',
+              content: _prettyJson({
+                'message':
+                    'The user rejected the request to continue tool usage.',
+                'budget': toolBudget.toJson(),
+                'auditCount': toolBudget.auditCount,
+              }),
+            );
+            for (var blockedIndex = toolIndex;
+                blockedIndex < response.toolCalls.length;
+                blockedIndex++) {
+              final blockedCall = response.toolCalls[blockedIndex];
+              final blockedResult = _toolBudgetBlockedToolResult(
+                toolName: blockedCall.name,
+                toolBudget: toolBudget,
+                auditResult: auditResult,
+              );
+              _emitToolResultTrace(onTrace, blockedCall.name, blockedResult);
+              workingMessages.add({
+                'role': 'tool',
+                'tool_call_id': blockedCall.id,
+                'content': blockedResult,
+              });
+            }
+            workingMessages.add({
+              'role': 'system',
+              'content': _toolBudgetRejectedFollowUpPrompt(
+                auditResult: auditResult,
+                toolBudget: toolBudget,
+              ),
+            });
+            break;
+          }
+
+          toolBudget.recordAuditTriggered();
           _emitBudgetTrace(
             onTrace,
             title: 'Tool budget safety audit running',
