@@ -770,10 +770,8 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     _backgroundService.on('sshStateChanged').listen((data) {
       if (data == null) return;
       final String sessionId = data['sessionId'];
-      final String connectionId = data['connectionId'];
       final String stateName = data['state'];
       final String? error = data['errorMessage'];
-      final String? connectionName = data['connectionName'];
 
       final state = SshConnectionState.values.firstWhere(
         (e) => e.name == stateName,

@@ -294,7 +294,6 @@ class _CollapsedMobileMonitorBar extends StatelessWidget {
   final VoidCallback onExpand;
 
   const _CollapsedMobileMonitorBar({
-    super.key,
     required this.connections,
     required this.sampling,
     required this.strings,
@@ -580,71 +579,6 @@ class _MonitorResponsiveEmptyState extends StatelessWidget {
           ),
         );
       },
-    );
-  }
-}
-
-class _MonitorEmptyState extends StatelessWidget {
-  final AppStrings strings;
-  final String? message;
-
-  const _MonitorEmptyState({
-    required this.strings,
-    this.message,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 72,
-              height: 72,
-              decoration: BoxDecoration(
-                color: colorScheme.primary.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: colorScheme.primary.withValues(alpha: 0.18),
-                ),
-              ),
-              child: Icon(
-                Icons.monitor_heart_outlined,
-                color: colorScheme.primary,
-                size: 34,
-              ),
-            ),
-            const SizedBox(height: 14),
-            Text(
-              _monitorText(strings, 'Select servers to monitor', '选择要监控的服务器'),
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: colorScheme.onSurface,
-                fontWeight: FontWeight.w800,
-                fontSize: 16,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              message ??
-                  _monitorText(
-                    strings,
-                    'Select one or more servers, then start monitoring. Sampling stays silent until started.',
-                    '可多选服务器，点击开始监控后才采样；未开始前保持静默。',
-                  ),
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: colorScheme.onSurfaceVariant,
-                fontSize: 13,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

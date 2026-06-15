@@ -15,7 +15,6 @@ import '../services/storage_service.dart';
 import '../utils/responsive.dart';
 import '../widgets/overflow_scroll_text.dart';
 
-part 'performance_monitor/monitor_strings.dart';
 part 'performance_monitor/monitor_models.dart';
 part 'performance_monitor/server_navigation.dart';
 part 'performance_monitor/performance_charts.dart';

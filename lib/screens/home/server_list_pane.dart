@@ -512,6 +512,7 @@ Widget _buildOverviewHeader(
   final windowCount = headerSnapshot.windowCount;
 
   return Padding(
+    padding: const EdgeInsets.only(bottom: 12),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -611,7 +612,6 @@ Widget _buildOverviewHeader(
         ),
       ],
     ),
-    padding: const EdgeInsets.only(bottom: 12),
   );
 }
 
