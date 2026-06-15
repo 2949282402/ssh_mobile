@@ -565,9 +565,12 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
       details: 'sessionId=${session.id} host=${config.host}',
     );
 
-    final client = await _clientFactory.connectClient(config, credentials: credentials);
+    final client =
+        await _clientFactory.connectClient(config, credentials: credentials);
     final isTmux = launchMode == TerminalLaunchMode.tmux;
-    final termType = config.serverPlatform == ServerPlatform.windows ? 'ms-terminal' : 'xterm-256color';
+    final termType = config.serverPlatform == ServerPlatform.windows
+        ? 'ms-terminal'
+        : 'xterm-256color';
 
     SSHSession shell;
     if (isTmux) {
@@ -703,12 +706,14 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
   }
 
   void _startLocalKeepAlive(_LocalSshRuntime runtime) {
-    runtime.keepAliveTimer = Timer.periodic(const Duration(seconds: 15), (timer) async {
+    runtime.keepAliveTimer =
+        Timer.periodic(const Duration(seconds: 15), (timer) async {
       if (runtime.pingInFlight) {
         runtime.keepAliveFailures++;
         AppLogService.instance.warning(
           'Keep-alive timeout',
-          details: 'sessionId=${runtime.sessionId} failures=${runtime.keepAliveFailures}',
+          details:
+              'sessionId=${runtime.sessionId} failures=${runtime.keepAliveFailures}',
         );
         if (runtime.keepAliveFailures >= 3) {
           timer.cancel();
@@ -728,7 +733,8 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
         AppLogService.instance.error(
           'Keep-alive ping failed',
           error: e,
-          details: 'sessionId=${runtime.sessionId} failures=${runtime.keepAliveFailures}',
+          details:
+              'sessionId=${runtime.sessionId} failures=${runtime.keepAliveFailures}',
         );
         if (runtime.keepAliveFailures >= 3) {
           timer.cancel();
@@ -738,7 +744,8 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     });
   }
 
-  Future<void> _closeLocalSession(String sessionId, {required bool destroyTmux}) async {
+  Future<void> _closeLocalSession(String sessionId,
+      {required bool destroyTmux}) async {
     final runtime = _localRuntimes.remove(sessionId);
     if (runtime == null) return;
 
@@ -904,7 +911,8 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     }
   }
 
-  String _uniqueTmuxSessionName(String baseName, {required String exceptSessionId}) {
+  String _uniqueTmuxSessionName(String baseName,
+      {required String exceptSessionId}) {
     bool exists(String name) {
       return _sessions.values.any((session) =>
           session.id != exceptSessionId &&

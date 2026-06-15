@@ -453,19 +453,19 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                     icon: const Icon(Icons.play_arrow_rounded),
                     label: Text(strings.resume),
                     onPressed: _selectedConnectionId == null
-                      ? null
-                      : () => service.resumeExecution(_selectedConnectionId!),
+                        ? null
+                        : () => service.resumeExecution(_selectedConnectionId!),
                   );
                 } else {
                   return FilledButton.icon(
                     icon: const Icon(Icons.play_arrow_rounded),
                     label: Text(strings.start),
                     onPressed: _selectedConnectionId == null
-                      ? null
-                      : () {
-                          service.startExecution(
-                              activePlaybook.id, _selectedConnectionId!);
-                        },
+                        ? null
+                        : () {
+                            service.startExecution(
+                                activePlaybook.id, _selectedConnectionId!);
+                          },
                   );
                 }
               }(),
@@ -479,8 +479,8 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                 icon: const Icon(Icons.skip_next_rounded),
                 label: Text(strings.skip),
                 onPressed: _selectedConnectionId == null
-                  ? null
-                  : () => service.skipCurrentStep(_selectedConnectionId!),
+                    ? null
+                    : () => service.skipCurrentStep(_selectedConnectionId!),
               ),
               const SizedBox(width: 8),
             ],

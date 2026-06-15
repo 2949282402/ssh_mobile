@@ -1,11 +1,70 @@
 part of '../ai_tool_service.dart';
 
-extension _MonitorTools on AiToolService {
-  Future<String> _monitorGetState(Map<String, dynamic> arguments) async {
+class MonitorToolsProvider implements AiToolProvider {
+  final PerformanceMonitorToolAdapter performanceMonitorToolService;
+  final StorageService storageService;
+
+  const MonitorToolsProvider({
+    required this.performanceMonitorToolService,
+    required this.storageService,
+  });
+
+  @override
+  Future<List<AiTool>> getTools(AiToolService service) async {
+    return _getMonitorTools(service);
+  }
+
+  @override
+  Future<String?> execute(
+    AiToolService service,
+    String name,
+    Map<String, dynamic> arguments, {
+    bool approvedWrite = false,
+  }) async {
+    switch (name) {
+      case 'monitor_get_state':
+        return _monitorGetState(service, arguments);
+      case 'monitor_set_selected_servers':
+        return _monitorSetSelectedServers(service, arguments,
+            approvedWrite: approvedWrite);
+      case 'monitor_clear_selection':
+        return _monitorClearSelection(service, arguments,
+            approvedWrite: approvedWrite);
+      case 'monitor_start':
+        return _monitorStart(service, arguments, approvedWrite: approvedWrite);
+      case 'monitor_stop':
+        return _monitorStop(service, arguments, approvedWrite: approvedWrite);
+      case 'monitor_stop_for_connection':
+        return _monitorStopForConnection(service, arguments,
+            approvedWrite: approvedWrite);
+      case 'monitor_set_interval':
+        return _monitorSetInterval(service, arguments,
+            approvedWrite: approvedWrite);
+      case 'monitor_set_history_window':
+        return _monitorSetHistoryWindow(service, arguments,
+            approvedWrite: approvedWrite);
+      case 'monitor_get_health':
+        return _monitorGetHealth(service, arguments);
+      case 'monitor_get_samples':
+        return _monitorGetSamples(service, arguments);
+      case 'monitor_get_alerts':
+        return _monitorGetAlerts(service, arguments);
+      case 'monitor_get_ports':
+        return _monitorGetPorts(service, arguments);
+      case 'monitor_get_applications':
+        return _monitorGetApplications(service, arguments);
+      default:
+        return null;
+    }
+  }
+
+  Future<String> _monitorGetState(
+      AiToolService service, Map<String, dynamic> arguments) async {
     return jsonEncode(performanceMonitorToolService.getState());
   }
 
   Future<String> _monitorSetSelectedServers(
+    AiToolService service,
     Map<String, dynamic> arguments, {
     required bool approvedWrite,
   }) async {
@@ -14,7 +73,7 @@ extension _MonitorTools on AiToolService {
         'error': 'Changing monitor selection requires user approval.',
       });
     }
-    final ids = _stringList(arguments['connectionIds']);
+    final ids = service._stringList(arguments['connectionIds']);
     for (final id in ids) {
       if (storageService.getConnection(id) == null) {
         throw StateError('Unknown connection id: $id');
@@ -24,6 +83,7 @@ extension _MonitorTools on AiToolService {
   }
 
   Future<String> _monitorClearSelection(
+    AiToolService service,
     Map<String, dynamic> arguments, {
     required bool approvedWrite,
   }) async {
@@ -36,6 +96,7 @@ extension _MonitorTools on AiToolService {
   }
 
   Future<String> _monitorStart(
+    AiToolService service,
     Map<String, dynamic> arguments, {
     required bool approvedWrite,
   }) async {
@@ -48,6 +109,7 @@ extension _MonitorTools on AiToolService {
   }
 
   Future<String> _monitorStop(
+    AiToolService service,
     Map<String, dynamic> arguments, {
     required bool approvedWrite,
   }) async {
@@ -60,6 +122,7 @@ extension _MonitorTools on AiToolService {
   }
 
   Future<String> _monitorStopForConnection(
+    AiToolService service,
     Map<String, dynamic> arguments, {
     required bool approvedWrite,
   }) async {
@@ -70,12 +133,13 @@ extension _MonitorTools on AiToolService {
     }
     return jsonEncode(
       performanceMonitorToolService.stopForConnection(
-        _arg(arguments, 'connectionId'),
+        service._arg(arguments, 'connectionId'),
       ),
     );
   }
 
   Future<String> _monitorSetInterval(
+    AiToolService service,
     Map<String, dynamic> arguments, {
     required bool approvedWrite,
   }) async {
@@ -84,13 +148,14 @@ extension _MonitorTools on AiToolService {
         'error': 'Changing monitor sampling settings requires user approval.',
       });
     }
-    final seconds = _argInt(arguments, 'seconds').clamp(2, 300);
+    final seconds = service._argInt(arguments, 'seconds').clamp(2, 300);
     return jsonEncode(
       performanceMonitorToolService.setInterval(Duration(seconds: seconds)),
     );
   }
 
   Future<String> _monitorSetHistoryWindow(
+    AiToolService service,
     Map<String, dynamic> arguments, {
     required bool approvedWrite,
   }) async {
@@ -99,85 +164,67 @@ extension _MonitorTools on AiToolService {
         'error': 'Changing monitor history settings requires user approval.',
       });
     }
-    final seconds = _argInt(arguments, 'seconds').clamp(30, 600);
+    final seconds = service._argInt(arguments, 'seconds').clamp(30, 600);
     return jsonEncode(
       performanceMonitorToolService
           .setHistoryWindow(Duration(seconds: seconds)),
     );
   }
 
-  Future<String> _monitorGetHealth(Map<String, dynamic> arguments) async {
+  Future<String> _monitorGetHealth(
+      AiToolService service, Map<String, dynamic> arguments) async {
     return jsonEncode(
       performanceMonitorToolService.getHealth(
-        connectionIds: _optionalStringList(arguments, 'connectionIds'),
+        connectionIds: service._optionalStringList(arguments, 'connectionIds'),
       ),
     );
   }
 
-  Future<String> _monitorGetSamples(Map<String, dynamic> arguments) async {
+  Future<String> _monitorGetSamples(
+      AiToolService service, Map<String, dynamic> arguments) async {
     return jsonEncode(
       performanceMonitorToolService.getSamples(
-        _arg(arguments, 'connectionId'),
-        visibleOnly: _optionalBool(arguments, 'visibleOnly') ?? true,
-        limit: _optionalInt(arguments, 'limit') ?? 100,
+        service._arg(arguments, 'connectionId'),
+        visibleOnly: service._optionalBool(arguments, 'visibleOnly') ?? true,
+        limit: service._optionalInt(arguments, 'limit') ?? 100,
       ),
     );
   }
 
-  Future<String> _monitorGetAlerts(Map<String, dynamic> arguments) async {
+  Future<String> _monitorGetAlerts(
+      AiToolService service, Map<String, dynamic> arguments) async {
     return jsonEncode(
       performanceMonitorToolService.getAlerts(
-        limit: _optionalInt(arguments, 'limit') ?? 50,
+        limit: service._optionalInt(arguments, 'limit') ?? 50,
       ),
     );
   }
 
-  Future<String> _monitorGetPorts(Map<String, dynamic> arguments) async {
+  Future<String> _monitorGetPorts(
+      AiToolService service, Map<String, dynamic> arguments) async {
     return jsonEncode(
       await performanceMonitorToolService
-          .getPorts(_arg(arguments, 'connectionId')),
+          .getPorts(service._arg(arguments, 'connectionId')),
     );
   }
 
-  Future<String> _monitorGetApplications(Map<String, dynamic> arguments) async {
+  Future<String> _monitorGetApplications(
+      AiToolService service, Map<String, dynamic> arguments) async {
     return jsonEncode(
       await performanceMonitorToolService.getApplications(
-        _arg(arguments, 'connectionId'),
+        service._arg(arguments, 'connectionId'),
       ),
     );
   }
 
-  List<AiTool> _getMonitorTools() {
+  List<AiTool> _getMonitorTools(AiToolService service) {
     return [
-      AiTool(
-        name: 'get_server_status',
-        description:
-            'Get read-only server status for diagnostics. Modes: performance, ports, applications, or all.',
-        properties: {
-          'connectionId': _string('Server connection id.'),
-          'mode': _string(
-            'Status mode: performance, ports, applications, or all. Defaults to all.',
-          ),
-        },
-        required: const ['connectionId'],
-        handler: _serverStatus,
-      ),
-      AiTool(
-        name: 'generate_ops_report',
-        description:
-            'Collect read-only server status and return an operations report payload with health score, risks, ports, applications, and suggested next checks.',
-        properties: {
-          'connectionId': _string('Server connection id.'),
-        },
-        required: const ['connectionId'],
-        handler: _opsReport,
-      ),
       AiTool(
         name: 'monitor_get_state',
         description:
             'Return the app-scoped performance monitor state for selected servers, running status, effective intervals, alerts, and health snapshots.',
         properties: const {},
-        handler: _monitorGetState,
+        handler: (args) => _monitorGetState(service, args),
       ),
       AiTool(
         name: 'monitor_set_selected_servers',
@@ -191,6 +238,7 @@ extension _MonitorTools on AiToolService {
         },
         required: const ['connectionIds'],
         handler: (arguments) => _monitorSetSelectedServers(
+          service,
           arguments,
           approvedWrite: false,
         ),
@@ -201,21 +249,23 @@ extension _MonitorTools on AiToolService {
             'Clear the performance monitor selected server set. This changes app monitor state and requires user approval.',
         properties: const {},
         handler: (arguments) =>
-            _monitorClearSelection(arguments, approvedWrite: false),
+            _monitorClearSelection(service, arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'monitor_start',
         description:
             'Start the app-scoped performance monitor for the currently selected servers. This changes app monitor state and requires user approval.',
         properties: const {},
-        handler: (arguments) => _monitorStart(arguments, approvedWrite: false),
+        handler: (arguments) =>
+            _monitorStart(service, arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'monitor_stop',
         description:
             'Stop the app-scoped performance monitor. This changes app monitor state and requires user approval.',
         properties: const {},
-        handler: (arguments) => _monitorStop(arguments, approvedWrite: false),
+        handler: (arguments) =>
+            _monitorStop(service, arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'monitor_stop_for_connection',
@@ -226,6 +276,7 @@ extension _MonitorTools on AiToolService {
         },
         required: const ['connectionId'],
         handler: (arguments) => _monitorStopForConnection(
+          service,
           arguments,
           approvedWrite: false,
         ),
@@ -239,7 +290,7 @@ extension _MonitorTools on AiToolService {
         },
         required: const ['seconds'],
         handler: (arguments) =>
-            _monitorSetInterval(arguments, approvedWrite: false),
+            _monitorSetInterval(service, arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'monitor_set_history_window',
@@ -250,7 +301,7 @@ extension _MonitorTools on AiToolService {
         },
         required: const ['seconds'],
         handler: (arguments) =>
-            _monitorSetHistoryWindow(arguments, approvedWrite: false),
+            _monitorSetHistoryWindow(service, arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'monitor_get_health',
@@ -261,7 +312,7 @@ extension _MonitorTools on AiToolService {
             'Optional subset of server connection ids. Omit to return all monitor health snapshots.',
           ),
         },
-        handler: _monitorGetHealth,
+        handler: (args) => _monitorGetHealth(service, args),
       ),
       AiTool(
         name: 'monitor_get_samples',
@@ -280,7 +331,7 @@ extension _MonitorTools on AiToolService {
           ),
         },
         required: const ['connectionId'],
-        handler: _monitorGetSamples,
+        handler: (args) => _monitorGetSamples(service, args),
       ),
       AiTool(
         name: 'monitor_get_alerts',
@@ -294,7 +345,7 @@ extension _MonitorTools on AiToolService {
             defaultValue: 50,
           ),
         },
-        handler: _monitorGetAlerts,
+        handler: (args) => _monitorGetAlerts(service, args),
       ),
       AiTool(
         name: 'monitor_get_ports',
@@ -304,7 +355,7 @@ extension _MonitorTools on AiToolService {
           'connectionId': _string('Server connection id.'),
         },
         required: const ['connectionId'],
-        handler: _monitorGetPorts,
+        handler: (args) => _monitorGetPorts(service, args),
       ),
       AiTool(
         name: 'monitor_get_applications',
@@ -314,7 +365,7 @@ extension _MonitorTools on AiToolService {
           'connectionId': _string('Server connection id.'),
         },
         required: const ['connectionId'],
-        handler: _monitorGetApplications,
+        handler: (args) => _monitorGetApplications(service, args),
       ),
     ];
   }

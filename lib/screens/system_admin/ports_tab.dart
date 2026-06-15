@@ -21,7 +21,8 @@ class _PortsTab extends StatefulWidget {
   State<_PortsTab> createState() => _PortsTabState();
 }
 
-class _PortsTabState extends State<_PortsTab> with AutomaticKeepAliveClientMixin {
+class _PortsTabState extends State<_PortsTab>
+    with AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
 

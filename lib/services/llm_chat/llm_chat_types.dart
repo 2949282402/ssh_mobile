@@ -117,6 +117,7 @@ class LlmToolBudgetController {
   void recordAuditTriggered() {
     _auditCount += 1;
   }
+
   bool get requiresAuditBeforeNextCall =>
       _initialExtensionGranted && _usedCalls >= _currentLimit;
 

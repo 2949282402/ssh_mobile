@@ -491,14 +491,16 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   Future<List<SftpEntry>> listDirectoryForConnection(
     String connectionId,
     String path,
-  ) => _listDirectoryForConnectionImpl(connectionId, path);
+  ) =>
+      _listDirectoryForConnectionImpl(connectionId, path);
 
   @override
   Future<String> readTextPathForConnection({
     required String connectionId,
     required String path,
     int maxBytes = maxTextPreviewBytes,
-  }) => _readTextPathForConnectionImpl(
+  }) =>
+      _readTextPathForConnectionImpl(
         connectionId: connectionId,
         path: path,
         maxBytes: maxBytes,
@@ -509,7 +511,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     required String connectionId,
     required String path,
     int maxBytes = maxDownloadBytes,
-  }) => _downloadPathForConnectionImpl(
+  }) =>
+      _downloadPathForConnectionImpl(
         connectionId: connectionId,
         path: path,
         maxBytes: maxBytes,
@@ -521,7 +524,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     required String path,
     required String text,
     int maxBytes = maxTextEditBytes,
-  }) => _writeTextPathForConnectionImpl(
+  }) =>
+      _writeTextPathForConnectionImpl(
         connectionId: connectionId,
         path: path,
         text: text,
@@ -532,7 +536,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   Future<SftpPathInfo> statPathForConnection({
     required String connectionId,
     required String path,
-  }) => _statPathForConnectionImpl(
+  }) =>
+      _statPathForConnectionImpl(
         connectionId: connectionId,
         path: path,
       );
@@ -543,7 +548,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     required String path,
     required Uint8List bytes,
     int maxBytes = maxUploadBytes,
-  }) => _uploadBytesPathForConnectionImpl(
+  }) =>
+      _uploadBytesPathForConnectionImpl(
         connectionId: connectionId,
         path: path,
         bytes: bytes,
@@ -554,7 +560,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   Future<void> createDirectoryPathForConnection({
     required String connectionId,
     required String path,
-  }) => _createDirectoryPathForConnectionImpl(
+  }) =>
+      _createDirectoryPathForConnectionImpl(
         connectionId: connectionId,
         path: path,
       );
@@ -564,7 +571,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     required String connectionId,
     required String path,
     required String newPath,
-  }) => _renamePathForConnectionImpl(
+  }) =>
+      _renamePathForConnectionImpl(
         connectionId: connectionId,
         path: path,
         newPath: newPath,
@@ -574,7 +582,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   Future<void> deletePathForConnection({
     required String connectionId,
     required String path,
-  }) => _deletePathForConnectionImpl(
+  }) =>
+      _deletePathForConnectionImpl(
         connectionId: connectionId,
         path: path,
       );

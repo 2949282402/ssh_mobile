@@ -45,7 +45,10 @@ class AiToolService implements AiToolExecutor {
   final PlaybookService? playbookService;
   final String? clientWebViewSessionId;
 
+  final List<AiToolProvider> providers;
+
   AiToolService({
+    List<AiToolProvider>? providers,
     required this.storageService,
     required this.sshService,
     required this.sftpService,
@@ -75,19 +78,89 @@ class AiToolService implements AiToolExecutor {
               storageService: storageService,
               sshService: sshService,
             ),
-        secretPolicy = secretPolicy ?? const ToolSecretPolicy();
+        secretPolicy = secretPolicy ?? const ToolSecretPolicy(),
+        providers = providers ??
+            _buildDefaultProviders(
+              storageService: storageService,
+              sshService: sshService,
+              sftpService: sftpService,
+              clientSystemToolService:
+                  clientSystemToolService ?? ClientSystemToolService.instance,
+              clientWebViewService:
+                  clientWebViewService ?? ClientWebViewService.instance,
+              serverCatalogService: serverCatalogService ??
+                  ServerCatalogService(
+                    storageService: storageService,
+                    sshService: sshService,
+                    sftpService: sftpService,
+                  ),
+              performanceMonitorToolService: performanceMonitorToolService ??
+                  const _UnavailablePerformanceMonitorToolService(),
+              serverDiagnosticsService: serverDiagnosticsService ??
+                  ServerDiagnosticsService(
+                    storageService: storageService,
+                    sshService: sshService,
+                  ),
+              secretPolicy: secretPolicy ?? const ToolSecretPolicy(),
+              appSettings: appSettings,
+              playbookService: playbookService,
+              clientWebViewSessionId: clientWebViewSessionId,
+            );
+
+  static List<AiToolProvider> _buildDefaultProviders({
+    required StorageService storageService,
+    required SshClientAdapter sshService,
+    required SftpClientAdapter sftpService,
+    required ClientSystemToolAdapter clientSystemToolService,
+    required ClientWebViewAdapter clientWebViewService,
+    required ServerCatalogAdapter serverCatalogService,
+    required PerformanceMonitorToolAdapter performanceMonitorToolService,
+    required ServerDiagnosticsAdapter serverDiagnosticsService,
+    required ToolSecretPolicy secretPolicy,
+    AppSettings? appSettings,
+    PlaybookService? playbookService,
+    String? clientWebViewSessionId,
+  }) {
+    return [
+      ClientToolsProvider(
+        storageService: storageService,
+        clientSystemToolService: clientSystemToolService,
+        clientWebViewService: clientWebViewService,
+        clientWebViewSessionId: clientWebViewSessionId,
+        secretPolicy: secretPolicy,
+      ),
+      ServerToolsProvider(
+        serverCatalogService: serverCatalogService,
+        serverDiagnosticsService: serverDiagnosticsService,
+      ),
+      SshToolsProvider(
+        sshService: sshService,
+        storageService: storageService,
+        secretPolicy: secretPolicy,
+      ),
+      SftpToolsProvider(
+        sftpService: sftpService,
+        clientSystemToolService: clientSystemToolService,
+      ),
+      MonitorToolsProvider(
+        performanceMonitorToolService: performanceMonitorToolService,
+        storageService: storageService,
+      ),
+      PlaybookToolsProvider(
+        storageService: storageService,
+        appSettings: appSettings,
+        playbookService: playbookService,
+      ),
+    ];
+  }
 
   @override
   Future<List<AiTool>> tools() async {
-    final searchSettings = await storageService.loadAiConnectionSettings();
-    return [
-      ..._getClientTools(searchSettings),
-      ..._getServerTools(),
-      ..._getSshTools(),
-      ..._getSftpTools(),
-      ..._getMonitorTools(),
-      ..._getPlaybookTools(),
-    ];
+    final list = <AiTool>[];
+    for (final provider in providers) {
+      list.addAll(await provider.getTools(this));
+    }
+    return list;
   }
 
   @override
@@ -493,152 +566,67 @@ class AiToolService implements AiToolExecutor {
     bool approvedWrite = false,
   }) async {
     final availableTools = await tools();
-    for (final tool in availableTools) {
-      if (tool.name != name) continue;
-      final startedAt = DateTime.now();
+    final hasTool = availableTools.any((t) => t.name == name);
+    if (!hasTool) {
+      AppLogService.instance
+          .warning('Unknown AI tool requested', details: name);
+      return jsonEncode({'error': 'Unknown tool: $name'});
+    }
+
+    final startedAt = DateTime.now();
+    AppLogService.instance.info(
+      'AI tool started',
+      details:
+          'tool=$name args=${secretPolicy.safeJson(arguments, truncateLongStrings: true)}',
+    );
+
+    try {
+      String? rawResult;
+
+      // 尝试路由给对应的 Provider 执行
+      for (final provider in providers) {
+        final res = await provider.execute(
+          this,
+          name,
+          arguments,
+          approvedWrite: approvedWrite,
+        );
+        if (res != null) {
+          rawResult = res;
+          break;
+        }
+      }
+
+      // 兜底直接执行原本 AiTool 中挂载的 handler
+      if (rawResult == null) {
+        for (final tool in availableTools) {
+          if (tool.name == name) {
+            rawResult = await tool.handler(arguments);
+            break;
+          }
+        }
+      }
+
+      rawResult ??=
+          jsonEncode({'error': 'Execution handler missing for tool: $name'});
+
+      final result = secretPolicy.redactJsonText(rawResult);
       AppLogService.instance.info(
-        'AI tool started',
+        'AI tool completed',
+        details:
+            'tool=$name elapsedMs=${DateTime.now().difference(startedAt).inMilliseconds} resultChars=${result.length}',
+      );
+      return result;
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'AI tool failed',
+        error: e,
+        stackTrace: stackTrace,
         details:
             'tool=$name args=${secretPolicy.safeJson(arguments, truncateLongStrings: true)}',
       );
-      try {
-        final rawResult = switch (name) {
-          'run_command' => await _runCommand(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'ssh_open_session' => await _sshOpenSession(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'ssh_close_session' => await _sshCloseSession(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'ssh_close_server_sessions' => await _sshCloseServerSessions(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'ssh_restore_tmux_sessions' => await _sshRestoreTmuxSessions(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'ssh_delete_terminal_history_record' =>
-            await _sshDeleteTerminalHistoryRecord(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'client_delete_log_entries' => await _clientDeleteLogEntries(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'client_clear_logs' => await _clientClearLogs(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'client_import_app_backup' => await _clientImportAppBackup(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'update_server_metadata' => await _updateServerMetadata(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'delete_server' => await _deleteServer(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'reorder_servers' => await _reorderServers(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'sftp_write_text' => await _sftpWriteText(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'sftp_upload_local_file' => await _sftpUploadLocalFile(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'sftp_create_directory' => await _sftpCreateDirectory(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'sftp_rename_entry' => await _sftpRenameEntry(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'sftp_delete_entry' => await _sftpDeleteEntry(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'monitor_set_selected_servers' => await _monitorSetSelectedServers(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'monitor_clear_selection' => await _monitorClearSelection(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'monitor_start' => await _monitorStart(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'monitor_stop' => await _monitorStop(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'monitor_stop_for_connection' => await _monitorStopForConnection(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'monitor_set_interval' => await _monitorSetInterval(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'monitor_set_history_window' => await _monitorSetHistoryWindow(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'client_save_experience_skill' =>
-            await _clientSaveExperienceSkill(arguments),
-          'app_update_operational_settings' =>
-            await _appUpdateOperationalSettings(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'list_playbooks' => await _listPlaybooksTool(arguments),
-          'create_playbook' => await _createPlaybookTool(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'run_playbook' => await _runPlaybookTool(
-              arguments,
-              approvedWrite: approvedWrite,
-            ),
-          'get_playbook_status' => await _getPlaybookStatusTool(arguments),
-          _ => await tool.handler(arguments),
-        };
-        final result = secretPolicy.redactJsonText(rawResult);
-        AppLogService.instance.info(
-          'AI tool completed',
-          details:
-              'tool=$name elapsedMs=${DateTime.now().difference(startedAt).inMilliseconds} resultChars=${result.length}',
-        );
-        return result;
-      } catch (e, stackTrace) {
-        AppLogService.instance.error(
-          'AI tool failed',
-          error: e,
-          stackTrace: stackTrace,
-          details:
-              'tool=$name args=${secretPolicy.safeJson(arguments, truncateLongStrings: true)}',
-        );
-        rethrow;
-      }
+      rethrow;
     }
-    AppLogService.instance.warning('Unknown AI tool requested', details: name);
-    return jsonEncode({'error': 'Unknown tool: $name'});
   }
 
   static Map<String, dynamic> _string(String description) {

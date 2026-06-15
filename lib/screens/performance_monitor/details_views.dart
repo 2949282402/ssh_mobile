@@ -138,7 +138,8 @@ class _ServerSnapshotTab<T> extends StatelessWidget {
                   }
 
                   final colorScheme = Theme.of(context).colorScheme;
-                  final borderSide = BorderSide(color: colorScheme.outlineVariant);
+                  final borderSide =
+                      BorderSide(color: colorScheme.outlineVariant);
 
                   return ListView.builder(
                     cacheExtent: 900,
@@ -153,10 +154,14 @@ class _ServerSnapshotTab<T> extends StatelessWidget {
                       final decoration = BoxDecoration(
                         color: colorScheme.surface,
                         borderRadius: BorderRadius.only(
-                          topLeft: isFirst ? const Radius.circular(8) : Radius.zero,
-                          topRight: isFirst ? const Radius.circular(8) : Radius.zero,
-                          bottomLeft: isLast ? const Radius.circular(8) : Radius.zero,
-                          bottomRight: isLast ? const Radius.circular(8) : Radius.zero,
+                          topLeft:
+                              isFirst ? const Radius.circular(8) : Radius.zero,
+                          topRight:
+                              isFirst ? const Radius.circular(8) : Radius.zero,
+                          bottomLeft:
+                              isLast ? const Radius.circular(8) : Radius.zero,
+                          bottomRight:
+                              isLast ? const Radius.circular(8) : Radius.zero,
                         ),
                         border: Border(
                           left: borderSide,
@@ -181,7 +186,8 @@ class _ServerSnapshotTab<T> extends StatelessWidget {
                           padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
                           child: Text(
                             flatItem.connection.name,
-                            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w800, fontSize: 14),
                           ),
                         );
                       }
@@ -194,7 +200,9 @@ class _ServerSnapshotTab<T> extends StatelessWidget {
                           padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
                           child: Text(
                             flatItem.emptyText!,
-                            style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
+                            style: TextStyle(
+                                color: colorScheme.onSurfaceVariant,
+                                fontSize: 12),
                           ),
                         );
                       }

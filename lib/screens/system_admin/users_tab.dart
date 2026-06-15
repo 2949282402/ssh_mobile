@@ -21,7 +21,8 @@ class _UsersTab extends StatefulWidget {
   State<_UsersTab> createState() => _UsersTabState();
 }
 
-class _UsersTabState extends State<_UsersTab> with AutomaticKeepAliveClientMixin {
+class _UsersTabState extends State<_UsersTab>
+    with AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
 
@@ -40,13 +41,17 @@ class _UsersTabState extends State<_UsersTab> with AutomaticKeepAliveClientMixin
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                widget.strings.switchToChinese == '中文' ? 'Local Accounts' : '本地账号列表',
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                widget.strings.switchToChinese == '中文'
+                    ? 'Local Accounts'
+                    : '本地账号列表',
+                style:
+                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
               ),
               FilledButton.icon(
                 icon: const Icon(Icons.person_add),
                 label: Text(widget.strings.createUser),
-                onPressed: () => _openCreateUserDialog(widget.strings, widget.connectionId),
+                onPressed: () =>
+                    _openCreateUserDialog(widget.strings, widget.connectionId),
               ),
             ],
           ),
@@ -83,7 +88,8 @@ class _UsersTabState extends State<_UsersTab> with AutomaticKeepAliveClientMixin
                               Text('(${account.uid}/${account.gid})',
                                   style: TextStyle(
                                       fontSize: 12,
-                                      color: widget.colorScheme.onSurfaceVariant)),
+                                      color:
+                                          widget.colorScheme.onSurfaceVariant)),
                               const Spacer(),
                               if (account.isLocked)
                                 Container(
@@ -127,8 +133,8 @@ class _UsersTabState extends State<_UsersTab> with AutomaticKeepAliveClientMixin
                             maxLines: 1,
                             style: TextStyle(
                               fontSize: 12,
-                              color:
-                                  widget.colorScheme.onSurface.withValues(alpha: 0.58),
+                              color: widget.colorScheme.onSurface
+                                  .withValues(alpha: 0.58),
                             ),
                           ),
                           children: [

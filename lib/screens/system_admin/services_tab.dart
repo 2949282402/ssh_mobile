@@ -21,8 +21,10 @@ class _ServicesTab extends StatefulWidget {
   State<_ServicesTab> createState() => _ServicesTabState();
 }
 
-class _ServicesTabState extends State<_ServicesTab> with AutomaticKeepAliveClientMixin {
-  final TextEditingController _serviceSearchController = TextEditingController();
+class _ServicesTabState extends State<_ServicesTab>
+    with AutomaticKeepAliveClientMixin {
+  final TextEditingController _serviceSearchController =
+      TextEditingController();
   List<SystemdService> _filteredServices = [];
 
   @override
@@ -107,10 +109,13 @@ class _ServicesTabState extends State<_ServicesTab> with AutomaticKeepAliveClien
                       return Card(
                         child: ListTile(
                           leading: Icon(
-                            service.isRunning ? Icons.play_circle : Icons.stop_circle,
+                            service.isRunning
+                                ? Icons.play_circle
+                                : Icons.stop_circle,
                             color: service.isRunning
                                 ? widget.colorScheme.secondary
-                                : widget.colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                                : widget.colorScheme.onSurfaceVariant
+                                    .withValues(alpha: 0.5),
                           ),
                           title: OverflowScrollText(
                             service.name,
@@ -124,17 +129,20 @@ class _ServicesTabState extends State<_ServicesTab> with AutomaticKeepAliveClien
                             maxLines: 1,
                             style: TextStyle(
                               fontSize: 12,
-                              color: widget.colorScheme.onSurface.withValues(alpha: 0.58),
+                              color: widget.colorScheme.onSurface
+                                  .withValues(alpha: 0.58),
                             ),
                           ),
                           trailing: PopupMenuButton<String>(
-                            onSelected: (action) =>
-                                _manageService(service.name, action, widget.connectionId),
+                            onSelected: (action) => _manageService(
+                                service.name, action, widget.connectionId),
                             itemBuilder: (context) => [
                               PopupMenuItem(
-                                  value: 'start', child: Text(widget.strings.serviceStart)),
+                                  value: 'start',
+                                  child: Text(widget.strings.serviceStart)),
                               PopupMenuItem(
-                                  value: 'stop', child: Text(widget.strings.serviceStop)),
+                                  value: 'stop',
+                                  child: Text(widget.strings.serviceStop)),
                               PopupMenuItem(
                                   value: 'restart',
                                   child: Text(widget.strings.serviceRestart)),

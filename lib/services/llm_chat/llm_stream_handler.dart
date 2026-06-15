@@ -59,7 +59,8 @@ extension LlmChatServiceStreamHandler on LlmChatService {
       },
       ...messages,
     ];
-    final estimatedBeforeCompression = LlmChatService.estimateMessagesTokens(workingMessages);
+    final estimatedBeforeCompression =
+        LlmChatService.estimateMessagesTokens(workingMessages);
     var compressed = false;
     final shouldCompressFromUsageThreshold =
         estimatedBeforeCompression >= settings.contextWindowTokens * 0.9;
@@ -220,8 +221,8 @@ extension LlmChatServiceStreamHandler on LlmChatService {
             DateTime.now().difference(runStartedAt).inMilliseconds;
         final promptTokens = response.usage?.promptTokens ??
             LlmChatService.estimateMessagesTokens(workingMessages);
-        final completionTokens =
-            response.usage?.completionTokens ?? LlmChatService.estimateTextTokens(answer);
+        final completionTokens = response.usage?.completionTokens ??
+            LlmChatService.estimateTextTokens(answer);
         onStats?.call(
           LlmRunStats(
             promptTokens: promptTokens,
@@ -625,7 +626,9 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     bool includeReasoningParams = true,
   }) async {
     final endpoint = Uri.parse(_joinUrl(baseUrl, '/chat/completions'));
-    for (var attempt = 0; attempt <= LlmChatService._networkRetryCount; attempt++) {
+    for (var attempt = 0;
+        attempt <= LlmChatService._networkRetryCount;
+        attempt++) {
       final client = HttpClient();
       cancellationToken?.onCancel(() => client.close(force: true));
       final startedAt = DateTime.now();

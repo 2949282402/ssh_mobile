@@ -43,10 +43,12 @@ class PdfTextExtractor {
 
       // 确定流数据的真实起始位置（跳过 stream 之后的换行符 \r\n 或 \n）
       int streamStart = streamIdx + 6;
-      if (streamStart < bytes.length && bytes[streamStart] == 13)
+      if (streamStart < bytes.length && bytes[streamStart] == 13) {
         streamStart++; // \r
-      if (streamStart < bytes.length && bytes[streamStart] == 10)
+      }
+      if (streamStart < bytes.length && bytes[streamStart] == 10) {
         streamStart++; // \n
+      }
 
       int streamEnd = endStreamIdx;
       // 剔除 endstream 前面的换行符

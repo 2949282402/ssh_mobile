@@ -1,5 +1,16 @@
 part of '../ai_tool_service.dart';
 
+abstract interface class AiToolProvider {
+  Future<List<AiTool>> getTools(AiToolService service);
+
+  Future<String?> execute(
+    AiToolService service,
+    String name,
+    Map<String, dynamic> arguments, {
+    bool approvedWrite = false,
+  });
+}
+
 abstract interface class AiToolExecutor {
   Future<List<AiTool>> tools();
 

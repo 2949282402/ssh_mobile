@@ -1,102 +1,46 @@
 part of '../ai_tool_service.dart';
 
-extension _PlaybookTools on AiToolService {
-  Future<String> _appGetOperationalSettings(
-      Map<String, dynamic> arguments) async {
-    return jsonEncode(await _readOperationalSettings());
+class PlaybookToolsProvider implements AiToolProvider {
+  final StorageService storageService;
+  final AppSettings? appSettings;
+  final PlaybookService? playbookService;
+
+  const PlaybookToolsProvider({
+    required this.storageService,
+    this.appSettings,
+    this.playbookService,
+  });
+
+  @override
+  Future<List<AiTool>> getTools(AiToolService service) async {
+    return _getPlaybookTools(service);
   }
 
-  Future<String> _appUpdateOperationalSettings(
+  @override
+  Future<String?> execute(
+    AiToolService service,
+    String name,
     Map<String, dynamic> arguments, {
-    required bool approvedWrite,
+    bool approvedWrite = false,
   }) async {
-    if (!approvedWrite) {
-      return jsonEncode({
-        'error': 'Changing app operational settings requires user approval.',
-      });
+    switch (name) {
+      case 'list_playbooks':
+        return _listPlaybooksTool(service, arguments);
+      case 'create_playbook':
+        return _createPlaybookTool(service, arguments,
+            approvedWrite: approvedWrite);
+      case 'run_playbook':
+        return _runPlaybookTool(service, arguments,
+            approvedWrite: approvedWrite);
+      case 'get_playbook_status':
+        return _getPlaybookStatusTool(service, arguments);
+      default:
+        return null;
     }
-    final current = await storageService.loadAiConnectionSettings();
-    final nextDownloadLimit = _optionalInt(arguments, 'sftpDownloadLimitBytes');
-    final nextEditLimit = _optionalInt(arguments, 'sftpTextEditLimitBytes');
-    if (nextDownloadLimit != null && appSettings != null) {
-      await appSettings!.setSftpDownloadLimitBytes(nextDownloadLimit);
-    }
-    if (nextEditLimit != null && appSettings != null) {
-      await appSettings!.setSftpTextEditLimitBytes(nextEditLimit);
-    }
-    final secretCacheEnabled = _optionalBool(arguments, 'secretCacheEnabled');
-    if (secretCacheEnabled != null) {
-      await storageService.setSecretCacheEnabled(secretCacheEnabled);
-    }
-    final secretCacheTtlMinutes =
-        _optionalInt(arguments, 'secretCacheTtlMinutes');
-    if (secretCacheTtlMinutes != null) {
-      await storageService.setSecretCacheTtl(
-        Duration(minutes: secretCacheTtlMinutes),
-      );
-    }
-    final nextTimeout = _optionalInt(arguments, 'aiRequestTimeoutSeconds');
-    final nextWebSearchEnabled = _optionalBool(arguments, 'webSearchEnabled');
-    final nextWebSearchMaxResults =
-        _optionalInt(arguments, 'webSearchMaxResults');
-    final nextMultiAgentEnabled = _optionalBool(arguments, 'multiAgentEnabled');
-    final nextMultiAgentMaxAgents =
-        _optionalInt(arguments, 'multiAgentMaxAgents');
-    final nextToolCallBudget = _optionalInt(arguments, 'toolCallBudget');
-    if (nextTimeout != null ||
-        nextWebSearchEnabled != null ||
-        nextWebSearchMaxResults != null ||
-        nextMultiAgentEnabled != null ||
-        nextMultiAgentMaxAgents != null ||
-        nextToolCallBudget != null) {
-      await storageService.saveAiConnectionSettings(
-        baseUrl: current.baseUrl,
-        model: current.model,
-        contextWindowTokens: current.contextWindowTokens,
-        timeoutSeconds: nextTimeout ?? current.timeoutSeconds,
-        deepSeekThinkingEnabled: current.deepSeekThinkingEnabled,
-        deepSeekReasoningEffort: current.deepSeekReasoningEffort,
-        openAiReasoningEffort: current.openAiReasoningEffort,
-        webSearchEnabled: nextWebSearchEnabled ?? current.webSearchEnabled,
-        webSearchMaxResults:
-            nextWebSearchMaxResults ?? current.webSearchMaxResults,
-        multiAgentEnabled: nextMultiAgentEnabled ?? current.multiAgentEnabled,
-        multiAgentMaxAgents:
-            nextMultiAgentMaxAgents ?? current.multiAgentMaxAgents,
-        toolCallBudget: nextToolCallBudget ?? current.toolCallBudget,
-      );
-    }
-    return jsonEncode(await _readOperationalSettings());
   }
 
-  Future<String> _appClearSecretCache(Map<String, dynamic> arguments) async {
-    storageService.clearSecretCache();
-    return jsonEncode({
-      'cleared': true,
-      'scope': 'memory_secret_cache',
-    });
-  }
-
-  Future<Map<String, dynamic>> _readOperationalSettings() async {
-    final ai = await storageService.loadAiConnectionSettings();
-    return {
-      'sftpDownloadLimitBytes': appSettings?.sftpDownloadLimitBytes ??
-          AppSettings.defaultSftpDownloadLimitBytes,
-      'sftpTextEditLimitBytes': appSettings?.sftpTextEditLimitBytes ??
-          AppSettings.defaultSftpTextEditLimitBytes,
-      'secretCacheEnabled': storageService.isSecretCacheEnabled,
-      'secretCacheTtlMinutes': storageService.secretCacheTtlMinutes,
-      'aiRequestTimeoutSeconds': ai.timeoutSeconds,
-      'webSearchEnabled': ai.webSearchEnabled,
-      'webSearchMaxResults': ai.webSearchMaxResults,
-      'multiAgentEnabled': ai.multiAgentEnabled,
-      'multiAgentMaxAgents': ai.multiAgentMaxAgents,
-      'toolCallBudget': ai.toolCallBudget,
-      'hasApiKeyConfigured': ai.hasApiKey,
-    };
-  }
-
-  Future<String> _listPlaybooksTool(Map<String, dynamic> arguments) async {
+  Future<String> _listPlaybooksTool(
+      AiToolService service, Map<String, dynamic> arguments) async {
     final list = await storageService.loadPlaybooks();
     return jsonEncode({
       'playbooks': list
@@ -118,6 +62,7 @@ extension _PlaybookTools on AiToolService {
   }
 
   Future<String> _createPlaybookTool(
+    AiToolService service,
     Map<String, dynamic> arguments, {
     required bool approvedWrite,
   }) async {
@@ -126,8 +71,8 @@ extension _PlaybookTools on AiToolService {
         'error': 'Creating a playbook requires user approval.',
       });
     }
-    final name = _arg(arguments, 'name');
-    final description = _arg(arguments, 'description');
+    final name = service._arg(arguments, 'name');
+    final description = service._arg(arguments, 'description');
     final rawSteps = arguments['steps'] as List? ?? [];
 
     final steps = <PlaybookStep>[];
@@ -162,6 +107,7 @@ extension _PlaybookTools on AiToolService {
   }
 
   Future<String> _runPlaybookTool(
+    AiToolService service,
     Map<String, dynamic> arguments, {
     required bool approvedWrite,
   }) async {
@@ -175,8 +121,8 @@ extension _PlaybookTools on AiToolService {
         'error': 'Running a playbook requires user approval.',
       });
     }
-    final playbookId = _arg(arguments, 'playbookId');
-    final connectionId = _arg(arguments, 'connectionId');
+    final playbookId = service._arg(arguments, 'playbookId');
+    final connectionId = service._arg(arguments, 'connectionId');
 
     final config = storageService.getConnection(connectionId);
     if (config == null) {
@@ -197,10 +143,11 @@ extension _PlaybookTools on AiToolService {
     });
   }
 
-  Future<String> _getPlaybookStatusTool(Map<String, dynamic> arguments) async {
+  Future<String> _getPlaybookStatusTool(
+      AiToolService service, Map<String, dynamic> arguments) async {
     if (playbookService == null) {
       final list = await storageService.loadPlaybooks();
-      final playbookId = _arg(arguments, 'playbookId');
+      final playbookId = service._arg(arguments, 'playbookId');
       try {
         final p = list.firstWhere((item) => item.id == playbookId);
         return jsonEncode({
@@ -228,7 +175,7 @@ extension _PlaybookTools on AiToolService {
     }
 
     // Use live memory states from playbookService
-    final playbookId = _arg(arguments, 'playbookId');
+    final playbookId = service._arg(arguments, 'playbookId');
     final active = playbookService!.activePlaybook;
     if (active == null || active.id != playbookId) {
       final list = playbookService!.playbooks;
@@ -277,14 +224,14 @@ extension _PlaybookTools on AiToolService {
     });
   }
 
-  List<AiTool> _getPlaybookTools() {
+  List<AiTool> _getPlaybookTools(AiToolService service) {
     return [
       AiTool(
         name: 'list_playbooks',
         description:
             'CLIENT tool. List all saved custom sequential task playbooks/scripts, including step names and commands.',
         properties: const {},
-        handler: _listPlaybooksTool,
+        handler: (args) => _listPlaybooksTool(service, args),
       ),
       AiTool(
         name: 'create_playbook',
@@ -313,7 +260,7 @@ extension _PlaybookTools on AiToolService {
         },
         required: const ['name', 'description', 'steps'],
         handler: (arguments) =>
-            _createPlaybookTool(arguments, approvedWrite: false),
+            _createPlaybookTool(service, arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'run_playbook',
@@ -325,7 +272,7 @@ extension _PlaybookTools on AiToolService {
         },
         required: const ['playbookId', 'connectionId'],
         handler: (arguments) =>
-            _runPlaybookTool(arguments, approvedWrite: false),
+            _runPlaybookTool(service, arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'get_playbook_status',
@@ -335,7 +282,7 @@ extension _PlaybookTools on AiToolService {
           'playbookId': _string('The playbook ID to query.'),
         },
         required: const ['playbookId'],
-        handler: _getPlaybookStatusTool,
+        handler: (args) => _getPlaybookStatusTool(service, args),
       ),
     ];
   }

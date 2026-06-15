@@ -15,7 +15,8 @@ class _PowerTab extends StatefulWidget {
   State<_PowerTab> createState() => _PowerTabState();
 }
 
-class _PowerTabState extends State<_PowerTab> with AutomaticKeepAliveClientMixin {
+class _PowerTabState extends State<_PowerTab>
+    with AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
 
@@ -28,7 +29,8 @@ class _PowerTabState extends State<_PowerTab> with AutomaticKeepAliveClientMixin
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.power_settings_new, size: 96, color: widget.colorScheme.error),
+            Icon(Icons.power_settings_new,
+                size: 96, color: widget.colorScheme.error),
             const SizedBox(height: 24),
             Text(
               widget.strings.systemPower,
@@ -52,7 +54,8 @@ class _PowerTabState extends State<_PowerTab> with AutomaticKeepAliveClientMixin
                   backgroundColor: widget.colorScheme.tertiary,
                   padding: const EdgeInsets.all(16),
                 ),
-                onPressed: () => _confirmPowerAction('reboot', widget.connectionId),
+                onPressed: () =>
+                    _confirmPowerAction('reboot', widget.connectionId),
               ),
             ),
             const SizedBox(height: 16),
@@ -66,7 +69,8 @@ class _PowerTabState extends State<_PowerTab> with AutomaticKeepAliveClientMixin
                   side: BorderSide(color: widget.colorScheme.error),
                   padding: const EdgeInsets.all(16),
                 ),
-                onPressed: () => _confirmPowerAction('shutdown', widget.connectionId),
+                onPressed: () =>
+                    _confirmPowerAction('shutdown', widget.connectionId),
               ),
             ),
           ],

@@ -602,7 +602,9 @@ class SystemAdminService extends ChangeNotifier {
         final trimmed = line.trim();
         if (trimmed.isEmpty ||
             trimmed.startsWith('Netid') ||
-            trimmed.startsWith('Active')) continue;
+            trimmed.startsWith('Active')) {
+          continue;
+        }
 
         // Split line fields
         final fields = trimmed.split(RegExp(r'\s+'));

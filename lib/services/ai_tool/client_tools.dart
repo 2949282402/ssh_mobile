@@ -1,7 +1,91 @@
 part of '../ai_tool_service.dart';
 
-extension _ClientTools on AiToolService {
-  Future<String> _webSearch(Map<String, dynamic> arguments) async {
+class ClientToolsProvider implements AiToolProvider {
+  final StorageService storageService;
+  final ClientSystemToolAdapter clientSystemToolService;
+  final ClientWebViewAdapter clientWebViewService;
+  final String? clientWebViewSessionId;
+  final ToolSecretPolicy secretPolicy;
+
+  const ClientToolsProvider({
+    required this.storageService,
+    required this.clientSystemToolService,
+    required this.clientWebViewService,
+    this.clientWebViewSessionId,
+    required this.secretPolicy,
+  });
+
+  @override
+  Future<List<AiTool>> getTools(AiToolService service) async {
+    final searchSettings = await storageService.loadAiConnectionSettings();
+    return _getClientTools(service, searchSettings);
+  }
+
+  @override
+  Future<String?> execute(
+    AiToolService service,
+    String name,
+    Map<String, dynamic> arguments, {
+    bool approvedWrite = false,
+  }) async {
+    switch (name) {
+      case 'web_search':
+        return _webSearch(service, arguments);
+      case 'client_get_time':
+        return jsonEncode(clientSystemToolService.getClientTime());
+      case 'client_get_device_info':
+        return jsonEncode(clientSystemToolService.getClientDeviceInfo());
+      case 'client_get_network_info':
+        return jsonEncode(await clientSystemToolService.getNetworkInfo());
+      case 'client_get_battery_status':
+        return jsonEncode(await clientSystemToolService.getBatteryStatus());
+      case 'client_get_permission_status':
+        return jsonEncode(await clientSystemToolService.getPermissionStatus());
+      case 'client_open_app_settings':
+        return jsonEncode(await clientSystemToolService.openAppSettings());
+      case 'client_set_clipboard':
+        return _clientSetClipboard(service, arguments);
+      case 'client_save_experience_skill':
+        return _clientSaveExperienceSkill(service, arguments);
+      case 'client_set_alarm':
+        return _clientSetAlarm(service, arguments);
+      case 'client_list_alarms':
+        return jsonEncode(await clientSystemToolService.listAlarms());
+      case 'client_cancel_alarm':
+        return _clientCancelAlarm(service, arguments);
+      case 'client_query_logs':
+        return _clientQueryLogs(service, arguments);
+      case 'client_delete_log_entries':
+        return _clientDeleteLogEntries(service, arguments,
+            approvedWrite: approvedWrite);
+      case 'client_clear_logs':
+        return _clientClearLogs(service, arguments,
+            approvedWrite: approvedWrite);
+      case 'client_export_app_backup':
+        return _clientExportAppBackup(service, arguments);
+      case 'client_import_app_backup':
+        return _clientImportAppBackup(service, arguments,
+            approvedWrite: approvedWrite);
+      case 'client_webview_get_page_text':
+        return _clientWebViewGetPageText(service, arguments);
+      case 'client_webview_get_state':
+        return _clientWebViewGetState(service, arguments);
+      case 'client_webview_navigate':
+        return _clientWebViewNavigate(service, arguments);
+      case 'app_get_operational_settings':
+        return _appGetOperationalSettings(service, arguments);
+      case 'app_update_operational_settings':
+        return _appUpdateOperationalSettings(service, arguments,
+            approvedWrite: approvedWrite);
+      case 'app_clear_secret_cache':
+        return _appClearSecretCache(service, arguments);
+      default:
+        return null;
+    }
+  }
+
+  Future<String> _webSearch(
+      AiToolService service, Map<String, dynamic> arguments) async {
     final settings = await storageService.loadAiConnectionSettings();
     if (!settings.webSearchEnabled) {
       return jsonEncode({
@@ -12,11 +96,12 @@ extension _ClientTools on AiToolService {
       });
     }
 
-    final query = _arg(arguments, 'query');
+    final query = service._arg(arguments, 'query');
     final limit = _webSearchLimit(arguments['limit'], settings);
 
     if (settings.webSearchEngine == AiWebSearchEngine.quark) {
       final result = await _executeQuarkCloudSearch(
+        service,
         query,
         limit: limit,
         settings: settings,
@@ -38,6 +123,7 @@ extension _ClientTools on AiToolService {
   }
 
   Future<ClientWebViewSearchResult> _executeQuarkCloudSearch(
+    AiToolService service,
     String query, {
     required int limit,
     required AiConnectionSettings settings,
@@ -158,37 +244,44 @@ extension _ClientTools on AiToolService {
     return (parsedLimit ?? configuredLimit).clamp(1, configuredLimit).toInt();
   }
 
-  Future<String> _clientSetAlarm(Map<String, dynamic> arguments) async {
+  Future<String> _clientSetAlarm(
+      AiToolService service, Map<String, dynamic> arguments) async {
     final result = await clientSystemToolService.setAlarm(
-      triggerAt: _optionalString(arguments, 'triggerAt'),
-      delaySeconds: _optionalInt(arguments, 'delaySeconds'),
-      delayMinutes: _optionalInt(arguments, 'delayMinutes'),
-      label: _optionalString(arguments, 'label'),
-      useSystemAlarm: _optionalBool(arguments, 'useSystemAlarm') ?? true,
+      triggerAt: service._optionalString(arguments, 'triggerAt'),
+      delaySeconds: service._optionalInt(arguments, 'delaySeconds'),
+      delayMinutes: service._optionalInt(arguments, 'delayMinutes'),
+      label: service._optionalString(arguments, 'label'),
+      useSystemAlarm:
+          service._optionalBool(arguments, 'useSystemAlarm') ?? true,
     );
     return jsonEncode(result);
   }
 
-  Future<String> _clientCancelAlarm(Map<String, dynamic> arguments) async {
+  Future<String> _clientCancelAlarm(
+      AiToolService service, Map<String, dynamic> arguments) async {
     return jsonEncode(
-      await clientSystemToolService.cancelAlarm(_arg(arguments, 'alarmId')),
+      await clientSystemToolService
+          .cancelAlarm(service._arg(arguments, 'alarmId')),
     );
   }
 
-  Future<String> _clientSetClipboard(Map<String, dynamic> arguments) async {
+  Future<String> _clientSetClipboard(
+      AiToolService service, Map<String, dynamic> arguments) async {
     return jsonEncode(
-      await clientSystemToolService.setClipboard(_arg(arguments, 'text')),
+      await clientSystemToolService
+          .setClipboard(service._arg(arguments, 'text')),
     );
   }
 
   Future<String> _clientSaveExperienceSkill(
+    AiToolService service,
     Map<String, dynamic> arguments,
   ) async {
-    final summary = _arg(arguments, 'summary');
+    final summary = service._arg(arguments, 'summary');
     final conciseSummary = _coerceConciseSkillSummary(summary);
-    final title = _optionalString(arguments, 'title') ??
+    final title = service._optionalString(arguments, 'title') ??
         _defaultExperienceSkillTitle(conciseSummary);
-    final details = _optionalString(arguments, 'content');
+    final details = service._optionalString(arguments, 'content');
     final now = DateTime.now();
     final record = AiSkillRecord(
       id: 'skill-${now.microsecondsSinceEpoch}',
@@ -241,16 +334,18 @@ extension _ClientTools on AiToolService {
     return '$truncated…';
   }
 
-  Future<String> _clientQueryLogs(Map<String, dynamic> arguments) async {
+  Future<String> _clientQueryLogs(
+      AiToolService service, Map<String, dynamic> arguments) async {
     final result = await clientSystemToolService.queryLogs(
-      level: _optionalString(arguments, 'level'),
-      contains: _optionalString(arguments, 'contains'),
-      limit: _optionalInt(arguments, 'limit') ?? 50,
+      level: service._optionalString(arguments, 'level'),
+      contains: service._optionalString(arguments, 'contains'),
+      limit: service._optionalInt(arguments, 'limit') ?? 50,
     );
     return jsonEncode(result);
   }
 
   Future<String> _clientDeleteLogEntries(
+    AiToolService service,
     Map<String, dynamic> arguments, {
     required bool approvedWrite,
   }) async {
@@ -259,11 +354,12 @@ extension _ClientTools on AiToolService {
         'error': 'Deleting client log entries requires user approval.',
       });
     }
-    final ids = _intList(arguments['ids']);
+    final ids = service._intList(arguments['ids']);
     return jsonEncode(await clientSystemToolService.deleteLogEntries(ids));
   }
 
   Future<String> _clientClearLogs(
+    AiToolService service,
     Map<String, dynamic> arguments, {
     required bool approvedWrite,
   }) async {
@@ -275,7 +371,8 @@ extension _ClientTools on AiToolService {
     return jsonEncode(await clientSystemToolService.clearLogs());
   }
 
-  Future<String> _clientExportAppBackup(Map<String, dynamic> arguments) async {
+  Future<String> _clientExportAppBackup(
+      AiToolService service, Map<String, dynamic> arguments) async {
     final jsonText = await storageService.exportAppDataJson();
     final now = DateTime.now();
     final fileName =
@@ -294,6 +391,7 @@ extension _ClientTools on AiToolService {
   }
 
   Future<String> _clientImportAppBackup(
+    AiToolService service,
     Map<String, dynamic> arguments, {
     required bool approvedWrite,
   }) async {
@@ -331,10 +429,11 @@ extension _ClientTools on AiToolService {
   }
 
   Future<String> _clientWebViewGetPageText(
+    AiToolService service,
     Map<String, dynamic> arguments,
   ) async {
     final chatId = clientWebViewSessionId;
-    final maxChars = _optionalInt(arguments, 'maxChars') ??
+    final maxChars = service._optionalInt(arguments, 'maxChars') ??
         ClientWebViewService.defaultMaxChars;
     if (chatId == null || chatId.trim().isEmpty) {
       return jsonEncode(_missingChatSessionPayload());
@@ -346,7 +445,8 @@ extension _ClientTools on AiToolService {
     return jsonEncode(result.toJson());
   }
 
-  Future<String> _clientWebViewGetState(Map<String, dynamic> arguments) async {
+  Future<String> _clientWebViewGetState(
+      AiToolService service, Map<String, dynamic> arguments) async {
     final chatId = clientWebViewSessionId;
     if (chatId == null || chatId.trim().isEmpty) {
       return jsonEncode(_missingChatSessionPayload());
@@ -354,15 +454,16 @@ extension _ClientTools on AiToolService {
     return jsonEncode((await clientWebViewService.getState(chatId)).toJson());
   }
 
-  Future<String> _clientWebViewNavigate(Map<String, dynamic> arguments) async {
+  Future<String> _clientWebViewNavigate(
+      AiToolService service, Map<String, dynamic> arguments) async {
     final chatId = clientWebViewSessionId;
     if (chatId == null || chatId.trim().isEmpty) {
       return jsonEncode(_missingChatSessionPayload());
     }
     final result = await clientWebViewService.navigate(
       chatId,
-      action: _arg(arguments, 'action'),
-      input: _optionalString(arguments, 'input'),
+      action: service._arg(arguments, 'action'),
+      input: service._optionalString(arguments, 'input'),
     );
     return jsonEncode(result.toJson());
   }
@@ -411,7 +512,114 @@ extension _ClientTools on AiToolService {
     };
   }
 
-  List<AiTool> _getClientTools(AiConnectionSettings searchSettings) {
+  Future<String> _appGetOperationalSettings(
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
+    final settings = await storageService.loadAiConnectionSettings();
+    return jsonEncode({
+      'sftpDownloadLimitBytes': service.appSettings?.sftpDownloadLimitBytes ??
+          AppSettings.defaultSftpDownloadLimitBytes,
+      'sftpTextEditLimitBytes': service.appSettings?.sftpTextEditLimitBytes ??
+          AppSettings.defaultSftpTextEditLimitBytes,
+      'secretCacheEnabled': storageService.isSecretCacheEnabled,
+      'secretCacheTtlMinutes': storageService.secretCacheTtlMinutes,
+      'aiRequestTimeoutSeconds': settings.timeoutSeconds,
+      'webSearchEnabled': settings.webSearchEnabled,
+      'webSearchMaxResults': settings.webSearchMaxResults,
+      'webSearchEngine': settings.webSearchEngine,
+      'quarkSearchEndpoint': settings.quarkSearchEndpoint,
+      'multiAgentEnabled': settings.multiAgentEnabled,
+      'multiAgentMaxAgents': settings.multiAgentMaxAgents,
+      'toolCallBudget': settings.toolCallBudget,
+      'hasApiKeyConfigured': settings.hasApiKey,
+    });
+  }
+
+  Future<String> _appUpdateOperationalSettings(
+    AiToolService service,
+    Map<String, dynamic> arguments, {
+    required bool approvedWrite,
+  }) async {
+    if (!approvedWrite) {
+      return jsonEncode({
+        'error':
+            'Updating app settings requires user approval before execution.',
+      });
+    }
+
+    final current = await storageService.loadAiConnectionSettings();
+    final nextDownloadLimit =
+        service._optionalInt(arguments, 'sftpDownloadLimitBytes');
+    if (nextDownloadLimit != null && service.appSettings != null) {
+      await service.appSettings!.setSftpDownloadLimitBytes(nextDownloadLimit);
+    }
+    final nextEditLimit =
+        service._optionalInt(arguments, 'sftpTextEditLimitBytes');
+    if (nextEditLimit != null && service.appSettings != null) {
+      await service.appSettings!.setSftpTextEditLimitBytes(nextEditLimit);
+    }
+
+    final secretCacheEnabled =
+        service._optionalBool(arguments, 'secretCacheEnabled');
+    if (secretCacheEnabled != null) {
+      await storageService.setSecretCacheEnabled(secretCacheEnabled);
+    }
+
+    final secretCacheTtlMinutes =
+        service._optionalInt(arguments, 'secretCacheTtlMinutes');
+    if (secretCacheTtlMinutes != null) {
+      await storageService.setSecretCacheTtl(
+        Duration(minutes: secretCacheTtlMinutes),
+      );
+    }
+
+    final aiRequestTimeoutSeconds =
+        service._optionalInt(arguments, 'aiRequestTimeoutSeconds');
+    final webSearchEnabled =
+        service._optionalBool(arguments, 'webSearchEnabled');
+    final webSearchMaxResults =
+        service._optionalInt(arguments, 'webSearchMaxResults');
+    final multiAgentEnabled =
+        service._optionalBool(arguments, 'multiAgentEnabled');
+    final multiAgentMaxAgents =
+        service._optionalInt(arguments, 'multiAgentMaxAgents');
+    final toolCallBudget = service._optionalInt(arguments, 'toolCallBudget');
+
+    await storageService.saveAiConnectionSettings(
+      baseUrl: current.baseUrl,
+      model: current.model,
+      contextWindowTokens: current.contextWindowTokens,
+      timeoutSeconds: aiRequestTimeoutSeconds ?? current.timeoutSeconds,
+      deepSeekThinkingEnabled: current.deepSeekThinkingEnabled,
+      deepSeekReasoningEffort: current.deepSeekReasoningEffort,
+      openAiReasoningEffort: current.openAiReasoningEffort,
+      webSearchEnabled: webSearchEnabled ?? current.webSearchEnabled,
+      webSearchMaxResults: webSearchMaxResults ?? current.webSearchMaxResults,
+      multiAgentEnabled: multiAgentEnabled ?? current.multiAgentEnabled,
+      multiAgentMaxAgents: multiAgentMaxAgents ?? current.multiAgentMaxAgents,
+      toolCallBudget: toolCallBudget ?? current.toolCallBudget,
+    );
+
+    return await _appGetOperationalSettings(service, arguments);
+  }
+
+  Future<String> _appClearSecretCache(
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
+    storageService.clearSecretCache();
+    return jsonEncode({
+      'execution': 'client',
+      'cleared': true,
+      'note': 'In-memory secret cache was cleared successfully.',
+    });
+  }
+
+  List<AiTool> _getClientTools(
+    AiToolService service,
+    AiConnectionSettings searchSettings,
+  ) {
     final webSearchMaxResults = AiWebSearchMaxResults.normalize(
       searchSettings.webSearchMaxResults,
     );
@@ -431,7 +639,7 @@ extension _ClientTools on AiToolService {
             ),
           },
           required: const ['query'],
-          handler: _webSearch,
+          handler: (args) => _webSearch(service, args),
         ),
       AiTool(
         name: 'client_get_time',
@@ -489,7 +697,7 @@ extension _ClientTools on AiToolService {
           'text': _string('Text to place on the client clipboard.'),
         },
         required: const ['text'],
-        handler: _clientSetClipboard,
+        handler: (args) => _clientSetClipboard(service, args),
       ),
       AiTool(
         name: 'client_save_experience_skill',
@@ -507,7 +715,7 @@ extension _ClientTools on AiToolService {
           ),
         },
         required: const ['summary'],
-        handler: _clientSaveExperienceSkill,
+        handler: (args) => _clientSaveExperienceSkill(service, args),
       ),
       AiTool(
         name: 'client_set_alarm',
@@ -524,7 +732,7 @@ extension _ClientTools on AiToolService {
             'Optional. Default true. On Android request a system Clock alarm when supported.',
           ),
         },
-        handler: _clientSetAlarm,
+        handler: (args) => _clientSetAlarm(service, args),
       ),
       AiTool(
         name: 'client_list_alarms',
@@ -542,7 +750,7 @@ extension _ClientTools on AiToolService {
           'alarmId': _string('Alarm id returned by client_set_alarm.'),
         },
         required: const ['alarmId'],
-        handler: _clientCancelAlarm,
+        handler: (args) => _clientCancelAlarm(service, args),
       ),
       AiTool(
         name: 'client_query_logs',
@@ -564,7 +772,7 @@ extension _ClientTools on AiToolService {
             defaultValue: 50,
           ),
         },
-        handler: _clientQueryLogs,
+        handler: (args) => _clientQueryLogs(service, args),
       ),
       AiTool(
         name: 'client_get_log_counts',
@@ -583,6 +791,7 @@ extension _ClientTools on AiToolService {
         },
         required: const ['ids'],
         handler: (arguments) => _clientDeleteLogEntries(
+          service,
           arguments,
           approvedWrite: false,
         ),
@@ -593,14 +802,14 @@ extension _ClientTools on AiToolService {
             'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Clear all client log entries. This changes local app state and requires user approval.',
         properties: const {},
         handler: (arguments) =>
-            _clientClearLogs(arguments, approvedWrite: false),
+            _clientClearLogs(service, arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'client_export_app_backup',
         description:
             'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Export a credential-free app backup file to the client device. The tool saves the file locally and returns only summary metadata.',
         properties: const {},
-        handler: _clientExportAppBackup,
+        handler: (args) => _clientExportAppBackup(service, args),
       ),
       AiTool(
         name: 'client_import_app_backup',
@@ -608,6 +817,7 @@ extension _ClientTools on AiToolService {
             'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Import an app backup file chosen through the client file picker. Credential fields in the backup are ignored and never exposed to the model. This replaces local saved data and requires user approval.',
         properties: const {},
         handler: (arguments) => _clientImportAppBackup(
+          service,
           arguments,
           approvedWrite: false,
         ),
@@ -621,14 +831,14 @@ extension _ClientTools on AiToolService {
             'Optional maximum characters to return. Defaults to 40000 and is capped at 100000.',
           ),
         },
-        handler: _clientWebViewGetPageText,
+        handler: (args) => _clientWebViewGetPageText(service, args),
       ),
       AiTool(
         name: 'client_webview_get_state',
         description:
             'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Get the current WebView state for the page bound to this chat session.',
         properties: const {},
-        handler: _clientWebViewGetState,
+        handler: (args) => _clientWebViewGetState(service, args),
       ),
       AiTool(
         name: 'client_webview_navigate',
@@ -645,14 +855,14 @@ extension _ClientTools on AiToolService {
           ),
         },
         required: const ['action'],
-        handler: _clientWebViewNavigate,
+        handler: (args) => _clientWebViewNavigate(service, args),
       ),
       AiTool(
         name: 'app_get_operational_settings',
         description:
             'Return app operational settings that affect tools and server operations, including SFTP limits, secret-cache settings, AI timeout, web-search settings, multi-agent settings, and the per-request tool call budget. Does not reveal API keys.',
         properties: const {},
-        handler: _appGetOperationalSettings,
+        handler: (args) => _appGetOperationalSettings(service, args),
       ),
       AiTool(
         name: 'app_update_operational_settings',
@@ -688,6 +898,7 @@ extension _ClientTools on AiToolService {
           ),
         },
         handler: (arguments) => _appUpdateOperationalSettings(
+          service,
           arguments,
           approvedWrite: false,
         ),
@@ -697,7 +908,7 @@ extension _ClientTools on AiToolService {
         description:
             'Clear the in-memory secret cache for saved SSH credentials and the active LLM API key without revealing any secret values.',
         properties: const {},
-        handler: _appClearSecretCache,
+        handler: (args) => _appClearSecretCache(service, args),
       ),
     ];
   }

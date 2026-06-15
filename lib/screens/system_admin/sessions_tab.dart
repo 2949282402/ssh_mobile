@@ -21,7 +21,8 @@ class _SessionsTab extends StatefulWidget {
   State<_SessionsTab> createState() => _SessionsTabState();
 }
 
-class _SessionsTabState extends State<_SessionsTab> with AutomaticKeepAliveClientMixin {
+class _SessionsTabState extends State<_SessionsTab>
+    with AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
 
@@ -86,8 +87,9 @@ class _SessionsTabState extends State<_SessionsTab> with AutomaticKeepAliveClien
               trailing: IconButton(
                 icon: const Icon(Icons.login_outlined),
                 color: widget.colorScheme.error,
-                tooltip:
-                    widget.strings.switchToChinese == '中文' ? 'Kill Session' : '断开会话',
+                tooltip: widget.strings.switchToChinese == '中文'
+                    ? 'Kill Session'
+                    : '断开会话',
                 onPressed: () => _confirmKillSession(s, widget.connectionId),
               ),
             ),
