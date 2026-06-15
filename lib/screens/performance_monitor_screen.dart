@@ -14,6 +14,7 @@ import '../services/server_status_probe.dart';
 import '../services/storage_service.dart';
 import '../utils/responsive.dart';
 import '../widgets/overflow_scroll_text.dart';
+import '../widgets/tactile_feedback.dart';
 
 part 'performance_monitor/monitor_models.dart';
 part 'performance_monitor/server_navigation.dart';

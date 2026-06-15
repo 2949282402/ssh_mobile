@@ -352,8 +352,9 @@ class _AdminServerStatusIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final size = compact ? 30.0 : 38.0;
-    final iconSize = compact ? 18.0 : 22.0;
+    final scale = mobileUiScaleFor(MediaQuery.of(context));
+    final size = (compact ? 30.0 : 38.0) * scale;
+    final iconSize = (compact ? 18.0 : 22.0) * scale;
     return Container(
       width: size,
       height: size,
@@ -368,8 +369,8 @@ class _AdminServerStatusIcon extends StatelessWidget {
       ),
       child: busy
           ? Padding(
-              padding: EdgeInsets.all(compact ? 7 : 10),
-              child: const CircularProgressIndicator(strokeWidth: 2),
+              padding: EdgeInsets.all(compact ? 7 * scale : 10 * scale),
+              child: CircularProgressIndicator(strokeWidth: 2 * scale),
             )
           : Icon(
               connected
@@ -402,19 +403,23 @@ class _AdminServerTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final scale = mobileUiScaleFor(MediaQuery.of(context));
     final borderColor = selected
-        ? colorScheme.primary.withValues(alpha: 0.52)
+        ? colorScheme.primary.withValues(alpha: 0.54)
         : colorScheme.outlineVariant;
 
     return Padding(
-      padding: EdgeInsets.only(bottom: compact ? 0 : 8),
+      padding: EdgeInsets.only(bottom: compact ? 0 : 8 * scale),
       child: TactileFeedback(
         onTap: busy ? null : onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          padding: EdgeInsets.symmetric(
+            horizontal: 10 * scale,
+            vertical: 8 * scale,
+          ),
           decoration: BoxDecoration(
             color: selected
-                ? colorScheme.primary.withValues(alpha: 0.1)
+                ? colorScheme.primary.withValues(alpha: 0.12)
                 : colorScheme.surface,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(color: borderColor),
@@ -422,16 +427,17 @@ class _AdminServerTile extends StatelessWidget {
           child: Row(
             children: [
               Container(
-                width: 30,
-                height: 30,
+                width: 30 * scale,
+                height: 30 * scale,
                 alignment: Alignment.center,
                 child: _AdminServerStatusIcon(
                   busy: busy,
                   connected: connected,
                   selected: selected,
+                  compact: true,
                 ),
               ),
-              const SizedBox(width: 8),
+              SizedBox(width: 8 * scale),
               Expanded(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -446,7 +452,7 @@ class _AdminServerTile extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(height: 3),
+                    SizedBox(height: 3 * scale),
                     OverflowScrollText(
                       '${connection.username}@${connection.host}',
                       selectable: false,

@@ -252,14 +252,16 @@ extension _LlmChatScreenStateHistory on _LlmChatScreenState {
                 left: extent - width,
                 width: width,
                 child: SafeArea(
-                  child: GlassmorphicContainer(
-                    borderRadius: 0,
-                    blurX: 16,
-                    blurY: 16,
-                    backgroundColor:
-                        colorScheme.surface.withValues(alpha: 0.72),
-                    borderColor: colorScheme.outlineVariant,
-                    borderWidth: 1,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: colorScheme.surface,
+                      border: Border(
+                        right: BorderSide(
+                          color: colorScheme.outlineVariant,
+                          width: 1,
+                        ),
+                      ),
+                    ),
                     child: _HistoryPanel(
                       chats: _savedHistoryChats,
                       activeChatId: _activeChatId,

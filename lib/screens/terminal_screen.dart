@@ -73,6 +73,7 @@ class _TerminalScreenState extends State<TerminalScreen>
   bool _terminalMenuOpen = false;
   bool _advancedKeyboardVisible = false;
   bool _ctrlActive = false;
+  bool _altActive = false;
   TerminalTheme? _cachedTerminalTheme;
   bool? _cachedTerminalThemeIsDark;
   Color? _cachedTerminalThemeBackground;
@@ -125,6 +126,20 @@ class _TerminalScreenState extends State<TerminalScreen>
               setState(() {});
               return;
             }
+          }
+          _sshService.sendData(widget.sessionId, data);
+          setState(() {});
+          return;
+        }
+        if (_altActive) {
+          _altActive = false;
+          if (data.length == 1) {
+            _sshService.sendData(
+              widget.sessionId,
+              '\x1b$data',
+            );
+            setState(() {});
+            return;
           }
           _sshService.sendData(widget.sessionId, data);
           setState(() {});
@@ -532,8 +547,19 @@ class _TerminalScreenState extends State<TerminalScreen>
       complexInputController: _complexInputController,
       terminalFocusNode: _terminalInputFocusNode,
       ctrlActive: _ctrlActive,
+      altActive: _altActive,
       onToggleCtrl: () {
-        setState(() => _ctrlActive = !_ctrlActive);
+        setState(() {
+          _ctrlActive = !_ctrlActive;
+          if (_ctrlActive) _altActive = false;
+        });
+        _requestWindowsAwareTerminalFocus();
+      },
+      onToggleAlt: () {
+        setState(() {
+          _altActive = !_altActive;
+          if (_altActive) _ctrlActive = false;
+        });
         _requestWindowsAwareTerminalFocus();
       },
       onToggleAdvancedKeyboard: () {

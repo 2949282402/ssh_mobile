@@ -106,6 +106,7 @@ Future<void> main() async {
         ),
       );
 
+
       // 首帧渲染完成后延迟预启动后台服务
       WidgetsBinding.instance.addPostFrameCallback((_) {
         Timer(const Duration(milliseconds: 900), () {

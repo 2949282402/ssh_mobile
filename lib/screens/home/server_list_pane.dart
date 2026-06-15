@@ -209,6 +209,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
     AppStrings strings, {
     required int connIndex,
   }) {
+    final scale = mobileUiScaleFor(MediaQuery.of(context));
     final isActive = sessionSummary.hasConnected;
     final sessionCount = sessionSummary.count;
     final latestState = sessionSummary.latestState;
@@ -222,6 +223,10 @@ extension _HomeScreenStateServerList on _HomeScreenState {
     final borderColor =
         isActive ? success.withValues(alpha: 0.42) : _panelBorderColor(context);
     final isSelected = _selectedServerIds.contains(conn.id);
+    final cardBgColor =
+        isSelected ? colorScheme.primary.withValues(alpha: 0.12) : cardColor;
+    final activeBorderColor =
+        isSelected ? colorScheme.primary.withValues(alpha: 0.54) : borderColor;
 
     final windowsExpanded = _expandedConnectionWindowIds.contains(conn.id);
 
@@ -237,14 +242,14 @@ extension _HomeScreenStateServerList on _HomeScreenState {
         }
       },
       child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(14),
+        margin: EdgeInsets.only(bottom: 10 * scale),
+        padding: EdgeInsets.all(14 * scale),
         decoration: BoxDecoration(
-          color: cardColor,
+          color: cardBgColor,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: isSelected ? colorScheme.primary : borderColor,
-            width: isSelected ? 1.5 : 1,
+            color: activeBorderColor,
+            width: 1,
           ),
           boxShadow: _panelShadow(context),
         ),
@@ -256,10 +261,10 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                   ReorderableDragStartListener(
                     index: connIndex,
                     child: Padding(
-                      padding: const EdgeInsets.only(right: 6),
+                      padding: EdgeInsets.only(right: 6 * scale),
                       child: Icon(
                         Icons.drag_handle,
-                        size: 20,
+                        size: 20 * scale,
                         color: mutedTextColor.withValues(alpha: 0.5),
                       ),
                     ),
@@ -270,8 +275,8 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                     onChanged: (_) => _toggleServerSelection(conn.id),
                   ),
                 Container(
-                  width: 44,
-                  height: 44,
+                  width: 42 * scale,
+                  height: 42 * scale,
                   decoration: BoxDecoration(
                     color: isActive
                         ? success.withValues(alpha: 0.15)
@@ -281,11 +286,11 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                   child: Icon(
                     _getStatusIcon(conn, latestState),
                     color: isActive ? success : primary,
-                    size: 24,
+                    size: 22 * scale,
                   ),
                 ),
-                if (!_serverSelectionMode) const SizedBox(width: 14),
-                if (_serverSelectionMode) const SizedBox(width: 8),
+                if (!_serverSelectionMode) SizedBox(width: 14 * scale),
+                if (_serverSelectionMode) SizedBox(width: 8 * scale),
                 Expanded(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -301,15 +306,15 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      SizedBox(height: 4 * scale),
                       Row(
                         children: [
                           Icon(
                             Icons.dns_outlined,
-                            size: 13,
+                            size: 13 * scale,
                             color: mutedTextColor.withValues(alpha: 0.72),
                           ),
-                          const SizedBox(width: 5),
+                          SizedBox(width: 5 * scale),
                           Flexible(
                             child: SingleChildScrollView(
                               scrollDirection: Axis.horizontal,
@@ -324,7 +329,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 6),
+                      SizedBox(height: 6 * scale),
                       SingleChildScrollView(
                         scrollDirection: Axis.horizontal,
                         child: Selector<PerformanceMonitorService,
@@ -338,10 +343,10 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                   ),
                 ),
                 if (!_serverSelectionMode && sessionCount > 0) ...[
-                  const SizedBox(width: 8),
+                  SizedBox(width: 8 * scale),
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                    padding: EdgeInsets.symmetric(
+                        horizontal: 7 * scale, vertical: 3 * scale),
                     decoration: BoxDecoration(
                       color: success.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(999),
@@ -359,21 +364,22 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                   ),
                 ],
                 if (!_serverSelectionMode && isConnecting)
-                  const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                  SizedBox(
+                    width: 24 * scale,
+                    height: 24 * scale,
+                    child: CircularProgressIndicator(strokeWidth: 2 * scale),
                   )
                 else if (!_serverSelectionMode) ...[
                   IconButton(
                     tooltip: strings.newWindow,
-                    icon: const Icon(Icons.add_to_photos_outlined),
+                    icon: Icon(Icons.add_to_photos_outlined, size: 20 * scale),
                     color: mutedTextColor,
                     visualDensity: VisualDensity.compact,
                     onPressed: () => _openNewTerminal(context, conn),
                   ),
                   PopupMenuButton<String>(
-                    icon: Icon(Icons.more_vert, color: mutedTextColor),
+                    icon: Icon(Icons.more_vert,
+                        color: mutedTextColor, size: 20 * scale),
                     onSelected: (action) =>
                         _handleAction(context, conn, action),
                     itemBuilder: (_) => [
@@ -381,8 +387,8 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                         value: 'edit',
                         child: Row(
                           children: [
-                            const Icon(Icons.edit, size: 18),
-                            const SizedBox(width: 8),
+                            Icon(Icons.edit, size: 18 * scale),
+                            SizedBox(width: 8 * scale),
                             Text(strings.edit),
                           ],
                         ),
@@ -392,9 +398,9 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                         child: Row(
                           children: [
                             Icon(Icons.delete,
-                                size: 18,
+                                size: 18 * scale,
                                 color: Theme.of(context).colorScheme.error),
-                            const SizedBox(width: 8),
+                            SizedBox(width: 8 * scale),
                             Text(
                               strings.delete,
                               style: TextStyle(
@@ -408,22 +414,23 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                 ],
               ],
             ),
-            const SizedBox(height: 10),
+            SizedBox(height: 10 * scale),
             Divider(
                 height: 1, color: Theme.of(context).colorScheme.outlineVariant),
             InkWell(
               borderRadius: BorderRadius.circular(8),
               onTap: () => _toggleConnectionWindows(conn.id),
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(4, 9, 4, 0),
+                padding:
+                    EdgeInsets.fromLTRB(4 * scale, 9 * scale, 4 * scale, 0),
                 child: Row(
                   children: [
                     Icon(
                       Icons.tab_outlined,
-                      size: 17,
+                      size: 17 * scale,
                       color: mutedTextColor,
                     ),
-                    const SizedBox(width: 8),
+                    SizedBox(width: 8 * scale),
                     Expanded(
                       child: Text(
                         '${strings.terminalWindows} ($sessionCount)',
@@ -439,6 +446,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                           ? Icons.expand_less_rounded
                           : Icons.expand_more_rounded,
                       color: mutedTextColor,
+                      size: 20 * scale,
                     ),
                   ],
                 ),

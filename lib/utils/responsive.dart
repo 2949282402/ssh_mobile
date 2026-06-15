@@ -38,11 +38,11 @@ double mobileUiScaleFor(MediaQueryData mediaQuery) {
   // Android/iOS already normalize layout with dp/pt. This is only a narrow
   // correction for 1.5K-class phones whose OEM density bucket makes app UI
   // visibly larger than 2K-class phones of similar physical size.
-  if (physicalShortestSide <= 1240) return 0.88;
-  if (physicalShortestSide >= 1440) return 1.0;
+  if (physicalShortestSide <= 1240) return 0.82;
+  if (physicalShortestSide >= 1440) return 0.92;
 
   final ratio = (physicalShortestSide - 1240) / (1440 - 1240);
-  return 0.88 + ratio * 0.12;
+  return 0.82 + ratio * 0.10;
 }
 
 MediaQueryData adaptMobileMediaQuery(MediaQueryData mediaQuery) {

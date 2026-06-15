@@ -26,7 +26,6 @@ import '../services/playbook_service.dart';
 import '../services/rag_service.dart';
 import '../utils/text_chunker.dart';
 import '../widgets/overflow_scroll_text.dart';
-import '../widgets/glass_container.dart';
 
 part 'llm_chat/assistant_run_indicator.dart';
 part 'llm_chat/llm_settings_screen.dart';

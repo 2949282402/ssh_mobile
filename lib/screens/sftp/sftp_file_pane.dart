@@ -358,6 +358,7 @@ class _SftpEntryList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scale = mobileUiScaleFor(MediaQuery.of(context));
     final snapshot = context.select<SftpService, _SftpEntriesSnapshot>(
       _SftpEntriesSnapshot.from,
     );
@@ -378,7 +379,7 @@ class _SftpEntryList extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     return ListView.separated(
       cacheExtent: 900,
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 24),
+      padding: EdgeInsets.fromLTRB(8 * scale, 8 * scale, 8 * scale, 24 * scale),
       itemCount: entries.length,
       separatorBuilder: (_, __) => const Divider(height: 1),
       itemBuilder: (context, index) {
@@ -388,7 +389,8 @@ class _SftpEntryList extends StatelessWidget {
           child: TactileFeedback(
             onTap: entry.isDirectory ? () => sftp.openPath(entry.path) : null,
             child: ListTile(
-              minLeadingWidth: 28,
+              dense: scale < 0.95,
+              minLeadingWidth: 26 * scale,
               leading: Icon(
                 entry.isDirectory
                     ? Icons.folder_rounded
@@ -398,6 +400,7 @@ class _SftpEntryList extends StatelessWidget {
                 color: entry.isDirectory
                     ? colorScheme.primary
                     : colorScheme.onSurface.withValues(alpha: 0.72),
+                size: 20 * scale,
               ),
               title: entries.length > 100
                   ? OverflowScrollText(

@@ -115,7 +115,7 @@ class _MonitorServerPane extends StatelessWidget {
                 final connection = connections[index];
                 return Container(
                   key: ValueKey(connection.id),
-                  margin: const EdgeInsets.only(bottom: 4),
+                  margin: const EdgeInsets.only(bottom: 8),
                   child: Row(
                     children: [
                       ReorderableDragStartListener(
@@ -403,30 +403,39 @@ class _MonitorServerTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final scale = mobileUiScaleFor(MediaQuery.of(context));
     final borderColor = selected
-        ? colorScheme.primary.withValues(alpha: 0.52)
+        ? colorScheme.primary.withValues(alpha: 0.54)
         : colorScheme.outlineVariant;
 
     return Padding(
-      padding: EdgeInsets.only(bottom: compact ? 0 : 8),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: disabled ? onDisabledTap : onTap,
-        child: Opacity(
-          opacity: disabled && !selected ? 0.58 : 1,
+      padding: EdgeInsets.only(bottom: compact ? 0 : 8 * scale),
+      child: Opacity(
+        opacity: disabled && !selected ? 0.58 : 1.0,
+        child: TactileFeedback(
+          onTap: disabled
+              ? (onDisabledTap != null ? () => onDisabledTap!() : null)
+              : onTap,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            padding: EdgeInsets.symmetric(
+              horizontal: 10 * scale,
+              vertical: 8 * scale,
+            ),
             decoration: BoxDecoration(
               color: selected
-                  ? colorScheme.primary.withValues(alpha: 0.1)
+                  ? colorScheme.primary.withValues(alpha: 0.12)
                   : colorScheme.surface,
               borderRadius: BorderRadius.circular(8),
               border: Border.all(color: borderColor),
             ),
             child: Row(
               children: [
-                _MonitorStatusIcon(sampling: sampling, selected: selected),
-                const SizedBox(width: 10),
+                _MonitorStatusIcon(
+                  sampling: sampling,
+                  selected: selected,
+                  compact: compact,
+                ),
+                SizedBox(width: 10 * scale),
                 Expanded(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -441,7 +450,7 @@ class _MonitorServerTile extends StatelessWidget {
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                      const SizedBox(height: 3),
+                      SizedBox(height: 3 * scale),
                       OverflowScrollText(
                         '${connection.username}@${connection.host}',
                         selectable: false,
@@ -454,7 +463,7 @@ class _MonitorServerTile extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (selected) const Icon(Icons.check_rounded, size: 18),
+                if (selected) Icon(Icons.check_rounded, size: 18 * scale),
               ],
             ),
           ),
@@ -478,7 +487,8 @@ class _MonitorStatusIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final size = compact ? 28.0 : 30.0;
+    final scale = mobileUiScaleFor(MediaQuery.of(context));
+    final size = (compact ? 28.0 : 30.0) * scale;
     return Container(
       width: size,
       height: size,
@@ -493,13 +503,13 @@ class _MonitorStatusIcon extends StatelessWidget {
       ),
       child: sampling
           ? Padding(
-              padding: EdgeInsets.all(compact ? 7 : 8),
-              child: const CircularProgressIndicator(strokeWidth: 2),
+              padding: EdgeInsets.all(compact ? 7 * scale : 8 * scale),
+              child: CircularProgressIndicator(strokeWidth: 2 * scale),
             )
           : Icon(
               Icons.monitor_heart_outlined,
               color: colorScheme.primary,
-              size: compact ? 17 : 19,
+              size: (compact ? 17 : 19) * scale,
             ),
     );
   }
