@@ -87,9 +87,7 @@ class _SessionsTabState extends State<_SessionsTab>
               trailing: IconButton(
                 icon: const Icon(Icons.login_outlined),
                 color: widget.colorScheme.error,
-                tooltip: widget.strings.switchToChinese == '中文'
-                    ? 'Kill Session'
-                    : '断开会话',
+                tooltip: widget.strings.killSession,
                 onPressed: () => _confirmKillSession(s, widget.connectionId),
               ),
             ),
@@ -108,9 +106,7 @@ class _SessionsTabState extends State<_SessionsTab>
       builder: (context) => AlertDialog(
         title: Text(strings.actionConfirm),
         content: Text(
-          strings.switchToChinese == '中文'
-              ? 'Kill the active session of user "${session.username}" on TTY "${session.tty}"?'
-              : '确定要强行断开用户 "${session.username}" 在终端 "${session.tty}" 的会话吗？',
+          strings.killSessionConfirm(session.username, session.tty),
         ),
         actions: [
           TextButton(
@@ -119,7 +115,7 @@ class _SessionsTabState extends State<_SessionsTab>
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: Text(strings.switchToChinese == '中文' ? 'Kill' : '断开'),
+            child: Text(strings.killAction),
           ),
         ],
       ),

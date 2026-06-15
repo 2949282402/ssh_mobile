@@ -41,9 +41,7 @@ class _UsersTabState extends State<_UsersTab>
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                widget.strings.switchToChinese == '中文'
-                    ? 'Local Accounts'
-                    : '本地账号列表',
+                widget.strings.userAccounts,
                 style:
                     const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
               ),
@@ -514,9 +512,7 @@ class _HomeDirectoryExplorerDialogState
       actions: [
         if (_currentPath != widget.homeDir)
           TextButton(
-            child: Text(widget.strings.switchToChinese == '中文'
-                ? 'Back to Home'
-                : '返回主目录'),
+            child: Text(widget.strings.backToHome),
             onPressed: () => _loadDirectory(widget.homeDir),
           ),
         TextButton(

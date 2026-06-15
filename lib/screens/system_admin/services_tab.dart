@@ -83,9 +83,7 @@ class _ServicesTabState extends State<_ServicesTab>
             child: TextField(
               controller: _serviceSearchController,
               decoration: InputDecoration(
-                hintText: widget.strings.switchToChinese == '中文'
-                    ? 'Search services...'
-                    : '搜索服务...',
+                hintText: widget.strings.searchService,
                 prefixIcon: const Icon(Icons.search),
                 border: const OutlineInputBorder(),
                 contentPadding: const EdgeInsets.symmetric(horizontal: 12),

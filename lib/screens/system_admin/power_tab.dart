@@ -38,9 +38,7 @@ class _PowerTabState extends State<_PowerTab>
             ),
             const SizedBox(height: 8),
             Text(
-              widget.strings.switchToChinese == '中文'
-                  ? 'Reboot or power down the remote server. Authenticated as root.'
-                  : '远程服务器系统控制，将直接向系统发送硬件关机或重启指令。',
+              widget.strings.systemPowerHint,
               textAlign: TextAlign.center,
               style: TextStyle(color: widget.colorScheme.onSurfaceVariant),
             ),
@@ -97,7 +95,7 @@ class _PowerTabState extends State<_PowerTab>
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: colorScheme.error),
             onPressed: () => Navigator.pop(context, true),
-            child: Text(strings.switchToChinese == '中文' ? 'Confirm' : '确定'),
+            child: Text(strings.confirm),
           ),
         ],
       ),

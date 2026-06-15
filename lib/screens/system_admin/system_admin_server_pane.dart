@@ -124,7 +124,7 @@ class _AdminServerPane extends StatelessWidget {
         children: [
           Expanded(
             child: Text(
-              strings.switchToChinese == '中文' ? 'O&M Servers' : '运维服务器',
+              strings.omServers,
               style: TextStyle(
                 color: colorScheme.onSurface,
                 fontSize: 13,
@@ -271,9 +271,7 @@ class _AdminCollapsedMobileServerBar extends StatelessWidget {
                 Expanded(
                   child: OverflowScrollText(
                     connection == null
-                        ? (strings.switchToChinese == '中文'
-                            ? 'O&M Servers'
-                            : '运维服务器')
+                        ? strings.omServers
                         : '${connection.name}  ${connection.username}@${connection.host}',
                     selectable: false,
                     maxLines: 1,
@@ -324,7 +322,7 @@ class _AdminCollapsedDesktopServerRail extends StatelessWidget {
           const SizedBox(height: 8),
           Tooltip(
             message: selectedConnection == null
-                ? (strings.switchToChinese == '中文' ? 'O&M Servers' : '运维服务器')
+                ? strings.omServers
                 : '${selectedConnection!.name}\n${selectedConnection!.username}@${selectedConnection!.host}',
             child: _AdminServerStatusIcon(
               busy: busy,

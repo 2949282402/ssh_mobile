@@ -238,7 +238,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
             IconButton(
               icon: const Icon(Icons.refresh),
               onPressed: _refreshAllData,
-              tooltip: strings.switchToChinese == '中文' ? 'Refresh All' : '刷新全部',
+              tooltip: strings.refreshAll,
             ),
         ],
       ),
@@ -342,9 +342,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
             const CircularProgressIndicator(),
             const SizedBox(height: 16),
             Text(
-              strings.switchToChinese == '中文'
-                  ? 'Connecting and verifying privilege level...'
-                  : '正在连接并验证权限级别...',
+              strings.verifyingPrivilege,
               style: TextStyle(color: colorScheme.onSurfaceVariant),
             ),
           ],
@@ -387,9 +385,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
               if (isPrivilegeError) ...[
                 const SizedBox(height: 16),
                 Text(
-                  strings.switchToChinese == '中文'
-                      ? 'Please reconnect as "root" user or with administrative authorization.'
-                      : '请以 root 账户重新连接，或确保连接的账户拥有完整的管理员权限。',
+                  strings.reconnectAsRootMsg,
                   textAlign: TextAlign.center,
                   style: TextStyle(color: colorScheme.onSurfaceVariant),
                 ),
@@ -421,9 +417,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                strings.switchToChinese == '中文'
-                    ? 'Please reconnect as "root" user or with administrative authorization.'
-                    : '请以 root 账户重新连接，或确保连接的账户拥有完整的管理员权限。',
+                strings.reconnectAsRootMsg,
                 textAlign: TextAlign.center,
                 style: TextStyle(color: colorScheme.onSurfaceVariant),
               ),
@@ -536,9 +530,7 @@ class _AdminEmptyState extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Text(
-              strings.switchToChinese == '中文'
-                  ? 'System O&M Administration'
-                  : '系统运维管理',
+              strings.systemOmAdmin,
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: colorScheme.onSurface,
@@ -548,9 +540,7 @@ class _AdminEmptyState extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              strings.switchToChinese == '中文'
-                  ? 'Select a server from the list to connect and manage local accounts, services, ports, and power status.'
-                  : '请从列表中选择服务器进行连接，以管理本地账户、系统服务、监听端口和电源状态。',
+              strings.selectServerToManage,
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: colorScheme.onSurfaceVariant,

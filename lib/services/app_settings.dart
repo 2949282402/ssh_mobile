@@ -693,6 +693,34 @@ class AppStrings {
   String get sudoStatus => _en ? 'Privilege Level' : '特权级别';
   String get normalUser => _en ? 'Normal User' : '普通用户';
   String get administrator => _en ? 'Administrator' : '管理员 (sudo/wheel)';
+
+  String get refreshAll => _en ? 'Refresh All' : '刷新全部';
+  String get verifyingPrivilege =>
+      _en ? 'Connecting and verifying privilege level...' : '正在连接并验证权限级别...';
+  String get reconnectAsRootMsg => _en
+      ? 'Please reconnect as "root" user or with administrative authorization.'
+      : '请以 root 账户重新连接，或确保连接的账户拥有完整的管理员权限。';
+  String get systemOmAdmin => _en ? 'System O&M Administration' : '系统运维管理';
+  String get selectServerToManage => _en
+      ? 'Select a server from the list to connect and manage local accounts, services, ports, and power status.'
+      : '请从列表中选择服务器进行连接，以管理本地账户、系统服务、监听端口和电源状态。';
+  String get backToHome => _en ? 'Back to Home' : '返回主目录';
+  String get systemPowerHint => _en
+      ? 'Reboot or power down the remote server. Authenticated as root.'
+      : '远程服务器系统控制，将直接向系统发送硬件关机或重启指令。';
+  String get confirm => _en ? 'Confirm' : '确定';
+  String get searchService => _en ? 'Search service...' : '搜索服务...';
+  String get searchPort => _en ? 'Search port/service...' : '搜索端口/服务...';
+  String get searchSessions => _en ? 'Search sessions...' : '搜索会话...';
+  String get searchAccounts => _en ? 'Search accounts...' : '搜索账户...';
+  String get killSession => _en ? 'Kill Session' : '断开会话';
+  String get killAction => _en ? 'Disconnect' : '断开';
+  String killSessionConfirm(String username, String tty) => _en
+      ? 'Kill the active session of user "$username" on TTY "$tty"?'
+      : '确定要强行断开用户 "$username" 在终端 "$tty" 的会话吗？';
+  String get omServers => _en ? 'O&M Servers' : '运维服务器';
+  String get notConnected => _en ? 'Not Connected' : '未连接';
+  String get connectingEllipsis => _en ? 'Connecting...' : '连接中...';
 }
 
 class TerminalStrings {
