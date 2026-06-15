@@ -135,10 +135,10 @@ class _HistoryItem extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: Text(
+                child: OverflowScrollText(
                   record.displayName,
+                  selectable: false,
                   maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: colorScheme.onSurface,
                     fontSize: 15,
@@ -171,10 +171,10 @@ class _HistoryItem extends StatelessWidget {
           ),
           if (record.errorMessage?.isNotEmpty == true) ...[
             const SizedBox(height: 8),
-            Text(
+            OverflowScrollText(
               record.errorMessage!,
+              selectable: true,
               maxLines: 2,
-              overflow: TextOverflow.ellipsis,
               style: TextStyle(color: colorScheme.error, fontSize: 12),
             ),
           ],

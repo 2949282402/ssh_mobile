@@ -6,6 +6,7 @@ import '../services/app_settings.dart';
 import '../services/ssh_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/responsive.dart';
+import '../widgets/overflow_scroll_text.dart';
 
 class TerminalWindowsScreen extends StatelessWidget {
   const TerminalWindowsScreen({super.key});
@@ -316,10 +317,10 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
+                      OverflowScrollText(
                         session.displayName,
+                        selectable: false,
                         maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: colorScheme.onSurface,
                           fontSize: 15,
@@ -327,10 +328,10 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
                         ),
                       ),
                       const SizedBox(height: 4),
-                      Text(
+                      OverflowScrollText(
                         session.connectionName,
+                        selectable: false,
                         maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 12,
                           color: colorScheme.onSurface.withValues(alpha: 0.58),
@@ -349,10 +350,10 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
                           ),
                           const SizedBox(width: 6),
                           Expanded(
-                            child: Text(
+                            child: OverflowScrollText(
                               _statusLabel(session, strings),
+                              selectable: false,
                               maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontSize: 12,
                                 color: colorScheme.onSurface
@@ -433,10 +434,10 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
             ),
             const SizedBox(width: 6),
             Expanded(
-              child: Text(
+              child: OverflowScrollText(
                 command,
+                selectable: false,
                 maxLines: 1,
-                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontFamily: 'monospace',
                   fontSize: 11,

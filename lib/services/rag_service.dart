@@ -57,7 +57,6 @@ class RagDocumentMetadata {
 class RagService extends ChangeNotifier {
   final StorageService storageService;
   final List<RagDocumentMetadata> _documents = [];
-  final Map<String, List<RagChunk>> _documentChunks = {};
   final Bm25SearchEngine _searchEngine = Bm25SearchEngine();
   bool _isLoading = false;
   bool _isInitialized = false;
@@ -68,16 +67,20 @@ class RagService extends ChangeNotifier {
   bool get isLoading => _isLoading;
   bool get isInitialized => _isInitialized;
 
-  /// 初始化 RAG 服务，从本地持久化加载索引及文档元数据
+  /// 初始化 RAG 服务，支持 legacy 数据库迁移与仅加载元数据
   Future<void> init() async {
     if (_isInitialized) return;
     _isLoading = true;
     notifyListeners();
 
     try {
-      final file = await _getDatabaseFile();
-      if (await file.exists()) {
-        final content = await file.readAsString();
+      final supportDir = await getApplicationSupportDirectory();
+      final legacyFile = File(p.join(supportDir.path, 'rag_database.json'));
+      final metadataFile = File(p.join(supportDir.path, 'rag_metadata.json'));
+
+      if (await legacyFile.exists()) {
+        AppLogService.instance.info('RAG: Legacy database found, migrating...');
+        final content = await legacyFile.readAsString();
         final json = jsonDecode(content) as Map<String, dynamic>;
 
         // 1. 加载文档元数据
@@ -89,32 +92,53 @@ class RagService extends ChangeNotifier {
           }
         }
 
-        // 2. 加载文档分块
+        // 2. 加载文档分块并将其切分为独立的文档文件
         final rawChunks = json['documentChunks'] as Map<String, dynamic>? ?? {};
-        _documentChunks.clear();
-        rawChunks.forEach((docId, list) {
-          if (list is List) {
-            _documentChunks[docId] = list
-                .map((item) => RagChunk.fromJson(item as Map<String, dynamic>))
-                .toList();
-          }
-        });
+        for (final entry in rawChunks.entries) {
+          final docId = entry.key;
+          final chunksList = entry.value as List? ?? [];
+          final docFile = File(p.join(supportDir.path, 'rag_doc_$docId.json'));
+          await docFile.writeAsString(jsonEncode(chunksList));
+        }
 
-        // 3. 反序列化搜索引擎索引
+        // 3. 加载搜索引擎索引状态
         final searchJson = json['searchEngine'] as Map<String, dynamic>?;
         if (searchJson != null) {
           _searchEngine.loadFromJson(searchJson);
-        } else {
-          // 如果索引为空，按分块重建索引
-          _rebuildSearchEngine();
+          _searchEngine.chunks.clear(); // 确保不把 chunks 缓存在内存中
         }
 
-        AppLogService.instance.info(
-          'RAG service initialized',
-          details:
-              'loadedDocs=${_documents.length} loadedChunks=${_searchEngine.totalDocs}',
-        );
+        // 4. 保存为新的轻量级元数据
+        await _saveMetadataAndIndex(supportDir.path);
+
+        // 5. 删除 legacy 文件
+        await legacyFile.delete();
+        AppLogService.instance
+            .info('RAG: Migration completed and legacy file deleted.');
+      } else if (await metadataFile.exists()) {
+        final content = await metadataFile.readAsString();
+        final json = jsonDecode(content) as Map<String, dynamic>;
+
+        // 加载文档元数据
+        final rawDocs = json['documents'] as List? ?? [];
+        _documents.clear();
+        for (final docJson in rawDocs) {
+          if (docJson is Map<String, dynamic>) {
+            _documents.add(RagDocumentMetadata.fromJson(docJson));
+          }
+        }
+
+        // 加载搜索引擎索引状态
+        final searchJson = json['searchEngine'] as Map<String, dynamic>?;
+        if (searchJson != null) {
+          _searchEngine.loadFromJson(searchJson);
+          _searchEngine.chunks.clear(); // 确保不把 chunks 缓存在内存中
+        }
       }
+      AppLogService.instance.info(
+        'RAG service initialized',
+        details: 'loadedDocs=${_documents.length}',
+      );
     } catch (e, stackTrace) {
       AppLogService.instance.error(
         'RAG service initialization failed',
@@ -128,7 +152,7 @@ class RagService extends ChangeNotifier {
     }
   }
 
-  /// 添加一个新文档，对其进行解析、分块、索引并持久化
+  /// 添加一个新文档，对其进行解析、分块、索引并持久化（分块写入独立文件）
   Future<RagDocumentMetadata> addDocument({
     required String name,
     required List<int> bytes,
@@ -140,6 +164,7 @@ class RagService extends ChangeNotifier {
 
     try {
       final docId = const Uuid().v4();
+      final supportDir = await getApplicationSupportDirectory();
       String text = '';
 
       // 1. 解析文本
@@ -202,11 +227,16 @@ class RagService extends ChangeNotifier {
         }
       }
 
-      // 3. 保存分块到内存和搜索引擎
-      _documentChunks[docId] = chunks;
-      _searchEngine.addChunks(chunks);
+      // 3. 将当前文档的分块写入独立的 JSON 文件中
+      final docFile = File(p.join(supportDir.path, 'rag_doc_$docId.json'));
+      final chunksJson = chunks.map((c) => c.toJson()).toList();
+      await docFile.writeAsString(jsonEncode(chunksJson));
 
-      // 4. 创建元数据
+      // 4. 将分块索引信息添加进搜索引擎，并清除 chunks 内存缓存
+      _searchEngine.addChunks(chunks);
+      _searchEngine.chunks.clear();
+
+      // 5. 创建文档元数据
       final metadata = RagDocumentMetadata(
         id: docId,
         name: name,
@@ -218,8 +248,8 @@ class RagService extends ChangeNotifier {
 
       _documents.add(metadata);
 
-      // 5. 持久化数据
-      await _saveDatabase();
+      // 6. 持久化元数据和索引状态
+      await _saveMetadataAndIndex(supportDir.path);
 
       AppLogService.instance.info(
         'RAG document added successfully',
@@ -241,20 +271,38 @@ class RagService extends ChangeNotifier {
     }
   }
 
-  /// 删除指定文档及相关的所有索引分块并持久化
+  /// 删除指定文档及相关的所有索引分块并持久化（后台 Isolate 重建搜索引擎索引）
   Future<void> deleteDocument(String documentId) async {
     await init();
     _isLoading = true;
     notifyListeners();
 
     try {
+      final supportDir = await getApplicationSupportDirectory();
+
+      // 1. 从元数据列表中移除
       _documents.removeWhere((doc) => doc.id == documentId);
-      _documentChunks.remove(documentId);
 
-      // BM25 搜索引擎做重建比较省心且避免脏索引
-      _rebuildSearchEngine();
+      // 2. 删除独立的分块文件
+      final docFile = File(p.join(supportDir.path, 'rag_doc_$documentId.json'));
+      if (await docFile.exists()) {
+        await docFile.delete();
+      }
 
-      await _saveDatabase();
+      // 3. 在后台 Isolate 中重建搜索引擎状态，以彻底清理该文档的倒排词频及长度信息
+      final remainingDocIds = _documents.map((d) => d.id).toList();
+      final newSearchEngineJson = await compute(_rebuildIndexTask, {
+        'supportDirPath': supportDir.path,
+        'documentIds': remainingDocIds,
+        'k1': _searchEngine.k1,
+        'b': _searchEngine.b,
+      });
+
+      _searchEngine.loadFromJson(newSearchEngineJson);
+      _searchEngine.chunks.clear();
+
+      // 4. 持久化新的元数据和索引状态
+      await _saveMetadataAndIndex(supportDir.path);
 
       AppLogService.instance.info(
         'RAG document deleted successfully',
@@ -287,19 +335,22 @@ class RagService extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       final searchMode = prefs.getString('rag_search_mode') ?? 'bm25';
       final aliyunKey = await storageService.getAliyunApiKey();
+      final supportDir = await getApplicationSupportDirectory();
 
       // 如果选了向量/混合搜索，但没有配 Aliyun 密钥，则回退为 BM25 搜索
       if (searchMode == 'bm25' || aliyunKey == null || aliyunKey.isEmpty) {
-        return _retrieveBm25(query, limit, filterDocumentIds);
+        return await _retrieveBm25Isolated(
+            query, limit, filterDocumentIds, supportDir.path);
       }
 
       if (searchMode == 'vector') {
-        return await _retrieveVector(
-            query, aliyunKey, limit, filterDocumentIds);
+        return await _retrieveVectorIsolated(
+            query, aliyunKey, limit, filterDocumentIds, supportDir.path);
       }
 
       // 混合搜索模式 (Hybrid Search using RRF)
-      return await _retrieveHybrid(query, aliyunKey, limit, filterDocumentIds);
+      return await _retrieveHybridIsolated(
+          query, aliyunKey, limit, filterDocumentIds, supportDir.path);
     } catch (e, stackTrace) {
       AppLogService.instance.error(
         'RAG retrieval failed',
@@ -308,147 +359,281 @@ class RagService extends ChangeNotifier {
         details: 'query=$query',
       );
       // 网络失败或其它情况，兜底使用纯本地 BM25 检索，确保不影响核心会话
-      return _retrieveBm25(query, limit, filterDocumentIds);
-    }
-  }
-
-  /// 纯本地 BM25 关键词检索
-  List<RagChunk> _retrieveBm25(
-      String query, int limit, Set<String>? filterDocumentIds) {
-    final searchLimit =
-        filterDocumentIds != null && filterDocumentIds.isNotEmpty
-            ? limit * 3
-            : limit;
-
-    final results = _searchEngine.search(query, limit: searchLimit);
-    final filtered = <RagChunk>[];
-    for (final scored in results) {
-      if (filterDocumentIds == null ||
-          filterDocumentIds.isEmpty ||
-          filterDocumentIds.contains(scored.chunk.documentId)) {
-        filtered.add(scored.chunk);
-        if (filtered.length >= limit) break;
+      try {
+        final supportDir = await getApplicationSupportDirectory();
+        return await _retrieveBm25Isolated(
+            query, limit, filterDocumentIds, supportDir.path);
+      } catch (ex) {
+        return const [];
       }
     }
-    return filtered;
   }
 
-  /// 阿里云 DashScope Embedding 语义检索
-  Future<List<RagChunk>> _retrieveVector(
+  /// 使用后台 Isolate 运行 BM25 检索
+  Future<List<RagChunk>> _retrieveBm25Isolated(
+    String query,
+    int limit,
+    Set<String>? filterDocumentIds,
+    String supportDirPath,
+  ) async {
+    final searchEngineJson = _searchEngine.toJson();
+    searchEngineJson.remove('chunks');
+
+    final List<dynamic> results = await compute(_bm25SearchTask, {
+      'query': query,
+      'limit': limit,
+      'filterDocumentIds': filterDocumentIds?.toList(),
+      'supportDirPath': supportDirPath,
+      'searchEngineJson': searchEngineJson,
+    });
+
+    return results
+        .map((m) => RagChunk.fromJson(m as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// 使用后台 Isolate 运行 阿里云 DashScope Embedding 语义检索
+  Future<List<RagChunk>> _retrieveVectorIsolated(
     String query,
     String apiKey,
     int limit,
     Set<String>? filterDocumentIds,
+    String supportDirPath,
   ) async {
     final client = AliyunEmbeddingClient(apiKey: apiKey);
     final queryVectors = await client.getEmbeddings([query], textType: 'query');
     if (queryVectors.isEmpty) return const [];
     final queryVector = queryVectors.first;
 
-    // 收集所有可供计算的候选分块
-    final candidates = <RagChunk>[];
-    if (filterDocumentIds != null && filterDocumentIds.isNotEmpty) {
-      for (final docId in filterDocumentIds) {
-        final docChunks = _documentChunks[docId];
-        if (docChunks != null) candidates.addAll(docChunks);
-      }
-    } else {
-      for (final docChunks in _documentChunks.values) {
-        candidates.addAll(docChunks);
-      }
-    }
+    final List<String> targetDocIds =
+        filterDocumentIds != null && filterDocumentIds.isNotEmpty
+            ? filterDocumentIds.toList()
+            : _documents.map((d) => d.id).toList();
 
-    // 计算余弦相似度（点积）并打分排序
-    final scoredList = <ScoredRagChunk>[];
-    for (final chunk in candidates) {
-      final chunkEmbedding = chunk.metadata['embedding'] as List<dynamic>?;
-      if (chunkEmbedding == null || chunkEmbedding.isEmpty) continue;
+    final List<dynamic> results = await compute(_vectorSearchTask, {
+      'queryVector': queryVector,
+      'targetDocIds': targetDocIds,
+      'supportDirPath': supportDirPath,
+      'limit': limit,
+    });
 
-      // 转换为双精度浮点数
-      final vector =
-          chunkEmbedding.map((val) => (val as num).toDouble()).toList();
-      final score = VectorMath.dotProduct(queryVector, vector);
-      scoredList.add(ScoredRagChunk(chunk: chunk, score: score));
-    }
-
-    scoredList.sort((a, b) => b.score.compareTo(a.score));
-    return scoredList.map((sc) => sc.chunk).take(limit).toList();
+    return results
+        .map((m) => RagChunk.fromJson(m as Map<String, dynamic>))
+        .toList();
   }
 
-  /// 倒数排序融合 (RRF) 混合搜索
-  Future<List<RagChunk>> _retrieveHybrid(
+  /// 使用后台 Isolate 运行 倒数排序融合 (RRF) 混合搜索
+  Future<List<RagChunk>> _retrieveHybridIsolated(
     String query,
     String apiKey,
     int limit,
     Set<String>? filterDocumentIds,
+    String supportDirPath,
   ) async {
-    // 1. 获取 BM25 的排名结果（多获取一些供 RRF 进行深层排序融合）
-    final bm25Chunks = _retrieveBm25(query, limit * 4, filterDocumentIds);
-    final bm25Rank = bm25Chunks.map((c) => c.id).toList();
+    final client = AliyunEmbeddingClient(apiKey: apiKey);
+    final queryVectors = await client.getEmbeddings([query], textType: 'query');
+    if (queryVectors.isEmpty) return const [];
+    final queryVector = queryVectors.first;
 
-    // 2. 获取向量检索的排名结果
-    final vectorChunks =
-        await _retrieveVector(query, apiKey, limit * 4, filterDocumentIds);
-    final vectorRank = vectorChunks.map((c) => c.id).toList();
+    final List<String> targetDocIds =
+        filterDocumentIds != null && filterDocumentIds.isNotEmpty
+            ? filterDocumentIds.toList()
+            : _documents.map((d) => d.id).toList();
 
-    if (bm25Rank.isEmpty && vectorRank.isEmpty) return const [];
+    final searchEngineJson = _searchEngine.toJson();
+    searchEngineJson.remove('chunks');
 
-    // 3. 使用 RRF 合并两种排名的得分
-    final fusedIds =
-        RrfMerger.merge(bm25Rank: bm25Rank, vectorRank: vectorRank);
+    final List<dynamic> results = await compute(_hybridSearchTask, {
+      'query': query,
+      'queryVector': queryVector,
+      'targetDocIds': targetDocIds,
+      'supportDirPath': supportDirPath,
+      'limit': limit,
+      'searchEngineJson': searchEngineJson,
+    });
 
-    // 4. 根据融合排名重组实体，取 Top-K
-    final allChunksMap = <String, RagChunk>{};
-    for (final c in bm25Chunks) {
-      allChunksMap[c.id] = c;
-    }
-    for (final c in vectorChunks) {
-      allChunksMap[c.id] = c;
-    }
-
-    final result = <RagChunk>[];
-    for (final id in fusedIds) {
-      final chunk = allChunksMap[id];
-      if (chunk != null) {
-        result.add(chunk);
-        if (result.length >= limit) break;
-      }
-    }
-
-    return result;
+    return results
+        .map((m) => RagChunk.fromJson(m as Map<String, dynamic>))
+        .toList();
   }
 
-  /// 一键重新构建所有搜索引擎的倒排索引
-  void _rebuildSearchEngine() {
-    _searchEngine.clear();
-    for (final chunks in _documentChunks.values) {
-      _searchEngine.addChunks(chunks);
-    }
-  }
-
-  /// 获取本地持久化数据库文件
-  Future<File> _getDatabaseFile() async {
-    final supportDir = await getApplicationSupportDirectory();
-    return File(p.join(supportDir.path, 'rag_database.json'));
-  }
-
-  /// 保存元数据与倒排索引至本地
-  Future<void> _saveDatabase() async {
+  /// 保存元数据与轻量倒排索引状态至本地
+  Future<void> _saveMetadataAndIndex(String supportDirPath) async {
     try {
-      final file = await _getDatabaseFile();
+      final metadataFile = File(p.join(supportDirPath, 'rag_metadata.json'));
+      final searchEngineJson = _searchEngine.toJson();
+      searchEngineJson.remove('chunks');
+
       final data = {
         'documents': _documents.map((doc) => doc.toJson()).toList(),
-        'documentChunks': _documentChunks
-            .map((k, v) => MapEntry(k, v.map((c) => c.toJson()).toList())),
-        'searchEngine': _searchEngine.toJson(),
+        'searchEngine': searchEngineJson,
       };
-      await file.writeAsString(jsonEncode(data));
+      await metadataFile.writeAsString(jsonEncode(data));
     } catch (e, stackTrace) {
       AppLogService.instance.error(
-        'RAG save database failed',
+        'RAG save metadata and index failed',
         error: e,
         stackTrace: stackTrace,
       );
     }
   }
+}
+
+/// 以下为后台 Isolate 计算任务 Top-level 函数，避免卡顿 UI 线程
+
+Map<String, dynamic> _rebuildIndexTask(Map<String, dynamic> args) {
+  final supportDirPath = args['supportDirPath'] as String;
+  final docIds = (args['documentIds'] as List).cast<String>();
+  final k1 = args['k1'] as double;
+  final b = args['b'] as double;
+
+  final engine = Bm25SearchEngine(k1: k1, b: b);
+  for (final docId in docIds) {
+    final file = File(p.join(supportDirPath, 'rag_doc_$docId.json'));
+    if (file.existsSync()) {
+      final content = file.readAsStringSync();
+      final list = jsonDecode(content) as List;
+      final chunks = list
+          .map((item) => RagChunk.fromJson(item as Map<String, dynamic>))
+          .toList();
+      engine.addChunks(chunks);
+    }
+  }
+  final json = engine.toJson();
+  json.remove('chunks');
+  return json;
+}
+
+List<Map<String, dynamic>> _bm25SearchTask(Map<String, dynamic> args) {
+  final query = args['query'] as String;
+  final limit = args['limit'] as int;
+  final filterDocumentIds =
+      (args['filterDocumentIds'] as List?)?.cast<String>().toSet();
+  final supportDirPath = args['supportDirPath'] as String;
+  final searchEngineJson = args['searchEngineJson'] as Map<String, dynamic>;
+
+  final engine = Bm25SearchEngine();
+  engine.loadFromJson(searchEngineJson);
+
+  final queryTokens = engine.tokenize(query);
+  final candidateDocIds = <String>{};
+  for (final token in queryTokens) {
+    final matches = engine.invertedIndex[token];
+    if (matches != null) {
+      for (final chunkId in matches.keys) {
+        final docId = chunkId.split('_c').first;
+        candidateDocIds.add(docId);
+      }
+    }
+  }
+
+  if (filterDocumentIds != null && filterDocumentIds.isNotEmpty) {
+    candidateDocIds.retainAll(filterDocumentIds);
+  }
+
+  for (final docId in candidateDocIds) {
+    final file = File(p.join(supportDirPath, 'rag_doc_$docId.json'));
+    if (file.existsSync()) {
+      final content = file.readAsStringSync();
+      final list = jsonDecode(content) as List;
+      for (final item in list) {
+        final chunk = RagChunk.fromJson(item as Map<String, dynamic>);
+        engine.chunks[chunk.id] = chunk;
+      }
+    }
+  }
+
+  final results = engine.search(query, limit: limit);
+  return results.map((r) => r.chunk.toJson()).toList();
+}
+
+List<Map<String, dynamic>> _vectorSearchTask(Map<String, dynamic> args) {
+  final queryVector = (args['queryVector'] as List).cast<double>();
+  final targetDocIds = (args['targetDocIds'] as List).cast<String>();
+  final supportDirPath = args['supportDirPath'] as String;
+  final limit = args['limit'] as int;
+
+  final candidates = <RagChunk>[];
+  for (final docId in targetDocIds) {
+    final file = File(p.join(supportDirPath, 'rag_doc_$docId.json'));
+    if (file.existsSync()) {
+      final content = file.readAsStringSync();
+      final list = jsonDecode(content) as List;
+      for (final item in list) {
+        candidates.add(RagChunk.fromJson(item as Map<String, dynamic>));
+      }
+    }
+  }
+
+  final scoredList = <ScoredRagChunk>[];
+  for (final chunk in candidates) {
+    final chunkEmbedding = chunk.metadata['embedding'] as List<dynamic>?;
+    if (chunkEmbedding == null || chunkEmbedding.isEmpty) continue;
+
+    final vector =
+        chunkEmbedding.map((val) => (val as num).toDouble()).toList();
+    final score = VectorMath.dotProduct(queryVector, vector);
+    scoredList.add(ScoredRagChunk(chunk: chunk, score: score));
+  }
+
+  scoredList.sort((a, b) => b.score.compareTo(a.score));
+  return scoredList.map((sc) => sc.chunk.toJson()).take(limit).toList();
+}
+
+List<Map<String, dynamic>> _hybridSearchTask(Map<String, dynamic> args) {
+  final query = args['query'] as String;
+  final queryVector = (args['queryVector'] as List).cast<double>();
+  final targetDocIds = (args['targetDocIds'] as List).cast<String>();
+  final supportDirPath = args['supportDirPath'] as String;
+  final limit = args['limit'] as int;
+  final searchEngineJson = args['searchEngineJson'] as Map<String, dynamic>;
+
+  final engine = Bm25SearchEngine();
+  engine.loadFromJson(searchEngineJson);
+
+  final allChunksMap = <String, RagChunk>{};
+  for (final docId in targetDocIds) {
+    final file = File(p.join(supportDirPath, 'rag_doc_$docId.json'));
+    if (file.existsSync()) {
+      final content = file.readAsStringSync();
+      final list = jsonDecode(content) as List;
+      for (final item in list) {
+        final chunk = RagChunk.fromJson(item as Map<String, dynamic>);
+        engine.chunks[chunk.id] = chunk;
+        allChunksMap[chunk.id] = chunk;
+      }
+    }
+  }
+
+  final bm25Results = engine.search(query, limit: limit * 4);
+  final bm25Rank = bm25Results.map((c) => c.chunk.id).toList();
+
+  final scoredList = <ScoredRagChunk>[];
+  for (final chunk in allChunksMap.values) {
+    final chunkEmbedding = chunk.metadata['embedding'] as List<dynamic>?;
+    if (chunkEmbedding == null || chunkEmbedding.isEmpty) continue;
+
+    final vector =
+        chunkEmbedding.map((val) => (val as num).toDouble()).toList();
+    final score = VectorMath.dotProduct(queryVector, vector);
+    scoredList.add(ScoredRagChunk(chunk: chunk, score: score));
+  }
+  scoredList.sort((a, b) => b.score.compareTo(a.score));
+  final vectorRank =
+      scoredList.map((sc) => sc.chunk.id).take(limit * 4).toList();
+
+  if (bm25Rank.isEmpty && vectorRank.isEmpty) return const [];
+
+  final fusedIds = RrfMerger.merge(bm25Rank: bm25Rank, vectorRank: vectorRank);
+
+  final result = <Map<String, dynamic>>[];
+  for (final id in fusedIds) {
+    final chunk = allChunksMap[id];
+    if (chunk != null) {
+      result.add(chunk.toJson());
+      if (result.length >= limit) break;
+    }
+  }
+
+  return result;
 }

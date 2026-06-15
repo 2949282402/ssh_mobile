@@ -227,12 +227,12 @@ class _CollapsedMobileServerBar extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text(
+                  child: OverflowScrollText(
                     connection == null
                         ? strings.sftpServers
                         : '${connection.name}  ${connection.username}@${connection.host}',
+                    selectable: false,
                     maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: colorScheme.onSurface,
                       fontWeight: FontWeight.w700,
@@ -394,20 +394,20 @@ class _ServerTile extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
+                    OverflowScrollText(
                       connection.name,
+                      selectable: false,
                       maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: colorScheme.onSurface,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                     const SizedBox(height: 3),
-                    Text(
+                    OverflowScrollText(
                       '${connection.username}@${connection.host}',
+                      selectable: false,
                       maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: colorScheme.onSurface.withValues(alpha: 0.62),
                         fontSize: 12,

@@ -43,7 +43,7 @@ admin    pts/1        2026-06-03 08:31 (192.168.1.11)
 
     final sessions = await service.getActiveSessions('conn1');
     expect(sessions, hasLength(2));
-    
+
     expect(sessions[0].username, 'root');
     expect(sessions[0].tty, 'pts/0');
     expect(sessions[0].loginTime, '2026-06-03 08:30');
@@ -56,7 +56,8 @@ admin    pts/1        2026-06-03 08:31 (192.168.1.11)
     expect(lastCommand, 'who');
   });
 
-  test('getUserAccounts parses /etc/passwd and password status correctly', () async {
+  test('getUserAccounts parses /etc/passwd and password status correctly',
+      () async {
     nextStdout = '''
 root:x:0:0:root:/root:/bin/bash
 bin:x:1:1:bin:/dev:
@@ -152,7 +153,8 @@ udp UNCONN 0 0 127.0.0.53:53 0.0.0.0:* users:(("systemd-resolve",pid=42,fd=12))
     nextExitCode = 0;
     nextStdout = '';
 
-    await service.createUser('conn1', username: 'testuser', password: 'password123');
+    await service.createUser('conn1',
+        username: 'testuser', password: 'password123');
     expect(lastCommand, contains('chpasswd'));
   });
 

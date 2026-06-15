@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import 'app_settings.dart';
 
@@ -26,6 +29,10 @@ class AppLogService extends ChangeNotifier {
   bool _notifyScheduled = false;
   Timer? _notifyTimer;
   int _nextEntryId = 1;
+  File? _logFile;
+  final List<String> _logWriteQueue = [];
+  bool _isWriting = false;
+  int logSizeLimit = 5 * 1024 * 1024;
 
   AppLogService._();
 
@@ -133,22 +140,24 @@ class AppLogService extends ChangeNotifier {
   }) {
     final safeMessage = _redact(message);
     final safeDetails = details == null ? null : _redact(details);
-    _entries.addLast(
-      AppLogEntry(
-        id: _nextEntryId++,
-        time: DateTime.now(),
-        level: level,
-        message: safeMessage,
-        sourceLocation: captureSource ? _sourceLocation(stackTrace) : null,
-        stackTrace: stackTrace?.toString(),
-        details: safeDetails,
-      ),
+    final entry = AppLogEntry(
+      id: _nextEntryId++,
+      time: DateTime.now(),
+      level: level,
+      message: safeMessage,
+      sourceLocation: captureSource ? _sourceLocation(stackTrace) : null,
+      stackTrace: stackTrace?.toString(),
+      details: safeDetails,
     );
+    _entries.addLast(entry);
     while (_entries.length > _maxEntries) {
       _entries.removeFirst();
     }
     _invalidateCaches();
     _scheduleNotify();
+
+    // Write log to disk asynchronously
+    unawaited(_writeToDisk(entry.text));
   }
 
   void deleteEntriesById(Set<int> ids) {
@@ -181,6 +190,55 @@ class AppLogService extends ChangeNotifier {
       _notifyScheduled = false;
       notifyListeners();
     });
+  }
+
+  Future<void> _writeToDisk(String logLine) async {
+    _logWriteQueue.add(logLine);
+    if (_isWriting) return;
+    _isWriting = true;
+
+    while (_logWriteQueue.isNotEmpty) {
+      final line = _logWriteQueue.removeAt(0);
+      try {
+        if (_logFile == null) {
+          final supportDir = await getApplicationSupportDirectory();
+          _logFile = File(p.join(supportDir.path, 'app.log'));
+        }
+
+        // Check size and rotate if needed
+        if (await _logFile!.exists()) {
+          final length = await _logFile!.length();
+          if (length > logSizeLimit) {
+            await _rotateLogs();
+          }
+        }
+
+        await _logFile!
+            .writeAsString('$line\n', mode: FileMode.append, flush: true);
+      } catch (e) {
+        // Ignore log file write errors to prevent infinite error logging loops
+      }
+    }
+    _isWriting = false;
+  }
+
+  Future<void> _rotateLogs() async {
+    try {
+      final supportDir = await getApplicationSupportDirectory();
+      final path = supportDir.path;
+
+      final file3 = File(p.join(path, 'app.log.3'));
+      final file2 = File(p.join(path, 'app.log.2'));
+      final file1 = File(p.join(path, 'app.log.1'));
+      final file0 = File(p.join(path, 'app.log'));
+
+      if (await file3.exists()) await file3.delete();
+      if (await file2.exists()) await file2.rename(file3.path);
+      if (await file1.exists()) await file1.rename(file2.path);
+      if (await file0.exists()) await file0.rename(file1.path);
+    } catch (e) {
+      // Ignore rotation errors
+    }
   }
 
   /// 日志脱敏：替换私钥 PEM、Bearer Token、密码字段等敏感信息为 [REDACTED]。

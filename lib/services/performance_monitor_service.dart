@@ -659,9 +659,87 @@ class PerformanceMonitorService extends ChangeNotifier {
   }
 
   void _trimSamples(String connectionId) {
-    final cutoff = DateTime.now().subtract(maxRetention);
-    _samplesByConnection[connectionId]
-        ?.removeWhere((sample) => sample.time.isBefore(cutoff));
+    final now = DateTime.now();
+    final maxRetCutoff = now.subtract(maxRetention);
+
+    final samples = _samplesByConnection[connectionId];
+    if (samples == null || samples.isEmpty) return;
+
+    // 1. 移除超过 10 分钟的最老数据
+    samples.removeWhere((sample) => sample.time.isBefore(maxRetCutoff));
+
+    // 2. 对超过 5 分钟的采样数据进行降采样（合并 10 秒间隔内的点）
+    final downsampleCutoff = now.subtract(const Duration(minutes: 5));
+
+    final olderSamples = <PerformanceSample>[];
+    final newerSamples = <PerformanceSample>[];
+
+    for (final sample in samples) {
+      if (sample.time.isBefore(downsampleCutoff)) {
+        olderSamples.add(sample);
+      } else {
+        newerSamples.add(sample);
+      }
+    }
+
+    if (olderSamples.isNotEmpty) {
+      final compactedOlder = <PerformanceSample>[];
+      var bucket = <PerformanceSample>[];
+
+      for (final sample in olderSamples) {
+        if (bucket.isEmpty) {
+          bucket.add(sample);
+        } else {
+          final firstTime = bucket.first.time;
+          if (sample.time.difference(firstTime) < const Duration(seconds: 10)) {
+            bucket.add(sample);
+          } else {
+            compactedOlder.add(_averageSamples(bucket));
+            bucket = [sample];
+          }
+        }
+      }
+
+      if (bucket.isNotEmpty) {
+        compactedOlder.add(_averageSamples(bucket));
+      }
+
+      samples.clear();
+      samples.addAll(compactedOlder);
+      samples.addAll(newerSamples);
+    }
+  }
+
+  PerformanceSample _averageSamples(List<PerformanceSample> list) {
+    if (list.length == 1) return list.first;
+
+    var totalCpu = 0.0;
+    var totalMem = 0.0;
+    var totalDisk = 0.0;
+    var totalNet = 0.0;
+    var totalMs = 0;
+
+    for (final s in list) {
+      totalCpu += s.cpuPercent;
+      totalMem += s.memoryPercent;
+      totalDisk += s.diskBytesPerSecond;
+      totalNet += s.networkBytesPerSecond;
+      totalMs += s.time.millisecondsSinceEpoch;
+    }
+
+    final count = list.length;
+    final avgTime = DateTime.fromMillisecondsSinceEpoch(totalMs ~/ count);
+    final diskUsage = list[count ~/ 2].diskUsage;
+
+    return PerformanceSample(
+      connectionId: list.first.connectionId,
+      time: avgTime,
+      cpuPercent: totalCpu / count,
+      memoryPercent: totalMem / count,
+      diskBytesPerSecond: totalDisk / count,
+      networkBytesPerSecond: totalNet / count,
+      diskUsage: diskUsage,
+    );
   }
 
   double _thresholdPenalty(

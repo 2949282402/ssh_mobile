@@ -155,6 +155,7 @@ class StorageService extends ChangeNotifier
       rethrow;
     }
   }
+
   final Map<String, _PendingProtectedPrefWrite> _pendingProtectedPrefWrites =
       {};
 

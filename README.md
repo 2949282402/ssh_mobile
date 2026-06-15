@@ -15,6 +15,7 @@ SSH Mobile is a Flutter-based cross-platform SSH / SFTP client for long-running 
 
 ## Highlights
 
+<<<<<<< HEAD
 - SSH 连接管理：支持密码、私钥、私钥密码、跳板机和服务器平台选择。
 - 多终端窗口：同一服务器可创建多个窗口，窗口名固定，用于稳定绑定 tmux 会话。
 - SFTP：支持目录浏览、上传、下载、文本编辑、文件预览和输入名称确认删除。
@@ -24,6 +25,124 @@ SSH Mobile is a Flutter-based cross-platform SSH / SFTP client for long-running 
 - 日志：集中记录 SSH、SFTP、LLM、AI tools 和异常信息。
 - 设置与备份：支持语言、主题、字体、AI 设置、聊天和窗口历史导入导出，但不导出密码、私钥或 API Key。
 - 附加页面：包含系统管理、Playbook、RAG 知识库、AI Skills、终端历史和客户端 WebView。
+=======
+The current maintenance baseline is documented in
+[`docs/ADR_ENGINEERING_BASELINE.md`](docs/ADR_ENGINEERING_BASELINE.md). Release
+Android builds disable cleartext traffic by default; debug and profile builds
+keep cleartext enabled for local OpenAI-compatible provider testing.
+
+Performance-sensitive changes should be checked against
+[`docs/PERFORMANCE_ACCEPTANCE.md`](docs/PERFORMANCE_ACCEPTANCE.md), especially
+terminal large output, AI long streaming replies, SFTP large directories, and
+multi-server monitor sampling.
+
+Core SSH, SFTP, LLM, AI tool, chat storage, terminal-history, and backup flows
+now expose lightweight Dart interfaces so tests and future feature controllers
+can inject fake implementations without real network or platform credentials.
+Backup import/export remains credential-free: passwords, private keys, and AI
+API keys are never restored from backup JSON and must be reconfigured manually.
+
+## Features
+
+- SSH 连接管理：保存多服务器配置，支持密码、私钥、私钥密码和可选跳板机。
+- 多终端窗口：同一服务器可打开多个窗口，窗口名固定，用于稳定绑定 tmux 会话。
+- SSH + tmux：默认推荐模式，适合 `codex`、编辑器、构建任务和长时间脚本。
+- tmux 恢复与清理：断连后可回到原会话，也可配置无客户端自动清理旧会话。
+- 导航顺序：AI 页、服务器页、SFTP 页、性能监控页和日志页；窗口管理合并到服务器页，应用启动默认进入服务器页，日志页不显示在导航栏中。
+- SFTP 文件管理：支持多服务器切换、保持连接、路径记忆、目录列表缓存（30秒 TTL）、下载预览与缩略图 SHA-256 临时缓存（自动比对大小与修改时间校验）、上传、下载、输入名称确认删除、文本编辑和文件预览。
+- 性能监控：可多选服务器，点击开始后实时绘制 CPU、内存、磁盘 IO 和网络折线图，默认 10 秒刷新一次，最多保留本轮监控启动后的近 10 分钟数据，历史采样超过 5 分钟的数据自动进行 10 秒分组降采样平均处理，并给出健康评分与内存告警。
+- 文件预览：支持文本、Markdown、HTML、PDF 等常见文档类型的查看。
+- AI 大模型聊天页：通过 API Key 接入 OpenAI-compatible 接口，默认支持 DeepSeek 模型。
+- AI Tools：模型可调用工具列出服务器、执行只读诊断命令、浏览 SFTP 目录、读取小文本文件、生成服务器运维报告，也可调用客户端工具查看本机时间/设备/网络/电池状态、打开应用设置、复制文本和设置客户端提醒；写命令必须先经过人工同意。
+- 流式输出与富文本：AI 回复支持流式显示和 Markdown 富文本渲染。
+- 过程详情：模型的深度思考、工具调用参数、工具执行结果和写命令审批结果会在聊天消息下方折叠展示。
+- 聊天工具栏：输入框旁的 `+` 会在输入框下方展开类似微信的功能面板，提供服务器选择、Skills 管理和当前会话绑定的 WebView 入口。
+- 上下文管理：AI 页显示上下文窗口用量，可选择 259K、512K、1M，长文档输出只保留精简记忆进入后续上下文，达到 90% 自动调用模型压缩上下文。
+- 聊天历史与多窗口：AI 页支持多会话历史、新建聊天、切换动画和当前会话保活。
+- 消息编辑与分支：用户消息可编辑后重新发送，AI 回复可重新生成，也可从某条 AI 回复创建新分支继续追问。
+- 开发日志：日志页记录 SSH、SFTP、LLM、tool 调用和错误信息，日志包含来源文件/行号，支持筛选、复制、长按多选和批量删除。日志写入使用异步队列，并实施大小自动轮转（单个日志上限 5MB，最多保留 3 个历史归档，共 20MB 上限）。
+- 辅助页面：服务器新增/编辑、系统管理、Playbook、RAG 知识（采用分区存储结构：轻量级 metadata 与独立文档 JSON，并在后台 Isolate 中进行向量相似度和 BM25 检索计算）、AI Skills、终端历史、客户端 WebView 和启动页都保留为独立页面，供主流程复用而不是塞进底部导航。
+- 设置面板与备份：在 AI 页顶部点击“应用设置”按钮打开设置抽屉，支持主题/语言/全局字体切换，以及一键导出/导入服务器、窗口历史、AI 聊天和自定义 Skills；密码、私钥和 API Key 不会导出。
+- 主题与语言：默认使用浅色主题和中文界面，支持黑白主题和中英文界面切换；全局视觉系统统一了色彩、圆角、输入框、按钮和导航样式。
+- 移动端导航优化：底部导航栏默认常驻显示；手机端会按 1.5K 到 2K 物理短边做轻量字号和组件密度适配，避免低分辨率机型 UI 过大。
+
+## UI Density Note
+
+Mobile layout uses Flutter logical pixels first, following Android dp/sp and
+iOS point-style density independence. For phone-class devices that still render
+too large because of OEM density buckets, the app applies a narrow correction:
+2K-class short edges (about 1440 physical px and above) use `1.0`, while
+1.5K-class short edges (about 1240 physical px and below) use about `0.88`,
+with interpolation between the two.
+
+Main navigation pages are deferred: AI, Servers, SFTP, Performance Monitor, and
+Logs stay
+blank until selected. During activation the app shows only the shared loading
+indicator, then mounts that page's data subscriptions and UI.
+
+The AI page does not load saved chat history during activation. On first open it
+creates an unsaved draft, then keeps the active draft/chat state alive when the
+user switches to another navigation page. Saved history is loaded only when the
+history drawer is opened; the drawer shows a blank loading state while reading
+history.
+
+Performance-sensitive UI paths are batched: terminal output writes are capped
+per frame, SSH shortcut keys use a saved manual order instead of LRU resorting,
+and shortcut usage stats are persisted without rebuilding the shortcut
+bar on every key press. Log/SFTP notifications are coalesced during noisy
+diagnostics or file operations. During AI streaming, context-token estimation,
+bottom-scroll updates, and chat-list resorting are throttled so Markdown
+rendering stays responsive while text is arriving; the history drawer animates
+through local value updates rather than rebuilding the full chat page. Server
+overview cards listen to compact session summaries instead of full
+terminal-window objects, and log-level filters are cached in the log service.
+High-frequency debug/background logs skip expensive source stack lookup, and
+the embedded terminal windows list listens to immutable value snapshots instead
+of raw session objects. AI chats, AI skills, tmux restore records, and terminal history
+metadata are cached in memory so single-record saves avoid repeatedly decoding
+full JSON lists; those high-frequency list writes are debounced and flushed
+when the app backgrounds. The interactive xterm scrollback is bounded for
+mobile smoothness, while the full raw stream remains available through
+encrypted terminal history.
+Port/Application monitor refresh controls are disabled while a fetch is in
+flight, port detail rows stay collapsed by default, and performance probes
+retry with a fresh one-shot SSH connection after transient interruptions. RAG storage is optimized through JSON database partitioning, and heavy calculations (cosine similarity, BM25 indexing, and JSON encoding/decoding) are offloaded to background Isolates via `compute()`. SFTP directory lists are cached in-memory with a 30s TTL, while file previews/thumbnails are temporarily cached with SHA-256 keys and validated against remote size and timestamp metadata. Performance Monitor history data points older than 5 minutes are grouped and averaged into 10-second intervals to prevent UI rendering lag. Developer logs are managed via an asynchronous queue with auto-rotation capped at 5MB per file (max 3 archive files).
+LLM settings include DeepSeek-only thinking controls. For DeepSeek API hosts the
+client can send `thinking.enabled/disabled` and `reasoning_effort` (`high` or
+`max`); generic OpenAI-compatible providers are left untouched. Local web search
+is enabled by default as a client-side `web_search` function tool backed by the
+current chat's WebView, and users can disable it in LLM settings. The assistant
+prompt tells enabled models to call it before answering current/latest/news or
+other external-information questions, and the tool definition embeds the
+current per-call result count setting. OpenAI hosted web search belongs in a
+separate Responses API adapter.
+Automatic multi-agent collaboration is enabled by default for complex AI chat
+requests such as troubleshooting, implementation planning, audits, performance
+work, reports, and multi-server operations. Helper agents run in parallel before
+the main assistant response, but they do not receive tool definitions and cannot
+execute SSH, SFTP, or client tools directly. Their redacted advisory summary is
+added as normal assistant memory, while the primary assistant remains
+responsible for tool calls, approval gates, cancellation, and the final answer.
+Users can disable this mode or choose the maximum helper-agent count in LLM
+settings.
+
+## Tech Stack
+
+| Module | Package | Description |
+| --- | --- | --- |
+| Flutter UI | `flutter`, `provider` | 页面、状态、主题和语言管理 |
+| SSH / SFTP | `dartssh2` | 纯 Dart SSH 和 SFTP 客户端 |
+| Terminal | `xterm` | ANSI 终端渲染、输入输出和滚动缓存 |
+| Charts | `fl_chart` | 性能监控折线图 |
+| Background | `flutter_background_service` | 后台 SSH 会话维护 |
+| Notifications | `flutter_local_notifications` | 前台服务通知 |
+| Secure storage | `flutter_secure_storage` | 密码、私钥、API Key 等敏感信息 |
+| Local settings | `shared_preferences` | 主题、语言、连接配置和聊天记录 |
+| Files | `file_picker`, `path_provider`, `path` | 本地文件选择、下载和缓存 |
+| Markdown | `flutter_markdown` | AI 回复和文档 Markdown 渲染 |
+| Preview | `webview_flutter`, `printing` | HTML / PDF 等文档预览 |
+| Permissions | `permission_handler` | 通知、电池优化等权限处理 |
+>>>>>>> 4b1dcc59f0cd32d1daff6a438b0c1d8810e30ef2
 
 ## Project Structure
 

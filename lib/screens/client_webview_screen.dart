@@ -5,6 +5,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import '../services/app_settings.dart';
 import '../services/client_webview_service.dart';
+import '../widgets/overflow_scroll_text.dart';
 
 class ClientWebViewScreen extends StatefulWidget {
   final String chatId;
@@ -66,12 +67,12 @@ class _ClientWebViewScreenState extends State<ClientWebViewScreen> {
         title: AnimatedBuilder(
           animation: _service,
           builder: (context, _) {
-            return Text(
+            return OverflowScrollText(
               _session.title?.trim().isNotEmpty == true
                   ? _session.title!
                   : strings.title,
+              selectable: false,
               maxLines: 1,
-              overflow: TextOverflow.ellipsis,
             );
           },
         ),
@@ -171,10 +172,10 @@ class _ClientWebViewScreenState extends State<ClientWebViewScreen> {
                                       .errorContainer,
                                   borderRadius: BorderRadius.circular(8),
                                 ),
-                                child: Text(
+                                child: OverflowScrollText(
                                   error,
+                                  selectable: true,
                                   maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
                                     color: Theme.of(context)
                                         .colorScheme
@@ -344,12 +345,12 @@ class _AiBrowsingBanner extends StatelessWidget {
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: Text(
+                child: OverflowScrollText(
                   effectiveLabel == null || effectiveLabel.isEmpty
                       ? strings.aiBrowsing
                       : '${strings.aiBrowsing}: $effectiveLabel',
+                  selectable: false,
                   maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: colorScheme.onSurfaceVariant,
                     fontSize: 13,

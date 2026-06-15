@@ -196,8 +196,7 @@ extension SettingsOps on StorageService {
     await _ensureAiApiKeyHistoryMigrated();
     final normalizedId = id.trim();
     if (normalizedId.isEmpty) return null;
-    final value =
-        await _readSecure(_aiApiKeyStorageKey(normalizedId));
+    final value = await _readSecure(_aiApiKeyStorageKey(normalizedId));
     return _normalizeAiApiKey(value);
   }
 
@@ -295,8 +294,7 @@ extension SettingsOps on StorageService {
         _secretCache.remove(StorageService._memoryAiApiKeyCacheKey);
         return null;
       }
-      final value =
-          await _readSecure(_aiApiKeyStorageKey(selectedId));
+      final value = await _readSecure(_aiApiKeyStorageKey(selectedId));
       final normalized = _normalizeAiApiKey(value);
       if (value != null && value.isNotEmpty && normalized == null) {
         await removeAiApiKeyHistoryEntry(selectedId);
@@ -319,8 +317,7 @@ extension SettingsOps on StorageService {
 
   Future<String?> getQuarkApiKey() async {
     if (!_initialized) return null;
-    final value =
-        await _readSecure(StorageService._quarkApiKeySecureKey);
+    final value = await _readSecure(StorageService._quarkApiKeySecureKey);
     return value?.trim();
   }
 
@@ -341,8 +338,7 @@ extension SettingsOps on StorageService {
 
   Future<String?> getAliyunApiKey() async {
     if (!_initialized) return null;
-    final value =
-        await _readSecure(StorageService._aliyunApiKeySecureKey);
+    final value = await _readSecure(StorageService._aliyunApiKeySecureKey);
     return value?.trim();
   }
 
@@ -550,8 +546,7 @@ extension SettingsOps on StorageService {
   Future<void> _ensureAiApiKeyHistoryMigrated() async {
     if (!_initialized || _prefs == null) return;
     if (_readAiApiKeyRefIds().isNotEmpty) return;
-    final legacyValue =
-        await _readSecure(StorageService._aiApiKeyKey);
+    final legacyValue = await _readSecure(StorageService._aiApiKeyKey);
     final normalizedLegacy = _normalizeAiApiKey(legacyValue);
     if (normalizedLegacy == null) {
       if (legacyValue != null && legacyValue.isNotEmpty) {

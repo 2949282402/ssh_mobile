@@ -70,8 +70,10 @@ class _ToolApprovalPanel extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: SelectableText(
+            child: OverflowScrollText(
               value,
+              selectable: true,
+              maxLines: 1,
               style: TextStyle(color: colorScheme.onSurface),
             ),
           ),
