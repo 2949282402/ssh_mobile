@@ -139,7 +139,7 @@ void main() {
 
       expect(result, isNotNull);
       expect(result!.agentCount, 4);
-      expect(roles, ['planner', 'operator', 'reviewer', 'summarizer']);
+      expect(roles, ['explore', 'planner', 'operator', 'reviewer']);
       expect(result.memoryContent, contains('Planner'));
       for (final messages in roleMessages) {
         for (final message in messages) {
@@ -345,6 +345,65 @@ void main() {
       expect(propagatedEffort, 'medium');
     });
 
+    test('propagates intermediate analysis contexts through cascade phases', () async {
+      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
+      final roleReceivedMessages = <String, List<Map<String, dynamic>>>{};
+
+      final result = await coordinator.run(
+        enabled: true,
+        maxAgents: 4,
+        messages: const [
+          {'role': 'user', 'content': 'inspect logs and fix system'},
+        ],
+        classify: (messages) async => jsonEncode({
+          "shouldCollaborate": true,
+          "reason": "multi-phase troubleshooting",
+          "thinkingEnabled": false,
+          "reasoningEffort": "low",
+          "agentCount": 4
+        }),
+        complete: (role, messages, {required thinkingSettings}) async {
+          roleReceivedMessages[role.name] = messages;
+          return 'mock output from ${role.label}';
+        },
+      );
+
+      expect(result, isNotNull);
+      expect(result!.agentCount, 4);
+
+      // 验证 Explore 率先执行，无前置依赖
+      final exploreMsgs = roleReceivedMessages['explore'];
+      expect(exploreMsgs, isNotNull);
+      final exploreContent = exploreMsgs!.last['content'] as String;
+      expect(exploreContent, isNot(contains('来自其他辅助智能体的阶段性分析结果：')));
+
+      // 验证 Planner 接收 Explore 诊断结果
+      final plannerMsgs = roleReceivedMessages['planner'];
+      expect(plannerMsgs, isNotNull);
+      final plannerContent = plannerMsgs!.last['content'] as String;
+      expect(plannerContent, contains('Explore Agent (探索智能体) 的诊断建议：'));
+      expect(plannerContent, contains('mock output from Explore'));
+
+      // 验证 Operator 接收 Explore 和 Planner 成果
+      final operatorMsgs = roleReceivedMessages['operator'];
+      expect(operatorMsgs, isNotNull);
+      final operatorContent = operatorMsgs!.last['content'] as String;
+      expect(operatorContent, contains('Explore Agent (探索智能体) 的诊断建议：'));
+      expect(operatorContent, contains('Planner Agent (规划智能体) 提出的执行工作流：'));
+      expect(operatorContent, contains('mock output from Explore'));
+      expect(operatorContent, contains('mock output from Planner'));
+
+      // 验证 Reviewer 审计 Planner 和 Operator
+      final reviewerMsgs = roleReceivedMessages['reviewer'];
+      expect(reviewerMsgs, isNotNull);
+      final reviewerContent = reviewerMsgs!.last['content'] as String;
+      expect(reviewerContent, isNot(contains('Explore Agent')));
+      expect(reviewerContent, contains('Planner Agent (规划智能体) 提出的执行工作流：'));
+      expect(reviewerContent, contains('Operator Agent (执行智能体) 建议的工具及命令：'));
+      expect(reviewerContent, contains('mock output from Planner'));
+      expect(reviewerContent, contains('mock output from Operator'));
+    });
+
     test(
         'gracefully falls back when classification returns invalid JSON or times out',
         () async {
@@ -412,6 +471,6 @@ void main() {
     expect(AiMultiAgentMaxAgents.normalize(null), 3);
     expect(AiMultiAgentMaxAgents.normalize(1), 2);
     expect(AiMultiAgentMaxAgents.normalize(3), 3);
-    expect(AiMultiAgentMaxAgents.normalize(99), 4);
+    expect(AiMultiAgentMaxAgents.normalize(99), 5);
   });
 }

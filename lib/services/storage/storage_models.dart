@@ -95,6 +95,7 @@ class AiConnectionSettings {
   final String customSystemPrompt;
   final String customPlannerPrompt;
   final String customOperatorPrompt;
+  final String customExplorePrompt;
   final String customReviewerPrompt;
   final String customSummarizerPrompt;
   final String customCoordinatorPrompt;
@@ -124,6 +125,7 @@ class AiConnectionSettings {
     required this.customSystemPrompt,
     required this.customPlannerPrompt,
     required this.customOperatorPrompt,
+    required this.customExplorePrompt,
     required this.customReviewerPrompt,
     required this.customSummarizerPrompt,
     required this.customCoordinatorPrompt,
@@ -494,6 +496,7 @@ class AiChatRecord {
   final List<AiChatMessageRecord> messages;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final bool planMode;
 
   const AiChatRecord({
     required this.id,
@@ -502,6 +505,7 @@ class AiChatRecord {
     required this.messages,
     required this.createdAt,
     required this.updatedAt,
+    this.planMode = false,
   });
 
   AiChatRecord copyWith({
@@ -509,6 +513,7 @@ class AiChatRecord {
     String? model,
     List<AiChatMessageRecord>? messages,
     DateTime? updatedAt,
+    bool? planMode,
   }) {
     return AiChatRecord(
       id: id,
@@ -517,6 +522,7 @@ class AiChatRecord {
       messages: messages ?? this.messages,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      planMode: planMode ?? this.planMode,
     );
   }
 
@@ -528,6 +534,7 @@ class AiChatRecord {
       'messages': messages.map((item) => item.toJson()).toList(),
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
+      'planMode': planMode,
     };
   }
 
@@ -544,6 +551,7 @@ class AiChatRecord {
           DateTime.now(),
       updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
           DateTime.now(),
+      planMode: json['planMode'] as bool? ?? false,
     );
   }
 }

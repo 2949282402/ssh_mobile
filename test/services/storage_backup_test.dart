@@ -79,7 +79,7 @@ void main() {
     );
     settings = await storage.loadAiConnectionSettings();
     expect(settings.multiAgentEnabled, isFalse);
-    expect(settings.multiAgentMaxAgents, 4);
+    expect(settings.multiAgentMaxAgents, 5);
 
     await storage.saveAiConnectionSettings(
       baseUrl: 'https://api.example.com',

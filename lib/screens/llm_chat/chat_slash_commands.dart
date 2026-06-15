@@ -36,6 +36,11 @@ const List<_SlashCommandMeta> _defaultSlashCommands = [
     summary: 'Open and manage local AI skills.',
     details: 'View saved Skills and enable or disable them.',
   ),
+  _SlashCommandMeta(
+    command: '/plan',
+    summary: 'Toggle plan mode or run a plan task.',
+    details: 'Design a structured execution plan without modifying server state.',
+  ),
 ];
 
 extension _ChatSlashCommands on _LlmChatScreenState {
@@ -93,8 +98,9 @@ extension _ChatSlashCommands on _LlmChatScreenState {
                     overflow: TextOverflow.ellipsis,
                   ),
                   onTap: () {
-                    _inputController.text = command.command == '/tools'
-                        ? '/tools '
+                    _inputController.text = (command.command == '/tools' ||
+                            command.command == '/plan')
+                        ? '${command.command} '
                         : command.command;
                     setState(() => _inputController.selection =
                         TextSelection.collapsed(
@@ -133,6 +139,16 @@ extension _ChatSlashCommands on _LlmChatScreenState {
         return true;
       case 'tools':
         final handled = await _executeToolsCommand(
+          chatId: chatId,
+          arguments: parsed.arguments,
+          strings: strings,
+        );
+        if (handled) {
+          _inputController.clear();
+        }
+        return handled;
+      case 'plan':
+        final handled = await _executePlanCommand(
           chatId: chatId,
           arguments: parsed.arguments,
           strings: strings,
@@ -463,5 +479,48 @@ extension _ChatSlashCommands on _LlmChatScreenState {
         duration: const Duration(seconds: 2),
       ),
     );
+  }
+
+  Future<bool> _executePlanCommand({
+    required String chatId,
+    required String arguments,
+    required _AiStrings strings,
+  }) async {
+    final activeChat = _activeChat;
+    if (activeChat == null || activeChat.id != chatId) return false;
+    final storage = context.read<StorageService>();
+
+    if (arguments.trim().isEmpty) {
+      final nextPlanMode = !activeChat.planMode;
+      final updatedChat = activeChat.copyWith(planMode: nextPlanMode);
+
+      setState(() {
+        _replaceChat(updatedChat);
+      });
+      await storage.saveAiChat(updatedChat);
+
+      if (!mounted || !context.mounted) return true;
+
+      final msg = strings.language == AppLanguage.en
+          ? (nextPlanMode ? 'Plan Mode Enabled' : 'Plan Mode Disabled')
+          : (nextPlanMode ? '规划模式已启用' : '规划模式已关闭');
+      _showCommandFeedback(msg, context);
+      return true;
+    }
+
+    final updatedChat = activeChat.copyWith(planMode: true);
+    setState(() {
+      _replaceChat(updatedChat);
+    });
+    await storage.saveAiChat(updatedChat);
+
+    if (!mounted || !context.mounted) return true;
+
+    scheduleMicrotask(() {
+      if (mounted) {
+        _sendText(context, strings, text: arguments, clearInput: true);
+      }
+    });
+    return true;
   }
 }

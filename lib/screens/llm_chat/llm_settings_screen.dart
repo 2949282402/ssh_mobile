@@ -247,6 +247,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       _errorText = null;
     });
     try {
+      final settings = widget.initialSettings;
       final service = LlmChatService(
         storageService: storage,
         toolService: AiToolService(
@@ -259,6 +260,14 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
           appSettings: context.read<AppSettings>(),
           playbookService: context.read<PlaybookService>(),
         ),
+        useCustomPrompts: settings.useCustomPrompts,
+        customSystemPrompt: settings.customSystemPrompt,
+        customPlannerPrompt: settings.customPlannerPrompt,
+        customOperatorPrompt: settings.customOperatorPrompt,
+        customExplorePrompt: settings.customExplorePrompt,
+        customReviewerPrompt: settings.customReviewerPrompt,
+        customSummarizerPrompt: settings.customSummarizerPrompt,
+        customCoordinatorPrompt: settings.customCoordinatorPrompt,
       );
       final typedApiKey = _apiKeyController.text.trim();
       final resolvedApiKey = typedApiKey.isNotEmpty

@@ -590,6 +590,57 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        if (activeChat.planMode)
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: colorScheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: colorScheme.primary
+                                    .withValues(alpha: 0.24),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.edit_note_rounded,
+                                  size: 18,
+                                  color: colorScheme.onPrimaryContainer,
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    strings.language == AppLanguage.en
+                                        ? 'Plan Mode Active (Read-only diagnostics & planning)'
+                                        : '规划模式已启用 (仅进行只读诊断与方案规划)',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      color: colorScheme.onPrimaryContainer,
+                                    ),
+                                  ),
+                                ),
+                                InkWell(
+                                  onTap: () {
+                                    final updatedChat =
+                                        activeChat.copyWith(planMode: false);
+                                    setState(() => _replaceChat(updatedChat));
+                                    context
+                                        .read<StorageService>()
+                                        .saveAiChat(updatedChat);
+                                  },
+                                  child: Icon(
+                                    Icons.close_rounded,
+                                    size: 16,
+                                    color: colorScheme.onPrimaryContainer,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         if (_shouldShowSlashCommandPanel)
                           _buildSlashCommandPanel(context, strings),
                         if (_pendingAttachments.isNotEmpty)

@@ -9,6 +9,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     void Function(LlmRunStats stats)? onStats,
     void Function(LlmTraceEvent event)? onTrace,
     LlmCancellationToken? cancellationToken,
+    bool planMode = false,
   }) async {
     final buffer = StringBuffer();
     await for (final chunk in _streamImpl(
@@ -18,6 +19,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
       onStats: onStats,
       onTrace: onTrace,
       cancellationToken: cancellationToken,
+      planMode: planMode,
     )) {
       buffer.write(chunk);
     }
@@ -34,6 +36,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     LlmCancellationToken? cancellationToken,
     Set<String>? allowedTools,
     bool forceContextCompression = false,
+    bool planMode = false,
   }) async* {
     final settings = await storageService.loadAiConnectionSettings();
     final runStartedAt = DateTime.now();
@@ -49,13 +52,13 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     AppLogService.instance.info(
       'LLM chat started',
       details:
-          'baseUrl=${settings.baseUrl} model=$model userMessages=${messages.length} forceContextCompression=$forceContextCompression',
+          'baseUrl=${settings.baseUrl} model=$model userMessages=${messages.length} forceContextCompression=$forceContextCompression planMode=$planMode',
     );
 
     var workingMessages = <Map<String, dynamic>>[
       {
         'role': 'system',
-        'content': systemPrompt,
+        'content': systemPromptFor(planMode: planMode),
       },
       ...messages,
     ];
@@ -91,6 +94,38 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         ? toolDefinitions
         : _filterToolDefinitions(toolDefinitions, normalizedAllowedTools);
     var currentToolDefinitions = filteredToolDefinitions;
+
+    bool isReadOnlyTool(String toolName) {
+      const writeTools = {
+        'client_write_clipboard',
+        'client_export_backup',
+        'client_import_backup',
+        'client_webview_navigate',
+        'client_webview_scroll',
+        'client_save_experience_skill',
+        'ssh_connect',
+        'ssh_disconnect',
+        'ssh_send_input',
+        'sftp_write_text',
+        'sftp_upload_local_file',
+        'sftp_create_directory',
+        'sftp_rename_entry',
+        'sftp_delete_entry',
+        'playbook_execute',
+      };
+      return !writeTools.contains(toolName);
+    }
+
+    if (planMode) {
+      currentToolDefinitions = currentToolDefinitions.where((def) {
+        final function = def['function'];
+        if (function is! Map) return false;
+        final name = function['name'];
+        if (name is! String) return false;
+        return isReadOnlyTool(name);
+      }).toList();
+    }
+
     final toolBudget = LlmToolBudgetController(
       baseBudget: settings.toolCallBudget,
     );
@@ -99,24 +134,28 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     if (normalizedAllowedTools == null) {
       AppLogService.instance.info(
         'LLM tool filter skipped',
-        details: 'availableTools=${toolDefinitions.length}',
+        details: 'availableTools=${toolDefinitions.length} planMode=$planMode',
       );
     } else {
       AppLogService.instance.info(
         'LLM tool definitions filtered',
         details:
-            'requestedTools=${normalizedAllowedTools.length} availableTools=${toolDefinitions.length} filteredTools=${filteredToolDefinitions.length}',
+            'requestedTools=${normalizedAllowedTools.length} availableTools=${toolDefinitions.length} filteredTools=${filteredToolDefinitions.length} planMode=$planMode',
       );
     }
 
+    final isMultiAgent = settings.multiAgentEnabled || planMode;
+    final activeMaxAgents = planMode ? 5 : settings.multiAgentMaxAgents;
+
     final multiAgentResult = await multiAgentCoordinator.run(
       messages: workingMessages,
-      enabled: settings.multiAgentEnabled,
-      maxAgents: settings.multiAgentMaxAgents,
+      enabled: isMultiAgent,
+      maxAgents: activeMaxAgents,
       checkCancelled: cancellationToken?.throwIfCancelled,
       language: language,
       plannerPrompt: plannerPrompt,
       operatorPrompt: operatorPrompt,
+      explorePrompt: explorePrompt,
       reviewerPrompt: reviewerPrompt,
       summarizerPrompt: summarizerPrompt,
       coordinatorPrompt: coordinatorPrompt,
@@ -483,7 +522,24 @@ extension LlmChatServiceStreamHandler on LlmChatService {
           );
           approvalRequired = approvalRequest != null;
           if (approvalRequest != null) {
-            if (requestToolApproval == null) {
+            if (planMode) {
+              outcome = 'blocked_in_plan_mode';
+              result = jsonEncode({
+                'error': 'This write operation or state-changing action is blocked because PLAN MODE is active. You must only outline your plan without execution.',
+                'command': approvalRequest.command,
+              });
+              onTrace?.call(
+                LlmTraceEvent(
+                  kind: 'approval',
+                  title: 'Action blocked in Plan Mode',
+                  content: _prettyJson({
+                    'tool': call.name,
+                    'message': 'Action blocked in plan mode',
+                    'command': approvalRequest.command,
+                  }),
+                ),
+              );
+            } else if (requestToolApproval == null) {
               outcome = 'approval_unavailable';
               result = jsonEncode({
                 'error':

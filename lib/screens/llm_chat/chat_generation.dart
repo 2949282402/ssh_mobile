@@ -164,6 +164,12 @@ extension _ChatGeneration on _LlmChatScreenState {
     final storage = context.read<StorageService>();
     final ssh = context.read<SshService>();
     final sftp = context.read<SftpService>();
+    final performanceMonitor = context.read<PerformanceMonitorService>();
+    final appSettings = context.read<AppSettings>();
+    final playbookService = context.read<PlaybookService>();
+    final language = appSettings.language;
+
+    final settings = await storage.loadAiConnectionSettings();
     final service = LlmChatService(
       storageService: storage,
       toolService: AiToolService(
@@ -171,13 +177,21 @@ extension _ChatGeneration on _LlmChatScreenState {
         sshService: ssh,
         sftpService: sftp,
         performanceMonitorToolService: PerformanceMonitorToolService(
-          context.read<PerformanceMonitorService>(),
+          performanceMonitor,
         ),
-        appSettings: context.read<AppSettings>(),
-        playbookService: context.read<PlaybookService>(),
+        appSettings: appSettings,
+        playbookService: playbookService,
         clientWebViewSessionId: chatId,
       ),
-      language: context.read<AppSettings>().language,
+      language: language,
+      useCustomPrompts: settings.useCustomPrompts,
+      customSystemPrompt: settings.customSystemPrompt,
+      customPlannerPrompt: settings.customPlannerPrompt,
+      customOperatorPrompt: settings.customOperatorPrompt,
+      customExplorePrompt: settings.customExplorePrompt,
+      customReviewerPrompt: settings.customReviewerPrompt,
+      customSummarizerPrompt: settings.customSummarizerPrompt,
+      customCoordinatorPrompt: settings.customCoordinatorPrompt,
     );
     final cancellationToken = LlmCancellationToken();
     _activeCancellationToken = cancellationToken;
@@ -219,6 +233,7 @@ extension _ChatGeneration on _LlmChatScreenState {
         allowedTools: allowedTools,
         forceContextCompression: forceContextCompression,
         cancellationToken: cancellationToken,
+        planMode: initialChat.planMode,
         messages: _messagesForRequest(
           requestMessages,
           placeholder: assistantMessage,

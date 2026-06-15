@@ -37,6 +37,7 @@ abstract interface class MultiAgentCoordinatorAdapter {
     AppLanguage language = AppLanguage.zh,
     String? plannerPrompt,
     String? operatorPrompt,
+    String? explorePrompt,
     String? reviewerPrompt,
     String? summarizerPrompt,
     String? coordinatorPrompt,
@@ -66,6 +67,7 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     AppLanguage language = AppLanguage.zh,
     String? plannerPrompt,
     String? operatorPrompt,
+    String? explorePrompt,
     String? reviewerPrompt,
     String? summarizerPrompt,
     String? coordinatorPrompt,
@@ -112,6 +114,7 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
       language: language,
       plannerPrompt: plannerPrompt,
       operatorPrompt: operatorPrompt,
+      explorePrompt: explorePrompt,
       reviewerPrompt: reviewerPrompt,
       summarizerPrompt: summarizerPrompt,
     );
@@ -128,19 +131,151 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
       reasoningEffort: classification.reasoningEffort,
     );
 
-    final futures = [
-      for (final role in roles)
-        _runRole(
-          role: role,
-          latestUser: latestUser,
-          contextText: contextText,
-          complete: complete,
-          thinkingSettings: thinkingSettings,
-          checkCancelled: checkCancelled,
-          language: language,
-        ),
-    ];
-    final outputs = await Future.wait(futures);
+    final outputs = <_RoleOutput>[];
+    final roleMap = {for (final r in roles) r.name: r};
+
+    String? getOutputOf(String roleName) {
+      for (final out in outputs) {
+        if (out.role.name == roleName && out.succeeded) {
+          return out.content;
+        }
+      }
+      return null;
+    }
+
+    // --- Phase 1: Explore ---
+    final exploreRole = roleMap['explore'];
+    if (exploreRole != null) {
+      checkCancelled?.call();
+      final out = await _runRole(
+        role: exploreRole,
+        latestUser: latestUser,
+        contextText: contextText,
+        complete: complete,
+        thinkingSettings: thinkingSettings,
+        checkCancelled: checkCancelled,
+        language: language,
+      );
+      outputs.add(out);
+    }
+
+    // --- Phase 2: Planner ---
+    final plannerRole = roleMap['planner'];
+    if (plannerRole != null) {
+      checkCancelled?.call();
+      final exploreContext = getOutputOf('explore');
+      final intermediateContext = exploreContext != null && exploreContext.isNotEmpty
+          ? (language == AppLanguage.en
+              ? 'Explore Agent diagnostics:\n$exploreContext'
+              : 'Explore Agent (探索智能体) 的诊断建议：\n$exploreContext')
+          : null;
+
+      final out = await _runRole(
+        role: plannerRole,
+        latestUser: latestUser,
+        contextText: contextText,
+        intermediateContext: intermediateContext,
+        complete: complete,
+        thinkingSettings: thinkingSettings,
+        checkCancelled: checkCancelled,
+        language: language,
+      );
+      outputs.add(out);
+    }
+
+    // --- Phase 3: Operator & Reviewer ---
+    // 3.1 Operator
+    final operatorRole = roleMap['operator'];
+    if (operatorRole != null) {
+      checkCancelled?.call();
+      final exploreContext = getOutputOf('explore');
+      final plannerContext = getOutputOf('planner');
+      final buffer = StringBuffer();
+      if (exploreContext != null && exploreContext.isNotEmpty) {
+        buffer.writeln(language == AppLanguage.en
+            ? 'Explore Agent diagnostics:\n$exploreContext'
+            : 'Explore Agent (探索智能体) 的诊断建议：\n$exploreContext');
+      }
+      if (plannerContext != null && plannerContext.isNotEmpty) {
+        if (buffer.isNotEmpty) buffer.writeln();
+        buffer.writeln(language == AppLanguage.en
+            ? 'Planner Agent proposed steps:\n$plannerContext'
+            : 'Planner Agent (规划智能体) 提出的执行工作流：\n$plannerContext');
+      }
+      final intermediateContext = buffer.isNotEmpty ? buffer.toString() : null;
+
+      final out = await _runRole(
+        role: operatorRole,
+        latestUser: latestUser,
+        contextText: contextText,
+        intermediateContext: intermediateContext,
+        complete: complete,
+        thinkingSettings: thinkingSettings,
+        checkCancelled: checkCancelled,
+        language: language,
+      );
+      outputs.add(out);
+    }
+
+    // 3.2 Reviewer
+    final reviewerRole = roleMap['reviewer'];
+    if (reviewerRole != null) {
+      checkCancelled?.call();
+      final plannerContext = getOutputOf('planner');
+      final operatorContext = getOutputOf('operator');
+      final buffer = StringBuffer();
+      if (plannerContext != null && plannerContext.isNotEmpty) {
+        buffer.writeln(language == AppLanguage.en
+            ? 'Planner Agent proposed steps:\n$plannerContext'
+            : 'Planner Agent (规划智能体) 提出的执行工作流：\n$plannerContext');
+      }
+      if (operatorContext != null && operatorContext.isNotEmpty) {
+        if (buffer.isNotEmpty) buffer.writeln();
+        buffer.writeln(language == AppLanguage.en
+            ? 'Operator Agent proposed actions and commands:\n$operatorContext'
+            : 'Operator Agent (执行智能体) 建议的工具及命令：\n$operatorContext');
+      }
+      final intermediateContext = buffer.isNotEmpty ? buffer.toString() : null;
+
+      final out = await _runRole(
+        role: reviewerRole,
+        latestUser: latestUser,
+        contextText: contextText,
+        intermediateContext: intermediateContext,
+        complete: complete,
+        thinkingSettings: thinkingSettings,
+        checkCancelled: checkCancelled,
+        language: language,
+      );
+      outputs.add(out);
+    }
+
+    // --- Phase 4: Summarizer ---
+    final summarizerRole = roleMap['summarizer'];
+    if (summarizerRole != null) {
+      checkCancelled?.call();
+      final buffer = StringBuffer();
+      for (final out in outputs) {
+        if (!out.succeeded || out.content.isEmpty) continue;
+        if (buffer.isNotEmpty) buffer.writeln('\n');
+        buffer.writeln('=== Analysis from ${out.role.label} ===');
+        buffer.writeln(out.content);
+      }
+      final intermediateContext = buffer.isNotEmpty ? buffer.toString() : null;
+
+      final out = await _runRole(
+        role: summarizerRole,
+        latestUser: latestUser,
+        contextText: contextText,
+        intermediateContext: intermediateContext,
+        complete: complete,
+        thinkingSettings: thinkingSettings,
+        checkCancelled: checkCancelled,
+        language: language,
+      );
+      outputs.add(out);
+    }
+
     checkCancelled?.call();
 
     final successful = outputs.where((output) => output.succeeded).toList();
@@ -302,6 +437,7 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     required MultiAgentRole role,
     required String latestUser,
     required String contextText,
+    String? intermediateContext,
     required MultiAgentCompletion complete,
     required SubAgentThinkingSettings thinkingSettings,
     void Function()? checkCancelled,
@@ -319,6 +455,7 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
             role: role,
             latestUser: latestUser,
             contextText: contextText,
+            intermediateContext: intermediateContext,
             language: language,
           ),
           thinkingSettings: thinkingSettings,
@@ -366,11 +503,17 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     required MultiAgentRole role,
     required String latestUser,
     required String contextText,
+    String? intermediateContext,
     AppLanguage language = AppLanguage.zh,
   }) {
     final footer = language == AppLanguage.en
         ? 'Return concise advisory notes for the primary assistant. Do not write the final user-facing answer.'
         : '为主要助手返回简明扼要的咨询建议。不要编写最终面向用户的解答。';
+
+    final intermediateSection = (intermediateContext != null && intermediateContext.trim().isNotEmpty)
+        ? intermediateContext.trim()
+        : '';
+
     return [
       {
         'role': 'system',
@@ -383,6 +526,13 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
             'User request:',
             latestUser,
             '',
+            if (intermediateSection.isNotEmpty) ...[
+              language == AppLanguage.en
+                  ? 'Intermediate analysis from other helper agents:'
+                  : '来自其他辅助智能体的阶段性分析结果：',
+              intermediateSection,
+              '',
+            ],
             'Recent conversation context:',
             contextText,
             '',
@@ -398,6 +548,7 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     AppLanguage language = AppLanguage.zh,
     String? plannerPrompt,
     String? operatorPrompt,
+    String? explorePrompt,
     String? reviewerPrompt,
     String? summarizerPrompt,
   }) {
@@ -417,6 +568,13 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     final operator = (operatorPrompt != null && operatorPrompt.trim().isNotEmpty)
         ? operatorPrompt.trim()
         : operatorDefault;
+
+    final exploreDefault = isEn
+        ? '$multiAgentExplorePromptEnPersona $multiAgentExplorePromptEnSafety'
+        : '$multiAgentExplorePromptZhPersona $multiAgentExplorePromptZhSafety';
+    final explore = (explorePrompt != null && explorePrompt.trim().isNotEmpty)
+        ? explorePrompt.trim()
+        : exploreDefault;
 
     final reviewerDefault = isEn
         ? '$multiAgentReviewerPromptEnPersona $multiAgentReviewerPromptEnSafety'
@@ -442,6 +600,11 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
         name: 'operator',
         label: 'Operator',
         systemPrompt: operator,
+      ),
+      MultiAgentRole(
+        name: 'explore',
+        label: 'Explore',
+        systemPrompt: explore,
       ),
       MultiAgentRole(
         name: 'reviewer',
@@ -595,7 +758,7 @@ class MultiAgentRole {
 
 class AiMultiAgentMaxAgents {
   static const int defaultValue = 3;
-  static const List<int> values = [2, 3, 4];
+  static const List<int> values = [2, 3, 4, 5];
 
   static int normalize(int? value) {
     if (value == null) return defaultValue;

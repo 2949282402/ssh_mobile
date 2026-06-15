@@ -96,6 +96,7 @@ class StorageService extends ChangeNotifier
   static const _aiCustomSystemPromptKey = 'ai_custom_system_prompt';
   static const _aiCustomPlannerPromptKey = 'ai_custom_planner_prompt';
   static const _aiCustomOperatorPromptKey = 'ai_custom_operator_prompt';
+  static const _aiCustomExplorePromptKey = 'ai_custom_explore_prompt';
   static const _aiCustomReviewerPromptKey = 'ai_custom_reviewer_prompt';
   static const _aiCustomSummarizerPromptKey = 'ai_custom_summarizer_prompt';
   static const _aiCustomCoordinatorPromptKey = 'ai_custom_coordinator_prompt';

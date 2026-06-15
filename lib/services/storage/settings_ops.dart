@@ -91,6 +91,8 @@ extension SettingsOps on StorageService {
         _prefs?.getString(StorageService._aiCustomPlannerPromptKey) ?? '';
     final customOperatorPrompt =
         _prefs?.getString(StorageService._aiCustomOperatorPromptKey) ?? '';
+    final customExplorePrompt =
+        _prefs?.getString(StorageService._aiCustomExplorePromptKey) ?? '';
     final customReviewerPrompt =
         _prefs?.getString(StorageService._aiCustomReviewerPromptKey) ?? '';
     final customSummarizerPrompt =
@@ -135,6 +137,7 @@ extension SettingsOps on StorageService {
       customSystemPrompt: customSystemPrompt,
       customPlannerPrompt: customPlannerPrompt,
       customOperatorPrompt: customOperatorPrompt,
+      customExplorePrompt: customExplorePrompt,
       customReviewerPrompt: customReviewerPrompt,
       customSummarizerPrompt: customSummarizerPrompt,
       customCoordinatorPrompt: customCoordinatorPrompt,
@@ -402,6 +405,7 @@ extension SettingsOps on StorageService {
     String? customSystemPrompt,
     String? customPlannerPrompt,
     String? customOperatorPrompt,
+    String? customExplorePrompt,
     String? customReviewerPrompt,
     String? customSummarizerPrompt,
     String? customCoordinatorPrompt,
@@ -474,6 +478,9 @@ extension SettingsOps on StorageService {
     }
     if (customOperatorPrompt != null) {
       await _prefs!.setString(StorageService._aiCustomOperatorPromptKey, customOperatorPrompt);
+    }
+    if (customExplorePrompt != null) {
+      await _prefs!.setString(StorageService._aiCustomExplorePromptKey, customExplorePrompt);
     }
     if (customReviewerPrompt != null) {
       await _prefs!.setString(StorageService._aiCustomReviewerPromptKey, customReviewerPrompt);

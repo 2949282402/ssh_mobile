@@ -13,11 +13,12 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
   bool _loading = true;
   bool _useCustomPrompts = false;
 
-  // 用于编辑这 5 种 prompt 的 controller 缓存数据
+  // 用于编辑这 6 种 prompt 的 controller 缓存数据
   final Map<String, String> _customPrompts = {
     'system': '',
     'planner': '',
     'operator': '',
+    'explore': '',
     'reviewer': '',
     'summarizer': '',
   };
@@ -48,6 +49,7 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
       _customPrompts['system'] = settings.customSystemPrompt;
       _customPrompts['planner'] = settings.customPlannerPrompt;
       _customPrompts['operator'] = settings.customOperatorPrompt;
+      _customPrompts['explore'] = settings.customExplorePrompt;
       _customPrompts['reviewer'] = settings.customReviewerPrompt;
       _customPrompts['summarizer'] = settings.customSummarizerPrompt;
 
@@ -65,6 +67,8 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
         return isEn ? multiAgentPlannerPromptEnPersona : multiAgentPlannerPromptZhPersona;
       case 'operator':
         return isEn ? multiAgentOperatorPromptEnPersona : multiAgentOperatorPromptZhPersona;
+      case 'explore':
+        return isEn ? multiAgentExplorePromptEnPersona : multiAgentExplorePromptZhPersona;
       case 'reviewer':
         return isEn ? multiAgentReviewerPromptEnPersona : multiAgentReviewerPromptZhPersona;
       case 'summarizer':
@@ -119,6 +123,7 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
         customSystemPrompt: _customPrompts['system'],
         customPlannerPrompt: _customPrompts['planner'],
         customOperatorPrompt: _customPrompts['operator'],
+        customExplorePrompt: _customPrompts['explore'],
         customReviewerPrompt: _customPrompts['reviewer'],
         customSummarizerPrompt: _customPrompts['summarizer'],
       );
@@ -183,6 +188,8 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
         return en ? 'Main System Prompt' : '主 System 提示词';
       case 'planner':
         return en ? 'Agent - Planner' : '智能体 - Planner (规划)';
+      case 'explore':
+        return en ? 'Agent - Explore' : '智能体 - Explore (探索/信息收集)';
       case 'operator':
         return en ? 'Agent - Operator' : '智能体 - Operator (执行)';
       case 'reviewer':
@@ -267,7 +274,7 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                           isDense: true,
                           contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                         ),
-                        items: ['system', 'planner', 'operator', 'reviewer', 'summarizer']
+                        items: ['system', 'planner', 'explore', 'operator', 'reviewer', 'summarizer']
                             .map((type) => DropdownMenuItem<String>(
                                   value: type,
                                   child: Text(_getPromptLabel(type)),

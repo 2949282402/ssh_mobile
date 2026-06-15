@@ -150,4 +150,42 @@ void main() {
     expect(AiUploadSizeLimit.label(5 * 1024 * 1024), '5 MB');
     expect(AiUploadSizeLimit.label(512 * 1024), '512 KB');
   });
+
+  group('AiChatRecord serialization and planMode', () {
+    test('round-trips planMode in toJson and fromJson', () {
+      final time = DateTime.utc(2026, 1, 1, 12, 0);
+      final record = AiChatRecord(
+        id: 'chat-test',
+        title: 'Plan Chat',
+        model: 'deepseek-v4-flash',
+        messages: const [],
+        createdAt: time,
+        updatedAt: time,
+        planMode: true,
+      );
+
+      final json = record.toJson();
+      expect(json['planMode'], isTrue);
+
+      final decoded = AiChatRecord.fromJson(json);
+      expect(decoded.planMode, isTrue);
+      expect(decoded.title, 'Plan Chat');
+    });
+
+    test('backward compatibility: defaults planMode to false when absent', () {
+      final time = DateTime.utc(2026, 1, 1, 12, 0);
+      final legacyJson = {
+        'id': 'legacy-chat',
+        'title': 'Legacy Chat',
+        'model': 'deepseek-v4-flash',
+        'messages': <Map<String, dynamic>>[],
+        'createdAt': time.toIso8601String(),
+        'updatedAt': time.toIso8601String(),
+      };
+
+      final decoded = AiChatRecord.fromJson(legacyJson);
+      expect(decoded.planMode, isFalse);
+      expect(decoded.title, 'Legacy Chat');
+    });
+  });
 }

@@ -2,7 +2,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ssh_mobile/models/connection.dart';
 import 'package:ssh_mobile/services/ai_tool_service.dart';
+import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/llm_chat_service.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/performance_monitor_tool_service.dart';
@@ -304,4 +306,47 @@ void main() {
       expect(signals.likelyNotAdvancing, isTrue);
     });
   });
+
+  group('LlmChatService Plan Mode', () {
+    test('systemPromptFor appends plan mode instructions when planMode is true', () {
+      final storage = StorageService();
+      final llmZh = LlmChatService(
+        storageService: storage,
+        toolService: _MockAiToolExecutor(),
+        language: AppLanguage.zh,
+      );
+      final llmEn = LlmChatService(
+        storageService: storage,
+        toolService: _MockAiToolExecutor(),
+        language: AppLanguage.en,
+      );
+
+      final zhNormal = llmZh.systemPromptFor(planMode: false);
+      final zhPlan = llmZh.systemPromptFor(planMode: true);
+      expect(zhNormal, isNot(contains('【规划模式已激活】')));
+      expect(zhPlan, contains('【规划模式已激活】'));
+
+      final enNormal = llmEn.systemPromptFor(planMode: false);
+      final enPlan = llmEn.systemPromptFor(planMode: true);
+      expect(enNormal, isNot(contains('[PLAN MODE ACTIVE]')));
+      expect(enPlan, contains('[PLAN MODE ACTIVE]'));
+    });
+  });
+}
+
+class _MockAiToolExecutor implements AiToolExecutor {
+  @override
+  Future<List<AiTool>> tools() async => const [];
+
+  @override
+  Future<List<Map<String, dynamic>>> toolDefinitions() async => const [];
+
+  @override
+  AiToolApprovalRequest? approvalRequestFor(String name, Map<String, dynamic> arguments) => null;
+
+  @override
+  Future<String> execute(String name, Map<String, dynamic> arguments, {bool approvedWrite = false}) async => '';
+
+  @override
+  AiCommandReview reviewCommand(String command, {ServerPlatform? platform}) => const AiCommandReview.readOnly();
 }

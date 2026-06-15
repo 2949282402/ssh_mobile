@@ -30,6 +30,7 @@ abstract interface class LlmClientAdapter {
     void Function(LlmRunStats stats)? onStats,
     void Function(LlmTraceEvent event)? onTrace,
     LlmCancellationToken? cancellationToken,
+    bool planMode = false,
   });
 
   Stream<String> stream({
@@ -42,6 +43,7 @@ abstract interface class LlmClientAdapter {
     LlmCancellationToken? cancellationToken,
     Set<String>? allowedTools,
     bool forceContextCompression = false,
+    bool planMode = false,
   });
 }
 
@@ -57,6 +59,7 @@ class LlmChatService implements LlmClientAdapter {
   final String customSystemPrompt;
   final String customPlannerPrompt;
   final String customOperatorPrompt;
+  final String customExplorePrompt;
   final String customReviewerPrompt;
   final String customSummarizerPrompt;
   final String customCoordinatorPrompt;
@@ -70,6 +73,7 @@ class LlmChatService implements LlmClientAdapter {
     this.customSystemPrompt = '',
     this.customPlannerPrompt = '',
     this.customOperatorPrompt = '',
+    this.customExplorePrompt = '',
     this.customReviewerPrompt = '',
     this.customSummarizerPrompt = '',
     this.customCoordinatorPrompt = '',
@@ -78,6 +82,10 @@ class LlmChatService implements LlmClientAdapter {
             multiAgentCoordinator ?? const MultiAgentCoordinator();
 
   String get systemPrompt {
+    return systemPromptFor(planMode: false);
+  }
+
+  String systemPromptFor({bool planMode = false}) {
     final isEn = language == AppLanguage.en;
     final basePersona = isEn ? systemPromptEnPersona : systemPromptZhPersona;
     final baseSafety = isEn ? systemPromptEnSafety : systemPromptZhSafety;
@@ -86,7 +94,13 @@ class LlmChatService implements LlmClientAdapter {
         ? customSystemPrompt.trim()
         : basePersona.trim();
 
-    return '$persona\n\n$baseSafety';
+    final base = '$persona\n\n$baseSafety';
+    if (!planMode) return base;
+
+    final planInstructions = isEn
+        ? '\n\n[PLAN MODE ACTIVE]\nThe user wants to design a plan. You are currently in PLAN MODE. DO NOT call any tools that modify server state or perform write actions. Focus entirely on diagnostics, design, risk auditing, and outputting a structured plan with Context, Proposal, and Verification sections. Keep your suggestions descriptive and avoid state-mutating execution.'
+        : '\n\n【规划模式已激活】\n用户希望设计一个操作计划。你当前处于“规划模式”。绝对不能调用任何改变服务器状态或执行写入操作的工具。请全力以赴进行系统现状诊断、运维方案设计与风险审计，并生成包含“上下文”、“方案建议”、“验证”三个部分的结构化计划。保持你的回复为描述性规划，不要执行改变系统状态的命令。';
+    return '$base$planInstructions';
   }
 
   String get compressionPrompt {
@@ -120,6 +134,18 @@ class LlmChatService implements LlmClientAdapter {
 
     final persona = (useCustomPrompts && customOperatorPrompt.trim().isNotEmpty)
         ? customOperatorPrompt.trim()
+        : basePersona.trim();
+
+    return '$persona $baseSafety';
+  }
+
+  String get explorePrompt {
+    final isEn = language == AppLanguage.en;
+    final basePersona = isEn ? multiAgentExplorePromptEnPersona : multiAgentExplorePromptZhPersona;
+    final baseSafety = isEn ? multiAgentExplorePromptEnSafety : multiAgentExplorePromptZhSafety;
+
+    final persona = (useCustomPrompts && customExplorePrompt.trim().isNotEmpty)
+        ? customExplorePrompt.trim()
         : basePersona.trim();
 
     return '$persona $baseSafety';
@@ -239,6 +265,7 @@ class LlmChatService implements LlmClientAdapter {
     void Function(LlmRunStats stats)? onStats,
     void Function(LlmTraceEvent event)? onTrace,
     LlmCancellationToken? cancellationToken,
+    bool planMode = false,
   }) {
     return _sendImpl(
       messages: messages,
@@ -247,6 +274,7 @@ class LlmChatService implements LlmClientAdapter {
       onStats: onStats,
       onTrace: onTrace,
       cancellationToken: cancellationToken,
+      planMode: planMode,
     );
   }
 
@@ -261,6 +289,7 @@ class LlmChatService implements LlmClientAdapter {
     LlmCancellationToken? cancellationToken,
     Set<String>? allowedTools,
     bool forceContextCompression = false,
+    bool planMode = false,
   }) {
     return _streamImpl(
       messages: messages,
@@ -271,6 +300,7 @@ class LlmChatService implements LlmClientAdapter {
       cancellationToken: cancellationToken,
       allowedTools: allowedTools,
       forceContextCompression: forceContextCompression,
+      planMode: planMode,
     );
   }
 
