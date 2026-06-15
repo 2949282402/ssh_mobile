@@ -10,7 +10,6 @@ extension LlmContextCompressor on LlmChatService {
     required String model,
     required List<Map<String, dynamic>> messages,
     required int contextWindowTokens,
-    required int timeoutSeconds,
     required bool deepSeekThinkingEnabled,
     required String deepSeekReasoningEffort,
     required String openAiReasoningEffort,
@@ -48,7 +47,6 @@ extension LlmContextCompressor on LlmChatService {
         },
         {'role': 'user', 'content': transcript},
       ],
-      timeoutSeconds: timeoutSeconds,
       deepSeekThinkingEnabled: deepSeekThinkingEnabled,
       deepSeekReasoningEffort: deepSeekReasoningEffort,
       openAiReasoningEffort: openAiReasoningEffort,
@@ -77,7 +75,6 @@ extension LlmContextCompressor on LlmChatService {
     required String apiKey,
     required String model,
     required List<Map<String, dynamic>> messages,
-    required int timeoutSeconds,
     required bool deepSeekThinkingEnabled,
     required String deepSeekReasoningEffort,
     required String openAiReasoningEffort,
@@ -86,80 +83,91 @@ extension LlmContextCompressor on LlmChatService {
     String operationLabel = 'LLM completion',
   }) async {
     final endpoint = Uri.parse(_joinUrl(baseUrl, '/chat/completions'));
-    final client = HttpClient();
     cancellationToken?.throwIfCancelled();
-    cancellationToken?.onCancel(() => client.close(force: true));
-    try {
-      final request = await client.postUrl(endpoint).timeout(
-            Duration(seconds: timeoutSeconds),
-          );
-      final requestBody = <String, dynamic>{
-        'model': model,
-        'messages': messages,
-      };
-      if (includeReasoningParams) {
-        requestBody.addAll(
-          _providerReasoningParams(
-            baseUrl: baseUrl,
-            model: model,
-            deepSeekThinkingEnabled: deepSeekThinkingEnabled,
-            deepSeekReasoningEffort: deepSeekReasoningEffort,
-            openAiReasoningEffort: openAiReasoningEffort,
-          ),
-        );
-      }
-      final bodyBytes = utf8.encode(jsonEncode(requestBody));
-      request.headers
-        ..set(HttpHeaders.authorizationHeader, 'Bearer $apiKey')
-        ..contentType = ContentType.json;
-      request.contentLength = bodyBytes.length;
-      request.add(bodyBytes);
-      final response = await request.close().timeout(
-            Duration(seconds: timeoutSeconds),
-          );
-      final body = await response.transform(utf8.decoder).join();
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        if (includeReasoningParams &&
-            response.statusCode == 400 &&
-            _looksLikeReasoningParamUnsupportedError(body)) {
-          AppLogService.instance.warning(
-            '$operationLabel reasoning params unsupported, retrying without them',
-            details: 'endpoint=$endpoint model=$model bodyChars=${body.length}',
-          );
-          return _chatCompletion(
-            baseUrl: baseUrl,
-            apiKey: apiKey,
-            model: model,
-            messages: messages,
-            timeoutSeconds: timeoutSeconds,
-            deepSeekThinkingEnabled: deepSeekThinkingEnabled,
-            deepSeekReasoningEffort: deepSeekReasoningEffort,
-            openAiReasoningEffort: openAiReasoningEffort,
-            includeReasoningParams: false,
-            cancellationToken: cancellationToken,
-            operationLabel: operationLabel,
+    for (var attempt = 0;
+        attempt <= LlmChatService._networkRetryCount;
+        attempt++) {
+      final client = HttpClient();
+      cancellationToken?.onCancel(() => client.close(force: true));
+      try {
+        final request = await client.postUrl(endpoint);
+        final requestBody = <String, dynamic>{
+          'model': model,
+          'messages': messages,
+        };
+        if (includeReasoningParams) {
+          requestBody.addAll(
+            _providerReasoningParams(
+              baseUrl: baseUrl,
+              model: model,
+              deepSeekThinkingEnabled: deepSeekThinkingEnabled,
+              deepSeekReasoningEffort: deepSeekReasoningEffort,
+              openAiReasoningEffort: openAiReasoningEffort,
+            ),
           );
         }
-        throw StateError(
-          '$operationLabel failed (${response.statusCode}): $body',
+        final bodyBytes = utf8.encode(jsonEncode(requestBody));
+        request.headers
+          ..set(HttpHeaders.authorizationHeader, 'Bearer $apiKey')
+          ..contentType = ContentType.json;
+        request.contentLength = bodyBytes.length;
+        request.add(bodyBytes);
+        final response = await request.close();
+        final body = await response.transform(utf8.decoder).join();
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          if (includeReasoningParams &&
+              response.statusCode == 400 &&
+              _looksLikeReasoningParamUnsupportedError(body)) {
+            AppLogService.instance.warning(
+              '$operationLabel reasoning params unsupported, retrying without them',
+              details:
+                  'endpoint=$endpoint model=$model bodyChars=${body.length}',
+            );
+            return _chatCompletion(
+              baseUrl: baseUrl,
+              apiKey: apiKey,
+              model: model,
+              messages: messages,
+              deepSeekThinkingEnabled: deepSeekThinkingEnabled,
+              deepSeekReasoningEffort: deepSeekReasoningEffort,
+              openAiReasoningEffort: openAiReasoningEffort,
+              includeReasoningParams: false,
+              cancellationToken: cancellationToken,
+              operationLabel: operationLabel,
+            );
+          }
+          throw StateError(
+            '$operationLabel failed (${response.statusCode}): $body',
+          );
+        }
+        return jsonDecode(body) as Map<String, dynamic>;
+      } catch (e, stackTrace) {
+        if (cancellationToken?.isCancelled == true) {
+          throw const LlmCancelledException();
+        }
+        final canRetry = _isRetryableNetworkError(e) &&
+            attempt < LlmChatService._networkRetryCount;
+        if (canRetry) {
+          AppLogService.instance.warning(
+            '$operationLabel network error, retrying',
+            details:
+                'endpoint=$endpoint model=$model attempt=${attempt + 1} nextAttempt=${attempt + 2} error=$e stack=$stackTrace',
+          );
+          await _delayBeforeNetworkRetry(attempt, cancellationToken);
+          continue;
+        }
+        AppLogService.instance.error(
+          '$operationLabel request error',
+          error: e,
+          stackTrace: stackTrace,
+          details: 'endpoint=$endpoint model=$model attempt=${attempt + 1}',
         );
+        rethrow;
+      } finally {
+        client.close(force: true);
       }
-      return jsonDecode(body) as Map<String, dynamic>;
-    } catch (e, stackTrace) {
-      if (cancellationToken?.isCancelled == true) {
-        throw const LlmCancelledException();
-      }
-      AppLogService.instance.error(
-        '$operationLabel request error',
-        error: e,
-        stackTrace: stackTrace,
-        details:
-            'endpoint=$endpoint model=$model timeoutSeconds=$timeoutSeconds',
-      );
-      rethrow;
-    } finally {
-      client.close(force: true);
     }
+    throw StateError('$operationLabel failed after network retries.');
   }
 
   String _contentFromChatResponse(Map<String, dynamic> response) {
