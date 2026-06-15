@@ -711,6 +711,18 @@ class _TraceEntry extends StatelessWidget {
         return '工具结果 - ${trace.title.replaceFirst('Tool result: ', '')}';
       case 'approval':
         return trace.title.contains('approved') ? '工具操作已同意' : '工具操作已拒绝';
+      case 'budget':
+        final lowerTitle = trace.title.toLowerCase();
+        if (lowerTitle.contains('running')) {
+          return '工具预算安全审计';
+        }
+        if (lowerTitle.contains('approved')) {
+          return '工具预算审计通过';
+        }
+        if (lowerTitle.contains('rejected')) {
+          return '工具预算已停止';
+        }
+        return '工具预算提醒';
       default:
         return trace.title;
     }
@@ -728,6 +740,8 @@ class _TraceEntry extends StatelessWidget {
         return Icons.fact_check_outlined;
       case 'approval':
         return Icons.verified_user_outlined;
+      case 'budget':
+        return Icons.tune_rounded;
       default:
         return Icons.info_outline;
     }
@@ -745,6 +759,8 @@ class _TraceEntry extends StatelessWidget {
         return colorScheme.tertiary;
       case 'approval':
         return colorScheme.error;
+      case 'budget':
+        return colorScheme.secondary;
       default:
         return colorScheme.onSurfaceVariant;
     }

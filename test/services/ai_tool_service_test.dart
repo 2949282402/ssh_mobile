@@ -395,6 +395,45 @@ void main() {
     expect(request.contentPreview, 'worker_processes auto;');
   });
 
+  test('ssh session and terminal history tools require approval metadata', () {
+    final openRequest = tools.approvalRequestFor('ssh_open_session', {
+      'connectionId': 'server-1',
+      'displayName': 'Ops Shell',
+    });
+    final closeAllRequest = tools.approvalRequestFor(
+      'ssh_close_server_sessions',
+      {
+        'connectionId': 'server-1',
+      },
+    );
+    final restoreRequest =
+        tools.approvalRequestFor('ssh_restore_tmux_sessions', {});
+    final deleteHistoryRequest =
+        tools.approvalRequestFor('ssh_delete_terminal_history_record', {
+      'sessionId': 'session-1',
+    });
+
+    expect(openRequest, isNotNull);
+    expect(openRequest!.approvalType, 'ssh_session_change');
+    expect(openRequest.contentPreview, 'Ops Shell');
+    expect(closeAllRequest, isNotNull);
+    expect(closeAllRequest!.approvalType, 'ssh_session_change');
+    expect(restoreRequest, isNotNull);
+    expect(restoreRequest!.approvalType, 'ssh_session_change');
+    expect(deleteHistoryRequest, isNotNull);
+    expect(deleteHistoryRequest!.approvalType, 'terminal_history_change');
+    expect(deleteHistoryRequest.destructive, isTrue);
+  });
+
+  test('ssh session tool refuses execution without approval', () async {
+    final raw = await tools.execute('ssh_open_session', {
+      'connectionId': 'server-1',
+    });
+    final decoded = jsonDecode(raw) as Map<String, dynamic>;
+
+    expect(decoded['error'], contains('requires user approval'));
+  });
+
   test('blocks secret-bearing SFTP paths before read', () async {
     final raw = await tools.execute('sftp_read_text', {
       'connectionId': 'server-1',
@@ -557,6 +596,7 @@ void main() {
     expect(decoded.containsKey('hasApiKeyConfigured'), isTrue);
     expect(decoded['multiAgentEnabled'], isTrue);
     expect(decoded['multiAgentMaxAgents'], 3);
+    expect(decoded['toolCallBudget'], 20);
   });
 
   test('app settings tool updates multi-agent settings with approval',
@@ -566,6 +606,7 @@ void main() {
       {
         'multiAgentEnabled': false,
         'multiAgentMaxAgents': 4,
+        'toolCallBudget': 40,
       },
       approvedWrite: true,
     );
@@ -574,8 +615,10 @@ void main() {
 
     expect(decoded['multiAgentEnabled'], isFalse);
     expect(decoded['multiAgentMaxAgents'], 4);
+    expect(decoded['toolCallBudget'], 40);
     expect(settings.multiAgentEnabled, isFalse);
     expect(settings.multiAgentMaxAgents, 4);
+    expect(settings.toolCallBudget, 40);
   });
 }
 

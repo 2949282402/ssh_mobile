@@ -240,6 +240,12 @@ class LlmChatService implements LlmClientAdapter {
     final filteredToolDefinitions = normalizedAllowedTools == null
         ? toolDefinitions
         : _filterToolDefinitions(toolDefinitions, normalizedAllowedTools);
+    var currentToolDefinitions = filteredToolDefinitions;
+    final toolBudget = LlmToolBudgetController(
+      baseBudget: settings.toolCallBudget,
+    );
+    final toolLedger = <LlmToolLedgerEntry>[];
+    final originalUserGoal = _latestUserGoal(messages);
     if (normalizedAllowedTools == null) {
       AppLogService.instance.info(
         'LLM tool filter skipped',
@@ -319,12 +325,12 @@ class LlmChatService implements LlmClientAdapter {
             apiKey: apiKey,
             model: model,
             messages: workingMessages,
-            tools: filteredToolDefinitions,
+            tools: currentToolDefinitions,
             deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
             deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
             openAiReasoningEffort: settings.openAiReasoningEffort,
             cancellationToken: cancellationToken,
-            includeTools: filteredToolDefinitions.isNotEmpty,
+            includeTools: currentToolDefinitions.isNotEmpty,
             onContent: (chunk) {
               cancellationToken?.throwIfCancelled();
               content.write(chunk);
@@ -415,7 +421,10 @@ class LlmChatService implements LlmClientAdapter {
         assistantToolMessage['reasoning_content'] = response.reasoningContent;
       }
       workingMessages.add(assistantToolMessage);
-      for (final call in response.toolCalls) {
+      for (var toolIndex = 0;
+          toolIndex < response.toolCalls.length;
+          toolIndex++) {
+        final call = response.toolCalls[toolIndex];
         cancellationToken?.throwIfCancelled();
         final arguments = _decodeArguments(call.arguments);
         onTrace?.call(
@@ -428,103 +437,204 @@ class LlmChatService implements LlmClientAdapter {
             }),
           ),
         );
-        String result;
+        final budgetCheck = toolBudget.checkBeforeToolCall();
+        if (budgetCheck.requiresAudit) {
+          _emitBudgetTrace(
+            onTrace,
+            title: 'Tool budget safety audit running',
+            content: _prettyJson({
+              'message':
+                  'Tool usage reached the current ceiling. Running an internal safety audit before granting more tool calls.',
+              'budget': toolBudget.toJson(),
+              'nextTool': call.name,
+            }),
+          );
+          final auditResult = await _runToolSafetyAudit(
+            baseUrl: settings.baseUrl,
+            apiKey: apiKey,
+            model: model,
+            deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
+            deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
+            openAiReasoningEffort: settings.openAiReasoningEffort,
+            originalUserGoal: originalUserGoal,
+            workingMessages: workingMessages,
+            toolLedger: toolLedger,
+            toolBudget: toolBudget,
+            cancellationToken: cancellationToken,
+          );
+          cancellationToken?.throwIfCancelled();
+          if (auditResult.shouldContinue) {
+            final budgetEvent = toolBudget.approveAuditExtension();
+            _emitBudgetTrace(
+              onTrace,
+              title: 'Tool budget safety audit approved',
+              content: _prettyJson({
+                'message':
+                    'The safety audit approved continued tool use. The tool budget was extended again.',
+                'budget': toolBudget.toJson(),
+                'extension': budgetEvent.toJson(),
+                'summary': auditResult.summary,
+                'issues': auditResult.issues,
+                'suspectedLoop': auditResult.suspectedLoop,
+                'goalDrift': auditResult.goalDrift,
+                'recommendedNextAction': auditResult.recommendedNextAction,
+              }),
+            );
+          } else {
+            currentToolDefinitions = const [];
+            _emitBudgetTrace(
+              onTrace,
+              title: 'Tool budget safety audit rejected',
+              content: _prettyJson({
+                'message':
+                    'The safety audit rejected further tool use for this run. Tools are now disabled and the assistant must finish without more tool calls.',
+                'budget': toolBudget.toJson(),
+                'summary': auditResult.summary,
+                'issues': auditResult.issues,
+                'suspectedLoop': auditResult.suspectedLoop,
+                'goalDrift': auditResult.goalDrift,
+                'recommendedNextAction': auditResult.recommendedNextAction,
+              }),
+            );
+            for (var blockedIndex = toolIndex;
+                blockedIndex < response.toolCalls.length;
+                blockedIndex++) {
+              final blockedCall = response.toolCalls[blockedIndex];
+              final blockedResult = _toolBudgetBlockedToolResult(
+                toolName: blockedCall.name,
+                toolBudget: toolBudget,
+                auditResult: auditResult,
+              );
+              _emitToolResultTrace(onTrace, blockedCall.name, blockedResult);
+              workingMessages.add({
+                'role': 'tool',
+                'tool_call_id': blockedCall.id,
+                'content': blockedResult,
+              });
+            }
+            workingMessages.add({
+              'role': 'system',
+              'content': _toolBudgetRejectedFollowUpPrompt(
+                auditResult: auditResult,
+                toolBudget: toolBudget,
+              ),
+            });
+            break;
+          }
+        }
+
+        final budgetEvent = toolBudget.recordAcceptedToolCall();
+        if (budgetEvent != null) {
+          _emitBudgetTrace(
+            onTrace,
+            title: 'Tool budget reached and auto-extended',
+            content: _prettyJson({
+              'message':
+                  'The default tool budget was reached. The app automatically granted more tool calls. Please review whether the assistant is still using tools reasonably.',
+              'budget': toolBudget.toJson(),
+              'extension': budgetEvent.toJson(),
+            }),
+          );
+        }
+
+        var result = jsonEncode({
+          'error': 'Tool execution did not complete.',
+        });
+        var outcome = 'success';
+        var approvalRequired = false;
+        var approvedWrite = false;
+        var stopAfterToolResult = false;
+        String? stopMessage;
         try {
-          var approvedWrite = false;
           final approvalRequest = toolService.approvalRequestFor(
             call.name,
             arguments,
           );
+          approvalRequired = approvalRequest != null;
           if (approvalRequest != null) {
             if (requestToolApproval == null) {
+              outcome = 'approval_unavailable';
               result = jsonEncode({
                 'error':
                     'This tool action requires user approval, but no approval UI is available.',
                 'command': approvalRequest.command,
               });
-              _emitToolResultTrace(onTrace, call.name, result);
-              workingMessages.add({
-                'role': 'tool',
-                'tool_call_id': call.id,
-                'content': result,
-              });
-              continue;
-            }
-
-            AppLogService.instance.info(
-              'AI tool approval requested',
-              details:
-                  'tool=${call.name} connection=${approvalRequest.connectionName} command=${approvalRequest.command}',
-            );
-            final decision = await requestToolApproval(approvalRequest);
-            cancellationToken?.throwIfCancelled();
-            if (!decision.approved) {
-              AppLogService.instance.warning(
-                'AI tool approval rejected',
+            } else {
+              AppLogService.instance.info(
+                'AI tool approval requested',
                 details:
-                    'tool=${call.name} connection=${approvalRequest.connectionName} abort=${decision.abort}',
+                    'tool=${call.name} connection=${approvalRequest.connectionName} command=${approvalRequest.command}',
               );
-              result = jsonEncode({
-                'error': 'User rejected the requested tool action.',
-                'command': approvalRequest.command,
-                if (decision.feedback?.trim().isNotEmpty == true)
-                  'feedback': decision.feedback!.trim(),
-              });
-              onTrace?.call(
-                LlmTraceEvent(
-                  kind: 'approval',
-                  title: 'Tool action rejected',
-                  content: _prettyJson({
-                    'tool': call.name,
-                    'approvalType': approvalRequest.approvalType,
-                    'server': approvalRequest.connectionName,
-                    'command': approvalRequest.command,
-                    'abort': decision.abort,
-                    if (decision.feedback?.trim().isNotEmpty == true)
-                      'feedback': decision.feedback!.trim(),
-                  }),
-                ),
-              );
-              _emitToolResultTrace(onTrace, call.name, result);
-              workingMessages.add({
-                'role': 'tool',
-                'tool_call_id': call.id,
-                'content': result,
-              });
-              if (decision.abort) {
-                yield '\n\nTool action rejected. Operation stopped. You can tell me what to do next.';
-                return;
-              }
-              continue;
-            }
-            approvedWrite = true;
-            onTrace?.call(
-              LlmTraceEvent(
-                kind: 'approval',
-                title: 'Tool action approved',
-                content: _prettyJson({
-                  'tool': call.name,
-                  'approvalType': approvalRequest.approvalType,
-                  'server': approvalRequest.connectionName,
+              final decision = await requestToolApproval(approvalRequest);
+              cancellationToken?.throwIfCancelled();
+              if (!decision.approved) {
+                outcome = 'approval_rejected';
+                AppLogService.instance.warning(
+                  'AI tool approval rejected',
+                  details:
+                      'tool=${call.name} connection=${approvalRequest.connectionName} abort=${decision.abort}',
+                );
+                result = jsonEncode({
+                  'error': 'User rejected the requested tool action.',
                   'command': approvalRequest.command,
-                }),
-              ),
-            );
-            AppLogService.instance.info(
-              'AI tool approval accepted',
-              details:
-                  'tool=${call.name} connection=${approvalRequest.connectionName} command=${approvalRequest.command}',
-            );
+                  if (decision.feedback?.trim().isNotEmpty == true)
+                    'feedback': decision.feedback!.trim(),
+                });
+                onTrace?.call(
+                  LlmTraceEvent(
+                    kind: 'approval',
+                    title: 'Tool action rejected',
+                    content: _prettyJson({
+                      'tool': call.name,
+                      'approvalType': approvalRequest.approvalType,
+                      'server': approvalRequest.connectionName,
+                      'command': approvalRequest.command,
+                      'abort': decision.abort,
+                      if (decision.feedback?.trim().isNotEmpty == true)
+                        'feedback': decision.feedback!.trim(),
+                    }),
+                  ),
+                );
+                stopAfterToolResult = decision.abort;
+                if (decision.abort) {
+                  stopMessage =
+                      '\n\nTool action rejected. Operation stopped. You can tell me what to do next.';
+                }
+              } else {
+                approvedWrite = true;
+                onTrace?.call(
+                  LlmTraceEvent(
+                    kind: 'approval',
+                    title: 'Tool action approved',
+                    content: _prettyJson({
+                      'tool': call.name,
+                      'approvalType': approvalRequest.approvalType,
+                      'server': approvalRequest.connectionName,
+                      'command': approvalRequest.command,
+                    }),
+                  ),
+                );
+                AppLogService.instance.info(
+                  'AI tool approval accepted',
+                  details:
+                      'tool=${call.name} connection=${approvalRequest.connectionName} command=${approvalRequest.command}',
+                );
+              }
+            }
           }
-          result = await toolService.execute(
-            call.name,
-            arguments,
-            approvedWrite: approvedWrite,
-          );
-          cancellationToken?.throwIfCancelled();
+          if (approvedWrite || !approvalRequired) {
+            result = await toolService.execute(
+              call.name,
+              arguments,
+              approvedWrite: approvedWrite,
+            );
+            cancellationToken?.throwIfCancelled();
+            outcome = _classifyToolResultOutcome(result);
+          }
         } on LlmCancelledException {
           rethrow;
         } catch (e) {
+          outcome = 'execution_error';
           result = jsonEncode({
             'error': _toolSecretPolicy.redactText(e.toString()),
           });
@@ -535,6 +645,37 @@ class LlmChatService implements LlmClientAdapter {
           'tool_call_id': call.id,
           'content': result,
         });
+        final redactedArguments = _toolSecretPolicy.redactValue(arguments);
+        final signatureArguments = _mapFromValue(redactedArguments);
+        toolLedger.add(
+          LlmToolLedgerEntry(
+            index: toolBudget.usedCalls,
+            toolName: call.name,
+            signature: LlmToolLedgerEntry.buildSignature(
+              call.name,
+              signatureArguments,
+            ),
+            argumentsPreview: _toolSecretPolicy.previewText(
+              _prettyJson(redactedArguments),
+              maxChars: 400,
+            ),
+            outcome: outcome,
+            approvalRequired: approvalRequired,
+            approved: approvedWrite,
+            failed: outcome != 'success',
+            emptyResult: _looksLikeEmptyToolResult(result),
+            resultPreview: _toolSecretPolicy.previewText(
+              _prettyJsonString(result),
+              maxChars: 600,
+            ),
+          ),
+        );
+        if (stopAfterToolResult) {
+          if (stopMessage != null) {
+            yield stopMessage;
+          }
+          return;
+        }
       }
       final separator = _toolContinuationSeparator(visibleOutput.toString());
       if (separator.isNotEmpty) {
@@ -904,6 +1045,104 @@ class LlmChatService implements LlmClientAdapter {
         lower.contains('function calling');
   }
 
+  String _latestUserGoal(List<Map<String, dynamic>> messages) {
+    for (final message in messages.reversed) {
+      if (message['role'] != 'user') {
+        continue;
+      }
+      final content = '${message['content'] ?? ''}'.trim();
+      if (content.isNotEmpty) {
+        return _toolSecretPolicy.previewText(content, maxChars: 1200);
+      }
+    }
+    return 'No explicit user goal provided.';
+  }
+
+  Map<String, dynamic> _mapFromValue(Object? value) {
+    if (value is Map<String, dynamic>) {
+      return value;
+    }
+    if (value is Map) {
+      return {
+        for (final entry in value.entries) '${entry.key}': entry.value,
+      };
+    }
+    return const {};
+  }
+
+  String _classifyToolResultOutcome(String result) {
+    final trimmed = result.trim();
+    if (trimmed.isEmpty) {
+      return 'empty_result';
+    }
+    try {
+      final decoded = jsonDecode(trimmed);
+      if (decoded is Map) {
+        final error = decoded['error'];
+        if (error is String && error.trim().isNotEmpty) {
+          return 'tool_error';
+        }
+      }
+      return _isMeaningfulToolResultValue(decoded) ? 'success' : 'empty_result';
+    } catch (_) {
+      return 'success';
+    }
+  }
+
+  bool _looksLikeEmptyToolResult(String result) {
+    final trimmed = result.trim();
+    if (trimmed.isEmpty) {
+      return true;
+    }
+    try {
+      return !_isMeaningfulToolResultValue(jsonDecode(trimmed));
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool _isMeaningfulToolResultValue(Object? value) {
+    if (value == null) {
+      return false;
+    }
+    if (value is String) {
+      return value.trim().isNotEmpty;
+    }
+    if (value is bool) {
+      return value;
+    }
+    if (value is num) {
+      return value != 0;
+    }
+    if (value is List) {
+      return value.isNotEmpty && value.any(_isMeaningfulToolResultValue);
+    }
+    if (value is Map) {
+      const ignoredKeys = {
+        'execution',
+        'limit',
+        'returned',
+        'truncated',
+        'tool',
+        'toolName',
+        'connectionId',
+        'connectionName',
+        'serverPlatform',
+        'command',
+      };
+      for (final entry in value.entries) {
+        if (ignoredKeys.contains('${entry.key}')) {
+          continue;
+        }
+        if (_isMeaningfulToolResultValue(entry.value)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    return true;
+  }
+
   void _emitReasoningTrace(
     void Function(LlmTraceEvent event)? onTrace,
     String reasoningContent,
@@ -914,6 +1153,20 @@ class LlmChatService implements LlmClientAdapter {
       LlmTraceEvent(
         kind: 'reasoning',
         title: 'Deep thinking',
+        content: content,
+      ),
+    );
+  }
+
+  void _emitBudgetTrace(
+    void Function(LlmTraceEvent event)? onTrace, {
+    required String title,
+    required String content,
+  }) {
+    onTrace?.call(
+      LlmTraceEvent(
+        kind: 'budget',
+        title: title,
         content: content,
       ),
     );
@@ -931,6 +1184,196 @@ class LlmChatService implements LlmClientAdapter {
         content: _prettyJsonString(result),
       ),
     );
+  }
+
+  Future<LlmToolSafetyAuditResult> _runToolSafetyAudit({
+    required String baseUrl,
+    required String apiKey,
+    required String model,
+    required bool deepSeekThinkingEnabled,
+    required String deepSeekReasoningEffort,
+    required String openAiReasoningEffort,
+    required String originalUserGoal,
+    required List<Map<String, dynamic>> workingMessages,
+    required List<LlmToolLedgerEntry> toolLedger,
+    required LlmToolBudgetController toolBudget,
+    LlmCancellationToken? cancellationToken,
+  }) async {
+    final signals = LlmToolUsageSignals.fromLedger(toolLedger);
+    final recentLedger = toolLedger.length <= 12
+        ? toolLedger
+        : toolLedger.sublist(toolLedger.length - 12);
+    try {
+      final response = await _chatCompletion(
+        baseUrl: baseUrl,
+        apiKey: apiKey,
+        model: model,
+        messages: [
+          {
+            'role': 'system',
+            'content':
+                'You are a safety auditor for SSH Mobile AI tool usage. Return JSON only with keys shouldContinue, summary, issues, suspectedLoop, goalDrift, recommendedNextAction. Approve only when continued tool use is still clearly advancing the original user goal. Reject when you see repeated identical calls, alternating tool loops, repeated failures, many empty results, or goal drift. Keep summary concise. issues must be a short array of strings.',
+          },
+          {
+            'role': 'user',
+            'content': _prettyJson({
+              'originalUserGoal': originalUserGoal,
+              'recentConversationSummary':
+                  _recentConversationSummary(workingMessages),
+              'budget': toolBudget.toJson(),
+              'deterministicSignals': signals.toJson(),
+              'toolLedger': [
+                for (final entry in recentLedger) entry.toJson(),
+              ],
+            }),
+          },
+        ],
+        deepSeekThinkingEnabled: deepSeekThinkingEnabled,
+        deepSeekReasoningEffort: deepSeekReasoningEffort,
+        openAiReasoningEffort: supportsOpenAiReasoningEffort(model)
+            ? 'low'
+            : openAiReasoningEffort,
+        cancellationToken: cancellationToken,
+        operationLabel: 'LLM tool budget safety audit',
+      );
+      cancellationToken?.throwIfCancelled();
+      final content = _contentFromChatResponse(response);
+      final auditResult = _parseToolSafetyAuditResult(
+        content,
+        signals: signals,
+      );
+      AppLogService.instance.info(
+        'LLM tool budget safety audit completed',
+        details:
+            'shouldContinue=${auditResult.shouldContinue} usedCalls=${toolBudget.usedCalls} currentLimit=${toolBudget.currentLimit}',
+      );
+      return auditResult;
+    } on LlmCancelledException {
+      rethrow;
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'LLM tool budget safety audit failed',
+        error: e,
+        stackTrace: stackTrace,
+        details:
+            'usedCalls=${toolBudget.usedCalls} currentLimit=${toolBudget.currentLimit}',
+      );
+      return LlmToolSafetyAuditResult.blocked(
+        summary:
+            'The safety audit could not confirm that continued tool use was still safe.',
+        issues: [
+          'The internal audit did not complete successfully.',
+          'Narrow the next step before asking the assistant to continue.',
+        ],
+        suspectedLoop: signals.suspectedLoop,
+        goalDrift: false,
+        recommendedNextAction:
+            'Review the recent tool trace, narrow the request, and start a fresh run if you still need more diagnostics.',
+      );
+    }
+  }
+
+  String _recentConversationSummary(List<Map<String, dynamic>> messages) {
+    final visibleMessages = messages
+        .where((message) => message['role'] != 'system')
+        .toList(growable: false);
+    final start = visibleMessages.length > 8 ? visibleMessages.length - 8 : 0;
+    final window = visibleMessages.sublist(start);
+    final buffer = StringBuffer();
+    for (final message in window) {
+      final role = '${message['role'] ?? 'unknown'}';
+      final content = '${message['content'] ?? ''}'.trim();
+      if (content.isEmpty) {
+        continue;
+      }
+      buffer.writeln(
+        '$role: ${_toolSecretPolicy.previewText(_toolSecretPolicy.redactText(content), maxChars: 500)}',
+      );
+    }
+    final summary = buffer.toString().trim();
+    return summary.isEmpty ? 'No recent conversation content.' : summary;
+  }
+
+  LlmToolSafetyAuditResult _parseToolSafetyAuditResult(
+    String rawContent, {
+    required LlmToolUsageSignals signals,
+  }) {
+    try {
+      var text = rawContent.trim();
+      if (text.startsWith('```')) {
+        text = text
+            .replaceFirst(RegExp(r'^```[a-zA-Z0-9_-]*\s*'), '')
+            .replaceFirst(RegExp(r'\s*```$'), '')
+            .trim();
+      }
+      final start = text.indexOf('{');
+      final end = text.lastIndexOf('}');
+      if (start < 0 || end <= start) {
+        throw const FormatException('Audit response did not contain JSON.');
+      }
+      final decoded = jsonDecode(text.substring(start, end + 1));
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Audit response JSON was not an object.');
+      }
+      final parsed = LlmToolSafetyAuditResult.fromJson(decoded);
+      return LlmToolSafetyAuditResult(
+        shouldContinue: parsed.shouldContinue,
+        summary: parsed.summary.isNotEmpty
+            ? parsed.summary
+            : parsed.shouldContinue
+                ? 'Continued tool use still appears justified.'
+                : 'Continued tool use is no longer justified for this run.',
+        issues: parsed.issues,
+        suspectedLoop: parsed.suspectedLoop || signals.suspectedLoop,
+        goalDrift: parsed.goalDrift,
+        recommendedNextAction: parsed.recommendedNextAction.isNotEmpty
+            ? parsed.recommendedNextAction
+            : 'Review the tool trace and narrow the next requested step.',
+      );
+    } catch (_) {
+      return LlmToolSafetyAuditResult.blocked(
+        summary:
+            'The safety audit returned an unreadable result, so tool use was stopped.',
+        issues: [
+          'The internal audit response could not be parsed.',
+          'Review the recent tool trace before continuing.',
+        ],
+        suspectedLoop: signals.suspectedLoop,
+        goalDrift: false,
+        recommendedNextAction:
+            'Start a fresh run with a narrower question or an explicit next command to inspect.',
+      );
+    }
+  }
+
+  String _toolBudgetBlockedToolResult({
+    required String toolName,
+    required LlmToolBudgetController toolBudget,
+    required LlmToolSafetyAuditResult auditResult,
+  }) {
+    return jsonEncode({
+      'error': 'Tool call blocked by tool budget safety audit.',
+      'tool': toolName,
+      'budget': toolBudget.toJson(),
+      'audit': auditResult.toJson(),
+    });
+  }
+
+  String _toolBudgetRejectedFollowUpPrompt({
+    required LlmToolSafetyAuditResult auditResult,
+    required LlmToolBudgetController toolBudget,
+  }) {
+    return '''
+Tool use is disabled for the rest of this run because the internal safety audit rejected further tool calls.
+Do not request any more tools.
+Respond with:
+1. A concise summary of useful progress so far.
+2. A clear explanation of the tool-use problem.
+3. Whether a loop or goal drift was detected.
+4. Concrete next steps the user can take.
+Budget state: ${jsonEncode(toolBudget.toJson())}
+Audit result: ${jsonEncode(auditResult.toJson())}
+''';
   }
 
   String _prettyJsonString(String text) {

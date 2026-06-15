@@ -35,6 +35,9 @@ class _ToolApprovalPanel extends StatelessWidget {
         en ? 'Approve server metadata change' : '确认服务器元数据修改',
       'monitor_state_change' =>
         en ? 'Approve monitor state change' : '确认监控状态变更',
+      'ssh_session_change' => en ? 'Approve SSH session change' : '确认 SSH 会话变更',
+      'terminal_history_change' =>
+        en ? 'Approve terminal history change' : '确认终端历史变更',
       'local_import' => en ? 'Approve local import' : '确认本地导入操作',
       'local_log_change' => en ? 'Approve local log change' : '确认本地日志变更',
       'app_setting_change' => en ? 'Approve app settings change' : '确认应用设置变更',

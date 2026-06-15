@@ -159,6 +159,64 @@ class AiToolService implements AiToolExecutor {
           command: secretPolicy.previewText(command, maxChars: 240),
           reason: review.reason,
         );
+      case 'ssh_open_session':
+        final connectionId = _arg(arguments, 'connectionId');
+        final config = storageService.getConnection(connectionId);
+        return AiToolApprovalRequest(
+          toolName: name,
+          approvalType: 'ssh_session_change',
+          connectionId: connectionId,
+          connectionName: config?.name ?? connectionId,
+          command: 'OPEN SSH SESSION',
+          reason: 'Opening a saved SSH session requires user approval.',
+          contentPreview: _optionalString(arguments, 'displayName'),
+        );
+      case 'ssh_close_session':
+        final sessionId = _arg(arguments, 'sessionId');
+        final session = sshService.getSession(sessionId);
+        final connectionId = session?.connectionId ?? _clientScopeId;
+        return AiToolApprovalRequest(
+          toolName: name,
+          approvalType: 'ssh_session_change',
+          connectionId: connectionId,
+          connectionName: session?.connectionName ?? _clientScopeName,
+          command: 'CLOSE SSH SESSION $sessionId',
+          reason: 'Closing an SSH session requires user approval.',
+          contentPreview: session?.displayName,
+        );
+      case 'ssh_close_server_sessions':
+        final connectionId = _arg(arguments, 'connectionId');
+        final config = storageService.getConnection(connectionId);
+        return AiToolApprovalRequest(
+          toolName: name,
+          approvalType: 'ssh_session_change',
+          connectionId: connectionId,
+          connectionName: config?.name ?? connectionId,
+          command: 'CLOSE ALL SSH SESSIONS',
+          reason:
+              'Closing all SSH sessions for a server requires user approval.',
+        );
+      case 'ssh_restore_tmux_sessions':
+        return AiToolApprovalRequest(
+          toolName: name,
+          approvalType: 'ssh_session_change',
+          connectionId: _clientScopeId,
+          connectionName: _clientScopeName,
+          command: 'RESTORE TMUX SESSIONS',
+          reason:
+              'Restoring saved tmux-backed SSH sessions requires user approval.',
+        );
+      case 'ssh_delete_terminal_history_record':
+        final sessionId = _arg(arguments, 'sessionId');
+        return AiToolApprovalRequest(
+          toolName: name,
+          approvalType: 'terminal_history_change',
+          connectionId: _clientScopeId,
+          connectionName: _clientScopeName,
+          command: 'DELETE TERMINAL HISTORY $sessionId',
+          reason: 'Deleting saved terminal history requires user approval.',
+          destructive: true,
+        );
       case 'sftp_write_text':
         final connectionId = _arg(arguments, 'connectionId');
         final path = _arg(arguments, 'path');
@@ -446,6 +504,27 @@ class AiToolService implements AiToolExecutor {
       try {
         final rawResult = switch (name) {
           'run_command' => await _runCommand(
+              arguments,
+              approvedWrite: approvedWrite,
+            ),
+          'ssh_open_session' => await _sshOpenSession(
+              arguments,
+              approvedWrite: approvedWrite,
+            ),
+          'ssh_close_session' => await _sshCloseSession(
+              arguments,
+              approvedWrite: approvedWrite,
+            ),
+          'ssh_close_server_sessions' => await _sshCloseServerSessions(
+              arguments,
+              approvedWrite: approvedWrite,
+            ),
+          'ssh_restore_tmux_sessions' => await _sshRestoreTmuxSessions(
+              arguments,
+              approvedWrite: approvedWrite,
+            ),
+          'ssh_delete_terminal_history_record' =>
+            await _sshDeleteTerminalHistoryRecord(
               arguments,
               approvedWrite: approvedWrite,
             ),

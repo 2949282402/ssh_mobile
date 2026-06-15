@@ -650,14 +650,14 @@ extension _ClientTools on AiToolService {
       AiTool(
         name: 'app_get_operational_settings',
         description:
-            'Return app operational settings that affect tools and server operations, including SFTP limits, secret-cache settings, AI timeout, web-search settings, and multi-agent settings. Does not reveal API keys.',
+            'Return app operational settings that affect tools and server operations, including SFTP limits, secret-cache settings, AI timeout, web-search settings, multi-agent settings, and the per-request tool call budget. Does not reveal API keys.',
         properties: const {},
         handler: _appGetOperationalSettings,
       ),
       AiTool(
         name: 'app_update_operational_settings',
         description:
-            'Update app operational settings that affect tools and server operations, including SFTP limits, secret-cache settings, AI timeout, web-search settings, and multi-agent settings. This changes local app state and requires user approval.',
+            'Update app operational settings that affect tools and server operations, including SFTP limits, secret-cache settings, AI timeout, web-search settings, multi-agent settings, and the per-request tool call budget. This changes local app state and requires user approval.',
         properties: {
           'sftpDownloadLimitBytes':
               _int('Optional SFTP download limit in bytes.'),
@@ -680,6 +680,11 @@ extension _ClientTools on AiToolService {
             'Optional maximum helper agents for automatic multi-agent collaboration.',
             minimum: AiMultiAgentMaxAgents.values.first,
             maximum: AiMultiAgentMaxAgents.values.last,
+          ),
+          'toolCallBudget': _int(
+            'Optional default per-request tool call budget before budget guardrails extend or audit the run.',
+            minimum: AiToolCallBudget.values.first,
+            maximum: AiToolCallBudget.values.last,
           ),
         },
         handler: (arguments) => _appUpdateOperationalSettings(

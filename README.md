@@ -183,6 +183,8 @@ AI 页负责聊天、历史、WebView、Skills 和 LLM 设置。当前聊天支�
 
 LLM 设置集中在单独的设置页中，包含 Base URL、API Key 历史、模型、上下文窗口、DeepSeek / OpenAI 推理参数、Web 搜索、多代理、上传大小等配置。AI 聊天回复、上下文压缩、多代理辅助和工具回合不设置固定请求超时；如果发送时遇到可重试网络错误，会自动重试三次，失败后再显示错误。
 
+AI 聊天的 tool 调用现在有按单次请求计算的预算保护：默认预算为 20 次，首次达到预算会自动增加一半，并在 trace 中提醒用户观察工具调用是否仍然合理；之后每次继续扩容前都会运行一次内部安全审计，必要时会停止继续调用工具，并强制模型给出一次无工具的总结与下一步建议。
+
 ### AI Tools
 
 AI tools 以能力分组维护在 `lib/services/ai_tool/` 中，而不是把逻辑散在聊天页里。当前主要包括：
@@ -199,6 +201,7 @@ AI tools 以能力分组维护在 `lib/services/ai_tool/` 中，而不是把逻�
 - `run_command` 会强制遵守保存的 `serverPlatform`。
 - 远程写入、本地导入、日志删除/清空、监控状态变更等操作必须经过统一审批。
 - AI destructive shell delete/remove 命令会被拦截；SFTP 变更工具需显式审批。
+- SSH 会话开关、tmux 会话恢复和终端历史删除也属于显式审批范围，不会绕过审批面板。
 - 所有 tool 参数、结果和 trace 都经过 `ToolSecretPolicy` 过滤或拦截，避免暴露凭据和敏感路径内容。
 
 ### Logs, Settings, Backup

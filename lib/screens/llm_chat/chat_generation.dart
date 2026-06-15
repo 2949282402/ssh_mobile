@@ -741,6 +741,15 @@ extension _ChatGeneration on _LlmChatScreenState {
         return strings.assistantProcessingApproval;
       case 'multi_agent':
         return strings.assistantCollaborating;
+      case 'budget':
+        final lowerTitle = event.title.toLowerCase();
+        if (lowerTitle.contains('running')) {
+          return strings.assistantToolBudgetAudit;
+        }
+        if (lowerTitle.contains('rejected')) {
+          return strings.assistantToolBudgetStopped;
+        }
+        return strings.assistantToolBudgetExtended;
       default:
         return strings.assistantPreparing;
     }

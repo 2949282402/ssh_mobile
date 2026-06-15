@@ -169,6 +169,16 @@ extension _AiRunStatusStrings on _AiStrings {
       ? 'Coordinating helper agents...'
       : '正在协调多 Agent 协作...';
 
+  String get assistantToolBudgetExtended => language == AppLanguage.en
+      ? 'Tool budget extended. Please review tool use...'
+      : '工具预算已扩展，请留意工具调用是否合理...';
+  String get assistantToolBudgetAudit => language == AppLanguage.en
+      ? 'Auditing tool usage before continuing...'
+      : '继续前正在审计工具调用...';
+  String get assistantToolBudgetStopped => language == AppLanguage.en
+      ? 'Tool usage stopped after safety audit...'
+      : '安全审计后已停止继续调用工具...';
+
   String assistantRunningTool(String toolName) {
     final name = toolName.trim();
     if (language == AppLanguage.en) {

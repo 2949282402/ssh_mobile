@@ -92,6 +92,341 @@ class LlmTraceEvent {
   });
 }
 
+class LlmToolBudgetController {
+  final int baseBudget;
+  final int extensionSize;
+  int _usedCalls;
+  int _currentLimit;
+  bool _initialExtensionGranted;
+
+  LlmToolBudgetController({
+    required int baseBudget,
+  })  : baseBudget = AiToolCallBudget.normalize(baseBudget),
+        extensionSize = AiToolCallBudget.normalize(baseBudget) ~/ 2,
+        _usedCalls = 0,
+        _currentLimit = AiToolCallBudget.normalize(baseBudget),
+        _initialExtensionGranted = false;
+
+  int get usedCalls => _usedCalls;
+  int get currentLimit => _currentLimit;
+  bool get initialExtensionGranted => _initialExtensionGranted;
+  bool get requiresAuditBeforeNextCall =>
+      _initialExtensionGranted && _usedCalls >= _currentLimit;
+
+  LlmToolBudgetCheck checkBeforeToolCall() {
+    if (requiresAuditBeforeNextCall) {
+      return const LlmToolBudgetCheck.auditRequired();
+    }
+    return const LlmToolBudgetCheck.allowed();
+  }
+
+  LlmToolBudgetEvent? recordAcceptedToolCall() {
+    _usedCalls += 1;
+    if (!_initialExtensionGranted && _usedCalls >= baseBudget) {
+      _initialExtensionGranted = true;
+      final previousLimit = _currentLimit;
+      _currentLimit = baseBudget + extensionSize;
+      return LlmToolBudgetEvent(
+        type: 'auto_extend',
+        usedCalls: _usedCalls,
+        previousLimit: previousLimit,
+        newLimit: _currentLimit,
+      );
+    }
+    return null;
+  }
+
+  LlmToolBudgetEvent approveAuditExtension() {
+    final previousLimit = _currentLimit;
+    _currentLimit += extensionSize;
+    return LlmToolBudgetEvent(
+      type: 'audit_extend',
+      usedCalls: _usedCalls,
+      previousLimit: previousLimit,
+      newLimit: _currentLimit,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'baseBudget': baseBudget,
+      'extensionSize': extensionSize,
+      'usedCalls': _usedCalls,
+      'currentLimit': _currentLimit,
+      'initialExtensionGranted': _initialExtensionGranted,
+    };
+  }
+}
+
+class LlmToolBudgetCheck {
+  final bool allowToolCall;
+  final bool requiresAudit;
+
+  const LlmToolBudgetCheck._({
+    required this.allowToolCall,
+    required this.requiresAudit,
+  });
+
+  const LlmToolBudgetCheck.allowed()
+      : this._(
+          allowToolCall: true,
+          requiresAudit: false,
+        );
+
+  const LlmToolBudgetCheck.auditRequired()
+      : this._(
+          allowToolCall: false,
+          requiresAudit: true,
+        );
+}
+
+class LlmToolBudgetEvent {
+  final String type;
+  final int usedCalls;
+  final int previousLimit;
+  final int newLimit;
+
+  const LlmToolBudgetEvent({
+    required this.type,
+    required this.usedCalls,
+    required this.previousLimit,
+    required this.newLimit,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'type': type,
+      'usedCalls': usedCalls,
+      'previousLimit': previousLimit,
+      'newLimit': newLimit,
+    };
+  }
+}
+
+class LlmToolLedgerEntry {
+  final int index;
+  final String toolName;
+  final String signature;
+  final String argumentsPreview;
+  final String outcome;
+  final bool approvalRequired;
+  final bool approved;
+  final bool failed;
+  final bool emptyResult;
+  final String resultPreview;
+
+  const LlmToolLedgerEntry({
+    required this.index,
+    required this.toolName,
+    required this.signature,
+    required this.argumentsPreview,
+    required this.outcome,
+    required this.approvalRequired,
+    required this.approved,
+    required this.failed,
+    required this.emptyResult,
+    required this.resultPreview,
+  });
+
+  static String buildSignature(
+    String toolName,
+    Map<String, dynamic> arguments,
+  ) {
+    final canonical = _canonicalize(arguments);
+    return '$toolName:${jsonEncode(canonical)}';
+  }
+
+  static Object? _canonicalize(Object? value) {
+    if (value is Map) {
+      final keys = value.keys.map((key) => '$key').toList()..sort();
+      return {
+        for (final key in keys) key: _canonicalize(value[key]),
+      };
+    }
+    if (value is List) {
+      return value.map(_canonicalize).toList(growable: false);
+    }
+    return value;
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'index': index,
+      'toolName': toolName,
+      'signature': signature,
+      'argumentsPreview': argumentsPreview,
+      'outcome': outcome,
+      'approvalRequired': approvalRequired,
+      'approved': approved,
+      'failed': failed,
+      'emptyResult': emptyResult,
+      'resultPreview': resultPreview,
+    };
+  }
+}
+
+class LlmToolUsageSignals {
+  final int totalCalls;
+  final int failedCalls;
+  final int emptyResults;
+  final int repeatedSignatureMaxStreak;
+  final int alternatingPairMaxLength;
+  final bool suspectedLoop;
+  final bool likelyNotAdvancing;
+
+  const LlmToolUsageSignals({
+    required this.totalCalls,
+    required this.failedCalls,
+    required this.emptyResults,
+    required this.repeatedSignatureMaxStreak,
+    required this.alternatingPairMaxLength,
+    required this.suspectedLoop,
+    required this.likelyNotAdvancing,
+  });
+
+  factory LlmToolUsageSignals.fromLedger(List<LlmToolLedgerEntry> ledger) {
+    var failedCalls = 0;
+    var emptyResults = 0;
+    var repeatedSignatureMaxStreak = 0;
+    var repeatedSignatureCurrentStreak = 0;
+    String? previousSignature;
+    final signatures = <String>[];
+
+    for (final entry in ledger) {
+      signatures.add(entry.signature);
+      if (entry.failed) {
+        failedCalls += 1;
+      }
+      if (entry.emptyResult) {
+        emptyResults += 1;
+      }
+      if (entry.signature == previousSignature) {
+        repeatedSignatureCurrentStreak += 1;
+      } else {
+        repeatedSignatureCurrentStreak = 1;
+        previousSignature = entry.signature;
+      }
+      if (repeatedSignatureCurrentStreak > repeatedSignatureMaxStreak) {
+        repeatedSignatureMaxStreak = repeatedSignatureCurrentStreak;
+      }
+    }
+
+    var alternatingPairMaxLength = 0;
+    for (var start = 0; start < signatures.length - 1; start++) {
+      final first = signatures[start];
+      final second = signatures[start + 1];
+      if (first == second) {
+        continue;
+      }
+      var length = 2;
+      for (var index = start + 2; index < signatures.length; index++) {
+        final expected = signatures[index - 2];
+        if (signatures[index] != expected ||
+            signatures[index] == signatures[index - 1]) {
+          break;
+        }
+        length += 1;
+      }
+      if (length > alternatingPairMaxLength) {
+        alternatingPairMaxLength = length;
+      }
+    }
+
+    final suspectedLoop = repeatedSignatureMaxStreak >= 3 ||
+        alternatingPairMaxLength >= 4 ||
+        (failedCalls >= 3 && ledger.length >= 4);
+    final likelyNotAdvancing = suspectedLoop ||
+        emptyResults >= 3 ||
+        (failedCalls + emptyResults >= 4 && ledger.length >= 5);
+
+    return LlmToolUsageSignals(
+      totalCalls: ledger.length,
+      failedCalls: failedCalls,
+      emptyResults: emptyResults,
+      repeatedSignatureMaxStreak: repeatedSignatureMaxStreak,
+      alternatingPairMaxLength: alternatingPairMaxLength,
+      suspectedLoop: suspectedLoop,
+      likelyNotAdvancing: likelyNotAdvancing,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'totalCalls': totalCalls,
+      'failedCalls': failedCalls,
+      'emptyResults': emptyResults,
+      'repeatedSignatureMaxStreak': repeatedSignatureMaxStreak,
+      'alternatingPairMaxLength': alternatingPairMaxLength,
+      'suspectedLoop': suspectedLoop,
+      'likelyNotAdvancing': likelyNotAdvancing,
+    };
+  }
+}
+
+class LlmToolSafetyAuditResult {
+  final bool shouldContinue;
+  final String summary;
+  final List<String> issues;
+  final bool suspectedLoop;
+  final bool goalDrift;
+  final String recommendedNextAction;
+
+  const LlmToolSafetyAuditResult({
+    required this.shouldContinue,
+    required this.summary,
+    required this.issues,
+    required this.suspectedLoop,
+    required this.goalDrift,
+    required this.recommendedNextAction,
+  });
+
+  factory LlmToolSafetyAuditResult.fromJson(Map<String, dynamic> json) {
+    final issuesValue = json['issues'];
+    final issues = issuesValue is List
+        ? issuesValue
+            .map((item) => '$item'.trim())
+            .where((item) => item.isNotEmpty)
+            .toList(growable: false)
+        : const <String>[];
+    return LlmToolSafetyAuditResult(
+      shouldContinue: json['shouldContinue'] == true,
+      summary: ('${json['summary'] ?? ''}').trim(),
+      issues: issues,
+      suspectedLoop: json['suspectedLoop'] == true,
+      goalDrift: json['goalDrift'] == true,
+      recommendedNextAction: ('${json['recommendedNextAction'] ?? ''}').trim(),
+    );
+  }
+
+  factory LlmToolSafetyAuditResult.blocked({
+    required String summary,
+    required List<String> issues,
+    required bool suspectedLoop,
+    required bool goalDrift,
+    required String recommendedNextAction,
+  }) {
+    return LlmToolSafetyAuditResult(
+      shouldContinue: false,
+      summary: summary,
+      issues: issues,
+      suspectedLoop: suspectedLoop,
+      goalDrift: goalDrift,
+      recommendedNextAction: recommendedNextAction,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'shouldContinue': shouldContinue,
+      'summary': summary,
+      'issues': issues,
+      'suspectedLoop': suspectedLoop,
+      'goalDrift': goalDrift,
+      'recommendedNextAction': recommendedNextAction,
+    };
+  }
+}
+
 class LlmTokenUsage {
   final int? promptTokens;
   final int? completionTokens;

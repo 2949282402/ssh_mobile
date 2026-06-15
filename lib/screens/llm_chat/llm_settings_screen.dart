@@ -38,6 +38,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   late String _ragSearchMode;
   late bool _multiAgentEnabled;
   late int _multiAgentMaxAgents;
+  late int _toolCallBudget;
   late int _maxImageSizeBytes;
   late int _maxFileSizeBytes;
   String? _selectedApiKeyId;
@@ -72,6 +73,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _ragSearchMode = context.read<AppSettings>().ragSearchMode;
     _multiAgentEnabled = widget.initialSettings.multiAgentEnabled;
     _multiAgentMaxAgents = widget.initialSettings.multiAgentMaxAgents;
+    _toolCallBudget = widget.initialSettings.toolCallBudget;
     _maxImageSizeBytes = widget.initialSettings.maxImageSizeBytes;
     _maxFileSizeBytes = widget.initialSettings.maxFileSizeBytes;
     _selectedApiKeyId = widget.initialSettings.activeApiKeyId;
@@ -318,6 +320,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       quarkApiKey: _quarkApiKeyController.text,
       multiAgentEnabled: _multiAgentEnabled,
       multiAgentMaxAgents: _multiAgentMaxAgents,
+      toolCallBudget: _toolCallBudget,
       maxImageSizeBytes: _maxImageSizeBytes,
       maxFileSizeBytes: _maxFileSizeBytes,
       apiKey: _apiKeyController.text,
@@ -343,6 +346,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         quarkApiKey: pending.quarkApiKey,
         multiAgentEnabled: pending.multiAgentEnabled,
         multiAgentMaxAgents: pending.multiAgentMaxAgents,
+        toolCallBudget: pending.toolCallBudget,
         maxImageSizeBytes: pending.maxImageSizeBytes,
         maxFileSizeBytes: pending.maxFileSizeBytes,
         apiKey: pending.apiKey,
@@ -601,6 +605,30 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                   : (value) {
                       if (value != null) {
                         setState(() => _multiAgentMaxAgents = value);
+                      }
+                    },
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<int>(
+              initialValue: AiToolCallBudget.normalize(_toolCallBudget),
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: strings.toolCallBudget,
+                helperText: strings.toolCallBudgetHint,
+                helperMaxLines: 3,
+              ),
+              items: [
+                for (final value in AiToolCallBudget.values)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text(AiToolCallBudget.label(value)),
+                  ),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        setState(() => _toolCallBudget = value);
                       }
                     },
             ),
@@ -998,6 +1026,7 @@ class _PendingAiSettings {
   final String quarkApiKey;
   final bool multiAgentEnabled;
   final int multiAgentMaxAgents;
+  final int toolCallBudget;
   final int maxImageSizeBytes;
   final int maxFileSizeBytes;
   final String apiKey;
@@ -1018,6 +1047,7 @@ class _PendingAiSettings {
     required this.quarkApiKey,
     required this.multiAgentEnabled,
     required this.multiAgentMaxAgents,
+    required this.toolCallBudget,
     required this.maxImageSizeBytes,
     required this.maxFileSizeBytes,
     required this.apiKey,

@@ -42,11 +42,13 @@ extension _PlaybookTools on AiToolService {
     final nextMultiAgentEnabled = _optionalBool(arguments, 'multiAgentEnabled');
     final nextMultiAgentMaxAgents =
         _optionalInt(arguments, 'multiAgentMaxAgents');
+    final nextToolCallBudget = _optionalInt(arguments, 'toolCallBudget');
     if (nextTimeout != null ||
         nextWebSearchEnabled != null ||
         nextWebSearchMaxResults != null ||
         nextMultiAgentEnabled != null ||
-        nextMultiAgentMaxAgents != null) {
+        nextMultiAgentMaxAgents != null ||
+        nextToolCallBudget != null) {
       await storageService.saveAiConnectionSettings(
         baseUrl: current.baseUrl,
         model: current.model,
@@ -61,6 +63,7 @@ extension _PlaybookTools on AiToolService {
         multiAgentEnabled: nextMultiAgentEnabled ?? current.multiAgentEnabled,
         multiAgentMaxAgents:
             nextMultiAgentMaxAgents ?? current.multiAgentMaxAgents,
+        toolCallBudget: nextToolCallBudget ?? current.toolCallBudget,
       );
     }
     return jsonEncode(await _readOperationalSettings());
@@ -88,6 +91,7 @@ extension _PlaybookTools on AiToolService {
       'webSearchMaxResults': ai.webSearchMaxResults,
       'multiAgentEnabled': ai.multiAgentEnabled,
       'multiAgentMaxAgents': ai.multiAgentMaxAgents,
+      'toolCallBudget': ai.toolCallBudget,
       'hasApiKeyConfigured': ai.hasApiKey,
     };
   }

@@ -89,6 +89,7 @@ class StorageService extends ChangeNotifier
   static const _aliyunApiKeySecureKey = 'ai_aliyun_api_key';
   static const _aiMultiAgentEnabledKey = 'ai_multi_agent_enabled';
   static const _aiMultiAgentMaxAgentsKey = 'ai_multi_agent_max_agents';
+  static const _aiToolCallBudgetKey = 'ai_tool_call_budget';
   static const _aiMaxImageSizeBytesKey = 'ai_max_image_size_bytes';
   static const _aiMaxFileSizeBytesKey = 'ai_max_file_size_bytes';
   static const _aiModelsCacheKey = 'ai_models_cache';

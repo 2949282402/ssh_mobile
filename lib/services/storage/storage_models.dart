@@ -85,6 +85,7 @@ class AiConnectionSettings {
   final bool hasQuarkApiKey;
   final bool multiAgentEnabled;
   final int multiAgentMaxAgents;
+  final int toolCallBudget;
   final int maxImageSizeBytes;
   final int maxFileSizeBytes;
   final bool hasApiKey;
@@ -106,6 +107,7 @@ class AiConnectionSettings {
     required this.hasQuarkApiKey,
     required this.multiAgentEnabled,
     required this.multiAgentMaxAgents,
+    required this.toolCallBudget,
     required this.maxImageSizeBytes,
     required this.maxFileSizeBytes,
     required this.hasApiKey,
@@ -191,6 +193,19 @@ class AiUploadSizeLimit {
       return '$mb MB';
     }
     return '${bytes ~/ 1024} KB';
+  }
+}
+
+class AiToolCallBudget {
+  static const int defaultValue = 20;
+  static const List<int> values = [10, 20, 30, 40, 60];
+
+  static int normalize(int? value) {
+    return values.contains(value) ? value! : defaultValue;
+  }
+
+  static String label(int value) {
+    return '${normalize(value)}';
   }
 }
 

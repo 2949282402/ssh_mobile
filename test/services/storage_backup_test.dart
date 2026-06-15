@@ -92,6 +92,29 @@ void main() {
     expect(settings.multiAgentMaxAgents, 2);
   });
 
+  test('tool call budget defaults and normalizes on save', () async {
+    storage = await initializedStorage();
+
+    var settings = await storage.loadAiConnectionSettings();
+    expect(settings.toolCallBudget, AiToolCallBudget.defaultValue);
+
+    await storage.saveAiConnectionSettings(
+      baseUrl: 'https://api.example.com',
+      model: 'demo-model',
+      toolCallBudget: 99,
+    );
+    settings = await storage.loadAiConnectionSettings();
+    expect(settings.toolCallBudget, AiToolCallBudget.defaultValue);
+
+    await storage.saveAiConnectionSettings(
+      baseUrl: 'https://api.example.com',
+      model: 'demo-model',
+      toolCallBudget: 40,
+    );
+    settings = await storage.loadAiConnectionSettings();
+    expect(settings.toolCallBudget, 40);
+  });
+
   test('base URL history keeps newest first and deduplicated', () async {
     storage = await initializedStorage();
 
@@ -223,6 +246,7 @@ void main() {
       apiKey: 'sk-secret',
       multiAgentEnabled: false,
       multiAgentMaxAgents: 4,
+      toolCallBudget: 40,
     );
 
     final jsonText = await storage.exportAppDataJson();
@@ -239,6 +263,7 @@ void main() {
     expect(aiSettings['apiKey'], '');
     expect(aiSettings['multiAgentEnabled'], isFalse);
     expect(aiSettings['multiAgentMaxAgents'], 4);
+    expect(aiSettings['toolCallBudget'], 40);
   });
 
   test('import ignores credential fields and clears existing AI key', () async {
@@ -270,6 +295,7 @@ void main() {
         'apiKey': 'sk-imported',
         'multiAgentEnabled': false,
         'multiAgentMaxAgents': 4,
+        'toolCallBudget': 30,
       },
     });
 
@@ -284,6 +310,7 @@ void main() {
     final settings = await storage.loadAiConnectionSettings();
     expect(settings.multiAgentEnabled, isFalse);
     expect(settings.multiAgentMaxAgents, 4);
+    expect(settings.toolCallBudget, 30);
   });
 
   test('web search engine settings persist, export, and import', () async {

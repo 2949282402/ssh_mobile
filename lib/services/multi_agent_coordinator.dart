@@ -290,7 +290,7 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
             contextText: contextText,
           ),
           thinkingSettings: thinkingSettings,
-        ).timeout(const Duration(minutes: 5));
+        );
         checkCancelled?.call();
         final content = _truncate(secretPolicy.redactText(raw.trim()));
         return _RoleOutput.success(role, content);
@@ -459,8 +459,7 @@ Return JSON only:
         }
       ];
 
-      final rawResult = await classify(classificationMessages)
-          .timeout(const Duration(seconds: 5));
+      final rawResult = await classify(classificationMessages);
 
       checkCancelled?.call();
 

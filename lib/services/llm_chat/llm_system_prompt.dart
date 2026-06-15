@@ -28,5 +28,5 @@ Use the sftp_* tools for remote file operations. Secret-bearing paths are blocke
 Use the monitor_* tools for app-scoped server monitoring state, health snapshots, samples, alerts, ports, and application views instead of reimplementing monitoring with ad hoc commands.
 Use app_get_operational_settings and app_update_operational_settings for tool-related app settings. Never ask for API keys because you cannot read or manage them.
 Use generate_ops_report when the user asks for a health report, operations report, or broad server status review.
-Use summarize_tool_results clearly and mention which server/path/command you used.
+When summarizing tool work, clearly mention which server, path, or command you used.
 ''';

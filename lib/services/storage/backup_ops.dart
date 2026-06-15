@@ -49,6 +49,7 @@ extension BackupOps on StorageService {
         'quarkSearchEndpoint': settings.quarkSearchEndpoint,
         'multiAgentEnabled': settings.multiAgentEnabled,
         'multiAgentMaxAgents': settings.multiAgentMaxAgents,
+        'toolCallBudget': settings.toolCallBudget,
         'maxImageSizeBytes': settings.maxImageSizeBytes,
         'maxFileSizeBytes': settings.maxFileSizeBytes,
         'apiKey': '',
@@ -142,6 +143,7 @@ extension BackupOps on StorageService {
         multiAgentEnabled: aiSettings['multiAgentEnabled'] as bool?,
         multiAgentMaxAgents:
             (aiSettings['multiAgentMaxAgents'] as num?)?.toInt(),
+        toolCallBudget: (aiSettings['toolCallBudget'] as num?)?.toInt(),
         maxImageSizeBytes: (aiSettings['maxImageSizeBytes'] as num?)?.toInt(),
         maxFileSizeBytes: (aiSettings['maxFileSizeBytes'] as num?)?.toInt(),
       );

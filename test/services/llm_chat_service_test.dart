@@ -157,4 +157,114 @@ void main() {
       storage.dispose();
     });
   });
+
+  group('LlmToolBudgetController', () {
+    test('auto-extends at the default budget and audits the next block', () {
+      final controller = LlmToolBudgetController(baseBudget: 20);
+
+      for (var i = 0; i < 19; i++) {
+        expect(controller.checkBeforeToolCall().requiresAudit, isFalse);
+        expect(controller.recordAcceptedToolCall(), isNull);
+      }
+
+      expect(controller.checkBeforeToolCall().requiresAudit, isFalse);
+      final autoExtension = controller.recordAcceptedToolCall();
+      expect(autoExtension, isNotNull);
+      expect(autoExtension!.type, 'auto_extend');
+      expect(autoExtension.previousLimit, 20);
+      expect(autoExtension.newLimit, 30);
+      expect(controller.usedCalls, 20);
+      expect(controller.currentLimit, 30);
+
+      for (var i = 0; i < 10; i++) {
+        expect(controller.checkBeforeToolCall().requiresAudit, isFalse);
+        expect(controller.recordAcceptedToolCall(), isNull);
+      }
+
+      expect(controller.usedCalls, 30);
+      expect(controller.checkBeforeToolCall().requiresAudit, isTrue);
+    });
+
+    test('approved audits keep extending in half-budget blocks', () {
+      final controller = LlmToolBudgetController(baseBudget: 20);
+
+      for (var i = 0; i < 30; i++) {
+        if (controller.checkBeforeToolCall().requiresAudit) {
+          controller.approveAuditExtension();
+        }
+        controller.recordAcceptedToolCall();
+      }
+
+      final auditExtension = controller.approveAuditExtension();
+      expect(auditExtension.type, 'audit_extend');
+      expect(auditExtension.previousLimit, 30);
+      expect(auditExtension.newLimit, 40);
+      expect(controller.currentLimit, 40);
+      expect(controller.checkBeforeToolCall().requiresAudit, isFalse);
+    });
+  });
+
+  group('LlmToolUsageSignals', () {
+    test('detects repeated and alternating loop patterns', () {
+      const entries = [
+        LlmToolLedgerEntry(
+          index: 1,
+          toolName: 'tool_a',
+          signature: 'tool_a:{"id":1}',
+          argumentsPreview: '{}',
+          outcome: 'success',
+          approvalRequired: false,
+          approved: false,
+          failed: false,
+          emptyResult: false,
+          resultPreview: '{"ok":true}',
+        ),
+        LlmToolLedgerEntry(
+          index: 2,
+          toolName: 'tool_b',
+          signature: 'tool_b:{"id":2}',
+          argumentsPreview: '{}',
+          outcome: 'tool_error',
+          approvalRequired: false,
+          approved: false,
+          failed: true,
+          emptyResult: false,
+          resultPreview: '{"error":"x"}',
+        ),
+        LlmToolLedgerEntry(
+          index: 3,
+          toolName: 'tool_a',
+          signature: 'tool_a:{"id":1}',
+          argumentsPreview: '{}',
+          outcome: 'empty_result',
+          approvalRequired: false,
+          approved: false,
+          failed: true,
+          emptyResult: true,
+          resultPreview: '{}',
+        ),
+        LlmToolLedgerEntry(
+          index: 4,
+          toolName: 'tool_b',
+          signature: 'tool_b:{"id":2}',
+          argumentsPreview: '{}',
+          outcome: 'tool_error',
+          approvalRequired: false,
+          approved: false,
+          failed: true,
+          emptyResult: false,
+          resultPreview: '{"error":"x"}',
+        ),
+      ];
+
+      final signals = LlmToolUsageSignals.fromLedger(entries);
+
+      expect(signals.totalCalls, 4);
+      expect(signals.failedCalls, 3);
+      expect(signals.emptyResults, 1);
+      expect(signals.alternatingPairMaxLength, 4);
+      expect(signals.suspectedLoop, isTrue);
+      expect(signals.likelyNotAdvancing, isTrue);
+    });
+  });
 }

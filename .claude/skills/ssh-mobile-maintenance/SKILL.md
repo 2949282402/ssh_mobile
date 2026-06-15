@@ -91,6 +91,10 @@ with its `lib/screens/llm_chat/` part files.
   not use a fixed LLM request timeout. Retry retryable network failures three
   times before surfacing the error. The stop button remains the user-controlled
   cancellation path.
+- Per-request tool use has budget guardrails. The default budget is 20 tool
+  calls, the first limit hit auto-extends by half, and every later extension
+  requires an internal safety audit that can disable further tools and force a
+  final no-tools summary.
 - State-changing tool actions must pause for the generic approval UI. Keep the
   approval model broader than `run_command`.
 - `run_command` uses one-shot SSH exec, respects `serverPlatform`, and blocks

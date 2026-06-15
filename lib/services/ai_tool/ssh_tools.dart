@@ -27,8 +27,17 @@ extension _SshTools on AiToolService {
     });
   }
 
-  Future<String> _sshOpenSession(Map<String, dynamic> arguments) async {
+  Future<String> _sshOpenSession(
+    Map<String, dynamic> arguments, {
+    required bool approvedWrite,
+  }) async {
     final connectionId = _arg(arguments, 'connectionId');
+    if (!approvedWrite) {
+      return jsonEncode({
+        'error': 'Opening an SSH session requires user approval.',
+        'connectionId': connectionId,
+      });
+    }
     final sessionId = await sshService.openSession(
       connectionId,
       displayName: _optionalString(arguments, 'displayName'),
@@ -69,8 +78,17 @@ extension _SshTools on AiToolService {
     });
   }
 
-  Future<String> _sshCloseSession(Map<String, dynamic> arguments) async {
+  Future<String> _sshCloseSession(
+    Map<String, dynamic> arguments, {
+    required bool approvedWrite,
+  }) async {
     final sessionId = _arg(arguments, 'sessionId');
+    if (!approvedWrite) {
+      return jsonEncode({
+        'error': 'Closing an SSH session requires user approval.',
+        'sessionId': sessionId,
+      });
+    }
     await sshService.disconnectSession(sessionId);
     return jsonEncode({
       'closed': true,
@@ -78,8 +96,18 @@ extension _SshTools on AiToolService {
     });
   }
 
-  Future<String> _sshCloseServerSessions(Map<String, dynamic> arguments) async {
+  Future<String> _sshCloseServerSessions(
+    Map<String, dynamic> arguments, {
+    required bool approvedWrite,
+  }) async {
     final connectionId = _arg(arguments, 'connectionId');
+    if (!approvedWrite) {
+      return jsonEncode({
+        'error':
+            'Closing all SSH sessions for a server requires user approval.',
+        'connectionId': connectionId,
+      });
+    }
     await sshService.disconnectSessionsForConnection(connectionId);
     return jsonEncode({
       'closed': true,
@@ -87,7 +115,16 @@ extension _SshTools on AiToolService {
     });
   }
 
-  Future<String> _sshRestoreTmuxSessions(Map<String, dynamic> arguments) async {
+  Future<String> _sshRestoreTmuxSessions(
+    Map<String, dynamic> arguments, {
+    required bool approvedWrite,
+  }) async {
+    if (!approvedWrite) {
+      return jsonEncode({
+        'error':
+            'Restoring saved tmux-backed SSH sessions requires user approval.',
+      });
+    }
     await sshService.restoreTmuxSessions();
     return jsonEncode({
       'restored': true,
@@ -114,9 +151,16 @@ extension _SshTools on AiToolService {
   }
 
   Future<String> _sshDeleteTerminalHistoryRecord(
-    Map<String, dynamic> arguments,
-  ) async {
+    Map<String, dynamic> arguments, {
+    required bool approvedWrite,
+  }) async {
     final sessionId = _arg(arguments, 'sessionId');
+    if (!approvedWrite) {
+      return jsonEncode({
+        'error': 'Deleting saved terminal history requires user approval.',
+        'sessionId': sessionId,
+      });
+    }
     await sshService.removeTerminalHistoryRecord(sessionId);
     return jsonEncode({
       'deleted': true,
@@ -264,7 +308,8 @@ extension _SshTools on AiToolService {
           'displayName': _string('Optional display name for the new session.'),
         },
         required: const ['connectionId'],
-        handler: _sshOpenSession,
+        handler: (arguments) =>
+            _sshOpenSession(arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'ssh_ensure_session_connected',
@@ -296,7 +341,8 @@ extension _SshTools on AiToolService {
           'sessionId': _string('Existing session id.'),
         },
         required: const ['sessionId'],
-        handler: _sshCloseSession,
+        handler: (arguments) =>
+            _sshCloseSession(arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'ssh_close_server_sessions',
@@ -306,14 +352,16 @@ extension _SshTools on AiToolService {
           'connectionId': _string('Server connection id.'),
         },
         required: const ['connectionId'],
-        handler: _sshCloseServerSessions,
+        handler: (arguments) =>
+            _sshCloseServerSessions(arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'ssh_restore_tmux_sessions',
         description:
             'Restore saved tmux-backed SSH sessions after an app restart. Returns summary metadata only.',
         properties: const {},
-        handler: _sshRestoreTmuxSessions,
+        handler: (arguments) =>
+            _sshRestoreTmuxSessions(arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'ssh_list_terminal_history',
@@ -338,7 +386,8 @@ extension _SshTools on AiToolService {
           'sessionId': _string('Terminal history session id.'),
         },
         required: const ['sessionId'],
-        handler: _sshDeleteTerminalHistoryRecord,
+        handler: (arguments) =>
+            _sshDeleteTerminalHistoryRecord(arguments, approvedWrite: false),
       ),
     ];
   }
