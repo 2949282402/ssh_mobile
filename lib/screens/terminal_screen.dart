@@ -72,6 +72,7 @@ class _TerminalScreenState extends State<TerminalScreen>
   int _activePointers = 0;
   bool _terminalMenuOpen = false;
   bool _advancedKeyboardVisible = false;
+  bool _ctrlActive = false;
   TerminalTheme? _cachedTerminalTheme;
   bool? _cachedTerminalThemeIsDark;
   Color? _cachedTerminalThemeBackground;
@@ -110,6 +111,25 @@ class _TerminalScreenState extends State<TerminalScreen>
       maxLines: _terminalScrollbackLines,
       onOutput: (data) {
         if (!mounted) return;
+        if (_ctrlActive) {
+          _ctrlActive = false;
+          if (data.length == 1) {
+            final charCode = data.codeUnitAt(0);
+            if ((charCode >= 97 && charCode <= 122) ||
+                (charCode >= 65 && charCode <= 90)) {
+              final ctrlCode = charCode >= 97 ? charCode - 96 : charCode - 64;
+              _sshService.sendData(
+                widget.sessionId,
+                String.fromCharCode(ctrlCode),
+              );
+              setState(() {});
+              return;
+            }
+          }
+          _sshService.sendData(widget.sessionId, data);
+          setState(() {});
+          return;
+        }
         _sshService.sendData(widget.sessionId, data);
       },
     );
@@ -511,6 +531,11 @@ class _TerminalScreenState extends State<TerminalScreen>
       advancedKeyboardVisible: _advancedKeyboardVisible,
       complexInputController: _complexInputController,
       terminalFocusNode: _terminalInputFocusNode,
+      ctrlActive: _ctrlActive,
+      onToggleCtrl: () {
+        setState(() => _ctrlActive = !_ctrlActive);
+        _requestWindowsAwareTerminalFocus();
+      },
       onToggleAdvancedKeyboard: () {
         setState(
           () => _advancedKeyboardVisible = !_advancedKeyboardVisible,

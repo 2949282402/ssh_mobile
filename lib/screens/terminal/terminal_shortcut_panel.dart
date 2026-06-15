@@ -13,6 +13,8 @@ class TerminalShortcutPanel extends StatelessWidget {
   final bool advancedKeyboardVisible;
   final TextEditingController complexInputController;
   final FocusNode terminalFocusNode;
+  final bool ctrlActive;
+  final VoidCallback onToggleCtrl;
   final VoidCallback onToggleAdvancedKeyboard;
 
   const TerminalShortcutPanel({
@@ -23,6 +25,8 @@ class TerminalShortcutPanel extends StatelessWidget {
     required this.advancedKeyboardVisible,
     required this.complexInputController,
     required this.terminalFocusNode,
+    required this.ctrlActive,
+    required this.onToggleCtrl,
     required this.onToggleAdvancedKeyboard,
   });
 
@@ -120,29 +124,78 @@ class TerminalShortcutPanel extends StatelessWidget {
       ...customCommands,
     ]);
 
-    return SizedBox(
-      height: 36,
-      child: ReorderableListView.builder(
-        scrollDirection: Axis.horizontal,
-        buildDefaultDragHandles: false,
-        itemCount: commands.length,
-        onReorder: (oldIndex, newIndex) {
-          final reordered = commands.toList();
-          final item = reordered.removeAt(oldIndex);
-          final targetIndex = newIndex > oldIndex ? newIndex - 1 : newIndex;
-          reordered.insert(targetIndex, item);
-          shortcuts.reorderCommands(
-            reordered.map((command) => command.id).toList(),
-          );
-        },
-        itemBuilder: (context, index) {
-          final command = commands[index];
-          return ReorderableDelayedDragStartListener(
-            key: ValueKey(command.id),
-            index: index,
-            child: _quickKey(context, command),
-          );
-        },
+    return Row(
+      children: [
+        _buildCtrlKey(context),
+        const SizedBox(width: 4),
+        Expanded(
+          child: SizedBox(
+            height: 36,
+            child: ReorderableListView.builder(
+              scrollDirection: Axis.horizontal,
+              buildDefaultDragHandles: false,
+              itemCount: commands.length,
+              onReorder: (oldIndex, newIndex) {
+                final reordered = commands.toList();
+                final item = reordered.removeAt(oldIndex);
+                final targetIndex = newIndex > oldIndex ? newIndex - 1 : newIndex;
+                reordered.insert(targetIndex, item);
+                shortcuts.reorderCommands(
+                  reordered.map((command) => command.id).toList(),
+                );
+              },
+              itemBuilder: (context, index) {
+                final command = commands[index];
+                return ReorderableDelayedDragStartListener(
+                  key: ValueKey(command.id),
+                  index: index,
+                  child: _quickKey(context, command),
+                );
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCtrlKey(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final colorScheme = Theme.of(context).colorScheme;
+
+    final activeBackground = colorScheme.primary;
+    final activeBorder = colorScheme.primary;
+    final activeForeground = colorScheme.onPrimary;
+
+    final normalBackground =
+        isDark ? const Color(0xFF21262D) : const Color(0xFFF6F8FA);
+    final normalBorder =
+        isDark ? const Color(0xFF30363D) : const Color(0xFFD0D7DE);
+    final normalForeground = isDark
+        ? const Color(0xFFC9D1D9)
+        : colorScheme.onSurface;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: InputChip(
+        label: const Text(
+          'CTRL',
+          style: TextStyle(
+            fontSize: 11,
+            fontFamily: 'monospace',
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        labelStyle: TextStyle(
+          color: ctrlActive ? activeForeground : normalForeground,
+        ),
+        backgroundColor: ctrlActive ? activeBackground : normalBackground,
+        side: BorderSide(
+          color: ctrlActive ? activeBorder : normalBorder,
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        onPressed: onToggleCtrl,
       ),
     );
   }
