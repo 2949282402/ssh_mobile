@@ -425,6 +425,8 @@ class AppStrings {
   String get window => _en ? 'Window' : '窗口';
   String get active => _en ? 'Active' : '活跃';
   String get performanceMonitor => _en ? 'Monitor' : '监控';
+  String get monitor => performanceMonitor;
+  String get admin => systemAdmin;
   String get logs => _en ? 'Logs' : '日志';
   String get cancel => _en ? 'Cancel' : '取消';
   String get create => _en ? 'Create' : '创建';
