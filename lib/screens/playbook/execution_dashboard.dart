@@ -530,6 +530,9 @@ Please analyze what went wrong and provide:
     // Set the prompt in the service
     context.read<PlaybookService>().pendingDiagnosticPrompt = prompt;
 
+    // 发送通知让上层的 HomeScreen 切换到 AI tab
+    const SwitchToAiTabNotification().dispatch(context);
+
     // Pop current screen (if it was pushed on top of Home)
     final rootNavigator = Navigator.of(context, rootNavigator: true);
     if (rootNavigator.canPop()) {

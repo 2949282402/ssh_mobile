@@ -11,7 +11,6 @@ import '../services/app_settings.dart';
 import '../services/sftp_service.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
-import '../services/playbook_service.dart';
 import '../utils/responsive.dart';
 import '../widgets/connection_progress_dialog.dart';
 import '../widgets/overflow_scroll_text.dart';
@@ -58,7 +57,6 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _appDataBusy = false;
   bool _serverSelectionMode = false;
   final Set<String> _selectedServerIds = {};
-  PlaybookService? _playbookService;
 
   @override
   void initState() {
@@ -66,31 +64,16 @@ class _HomeScreenState extends State<HomeScreen> {
     _selectedIndex = widget.initialIndex.clamp(_firstPage, _lastPage);
     _settledIndex = _selectedIndex;
     _pageController = PageController(initialPage: _selectedIndex);
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _playbookService = context.read<PlaybookService>();
-      _playbookService?.addListener(_onPlaybookServiceChanged);
-    });
   }
 
   @override
   void dispose() {
-    _playbookService?.removeListener(_onPlaybookServiceChanged);
     _pageController.dispose();
     super.dispose();
   }
 
   void updateState(VoidCallback fn) {
     if (mounted) setState(fn);
-  }
-
-  void _onPlaybookServiceChanged() {
-    if (!mounted) return;
-    final prompt = _playbookService?.pendingDiagnosticPrompt;
-    if (prompt != null && prompt.isNotEmpty) {
-      _switchPage(_aiPage);
-    }
   }
 
   @override
@@ -100,25 +83,31 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     final strings = AppStrings(language);
     final desktop = isDesktopLayout(context);
-    final content = NotificationListener<ScrollNotification>(
+    final content = NotificationListener<SwitchToAiTabNotification>(
       onNotification: (notification) {
-        if (desktop || notification.metrics.axis != Axis.horizontal) {
-          return false;
-        }
-        return false;
+        _switchPage(_aiPage);
+        return true;
       },
-      child: PageView.builder(
-        controller: _pageController,
-        itemCount: _lastPage + 1,
-        physics: const NeverScrollableScrollPhysics(),
-        allowImplicitScrolling: false,
-        onPageChanged: (index) {
-          setState(() {
-            _selectedIndex = index;
-            _settledIndex = index;
-          });
+      child: NotificationListener<ScrollNotification>(
+        onNotification: (notification) {
+          if (desktop || notification.metrics.axis != Axis.horizontal) {
+            return false;
+          }
+          return false;
         },
-        itemBuilder: (context, index) => _buildPage(context, index, strings),
+        child: PageView.builder(
+          controller: _pageController,
+          itemCount: _lastPage + 1,
+          physics: const NeverScrollableScrollPhysics(),
+          allowImplicitScrolling: false,
+          onPageChanged: (index) {
+            setState(() {
+              _selectedIndex = index;
+              _settledIndex = index;
+            });
+          },
+          itemBuilder: (context, index) => _buildPage(context, index, strings),
+        ),
       ),
     );
 
@@ -581,4 +570,8 @@ class _ServerHeaderSnapshot {
 
   @override
   int get hashCode => Object.hash(activeCount, windowCount);
+}
+
+class SwitchToAiTabNotification extends Notification {
+  const SwitchToAiTabNotification();
 }
