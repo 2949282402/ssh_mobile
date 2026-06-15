@@ -41,6 +41,7 @@ abstract interface class MultiAgentCoordinatorAdapter {
     String? reviewerPrompt,
     String? summarizerPrompt,
     String? coordinatorPrompt,
+    bool planMode = false,
   });
 }
 
@@ -71,6 +72,7 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     String? reviewerPrompt,
     String? summarizerPrompt,
     String? coordinatorPrompt,
+    bool planMode = false,
   }) async {
     checkCancelled?.call();
     final decision = shouldCollaborate(
@@ -291,6 +293,24 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
             : '尝试了多智能体协作，但所有辅助智能体都失败了。仅使用主助手继续。',
         traceContent: _traceContent(outputs),
       );
+    }
+
+    if (planMode) {
+      final summarizerOut = successful.firstWhere(
+        (out) => out.role.name == 'summarizer',
+        orElse: () => successful.last,
+      );
+      final result = MultiAgentRunResult(
+        agentCount: roles.length,
+        memoryContent: secretPolicy.redactText(summarizerOut.content.trim()),
+        traceContent: _traceContent(outputs),
+      );
+      AppLogService.instance.info(
+        'LLM multi-agent plan mode collaboration completed',
+        details:
+            'roles=${roles.length} successful=${successful.length} memoryChars=${result.memoryContent.length}',
+      );
+      return result;
     }
 
     final header = language == AppLanguage.en

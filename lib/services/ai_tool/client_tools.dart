@@ -703,6 +703,7 @@ class ClientToolsProvider implements AiToolProvider {
     final name = service._arg(arguments, 'name');
     final command = service._optionalString(arguments, 'command') ?? '';
     final description = service._optionalString(arguments, 'description') ?? '';
+    final connectionId = service._optionalString(arguments, 'connectionId');
 
     final messages = [...currentChat.messages];
     if (messages.isEmpty) {
@@ -725,6 +726,7 @@ class ClientToolsProvider implements AiToolProvider {
       command: command,
       description: description,
       status: StepStatus.pending,
+      connectionId: connectionId,
     );
     steps.add(newStep);
 
@@ -1136,6 +1138,7 @@ class ClientToolsProvider implements AiToolProvider {
           'name': _string('The name/title of the planned step.'),
           'command': _string('The exact shell/remote command recommended for execution in this step.'),
           'description': _string('The purpose or explanation of what this step accomplishes.'),
+          'connectionId': _string('Optional. The unique connectionId of the server to execute this step on. Use list_servers to find available ids.'),
         },
         required: const ['name'],
         handler: (args) => _clientTaskCreate(service, args),

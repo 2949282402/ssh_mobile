@@ -850,6 +850,7 @@ class AiTodoStep {
   final String? stdout;
   final String? stderr;
   final int? exitCode;
+  final String? connectionId;
 
   const AiTodoStep({
     required this.id,
@@ -860,6 +861,7 @@ class AiTodoStep {
     this.stdout,
     this.stderr,
     this.exitCode,
+    this.connectionId,
   });
 
   AiTodoStep copyWith({
@@ -871,6 +873,7 @@ class AiTodoStep {
     String? stdout,
     String? stderr,
     int? exitCode,
+    String? connectionId,
   }) {
     return AiTodoStep(
       id: id ?? this.id,
@@ -881,6 +884,7 @@ class AiTodoStep {
       stdout: stdout ?? this.stdout,
       stderr: stderr ?? this.stderr,
       exitCode: exitCode ?? this.exitCode,
+      connectionId: connectionId ?? this.connectionId,
     );
   }
 
@@ -894,6 +898,7 @@ class AiTodoStep {
       if (stdout != null) 'stdout': stdout,
       if (stderr != null) 'stderr': stderr,
       if (exitCode != null) 'exitCode': exitCode,
+      if (connectionId != null) 'connectionId': connectionId,
     };
   }
 
@@ -910,6 +915,7 @@ class AiTodoStep {
       stdout: json['stdout'] as String?,
       stderr: json['stderr'] as String?,
       exitCode: json['exitCode'] as int?,
+      connectionId: json['connectionId'] as String?,
     );
   }
 }

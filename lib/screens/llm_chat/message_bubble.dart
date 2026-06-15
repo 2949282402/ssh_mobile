@@ -12,6 +12,7 @@ class _StreamingAssistantTarget {
 
 class _MessageBubble extends StatelessWidget {
   final String chatId;
+  final int index;
   final AiChatMessageRecord message;
   final ValueListenable<String>? streamingTextListenable;
   final ValueListenable<String>? streamingStatusListenable;
@@ -23,6 +24,7 @@ class _MessageBubble extends StatelessWidget {
 
   const _MessageBubble({
     required this.chatId,
+    required this.index,
     required this.message,
     this.streamingTextListenable,
     this.streamingStatusListenable,
@@ -35,6 +37,17 @@ class _MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final state = context.findAncestorStateOfType<_LlmChatScreenState>();
+    final activeChat = state?._activeChat;
+    final isLatestAssistant = activeChat != null &&
+        activeChat.messages.lastIndexWhere((m) => m.role == 'assistant') ==
+            index;
+
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
+    final strings = _AiStrings(language);
+
     final colorScheme = Theme.of(context).colorScheme;
     final isUser = message.role == 'user';
     final isError = message.role == 'error';
@@ -182,6 +195,26 @@ class _MessageBubble extends StatelessWidget {
                             chatId: chatId,
                             message: message,
                           ),
+                          if (message.todoSteps.every(
+                                  (s) => s.status == StepStatus.pending) &&
+                              isLatestAssistant) ...[
+                            const SizedBox(height: 8),
+                            _buildApproveButton(context),
+                            const SizedBox(height: 4),
+                            Center(
+                              child: Text(
+                                strings.language == AppLanguage.en
+                                    ? '💡 If you want to modify this plan, simply type your feedback to adjust it.'
+                                    : '💡 如果你想修改此计划，直接在下方输入框发送修改意见以进行调整。',
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontStyle: FontStyle.italic,
+                                  color: colorScheme.onSurfaceVariant
+                                      .withValues(alpha: 0.8),
+                                ),
+                              ),
+                            ),
+                          ],
                         ]
                       ],
                     ),
@@ -216,6 +249,39 @@ class _MessageBubble extends StatelessWidget {
             else
               const SizedBox(height: 6),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildApproveButton(BuildContext context) {
+    final isEn = context.read<AppSettings>().language == AppLanguage.en;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 4),
+      child: Center(
+        child: FilledButton.icon(
+          onPressed: () {
+            final state =
+                context.findAncestorStateOfType<_LlmChatScreenState>();
+            if (state == null) return;
+
+            final command = isEn
+                ? 'I approve the operations plan. Please execute all planned task steps sequentially. Run the command for each step, and call client_task_update with its taskId to update status (success/failed) and write the logs after execution. Report back once finished.'
+                : '我同意此操作计划。请按顺序依次执行计划中的所有任务步骤，运行对应的命令，并在每一步执行完毕后自动调用 client_task_update 工具更新该步状态（成功/失败）并存入 stdout/stderr 回显日志，全部完成后向我报告。';
+            state.sendDirectCommand(command);
+          },
+          icon: const Icon(Icons.verified_user_outlined, size: 16),
+          label: Text(
+            isEn ? 'Approve & Execute Plan' : '同意并执行计划',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+          ),
+          style: FilledButton.styleFrom(
+            backgroundColor: Colors.green,
+            foregroundColor: Colors.white,
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          ),
         ),
       ),
     );
@@ -807,49 +873,15 @@ class _ChatTodoPanel extends StatefulWidget {
 
 class _ChatTodoPanelState extends State<_ChatTodoPanel> {
   final Set<int> _expandedIndices = {};
-  bool _todoExecuting = false;
 
-  Future<void> _runSingleStep(BuildContext context, int index) async {
-    if (_todoExecuting) return;
-    final state = context.findAncestorStateOfType<_LlmChatScreenState>();
-    if (state == null) return;
-
-    setState(() => _todoExecuting = true);
+  String? _getServerDisplayName(BuildContext context, String? connectionId) {
+    if (connectionId == null || connectionId.trim().isEmpty) return null;
     try {
-      await state._runTodoStep(
-        chatId: widget.chatId,
-        message: widget.message,
-        stepIndex: index,
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _todoExecuting = false);
-      }
-    }
-  }
-
-  Future<void> _runAll(BuildContext context) async {
-    if (_todoExecuting) return;
-    final state = context.findAncestorStateOfType<_LlmChatScreenState>();
-    if (state == null) return;
-
-    setState(() => _todoExecuting = true);
-    try {
-      for (var i = 0; i < widget.message.todoSteps.length; i++) {
-        final step = widget.message.todoSteps[i];
-        if (step.status == StepStatus.pending ||
-            step.status == StepStatus.failed) {
-          await state._runTodoStep(
-            chatId: widget.chatId,
-            message: widget.message,
-            stepIndex: i,
-          );
-        }
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _todoExecuting = false);
-      }
+      final connections = context.read<StorageService>().connections;
+      final conn = connections.firstWhere((c) => c.id == connectionId);
+      return conn.name;
+    } catch (_) {
+      return 'Server';
     }
   }
 
@@ -857,9 +889,6 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final isEn = context.read<AppSettings>().language == AppLanguage.en;
-
-    final hasActiveExecution = widget.message.todoSteps
-        .any((s) => s.status == StepStatus.running);
 
     return Container(
       decoration: BoxDecoration(
@@ -889,23 +918,6 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                   ),
                 ),
               ),
-              if (widget.message.todoSteps.any((s) =>
-                  s.status == StepStatus.pending ||
-                  s.status == StepStatus.failed))
-                TextButton.icon(
-                  onPressed: (hasActiveExecution || _todoExecuting)
-                      ? null
-                      : () => _runAll(context),
-                  icon: const Icon(Icons.play_circle_outline, size: 16),
-                  label: Text(
-                    isEn ? 'Run All' : '一键运行',
-                    style: const TextStyle(fontSize: 11),
-                  ),
-                  style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                  ),
-                ),
             ],
           ),
           const Divider(height: 12),
@@ -985,8 +997,38 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                     ],
                   ),
                 ),
-                const SizedBox(width: 8),
-                _buildActionWidget(context, index, step, colorScheme, isEn),
+                if (step.connectionId != null &&
+                    _getServerDisplayName(context, step.connectionId) !=
+                        null) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(left: 6),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 5, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: colorScheme.surfaceContainerHighest
+                            .withValues(alpha: 0.6),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.dns_outlined,
+                              size: 10, color: colorScheme.onSurfaceVariant),
+                          const SizedBox(width: 2),
+                          Text(
+                            _getServerDisplayName(context, step.connectionId)!,
+                            style: TextStyle(
+                              fontSize: 9.5,
+                              color: colorScheme.onSurfaceVariant,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -1060,50 +1102,5 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
       case StepStatus.skipped:
         return Icon(Icons.next_plan_outlined, size: 16, color: colorScheme.onSurfaceVariant);
     }
-  }
-
-  Widget _buildActionWidget(
-    BuildContext context,
-    int index,
-    AiTodoStep step,
-    ColorScheme colorScheme,
-    bool isEn,
-  ) {
-    if (step.status == StepStatus.running) {
-      return const SizedBox.shrink();
-    }
-    if (step.status == StepStatus.success) {
-      return Icon(
-        Icons.verified_outlined,
-        size: 16,
-        color: colorScheme.primary.withValues(alpha: 0.6),
-      );
-    }
-
-    final isFailed = step.status == StepStatus.failed;
-    return SizedBox(
-      height: 24,
-      child: TextButton(
-        style: TextButton.styleFrom(
-          visualDensity: VisualDensity.compact,
-          padding: const EdgeInsets.symmetric(horizontal: 6),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-          backgroundColor: isFailed
-              ? colorScheme.errorContainer.withValues(alpha: 0.4)
-              : colorScheme.primaryContainer.withValues(alpha: 0.4),
-        ),
-        onPressed: _todoExecuting ? null : () => _runSingleStep(context, index),
-        child: Text(
-          isFailed
-              ? (isEn ? 'Retry' : '重试')
-              : (isEn ? 'Run' : '运行'),
-          style: TextStyle(
-            fontSize: 10.5,
-            fontWeight: FontWeight.bold,
-            color: isFailed ? colorScheme.error : colorScheme.primary,
-          ),
-        ),
-      ),
-    );
   }
 }

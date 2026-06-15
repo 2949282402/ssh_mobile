@@ -159,6 +159,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
       reviewerPrompt: reviewerPrompt,
       summarizerPrompt: summarizerPrompt,
       coordinatorPrompt: coordinatorPrompt,
+      planMode: planMode,
       classify: (classificationMessages) async {
         final response = await _chatCompletion(
           baseUrl: settings.baseUrl,

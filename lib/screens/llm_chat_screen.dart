@@ -343,6 +343,12 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     super.dispose();
   }
 
+  void sendDirectCommand(String text) {
+    if (_sending) return;
+    final strings = _AiStrings(context.read<AppSettings>().language);
+    _sendText(context, strings, text: text, clearInput: true);
+  }
+
   Future<void> _loadInitialDraft() async {
     if (_settingsLoadStarted) return;
     _settingsLoadStarted = true;
@@ -534,6 +540,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                           ),
                           child: _MessageBubble(
                             chatId: activeChat.id,
+                            index: index,
                             message: message,
                             streamingTextListenable: streamingTextListenable,
                             streamingStatusListenable:
@@ -592,8 +599,11 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        if (activeChat.planMode)
-                          Container(
+                        (() {
+                          final isPlanInput = _inputController.text.trim().startsWith('/plan');
+                          final showPlanMode = activeChat.planMode || isPlanInput;
+                          if (!showPlanMode) return const SizedBox.shrink();
+                          return Container(
                             margin: const EdgeInsets.only(bottom: 8),
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 10, vertical: 6),
@@ -627,12 +637,19 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                                 ),
                                 InkWell(
                                   onTap: () {
-                                    final updatedChat =
-                                        activeChat.copyWith(planMode: false);
-                                    setState(() => _replaceChat(updatedChat));
-                                    context
-                                        .read<StorageService>()
-                                        .saveAiChat(updatedChat);
+                                    if (isPlanInput) {
+                                      setState(() {
+                                        _inputController.clear();
+                                      });
+                                    }
+                                    if (activeChat.planMode) {
+                                      final updatedChat =
+                                          activeChat.copyWith(planMode: false);
+                                      setState(() => _replaceChat(updatedChat));
+                                      context
+                                          .read<StorageService>()
+                                          .saveAiChat(updatedChat);
+                                    }
                                   },
                                   child: Icon(
                                     Icons.close_rounded,
@@ -642,7 +659,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                                 ),
                               ],
                             ),
-                          ),
+                          );
+                        })(),
                         if (_shouldShowSlashCommandPanel)
                           _buildSlashCommandPanel(context, strings),
                         if (_pendingAttachments.isNotEmpty)

@@ -840,121 +840,18 @@ extension _ChatGeneration on _LlmChatScreenState {
         final stepName = item['name']?.toString() ?? 'Step ${idx + 1}';
         final command = item['command']?.toString() ?? '';
         final desc = item['description']?.toString() ?? '';
+        final connId = item['connectionId']?.toString();
         return AiTodoStep(
           id: 'todo-${now.millisecondsSinceEpoch}-$idx',
           name: stepName,
           command: command,
           description: desc,
           status: StepStatus.pending,
+          connectionId: connId,
         );
       }).toList();
     } catch (_) {
       return const [];
     }
-  }
-
-  Future<void> _runTodoStep({
-    required String chatId,
-    required AiChatMessageRecord message,
-    required int stepIndex,
-  }) async {
-    final activeChat = _chatById(chatId);
-    if (activeChat == null) return;
-
-    final msgIndex =
-        activeChat.messages.indexWhere((m) => m.createdAt == message.createdAt);
-    if (msgIndex < 0) return;
-    final latestMsg = activeChat.messages[msgIndex];
-
-    final steps = [...latestMsg.todoSteps];
-    if (stepIndex < 0 || stepIndex >= steps.length) return;
-
-    final targetStep = steps[stepIndex];
-    if (targetStep.status == StepStatus.running ||
-        targetStep.status == StepStatus.success) {
-      return;
-    }
-
-    if (_selectedConnectionIds.isEmpty) {
-      final isEn = context.read<AppSettings>().language == AppLanguage.en;
-      _showCommandFeedback(
-        isEn
-            ? 'Please select a target server in the tools bar first.'
-            : '请先在工具条中选择要执行的目标服务器。',
-        context,
-      );
-      return;
-    }
-    final connectionId = _selectedConnectionIds.first;
-
-    steps[stepIndex] = targetStep.copyWith(status: StepStatus.running);
-    final nextMsg = latestMsg.copyWith(todoSteps: steps);
-
-    final updatedMessages = [...activeChat.messages];
-    updatedMessages[msgIndex] = nextMsg;
-    final updatedChat = activeChat.copyWith(
-      messages: updatedMessages,
-      updatedAt: DateTime.now(),
-    );
-
-    setState(() {
-      _replaceChat(updatedChat);
-    });
-    final storage = context.read<StorageService>();
-    final ssh = context.read<SshService>();
-    unawaited(storage.saveAiChat(updatedChat));
-
-    final timeoutSeconds = await storage.getAiRequestTimeoutSeconds();
-
-    StepStatus finalStatus = StepStatus.success;
-    String? stdout;
-    String? stderr;
-    int? exitCode;
-
-    try {
-      final res = await ssh.runOneShotCommand(
-        connectionId: connectionId,
-        command: targetStep.command,
-        timeout: Duration(seconds: timeoutSeconds),
-      );
-      stdout = res.stdout;
-      stderr = res.stderr;
-      exitCode = res.exitCode;
-      if (exitCode != 0) {
-        finalStatus = StepStatus.failed;
-      }
-    } catch (e) {
-      finalStatus = StepStatus.failed;
-      stderr = e.toString();
-    }
-
-    final currentChat = _chatById(chatId) ?? updatedChat;
-    final finalMessages = [...currentChat.messages];
-    final targetIndex =
-        finalMessages.indexWhere((m) => m.createdAt == message.createdAt);
-    if (targetIndex >= 0) {
-      final currentMsg = finalMessages[targetIndex];
-      final nextSteps = [...currentMsg.todoSteps];
-      if (stepIndex >= 0 && stepIndex < nextSteps.length) {
-        nextSteps[stepIndex] = targetStep.copyWith(
-          status: finalStatus,
-          stdout: stdout,
-          stderr: stderr,
-          exitCode: exitCode,
-        );
-        final finalMsg = currentMsg.copyWith(todoSteps: nextSteps);
-        finalMessages[targetIndex] = finalMsg;
-      }
-    }
-
-    final finalChat = currentChat.copyWith(
-      messages: finalMessages,
-      updatedAt: DateTime.now(),
-    );
-
-    setState(() {
-      _replaceChat(finalChat);
-    });
-    unawaited(storage.saveAiChat(finalChat));
   }
 }
