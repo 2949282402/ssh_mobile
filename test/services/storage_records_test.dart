@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ssh_mobile/models/playbook.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 
 void main() {
@@ -186,6 +187,55 @@ void main() {
       final decoded = AiChatRecord.fromJson(legacyJson);
       expect(decoded.planMode, isFalse);
       expect(decoded.title, 'Legacy Chat');
+    });
+  });
+
+  group('AiTodoStep and todoSteps serialization', () {
+    test('round-trips AiTodoStep and todoSteps correctly', () {
+      final time = DateTime.utc(2026, 1, 1, 12, 0);
+      final step = AiTodoStep(
+        id: 'todo-1',
+        name: 'Check Server Status',
+        command: 'systemctl status nginx',
+        description: 'Verify service is active',
+        status: StepStatus.success,
+        stdout: 'Active: active (running)',
+        stderr: '',
+        exitCode: 0,
+      );
+
+      final message = AiChatMessageRecord(
+        role: 'assistant',
+        text: 'This is a plan',
+        createdAt: time,
+        todoSteps: [step],
+      );
+
+      final json = message.toJson();
+      expect(json['todoSteps'], isNotNull);
+      final stepsJson = json['todoSteps'] as List;
+      expect(stepsJson.length, 1);
+      expect(stepsJson[0]['status'], 'success');
+
+      final decoded = AiChatMessageRecord.fromJson(json);
+      expect(decoded.todoSteps.length, 1);
+      final decodedStep = decoded.todoSteps[0];
+      expect(decodedStep.id, 'todo-1');
+      expect(decodedStep.status, StepStatus.success);
+      expect(decodedStep.stdout, 'Active: active (running)');
+      expect(decodedStep.exitCode, 0);
+    });
+
+    test('backward compatibility: defaults todoSteps to empty list when absent', () {
+      final time = DateTime.utc(2026, 1, 1, 12, 0);
+      final oldJson = {
+        'role': 'assistant',
+        'text': 'Hello world',
+        'createdAt': time.toIso8601String(),
+      };
+
+      final decoded = AiChatMessageRecord.fromJson(oldJson);
+      expect(decoded.todoSteps, isEmpty);
     });
   });
 }

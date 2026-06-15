@@ -11,6 +11,7 @@ class _StreamingAssistantTarget {
 }
 
 class _MessageBubble extends StatelessWidget {
+  final String chatId;
   final AiChatMessageRecord message;
   final ValueListenable<String>? streamingTextListenable;
   final ValueListenable<String>? streamingStatusListenable;
@@ -21,6 +22,7 @@ class _MessageBubble extends StatelessWidget {
   final VoidCallback? onContinueTimeout;
 
   const _MessageBubble({
+    required this.chatId,
     required this.message,
     this.streamingTextListenable,
     this.streamingStatusListenable,
@@ -166,10 +168,22 @@ class _MessageBubble extends StatelessWidget {
                         ),
                       ],
                     )
-                  : _AssistantMarkdownBody(
-                      text: message.text,
-                      streamingTextListenable: streamingTextListenable,
-                      streamingStatusListenable: streamingStatusListenable,
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _AssistantMarkdownBody(
+                          text: message.text,
+                          streamingTextListenable: streamingTextListenable,
+                          streamingStatusListenable: streamingStatusListenable,
+                        ),
+                        if (message.todoSteps.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          _ChatTodoPanel(
+                            chatId: chatId,
+                            message: message,
+                          ),
+                        ]
+                      ],
                     ),
             ),
             if (canAct &&
@@ -307,11 +321,21 @@ class _AssistantMarkdownBody extends StatelessWidget {
     this.streamingStatusListenable,
   });
 
+  String _cleanTextForMarkdown(String text, BuildContext context) {
+    final isEn = context.read<AppSettings>().language == AppLanguage.en;
+    return text.replaceAll(
+      RegExp(r'```playbook\s*\{[\s\S]*?\}\s*```'),
+      isEn
+          ? '\n\n*📋 Operational plan steps generated below. Please select a target server first, then execute step-by-step:*'
+          : '\n\n*📋 规划的运维步骤已在下方可视化生成，请先选择目标服务器后点击运行：*',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final listenable = streamingTextListenable;
     if (listenable == null) {
-      return _buildMarkdown(context, text);
+      return _buildMarkdown(context, _cleanTextForMarkdown(text, context));
     }
     return ValueListenableBuilder<String>(
       valueListenable: listenable,
@@ -334,7 +358,8 @@ class _AssistantMarkdownBody extends StatelessWidget {
                   padding: EdgeInsets.only(
                     top: label.isNotEmpty ? 8 : 0,
                   ),
-                  child: _buildMarkdown(context, displayText),
+                  child: _buildMarkdown(
+                      context, _cleanTextForMarkdown(displayText, context)),
                 ),
             ],
           );
@@ -764,5 +789,294 @@ class _TraceEntry extends StatelessWidget {
       default:
         return colorScheme.onSurfaceVariant;
     }
+  }
+}
+
+class _ChatTodoPanel extends StatefulWidget {
+  final String chatId;
+  final AiChatMessageRecord message;
+
+  const _ChatTodoPanel({
+    required this.chatId,
+    required this.message,
+  });
+
+  @override
+  State<_ChatTodoPanel> createState() => _ChatTodoPanelState();
+}
+
+class _ChatTodoPanelState extends State<_ChatTodoPanel> {
+  final Set<int> _expandedIndices = {};
+
+  Future<void> _runSingleStep(BuildContext context, int index) async {
+    final state = context.findAncestorStateOfType<_LlmChatScreenState>();
+    if (state == null) return;
+    await state._runTodoStep(
+      chatId: widget.chatId,
+      message: widget.message,
+      stepIndex: index,
+    );
+  }
+
+  Future<void> _runAll(BuildContext context) async {
+    for (var i = 0; i < widget.message.todoSteps.length; i++) {
+      final step = widget.message.todoSteps[i];
+      if (step.status == StepStatus.pending ||
+          step.status == StepStatus.failed) {
+        await _runSingleStep(context, i);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isEn = context.read<AppSettings>().language == AppLanguage.en;
+
+    final hasActiveExecution = widget.message.todoSteps
+        .any((s) => s.status == StepStatus.running);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.24),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: colorScheme.outlineVariant),
+      ),
+      padding: const EdgeInsets.all(10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.rule_folder_outlined,
+                size: 18,
+                color: colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  isEn ? 'Operation Tasks (TODO)' : '规划的运维任务清单 (TODO)',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: colorScheme.onSurface,
+                  ),
+                ),
+              ),
+              if (widget.message.todoSteps.any((s) =>
+                  s.status == StepStatus.pending ||
+                  s.status == StepStatus.failed))
+                TextButton.icon(
+                  onPressed: hasActiveExecution ? null : () => _runAll(context),
+                  icon: const Icon(Icons.play_circle_outline, size: 16),
+                  label: Text(
+                    isEn ? 'Run All' : '一键运行',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                ),
+            ],
+          ),
+          const Divider(height: 12),
+          for (var i = 0; i < widget.message.todoSteps.length; i++) ...[
+            _buildStepRow(context, i, widget.message.todoSteps[i], colorScheme, isEn),
+            if (i < widget.message.todoSteps.length - 1)
+              const SizedBox(height: 8),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStepRow(
+    BuildContext context,
+    int index,
+    AiTodoStep step,
+    ColorScheme colorScheme,
+    bool isEn,
+  ) {
+    final isExpanded = _expandedIndices.contains(index);
+    final hasLogs =
+        (step.stdout?.isNotEmpty == true || step.stderr?.isNotEmpty == true);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: () {
+            setState(() {
+              if (isExpanded) {
+                _expandedIndices.remove(index);
+              } else {
+                _expandedIndices.add(index);
+              }
+            });
+          },
+          borderRadius: BorderRadius.circular(6),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: _buildStatusIcon(step.status, colorScheme),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        step.name,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: step.status == StepStatus.success
+                              ? colorScheme.onSurface.withValues(alpha: 0.6)
+                              : colorScheme.onSurface,
+                          decoration: step.status == StepStatus.success
+                              ? TextDecoration.lineThrough
+                              : null,
+                        ),
+                      ),
+                      if (step.description.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            step.description,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _buildActionWidget(context, index, step, colorScheme, isEn),
+              ],
+            ),
+          ),
+        ),
+        if (isExpanded)
+          Padding(
+            padding: const EdgeInsets.only(left: 30, top: 4, right: 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.48),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: colorScheme.outlineVariant),
+                  ),
+                  child: Text(
+                    step.command,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 10.5,
+                      color: colorScheme.primary,
+                    ),
+                  ),
+                ),
+                if (hasLogs) ...[
+                  const SizedBox(height: 4),
+                  Container(
+                    width: double.infinity,
+                    constraints: const BoxConstraints(maxHeight: 180),
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.84),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: SingleChildScrollView(
+                      child: SelectableText(
+                        '${step.stdout ?? ''}\n${step.stderr ?? ''}'.trim(),
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 10,
+                          color: Colors.greenAccent,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildStatusIcon(StepStatus status, ColorScheme colorScheme) {
+    switch (status) {
+      case StepStatus.pending:
+        return Icon(Icons.circle_outlined, size: 16, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6));
+      case StepStatus.running:
+        return const SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        );
+      case StepStatus.success:
+        return const Icon(Icons.check_circle_rounded, size: 16, color: Colors.green);
+      case StepStatus.failed:
+        return const Icon(Icons.cancel_rounded, size: 16, color: Colors.red);
+      case StepStatus.skipped:
+        return Icon(Icons.next_plan_outlined, size: 16, color: colorScheme.onSurfaceVariant);
+    }
+  }
+
+  Widget _buildActionWidget(
+    BuildContext context,
+    int index,
+    AiTodoStep step,
+    ColorScheme colorScheme,
+    bool isEn,
+  ) {
+    if (step.status == StepStatus.running) {
+      return const SizedBox.shrink();
+    }
+    if (step.status == StepStatus.success) {
+      return Icon(
+        Icons.verified_outlined,
+        size: 16,
+        color: colorScheme.primary.withValues(alpha: 0.6),
+      );
+    }
+
+    final isFailed = step.status == StepStatus.failed;
+    return SizedBox(
+      height: 24,
+      child: TextButton(
+        style: TextButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+          backgroundColor: isFailed
+              ? colorScheme.errorContainer.withValues(alpha: 0.4)
+              : colorScheme.primaryContainer.withValues(alpha: 0.4),
+        ),
+        onPressed: () => _runSingleStep(context, index),
+        child: Text(
+          isFailed
+              ? (isEn ? 'Retry' : '重试')
+              : (isEn ? 'Run' : '运行'),
+          style: TextStyle(
+            fontSize: 10.5,
+            fontWeight: FontWeight.bold,
+            color: isFailed ? colorScheme.error : colorScheme.primary,
+          ),
+        ),
+      ),
+    );
   }
 }

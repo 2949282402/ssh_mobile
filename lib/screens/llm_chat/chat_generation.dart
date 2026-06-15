@@ -260,6 +260,12 @@ extension _ChatGeneration on _LlmChatScreenState {
             message.createdAt == assistantMessage.createdAt,
       );
       if (assistantIndex >= 0) {
+        final existingSteps = completedMessages[assistantIndex].todoSteps;
+        final todoSteps = existingSteps.isNotEmpty
+            ? existingSteps
+            : (initialChat.planMode
+                ? _parseTodoStepsFromText(answer.toString())
+                : const <AiTodoStep>[]);
         completedMessages[assistantIndex] =
             completedMessages[assistantIndex].copyWith(
           text: answer.toString(),
@@ -276,6 +282,7 @@ extension _ChatGeneration on _LlmChatScreenState {
           promptCacheHitTokens: runStats?.promptCacheHitTokens,
           promptCacheMissTokens: runStats?.promptCacheMissTokens,
           reasoningTokens: runStats?.reasoningTokens,
+          todoSteps: todoSteps,
         );
       }
       final answeredChat = currentChat.copyWith(
@@ -814,5 +821,132 @@ extension _ChatGeneration on _LlmChatScreenState {
         curve: Curves.easeOutCubic,
       );
     });
+  }
+
+  List<AiTodoStep> _parseTodoStepsFromText(String text) {
+    try {
+      final reg = RegExp(r'```playbook\s*(\{[\s\S]*?\})\s*```');
+      final match = reg.firstMatch(text);
+      if (match == null) return const [];
+      final rawJson = match.group(1);
+      if (rawJson == null) return const [];
+      final decoded = jsonDecode(rawJson) as Map<String, dynamic>;
+      final stepsList = decoded['steps'] as List? ?? [];
+      final now = DateTime.now();
+      return stepsList.asMap().entries.map((entry) {
+        final idx = entry.key;
+        final item = entry.value;
+        final stepName = item['name']?.toString() ?? 'Step ${idx + 1}';
+        final command = item['command']?.toString() ?? '';
+        final desc = item['description']?.toString() ?? '';
+        return AiTodoStep(
+          id: 'todo-${now.millisecondsSinceEpoch}-$idx',
+          name: stepName,
+          command: command,
+          description: desc,
+          status: StepStatus.pending,
+        );
+      }).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> _runTodoStep({
+    required String chatId,
+    required AiChatMessageRecord message,
+    required int stepIndex,
+  }) async {
+    final activeChat = _chatById(chatId);
+    if (activeChat == null) return;
+
+    final steps = [...message.todoSteps];
+    if (stepIndex < 0 || stepIndex >= steps.length) return;
+
+    final targetStep = steps[stepIndex];
+    if (targetStep.status == StepStatus.running) return;
+
+    if (_selectedConnectionIds.isEmpty) {
+      final isEn = context.read<AppSettings>().language == AppLanguage.en;
+      _showCommandFeedback(
+        isEn
+            ? 'Please select a target server in the tools bar first.'
+            : '请先在工具条中选择要执行的目标服务器。',
+        context,
+      );
+      return;
+    }
+    final connectionId = _selectedConnectionIds.first;
+
+    steps[stepIndex] = targetStep.copyWith(status: StepStatus.running);
+    final nextMsg = message.copyWith(todoSteps: steps);
+    final msgIndex =
+        activeChat.messages.indexWhere((m) => m.createdAt == message.createdAt);
+    if (msgIndex < 0) return;
+
+    final updatedMessages = [...activeChat.messages];
+    updatedMessages[msgIndex] = nextMsg;
+    final updatedChat = activeChat.copyWith(
+      messages: updatedMessages,
+      updatedAt: DateTime.now(),
+    );
+
+    setState(() {
+      _replaceChat(updatedChat);
+    });
+    final storage = context.read<StorageService>();
+    final ssh = context.read<SshService>();
+    await storage.saveAiChat(updatedChat);
+
+    final timeoutSeconds = await storage.getAiRequestTimeoutSeconds();
+
+    StepStatus finalStatus = StepStatus.success;
+    String? stdout;
+    String? stderr;
+    int? exitCode;
+
+    try {
+      final res = await ssh.runOneShotCommand(
+        connectionId: connectionId,
+        command: targetStep.command,
+        timeout: Duration(seconds: timeoutSeconds),
+      );
+      stdout = res.stdout;
+      stderr = res.stderr;
+      exitCode = res.exitCode;
+      if (exitCode != 0) {
+        finalStatus = StepStatus.failed;
+      }
+    } catch (e) {
+      finalStatus = StepStatus.failed;
+      stderr = e.toString();
+    }
+
+    final nextSteps = [...nextMsg.todoSteps];
+    nextSteps[stepIndex] = targetStep.copyWith(
+      status: finalStatus,
+      stdout: stdout,
+      stderr: stderr,
+      exitCode: exitCode,
+    );
+
+    final finalMsg = nextMsg.copyWith(todoSteps: nextSteps);
+    final currentChat = _chatById(chatId) ?? updatedChat;
+    final finalMessages = [...currentChat.messages];
+    final targetIndex =
+        finalMessages.indexWhere((m) => m.createdAt == message.createdAt);
+    if (targetIndex >= 0) {
+      finalMessages[targetIndex] = finalMsg;
+    }
+
+    final finalChat = currentChat.copyWith(
+      messages: finalMessages,
+      updatedAt: DateTime.now(),
+    );
+
+    setState(() {
+      _replaceChat(finalChat);
+    });
+    await storage.saveAiChat(finalChat);
   }
 }

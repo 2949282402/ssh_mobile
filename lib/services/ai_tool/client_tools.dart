@@ -79,6 +79,12 @@ class ClientToolsProvider implements AiToolProvider {
             approvedWrite: approvedWrite);
       case 'app_clear_secret_cache':
         return _appClearSecretCache(service, arguments);
+      case 'client_set_plan_mode':
+        return _clientSetPlanMode(service, arguments);
+      case 'client_task_create':
+        return _clientTaskCreate(service, arguments);
+      case 'client_task_update':
+        return _clientTaskUpdate(service, arguments);
       default:
         return null;
     }
@@ -616,6 +622,208 @@ class ClientToolsProvider implements AiToolProvider {
     });
   }
 
+  Future<String> _clientSetPlanMode(
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
+    final chatId = clientWebViewSessionId;
+    if (chatId == null || chatId.trim().isEmpty) {
+      return jsonEncode({
+        'error': 'No active chat session found for this client tool call.',
+      });
+    }
+
+    final enabled = service._optionalBool(arguments, 'enabled') ?? true;
+    final chats = await storageService.loadAiChats();
+    final chatIndex = chats.indexWhere((c) => c.id == chatId);
+    if (chatIndex == -1) {
+      return jsonEncode({
+        'error': 'Active chat record not found for id: $chatId',
+      });
+    }
+    final currentChat = chats[chatIndex];
+
+    if (!enabled) {
+      bool hasPlaybook = false;
+      for (final msg in currentChat.messages) {
+        if (msg.todoSteps.isNotEmpty) {
+          hasPlaybook = true;
+          break;
+        }
+        if (msg.text.contains('```playbook')) {
+          hasPlaybook = true;
+          break;
+        }
+      }
+
+      if (!hasPlaybook) {
+        return jsonEncode({
+          'error': 'Cannot exit Plan Mode. You must outline a detailed step-by-step playbook plan in a markdown ```playbook ... ``` JSON block before switching to execution mode.',
+        });
+      }
+    }
+
+    final updatedChat = currentChat.copyWith(
+      planMode: enabled,
+      updatedAt: DateTime.now(),
+    );
+    await storageService.saveAiChat(updatedChat);
+
+    return jsonEncode({
+      'status': 'success',
+      'planMode': enabled,
+      'message': enabled
+          ? 'Successfully entered Plan Mode. State-mutating tools are restricted. Please diagnose and replan.'
+          : 'Successfully exited Plan Mode. Now in execution mode. You can instruct the user to execute the TODO steps.',
+    });
+  }
+
+  Future<String> _clientTaskCreate(
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
+    final chatId = clientWebViewSessionId;
+    if (chatId == null || chatId.trim().isEmpty) {
+      return jsonEncode({'error': 'No active chat session found.'});
+    }
+
+    final chats = await storageService.loadAiChats();
+    final chatIndex = chats.indexWhere((c) => c.id == chatId);
+    if (chatIndex == -1) {
+      return jsonEncode({'error': 'Active chat record not found.'});
+    }
+    final currentChat = chats[chatIndex];
+
+    if (!currentChat.planMode) {
+      return jsonEncode({
+        'error': 'Task creation is blocked. client_task_create can ONLY be called during Plan Mode.',
+      });
+    }
+
+    final name = service._arg(arguments, 'name');
+    final command = service._optionalString(arguments, 'command') ?? '';
+    final description = service._optionalString(arguments, 'description') ?? '';
+
+    final messages = [...currentChat.messages];
+    if (messages.isEmpty) {
+      return jsonEncode({'error': 'No messages to bind the task to.'});
+    }
+
+    final assistantIndex = messages.lastIndexWhere((m) => m.role == 'assistant');
+    if (assistantIndex == -1) {
+      return jsonEncode({'error': 'No assistant message found to bind the task.'});
+    }
+
+    final targetMsg = messages[assistantIndex];
+    final steps = [...targetMsg.todoSteps];
+
+    final now = DateTime.now();
+    final taskId = 'task-${now.microsecondsSinceEpoch}-${steps.length}';
+    final newStep = AiTodoStep(
+      id: taskId,
+      name: name,
+      command: command,
+      description: description,
+      status: StepStatus.pending,
+    );
+    steps.add(newStep);
+
+    messages[assistantIndex] = targetMsg.copyWith(todoSteps: steps);
+    final updatedChat = currentChat.copyWith(
+      messages: messages,
+      updatedAt: DateTime.now(),
+    );
+    await storageService.saveAiChat(updatedChat);
+
+    return jsonEncode({
+      'status': 'success',
+      'taskId': taskId,
+      'name': name,
+      'command': command,
+      'description': description,
+      'message': 'Task step successfully created and appended to the plan list.',
+    });
+  }
+
+  Future<String> _clientTaskUpdate(
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
+    final chatId = clientWebViewSessionId;
+    if (chatId == null || chatId.trim().isEmpty) {
+      return jsonEncode({'error': 'No active chat session found.'});
+    }
+
+    final chats = await storageService.loadAiChats();
+    final chatIndex = chats.indexWhere((c) => c.id == chatId);
+    if (chatIndex == -1) {
+      return jsonEncode({'error': 'Active chat record not found.'});
+    }
+    final currentChat = chats[chatIndex];
+
+    if (currentChat.planMode) {
+      return jsonEncode({
+        'error': 'Task status update is blocked. client_task_update can ONLY be called during Execution Mode.',
+      });
+    }
+
+    final taskId = service._arg(arguments, 'taskId');
+    final rawStatus = service._arg(arguments, 'status');
+    final stdout = service._optionalString(arguments, 'stdout');
+    final stderr = service._optionalString(arguments, 'stderr');
+
+    final nextStatus = StepStatus.values.firstWhere(
+      (e) => e.name == rawStatus,
+      orElse: () => StepStatus.pending,
+    );
+
+    bool foundAndUpdated = false;
+    final messages = [...currentChat.messages];
+
+    for (var mIdx = 0; mIdx < messages.length; mIdx++) {
+      final msg = messages[mIdx];
+      if (msg.todoSteps.isEmpty) continue;
+
+      final sIdx = msg.todoSteps.indexWhere((s) => s.id == taskId);
+      if (sIdx != -1) {
+        final steps = [...msg.todoSteps];
+        final currentStep = steps[sIdx];
+
+        steps[sIdx] = currentStep.copyWith(
+          status: nextStatus,
+          stdout: stdout ?? currentStep.stdout,
+          stderr: stderr ?? currentStep.stderr,
+          exitCode: nextStatus == StepStatus.success
+              ? 0
+              : (nextStatus == StepStatus.failed ? 1 : currentStep.exitCode),
+        );
+
+        messages[mIdx] = msg.copyWith(todoSteps: steps);
+        foundAndUpdated = true;
+        break;
+      }
+    }
+
+    if (!foundAndUpdated) {
+      return jsonEncode({
+        'error': 'Task step not found. No task with id: $taskId exists in this chat session.',
+      });
+    }
+
+    final updatedChat = currentChat.copyWith(
+      messages: messages,
+      updatedAt: DateTime.now(),
+    );
+    await storageService.saveAiChat(updatedChat);
+
+    return jsonEncode({
+      'status': 'success',
+      'taskId': taskId,
+      'newStatus': nextStatus.name,
+      'message': 'Task step successfully updated in the execution logs.',
+    });
+  }
+
   List<AiTool> _getClientTools(
     AiToolService service,
     AiConnectionSettings searchSettings,
@@ -909,6 +1117,45 @@ class ClientToolsProvider implements AiToolProvider {
             'Clear the in-memory secret cache for saved SSH credentials and the active LLM API key without revealing any secret values.',
         properties: const {},
         handler: (args) => _appClearSecretCache(service, args),
+      ),
+      AiTool(
+        name: 'client_set_plan_mode',
+        description:
+            'CLIENT tool. Toggle Plan Mode for the active chat thread. Set enabled=true to enter read-only planning when you need to replan. Set enabled=false to exit to execution mode ONLY after you have outlined a structured step-by-step playbook plan beforehand.',
+        properties: {
+          'enabled': _bool('true to enter plan mode, false to exit to execution mode.'),
+        },
+        required: const ['enabled'],
+        handler: (args) => _clientSetPlanMode(service, args),
+      ),
+      AiTool(
+        name: 'client_task_create',
+        description:
+            'CLIENT tool. Create a new step in the TODO task plan. This tool is ONLY allowed during Plan Mode (read-only stage). Returns a generated unique taskId.',
+        properties: {
+          'name': _string('The name/title of the planned step.'),
+          'command': _string('The exact shell/remote command recommended for execution in this step.'),
+          'description': _string('The purpose or explanation of what this step accomplishes.'),
+        },
+        required: const ['name'],
+        handler: (args) => _clientTaskCreate(service, args),
+      ),
+      AiTool(
+        name: 'client_task_update',
+        description:
+            'CLIENT tool. Update the execution status and output logs of a planned TODO task. This tool is ONLY allowed during Execution Mode, and only for pre-existing taskIds.',
+        properties: {
+          'taskId': _string('The unique taskId of the step to update.'),
+          'status': {
+            'type': 'string',
+            'enum': const ['pending', 'in_progress', 'success', 'failed', 'skipped'],
+            'description': 'The new execution status of the step.',
+          },
+          'stdout': _string('Optional stdout log response from executing the command.'),
+          'stderr': _string('Optional stderr log response if execution failed.'),
+        },
+        required: const ['taskId', 'status'],
+        handler: (args) => _clientTaskUpdate(service, args),
       ),
     ];
   }

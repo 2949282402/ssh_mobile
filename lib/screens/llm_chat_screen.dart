@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'client_webview_screen.dart';
+import '../models/playbook.dart';
 import '../services/ai_tool_service.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
@@ -532,6 +533,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                             '${message.role}-${message.createdAt.microsecondsSinceEpoch}',
                           ),
                           child: _MessageBubble(
+                            chatId: activeChat.id,
                             message: message,
                             streamingTextListenable: streamingTextListenable,
                             streamingStatusListenable:

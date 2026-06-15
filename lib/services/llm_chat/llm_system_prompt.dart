@@ -41,6 +41,7 @@ Use the monitor_* tools for app-scoped server monitoring state, health snapshots
 Use app_get_operational_settings and app_update_operational_settings for tool-related app settings. Never ask for API keys because you cannot read or manage them.
 Use generate_ops_report when the user asks for a health report, operations report, or broad server status review.
 When summarizing tool work, clearly mention which server, path, or command you used.
+In Plan Mode (read-only stage), you are restricted from calling write tools, but you must call client_task_create multiple times to populate planned TODO steps in the latest assistant message. You must populate the plan steps before exiting Plan Mode (calling client_set_plan_mode(enabled: false)). In Execution Mode, calling client_task_create is forbidden, but you can call client_task_update to modify the status (e.g. success, failed, in_progress) of a pre-existing taskId to tick it off when commands execute. You can call client_set_plan_mode(enabled: true) to return to Plan Mode for replanning.
 ''';
 
 const String systemPromptZhSafety = '''
@@ -70,6 +71,7 @@ run_command 也被阻止读取环境变量转储或包含敏感秘密的路径�
 使用 app_get_operational_settings 和 app_update_operational_settings 来管理与工具相关的应用设置。绝不要索取 API 密钥，因为你无法读取或管理它们。
 当用户请求健康报告、运维报告或广泛的服务器状态审查时，使用 generate_ops_report。
 在总结工具工作时，请明确提及你所使用的服务器、路径或命令。
+在规划模式（Plan Mode）下，你被限制调用任何写操作工具，但你必须通过多次调用 client_task_create 在最新的助手回复消息中创建详细的 TODO 步骤计划。在你退出规划模式（调用 client_set_plan_mode(enabled: false)）之前，你必须已经创建好计划步骤。在执行模式（Execution Mode）下，你无法调用 client_task_create，但你可以在任务命令执行完成后，调用 client_task_update 工具修改对应 taskId 计划的 status（例如 success/failed/in_progress）以原地打勾。当你需要重新规划时，可以使用 client_set_plan_mode(enabled: true) 退回规划模式。
 ''';
 
 // ==========================================

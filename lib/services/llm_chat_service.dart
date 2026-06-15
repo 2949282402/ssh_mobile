@@ -98,8 +98,34 @@ class LlmChatService implements LlmClientAdapter {
     if (!planMode) return base;
 
     final planInstructions = isEn
-        ? '\n\n[PLAN MODE ACTIVE]\nThe user wants to design a plan. You are currently in PLAN MODE. DO NOT call any tools that modify server state or perform write actions. Focus entirely on diagnostics, design, risk auditing, and outputting a structured plan with Context, Proposal, and Verification sections. Keep your suggestions descriptive and avoid state-mutating execution.'
-        : '\n\n【规划模式已激活】\n用户希望设计一个操作计划。你当前处于“规划模式”。绝对不能调用任何改变服务器状态或执行写入操作的工具。请全力以赴进行系统现状诊断、运维方案设计与风险审计，并生成包含“上下文”、“方案建议”、“验证”三个部分的结构化计划。保持你的回复为描述性规划，不要执行改变系统状态的命令。';
+        ? '\n\n[PLAN MODE ACTIVE]\n'
+            'You are currently in PLAN MODE. Your goal is to design a detailed, step-by-step operation plan for the user\'s request.\n'
+            '1. Restrictions: DO NOT call any state-changing tools (e.g. sftp_write_text, playbook_execute, etc.) or run mutating shell commands. Only recommend commands and describe expected outcomes.\n'
+            '2. Output Format: You must structure your final answer with a clear implementation plan containing:\n'
+            '   - **Context**: Summary of current state and diagnostics.\n'
+            '   - **Proposal**: Step-by-step tasks. Wrap the structured steps in a markdown JSON block ```playbook ... ``` representing a Playbook configuration so the app can parse and execute it later:\n'
+            '     {\n'
+            '       "name": "Plan Name",\n'
+            '       "description": "Brief description",\n'
+            '       "steps": [\n'
+            '         {"name": "Step 1 Title", "command": "command", "description": "What to do"}\n'
+            '       ]\n'
+            '     }\n'
+            '   - **Verification**: How to verify the plan succeeded.'
+        : '\n\n【规划模式已激活】\n'
+            '你当前处于“规划模式”。你的目标是针对用户的运维请求设计一份详细的、分步的操作执行计划。\n'
+            '1. 行为限制：绝对不能调用任何会改变系统状态的工具（如 sftp_write_text, playbook_execute 等）或执行有修改副作用的 shell 命令。仅提供只读建议并描述预期效果。\n'
+            '2. 输出格式：你必须用以下清晰的结构输出你的规划建议：\n'
+            '   - **上下文 (Context)**: 现状汇总与系统诊断事实。\n'
+            '   - **方案建议 (Proposal)**: 详细的分步步骤。将这些步骤包裹在一个标准的 markdown JSON 代码块 ```playbook ... ``` 中，代表剧本配置，以便应用能自动解析并转为可勾选执行的 TODO 任务：\n'
+            '     {\n'
+            '       "name": "计划名称",\n'
+            '       "description": "简要描述",\n'
+            '       "steps": [\n'
+            '         {"name": "步骤 1 名称", "command": "命令内容", "description": "操作说明"}\n'
+            '       ]\n'
+            '     }\n'
+            '   - **验证 (Verification)**: 运维步骤完成后如何验证成功。';
     return '$base$planInstructions';
   }
 

@@ -620,6 +620,142 @@ void main() {
     expect(settings.multiAgentMaxAgents, 4);
     expect(settings.toolCallBudget, 40);
   });
+
+  group('client_set_plan_mode tool', () {
+    test('switches planMode to true and blocks switching to false without plans', () async {
+      final now = DateTime.now();
+      var chat = AiChatRecord(
+        id: 'chat-1',
+        title: 'Draft',
+        model: 'deepseek-v4-flash',
+        messages: const [],
+        createdAt: now,
+        updatedAt: now,
+        planMode: false,
+      );
+      await storage.saveAiChat(chat);
+
+      // 1. 开启 planMode
+      final rawTrue = await tools.execute('client_set_plan_mode', {'enabled': true});
+      final decodedTrue = jsonDecode(rawTrue) as Map<String, dynamic>;
+      expect(decodedTrue['status'], 'success');
+      expect(decodedTrue['planMode'], isTrue);
+
+      final chatTrue = (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      expect(chatTrue.planMode, isTrue);
+
+      // 2. 尝试关闭 planMode（因为没有任何 playbook 计划，应该被拦截报错）
+      final rawFalse = await tools.execute('client_set_plan_mode', {'enabled': false});
+      final decodedFalse = jsonDecode(rawFalse) as Map<String, dynamic>;
+      expect(decodedFalse['error'], contains('Cannot exit Plan Mode'));
+
+      final chatStillTrue = (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      expect(chatStillTrue.planMode, isTrue);
+
+      // 3. 往会话中添加一条带有 playbook 计划步骤的消息
+      final updatedChat = chatStillTrue.copyWith(
+        messages: [
+          AiChatMessageRecord(
+            role: 'assistant',
+            text: 'I have designed a plan ```playbook {"steps": [{"name": "Step 1"}]} ```',
+            createdAt: now,
+          ),
+        ],
+      );
+      await storage.saveAiChat(updatedChat);
+
+      // 4. 再次尝试关闭 planMode（此时符合条件，应允许退出）
+      final rawExit = await tools.execute('client_set_plan_mode', {'enabled': false});
+      final decodedExit = jsonDecode(rawExit) as Map<String, dynamic>;
+      expect(decodedExit['status'], 'success');
+      expect(decodedExit['planMode'], isFalse);
+
+      final chatFalse = (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      expect(chatFalse.planMode, isFalse);
+    });
+  });
+
+  group('client_task_create and client_task_update flow and constraints', () {
+    test('enforces planMode時机限制与数据防篡改', () async {
+      final now = DateTime.now();
+
+      // 1. 初始化 ChatRecord，最后一客助理消息，并且处于 planMode = true
+      var chat = AiChatRecord(
+        id: 'chat-1',
+        title: 'Draft',
+        model: 'deepseek-v4-flash',
+        messages: [
+          AiChatMessageRecord(
+            role: 'assistant',
+            text: 'Let me plan...',
+            createdAt: now,
+          ),
+        ],
+        createdAt: now,
+        updatedAt: now,
+        planMode: true,
+      );
+      await storage.saveAiChat(chat);
+
+      // 2. 处于 Plan Mode，调用 TaskCreate 应成功
+      final rawCreate = await tools.execute('client_task_create', {
+        'name': 'Install Docker',
+        'command': 'curl -fsSL https://get.docker.com | sh',
+        'description': 'Install docker engine',
+      });
+      final decodedCreate = jsonDecode(rawCreate) as Map<String, dynamic>;
+      expect(decodedCreate['status'], 'success');
+      final taskId = decodedCreate['taskId'] as String;
+      expect(taskId, startsWith('task-'));
+
+      // 验证是否已存入助理消息的 todoSteps
+      final chatAfterCreate = (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      expect(chatAfterCreate.messages.last.todoSteps.length, 1);
+      expect(chatAfterCreate.messages.last.todoSteps.first.id, taskId);
+
+      // 3. 处于 Plan Mode，调用 TaskUpdate 应该被拦截报错
+      final rawUpdateInPlan = await tools.execute('client_task_update', {
+        'taskId': taskId,
+        'status': 'success',
+      });
+      final decodedUpdateInPlan = jsonDecode(rawUpdateInPlan) as Map<String, dynamic>;
+      expect(decodedUpdateInPlan['error'], contains('client_task_update can ONLY be called during Execution Mode'));
+
+      // 4. 将 Chat 设为 planMode = false (执行模式)
+      final chatExecution = chatAfterCreate.copyWith(planMode: false);
+      await storage.saveAiChat(chatExecution);
+
+      // 5. 处于 Execution Mode，调用 TaskCreate 应该被拦截报错
+      final rawCreateInExec = await tools.execute('client_task_create', {
+        'name': 'Another Step',
+      });
+      final decodedCreateInExec = jsonDecode(rawCreateInExec) as Map<String, dynamic>;
+      expect(decodedCreateInExec['error'], contains('client_task_create can ONLY be called during Plan Mode'));
+
+      // 6. 处于 Execution Mode，调用 TaskUpdate 应该成功并更新状态
+      final rawUpdate = await tools.execute('client_task_update', {
+        'taskId': taskId,
+        'status': 'success',
+        'stdout': 'Docker version 24.0.7',
+      });
+      final decodedUpdate = jsonDecode(rawUpdate) as Map<String, dynamic>;
+      expect(decodedUpdate['status'], 'success');
+      expect(decodedUpdate['newStatus'], 'success');
+
+      final chatAfterUpdate = (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      final updatedStep = chatAfterUpdate.messages.last.todoSteps.first;
+      expect(updatedStep.status.name, 'success');
+      expect(updatedStep.stdout, 'Docker version 24.0.7');
+
+      // 7. 处于 Execution Mode，但调用不存在的 taskId 应该报错
+      final rawUpdateInvalid = await tools.execute('client_task_update', {
+        'taskId': 'invalid-id',
+        'status': 'success',
+      });
+      final decodedUpdateInvalid = jsonDecode(rawUpdateInvalid) as Map<String, dynamic>;
+      expect(decodedUpdateInvalid['error'], contains('Task step not found'));
+    });
+  });
 }
 
 AiToolService _buildTools({

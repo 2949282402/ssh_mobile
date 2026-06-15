@@ -571,6 +571,7 @@ class AiChatMessageRecord {
   final int? promptCacheMissTokens;
   final List<AiChatAttachment> attachments;
   final int? reasoningTokens;
+  final List<AiTodoStep> todoSteps;
 
   const AiChatMessageRecord({
     required this.role,
@@ -587,6 +588,7 @@ class AiChatMessageRecord {
     this.promptCacheHitTokens,
     this.promptCacheMissTokens,
     this.reasoningTokens,
+    this.todoSteps = const [],
   });
 
   AiChatMessageRecord copyWith({
@@ -604,6 +606,7 @@ class AiChatMessageRecord {
     int? promptCacheHitTokens,
     int? promptCacheMissTokens,
     int? reasoningTokens,
+    List<AiTodoStep>? todoSteps,
   }) {
     return AiChatMessageRecord(
       role: role ?? this.role,
@@ -621,6 +624,7 @@ class AiChatMessageRecord {
       promptCacheMissTokens:
           promptCacheMissTokens ?? this.promptCacheMissTokens,
       reasoningTokens: reasoningTokens ?? this.reasoningTokens,
+      todoSteps: todoSteps ?? this.todoSteps,
     );
   }
 
@@ -645,6 +649,8 @@ class AiChatMessageRecord {
       if (promptCacheMissTokens != null)
         'promptCacheMissTokens': promptCacheMissTokens,
       if (reasoningTokens != null) 'reasoningTokens': reasoningTokens,
+      if (todoSteps.isNotEmpty)
+        'todoSteps': todoSteps.map((s) => s.toJson()).toList(),
     };
   }
 
@@ -670,6 +676,9 @@ class AiChatMessageRecord {
       promptCacheHitTokens: json['promptCacheHitTokens'] as int?,
       promptCacheMissTokens: json['promptCacheMissTokens'] as int?,
       reasoningTokens: json['reasoningTokens'] as int?,
+      todoSteps: ((json['todoSteps'] as List<dynamic>?) ?? const [])
+          .map((item) => AiTodoStep.fromJson(item as Map<String, dynamic>))
+          .toList(),
     );
   }
 }
@@ -829,5 +838,78 @@ class TerminalHistoryRecord {
 
   static String _shellQuote(String value) {
     return "'${value.replaceAll("'", "'\"'\"'")}'";
+  }
+}
+
+class AiTodoStep {
+  final String id;
+  final String name;
+  final String command;
+  final String description;
+  final StepStatus status;
+  final String? stdout;
+  final String? stderr;
+  final int? exitCode;
+
+  const AiTodoStep({
+    required this.id,
+    required this.name,
+    required this.command,
+    required this.description,
+    this.status = StepStatus.pending,
+    this.stdout,
+    this.stderr,
+    this.exitCode,
+  });
+
+  AiTodoStep copyWith({
+    String? id,
+    String? name,
+    String? command,
+    String? description,
+    StepStatus? status,
+    String? stdout,
+    String? stderr,
+    int? exitCode,
+  }) {
+    return AiTodoStep(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      command: command ?? this.command,
+      description: description ?? this.description,
+      status: status ?? this.status,
+      stdout: stdout ?? this.stdout,
+      stderr: stderr ?? this.stderr,
+      exitCode: exitCode ?? this.exitCode,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'command': command,
+      'description': description,
+      'status': status.name,
+      if (stdout != null) 'stdout': stdout,
+      if (stderr != null) 'stderr': stderr,
+      if (exitCode != null) 'exitCode': exitCode,
+    };
+  }
+
+  factory AiTodoStep.fromJson(Map<String, dynamic> json) {
+    return AiTodoStep(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? 'Step',
+      command: json['command'] as String? ?? '',
+      description: json['description'] as String? ?? '',
+      status: StepStatus.values.firstWhere(
+        (e) => e.name == json['status'],
+        orElse: () => StepStatus.pending,
+      ),
+      stdout: json['stdout'] as String?,
+      stderr: json['stderr'] as String?,
+      exitCode: json['exitCode'] as int?,
+    );
   }
 }
