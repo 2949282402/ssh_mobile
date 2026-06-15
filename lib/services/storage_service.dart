@@ -168,6 +168,8 @@ class StorageService extends ChangeNotifier
   List<RestorableTmuxSession>? _restorableTmuxSessionsCache;
   List<TerminalHistoryRecord>? _terminalHistoryRecordsCache;
   bool _initialized = false;
+  final Completer<void> _initCompleter = Completer<void>();
+  Future<void> get initFuture => _initCompleter.future;
   bool _powerGuideSeen = false;
   bool _secretCacheEnabled = true;
   Duration _secretCacheTtl = const Duration(minutes: 15);
@@ -212,6 +214,9 @@ class StorageService extends ChangeNotifier
       _powerGuideSeen = false;
     } finally {
       _initialized = true;
+      if (!_initCompleter.isCompleted) {
+        _initCompleter.complete();
+      }
       notifyListeners();
     }
   }

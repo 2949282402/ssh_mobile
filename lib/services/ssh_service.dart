@@ -57,6 +57,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
         'Background SSH service disabled on this platform',
       );
     }
+    unawaited(restoreTmuxSessions());
   }
 
   bool get _usesBackgroundService {
@@ -164,6 +165,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
   Future<void> restoreTmuxSessions() async {
     if (_restoredTmuxSessions) return;
     _restoredTmuxSessions = true;
+    await _storageService.initFuture;
     final storedSessions = await _storageService.loadRestorableTmuxSessions();
     AppLogService.instance.info(
       'Restoring tmux sessions',

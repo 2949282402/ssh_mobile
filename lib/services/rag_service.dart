@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -61,19 +62,32 @@ class RagService extends ChangeNotifier {
   bool _isLoading = false;
   bool _isInitialized = false;
 
-  RagService({required this.storageService});
+  Future<void>? _initFuture;
+
+  RagService({required this.storageService}) {
+    unawaited(init());
+  }
 
   List<RagDocumentMetadata> get documents => List.unmodifiable(_documents);
   bool get isLoading => _isLoading;
   bool get isInitialized => _isInitialized;
 
   /// 初始化 RAG 服务，支持 legacy 数据库迁移与仅加载元数据
-  Future<void> init() async {
-    if (_isInitialized) return;
+  Future<void> init({bool force = false}) {
+    if (force) {
+      _initFuture = null;
+      _isInitialized = false;
+    }
+    _initFuture ??= _doInit();
+    return _initFuture!;
+  }
+
+  Future<void> _doInit() async {
     _isLoading = true;
     notifyListeners();
 
     try {
+      await storageService.initFuture;
       final supportDir = await getApplicationSupportDirectory();
       final legacyFile = File(p.join(supportDir.path, 'rag_database.json'));
       final metadataFile = File(p.join(supportDir.path, 'rag_metadata.json'));
