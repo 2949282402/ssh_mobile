@@ -807,23 +807,48 @@ class _ChatTodoPanel extends StatefulWidget {
 
 class _ChatTodoPanelState extends State<_ChatTodoPanel> {
   final Set<int> _expandedIndices = {};
+  bool _todoExecuting = false;
 
   Future<void> _runSingleStep(BuildContext context, int index) async {
+    if (_todoExecuting) return;
     final state = context.findAncestorStateOfType<_LlmChatScreenState>();
     if (state == null) return;
-    await state._runTodoStep(
-      chatId: widget.chatId,
-      message: widget.message,
-      stepIndex: index,
-    );
+
+    setState(() => _todoExecuting = true);
+    try {
+      await state._runTodoStep(
+        chatId: widget.chatId,
+        message: widget.message,
+        stepIndex: index,
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _todoExecuting = false);
+      }
+    }
   }
 
   Future<void> _runAll(BuildContext context) async {
-    for (var i = 0; i < widget.message.todoSteps.length; i++) {
-      final step = widget.message.todoSteps[i];
-      if (step.status == StepStatus.pending ||
-          step.status == StepStatus.failed) {
-        await _runSingleStep(context, i);
+    if (_todoExecuting) return;
+    final state = context.findAncestorStateOfType<_LlmChatScreenState>();
+    if (state == null) return;
+
+    setState(() => _todoExecuting = true);
+    try {
+      for (var i = 0; i < widget.message.todoSteps.length; i++) {
+        final step = widget.message.todoSteps[i];
+        if (step.status == StepStatus.pending ||
+            step.status == StepStatus.failed) {
+          await state._runTodoStep(
+            chatId: widget.chatId,
+            message: widget.message,
+            stepIndex: i,
+          );
+        }
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _todoExecuting = false);
       }
     }
   }
@@ -868,7 +893,9 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                   s.status == StepStatus.pending ||
                   s.status == StepStatus.failed))
                 TextButton.icon(
-                  onPressed: hasActiveExecution ? null : () => _runAll(context),
+                  onPressed: (hasActiveExecution || _todoExecuting)
+                      ? null
+                      : () => _runAll(context),
                   icon: const Icon(Icons.play_circle_outline, size: 16),
                   label: Text(
                     isEn ? 'Run All' : '一键运行',
@@ -1065,7 +1092,7 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
               ? colorScheme.errorContainer.withValues(alpha: 0.4)
               : colorScheme.primaryContainer.withValues(alpha: 0.4),
         ),
-        onPressed: () => _runSingleStep(context, index),
+        onPressed: _todoExecuting ? null : () => _runSingleStep(context, index),
         child: Text(
           isFailed
               ? (isEn ? 'Retry' : '重试')

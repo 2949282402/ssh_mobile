@@ -288,6 +288,7 @@ extension _ChatGeneration on _LlmChatScreenState {
       final answeredChat = currentChat.copyWith(
         messages: completedMessages,
         updatedAt: DateTime.now(),
+        planMode: initialChat.planMode ? false : currentChat.planMode,
       );
       setState(() {
         _clearStreamingAssistant(
@@ -860,11 +861,19 @@ extension _ChatGeneration on _LlmChatScreenState {
     final activeChat = _chatById(chatId);
     if (activeChat == null) return;
 
-    final steps = [...message.todoSteps];
+    final msgIndex =
+        activeChat.messages.indexWhere((m) => m.createdAt == message.createdAt);
+    if (msgIndex < 0) return;
+    final latestMsg = activeChat.messages[msgIndex];
+
+    final steps = [...latestMsg.todoSteps];
     if (stepIndex < 0 || stepIndex >= steps.length) return;
 
     final targetStep = steps[stepIndex];
-    if (targetStep.status == StepStatus.running) return;
+    if (targetStep.status == StepStatus.running ||
+        targetStep.status == StepStatus.success) {
+      return;
+    }
 
     if (_selectedConnectionIds.isEmpty) {
       final isEn = context.read<AppSettings>().language == AppLanguage.en;
@@ -879,10 +888,7 @@ extension _ChatGeneration on _LlmChatScreenState {
     final connectionId = _selectedConnectionIds.first;
 
     steps[stepIndex] = targetStep.copyWith(status: StepStatus.running);
-    final nextMsg = message.copyWith(todoSteps: steps);
-    final msgIndex =
-        activeChat.messages.indexWhere((m) => m.createdAt == message.createdAt);
-    if (msgIndex < 0) return;
+    final nextMsg = latestMsg.copyWith(todoSteps: steps);
 
     final updatedMessages = [...activeChat.messages];
     updatedMessages[msgIndex] = nextMsg;
@@ -896,7 +902,7 @@ extension _ChatGeneration on _LlmChatScreenState {
     });
     final storage = context.read<StorageService>();
     final ssh = context.read<SshService>();
-    await storage.saveAiChat(updatedChat);
+    unawaited(storage.saveAiChat(updatedChat));
 
     final timeoutSeconds = await storage.getAiRequestTimeoutSeconds();
 
@@ -922,21 +928,23 @@ extension _ChatGeneration on _LlmChatScreenState {
       stderr = e.toString();
     }
 
-    final nextSteps = [...nextMsg.todoSteps];
-    nextSteps[stepIndex] = targetStep.copyWith(
-      status: finalStatus,
-      stdout: stdout,
-      stderr: stderr,
-      exitCode: exitCode,
-    );
-
-    final finalMsg = nextMsg.copyWith(todoSteps: nextSteps);
     final currentChat = _chatById(chatId) ?? updatedChat;
     final finalMessages = [...currentChat.messages];
     final targetIndex =
         finalMessages.indexWhere((m) => m.createdAt == message.createdAt);
     if (targetIndex >= 0) {
-      finalMessages[targetIndex] = finalMsg;
+      final currentMsg = finalMessages[targetIndex];
+      final nextSteps = [...currentMsg.todoSteps];
+      if (stepIndex >= 0 && stepIndex < nextSteps.length) {
+        nextSteps[stepIndex] = targetStep.copyWith(
+          status: finalStatus,
+          stdout: stdout,
+          stderr: stderr,
+          exitCode: exitCode,
+        );
+        final finalMsg = currentMsg.copyWith(todoSteps: nextSteps);
+        finalMessages[targetIndex] = finalMsg;
+      }
     }
 
     final finalChat = currentChat.copyWith(
@@ -947,6 +955,6 @@ extension _ChatGeneration on _LlmChatScreenState {
     setState(() {
       _replaceChat(finalChat);
     });
-    await storage.saveAiChat(finalChat);
+    unawaited(storage.saveAiChat(finalChat));
   }
 }

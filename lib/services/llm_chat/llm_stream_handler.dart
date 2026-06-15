@@ -200,6 +200,29 @@ extension LlmChatServiceStreamHandler on LlmChatService {
           content: multiAgentResult.traceContent,
         ),
       );
+
+      if (planMode) {
+        yield multiAgentResult.memoryContent;
+        final elapsedMs =
+            DateTime.now().difference(runStartedAt).inMilliseconds;
+        final promptTokens =
+            LlmChatService.estimateMessagesTokens(workingMessages);
+        final completionTokens = LlmChatService.estimateTextTokens(
+            multiAgentResult.memoryContent);
+        onStats?.call(
+          LlmRunStats(
+            promptTokens: promptTokens,
+            completionTokens: completionTokens,
+            totalTokens: promptTokens + completionTokens,
+            elapsedMs: elapsedMs,
+            usageFromProvider: false,
+            contextTokensBeforeCompression: estimatedBeforeCompression,
+            contextWindowTokens: settings.contextWindowTokens,
+            compressed: compressed,
+          ),
+        );
+        return;
+      }
     }
 
     final visibleOutput = StringBuffer();

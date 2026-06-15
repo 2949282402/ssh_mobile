@@ -48,16 +48,37 @@ extension _ChatSlashCommands on _LlmChatScreenState {
 
   bool get _shouldShowSlashCommandPanel {
     final text = _inputController.text;
-    return text.startsWith('/') &&
-        !_parseSlashCommand(text)!.command.contains(' ');
+    if (!text.startsWith('/')) return false;
+
+    final firstSpace = text.indexOf(' ');
+    if (firstSpace == -1) {
+      return true;
+    }
+
+    final selection = _inputController.selection;
+    if (selection.isValid &&
+        selection.isCollapsed &&
+        selection.baseOffset <= firstSpace) {
+      return true;
+    }
+
+    if (text == '/' || text.startsWith('/ ')) return true;
+
+    return false;
   }
 
   List<_SlashCommandMeta> get _filteredSlashCommands {
     final text = _inputController.text;
-    if (text == '/') {
+    if (text.isEmpty || !text.startsWith('/')) return const [];
+
+    final firstSpace = text.indexOf(' ');
+    final query = firstSpace == -1
+        ? text.substring(1).toLowerCase()
+        : text.substring(1, firstSpace).toLowerCase();
+
+    if (query.isEmpty) {
       return _defaultSlashCommands;
     }
-    final query = text.substring(1).toLowerCase();
     return _defaultSlashCommands
         .where((cmd) => cmd.command.substring(1).toLowerCase().contains(query))
         .toList();
@@ -98,13 +119,25 @@ extension _ChatSlashCommands on _LlmChatScreenState {
                     overflow: TextOverflow.ellipsis,
                   ),
                   onTap: () {
-                    _inputController.text = (command.command == '/tools' ||
-                            command.command == '/plan')
+                    final text = _inputController.text;
+                    final firstSpace = text.indexOf(' ');
+                    final arguments =
+                        firstSpace == -1 ? '' : text.substring(firstSpace + 1);
+
+                    final bool needsSpaceSuffix = command.command == '/tools' ||
+                        command.command == '/plan';
+                    final canonicalCmd = needsSpaceSuffix
                         ? '${command.command} '
                         : command.command;
+
+                    final nextText = '$canonicalCmd$arguments';
+                    _inputController.text = nextText;
+
+                    final nextCursorOffset =
+                        arguments.isEmpty ? nextText.length : canonicalCmd.length;
+
                     setState(() => _inputController.selection =
-                        TextSelection.collapsed(
-                            offset: _inputController.text.length));
+                        TextSelection.collapsed(offset: nextCursorOffset));
                   },
                 ),
             ],
