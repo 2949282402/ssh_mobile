@@ -1,5 +1,23 @@
 part of '../performance_monitor_screen.dart';
 
+class _FlatSnapshotItem<T> {
+  final ConnectionConfig connection;
+  final T? item;
+  final String? emptyText;
+  final bool isHeader;
+  final bool isFirst;
+  final bool isLast;
+
+  _FlatSnapshotItem({
+    required this.connection,
+    this.item,
+    this.emptyText,
+    this.isHeader = false,
+    this.isFirst = false,
+    this.isLast = false,
+  });
+}
+
 class _ServerSnapshotTab<T> extends StatelessWidget {
   final AppStrings strings;
   final List<ConnectionConfig> connections;
@@ -75,25 +93,116 @@ class _ServerSnapshotTab<T> extends StatelessWidget {
                   if (snapshot.hasError) {
                     return Center(
                       child: Text(
-                        '${_monitorText(strings, 'Load failed', '鍔犺浇澶辫触')}: ${snapshot.error}',
+                        '${_monitorText(strings, 'Load failed', '加载失败')}: ${snapshot.error}',
                         textAlign: TextAlign.center,
                       ),
                     );
                   }
                   final data = snapshot.data ?? const {};
+
+                  // Build the flat list of items
+                  final flatItems = <_FlatSnapshotItem<T>>[];
+                  for (final connection in connections) {
+                    final items = data[connection.id] ?? const [];
+                    if (items.isEmpty) {
+                      flatItems.add(_FlatSnapshotItem<T>(
+                        connection: connection,
+                        isHeader: true,
+                        isFirst: true,
+                        isLast: false,
+                      ));
+                      flatItems.add(_FlatSnapshotItem<T>(
+                        connection: connection,
+                        emptyText: emptyText,
+                        isHeader: false,
+                        isFirst: false,
+                        isLast: true,
+                      ));
+                    } else {
+                      flatItems.add(_FlatSnapshotItem<T>(
+                        connection: connection,
+                        isHeader: true,
+                        isFirst: true,
+                        isLast: false,
+                      ));
+                      for (int i = 0; i < items.length; i++) {
+                        flatItems.add(_FlatSnapshotItem<T>(
+                          connection: connection,
+                          item: items[i],
+                          isHeader: false,
+                          isFirst: false,
+                          isLast: i == items.length - 1,
+                        ));
+                      }
+                    }
+                  }
+
+                  final colorScheme = Theme.of(context).colorScheme;
+                  final borderSide = BorderSide(color: colorScheme.outlineVariant);
+
                   return ListView.builder(
                     cacheExtent: 900,
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
-                    itemCount: connections.length,
+                    itemCount: flatItems.length,
                     itemBuilder: (context, index) {
-                      final connection = connections[index];
-                      return RepaintBoundary(
-                        child: _ServerSnapshotSection<T>(
-                          connection: connection,
-                          items: data[connection.id] ?? const [],
-                          emptyText: emptyText,
-                          itemBuilder: itemBuilder,
+                      final flatItem = flatItems[index];
+                      final isFirst = flatItem.isFirst;
+                      final isLast = flatItem.isLast;
+
+                      // Render decoration for continuous border
+                      final decoration = BoxDecoration(
+                        color: colorScheme.surface,
+                        borderRadius: BorderRadius.only(
+                          topLeft: isFirst ? const Radius.circular(8) : Radius.zero,
+                          topRight: isFirst ? const Radius.circular(8) : Radius.zero,
+                          bottomLeft: isLast ? const Radius.circular(8) : Radius.zero,
+                          bottomRight: isLast ? const Radius.circular(8) : Radius.zero,
                         ),
+                        border: Border(
+                          left: borderSide,
+                          right: borderSide,
+                          top: isFirst ? borderSide : BorderSide.none,
+                          bottom: isLast ? borderSide : BorderSide.none,
+                        ),
+                      );
+
+                      final margin = EdgeInsets.only(
+                        left: 0,
+                        right: 0,
+                        top: isFirst ? 12.0 : 0.0,
+                        bottom: isLast ? 12.0 : 0.0,
+                      );
+
+                      if (flatItem.isHeader) {
+                        return Container(
+                          key: ValueKey('header-${flatItem.connection.id}'),
+                          margin: margin,
+                          decoration: decoration,
+                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
+                          child: Text(
+                            flatItem.connection.name,
+                            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+                          ),
+                        );
+                      }
+
+                      if (flatItem.emptyText != null) {
+                        return Container(
+                          key: ValueKey('empty-${flatItem.connection.id}'),
+                          margin: margin,
+                          decoration: decoration,
+                          padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                          child: Text(
+                            flatItem.emptyText!,
+                            style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
+                          ),
+                        );
+                      }
+
+                      return Container(
+                        margin: margin,
+                        decoration: decoration,
+                        child: itemBuilder(context, flatItem.item as T),
                       );
                     },
                   );
@@ -103,55 +212,6 @@ class _ServerSnapshotTab<T> extends StatelessWidget {
           ],
         );
       },
-    );
-  }
-}
-
-class _ServerSnapshotSection<T> extends StatelessWidget {
-  final ConnectionConfig connection;
-  final List<T> items;
-  final String emptyText;
-  final Widget Function(BuildContext context, T item) itemBuilder;
-
-  const _ServerSnapshotSection({
-    required this.connection,
-    required this.items,
-    required this.emptyText,
-    required this.itemBuilder,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: colorScheme.outlineVariant),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
-            child: Text(
-              connection.name,
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-          ),
-          if (items.isEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              child: Text(
-                emptyText,
-                style: TextStyle(color: colorScheme.onSurfaceVariant),
-              ),
-            )
-          else
-            for (final item in items) itemBuilder(context, item),
-        ],
-      ),
     );
   }
 }

@@ -76,6 +76,20 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
       connections,
       monitorShell.monitoringConnectionIds,
     );
+    final selectedConnections = _connectionsByIds(
+      connections,
+      monitorShell.selectedConnectionIds,
+    );
+    final portConnections = _portConnectionId == null
+        ? const <ConnectionConfig>[]
+        : _connectionsByIds(connections, {_portConnectionId!});
+    final appConnections = _appConnectionId == null
+        ? const <ConnectionConfig>[]
+        : _connectionsByIds(connections, {_appConnectionId!});
+    final serviceConnections = _serviceConnectionId == null
+        ? const <ConnectionConfig>[]
+        : _connectionsByIds(connections, {_serviceConnectionId!});
+
     final tabSelectedIds = _selectedIdsForTab(monitorShell);
     final tabSelectedConnections =
         _connectionsByIds(connections, tabSelectedIds);
@@ -144,8 +158,11 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
                         monitor: monitor,
                         tabIndex: _tabIndex,
                         selectionVersion: _selectionVersion,
-                        selectedConnections: tabSelectedConnections,
+                        selectedConnections: selectedConnections,
                         monitoringConnections: monitoringConnections,
+                        portConnections: portConnections,
+                        appConnections: appConnections,
+                        serviceConnections: serviceConnections,
                         onStartMonitoring: () async {
                           await monitor.startMonitoring();
                           if (mounted) _collapseServers();
@@ -197,8 +214,11 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
                         monitor: monitor,
                         tabIndex: _tabIndex,
                         selectionVersion: _selectionVersion,
-                        selectedConnections: tabSelectedConnections,
+                        selectedConnections: selectedConnections,
                         monitoringConnections: monitoringConnections,
+                        portConnections: portConnections,
+                        appConnections: appConnections,
+                        serviceConnections: serviceConnections,
                         onStartMonitoring: () async {
                           await monitor.startMonitoring();
                           if (mounted) _collapseServers();
@@ -307,6 +327,9 @@ class _MonitorContent extends StatefulWidget {
   final int selectionVersion;
   final List<ConnectionConfig> selectedConnections;
   final List<ConnectionConfig> monitoringConnections;
+  final List<ConnectionConfig> portConnections;
+  final List<ConnectionConfig> appConnections;
+  final List<ConnectionConfig> serviceConnections;
   final Future<void> Function() onStartMonitoring;
 
   const _MonitorContent({
@@ -316,6 +339,9 @@ class _MonitorContent extends StatefulWidget {
     required this.selectionVersion,
     required this.selectedConnections,
     required this.monitoringConnections,
+    required this.portConnections,
+    required this.appConnections,
+    required this.serviceConnections,
     required this.onStartMonitoring,
   });
 
@@ -341,12 +367,9 @@ class _MonitorContentState extends State<_MonitorContent> {
   AppStrings get strings => widget.strings;
   PerformanceMonitorService get monitor => widget.monitor;
   List<ConnectionConfig> get activeConnections {
-    if (widget.tabIndex == 0) {
-      return monitor.isRunning
-          ? widget.monitoringConnections
-          : widget.selectedConnections;
-    }
-    return widget.selectedConnections;
+    return monitor.isRunning
+        ? widget.monitoringConnections
+        : widget.selectedConnections;
   }
 
   @override
@@ -375,7 +398,7 @@ class _MonitorContentState extends State<_MonitorContent> {
   }
 
   void _refreshPortsFuture({bool force = false}) {
-    final key = _connectionsCacheKey(widget.selectedConnections);
+    final key = _connectionsCacheKey(widget.portConnections);
     if (key == null) {
       _portsSelectionKey = null;
       _portsFuture = null;
@@ -388,7 +411,7 @@ class _MonitorContentState extends State<_MonitorContent> {
   }
 
   void _refreshApplicationsFuture({bool force = false}) {
-    final key = _connectionsCacheKey(widget.selectedConnections);
+    final key = _connectionsCacheKey(widget.appConnections);
     if (key == null) {
       _appsSelectionKey = null;
       _appsFuture = null;
@@ -401,7 +424,7 @@ class _MonitorContentState extends State<_MonitorContent> {
   }
 
   void _refreshServicesFuture({bool force = false}) {
-    final key = _connectionsCacheKey(widget.selectedConnections);
+    final key = _connectionsCacheKey(widget.serviceConnections);
     if (key == null) {
       _servicesSelectionKey = null;
       _servicesFuture = null;
@@ -463,48 +486,50 @@ class _MonitorContentState extends State<_MonitorContent> {
   }
 
   Widget _buildActiveTab(BuildContext context) {
-    switch (widget.tabIndex) {
-      case 1:
-        return _ServerSnapshotTab<PortProcessSnapshot>(
+    return IndexedStack(
+      index: widget.tabIndex,
+      children: [
+        // Tab 0: Performance
+        Selector<PerformanceMonitorService, _MonitorPerformanceSnapshot>(
+          selector: (_, monitor) => _MonitorPerformanceSnapshot.from(
+            monitor,
+            widget.monitoringConnections,
+          ),
+          builder: (context, _, __) => _buildPerformanceTab(context),
+        ),
+        // Tab 1: Ports
+        _ServerSnapshotTab<PortProcessSnapshot>(
           strings: strings,
-          connections: activeConnections,
+          connections: widget.portConnections,
           emptyText:
               _monitorText(strings, 'No listening ports found', '未发现监听端口'),
           future: _portsFuture,
           onRefresh: () => setState(() => _refreshPortsFuture(force: true)),
           itemBuilder: _buildPortItem,
-        );
-      case 2:
-        return _ServerSnapshotTab<ApplicationMemorySnapshot>(
+        ),
+        // Tab 2: Applications
+        _ServerSnapshotTab<ApplicationMemorySnapshot>(
           strings: strings,
-          connections: activeConnections,
+          connections: widget.appConnections,
           emptyText:
               _monitorText(strings, 'No application data found', '未发现应用数据'),
           future: _appsFuture,
           onRefresh: () =>
               setState(() => _refreshApplicationsFuture(force: true)),
           itemBuilder: _buildApplicationItem,
-        );
-      case 3:
-        return _ServerSnapshotTab<ServiceStatusSnapshot>(
+        ),
+        // Tab 3: Services
+        _ServerSnapshotTab<ServiceStatusSnapshot>(
           strings: strings,
-          connections: activeConnections,
+          connections: widget.serviceConnections,
           emptyText:
               _monitorText(strings, 'No running services found', '未发现运行中的服务'),
           future: _servicesFuture,
           onRefresh: () => setState(() => _refreshServicesFuture(force: true)),
           itemBuilder: _buildServiceItem,
-        );
-      case 0:
-      default:
-        return Selector<PerformanceMonitorService, _MonitorPerformanceSnapshot>(
-          selector: (_, monitor) => _MonitorPerformanceSnapshot.from(
-            monitor,
-            widget.monitoringConnections,
-          ),
-          builder: (context, _, __) => _buildPerformanceTab(context),
-        );
-    }
+        ),
+      ],
+    );
   }
 
   Widget _buildPerformanceTab(BuildContext context) {
@@ -672,7 +697,7 @@ class _MonitorContentState extends State<_MonitorContent> {
 
   Future<Map<String, List<PortProcessSnapshot>>> _loadPorts() async {
     final result = <String, List<PortProcessSnapshot>>{};
-    for (final connection in activeConnections) {
+    for (final connection in widget.portConnections) {
       result[connection.id] = await monitor.fetchPorts(connection.id);
     }
     return result;
@@ -681,7 +706,7 @@ class _MonitorContentState extends State<_MonitorContent> {
   Future<Map<String, List<ApplicationMemorySnapshot>>>
       _loadApplications() async {
     final result = <String, List<ApplicationMemorySnapshot>>{};
-    for (final connection in activeConnections) {
+    for (final connection in widget.appConnections) {
       result[connection.id] = await monitor.fetchApplications(connection.id);
     }
     return result;
@@ -689,7 +714,7 @@ class _MonitorContentState extends State<_MonitorContent> {
 
   Future<Map<String, List<ServiceStatusSnapshot>>> _loadServices() async {
     final result = <String, List<ServiceStatusSnapshot>>{};
-    for (final connection in activeConnections) {
+    for (final connection in widget.serviceConnections) {
       result[connection.id] = await monitor.fetchServices(connection.id);
     }
     return result;

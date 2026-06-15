@@ -218,7 +218,9 @@ class _PlaybookScreenState extends State<PlaybookScreen>
     final strings = _PlaybookStrings(language);
     final colorScheme = Theme.of(context).colorScheme;
     final playbookService = context.watch<PlaybookService>();
-    final connections = context.watch<StorageService>().connections;
+    final connections = context.select<StorageService, List<ConnectionConfig>>(
+      (s) => s.connections,
+    );
 
     // Resolve active selection
     final activePlaybook = playbookService.activePlaybook;

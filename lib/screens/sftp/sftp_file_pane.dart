@@ -399,17 +399,23 @@ class _SftpEntryList extends StatelessWidget {
                     ? colorScheme.primary
                     : colorScheme.onSurface.withValues(alpha: 0.72),
               ),
-              title: Hero(
-                tag: 'sftp_file_${entry.path}',
-                child: Material(
-                  type: MaterialType.transparency,
-                  child: OverflowScrollText(
-                    entry.name,
-                    selectable: false,
-                    maxLines: 1,
-                  ),
-                ),
-              ),
+              title: entries.length > 100
+                  ? OverflowScrollText(
+                      entry.name,
+                      selectable: false,
+                      maxLines: 1,
+                    )
+                  : Hero(
+                      tag: 'sftp_file_${entry.path}',
+                      child: Material(
+                        type: MaterialType.transparency,
+                        child: OverflowScrollText(
+                          entry.name,
+                          selectable: false,
+                          maxLines: 1,
+                        ),
+                      ),
+                    ),
               subtitle: OverflowScrollText(
                 entryMeta(strings, entry),
                 selectable: false,

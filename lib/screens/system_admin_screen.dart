@@ -39,10 +39,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
 
   // Systemd services
   List<SystemdService> _services = [];
-  List<SystemdService> _filteredServices = [];
   bool _loadingServices = false;
-  final TextEditingController _serviceSearchController =
-      TextEditingController();
 
   // Listening ports
   List<ListeningPort> _ports = [];
@@ -51,7 +48,6 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
   @override
   void initState() {
     super.initState();
-    _serviceSearchController.addListener(_filterServices);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _adminService = context.read<SystemAdminService>();
       _adminService!.addListener(_onAdminServiceChanged);
@@ -76,7 +72,6 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
 
   @override
   void dispose() {
-    _serviceSearchController.dispose();
     _adminService?.removeListener(_onAdminServiceChanged);
     super.dispose();
   }
@@ -115,25 +110,9 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
         _accounts.clear();
         _sessions.clear();
         _services.clear();
-        _filteredServices.clear();
         _ports.clear();
       });
     }
-  }
-
-  void _filterServices() {
-    final query = _serviceSearchController.text.trim().toLowerCase();
-    setState(() {
-      if (query.isEmpty) {
-        _filteredServices = List.from(_services);
-      } else {
-        _filteredServices = _services
-            .where((s) =>
-                s.name.toLowerCase().contains(query) ||
-                s.description.toLowerCase().contains(query))
-            .toList();
-      }
-    });
   }
 
   Future<void> _refreshAllData() async {
@@ -175,7 +154,6 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
     setState(() {
       _services = services;
       _loadingServices = false;
-      _filterServices();
     });
   }
 
@@ -203,12 +181,21 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
       (storage) => storage.connections,
     );
 
-    final adminService = context.watch<SystemAdminService>();
-    final selectedConnectionId = adminService.connectionId;
-    final isConnecting = adminService.isConnecting;
-    final isConnected = adminService.isConnected;
-    final errorMessage = adminService.errorMessage;
-    final isRoot = adminService.isRoot;
+    final selectedConnectionId = context.select<SystemAdminService, String?>(
+      (service) => service.connectionId,
+    );
+    final isConnecting = context.select<SystemAdminService, bool>(
+      (service) => service.isConnecting,
+    );
+    final isConnected = context.select<SystemAdminService, bool>(
+      (service) => service.isConnected,
+    );
+    final errorMessage = context.select<SystemAdminService, String?>(
+      (service) => service.errorMessage,
+    );
+    final isRoot = context.select<SystemAdminService, bool>(
+      (service) => service.isRoot,
+    );
 
     final desktop = isDesktopLayout(context);
     final colorScheme = Theme.of(context).colorScheme;
@@ -466,11 +453,43 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
           Expanded(
             child: TabBarView(
               children: [
-                _buildUsersTab(strings, colorScheme, selectedConnectionId),
-                _buildSessionsTab(strings, colorScheme, selectedConnectionId),
-                _buildServicesTab(strings, colorScheme, selectedConnectionId),
-                _buildPortsTab(strings, colorScheme, selectedConnectionId),
-                _buildPowerTab(strings, colorScheme, selectedConnectionId),
+                _UsersTab(
+                  strings: strings,
+                  colorScheme: colorScheme,
+                  connectionId: selectedConnectionId,
+                  accounts: _accounts,
+                  isLoading: _loadingAccounts,
+                  onRefresh: () => _fetchAccounts(selectedConnectionId),
+                ),
+                _SessionsTab(
+                  strings: strings,
+                  colorScheme: colorScheme,
+                  connectionId: selectedConnectionId,
+                  sessions: _sessions,
+                  isLoading: _loadingSessions,
+                  onRefresh: () => _fetchSessions(selectedConnectionId),
+                ),
+                _ServicesTab(
+                  strings: strings,
+                  colorScheme: colorScheme,
+                  connectionId: selectedConnectionId,
+                  services: _services,
+                  isLoading: _loadingServices,
+                  onRefresh: () => _fetchServices(selectedConnectionId),
+                ),
+                _PortsTab(
+                  strings: strings,
+                  colorScheme: colorScheme,
+                  connectionId: selectedConnectionId,
+                  ports: _ports,
+                  isLoading: _loadingPorts,
+                  onRefresh: () => _fetchPorts(selectedConnectionId),
+                ),
+                _PowerTab(
+                  strings: strings,
+                  colorScheme: colorScheme,
+                  connectionId: selectedConnectionId,
+                ),
               ],
             ),
           ),
@@ -478,11 +497,37 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
       ),
     );
   }
+}
 
-  // --- Users Tab Implementation ---
-  Widget _buildUsersTab(
-      AppStrings strings, ColorScheme colorScheme, String connectionId) {
-    if (_loadingAccounts) {
+class _UsersTab extends StatefulWidget {
+  final AppStrings strings;
+  final ColorScheme colorScheme;
+  final String connectionId;
+  final List<LinuxUserAccount> accounts;
+  final bool isLoading;
+  final RefreshCallback onRefresh;
+
+  const _UsersTab({
+    required this.strings,
+    required this.colorScheme,
+    required this.connectionId,
+    required this.accounts,
+    required this.isLoading,
+    required this.onRefresh,
+  });
+
+  @override
+  State<_UsersTab> createState() => _UsersTabState();
+}
+
+class _UsersTabState extends State<_UsersTab> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    if (widget.isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
 
@@ -494,39 +539,38 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                strings.switchToChinese == '中文' ? 'Local Accounts' : '本地账号列表',
-                style:
-                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                widget.strings.switchToChinese == '中文' ? 'Local Accounts' : '本地账号列表',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
               ),
               FilledButton.icon(
                 icon: const Icon(Icons.person_add),
-                label: Text(strings.createUser),
-                onPressed: () => _openCreateUserDialog(strings, connectionId),
+                label: Text(widget.strings.createUser),
+                onPressed: () => _openCreateUserDialog(widget.strings, widget.connectionId),
               ),
             ],
           ),
         ),
         Expanded(
           child: RefreshIndicator(
-            onRefresh: () => _fetchAccounts(connectionId),
-            child: _accounts.isEmpty
+            onRefresh: widget.onRefresh,
+            child: widget.accounts.isEmpty
                 ? const Center(child: Text('No accounts found.'))
                 : ListView.builder(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
-                    itemCount: _accounts.length,
+                    itemCount: widget.accounts.length,
                     itemBuilder: (context, index) {
-                      final account = _accounts[index];
+                      final account = widget.accounts[index];
                       return Card(
                         child: ExpansionTile(
                           leading: CircleAvatar(
                             backgroundColor: account.uid == 0
-                                ? colorScheme.errorContainer
-                                : colorScheme.primaryContainer,
+                                ? widget.colorScheme.errorContainer
+                                : widget.colorScheme.primaryContainer,
                             child: Icon(
                               account.uid == 0 ? Icons.security : Icons.person,
                               color: account.uid == 0
-                                  ? colorScheme.onErrorContainer
-                                  : colorScheme.onPrimaryContainer,
+                                  ? widget.colorScheme.onErrorContainer
+                                  : widget.colorScheme.onPrimaryContainer,
                             ),
                           ),
                           title: Row(
@@ -538,21 +582,21 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                               Text('(${account.uid}/${account.gid})',
                                   style: TextStyle(
                                       fontSize: 12,
-                                      color: colorScheme.onSurfaceVariant)),
+                                      color: widget.colorScheme.onSurfaceVariant)),
                               const Spacer(),
                               if (account.isLocked)
                                 Container(
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 6, vertical: 2),
                                   decoration: BoxDecoration(
-                                    color: colorScheme.error
+                                    color: widget.colorScheme.error
                                         .withValues(alpha: 0.1),
                                     borderRadius: BorderRadius.circular(4),
                                   ),
                                   child: Text(
-                                    strings.lockUser,
+                                    widget.strings.lockUser,
                                     style: TextStyle(
-                                        color: colorScheme.error,
+                                        color: widget.colorScheme.error,
                                         fontSize: 10,
                                         fontWeight: FontWeight.bold),
                                   ),
@@ -562,14 +606,14 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 6, vertical: 2),
                                   decoration: BoxDecoration(
-                                    color: colorScheme.primary
+                                    color: widget.colorScheme.primary
                                         .withValues(alpha: 0.1),
                                     borderRadius: BorderRadius.circular(4),
                                   ),
                                   child: Text(
-                                    strings.unlockUser,
+                                    widget.strings.unlockUser,
                                     style: TextStyle(
-                                        color: colorScheme.primary,
+                                        color: widget.colorScheme.primary,
                                         fontSize: 10,
                                         fontWeight: FontWeight.bold),
                                   ),
@@ -583,17 +627,16 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                             style: TextStyle(
                               fontSize: 12,
                               color:
-                                  colorScheme.onSurface.withValues(alpha: 0.58),
+                                  widget.colorScheme.onSurface.withValues(alpha: 0.58),
                             ),
                           ),
                           children: [
                             _UserDetailActions(
-                              connectionId: connectionId,
+                              connectionId: widget.connectionId,
                               account: account,
-                              strings: strings,
-                              colorScheme: colorScheme,
-                              onStatusChanged: () =>
-                                  _fetchAccounts(connectionId),
+                              strings: widget.strings,
+                              colorScheme: widget.colorScheme,
+                              onStatusChanged: widget.onRefresh,
                             ),
                           ],
                         ),
@@ -606,24 +649,70 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
     );
   }
 
-  // --- Sessions Tab Implementation ---
-  Widget _buildSessionsTab(
-      AppStrings strings, ColorScheme colorScheme, String connectionId) {
-    if (_loadingSessions) {
+  void _openCreateUserDialog(AppStrings strings, String connectionId) {
+    showDialog(
+      context: context,
+      builder: (context) => _CreateUserDialog(
+        connectionId: connectionId,
+        strings: strings,
+        onCreated: widget.onRefresh,
+      ),
+    );
+  }
+}
+
+class _SessionsTab extends StatefulWidget {
+  final AppStrings strings;
+  final ColorScheme colorScheme;
+  final String connectionId;
+  final List<ActiveSession> sessions;
+  final bool isLoading;
+  final RefreshCallback onRefresh;
+
+  const _SessionsTab({
+    required this.strings,
+    required this.colorScheme,
+    required this.connectionId,
+    required this.sessions,
+    required this.isLoading,
+    required this.onRefresh,
+  });
+
+  @override
+  State<_SessionsTab> createState() => _SessionsTabState();
+}
+
+class _SessionsTabState extends State<_SessionsTab> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    if (widget.isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (_sessions.isEmpty) {
-      return const Center(child: Text('No active sessions.'));
+    if (widget.sessions.isEmpty) {
+      return RefreshIndicator(
+        onRefresh: widget.onRefresh,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: const [
+            SizedBox(height: 100),
+            Center(child: Text('No active sessions.')),
+          ],
+        ),
+      );
     }
 
     return RefreshIndicator(
-      onRefresh: () => _fetchSessions(connectionId),
+      onRefresh: widget.onRefresh,
       child: ListView.builder(
         padding: const EdgeInsets.all(12),
-        itemCount: _sessions.length,
+        itemCount: widget.sessions.length,
         itemBuilder: (context, index) {
-          final s = _sessions[index];
+          final s = widget.sessions[index];
           return Card(
             child: ListTile(
               leading: const CircleAvatar(child: Icon(Icons.computer)),
@@ -636,12 +725,12 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
-                      color: colorScheme.secondaryContainer,
+                      color: widget.colorScheme.secondaryContainer,
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(s.tty,
                         style: TextStyle(
-                            color: colorScheme.onSecondaryContainer,
+                            color: widget.colorScheme.onSecondaryContainer,
                             fontSize: 11)),
                   ),
                 ],
@@ -652,15 +741,15 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                 maxLines: 1,
                 style: TextStyle(
                   fontSize: 12,
-                  color: colorScheme.onSurface.withValues(alpha: 0.58),
+                  color: widget.colorScheme.onSurface.withValues(alpha: 0.58),
                 ),
               ),
               trailing: IconButton(
                 icon: const Icon(Icons.login_outlined),
-                color: colorScheme.error,
+                color: widget.colorScheme.error,
                 tooltip:
-                    strings.switchToChinese == '中文' ? 'Kill Session' : '断开会话',
-                onPressed: () => _confirmKillSession(s, connectionId),
+                    widget.strings.switchToChinese == '中文' ? 'Kill Session' : '断开会话',
+                onPressed: () => _confirmKillSession(s, widget.connectionId),
               ),
             ),
           );
@@ -702,7 +791,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
             .read<SystemAdminService>()
             .killActiveSession(connectionId, session.tty);
         if (!mounted) return;
-        _fetchSessions(connectionId);
+        widget.onRefresh();
       } catch (e) {
         if (!mounted) return;
         ScaffoldMessenger.of(context)
@@ -710,16 +799,82 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
       }
     }
   }
+}
 
-  // --- Services Tab Implementation ---
-  Widget _buildServicesTab(
-      AppStrings strings, ColorScheme colorScheme, String connectionId) {
-    if (_loadingServices) {
+class _ServicesTab extends StatefulWidget {
+  final AppStrings strings;
+  final ColorScheme colorScheme;
+  final String connectionId;
+  final List<SystemdService> services;
+  final bool isLoading;
+  final RefreshCallback onRefresh;
+
+  const _ServicesTab({
+    required this.strings,
+    required this.colorScheme,
+    required this.connectionId,
+    required this.services,
+    required this.isLoading,
+    required this.onRefresh,
+  });
+
+  @override
+  State<_ServicesTab> createState() => _ServicesTabState();
+}
+
+class _ServicesTabState extends State<_ServicesTab> with AutomaticKeepAliveClientMixin {
+  final TextEditingController _serviceSearchController = TextEditingController();
+  List<SystemdService> _filteredServices = [];
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _serviceSearchController.addListener(_filterServices);
+    _filteredServices = List.from(widget.services);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ServicesTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.services != oldWidget.services) {
+      _filterServices();
+    }
+  }
+
+  @override
+  void dispose() {
+    _serviceSearchController.dispose();
+    super.dispose();
+  }
+
+  void _filterServices() {
+    if (!mounted) return;
+    final query = _serviceSearchController.text.trim().toLowerCase();
+    setState(() {
+      if (query.isEmpty) {
+        _filteredServices = List.from(widget.services);
+      } else {
+        _filteredServices = widget.services
+            .where((s) =>
+                s.name.toLowerCase().contains(query) ||
+                s.description.toLowerCase().contains(query))
+            .toList();
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    if (widget.isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
 
     return RefreshIndicator(
-      onRefresh: () => _fetchServices(connectionId),
+      onRefresh: widget.onRefresh,
       child: Column(
         children: [
           Padding(
@@ -727,7 +882,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
             child: TextField(
               controller: _serviceSearchController,
               decoration: InputDecoration(
-                hintText: strings.switchToChinese == '中文'
+                hintText: widget.strings.switchToChinese == '中文'
                     ? 'Search services...'
                     : '搜索服务...',
                 prefixIcon: const Icon(Icons.search),
@@ -737,57 +892,65 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
             ),
           ),
           Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              itemCount: _filteredServices.length,
-              itemBuilder: (context, index) {
-                final service = _filteredServices[index];
-                return Card(
-                  child: ListTile(
-                    leading: Icon(
-                      service.isRunning ? Icons.play_circle : Icons.stop_circle,
-                      color: service.isRunning
-                          ? colorScheme.secondary
-                          : colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
-                    ),
-                    title: OverflowScrollText(
-                      service.name,
-                      selectable: false,
-                      maxLines: 1,
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    subtitle: OverflowScrollText(
-                      '${service.activeState} (${service.subState}) • ${service.description}',
-                      selectable: false,
-                      maxLines: 1,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colorScheme.onSurface.withValues(alpha: 0.58),
-                      ),
-                    ),
-                    trailing: PopupMenuButton<String>(
-                      onSelected: (action) =>
-                          _manageService(service.name, action, connectionId),
-                      itemBuilder: (context) => [
-                        PopupMenuItem(
-                            value: 'start', child: Text(strings.serviceStart)),
-                        PopupMenuItem(
-                            value: 'stop', child: Text(strings.serviceStop)),
-                        PopupMenuItem(
-                            value: 'restart',
-                            child: Text(strings.serviceRestart)),
-                        PopupMenuItem(
-                            value: 'enable',
-                            child: Text(strings.serviceEnable)),
-                        PopupMenuItem(
-                            value: 'disable',
-                            child: Text(strings.serviceDisable)),
-                      ],
-                    ),
+            child: _filteredServices.isEmpty
+                ? ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: const [
+                      SizedBox(height: 100),
+                      Center(child: Text('No services found.')),
+                    ],
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    itemCount: _filteredServices.length,
+                    itemBuilder: (context, index) {
+                      final service = _filteredServices[index];
+                      return Card(
+                        child: ListTile(
+                          leading: Icon(
+                            service.isRunning ? Icons.play_circle : Icons.stop_circle,
+                            color: service.isRunning
+                                ? widget.colorScheme.secondary
+                                : widget.colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                          ),
+                          title: OverflowScrollText(
+                            service.name,
+                            selectable: false,
+                            maxLines: 1,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: OverflowScrollText(
+                            '${service.activeState} (${service.subState}) • ${service.description}',
+                            selectable: false,
+                            maxLines: 1,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: widget.colorScheme.onSurface.withValues(alpha: 0.58),
+                            ),
+                          ),
+                          trailing: PopupMenuButton<String>(
+                            onSelected: (action) =>
+                                _manageService(service.name, action, widget.connectionId),
+                            itemBuilder: (context) => [
+                              PopupMenuItem(
+                                  value: 'start', child: Text(widget.strings.serviceStart)),
+                              PopupMenuItem(
+                                  value: 'stop', child: Text(widget.strings.serviceStop)),
+                              PopupMenuItem(
+                                  value: 'restart',
+                                  child: Text(widget.strings.serviceRestart)),
+                              PopupMenuItem(
+                                  value: 'enable',
+                                  child: Text(widget.strings.serviceEnable)),
+                              PopupMenuItem(
+                                  value: 'disable',
+                                  child: Text(widget.strings.serviceDisable)),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                );
-              },
-            ),
           ),
         ],
       ),
@@ -827,39 +990,74 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
           .read<SystemAdminService>()
           .manageSystemdService(connectionId, name, action);
       if (!mounted) return;
-      _fetchServices(connectionId);
+      widget.onRefresh();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Action failed: $e')));
     }
   }
+}
 
-  // --- Ports Tab Implementation ---
-  Widget _buildPortsTab(
-      AppStrings strings, ColorScheme colorScheme, String connectionId) {
-    if (_loadingPorts) {
+class _PortsTab extends StatefulWidget {
+  final AppStrings strings;
+  final ColorScheme colorScheme;
+  final String connectionId;
+  final List<ListeningPort> ports;
+  final bool isLoading;
+  final RefreshCallback onRefresh;
+
+  const _PortsTab({
+    required this.strings,
+    required this.colorScheme,
+    required this.connectionId,
+    required this.ports,
+    required this.isLoading,
+    required this.onRefresh,
+  });
+
+  @override
+  State<_PortsTab> createState() => _PortsTabState();
+}
+
+class _PortsTabState extends State<_PortsTab> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    if (widget.isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (_ports.isEmpty) {
-      return const Center(child: Text('No listening ports found.'));
+    if (widget.ports.isEmpty) {
+      return RefreshIndicator(
+        onRefresh: widget.onRefresh,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: const [
+            SizedBox(height: 100),
+            Center(child: Text('No listening ports found.')),
+          ],
+        ),
+      );
     }
 
     return RefreshIndicator(
-      onRefresh: () => _fetchPorts(connectionId),
+      onRefresh: widget.onRefresh,
       child: ListView.builder(
         padding: const EdgeInsets.all(12),
-        itemCount: _ports.length,
+        itemCount: widget.ports.length,
         itemBuilder: (context, index) {
-          final p = _ports[index];
+          final p = widget.ports[index];
           return Card(
             child: ListTile(
               leading: Icon(
                 p.protocol.contains('udp')
                     ? Icons.radio_button_checked
                     : Icons.swap_horizontal_circle,
-                color: colorScheme.secondary,
+                color: widget.colorScheme.secondary,
               ),
               title: Row(
                 children: [
@@ -873,7 +1071,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
-                          color: colorScheme.surfaceContainerHighest,
+                          color: widget.colorScheme.surfaceContainerHighest,
                           borderRadius: BorderRadius.circular(4),
                         ),
                         child: OverflowScrollText(
@@ -896,7 +1094,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                 maxLines: 1,
                 style: TextStyle(
                   fontSize: 12,
-                  color: colorScheme.onSurface.withValues(alpha: 0.58),
+                  color: widget.colorScheme.onSurface.withValues(alpha: 0.58),
                 ),
               ),
             ),
@@ -905,41 +1103,61 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
       ),
     );
   }
+}
 
-  // --- Power Tab Implementation ---
-  Widget _buildPowerTab(
-      AppStrings strings, ColorScheme colorScheme, String connectionId) {
+class _PowerTab extends StatefulWidget {
+  final AppStrings strings;
+  final ColorScheme colorScheme;
+  final String connectionId;
+
+  const _PowerTab({
+    required this.strings,
+    required this.colorScheme,
+    required this.connectionId,
+  });
+
+  @override
+  State<_PowerTab> createState() => _PowerTabState();
+}
+
+class _PowerTabState extends State<_PowerTab> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.power_settings_new, size: 96, color: colorScheme.error),
+            Icon(Icons.power_settings_new, size: 96, color: widget.colorScheme.error),
             const SizedBox(height: 24),
             Text(
-              strings.systemPower,
+              widget.strings.systemPower,
               style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             Text(
-              strings.switchToChinese == '中文'
+              widget.strings.switchToChinese == '中文'
                   ? 'Reboot or power down the remote server. Authenticated as root.'
                   : '远程服务器系统控制，将直接向系统发送硬件关机或重启指令。',
               textAlign: TextAlign.center,
-              style: TextStyle(color: colorScheme.onSurfaceVariant),
+              style: TextStyle(color: widget.colorScheme.onSurfaceVariant),
             ),
             const SizedBox(height: 36),
             SizedBox(
               width: 250,
               child: FilledButton.icon(
                 icon: const Icon(Icons.cached),
-                label: Text(strings.rebootServer),
+                label: Text(widget.strings.rebootServer),
                 style: FilledButton.styleFrom(
-                  backgroundColor: colorScheme.tertiary,
+                  backgroundColor: widget.colorScheme.tertiary,
                   padding: const EdgeInsets.all(16),
                 ),
-                onPressed: () => _confirmPowerAction('reboot', connectionId),
+                onPressed: () => _confirmPowerAction('reboot', widget.connectionId),
               ),
             ),
             const SizedBox(height: 16),
@@ -947,13 +1165,13 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
               width: 250,
               child: OutlinedButton.icon(
                 icon: const Icon(Icons.power_off),
-                label: Text(strings.shutdownServer),
+                label: Text(widget.strings.shutdownServer),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: colorScheme.error,
-                  side: BorderSide(color: colorScheme.error),
+                  foregroundColor: widget.colorScheme.error,
+                  side: BorderSide(color: widget.colorScheme.error),
                   padding: const EdgeInsets.all(16),
                 ),
-                onPressed: () => _confirmPowerAction('shutdown', connectionId),
+                onPressed: () => _confirmPowerAction('shutdown', widget.connectionId),
               ),
             ),
           ],
@@ -1007,17 +1225,6 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
         );
       }
     }
-  }
-
-  void _openCreateUserDialog(AppStrings strings, String connectionId) {
-    showDialog(
-      context: context,
-      builder: (context) => _CreateUserDialog(
-        connectionId: connectionId,
-        strings: strings,
-        onCreated: () => _fetchAccounts(connectionId),
-      ),
-    );
   }
 }
 

@@ -4,7 +4,8 @@
       "Bash(flutter analyze *)",
       "PowerShell(flutter test *)",
       "PowerShell(flutter analyze *)",
-      "PowerShell(dart format *)"
+      "PowerShell(dart format *)",
+      "Bash(flutter test *)"
     ]
   }
 }
