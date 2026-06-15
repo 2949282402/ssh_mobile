@@ -177,6 +177,7 @@ extension _ChatGeneration on _LlmChatScreenState {
         playbookService: context.read<PlaybookService>(),
         clientWebViewSessionId: chatId,
       ),
+      language: context.read<AppSettings>().language,
     );
     final cancellationToken = LlmCancellationToken();
     _activeCancellationToken = cancellationToken;

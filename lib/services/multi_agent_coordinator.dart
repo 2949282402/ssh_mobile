@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'app_log_service.dart';
+import 'app_settings.dart';
+import 'llm_chat_service.dart';
 import 'tool_secret_policy.dart';
 
 class SubAgentThinkingSettings {
@@ -32,6 +34,12 @@ abstract interface class MultiAgentCoordinatorAdapter {
     required MultiAgentCompletion complete,
     required MultiAgentClassificationCompletion classify,
     void Function()? checkCancelled,
+    AppLanguage language = AppLanguage.zh,
+    String? plannerPrompt,
+    String? operatorPrompt,
+    String? reviewerPrompt,
+    String? summarizerPrompt,
+    String? coordinatorPrompt,
   });
 }
 
@@ -55,6 +63,12 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     required MultiAgentCompletion complete,
     required MultiAgentClassificationCompletion classify,
     void Function()? checkCancelled,
+    AppLanguage language = AppLanguage.zh,
+    String? plannerPrompt,
+    String? operatorPrompt,
+    String? reviewerPrompt,
+    String? summarizerPrompt,
+    String? coordinatorPrompt,
   }) async {
     checkCancelled?.call();
     final decision = shouldCollaborate(
@@ -79,6 +93,8 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
       classify: classify,
       maxAgents: maxAgents,
       checkCancelled: checkCancelled,
+      language: language,
+      coordinatorPrompt: coordinatorPrompt,
     );
 
     checkCancelled?.call();
@@ -91,7 +107,14 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
       return null;
     }
 
-    final roles = _rolesFor(classification.agentCount);
+    final roles = _rolesFor(
+      classification.agentCount,
+      language: language,
+      plannerPrompt: plannerPrompt,
+      operatorPrompt: operatorPrompt,
+      reviewerPrompt: reviewerPrompt,
+      summarizerPrompt: summarizerPrompt,
+    );
     final latestUser = _latestUserContent(messages);
     final contextText = _recentConversationText(messages);
     AppLogService.instance.info(
@@ -114,6 +137,7 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
           complete: complete,
           thinkingSettings: thinkingSettings,
           checkCancelled: checkCancelled,
+          language: language,
         ),
     ];
     final outputs = await Future.wait(futures);
@@ -127,19 +151,25 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
       );
       return MultiAgentRunResult(
         agentCount: roles.length,
-        memoryContent:
-            'Multi-agent collaboration was attempted, but every helper failed. Continue with the primary assistant only.',
+        memoryContent: language == AppLanguage.en
+            ? 'Multi-agent collaboration was attempted, but every helper failed. Continue with the primary assistant only.'
+            : '尝试了多智能体协作，但所有辅助智能体都失败了。仅使用主助手继续。',
         traceContent: _traceContent(outputs),
       );
     }
 
-    final memory = StringBuffer('Multi-agent collaboration summary:\n');
+    final header = language == AppLanguage.en
+        ? 'Multi-agent collaboration summary:\n'
+        : '多智能体协作概要：\n';
+    final footer = language == AppLanguage.en
+        ? '\nUse this as advisory context only. The primary assistant remains responsible for any tool calls, approvals, and final answer.'
+        : '\n仅作为参考上下文。主助手仍应对任何工具调用、审批和最终回答负责。';
+
+    final memory = StringBuffer(header);
     for (final output in successful) {
       memory.writeln('- ${output.role.label}: ${output.content}');
     }
-    memory.writeln(
-      '\nUse this as advisory context only. The primary assistant remains responsible for any tool calls, approvals, and final answer.',
-    );
+    memory.writeln(footer);
 
     final result = MultiAgentRunResult(
       agentCount: roles.length,
@@ -275,6 +305,7 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     required MultiAgentCompletion complete,
     required SubAgentThinkingSettings thinkingSettings,
     void Function()? checkCancelled,
+    AppLanguage language = AppLanguage.zh,
   }) async {
     int attempts = 0;
     const maxRetries = 3;
@@ -288,6 +319,7 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
             role: role,
             latestUser: latestUser,
             contextText: contextText,
+            language: language,
           ),
           thinkingSettings: thinkingSettings,
         );
@@ -334,7 +366,11 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     required MultiAgentRole role,
     required String latestUser,
     required String contextText,
+    AppLanguage language = AppLanguage.zh,
   }) {
+    final footer = language == AppLanguage.en
+        ? 'Return concise advisory notes for the primary assistant. Do not write the final user-facing answer.'
+        : '为主要助手返回简明扼要的咨询建议。不要编写最终面向用户的解答。';
     return [
       {
         'role': 'system',
@@ -350,39 +386,72 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
             'Recent conversation context:',
             contextText,
             '',
-            'Return concise advisory notes for the primary assistant. Do not write the final user-facing answer.',
+            footer,
           ].join('\n'),
         ),
       },
     ];
   }
 
-  List<MultiAgentRole> _rolesFor(int requestedMaxAgents) {
+  List<MultiAgentRole> _rolesFor(
+    int requestedMaxAgents, {
+    AppLanguage language = AppLanguage.zh,
+    String? plannerPrompt,
+    String? operatorPrompt,
+    String? reviewerPrompt,
+    String? summarizerPrompt,
+  }) {
     final maxAgents = AiMultiAgentMaxAgents.normalize(requestedMaxAgents);
-    const roles = [
+    final isEn = language == AppLanguage.en;
+
+    final plannerDefault = isEn
+        ? '$multiAgentPlannerPromptEnPersona $multiAgentPlannerPromptEnSafety'
+        : '$multiAgentPlannerPromptZhPersona $multiAgentPlannerPromptZhSafety';
+    final planner = (plannerPrompt != null && plannerPrompt.trim().isNotEmpty)
+        ? plannerPrompt.trim()
+        : plannerDefault;
+
+    final operatorDefault = isEn
+        ? '$multiAgentOperatorPromptEnPersona $multiAgentOperatorPromptEnSafety'
+        : '$multiAgentOperatorPromptZhPersona $multiAgentOperatorPromptZhSafety';
+    final operator = (operatorPrompt != null && operatorPrompt.trim().isNotEmpty)
+        ? operatorPrompt.trim()
+        : operatorDefault;
+
+    final reviewerDefault = isEn
+        ? '$multiAgentReviewerPromptEnPersona $multiAgentReviewerPromptEnSafety'
+        : '$multiAgentReviewerPromptZhPersona $multiAgentReviewerPromptZhSafety';
+    final reviewer = (reviewerPrompt != null && reviewerPrompt.trim().isNotEmpty)
+        ? reviewerPrompt.trim()
+        : reviewerDefault;
+
+    final summarizerDefault = isEn
+        ? '$multiAgentSummarizerPromptEnPersona $multiAgentSummarizerPromptEnSafety'
+        : '$multiAgentSummarizerPromptZhPersona $multiAgentSummarizerPromptZhSafety';
+    final summarizer = (summarizerPrompt != null && summarizerPrompt.trim().isNotEmpty)
+        ? summarizerPrompt.trim()
+        : summarizerDefault;
+
+    final roles = [
       MultiAgentRole(
         name: 'planner',
         label: 'Planner',
-        systemPrompt:
-            'You are a planning helper inside SSH Mobile. Break the user request into a safe, efficient sequence. Do not call tools, request secrets, or produce a final answer. Keep output brief.',
+        systemPrompt: planner,
       ),
       MultiAgentRole(
         name: 'operator',
         label: 'Operator',
-        systemPrompt:
-            'You are an operations helper inside SSH Mobile. Suggest safe evidence to gather, likely SSH/SFTP/client tools the primary assistant may use, and approval-sensitive actions. Do not call tools yourself. Keep output brief.',
+        systemPrompt: operator,
       ),
       MultiAgentRole(
         name: 'reviewer',
         label: 'Reviewer',
-        systemPrompt:
-            'You are a risk reviewer inside SSH Mobile. Look for missing checks, security pitfalls, platform mismatches, and user-impact risks. Do not call tools or produce a final answer. Keep output brief.',
+        systemPrompt: reviewer,
       ),
       MultiAgentRole(
         name: 'summarizer',
         label: 'Summarizer',
-        systemPrompt:
-            'You are a synthesis helper inside SSH Mobile. Identify the shortest useful path and the key facts the primary assistant should preserve. Do not call tools or produce a final answer. Keep output brief.',
+        systemPrompt: summarizer,
       ),
     ];
     return roles.take(maxAgents).toList(growable: false);
@@ -433,25 +502,22 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     required MultiAgentClassificationCompletion classify,
     required int maxAgents,
     void Function()? checkCancelled,
+    AppLanguage language = AppLanguage.zh,
+    String? coordinatorPrompt,
   }) async {
     try {
       checkCancelled?.call();
       final latestUser = _latestUserContent(messages);
       final contextText = _recentConversationText(messages);
 
+      final coordinator = (coordinatorPrompt != null && coordinatorPrompt.trim().isNotEmpty)
+          ? coordinatorPrompt.trim()
+          : (language == AppLanguage.en ? multiAgentCoordinatorPromptEn : multiAgentCoordinatorPromptZh);
+
       final classificationMessages = [
         {
           'role': 'system',
-          'content': '''You are the Multi-Agent Coordinator for SSH Mobile.
-Determine if the user request requires multi-agent collaboration (e.g. complex troubleshooting, code implementations, debugging, multi-step maintenance planning, safety-critical tasks).
-Return JSON only:
-{
-  "shouldCollaborate": true,
-  "reason": "brief explanation",
-  "thinkingEnabled": true,
-  "reasoningEffort": "medium",
-  "agentCount": 3
-}''',
+          'content': coordinator,
         },
         {
           'role': 'user',

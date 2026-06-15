@@ -20,7 +20,7 @@ extension LlmContextCompressor on LlmChatService {
         messages.lastIndexWhere((message) => message['role'] == 'user');
     if (lastUserIndex <= 0) {
       return [
-        {'role': 'system', 'content': _systemPrompt},
+        {'role': 'system', 'content': systemPrompt},
         ...messages,
       ];
     }
@@ -42,8 +42,7 @@ extension LlmContextCompressor on LlmChatService {
       messages: [
         {
           'role': 'system',
-          'content':
-              'Summarize this conversation for continuing an SSH/SFTP assistant chat. Preserve server names, paths, commands, decisions, approvals, errors, and unresolved tasks. Be concise but operationally complete.',
+          'content': compressionPrompt,
         },
         {'role': 'user', 'content': transcript},
       ],
@@ -61,10 +60,10 @@ extension LlmContextCompressor on LlmChatService {
           'summaryTokens=${LlmChatService.estimateTextTokens(summary)} tailMessages=${tail.length}',
     );
     return [
-      {'role': 'system', 'content': _systemPrompt},
+      {'role': 'system', 'content': systemPrompt},
       {
         'role': 'assistant',
-        'content': 'Conversation memory summary:\n$summary',
+        'content': '$conversationMemorySummaryHeader$summary',
       },
       ...tail,
     ];

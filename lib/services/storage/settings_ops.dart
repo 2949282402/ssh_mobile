@@ -83,6 +83,20 @@ extension SettingsOps on StorageService {
     final activeApiKeyId = await getSelectedAiApiKeyId();
     final activeApiKeyMasked =
         apiKey?.isNotEmpty == true ? maskAiApiKey(apiKey!) : null;
+    final useCustomPrompts =
+        _prefs?.getBool(StorageService._aiUseCustomPromptsKey) ?? false;
+    final customSystemPrompt =
+        _prefs?.getString(StorageService._aiCustomSystemPromptKey) ?? '';
+    final customPlannerPrompt =
+        _prefs?.getString(StorageService._aiCustomPlannerPromptKey) ?? '';
+    final customOperatorPrompt =
+        _prefs?.getString(StorageService._aiCustomOperatorPromptKey) ?? '';
+    final customReviewerPrompt =
+        _prefs?.getString(StorageService._aiCustomReviewerPromptKey) ?? '';
+    final customSummarizerPrompt =
+        _prefs?.getString(StorageService._aiCustomSummarizerPromptKey) ?? '';
+    final customCoordinatorPrompt =
+        _prefs?.getString(StorageService._aiCustomCoordinatorPromptKey) ?? '';
     return AiConnectionSettings(
       baseUrl:
           baseUrl?.isNotEmpty == true ? baseUrl! : 'https://api.deepseek.com',
@@ -117,6 +131,13 @@ extension SettingsOps on StorageService {
       hasApiKey: apiKey?.isNotEmpty == true,
       activeApiKeyId: activeApiKeyId,
       activeApiKeyMasked: activeApiKeyMasked,
+      useCustomPrompts: useCustomPrompts,
+      customSystemPrompt: customSystemPrompt,
+      customPlannerPrompt: customPlannerPrompt,
+      customOperatorPrompt: customOperatorPrompt,
+      customReviewerPrompt: customReviewerPrompt,
+      customSummarizerPrompt: customSummarizerPrompt,
+      customCoordinatorPrompt: customCoordinatorPrompt,
     );
   }
 
@@ -377,6 +398,13 @@ extension SettingsOps on StorageService {
     String? quarkSearchEndpoint,
     String? quarkApiKey,
     bool clearQuarkApiKey = false,
+    bool? useCustomPrompts,
+    String? customSystemPrompt,
+    String? customPlannerPrompt,
+    String? customOperatorPrompt,
+    String? customReviewerPrompt,
+    String? customSummarizerPrompt,
+    String? customCoordinatorPrompt,
   }) async {
     if (!_initialized || _prefs == null) return;
     final normalizedBaseUrl = baseUrl.trim();
@@ -434,6 +462,27 @@ extension SettingsOps on StorageService {
     if (quarkSearchEndpoint != null) {
       await _prefs!.setString(
           StorageService._aiQuarkSearchEndpointKey, quarkSearchEndpoint.trim());
+    }
+    if (useCustomPrompts != null) {
+      await _prefs!.setBool(StorageService._aiUseCustomPromptsKey, useCustomPrompts);
+    }
+    if (customSystemPrompt != null) {
+      await _prefs!.setString(StorageService._aiCustomSystemPromptKey, customSystemPrompt);
+    }
+    if (customPlannerPrompt != null) {
+      await _prefs!.setString(StorageService._aiCustomPlannerPromptKey, customPlannerPrompt);
+    }
+    if (customOperatorPrompt != null) {
+      await _prefs!.setString(StorageService._aiCustomOperatorPromptKey, customOperatorPrompt);
+    }
+    if (customReviewerPrompt != null) {
+      await _prefs!.setString(StorageService._aiCustomReviewerPromptKey, customReviewerPrompt);
+    }
+    if (customSummarizerPrompt != null) {
+      await _prefs!.setString(StorageService._aiCustomSummarizerPromptKey, customSummarizerPrompt);
+    }
+    if (customCoordinatorPrompt != null) {
+      await _prefs!.setString(StorageService._aiCustomCoordinatorPromptKey, customCoordinatorPrompt);
     }
     await _prefs!.setBool(
       StorageService._aiMultiAgentEnabledKey,
@@ -520,7 +569,7 @@ extension SettingsOps on StorageService {
     AppLogService.instance.info(
       'LLM settings saved',
       details:
-          'baseUrl=$normalizedBaseUrl model=$normalizedModel contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} timeoutSeconds=${AiRequestTimeout.normalize(timeoutSeconds)} deepSeekThinking=${deepSeekThinkingEnabled ?? (_prefs!.getBool(StorageService._aiDeepSeekThinkingEnabledKey) ?? true)} deepSeekEffort=${DeepSeekReasoningEffort.normalize(deepSeekReasoningEffort ?? _prefs!.getString(StorageService._aiDeepSeekReasoningEffortKey))} openAiEffort=${OpenAiReasoningEffort.normalize(openAiReasoningEffort ?? _prefs!.getString(StorageService._aiOpenAiReasoningEffortKey))} webSearch=${webSearchEnabled ?? (_prefs!.getBool(StorageService._aiWebSearchEnabledKey) ?? true)} webSearchEngine=${AiWebSearchEngine.normalize(webSearchEngine ?? _prefs!.getString(StorageService._aiWebSearchEngineKey))} quarkSearchEndpoint=${_prefs!.getString(StorageService._aiQuarkSearchEndpointKey)} quarkApiKeyUpdated=$quarkApiKeyUpdated multiAgent=${multiAgentEnabled ?? (_prefs!.getBool(StorageService._aiMultiAgentEnabledKey) ?? true)} maxAgents=${AiMultiAgentMaxAgents.normalize(multiAgentMaxAgents ?? _prefs!.getInt(StorageService._aiMultiAgentMaxAgentsKey))} toolCallBudget=${AiToolCallBudget.normalize(toolCallBudget ?? _prefs!.getInt(StorageService._aiToolCallBudgetKey))} apiKeyUpdated=$apiKeyUpdated',
+          'baseUrl=$normalizedBaseUrl model=$normalizedModel contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} timeoutSeconds=${AiRequestTimeout.normalize(timeoutSeconds)} deepSeekThinking=${deepSeekThinkingEnabled ?? (_prefs!.getBool(StorageService._aiDeepSeekThinkingEnabledKey) ?? true)} deepSeekEffort=${DeepSeekReasoningEffort.normalize(deepSeekReasoningEffort ?? _prefs!.getString(StorageService._aiDeepSeekReasoningEffortKey))} openAiEffort=${OpenAiReasoningEffort.normalize(openAiReasoningEffort ?? _prefs!.getString(StorageService._aiOpenAiReasoningEffortKey))} webSearch=${webSearchEnabled ?? (_prefs!.getBool(StorageService._aiWebSearchEnabledKey) ?? true)} webSearchEngine=${AiWebSearchEngine.normalize(webSearchEngine ?? _prefs!.getString(StorageService._aiWebSearchEngineKey))} quarkSearchEndpoint=${_prefs!.getString(StorageService._aiQuarkSearchEndpointKey)} quarkApiKeyUpdated=$quarkApiKeyUpdated multiAgent=${multiAgentEnabled ?? (_prefs!.getBool(StorageService._aiMultiAgentEnabledKey) ?? true)} maxAgents=${AiMultiAgentMaxAgents.normalize(multiAgentMaxAgents ?? _prefs!.getInt(StorageService._aiMultiAgentMaxAgentsKey))} toolCallBudget=${AiToolCallBudget.normalize(toolCallBudget ?? _prefs!.getInt(StorageService._aiToolCallBudgetKey))} apiKeyUpdated=$apiKeyUpdated useCustomPrompts=$useCustomPrompts',
     );
   }
 

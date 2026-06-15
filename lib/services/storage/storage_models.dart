@@ -91,6 +91,13 @@ class AiConnectionSettings {
   final bool hasApiKey;
   final String? activeApiKeyId;
   final String? activeApiKeyMasked;
+  final bool useCustomPrompts;
+  final String customSystemPrompt;
+  final String customPlannerPrompt;
+  final String customOperatorPrompt;
+  final String customReviewerPrompt;
+  final String customSummarizerPrompt;
+  final String customCoordinatorPrompt;
 
   const AiConnectionSettings({
     required this.baseUrl,
@@ -113,6 +120,13 @@ class AiConnectionSettings {
     required this.hasApiKey,
     required this.activeApiKeyId,
     required this.activeApiKeyMasked,
+    required this.useCustomPrompts,
+    required this.customSystemPrompt,
+    required this.customPlannerPrompt,
+    required this.customOperatorPrompt,
+    required this.customReviewerPrompt,
+    required this.customSummarizerPrompt,
+    required this.customCoordinatorPrompt,
   });
 }
 

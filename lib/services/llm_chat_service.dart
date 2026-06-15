@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'ai_tool_service.dart';
 import 'app_log_service.dart';
+import 'app_settings.dart';
 import 'multi_agent_coordinator.dart';
 import 'storage_service.dart';
 import 'tool_secret_policy.dart';
@@ -51,14 +52,106 @@ class LlmChatService implements LlmClientAdapter {
   final StorageService storageService;
   final AiToolExecutor toolService;
   final MultiAgentCoordinatorAdapter multiAgentCoordinator;
+  final AppLanguage language;
+  final bool useCustomPrompts;
+  final String customSystemPrompt;
+  final String customPlannerPrompt;
+  final String customOperatorPrompt;
+  final String customReviewerPrompt;
+  final String customSummarizerPrompt;
+  final String customCoordinatorPrompt;
   final ToolSecretPolicy _toolSecretPolicy = const ToolSecretPolicy();
 
   LlmChatService({
     required this.storageService,
     required this.toolService,
+    this.language = AppLanguage.zh,
+    this.useCustomPrompts = false,
+    this.customSystemPrompt = '',
+    this.customPlannerPrompt = '',
+    this.customOperatorPrompt = '',
+    this.customReviewerPrompt = '',
+    this.customSummarizerPrompt = '',
+    this.customCoordinatorPrompt = '',
     MultiAgentCoordinatorAdapter? multiAgentCoordinator,
   }) : multiAgentCoordinator =
             multiAgentCoordinator ?? const MultiAgentCoordinator();
+
+  String get systemPrompt {
+    final isEn = language == AppLanguage.en;
+    final basePersona = isEn ? systemPromptEnPersona : systemPromptZhPersona;
+    final baseSafety = isEn ? systemPromptEnSafety : systemPromptZhSafety;
+
+    final persona = (useCustomPrompts && customSystemPrompt.trim().isNotEmpty)
+        ? customSystemPrompt.trim()
+        : basePersona.trim();
+
+    return '$persona\n\n$baseSafety';
+  }
+
+  String get compressionPrompt {
+    return language == AppLanguage.en
+        ? 'Summarize this conversation for continuing an SSH/SFTP assistant chat. Preserve server names, paths, commands, decisions, approvals, errors, and unresolved tasks. Be concise but operationally complete.'
+        : '总结此对话以继续进行 SSH/SFTP 助手聊天。保留服务器名称、路径、命令、决策、审批、错误和未解决的任务。保持简明，但操作信息需完整。';
+  }
+
+  String get conversationMemorySummaryHeader {
+    return language == AppLanguage.en
+        ? 'Conversation memory summary:\n'
+        : '对话历史记忆摘要：\n';
+  }
+
+  String get plannerPrompt {
+    final isEn = language == AppLanguage.en;
+    final basePersona = isEn ? multiAgentPlannerPromptEnPersona : multiAgentPlannerPromptZhPersona;
+    final baseSafety = isEn ? multiAgentPlannerPromptEnSafety : multiAgentPlannerPromptZhSafety;
+
+    final persona = (useCustomPrompts && customPlannerPrompt.trim().isNotEmpty)
+        ? customPlannerPrompt.trim()
+        : basePersona.trim();
+
+    return '$persona $baseSafety';
+  }
+
+  String get operatorPrompt {
+    final isEn = language == AppLanguage.en;
+    final basePersona = isEn ? multiAgentOperatorPromptEnPersona : multiAgentOperatorPromptZhPersona;
+    final baseSafety = isEn ? multiAgentOperatorPromptEnSafety : multiAgentOperatorPromptZhSafety;
+
+    final persona = (useCustomPrompts && customOperatorPrompt.trim().isNotEmpty)
+        ? customOperatorPrompt.trim()
+        : basePersona.trim();
+
+    return '$persona $baseSafety';
+  }
+
+  String get reviewerPrompt {
+    final isEn = language == AppLanguage.en;
+    final basePersona = isEn ? multiAgentReviewerPromptEnPersona : multiAgentReviewerPromptZhPersona;
+    final baseSafety = isEn ? multiAgentReviewerPromptEnSafety : multiAgentReviewerPromptZhSafety;
+
+    final persona = (useCustomPrompts && customReviewerPrompt.trim().isNotEmpty)
+        ? customReviewerPrompt.trim()
+        : basePersona.trim();
+
+    return '$persona $baseSafety';
+  }
+
+  String get summarizerPrompt {
+    final isEn = language == AppLanguage.en;
+    final basePersona = isEn ? multiAgentSummarizerPromptEnPersona : multiAgentSummarizerPromptZhPersona;
+    final baseSafety = isEn ? multiAgentSummarizerPromptEnSafety : multiAgentSummarizerPromptZhSafety;
+
+    final persona = (useCustomPrompts && customSummarizerPrompt.trim().isNotEmpty)
+        ? customSummarizerPrompt.trim()
+        : basePersona.trim();
+
+    return '$persona $baseSafety';
+  }
+
+  String get coordinatorPrompt {
+    return language == AppLanguage.en ? multiAgentCoordinatorPromptEn : multiAgentCoordinatorPromptZh;
+  }
 
   @override
   Future<List<String>> fetchModels({

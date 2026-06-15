@@ -7,12 +7,14 @@ class _ChatToolsBar extends StatelessWidget {
   final String imageLabel;
   final String fileLabel;
   final String ragLabel;
+  final String promptLabel;
   final VoidCallback onServerTap;
   final VoidCallback onSkillsTap;
   final VoidCallback onWebViewTap;
   final VoidCallback onImageTap;
   final VoidCallback onFileTap;
   final VoidCallback onRagTap;
+  final VoidCallback onPromptTap;
 
   const _ChatToolsBar({
     required this.skillsLabel,
@@ -21,12 +23,14 @@ class _ChatToolsBar extends StatelessWidget {
     required this.imageLabel,
     required this.fileLabel,
     required this.ragLabel,
+    required this.promptLabel,
     required this.onServerTap,
     required this.onSkillsTap,
     required this.onWebViewTap,
     required this.onImageTap,
     required this.onFileTap,
     required this.onRagTap,
+    required this.onPromptTap,
   });
 
   @override
@@ -91,6 +95,12 @@ class _ChatToolsBar extends StatelessWidget {
                   icon: Icons.auto_stories_outlined,
                   label: Text(ragLabel),
                   onPressed: onRagTap,
+                ),
+                _ChatToolTile(
+                  width: tileWidth,
+                  icon: Icons.psychology_outlined,
+                  label: Text(promptLabel),
+                  onPressed: onPromptTap,
                 ),
               ],
             );

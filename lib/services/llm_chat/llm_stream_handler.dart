@@ -55,7 +55,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     var workingMessages = <Map<String, dynamic>>[
       {
         'role': 'system',
-        'content': _systemPrompt,
+        'content': systemPrompt,
       },
       ...messages,
     ];
@@ -114,6 +114,12 @@ extension LlmChatServiceStreamHandler on LlmChatService {
       enabled: settings.multiAgentEnabled,
       maxAgents: settings.multiAgentMaxAgents,
       checkCancelled: cancellationToken?.throwIfCancelled,
+      language: language,
+      plannerPrompt: plannerPrompt,
+      operatorPrompt: operatorPrompt,
+      reviewerPrompt: reviewerPrompt,
+      summarizerPrompt: summarizerPrompt,
+      coordinatorPrompt: coordinatorPrompt,
       classify: (classificationMessages) async {
         final response = await _chatCompletion(
           baseUrl: settings.baseUrl,

@@ -40,6 +40,7 @@ part 'llm_chat/chat_rag_sheet.dart';
 part 'llm_chat/chat_generation.dart';
 part 'llm_chat/chat_token_compression.dart';
 part 'llm_chat/chat_controller_ops.dart';
+part 'llm_chat/prompt_customizer_dialog.dart';
 
 const List<String> _defaultModels = [
   'deepseek-v4-flash',
@@ -137,6 +138,7 @@ extension _AiSkillToolbarStrings on _AiStrings {
   String get webView => language == AppLanguage.en ? 'WebView' : '网页';
   String get attachImage => language == AppLanguage.en ? 'Image' : '图片';
   String get attachFile => language == AppLanguage.en ? 'File' : '文件';
+  String get promptLabel => language == AppLanguage.en ? 'Prompt' : '提示词';
 }
 
 extension _AiToolbarActionStrings on _AiStrings {
@@ -650,6 +652,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                                     imageLabel: strings.attachImage,
                                     fileLabel: strings.attachFile,
                                     ragLabel: strings.ragTitle,
+                                    promptLabel: strings.promptLabel,
                                     onServerTap: () =>
                                         _selectTargetServer(strings),
                                     onSkillsTap: () {
@@ -662,6 +665,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                                     onFileTap: () => _pickFile(strings),
                                     onRagTap: () =>
                                         _showRagBottomSheet(context, strings),
+                                    onPromptTap: () =>
+                                        _showPromptCustomizer(strings),
                                   ),
                                 )
                               : const SizedBox(width: double.infinity),
@@ -819,6 +824,14 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       MaterialPageRoute(
         builder: (_) => ClientWebViewScreen(chatId: chatId),
       ),
+    );
+  }
+
+  Future<void> _showPromptCustomizer(_AiStrings strings) async {
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _PromptCustomizerDialog(strings: strings),
     );
   }
 

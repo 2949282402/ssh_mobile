@@ -92,6 +92,13 @@ class StorageService extends ChangeNotifier
   static const _aiToolCallBudgetKey = 'ai_tool_call_budget';
   static const _aiMaxImageSizeBytesKey = 'ai_max_image_size_bytes';
   static const _aiMaxFileSizeBytesKey = 'ai_max_file_size_bytes';
+  static const _aiUseCustomPromptsKey = 'ai_use_custom_prompts';
+  static const _aiCustomSystemPromptKey = 'ai_custom_system_prompt';
+  static const _aiCustomPlannerPromptKey = 'ai_custom_planner_prompt';
+  static const _aiCustomOperatorPromptKey = 'ai_custom_operator_prompt';
+  static const _aiCustomReviewerPromptKey = 'ai_custom_reviewer_prompt';
+  static const _aiCustomSummarizerPromptKey = 'ai_custom_summarizer_prompt';
+  static const _aiCustomCoordinatorPromptKey = 'ai_custom_coordinator_prompt';
   static const _aiModelsCacheKey = 'ai_models_cache';
   static const _aiApiKeyRefsKey = 'ai_api_key_refs';
   static const _aiSelectedApiKeyIdKey = 'ai_selected_api_key_id';
