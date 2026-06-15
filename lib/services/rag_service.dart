@@ -64,9 +64,7 @@ class RagService extends ChangeNotifier {
 
   Future<void>? _initFuture;
 
-  RagService({required this.storageService}) {
-    unawaited(init());
-  }
+  RagService({required this.storageService});
 
   List<RagDocumentMetadata> get documents => List.unmodifiable(_documents);
   bool get isLoading => _isLoading;

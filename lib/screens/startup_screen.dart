@@ -61,8 +61,11 @@ class _StartupScreenState extends State<StartupScreen> {
     final storageInitialized = context.select<StorageService, bool>(
       (storage) => storage.initialized,
     );
+    final settingsInitialized = context.select<AppSettings, bool>(
+      (settings) => settings.initialized,
+    );
 
-    if (!storageInitialized) {
+    if (!storageInitialized || !settingsInitialized) {
       return const _StartupLoadingScreen();
     }
 
