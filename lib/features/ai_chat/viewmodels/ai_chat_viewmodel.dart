@@ -6,12 +6,10 @@ import '../../../services/ai_tool_service.dart';
 import '../../../services/agent_model_profile.dart';
 import '../../../services/app_log_service.dart';
 import '../../../services/app_settings.dart';
-import '../../../services/chat_context_assembler.dart';
+import '../services/ai_chat_runtime_factory.dart';
 import '../../../services/chat_orchestrator.dart';
 import '../../../services/llm_chat_service.dart';
-import '../../../services/operational_memory_retriever.dart';
 import '../../../services/performance_monitor_service.dart';
-import '../../../services/performance_monitor_tool_service.dart';
 import '../../../services/playbook_service.dart';
 import '../../../services/rag_service.dart';
 import '../../../services/sftp_service.dart';
@@ -123,12 +121,8 @@ class PendingToolApproval {
 
 class AiChatViewModel extends ChangeNotifier {
   final StorageService _storageService;
-  final SshService _sshService;
-  final SftpService _sftpService;
-  final PerformanceMonitorService _performanceMonitorService;
-  final PlaybookService _playbookService;
-  final RagService _ragService;
   final AppSettings _appSettings;
+  final AiChatRuntimeFactory _runtimeFactory;
 
   // 聊天会话状态列表
   List<AiChatRecord> _chats = const [];
@@ -178,13 +172,19 @@ class AiChatViewModel extends ChangeNotifier {
     required PlaybookService playbookService,
     required RagService ragService,
     required AppSettings appSettings,
+    AiChatRuntimeFactory? runtimeFactory,
   })  : _storageService = storageService,
-        _sshService = sshService,
-        _sftpService = sftpService,
-        _performanceMonitorService = performanceMonitorService,
-        _playbookService = playbookService,
-        _ragService = ragService,
-        _appSettings = appSettings;
+        _appSettings = appSettings,
+        _runtimeFactory = runtimeFactory ??
+            AiChatRuntimeFactory(
+              storageService: storageService,
+              sshService: sshService,
+              sftpService: sftpService,
+              performanceMonitorService: performanceMonitorService,
+              playbookService: playbookService,
+              ragService: ragService,
+              appSettings: appSettings,
+            );
 
   // Getters
   List<AiChatRecord> get chats => _chats;
@@ -385,16 +385,7 @@ class AiChatViewModel extends ChangeNotifier {
 
     // RAG 检索
     final attachments = List<AiChatAttachment>.from(_pendingAttachments);
-    final orchestrator = ChatOrchestrator(
-      storageService: _storageService,
-      contextAssembler: ChatContextAssembler(
-        storageService: _storageService,
-      ),
-      memoryRetriever: OperationalMemoryRetriever(
-        storageService: _storageService,
-        ragService: _ragService,
-      ),
-    );
+    final orchestrator = _runtimeFactory.createOrchestrator();
 
     final preparedTurn = await orchestrator.prepareTurn(
       chat: activeChat,
@@ -1028,26 +1019,10 @@ class AiChatViewModel extends ChangeNotifier {
       fallbackPolicy: settings.modelFallbackPolicy,
     );
 
-    final service = LlmChatService(
-      storageService: _storageService,
-      toolService: AiToolService(
-        storageService: _storageService,
-        sshService: _sshService,
-        sftpService: _sftpService,
-        performanceMonitorToolService: PerformanceMonitorToolService(_performanceMonitorService),
-        appSettings: _appSettings,
-        playbookService: _playbookService,
-        clientWebViewSessionId: chatId,
-      ),
-      language: _appSettings.language,
-      useCustomPrompts: settings.useCustomPrompts,
-      customSystemPrompt: settings.customSystemPrompt,
-      customPlannerPrompt: settings.customPlannerPrompt,
-      customOperatorPrompt: settings.customOperatorPrompt,
-      customExplorePrompt: settings.customExplorePrompt,
-      customReviewerPrompt: settings.customReviewerPrompt,
-      customSummarizerPrompt: settings.customSummarizerPrompt,
-      customCoordinatorPrompt: settings.customCoordinatorPrompt,
+    final service = _runtimeFactory.createLlmChatService(
+      settings: settings,
+      model: model,
+      chatId: chatId,
     );
 
     final cancellationToken = LlmCancellationToken();
@@ -1114,14 +1089,7 @@ class AiChatViewModel extends ChangeNotifier {
         (message) => message.role == 'assistant' && message.createdAt == assistantMessage.createdAt,
       );
 
-      final orchestrator = ChatOrchestrator(
-        storageService: _storageService,
-        contextAssembler: ChatContextAssembler(storageService: _storageService),
-        memoryRetriever: OperationalMemoryRetriever(
-          storageService: _storageService,
-          ragService: _ragService,
-        ),
-      );
+      final orchestrator = _runtimeFactory.createOrchestrator();
 
       if (assistantIndex >= 0) {
         final completion = orchestrator.finalizeAssistantTurn(
@@ -1437,14 +1405,7 @@ class AiChatViewModel extends ChangeNotifier {
     if (cmd == '/tools') {
       final tools = _parseToolList(args);
       if (tools.isEmpty) {
-        final service = AiToolService(
-          storageService: _storageService,
-          sshService: _sshService,
-          sftpService: _sftpService,
-          performanceMonitorToolService: PerformanceMonitorToolService(_performanceMonitorService),
-          appSettings: _appSettings,
-          playbookService: _playbookService,
-        );
+        final service = _runtimeFactory.createToolService(chatId: chatId);
         final definitions = await service.toolDefinitions();
         final names = definitions
             .map((def) => _toolNameFromDefinition(def))
