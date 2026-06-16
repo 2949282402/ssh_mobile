@@ -292,6 +292,7 @@ class ServerToolsProvider implements AiToolProvider {
           'jumpUsername': _string('Optional jump host username.'),
         },
         required: const ['connectionId'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) => _updateServerMetadata(
           service,
           arguments,
@@ -306,6 +307,7 @@ class ServerToolsProvider implements AiToolProvider {
           'connectionId': _string('Server connection id.'),
         },
         required: const ['connectionId'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) =>
             _deleteServer(service, arguments, approvedWrite: false),
       ),
@@ -320,6 +322,7 @@ class ServerToolsProvider implements AiToolProvider {
           ),
         },
         required: const ['orderedIds'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) => _reorderServers(
           service,
           arguments,

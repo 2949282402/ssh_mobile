@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 import 'ai_tool_service.dart';
 import 'app_log_service.dart';
 import 'app_settings.dart';
@@ -85,6 +87,38 @@ class LlmChatService implements LlmClientAdapter {
     return systemPromptFor(planMode: false);
   }
 
+  @visibleForTesting
+  List<AiTool> filterVisibleTools(
+    Iterable<AiTool> tools, {
+    Set<String>? allowedTools,
+    bool planMode = false,
+  }) {
+    final normalizedAllowedTools = _normalizeToolNames(allowedTools);
+    return tools.where((tool) {
+      if (normalizedAllowedTools != null &&
+          !normalizedAllowedTools.contains(tool.name.toLowerCase())) {
+        return false;
+      }
+      if (planMode && !tool.executionMode.allowedInPlanMode) {
+        return false;
+      }
+      return true;
+    }).toList(growable: false);
+  }
+
+  @visibleForTesting
+  Future<List<Map<String, dynamic>>> visibleToolDefinitions({
+    Set<String>? allowedTools,
+    bool planMode = false,
+  }) async {
+    final tools = await toolService.tools();
+    return filterVisibleTools(
+      tools,
+      allowedTools: allowedTools,
+      planMode: planMode,
+    ).map((tool) => tool.definition).toList(growable: false);
+  }
+
   String systemPromptFor({bool planMode = false}) {
     final isEn = language == AppLanguage.en;
     final basePersona = isEn ? systemPromptEnPersona : systemPromptZhPersona;
@@ -100,18 +134,21 @@ class LlmChatService implements LlmClientAdapter {
     final planInstructions = isEn
         ? '\n\n[PLAN MODE ACTIVE]\n'
             'You are currently in PLAN MODE. Your goal is to design a detailed, step-by-step operation plan for the user\'s request.\n'
-            '1. Restrictions: DO NOT call any state-changing tools (e.g. sftp_write_text, playbook_execute, etc.) or run mutating shell commands. Only recommend commands and describe expected outcomes.\n'
-            '2. Output Format: You must structure your final answer with a clear implementation plan containing:\n'
+            '1. Restrictions: DO NOT call any state-changing tools or run mutating shell commands. Only recommend commands and describe expected outcomes.\n'
+            '2. Tool availability: In Plan Mode you may use read-only tools, plan-only tools such as client_task_create, and the plan control tool client_set_plan_mode when applicable. Execution-only tools such as client_task_update are unavailable until execution mode.\n'
+            '3. Plan persistence: The app can persist executable todoSteps either from client_task_create calls or by parsing a valid ```playbook JSON block from your final reply. If you do not call client_task_create, you must still return a valid ```playbook JSON block.\n'
+            '4. Output Format: You must structure your final answer with a clear implementation plan containing:\n'
             '   - **Context**: Summary of current state and diagnostics.\n'
-            '   - **Proposal**: Step-by-step tasks. Wrap the structured steps in a markdown JSON block ```playbook ... ``` representing a Playbook configuration so the app can parse and execute it later:\n'
+            '   - **Proposal**: Step-by-step tasks. Wrap the structured steps in a markdown JSON block ```playbook ... ``` representing a Playbook configuration so the app can parse and persist it later:\n'
             '     {\n'
             '       "name": "Plan Name",\n'
             '       "description": "Brief description",\n'
             '       "steps": [\n'
-            '         {"name": "Step 1 Title", "command": "command", "description": "What to do"}\n'
+            '         {"name": "Step 1 Title", "command": "command", "description": "What to do", "connectionId": "optional-server-id"}\n'
             '       ]\n'
             '     }\n'
-            '   - **Verification**: How to verify the plan succeeded.'
+            '   - **Verification**: How to verify the plan succeeded.\n'
+            '5. Execution handoff: Once the user approves the plan, execute the persisted steps sequentially and call client_task_update with status running, success, failed, or skipped. The legacy alias in_progress may still appear in old prompts or histories, but running is the canonical status.'
         : '\n\n【规划模式已激活】\n'
             '你当前处于“规划模式”。你的目标是针对用户的运维请求设计一份详细的、分步的操作执行计划。\n'
             '1. 行为限制：绝对不能调用任何会改变系统状态的工具（如 sftp_write_text, playbook_execute 等）或执行有修改副作用的 shell 命令。仅提供只读建议并描述预期效果。\n'
@@ -126,7 +163,26 @@ class LlmChatService implements LlmClientAdapter {
             '       ]\n'
             '     }\n'
             '   - **验证 (Verification)**: 运维步骤完成后如何验证成功。';
-    return '$base$planInstructions';
+    final normalizedPlanInstructions = isEn
+        ? planInstructions
+        : '\n\n[PLAN MODE ACTIVE]\n'
+            '你当前处于规划模式。目标是为用户请求产出一份详细、可执行、分步骤的计划。\n'
+            '1. 限制：不要调用任何 state-changing 工具，也不要执行会修改状态的 shell 命令；只能做只读诊断、分析和规划。\n'
+            '2. 工具语义：规划模式下只允许只读工具、plan-only 工具（如 client_task_create）以及计划控制工具；execution-only 工具（如 client_task_update）在规划阶段不可用。\n'
+            '3. 计划持久化：应用可以通过两种方式持久化 todoSteps：一是调用 client_task_create，二是解析你最终回复里的合法 ```playbook JSON 代码块。即使不调用 client_task_create，也必须返回合法的 ```playbook JSON。\n'
+            '4. 输出格式：最终答案必须包含清晰的计划结构：\n'
+            '   - Context：当前状态与诊断结论。\n'
+            '   - Proposal：分步骤执行方案。必须把结构化步骤包在 ```playbook ... ``` JSON 代码块中，便于应用后续解析并持久化：\n'
+            '     {\n'
+            '       "name": "计划名称",\n'
+            '       "description": "简要说明",\n'
+            '       "steps": [\n'
+            '         {"name": "步骤 1", "command": "命令", "description": "说明", "connectionId": "可选服务器 ID"}\n'
+            '       ]\n'
+            '     }\n'
+            '   - Verification：如何验证计划成功。\n'
+            '5. 执行交接：用户批准后，必须按顺序执行持久化后的步骤，并使用 client_task_update 把状态更新为 running、success、failed 或 skipped。旧提示里可能仍出现 in_progress，但规范写法是 running。';
+    return '$base$normalizedPlanInstructions';
   }
 
   String get compressionPrompt {

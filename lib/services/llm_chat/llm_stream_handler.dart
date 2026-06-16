@@ -88,43 +88,15 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         );
       }
     }
-    final toolDefinitions = await toolService.toolDefinitions();
+    final availableTools = await toolService.tools();
     final normalizedAllowedTools = _normalizeToolNames(allowedTools);
-    final filteredToolDefinitions = normalizedAllowedTools == null
-        ? toolDefinitions
-        : _filterToolDefinitions(toolDefinitions, normalizedAllowedTools);
-    var currentToolDefinitions = filteredToolDefinitions;
-
-    bool isReadOnlyTool(String toolName) {
-      const writeTools = {
-        'client_write_clipboard',
-        'client_export_backup',
-        'client_import_backup',
-        'client_webview_navigate',
-        'client_webview_scroll',
-        'client_save_experience_skill',
-        'ssh_connect',
-        'ssh_disconnect',
-        'ssh_send_input',
-        'sftp_write_text',
-        'sftp_upload_local_file',
-        'sftp_create_directory',
-        'sftp_rename_entry',
-        'sftp_delete_entry',
-        'playbook_execute',
-      };
-      return !writeTools.contains(toolName);
-    }
-
-    if (planMode) {
-      currentToolDefinitions = currentToolDefinitions.where((def) {
-        final function = def['function'];
-        if (function is! Map) return false;
-        final name = function['name'];
-        if (name is! String) return false;
-        return isReadOnlyTool(name);
-      }).toList();
-    }
+    final visibleTools = filterVisibleTools(
+      availableTools,
+      allowedTools: normalizedAllowedTools,
+      planMode: planMode,
+    );
+    var currentToolDefinitions =
+        visibleTools.map((tool) => tool.definition).toList(growable: false);
 
     final toolBudget = LlmToolBudgetController(
       baseBudget: settings.toolCallBudget,
@@ -134,13 +106,13 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     if (normalizedAllowedTools == null) {
       AppLogService.instance.info(
         'LLM tool filter skipped',
-        details: 'availableTools=${toolDefinitions.length} planMode=$planMode',
+        details: 'availableTools=${availableTools.length} filteredTools=${currentToolDefinitions.length} planMode=$planMode',
       );
     } else {
       AppLogService.instance.info(
         'LLM tool definitions filtered',
         details:
-            'requestedTools=${normalizedAllowedTools.length} availableTools=${toolDefinitions.length} filteredTools=${filteredToolDefinitions.length} planMode=$planMode',
+            'requestedTools=${normalizedAllowedTools.length} availableTools=${availableTools.length} filteredTools=${currentToolDefinitions.length} planMode=$planMode',
       );
     }
 

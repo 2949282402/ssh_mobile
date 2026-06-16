@@ -237,6 +237,7 @@ class MonitorToolsProvider implements AiToolProvider {
           ),
         },
         required: const ['connectionIds'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) => _monitorSetSelectedServers(
           service,
           arguments,
@@ -248,6 +249,7 @@ class MonitorToolsProvider implements AiToolProvider {
         description:
             'Clear the performance monitor selected server set. This changes app monitor state and requires user approval.',
         properties: const {},
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) =>
             _monitorClearSelection(service, arguments, approvedWrite: false),
       ),
@@ -256,6 +258,7 @@ class MonitorToolsProvider implements AiToolProvider {
         description:
             'Start the app-scoped performance monitor for the currently selected servers. This changes app monitor state and requires user approval.',
         properties: const {},
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) =>
             _monitorStart(service, arguments, approvedWrite: false),
       ),
@@ -264,6 +267,7 @@ class MonitorToolsProvider implements AiToolProvider {
         description:
             'Stop the app-scoped performance monitor. This changes app monitor state and requires user approval.',
         properties: const {},
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) =>
             _monitorStop(service, arguments, approvedWrite: false),
       ),
@@ -275,6 +279,7 @@ class MonitorToolsProvider implements AiToolProvider {
           'connectionId': _string('Server connection id.'),
         },
         required: const ['connectionId'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) => _monitorStopForConnection(
           service,
           arguments,
@@ -289,6 +294,7 @@ class MonitorToolsProvider implements AiToolProvider {
           'seconds': _int('Sampling interval in seconds.', minimum: 2),
         },
         required: const ['seconds'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) =>
             _monitorSetInterval(service, arguments, approvedWrite: false),
       ),
@@ -300,6 +306,7 @@ class MonitorToolsProvider implements AiToolProvider {
           'seconds': _int('History window in seconds.', minimum: 30),
         },
         required: const ['seconds'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) =>
             _monitorSetHistoryWindow(service, arguments, approvedWrite: false),
       ),

@@ -489,6 +489,34 @@ class AiSkillRecord {
   }
 }
 
+class AiApprovedPlanRef {
+  final DateTime assistantCreatedAt;
+  final DateTime approvedAt;
+
+  const AiApprovedPlanRef({
+    required this.assistantCreatedAt,
+    required this.approvedAt,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'assistantCreatedAt': assistantCreatedAt.toIso8601String(),
+      'approvedAt': approvedAt.toIso8601String(),
+    };
+  }
+
+  factory AiApprovedPlanRef.fromJson(Map<String, dynamic> json) {
+    return AiApprovedPlanRef(
+      assistantCreatedAt:
+          DateTime.tryParse(json['assistantCreatedAt'] as String? ?? '') ??
+              DateTime.now(),
+      approvedAt:
+          DateTime.tryParse(json['approvedAt'] as String? ?? '') ??
+              DateTime.now(),
+    );
+  }
+}
+
 class AiChatRecord {
   final String id;
   final String title;
@@ -497,6 +525,7 @@ class AiChatRecord {
   final DateTime createdAt;
   final DateTime updatedAt;
   final bool planMode;
+  final AiApprovedPlanRef? approvedPlan;
 
   const AiChatRecord({
     required this.id,
@@ -506,6 +535,7 @@ class AiChatRecord {
     required this.createdAt,
     required this.updatedAt,
     this.planMode = false,
+    this.approvedPlan,
   });
 
   AiChatRecord copyWith({
@@ -514,6 +544,8 @@ class AiChatRecord {
     List<AiChatMessageRecord>? messages,
     DateTime? updatedAt,
     bool? planMode,
+    AiApprovedPlanRef? approvedPlan,
+    bool clearApprovedPlan = false,
   }) {
     return AiChatRecord(
       id: id,
@@ -523,6 +555,8 @@ class AiChatRecord {
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       planMode: planMode ?? this.planMode,
+      approvedPlan:
+          clearApprovedPlan ? null : approvedPlan ?? this.approvedPlan,
     );
   }
 
@@ -535,6 +569,7 @@ class AiChatRecord {
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       'planMode': planMode,
+      if (approvedPlan != null) 'approvedPlan': approvedPlan!.toJson(),
     };
   }
 
@@ -552,8 +587,50 @@ class AiChatRecord {
       updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
           DateTime.now(),
       planMode: json['planMode'] as bool? ?? false,
+      approvedPlan: json['approvedPlan'] is Map<String, dynamic>
+          ? AiApprovedPlanRef.fromJson(
+              json['approvedPlan'] as Map<String, dynamic>,
+            )
+          : null,
     );
   }
+}
+
+AiChatMessageRecord? chatAssistantMessageByCreatedAt(
+  AiChatRecord chat,
+  DateTime assistantCreatedAt,
+) {
+  for (final message in chat.messages.reversed) {
+    if (message.role == 'assistant' &&
+        message.createdAt == assistantCreatedAt) {
+      return message;
+    }
+  }
+  return null;
+}
+
+AiChatMessageRecord? latestAssistantMessageForChat(AiChatRecord chat) {
+  for (final message in chat.messages.reversed) {
+    if (message.role == 'assistant') {
+      return message;
+    }
+  }
+  return null;
+}
+
+AiChatMessageRecord? approvedPlanMessageForChat(AiChatRecord chat) {
+  final approvedPlan = chat.approvedPlan;
+  if (approvedPlan == null) return null;
+  return chatAssistantMessageByCreatedAt(chat, approvedPlan.assistantCreatedAt);
+}
+
+bool canExitPlanMode(AiChatRecord chat) {
+  final latestAssistant = latestAssistantMessageForChat(chat);
+  return latestAssistant != null && latestAssistant.todoSteps.isNotEmpty;
+}
+
+String buildStableTodoStepId(DateTime assistantCreatedAt, int index) {
+  return 'task-${assistantCreatedAt.microsecondsSinceEpoch}-$index';
 }
 
 class AiChatMessageRecord {

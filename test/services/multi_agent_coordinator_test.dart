@@ -272,6 +272,43 @@ void main() {
       expect(result!.memoryContent, contains('Operator: resolved advice'));
     });
 
+    test('preserves long playbook output in plan mode summarizer results', () async {
+      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
+      final longCommand = 'echo ${'x' * 2200}';
+      final playbook = '''
+```playbook
+{"steps":[{"name":"Long step","command":"$longCommand","description":"Preserve the full command in plan mode."}]}
+```
+''';
+
+      final result = await coordinator.run(
+        enabled: true,
+        maxAgents: 5,
+        planMode: true,
+        messages: const [
+          {'role': 'user', 'content': 'Plan a long maintenance workflow'},
+        ],
+        classify: (messages) async => jsonEncode({
+          "shouldCollaborate": true,
+          "reason": "complex plan",
+          "thinkingEnabled": false,
+          "reasoningEffort": "low",
+          "agentCount": 5
+        }),
+        complete: (role, messages, {required thinkingSettings}) async {
+          if (role.name == 'summarizer') {
+            return playbook;
+          }
+          return 'helper output from ${role.name}';
+        },
+      );
+
+      expect(result, isNotNull);
+      expect(result!.memoryContent, contains('```playbook'));
+      expect(result.memoryContent, contains(longCommand));
+      expect(result.memoryContent, isNot(contains('[truncated]')));
+    });
+
     test('cancellation exits immediately without retrying', () async {
       const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
       var operatorCalls = 0;

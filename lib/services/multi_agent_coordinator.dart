@@ -274,6 +274,7 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
         thinkingSettings: thinkingSettings,
         checkCancelled: checkCancelled,
         language: language,
+        allowFullOutput: planMode,
       );
       outputs.add(out);
     }
@@ -462,6 +463,7 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     required SubAgentThinkingSettings thinkingSettings,
     void Function()? checkCancelled,
     AppLanguage language = AppLanguage.zh,
+    bool allowFullOutput = false,
   }) async {
     int attempts = 0;
     const maxRetries = 3;
@@ -481,8 +483,10 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
           thinkingSettings: thinkingSettings,
         );
         checkCancelled?.call();
-        final content = _truncate(secretPolicy.redactText(raw.trim()));
-        return _RoleOutput.success(role, content);
+        final content = secretPolicy.redactText(raw.trim());
+        final normalized =
+            allowFullOutput ? content : _truncate(content);
+        return _RoleOutput.success(role, normalized);
       } catch (e, stackTrace) {
         // Bubble up cancellation exceptions immediately.
         try {

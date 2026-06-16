@@ -19,14 +19,14 @@ void main() {
       expect(LlmChatService.estimateTextTokens(''), 0);
       expect(LlmChatService.estimateTextTokens('abcd'), 1);
       expect(LlmChatService.estimateTextTokens('abcde'), 2);
-      expect(LlmChatService.estimateTextTokens('中文'), 2);
-      expect(LlmChatService.estimateTextTokens('abcd中文'), 3);
+      expect(LlmChatService.estimateTextTokens('\u4e2d\u6587'), 2);
+      expect(LlmChatService.estimateTextTokens('abcd\u4e2d\u6587'), 3);
     });
 
     test('adds per-message overhead', () {
       final tokens = LlmChatService.estimateMessagesTokens([
         {'role': 'user', 'content': 'abcd'},
-        {'role': 'assistant', 'content': '中文'},
+        {'role': 'assistant', 'content': '\u4e2d\u6587'},
       ]);
 
       expect(tokens, 4 + 1 + 1 + 4 + 3 + 2);
@@ -209,14 +209,14 @@ void main() {
       final controller = LlmToolBudgetController(baseBudget: 10);
       expect(controller.auditCount, 0);
 
-      // 第一阶段：用满 baseBudget 并自动扩充至 15
+      // 缂傚倷鐒﹂〃蹇涘礂濞戞氨鍗氶柟缁㈠枟閳锋捇鏌ら崨濠庡晱闁哥偘绮欓弻銊モ槈濞嗘劗娈ら梺杞伴檷閸婃洟鈥?baseBudget 婵°倗濮烽崑鐐哄磿婵傜鍚规繝濠傜墕缁€澶愭煏婵犲繒鐣遍柍閿嬬墵閺屾稖绠涢幘鏉戞畬闂?15
       for (var i = 0; i < 9; i++) {
         controller.recordAcceptedToolCall();
       }
       expect(controller.checkBeforeToolCall().requiresAudit, isFalse);
-      controller.recordAcceptedToolCall(); // 这一步 usedCalls = 10，自动扩充 limit 到 15
+      controller.recordAcceptedToolCall(); // 闂佸搫顦弲婊堟偡閵堝洨鍗氶柡澶嬪焾濞?usedCalls = 10闂備焦瀵х粙鎴︽儗娓氣偓瀹曢潧顭ㄩ崼婵堫槷闂侀潧顭粻鎴﹀煕閺嶎厽鐓?limit 闂?15
 
-      // 第二阶段：用满 15，并触发第 1 次安全审计
+      // 缂傚倷鐒﹂〃蹇涘礂濞戞俺濮抽柍鍝勬噺閳锋捇鏌ら崨濠庡晱闁哥偘绮欓弻銊モ槈濞嗘劗娈ら梺杞伴檷閸婃洟鈥?15闂備焦瀵х粙鎴︽嚐椤栫偞鍤愰柣鏃傚劋閸犲棝鏌ㄩ弴妤€浜鹃悷婊勬緲閸婅崵鍒?1 婵犵數鍋涘Λ宀勫焵椤掆偓绾绢參寮抽弮鍫熺厱闊洤顑呮俊鍏笺亜閹捐櫕鎲搁柟?
       for (var i = 0; i < 4; i++) {
         controller.recordAcceptedToolCall();
       }
@@ -227,10 +227,10 @@ void main() {
       controller.recordAuditTriggered();
       expect(controller.auditCount, 1);
 
-      controller.approveAuditExtension(); // limit 增加到 20
+      controller.approveAuditExtension(); // limit 濠电姭鎷冮崨顓濈捕婵犳鍠氶崑銈呯暦?20
       expect(controller.checkBeforeToolCall().requiresAudit, isFalse);
 
-      // 第三阶段：用满 20，并触发第 2 次安全审计
+      // 缂傚倷鐒﹂〃蹇涘礂濞戞氨绠斿〒姘ｅ亾婵﹤銈搁幊婊冣枔閸喗鏉搁梻浣瑰缁嬫帒顫濋妸鈺佹瀬闁靛牆鎷嬮悡?20闂備焦瀵х粙鎴︽嚐椤栫偞鍤愰柣鏃傚劋閸犲棝鏌ㄩ弴妤€浜鹃悷婊勬緲閸婅崵鍒?2 婵犵數鍋涘Λ宀勫焵椤掆偓绾绢參寮抽弮鍫熺厱闊洤顑呮俊鍏笺亜閹捐櫕鎲搁柟?
       for (var i = 0; i < 4; i++) {
         controller.recordAcceptedToolCall();
       }
@@ -323,23 +323,151 @@ void main() {
 
       final zhNormal = llmZh.systemPromptFor(planMode: false);
       final zhPlan = llmZh.systemPromptFor(planMode: true);
-      expect(zhNormal, isNot(contains('【规划模式已激活】')));
-      expect(zhPlan, contains('【规划模式已激活】'));
+      expect(zhNormal, isNot(contains('[PLAN MODE ACTIVE]')));
+      expect(zhPlan, contains('[PLAN MODE ACTIVE]'));
+      expect(zhPlan, contains('todoSteps'));
 
       final enNormal = llmEn.systemPromptFor(planMode: false);
       final enPlan = llmEn.systemPromptFor(planMode: true);
       expect(enNormal, isNot(contains('[PLAN MODE ACTIVE]')));
       expect(enPlan, contains('[PLAN MODE ACTIVE]'));
     });
+
+    test('filters state-changing and execution-only tools out of plan mode', () async {
+      Future<String> noop(Map<String, dynamic> _) async => '{}';
+
+      final executor = _MockAiToolExecutor([
+        AiTool(
+          name: 'list_servers',
+          description: 'read',
+          properties: const {},
+          handler: noop,
+        ),
+        AiTool(
+          name: 'client_set_clipboard',
+          description: 'write',
+          properties: const {},
+          executionMode: AiToolExecutionMode.stateChanging,
+          handler: noop,
+        ),
+        AiTool(
+          name: 'client_set_alarm',
+          description: 'write',
+          properties: const {},
+          executionMode: AiToolExecutionMode.stateChanging,
+          handler: noop,
+        ),
+        AiTool(
+          name: 'client_cancel_alarm',
+          description: 'write',
+          properties: const {},
+          executionMode: AiToolExecutionMode.stateChanging,
+          handler: noop,
+        ),
+        AiTool(
+          name: 'client_open_app_settings',
+          description: 'write',
+          properties: const {},
+          executionMode: AiToolExecutionMode.stateChanging,
+          handler: noop,
+        ),
+        AiTool(
+          name: 'ssh_rename_session',
+          description: 'write',
+          properties: const {},
+          executionMode: AiToolExecutionMode.stateChanging,
+          handler: noop,
+        ),
+        AiTool(
+          name: 'update_server_metadata',
+          description: 'write',
+          properties: const {},
+          executionMode: AiToolExecutionMode.stateChanging,
+          handler: noop,
+        ),
+        AiTool(
+          name: 'monitor_start',
+          description: 'write',
+          properties: const {},
+          executionMode: AiToolExecutionMode.stateChanging,
+          handler: noop,
+        ),
+        AiTool(
+          name: 'create_playbook',
+          description: 'write',
+          properties: const {},
+          executionMode: AiToolExecutionMode.stateChanging,
+          handler: noop,
+        ),
+        AiTool(
+          name: 'run_playbook',
+          description: 'write',
+          properties: const {},
+          executionMode: AiToolExecutionMode.stateChanging,
+          handler: noop,
+        ),
+        AiTool(
+          name: 'client_task_create',
+          description: 'plan',
+          properties: const {},
+          executionMode: AiToolExecutionMode.planOnly,
+          handler: noop,
+        ),
+        AiTool(
+          name: 'client_task_update',
+          description: 'exec',
+          properties: const {},
+          executionMode: AiToolExecutionMode.executionOnly,
+          handler: noop,
+        ),
+        AiTool(
+          name: 'client_set_plan_mode',
+          description: 'control',
+          properties: const {},
+          executionMode: AiToolExecutionMode.planControl,
+          handler: noop,
+        ),
+      ]);
+      final llm = LlmChatService(
+        storageService: StorageService(),
+        toolService: executor,
+        language: AppLanguage.en,
+      );
+
+      final names = llm
+          .filterVisibleTools(
+            await executor.tools(),
+            planMode: true,
+          )
+          .map((tool) => tool.name)
+          .toList();
+
+      expect(names, containsAll(['list_servers', 'client_task_create', 'client_set_plan_mode']));
+      expect(names, isNot(contains('client_set_clipboard')));
+      expect(names, isNot(contains('client_set_alarm')));
+      expect(names, isNot(contains('client_cancel_alarm')));
+      expect(names, isNot(contains('client_open_app_settings')));
+      expect(names, isNot(contains('ssh_rename_session')));
+      expect(names, isNot(contains('update_server_metadata')));
+      expect(names, isNot(contains('monitor_start')));
+      expect(names, isNot(contains('create_playbook')));
+      expect(names, isNot(contains('run_playbook')));
+      expect(names, isNot(contains('client_task_update')));
+    });
   });
 }
 
 class _MockAiToolExecutor implements AiToolExecutor {
-  @override
-  Future<List<AiTool>> tools() async => const [];
+  final List<AiTool> availableTools;
+
+  const _MockAiToolExecutor([this.availableTools = const []]);
 
   @override
-  Future<List<Map<String, dynamic>>> toolDefinitions() async => const [];
+  Future<List<AiTool>> tools() async => availableTools;
+
+  @override
+  Future<List<Map<String, dynamic>>> toolDefinitions() async =>
+      availableTools.map((tool) => tool.definition).toList(growable: false);
 
   @override
   AiToolApprovalRequest? approvalRequestFor(String name, Map<String, dynamic> arguments) => null;

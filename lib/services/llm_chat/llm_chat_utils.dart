@@ -28,28 +28,6 @@ extension LlmChatServiceUtils on LlmChatService {
     return normalized;
   }
 
-  List<Map<String, dynamic>> _filterToolDefinitions(
-    List<Map<String, dynamic>> definitions,
-    Set<String> allowedTools,
-  ) {
-    if (allowedTools.isEmpty) return const [];
-    final filtered = <Map<String, dynamic>>[];
-    for (final definition in definitions) {
-      final name = _toolNameFromDefinition(definition);
-      if (name != null && allowedTools.contains(name.toLowerCase())) {
-        filtered.add(definition);
-      }
-    }
-    return filtered;
-  }
-
-  String? _toolNameFromDefinition(Map<String, dynamic> definition) {
-    final function = definition['function'];
-    if (function is! Map) return null;
-    final name = function['name'];
-    return name is String ? name : null;
-  }
-
   String _latestUserGoal(List<Map<String, dynamic>> messages) {
     for (final message in messages.reversed) {
       if (message['role'] != 'user') {

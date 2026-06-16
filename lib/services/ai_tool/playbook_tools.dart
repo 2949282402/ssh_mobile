@@ -259,6 +259,7 @@ class PlaybookToolsProvider implements AiToolProvider {
           },
         },
         required: const ['name', 'description', 'steps'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) =>
             _createPlaybookTool(service, arguments, approvedWrite: false),
       ),
@@ -271,6 +272,7 @@ class PlaybookToolsProvider implements AiToolProvider {
           'connectionId': _string('The remote SSH server connection ID.'),
         },
         required: const ['playbookId', 'connectionId'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) =>
             _runPlaybookTool(service, arguments, approvedWrite: false),
       ),

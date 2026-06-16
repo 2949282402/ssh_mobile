@@ -4,8 +4,10 @@ extension _ChatTokenCompression on _LlmChatScreenState {
   Future<String?> _contextTextForUser(
     String text, {
     List<RagChunk> ragChunks = const [],
+    AiChatMessageRecord? approvedPlanMessage,
   }) async {
     final lines = <String>[];
+    final language = context.read<AppSettings>().language;
     if (_selectedConnectionIds.isNotEmpty) {
       final storage = context.read<StorageService>();
       final serverInfos = <String>[];
@@ -41,8 +43,16 @@ extension _ChatTokenCompression on _LlmChatScreenState {
       lines.add(ragLines.join('\n'));
     }
 
-    if (lines.isEmpty) return null;
-    return '${lines.join('\n\n')}\n\nUser request:\n$text';
+    final requestBlock =
+        approvedPlanMessage != null && approvedPlanMessage.todoSteps.isNotEmpty
+            ? buildApprovedPlanExecutionContext(
+                userText: text,
+                planMessage: approvedPlanMessage,
+                language: language,
+              )
+            : 'User request:\n$text';
+    if (lines.isEmpty) return requestBlock;
+    return '${lines.join('\n\n')}\n\n$requestBlock';
   }
 
   String _contextTextForAssistant(

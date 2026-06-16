@@ -265,11 +265,15 @@ class _MessageBubble extends StatelessWidget {
             final state =
                 context.findAncestorStateOfType<_LlmChatScreenState>();
             if (state == null) return;
+            state.approvePlanAndExecute(message.createdAt);
+            return;
 
+            /*
             final command = isEn
                 ? 'I approve the operations plan. Please execute all planned task steps sequentially. Run the command for each step, and call client_task_update with its taskId to update status (success/failed) and write the logs after execution. Report back once finished.'
                 : '我同意此操作计划。请按顺序依次执行计划中的所有任务步骤，运行对应的命令，并在每一步执行完毕后自动调用 client_task_update 工具更新该步状态（成功/失败）并存入 stdout/stderr 回显日志，全部完成后向我报告。';
             state.sendDirectCommand(command);
+            */
           },
           icon: const Icon(Icons.verified_user_outlined, size: 16),
           label: Text(

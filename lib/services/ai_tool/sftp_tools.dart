@@ -54,6 +54,7 @@ class SftpToolsProvider implements AiToolProvider {
           'path': _string('Remote file path.'),
         },
         required: const ['connectionId', 'path'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (args) => _sftpDownloadFile(service, args),
       ),
       AiTool(
@@ -66,6 +67,7 @@ class SftpToolsProvider implements AiToolProvider {
           'content': _string('Full text content to write to the remote file.'),
         },
         required: const ['connectionId', 'path', 'content'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) =>
             _sftpWriteText(service, arguments, approvedWrite: false),
       ),
@@ -80,6 +82,7 @@ class SftpToolsProvider implements AiToolProvider {
           ),
         },
         required: const ['connectionId', 'path'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) => _sftpUploadLocalFile(
           service,
           arguments,
@@ -95,6 +98,7 @@ class SftpToolsProvider implements AiToolProvider {
           'path': _string('Remote directory path to create.'),
         },
         required: const ['connectionId', 'path'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) => _sftpCreateDirectory(
           service,
           arguments,
@@ -111,6 +115,7 @@ class SftpToolsProvider implements AiToolProvider {
           'newPath': _string('New remote path.'),
         },
         required: const ['connectionId', 'path', 'newPath'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) => _sftpRenameEntry(
           service,
           arguments,
@@ -126,6 +131,7 @@ class SftpToolsProvider implements AiToolProvider {
           'path': _string('Remote file or directory path.'),
         },
         required: const ['connectionId', 'path'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) => _sftpDeleteEntry(
           service,
           arguments,

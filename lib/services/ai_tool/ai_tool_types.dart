@@ -94,11 +94,26 @@ class AiCommandReview {
         blocked = true;
 }
 
+enum AiToolExecutionMode {
+  readOnly,
+  planOnly,
+  executionOnly,
+  stateChanging,
+  planControl;
+
+  bool get allowedInPlanMode {
+    return this == AiToolExecutionMode.readOnly ||
+        this == AiToolExecutionMode.planOnly ||
+        this == AiToolExecutionMode.planControl;
+  }
+}
+
 class AiTool {
   final String name;
   final String description;
   final Map<String, dynamic> properties;
   final List<String> required;
+  final AiToolExecutionMode executionMode;
   final Future<String> Function(Map<String, dynamic> arguments) handler;
 
   const AiTool({
@@ -107,6 +122,7 @@ class AiTool {
     required this.properties,
     required this.handler,
     this.required = const [],
+    this.executionMode = AiToolExecutionMode.readOnly,
   });
 
   Map<String, dynamic> get definition {

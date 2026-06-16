@@ -155,6 +155,10 @@ void main() {
   group('AiChatRecord serialization and planMode', () {
     test('round-trips planMode in toJson and fromJson', () {
       final time = DateTime.utc(2026, 1, 1, 12, 0);
+      final approvedPlan = AiApprovedPlanRef(
+        assistantCreatedAt: time,
+        approvedAt: time.add(const Duration(minutes: 5)),
+      );
       final record = AiChatRecord(
         id: 'chat-test',
         title: 'Plan Chat',
@@ -163,14 +167,18 @@ void main() {
         createdAt: time,
         updatedAt: time,
         planMode: true,
+        approvedPlan: approvedPlan,
       );
 
       final json = record.toJson();
       expect(json['planMode'], isTrue);
+      expect(json['approvedPlan'], isNotNull);
 
       final decoded = AiChatRecord.fromJson(json);
       expect(decoded.planMode, isTrue);
       expect(decoded.title, 'Plan Chat');
+      expect(decoded.approvedPlan?.assistantCreatedAt, approvedPlan.assistantCreatedAt);
+      expect(decoded.approvedPlan?.approvedAt, approvedPlan.approvedAt);
     });
 
     test('backward compatibility: defaults planMode to false when absent', () {
@@ -187,6 +195,96 @@ void main() {
       final decoded = AiChatRecord.fromJson(legacyJson);
       expect(decoded.planMode, isFalse);
       expect(decoded.title, 'Legacy Chat');
+      expect(decoded.approvedPlan, isNull);
+    });
+
+    test('approved plan helpers resolve the referenced assistant message', () {
+      final base = DateTime.utc(2026, 1, 1, 12, 0);
+      final planTime = base.add(const Duration(minutes: 1));
+      final executionApprovalTime = base.add(const Duration(minutes: 2));
+      final planStep = AiTodoStep(
+        id: 'task-1',
+        name: 'Check nginx',
+        command: 'systemctl status nginx',
+        description: 'Verify the service is healthy.',
+      );
+      final chat = AiChatRecord(
+        id: 'chat-approved',
+        title: 'Approved',
+        model: 'model',
+        messages: [
+          AiChatMessageRecord(
+            role: 'assistant',
+            text: 'Old reply',
+            createdAt: base,
+          ),
+          AiChatMessageRecord(
+            role: 'assistant',
+            text: 'Plan',
+            createdAt: planTime,
+            todoSteps: [planStep],
+          ),
+        ],
+        createdAt: base,
+        updatedAt: executionApprovalTime,
+        approvedPlan: AiApprovedPlanRef(
+          assistantCreatedAt: planTime,
+          approvedAt: executionApprovalTime,
+        ),
+      );
+
+      expect(latestAssistantMessageForChat(chat)?.createdAt, planTime);
+      expect(approvedPlanMessageForChat(chat)?.todoSteps.single.id, 'task-1');
+    });
+
+    test('canExitPlanMode only accepts persisted todoSteps on the latest assistant message', () {
+      final base = DateTime.utc(2026, 1, 1, 12, 0);
+      final oldPlan = AiChatMessageRecord(
+        role: 'assistant',
+        text: 'Old plan',
+        createdAt: base,
+        todoSteps: const [
+          AiTodoStep(
+            id: 'task-old',
+            name: 'Old',
+            command: 'echo old',
+            description: 'old',
+          ),
+        ],
+      );
+      final latestWithoutSteps = AiChatMessageRecord(
+        role: 'assistant',
+        text: 'Broken plan',
+        createdAt: base.add(const Duration(minutes: 1)),
+      );
+
+      final blockedChat = AiChatRecord(
+        id: 'chat-blocked',
+        title: 'Blocked',
+        model: 'model',
+        messages: [oldPlan, latestWithoutSteps],
+        createdAt: base,
+        updatedAt: base.add(const Duration(minutes: 1)),
+        planMode: true,
+      );
+      expect(canExitPlanMode(blockedChat), isFalse);
+
+      final allowedChat = blockedChat.copyWith(
+        messages: [
+          oldPlan,
+          latestWithoutSteps.copyWith(
+            todoSteps: const [
+              AiTodoStep(
+                id: 'task-new',
+                name: 'New',
+                command: 'echo new',
+                description: 'new',
+              ),
+            ],
+          ),
+        ],
+      );
+      expect(canExitPlanMode(allowedChat), isTrue);
     });
   });
 

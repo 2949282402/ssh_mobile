@@ -502,6 +502,41 @@ extension _ChatSlashCommands on _LlmChatScreenState {
     return name is String ? name : null;
   }
 
+  Future<bool> _setPlanModeFromUi({
+    required AiChatRecord chat,
+    required bool enabled,
+    required _AiStrings strings,
+    bool showFeedback = true,
+  }) async {
+    if (!enabled && !canExitPlanMode(chat)) {
+      if (showFeedback) {
+        _showCommandFeedback(
+          strings.language == AppLanguage.en
+              ? 'Cannot exit Plan Mode until the latest assistant plan has persisted executable TODO steps.'
+              : '最新一条助手计划还没有持久化可执行 TODO 步骤，暂时不能退出规划模式。',
+          context,
+        );
+      }
+      return false;
+    }
+
+    final updatedChat = chat.copyWith(
+      planMode: enabled,
+      updatedAt: DateTime.now(),
+      clearApprovedPlan: enabled,
+    );
+    setState(() => _replaceChat(updatedChat));
+    await context.read<StorageService>().saveAiChat(updatedChat);
+
+    if (showFeedback && mounted && context.mounted) {
+      final msg = strings.language == AppLanguage.en
+          ? (enabled ? 'Plan Mode Enabled' : 'Plan Mode Disabled')
+          : (enabled ? '规划模式已启用' : '规划模式已关闭');
+      _showCommandFeedback(msg, context);
+    }
+    return true;
+  }
+
   void _showCommandFeedback(String message, BuildContext context) {
     if (!context.mounted) {
       return;
@@ -521,6 +556,30 @@ extension _ChatSlashCommands on _LlmChatScreenState {
   }) async {
     final activeChat = _activeChat;
     if (activeChat == null || activeChat.id != chatId) return false;
+    if (arguments.trim().isEmpty) {
+      final nextPlanMode = !activeChat.planMode;
+      return _setPlanModeFromUi(
+        chat: activeChat,
+        enabled: nextPlanMode,
+        strings: strings,
+      );
+    }
+
+    final enabled = await _setPlanModeFromUi(
+      chat: activeChat,
+      enabled: true,
+      strings: strings,
+      showFeedback: false,
+    );
+    if (!enabled || !mounted || !context.mounted) return true;
+    scheduleMicrotask(() {
+      if (mounted) {
+        _sendText(context, strings, text: arguments, clearInput: true);
+      }
+    });
+    return true;
+    /*
+
     final storage = context.read<StorageService>();
 
     if (arguments.trim().isEmpty) {
@@ -555,5 +614,6 @@ extension _ChatSlashCommands on _LlmChatScreenState {
       }
     });
     return true;
+    */
   }
 }

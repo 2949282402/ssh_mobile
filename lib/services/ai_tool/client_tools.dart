@@ -643,29 +643,16 @@ class ClientToolsProvider implements AiToolProvider {
     }
     final currentChat = chats[chatIndex];
 
-    if (!enabled) {
-      bool hasPlaybook = false;
-      for (final msg in currentChat.messages) {
-        if (msg.todoSteps.isNotEmpty) {
-          hasPlaybook = true;
-          break;
-        }
-        if (msg.text.contains('```playbook')) {
-          hasPlaybook = true;
-          break;
-        }
-      }
-
-      if (!hasPlaybook) {
-        return jsonEncode({
-          'error': 'Cannot exit Plan Mode. You must outline a detailed step-by-step playbook plan in a markdown ```playbook ... ``` JSON block before switching to execution mode.',
-        });
-      }
+    if (!enabled && !canExitPlanMode(currentChat)) {
+      return jsonEncode({
+        'error': 'Cannot exit Plan Mode. You must persist executable TODO steps on the latest assistant planning message before switching to execution mode.',
+      });
     }
 
     final updatedChat = currentChat.copyWith(
       planMode: enabled,
       updatedAt: DateTime.now(),
+      clearApprovedPlan: enabled,
     );
     await storageService.saveAiChat(updatedChat);
 
@@ -773,11 +760,7 @@ class ClientToolsProvider implements AiToolProvider {
     final rawStatus = service._arg(arguments, 'status');
     final stdout = service._optionalString(arguments, 'stdout');
     final stderr = service._optionalString(arguments, 'stderr');
-
-    final nextStatus = StepStatus.values.firstWhere(
-      (e) => e.name == rawStatus,
-      orElse: () => StepStatus.pending,
-    );
+    final nextStatus = _taskStatusFromRaw(rawStatus);
 
     bool foundAndUpdated = false;
     final messages = [...currentChat.messages];
@@ -824,6 +807,17 @@ class ClientToolsProvider implements AiToolProvider {
       'newStatus': nextStatus.name,
       'message': 'Task step successfully updated in the execution logs.',
     });
+  }
+
+  StepStatus _taskStatusFromRaw(String rawStatus) {
+    final normalized = rawStatus.trim().toLowerCase();
+    if (normalized == 'in_progress') {
+      return StepStatus.running;
+    }
+    return StepStatus.values.firstWhere(
+      (e) => e.name == normalized,
+      orElse: () => StepStatus.pending,
+    );
   }
 
   List<AiTool> _getClientTools(
@@ -896,6 +890,7 @@ class ClientToolsProvider implements AiToolProvider {
         description:
             'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Open the operating system app settings page so the user can grant notifications, battery, or background permissions.',
         properties: const {},
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (_) async =>
             jsonEncode(await clientSystemToolService.openAppSettings()),
       ),
@@ -907,6 +902,7 @@ class ClientToolsProvider implements AiToolProvider {
           'text': _string('Text to place on the client clipboard.'),
         },
         required: const ['text'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (args) => _clientSetClipboard(service, args),
       ),
       AiTool(
@@ -925,6 +921,7 @@ class ClientToolsProvider implements AiToolProvider {
           ),
         },
         required: const ['summary'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (args) => _clientSaveExperienceSkill(service, args),
       ),
       AiTool(
@@ -942,6 +939,7 @@ class ClientToolsProvider implements AiToolProvider {
             'Optional. Default true. On Android request a system Clock alarm when supported.',
           ),
         },
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (args) => _clientSetAlarm(service, args),
       ),
       AiTool(
@@ -960,6 +958,7 @@ class ClientToolsProvider implements AiToolProvider {
           'alarmId': _string('Alarm id returned by client_set_alarm.'),
         },
         required: const ['alarmId'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (args) => _clientCancelAlarm(service, args),
       ),
       AiTool(
@@ -1000,6 +999,7 @@ class ClientToolsProvider implements AiToolProvider {
           'ids': _intArray('Log entry ids to delete.', minimumItems: 1),
         },
         required: const ['ids'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) => _clientDeleteLogEntries(
           service,
           arguments,
@@ -1011,6 +1011,7 @@ class ClientToolsProvider implements AiToolProvider {
         description:
             'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Clear all client log entries. This changes local app state and requires user approval.',
         properties: const {},
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) =>
             _clientClearLogs(service, arguments, approvedWrite: false),
       ),
@@ -1019,6 +1020,7 @@ class ClientToolsProvider implements AiToolProvider {
         description:
             'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Export a credential-free app backup file to the client device. The tool saves the file locally and returns only summary metadata.',
         properties: const {},
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (args) => _clientExportAppBackup(service, args),
       ),
       AiTool(
@@ -1026,6 +1028,7 @@ class ClientToolsProvider implements AiToolProvider {
         description:
             'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Import an app backup file chosen through the client file picker. Credential fields in the backup are ignored and never exposed to the model. This replaces local saved data and requires user approval.',
         properties: const {},
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) => _clientImportAppBackup(
           service,
           arguments,
@@ -1065,6 +1068,7 @@ class ClientToolsProvider implements AiToolProvider {
           ),
         },
         required: const ['action'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (args) => _clientWebViewNavigate(service, args),
       ),
       AiTool(
@@ -1107,6 +1111,7 @@ class ClientToolsProvider implements AiToolProvider {
             maximum: AiToolCallBudget.values.last,
           ),
         },
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) => _appUpdateOperationalSettings(
           service,
           arguments,
@@ -1118,6 +1123,7 @@ class ClientToolsProvider implements AiToolProvider {
         description:
             'Clear the in-memory secret cache for saved SSH credentials and the active LLM API key without revealing any secret values.',
         properties: const {},
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (args) => _appClearSecretCache(service, args),
       ),
       AiTool(
@@ -1128,12 +1134,13 @@ class ClientToolsProvider implements AiToolProvider {
           'enabled': _bool('true to enter plan mode, false to exit to execution mode.'),
         },
         required: const ['enabled'],
+        executionMode: AiToolExecutionMode.planControl,
         handler: (args) => _clientSetPlanMode(service, args),
       ),
       AiTool(
         name: 'client_task_create',
         description:
-            'CLIENT tool. Create a new step in the TODO task plan. This tool is ONLY allowed during Plan Mode (read-only stage). Returns a generated unique taskId.',
+            'CLIENT tool. Create a new step in the TODO task plan. This tool is ONLY allowed during Plan Mode (read-only stage). Returns a generated unique taskId. Complex planning flows may also persist todoSteps from a valid ```playbook JSON block without calling this tool.',
         properties: {
           'name': _string('The name/title of the planned step.'),
           'command': _string('The exact shell/remote command recommended for execution in this step.'),
@@ -1141,23 +1148,25 @@ class ClientToolsProvider implements AiToolProvider {
           'connectionId': _string('Optional. The unique connectionId of the server to execute this step on. Use list_servers to find available ids.'),
         },
         required: const ['name'],
+        executionMode: AiToolExecutionMode.planOnly,
         handler: (args) => _clientTaskCreate(service, args),
       ),
       AiTool(
         name: 'client_task_update',
         description:
-            'CLIENT tool. Update the execution status and output logs of a planned TODO task. This tool is ONLY allowed during Execution Mode, and only for pre-existing taskIds.',
+            'CLIENT tool. Update the execution status and output logs of a planned TODO task. This tool is ONLY allowed during Execution Mode, and only for pre-existing taskIds. Use running as the canonical in-progress status; the legacy alias in_progress is still accepted.',
         properties: {
           'taskId': _string('The unique taskId of the step to update.'),
           'status': {
             'type': 'string',
-            'enum': const ['pending', 'in_progress', 'success', 'failed', 'skipped'],
-            'description': 'The new execution status of the step.',
+            'enum': const ['pending', 'running', 'success', 'failed', 'skipped'],
+            'description': 'The new execution status of the step. The legacy alias in_progress is still accepted.',
           },
           'stdout': _string('Optional stdout log response from executing the command.'),
           'stderr': _string('Optional stderr log response if execution failed.'),
         },
         required: const ['taskId', 'status'],
+        executionMode: AiToolExecutionMode.executionOnly,
         handler: (args) => _clientTaskUpdate(service, args),
       ),
     ];

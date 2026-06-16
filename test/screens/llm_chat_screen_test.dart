@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/screens/llm_chat_screen.dart';
+import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 
 void main() {
@@ -131,5 +132,35 @@ void main() {
     expect(result[0]['text'], contains('sending archive'));
     expect(
         result[0]['text'], contains('[Attached file: archive.zip (3.0 MB)]'));
+  });
+
+  test('approved plan execution context uses persisted todo steps as source of truth', () {
+    final planMessage = AiChatMessageRecord(
+      role: 'assistant',
+      text: 'Plan',
+      createdAt: DateTime.utc(2026, 1, 1, 12, 0),
+      todoSteps: const [
+        AiTodoStep(
+          id: 'task-1',
+          name: 'Inspect service',
+          command: 'systemctl status nginx',
+          description: 'Check nginx status',
+          connectionId: 'server-1',
+        ),
+      ],
+    );
+
+    final contextText = buildApprovedPlanExecutionContext(
+      userText: 'Execute the approved plan.',
+      planMessage: planMessage,
+      language: AppLanguage.en,
+    );
+
+    expect(contextText, contains('Approved execution plan:'));
+    expect(contextText, contains('task-1'));
+    expect(contextText, contains('systemctl status nginx'));
+    expect(contextText, contains('"connectionId":"server-1"'));
+    expect(contextText, contains('status="running"'));
+    expect(contextText, contains('Execute the approved plan.'));
   });
 }

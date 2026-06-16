@@ -12,6 +12,7 @@ extension _ChatGeneration on _LlmChatScreenState {
     _AiStrings strings, {
     required String text,
     required bool clearInput,
+    AiApprovedPlanRef? approvedPlanRef,
   }) async {
     final activeChat = _activeChat;
     if (text.isEmpty || _sending || activeChat == null) return;
@@ -63,8 +64,16 @@ extension _ChatGeneration on _LlmChatScreenState {
       }
     }
 
-    final userContextText =
-        await _contextTextForUser(text, ragChunks: ragChunks);
+    final approvedPlanMessage = approvedPlanRef == null
+        ? null
+        : approvedPlanMessageForChat(
+            activeChat.copyWith(approvedPlan: approvedPlanRef),
+          );
+    final userContextText = await _contextTextForUser(
+      text,
+      ragChunks: ragChunks,
+      approvedPlanMessage: approvedPlanMessage,
+    );
     final attachments = List<AiChatAttachment>.from(_pendingAttachments);
     final userMessage = AiChatMessageRecord(
       role: 'user',
@@ -261,17 +270,32 @@ extension _ChatGeneration on _LlmChatScreenState {
       );
       if (assistantIndex >= 0) {
         final existingSteps = completedMessages[assistantIndex].todoSteps;
+        final parsedSteps = initialChat.planMode
+            ? _parseTodoStepsFromText(
+                answer.toString(),
+                assistantCreatedAt: assistantMessage.createdAt,
+              )
+            : const <AiTodoStep>[];
         final todoSteps = existingSteps.isNotEmpty
             ? existingSteps
-            : (initialChat.planMode
-                ? _parseTodoStepsFromText(answer.toString())
-                : const <AiTodoStep>[]);
+            : parsedSteps;
+        final traces = [...completedMessages[assistantIndex].traces];
+        if (initialChat.planMode && todoSteps.isEmpty) {
+          traces.add(
+            AiMessageTrace.create(
+              kind: 'plan_error',
+              title: 'Plan persistence failed',
+              content:
+                  'The response did not persist any executable todoSteps. Return a valid ```playbook JSON block or call client_task_create before leaving Plan Mode.',
+            ),
+          );
+        }
         completedMessages[assistantIndex] =
             completedMessages[assistantIndex].copyWith(
           text: answer.toString(),
           contextText: _contextTextForAssistant(
             answer.toString(),
-            traces: completedMessages[assistantIndex].traces,
+            traces: traces,
           ),
           promptTokens: runStats?.promptTokens,
           completionTokens: runStats?.completionTokens,
@@ -282,13 +306,19 @@ extension _ChatGeneration on _LlmChatScreenState {
           promptCacheHitTokens: runStats?.promptCacheHitTokens,
           promptCacheMissTokens: runStats?.promptCacheMissTokens,
           reasoningTokens: runStats?.reasoningTokens,
+          traces: traces,
           todoSteps: todoSteps,
         );
       }
+      final latestAssistant = latestAssistantMessageForChat(
+        currentChat.copyWith(messages: completedMessages),
+      );
+      final shouldExitPlanMode =
+          initialChat.planMode && latestAssistant?.todoSteps.isNotEmpty == true;
       final answeredChat = currentChat.copyWith(
         messages: completedMessages,
         updatedAt: DateTime.now(),
-        planMode: initialChat.planMode ? false : currentChat.planMode,
+        planMode: shouldExitPlanMode ? false : currentChat.planMode,
       );
       setState(() {
         _clearStreamingAssistant(
@@ -824,7 +854,10 @@ extension _ChatGeneration on _LlmChatScreenState {
     });
   }
 
-  List<AiTodoStep> _parseTodoStepsFromText(String text) {
+  List<AiTodoStep> _parseTodoStepsFromText(
+    String text, {
+    required DateTime assistantCreatedAt,
+  }) {
     try {
       final reg = RegExp(r'```playbook\s*(\{[\s\S]*?\})\s*```');
       final match = reg.firstMatch(text);
@@ -833,16 +866,24 @@ extension _ChatGeneration on _LlmChatScreenState {
       if (rawJson == null) return const [];
       final decoded = jsonDecode(rawJson) as Map<String, dynamic>;
       final stepsList = decoded['steps'] as List? ?? [];
-      final now = DateTime.now();
       return stepsList.asMap().entries.map((entry) {
         final idx = entry.key;
         final item = entry.value;
+        if (item is! Map) {
+          return AiTodoStep(
+            id: buildStableTodoStepId(assistantCreatedAt, idx),
+            name: 'Step ${idx + 1}',
+            command: '',
+            description: '',
+            status: StepStatus.pending,
+          );
+        }
         final stepName = item['name']?.toString() ?? 'Step ${idx + 1}';
         final command = item['command']?.toString() ?? '';
         final desc = item['description']?.toString() ?? '';
         final connId = item['connectionId']?.toString();
         return AiTodoStep(
-          id: 'todo-${now.millisecondsSinceEpoch}-$idx',
+          id: buildStableTodoStepId(assistantCreatedAt, idx),
           name: stepName,
           command: command,
           description: desc,

@@ -32,6 +32,7 @@ class SshToolsProvider implements AiToolProvider {
           'displayName': _string('Optional display name for the new session.'),
         },
         required: const ['connectionId'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) =>
             _sshOpenSession(service, arguments, approvedWrite: false),
       ),
@@ -44,6 +45,7 @@ class SshToolsProvider implements AiToolProvider {
           'connectionId': _string('Server connection id for that session.'),
         },
         required: const ['sessionId', 'connectionId'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (args) => _sshEnsureSessionConnected(service, args),
       ),
       AiTool(
@@ -55,6 +57,7 @@ class SshToolsProvider implements AiToolProvider {
           'name': _string('New display name.'),
         },
         required: const ['sessionId', 'name'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (args) => _sshRenameSession(service, args),
       ),
       AiTool(
@@ -65,6 +68,7 @@ class SshToolsProvider implements AiToolProvider {
           'sessionId': _string('Existing session id.'),
         },
         required: const ['sessionId'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) =>
             _sshCloseSession(service, arguments, approvedWrite: false),
       ),
@@ -76,6 +80,7 @@ class SshToolsProvider implements AiToolProvider {
           'connectionId': _string('Server connection id.'),
         },
         required: const ['connectionId'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) =>
             _sshCloseServerSessions(service, arguments, approvedWrite: false),
       ),
@@ -84,6 +89,7 @@ class SshToolsProvider implements AiToolProvider {
         description:
             'Restore saved tmux-backed SSH sessions after an app restart. Returns summary metadata only.',
         properties: const {},
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) =>
             _sshRestoreTmuxSessions(service, arguments, approvedWrite: false),
       ),
@@ -110,6 +116,7 @@ class SshToolsProvider implements AiToolProvider {
           'sessionId': _string('Terminal history session id.'),
         },
         required: const ['sessionId'],
+        executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) => _sshDeleteTerminalHistoryRecord(
             service, arguments,
             approvedWrite: false),

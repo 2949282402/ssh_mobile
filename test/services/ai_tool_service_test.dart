@@ -622,7 +622,7 @@ void main() {
   });
 
   group('client_set_plan_mode tool', () {
-    test('switches planMode to true and blocks switching to false without plans', () async {
+    test('switches planMode to true, clears approved plan, and exits only with persisted latest todo steps', () async {
       final now = DateTime.now();
       var chat = AiChatRecord(
         id: 'chat-1',
@@ -632,6 +632,10 @@ void main() {
         createdAt: now,
         updatedAt: now,
         planMode: false,
+        approvedPlan: AiApprovedPlanRef(
+          assistantCreatedAt: now,
+          approvedAt: now,
+        ),
       );
       await storage.saveAiChat(chat);
 
@@ -643,6 +647,7 @@ void main() {
 
       final chatTrue = (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
       expect(chatTrue.planMode, isTrue);
+      expect(chatTrue.approvedPlan, isNull);
 
       // 2. 尝试关闭 planMode（因为没有任何 playbook 计划，应该被拦截报错）
       final rawFalse = await tools.execute('client_set_plan_mode', {'enabled': false});
@@ -657,8 +662,29 @@ void main() {
         messages: [
           AiChatMessageRecord(
             role: 'assistant',
-            text: 'I have designed a plan ```playbook {"steps": [{"name": "Step 1"}]} ```',
+            text: 'Earlier valid plan',
+            createdAt: now.subtract(const Duration(minutes: 1)),
+            todoSteps: const [
+              AiTodoStep(
+                id: 'task-old',
+                name: 'Earlier plan',
+                command: 'echo old',
+                description: 'old',
+              ),
+            ],
+          ),
+          AiChatMessageRecord(
+            role: 'assistant',
+            text: 'Latest executable plan',
             createdAt: now,
+            todoSteps: const [
+              AiTodoStep(
+                id: 'task-new',
+                name: 'Step 1',
+                command: 'echo ok',
+                description: 'Persisted plan step',
+              ),
+            ],
           ),
         ],
       );
@@ -733,6 +759,18 @@ void main() {
       expect(decodedCreateInExec['error'], contains('client_task_create can ONLY be called during Plan Mode'));
 
       // 6. 处于 Execution Mode，调用 TaskUpdate 应该成功并更新状态
+      final rawRunningAlias = await tools.execute('client_task_update', {
+        'taskId': taskId,
+        'status': 'in_progress',
+      });
+      final decodedRunningAlias =
+          jsonDecode(rawRunningAlias) as Map<String, dynamic>;
+      expect(decodedRunningAlias['status'], 'success');
+      expect(decodedRunningAlias['newStatus'], 'running');
+
+      final chatAfterAlias = (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      expect(chatAfterAlias.messages.last.todoSteps.first.status.name, 'running');
+
       final rawUpdate = await tools.execute('client_task_update', {
         'taskId': taskId,
         'status': 'success',
