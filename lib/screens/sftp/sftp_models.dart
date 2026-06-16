@@ -12,7 +12,7 @@ class _SftpConnectionStatusSnapshot {
   });
 
   factory _SftpConnectionStatusSnapshot.from(
-    SftpService service,
+    SftpViewModel service,
     String? connectionId,
   ) {
     if (connectionId == null || connectionId.isEmpty) {
@@ -54,7 +54,7 @@ class _SftpPaneStatusSnapshot {
     required this.errorMessage,
   });
 
-  factory _SftpPaneStatusSnapshot.from(SftpService service) {
+  factory _SftpPaneStatusSnapshot.from(SftpViewModel service) {
     return _SftpPaneStatusSnapshot(
       connectionId: service.connectionId,
       currentPath: service.currentPath,
@@ -96,7 +96,7 @@ class _SftpEntriesSnapshot {
     required this.entries,
   });
 
-  factory _SftpEntriesSnapshot.from(SftpService service) {
+  factory _SftpEntriesSnapshot.from(SftpViewModel service) {
     return _SftpEntriesSnapshot(
       connectionId: service.connectionId,
       entriesRevision: service.entriesRevision,

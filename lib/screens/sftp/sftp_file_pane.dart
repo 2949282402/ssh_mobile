@@ -2,7 +2,7 @@ part of '../sftp_screen.dart';
 
 class _FilePane extends StatelessWidget {
   final AppStrings strings;
-  final SftpService sftp;
+  final SftpViewModel sftp;
 
   const _FilePane({
     required this.strings,
@@ -11,7 +11,7 @@ class _FilePane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final snapshot = context.select<SftpService, _SftpPaneStatusSnapshot>(
+    final snapshot = context.select<SftpViewModel, _SftpPaneStatusSnapshot>(
       _SftpPaneStatusSnapshot.from,
     );
     final colorScheme = Theme.of(context).colorScheme;
@@ -103,7 +103,7 @@ class _FilePane extends StatelessWidget {
   }
 
   Future<void> _uploadFile(BuildContext context) async {
-    final sftp = context.read<SftpService>();
+    final sftp = context.read<SftpViewModel>();
     final strings = AppStrings(context.read<AppSettings>().language);
     final messenger = ScaffoldMessenger.of(context);
     final result = await FilePicker.pickFiles(withData: true);
@@ -184,7 +184,7 @@ class _FilePane extends StatelessWidget {
   Future<void> _downloadFile(BuildContext context, SftpEntry entry) async {
     final settings = context.read<AppSettings>();
     final strings = AppStrings(settings.language);
-    final sftp = context.read<SftpService>();
+    final sftp = context.read<SftpViewModel>();
     final messenger = ScaffoldMessenger.of(context);
 
     try {
@@ -214,7 +214,7 @@ class _FilePane extends StatelessWidget {
   Future<void> _confirmDelete(BuildContext context, SftpEntry entry) async {
     final settings = context.read<AppSettings>();
     final strings = AppStrings(settings.language);
-    final sftp = context.read<SftpService>();
+    final sftp = context.read<SftpViewModel>();
     final nameController = TextEditingController();
     String? errorText;
     final confirmedName = await showDialog<String>(
@@ -313,7 +313,7 @@ class _FilePane extends StatelessWidget {
       ),
     );
     if (saved == true && context.mounted) {
-      await context.read<SftpService>().refresh();
+      await context.read<SftpViewModel>().refresh();
     }
   }
 
@@ -339,7 +339,7 @@ class _FilePane extends StatelessWidget {
 
 class _SftpEntryList extends StatelessWidget {
   final AppStrings strings;
-  final SftpService sftp;
+  final SftpViewModel sftp;
   final bool busy;
   final Future<void> Function(
     BuildContext context,
@@ -359,7 +359,7 @@ class _SftpEntryList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scale = mobileUiScaleOf(context);
-    final snapshot = context.select<SftpService, _SftpEntriesSnapshot>(
+    final snapshot = context.select<SftpViewModel, _SftpEntriesSnapshot>(
       _SftpEntriesSnapshot.from,
     );
     final entries = snapshot.entries;

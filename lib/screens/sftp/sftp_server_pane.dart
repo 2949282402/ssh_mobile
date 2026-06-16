@@ -66,7 +66,7 @@ class _ServerPane extends StatelessWidget {
               },
               onReorder: (oldIndex, newIndex) {
                 context
-                    .read<StorageService>()
+                    .read<ConnectionViewModel>()
                     .reorderConnections(oldIndex, newIndex);
               },
             ),
@@ -441,7 +441,7 @@ class _SftpServerTileBinding extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Selector<SftpService, _SftpConnectionStatusSnapshot>(
+    return Selector<SftpViewModel, _SftpConnectionStatusSnapshot>(
       selector: (_, service) =>
           _SftpConnectionStatusSnapshot.from(service, connection.id),
       builder: (context, status, _) => _ServerTile(
@@ -450,7 +450,7 @@ class _SftpServerTileBinding extends StatelessWidget {
         busy: status.busy,
         connected: status.connected,
         compact: compact,
-        onTap: () => context.read<SftpService>().connect(connection.id),
+        onTap: () => context.read<SftpViewModel>().connect(connection.id),
       ),
     );
   }

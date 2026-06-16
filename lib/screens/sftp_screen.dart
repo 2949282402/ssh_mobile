@@ -5,9 +5,10 @@ import 'package:provider/provider.dart';
 import 'package:animations/animations.dart';
 
 import '../features/connection/models/connection.dart';
+import '../features/connection/viewmodels/connection_viewmodel.dart';
+import '../features/sftp/viewmodels/sftp_viewmodel.dart';
 import '../services/app_settings.dart';
 import '../services/sftp_service.dart';
-import '../services/storage_service.dart';
 import '../utils/responsive.dart';
 import '../widgets/tactile_feedback.dart';
 import '../widgets/overflow_scroll_text.dart';
@@ -49,16 +50,13 @@ class _SftpScreenState extends State<SftpScreen> {
       (settings) => settings.language,
     );
     final strings = AppStrings(language);
-    final storageReady = context.select<StorageService, bool>(
-      (storage) => storage.initialized,
+    final connectionVm = context.watch<ConnectionViewModel>();
+    final sftp = context.read<SftpViewModel>();
+    final storageReady = !connectionVm.isLoading;
+    final connections = connectionVm.connections;
+    final selectedConnectionId = context.select<SftpViewModel, String?>(
+      (vm) => vm.connectionId,
     );
-    final connections = context.select<StorageService, List<ConnectionConfig>>(
-      (storage) => storage.connections,
-    );
-    final selectedConnectionId = context.select<SftpService, String?>(
-      (service) => service.connectionId,
-    );
-    final sftp = context.read<SftpService>();
     final desktop = isDesktopLayout(context);
     final selectedConnection =
         _selectedConnection(connections, selectedConnectionId);
@@ -82,7 +80,7 @@ class _SftpScreenState extends State<SftpScreen> {
                 curve: Curves.easeOutCubic,
                 width: serversCollapsed ? 64 : 320,
                 child: serversCollapsed
-                    ? Selector<SftpService, _SftpConnectionStatusSnapshot>(
+                    ? Selector<SftpViewModel, _SftpConnectionStatusSnapshot>(
                         selector: (_, service) =>
                             _SftpConnectionStatusSnapshot.from(
                           service,
@@ -123,7 +121,7 @@ class _SftpScreenState extends State<SftpScreen> {
                 switchInCurve: Curves.easeOutCubic,
                 switchOutCurve: Curves.easeInCubic,
                 child: serversCollapsed
-                    ? Selector<SftpService, _SftpConnectionStatusSnapshot>(
+                    ? Selector<SftpViewModel, _SftpConnectionStatusSnapshot>(
                         key: const ValueKey('sftp-server-collapsed'),
                         selector: (_, service) =>
                             _SftpConnectionStatusSnapshot.from(
