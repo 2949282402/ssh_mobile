@@ -143,6 +143,10 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
 
   SftpService(this._storageService);
 
+  static String _decodeUtf8(Uint8List bytes) {
+    return utf8.decode(bytes, allowMalformed: true);
+  }
+
   _SftpSession? get _activeSession =>
       _activeConnectionId == null ? null : _sessions[_activeConnectionId];
 

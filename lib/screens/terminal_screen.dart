@@ -69,6 +69,7 @@ class _TerminalScreenState extends State<TerminalScreen>
   double _terminalFontSize = SshSession.defaultTerminalFontSize;
   Offset _lastLongPressPosition = Offset.zero;
   Timer? _longPressTimer;
+  Timer? _resizeTimer;
   int _activePointers = 0;
   bool _terminalMenuOpen = false;
   bool _advancedKeyboardVisible = false;
@@ -645,16 +646,20 @@ class _TerminalScreenState extends State<TerminalScreen>
   }
 
   void _syncTerminalSize() {
-    final width = _terminal.viewWidth;
-    final height = _terminal.viewHeight;
-    if (width > 0 && height > 0) {
-      context.read<SshService>().resizeTerminal(
-            widget.sessionId,
-            width,
-            height,
-          );
-    }
-    _requestWindowsAwareTerminalFocus();
+    _resizeTimer?.cancel();
+    _resizeTimer = Timer(const Duration(milliseconds: 150), () {
+      if (!mounted) return;
+      final width = _terminal.viewWidth;
+      final height = _terminal.viewHeight;
+      if (width > 0 && height > 0) {
+        context.read<SshService>().resizeTerminal(
+              widget.sessionId,
+              width,
+              height,
+            );
+      }
+      _requestWindowsAwareTerminalFocus();
+    });
   }
 
   KeyEventResult _sendTerminalKey(
@@ -765,6 +770,7 @@ class _TerminalScreenState extends State<TerminalScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _longPressTimer?.cancel();
+    _resizeTimer?.cancel();
     final listener = _sshListener;
     if (listener != null) {
       _sshService.removeListener(listener);

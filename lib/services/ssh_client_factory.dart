@@ -1,4 +1,5 @@
 import 'package:dartssh2/dartssh2.dart';
+import 'package:flutter/foundation.dart';
 
 import '../models/connection.dart';
 import 'app_log_service.dart';
@@ -58,9 +59,11 @@ class SshClientFactory {
       password: resolvedCredentials.password,
       privateKey: resolvedCredentials.privateKey,
     );
+    final identities = await identitiesFor(config, resolvedCredentials);
     final authOptions = buildAuthOptions(
       config: config,
       credentials: resolvedCredentials,
+      identities: identities,
     );
     AppLogService.instance.info(
       'SshClientFactory: connecting socket',
@@ -96,12 +99,13 @@ class SshClientFactory {
   static SshClientAuthOptions buildAuthOptions({
     required ConnectionConfig config,
     required SshCredentials credentials,
+    required List<SSHKeyPair>? identities,
   }) {
     final password =
         credentials.password?.isNotEmpty == true ? credentials.password : null;
     final usesPassword = config.authMethod != AuthMethod.privateKey;
     return SshClientAuthOptions(
-      identities: identitiesFor(config, credentials),
+      identities: identities,
       onPasswordRequest: usesPassword ? () => password : null,
       onUserInfoRequest: usesPassword && password != null
           ? (request) => keyboardInteractiveResponsesForPassword(
@@ -112,10 +116,16 @@ class SshClientFactory {
     );
   }
 
-  static List<SSHKeyPair>? identitiesFor(
+  static List<SSHKeyPair> _parsePemKey(Map<String, String?> args) {
+    final pem = args['pem']!;
+    final passphrase = args['passphrase'];
+    return SSHKeyPair.fromPem(pem, passphrase);
+  }
+
+  static Future<List<SSHKeyPair>?> identitiesFor(
     ConnectionConfig config,
     SshCredentials credentials,
-  ) {
+  ) async {
     final shouldUseKey = config.authMethod == AuthMethod.privateKey ||
         config.authMethod == AuthMethod.both;
     if (!shouldUseKey || credentials.privateKey?.isNotEmpty != true) {
@@ -129,8 +139,10 @@ class SshClientFactory {
     if (cached != null) {
       return cached;
     }
-    final identities =
-        SSHKeyPair.fromPem(credentials.privateKey!, credentials.password);
+    final identities = await compute(_parsePemKey, {
+      'pem': credentials.privateKey!,
+      'passphrase': credentials.password,
+    });
     _identityCache[key] = identities;
     return identities;
   }

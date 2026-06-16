@@ -44,7 +44,7 @@ extension SftpServiceOperations on SftpService {
       final cachedBytes = await SftpFileCache.get(
           connectionId, absolutePath, attrs.size, modifiedAt);
       if (cachedBytes != null) {
-        return utf8.decode(cachedBytes, allowMalformed: true);
+        return compute(SftpService._decodeUtf8, cachedBytes);
       }
 
       SftpFile? file;
@@ -61,7 +61,7 @@ extension SftpServiceOperations on SftpService {
         await SftpFileCache.put(
             connectionId, absolutePath, attrs.size, modifiedAt, bytes);
 
-        return utf8.decode(bytes, allowMalformed: true);
+        return compute(SftpService._decodeUtf8, bytes);
       } finally {
         await _closeFileQuietly(file);
       }

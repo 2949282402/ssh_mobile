@@ -319,6 +319,15 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     } catch (_) {}
   }
 
+  void _onInputFocusChanged() {
+    if (_inputFocusNode.hasFocus) {
+      Future.delayed(const Duration(milliseconds: 100), () {
+        if (!mounted) return;
+        _scrollToBottom(jump: false);
+      });
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -327,6 +336,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     }
     _checkPendingDiagnosticPrompt();
     _inputFocusNode = FocusNode(onKeyEvent: _handleInputKeyEvent);
+    _inputFocusNode.addListener(_onInputFocusChanged);
     _historySlideController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 240),
@@ -370,6 +380,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     _historyPanelExtent.dispose();
     _streamingAssistantText.dispose();
     _streamingAssistantStatus.dispose();
+    _inputFocusNode.removeListener(_onInputFocusChanged);
     _inputFocusNode.dispose();
     _inputController.dispose();
     _scrollController.dispose();

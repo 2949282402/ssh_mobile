@@ -34,7 +34,14 @@ class SftpFileViewerScreen extends StatefulWidget {
 class _SftpFileViewerScreenState extends State<SftpFileViewerScreen> {
   late final _PreviewKind _kind;
   Future<Uint8List>? _bytesFuture;
+  Future<String>? _textFuture;
   bool _showSource = false;
+
+  bool get _isTextPreview {
+    return _kind == _PreviewKind.markdown ||
+        _kind == _PreviewKind.html ||
+        _kind == _PreviewKind.text;
+  }
 
   @override
   void initState() {
@@ -42,11 +49,26 @@ class _SftpFileViewerScreenState extends State<SftpFileViewerScreen> {
     _kind = _previewKind(widget.entry.name);
     if (_kind != _PreviewKind.unsupported) {
       final settings = context.read<AppSettings>();
-      _bytesFuture = context.read<SftpService>().downloadBytes(
+      final limit = _previewLimitFor(_kind, settings);
+      final download = context.read<SftpService>().downloadBytes(
             widget.entry,
-            maxBytes: _previewLimitFor(_kind, settings),
+            maxBytes: limit,
           );
+      if (_isTextPreview) {
+        _textFuture = _decodeTextAsync(download);
+      } else {
+        _bytesFuture = download;
+      }
     }
+  }
+
+  static String _parseUtf8(Uint8List bytes) {
+    return utf8.decode(bytes, allowMalformed: true);
+  }
+
+  Future<String> _decodeTextAsync(Future<Uint8List> futureBytes) async {
+    final bytes = await futureBytes;
+    return compute(_parseUtf8, bytes);
   }
 
   @override
@@ -99,10 +121,50 @@ class _SftpFileViewerScreenState extends State<SftpFileViewerScreen> {
             ),
         ],
       ),
-      body: _bytesFuture == null
-          ? _UnsupportedPreview(strings: strings)
-          : FutureBuilder<Uint8List>(
-              future: _bytesFuture,
+      body: !_isTextPreview
+          ? (_bytesFuture == null
+              ? _UnsupportedPreview(strings: strings)
+              : FutureBuilder<Uint8List>(
+                  future: _bytesFuture,
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState != ConnectionState.done) {
+                      return const Center(
+                        child: SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      );
+                    }
+                    if (snapshot.hasError) {
+                      return Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Text(strings.previewFailed(snapshot.error!)),
+                        ),
+                      );
+                    }
+
+                    final bytes = snapshot.data!;
+                    switch (_kind) {
+                      case _PreviewKind.image:
+                        return _ImagePreview(bytes: bytes);
+                      case _PreviewKind.pdf:
+                        return PdfPreview(
+                          build: (_) async => bytes,
+                          allowPrinting: false,
+                          allowSharing: false,
+                          canChangeOrientation: false,
+                          canChangePageFormat: false,
+                          canDebug: false,
+                        );
+                      default:
+                        return _UnsupportedPreview(strings: strings);
+                    }
+                  },
+                ))
+          : FutureBuilder<String>(
+              future: _textFuture,
               builder: (context, snapshot) {
                 if (snapshot.connectionState != ConnectionState.done) {
                   return const Center(
@@ -122,37 +184,26 @@ class _SftpFileViewerScreenState extends State<SftpFileViewerScreen> {
                   );
                 }
 
-                final bytes = snapshot.data!;
+                final text = snapshot.data!;
                 if (_showSource && canToggleSource) {
-                  return _TextPreview(text: _decodeText(bytes));
+                  return _TextPreview(text: text);
                 }
 
                 switch (_kind) {
-                  case _PreviewKind.image:
-                    return _ImagePreview(bytes: bytes);
-                  case _PreviewKind.pdf:
-                    return PdfPreview(
-                      build: (_) async => bytes,
-                      allowPrinting: false,
-                      allowSharing: false,
-                      canChangeOrientation: false,
-                      canChangePageFormat: false,
-                      canDebug: false,
-                    );
                   case _PreviewKind.markdown:
                     return Markdown(
-                      data: _decodeText(bytes),
+                      data: text,
                       selectable: true,
                       padding: const EdgeInsets.all(16),
                     );
                   case _PreviewKind.html:
                     return _HtmlPreview(
-                      html: _decodeText(bytes),
+                      html: text,
                       fallbackLabel: strings.source,
                     );
                   case _PreviewKind.text:
-                    return _TextPreview(text: _decodeText(bytes));
-                  case _PreviewKind.unsupported:
+                    return _TextPreview(text: text);
+                  default:
                     return _UnsupportedPreview(strings: strings);
                 }
               },
@@ -197,10 +248,6 @@ class _SftpFileViewerScreenState extends State<SftpFileViewerScreen> {
       return _PreviewKind.text;
     }
     return _PreviewKind.unsupported;
-  }
-
-  String _decodeText(Uint8List bytes) {
-    return utf8.decode(bytes, allowMalformed: true);
   }
 
   int _previewLimitFor(_PreviewKind kind, AppSettings settings) {

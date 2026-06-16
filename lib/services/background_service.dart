@@ -445,19 +445,25 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
         details: 'sessionId=$sessionId host=$host:$port',
       );
 
+      final config = ConnectionConfig(
+        id: connectionId ?? sessionId,
+        name: name,
+        host: host,
+        port: port,
+        username: username,
+        authMethod: AuthMethod.fromName(authMethod),
+      );
+      final credentials = SshCredentials(
+        password: password,
+        privateKey: privateKey,
+      );
+
+      final identities = await SshClientFactory.identitiesFor(config, credentials);
+
       final authOptions = SshClientFactory.buildAuthOptions(
-        config: ConnectionConfig(
-          id: connectionId ?? sessionId,
-          name: name,
-          host: host,
-          port: port,
-          username: username,
-          authMethod: AuthMethod.fromName(authMethod),
-        ),
-        credentials: SshCredentials(
-          password: password,
-          privateKey: privateKey,
-        ),
+        config: config,
+        credentials: credentials,
+        identities: identities,
       );
 
       final client = SSHClient(

@@ -65,6 +65,7 @@ void main() {
           password: null,
           privateKey: null,
         ),
+        identities: null,
       );
 
       expect(options.onPasswordRequest, isNull);
