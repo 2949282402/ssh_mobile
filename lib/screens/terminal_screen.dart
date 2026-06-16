@@ -10,6 +10,7 @@ import 'package:animations/animations.dart';
 
 import '../services/app_settings.dart';
 import '../services/ssh_service.dart';
+import '../features/terminal/viewmodels/terminal_viewmodel.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/responsive.dart';
@@ -77,15 +78,12 @@ class _TerminalScreenState extends State<TerminalScreen>
   bool _loadingBufferedOutput = false;
   bool _reconnectInProgress = false;
   bool _hasShownDisconnectMessage = false;
-  double _terminalFontSize = SshSession.defaultTerminalFontSize;
   Offset _lastLongPressPosition = Offset.zero;
   Timer? _longPressTimer;
   Timer? _resizeTimer;
   int _activePointers = 0;
   bool _terminalMenuOpen = false;
   bool _advancedKeyboardVisible = false;
-  bool _ctrlActive = false;
-  bool _altActive = false;
   TerminalTheme? _cachedTerminalTheme;
   bool? _cachedTerminalThemeIsDark;
   Color? _cachedTerminalThemeBackground;
@@ -116,6 +114,10 @@ class _TerminalScreenState extends State<TerminalScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _sshService = context.read<SshService>();
+    final initialFontSize =
+        _sshService.getSession(widget.sessionId)?.fontSize ??
+            SshSession.defaultTerminalFontSize;
+    context.read<TerminalViewModel>().setFontSize(initialFontSize);
 
     _terminal = Terminal(
       // Keep the interactive scrollback bounded; full raw output still goes to
@@ -124,8 +126,9 @@ class _TerminalScreenState extends State<TerminalScreen>
       maxLines: _terminalScrollbackLines,
       onOutput: (data) {
         if (!mounted) return;
-        if (_ctrlActive) {
-          _ctrlActive = false;
+        final terminalVm = context.read<TerminalViewModel>();
+        if (terminalVm.ctrlActive) {
+          terminalVm.setCtrlActive(false);
           if (data.length == 1) {
             final charCode = data.codeUnitAt(0);
             if ((charCode >= 97 && charCode <= 122) ||
@@ -135,26 +138,22 @@ class _TerminalScreenState extends State<TerminalScreen>
                 widget.sessionId,
                 String.fromCharCode(ctrlCode),
               );
-              setState(() {});
               return;
             }
           }
           _sshService.sendData(widget.sessionId, data);
-          setState(() {});
           return;
         }
-        if (_altActive) {
-          _altActive = false;
+        if (terminalVm.altActive) {
+          terminalVm.setAltActive(false);
           if (data.length == 1) {
             _sshService.sendData(
               widget.sessionId,
               '\x1b$data',
             );
-            setState(() {});
             return;
           }
           _sshService.sendData(widget.sessionId, data);
-          setState(() {});
           return;
         }
         _sshService.sendData(widget.sessionId, data);
@@ -169,10 +168,9 @@ class _TerminalScreenState extends State<TerminalScreen>
         : _terminalFocusNode;
     _complexInputController = TextEditingController();
     _windowsCommandInputController = TextEditingController();
-    _terminalFontSize = (_sshService.getSession(widget.sessionId)?.fontSize ??
-            _terminalFontSize)
-        .clamp(_minTerminalFontSize, _maxTerminalFontSize)
-        .toDouble();
+    final sessionFontSize = _sshService.getSession(widget.sessionId)?.fontSize ??
+        SshSession.defaultTerminalFontSize;
+    context.read<TerminalViewModel>().setFontSize(sessionFontSize);
 
     _loadServerInfo();
     _installSshListener();
@@ -535,6 +533,11 @@ class _TerminalScreenState extends State<TerminalScreen>
 
   @override
   Widget build(BuildContext context) {
+    final terminalVm = context.watch<TerminalViewModel>();
+    final ctrlActive = terminalVm.ctrlActive;
+    final altActive = terminalVm.altActive;
+    final terminalFontSize = terminalVm.fontSize;
+
     final appSettings = context.select<AppSettings, _TerminalSettingsSnapshot>(
       _TerminalSettingsSnapshot.from,
     );
@@ -558,7 +561,7 @@ class _TerminalScreenState extends State<TerminalScreen>
       controller: _terminalController,
       focusNode: _terminalFocusNode,
       theme: _terminalTheme(isDark, terminalBackground),
-      fontSize: _terminalFontSize,
+      fontSize: terminalFontSize,
       minFontSize: _minTerminalFontSize,
       maxFontSize: _maxTerminalFontSize,
       onFontSizeChanged: _setTerminalFontSize,
@@ -581,20 +584,20 @@ class _TerminalScreenState extends State<TerminalScreen>
       advancedKeyboardVisible: _advancedKeyboardVisible,
       complexInputController: _complexInputController,
       terminalFocusNode: _terminalInputFocusNode,
-      ctrlActive: _ctrlActive,
-      altActive: _altActive,
+      ctrlActive: ctrlActive,
+      altActive: altActive,
       onToggleCtrl: () {
-        setState(() {
-          _ctrlActive = !_ctrlActive;
-          if (_ctrlActive) _altActive = false;
-        });
+        terminalVm.toggleCtrl();
+        if (terminalVm.ctrlActive) {
+          terminalVm.setAltActive(false);
+        }
         _requestWindowsAwareTerminalFocus();
       },
       onToggleAlt: () {
-        setState(() {
-          _altActive = !_altActive;
-          if (_altActive) _ctrlActive = false;
-        });
+        terminalVm.toggleAlt();
+        if (terminalVm.altActive) {
+          terminalVm.setCtrlActive(false);
+        }
         _requestWindowsAwareTerminalFocus();
       },
       onToggleAdvancedKeyboard: () {
@@ -618,11 +621,11 @@ class _TerminalScreenState extends State<TerminalScreen>
         onCloseWindow: () => _confirmDisconnect(context),
         onOpenSiblingSession: () => _openSiblingSession(context),
         onSmallerFont: () {
-          _setTerminalFontSize(_terminalFontSize - 1);
+          _setTerminalFontSize(terminalFontSize - 1);
           _syncTerminalSize();
         },
         onLargerFont: () {
-          _setTerminalFontSize(_terminalFontSize + 1);
+          _setTerminalFontSize(terminalFontSize + 1);
           _syncTerminalSize();
         },
       ),
@@ -674,8 +677,9 @@ class _TerminalScreenState extends State<TerminalScreen>
 
   void _setTerminalFontSize(double size) {
     final nextSize = size.clamp(_minTerminalFontSize, _maxTerminalFontSize);
-    if ((nextSize - _terminalFontSize).abs() < 0.05) return;
-    setState(() => _terminalFontSize = nextSize);
+    final terminalVm = context.read<TerminalViewModel>();
+    if ((nextSize - terminalVm.fontSize).abs() < 0.05) return;
+    terminalVm.setFontSize(nextSize);
     context.read<SshService>().setSessionFontSize(widget.sessionId, nextSize);
   }
 

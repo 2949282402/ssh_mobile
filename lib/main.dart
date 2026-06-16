@@ -8,6 +8,7 @@ import 'features/connection/viewmodels/connection_viewmodel.dart';
 import 'features/settings/viewmodels/settings_viewmodel.dart';
 import 'features/performance/viewmodels/performance_viewmodel.dart';
 import 'features/sftp/viewmodels/sftp_viewmodel.dart';
+import 'features/terminal/viewmodels/terminal_viewmodel.dart';
 import 'screens/ai_skills_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/performance_monitor_screen.dart';
@@ -125,6 +126,11 @@ Future<void> main() async {
             ChangeNotifierProvider(
               create: (context) => SftpViewModel(
                 sftpService: context.read<SftpService>(),
+              ),
+            ),
+            ChangeNotifierProvider(
+              create: (context) => TerminalViewModel(
+                sshService: context.read<SshService>(),
               ),
             ),
           ],
