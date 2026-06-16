@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../features/sftp/viewmodels/sftp_viewmodel.dart';
 import '../services/app_settings.dart';
 import '../services/sftp_service.dart';
 
@@ -43,7 +44,7 @@ class _SftpEditorScreenState extends State<SftpEditorScreen> {
   }
 
   Future<void> _load() async {
-    final text = await context.read<SftpService>().readTextFile(
+    final text = await context.read<SftpViewModel>().readTextFile(
           widget.entry,
           maxBytes: context.read<AppSettings>().sftpTextEditLimitBytes,
         );
@@ -242,7 +243,7 @@ class _SftpEditorScreenState extends State<SftpEditorScreen> {
   Future<void> _save(BuildContext context, AppStrings strings) async {
     setState(() => _saving = true);
     try {
-      await context.read<SftpService>().saveTextFile(
+      await context.read<SftpViewModel>().saveTextFile(
             widget.entry,
             _controller.text,
           );

@@ -115,48 +115,14 @@ Future<void> main() async {
               create: (context) => ConnectionViewModel(
                 connectionRepository: context.read<StorageService>(),
                 sshService: context.read<SshService>(),
+                sftpService: context.read<SftpService>(),
+                performanceService: context.read<PerformanceMonitorService>(),
               )..fetchConnections(),
             ),
             ChangeNotifierProvider(
               create: (context) => SettingsViewModel(
                 appSettings: context.read<AppSettings>(),
                 storageService: context.read<StorageService>(),
-              ),
-            ),
-            ChangeNotifierProvider(
-              create: (context) => PlaybookViewModel(
-                playbookService: context.read<PlaybookService>(),
-                storageService: context.read<StorageService>(),
-              ),
-            ),
-            ChangeNotifierProvider(
-              create: (context) => SystemAdminViewModel(
-                adminService: context.read<SystemAdminService>(),
-                storageService: context.read<StorageService>(),
-              ),
-            ),
-            ChangeNotifierProvider(
-              create: (context) => RagKnowledgeViewModel(
-                ragService: context.read<RagService>(),
-                storageService: context.read<StorageService>(),
-              ),
-            ),
-            ChangeNotifierProvider(
-              create: (context) => AiSkillsViewModel(
-                storageService: context.read<StorageService>(),
-                appSettings: context.read<AppSettings>(),
-              ),
-            ),
-            ChangeNotifierProvider(
-              create: (context) => DeveloperLogViewModel(
-                logService: context.read<AppLogService>(),
-                appSettings: context.read<AppSettings>(),
-              ),
-            ),
-            ChangeNotifierProvider(
-              create: (context) => StartupViewModel(
-                storageService: context.read<StorageService>(),
-                appSettings: context.read<AppSettings>(),
               ),
             ),
             ChangeNotifierProvider(
@@ -266,7 +232,13 @@ class _SshMobileAppState extends State<SshMobileApp>
         switch (settings.name) {
           case '/':
             return MaterialPageRoute(
-              builder: (_) => const StartupScreen(),
+              builder: (_) => ChangeNotifierProvider(
+                create: (context) => StartupViewModel(
+                  storageService: context.read<StorageService>(),
+                  appSettings: context.read<AppSettings>(),
+                ),
+                child: const StartupScreen(),
+              ),
             );
           case '/terminal':
             final config = settings.arguments as Map<String, dynamic>;
@@ -290,11 +262,23 @@ class _SshMobileAppState extends State<SshMobileApp>
             );
           case '/ai-skills':
             return MaterialPageRoute(
-              builder: (_) => const AiSkillsScreen(),
+              builder: (_) => ChangeNotifierProvider(
+                create: (context) => AiSkillsViewModel(
+                  storageService: context.read<StorageService>(),
+                  appSettings: context.read<AppSettings>(),
+                ),
+                child: const AiSkillsScreen(),
+              ),
             );
           case '/playbooks':
             return MaterialPageRoute(
-              builder: (_) => const PlaybookScreen(),
+              builder: (_) => ChangeNotifierProvider(
+                create: (context) => PlaybookViewModel(
+                  playbookService: context.read<PlaybookService>(),
+                  storageService: context.read<StorageService>(),
+                ),
+                child: const PlaybookScreen(),
+              ),
             );
           case '/add':
             return MaterialPageRoute(
@@ -307,7 +291,13 @@ class _SshMobileAppState extends State<SshMobileApp>
             );
           case '/rag-knowledge':
             return MaterialPageRoute(
-              builder: (_) => const RagKnowledgeScreen(),
+              builder: (_) => ChangeNotifierProvider(
+                create: (context) => RagKnowledgeViewModel(
+                  ragService: context.read<RagService>(),
+                  storageService: context.read<StorageService>(),
+                ),
+                child: const RagKnowledgeScreen(),
+              ),
             );
           default:
             return MaterialPageRoute(

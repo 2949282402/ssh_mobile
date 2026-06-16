@@ -748,7 +748,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
     ConnectionConfig conn,
     String windowName,
   ) async {
-    final ssh = context.read<SshService>();
+    final connectionVm = context.read<ConnectionViewModel>();
     final strings = AppStrings(context.read<AppSettings>().language);
 
     showDialog(
@@ -764,7 +764,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
     await waitForConnectionProgressFrame();
     if (!context.mounted) return;
 
-    final sessionId = await ssh.openSession(conn.id, displayName: windowName);
+    final sessionId = await connectionVm.openTerminalSession(conn.id, windowName);
     if (!context.mounted) return;
     Navigator.of(context).pop();
 
@@ -780,7 +780,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(_formatConnectionFailure(ssh.errorMessage)),
+          content: Text(_formatConnectionFailure(connectionVm.errorMessage)),
           backgroundColor: Theme.of(context).colorScheme.error,
         ),
       );
@@ -840,9 +840,6 @@ extension _HomeScreenStateServerList on _HomeScreenState {
   void _confirmDelete(BuildContext context, ConnectionConfig conn) {
     final strings = AppStrings(context.read<AppSettings>().language);
     final storage = context.read<ConnectionViewModel>();
-    final ssh = context.read<SshService>();
-    final sftp = context.read<SftpService>();
-    final performance = context.read<PerformanceMonitorService>();
 
     showDialog(
       context: context,
@@ -857,10 +854,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
           TextButton(
             onPressed: () async {
               Navigator.pop(ctx);
-              await ssh.disconnectSessionsForConnection(conn.id);
-              await sftp.disconnectConnection(conn.id, forgetPath: true);
-              performance.stopForConnection(conn.id);
-              await storage.deleteConnection(conn.id);
+              await storage.deleteConnectionWithCleanup(conn.id);
             },
             style: TextButton.styleFrom(
               foregroundColor: Theme.of(context).colorScheme.error,
@@ -921,15 +915,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
     );
     if (confirmed != true || !context.mounted) return;
     final storage = context.read<ConnectionViewModel>();
-    final ssh = context.read<SshService>();
-    final sftp = context.read<SftpService>();
-    final performance = context.read<PerformanceMonitorService>();
-    for (final id in ids) {
-      await ssh.disconnectSessionsForConnection(id);
-      await sftp.disconnectConnection(id, forgetPath: true);
-      performance.stopForConnection(id);
-    }
-    await storage.deleteConnections(ids);
+    await storage.deleteConnectionsWithCleanup(ids);
     if (!mounted) return;
     updateState(() {
       _serverSelectionMode = false;

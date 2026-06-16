@@ -3,12 +3,16 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/services/ssh_client_factory.dart';
 import '../../../services/ssh_service.dart';
+import '../../../services/sftp_service.dart';
+import '../../../services/performance_monitor_service.dart';
 import '../models/connection.dart';
 import '../../../services/storage_service.dart';
 
 class ConnectionViewModel extends ChangeNotifier {
   final ConnectionRepository _connectionRepository;
   final SshService _sshService;
+  final SftpService _sftpService;
+  final PerformanceMonitorService _performanceService;
 
   List<ConnectionConfig> _connections = [];
   bool _isLoading = false;
@@ -19,8 +23,12 @@ class ConnectionViewModel extends ChangeNotifier {
   ConnectionViewModel({
     required ConnectionRepository connectionRepository,
     required SshService sshService,
+    required SftpService sftpService,
+    required PerformanceMonitorService performanceService,
   })  : _connectionRepository = connectionRepository,
-        _sshService = sshService;
+        _sshService = sshService,
+        _sftpService = sftpService,
+        _performanceService = performanceService;
 
   List<ConnectionConfig> get connections => _connections;
   bool get isLoading => _isLoading;
@@ -172,5 +180,56 @@ class ConnectionViewModel extends ChangeNotifier {
 
   Future<String?> getPrivateKey(String id) {
     return _connectionRepository.getPrivateKey(id);
+  }
+
+  Future<String?> openTerminalSession(String connectionId, String windowName) async {
+    _errorMessage = null;
+    notifyListeners();
+    try {
+      final sessionId = await _sshService.openSession(connectionId, displayName: windowName);
+      if (sessionId == null) {
+        _errorMessage = _sshService.errorMessage;
+      }
+      return sessionId;
+    } catch (e) {
+      _errorMessage = e.toString();
+      return null;
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  Future<void> deleteConnectionWithCleanup(String connectionId) async {
+    _errorMessage = null;
+    notifyListeners();
+    try {
+      await _sshService.disconnectSessionsForConnection(connectionId);
+      await _sftpService.disconnectConnection(connectionId, forgetPath: true);
+      _performanceService.stopForConnection(connectionId);
+      await _connectionRepository.deleteConnection(connectionId);
+      _connections = _connectionRepository.connections;
+    } catch (e) {
+      _errorMessage = e.toString();
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  Future<void> deleteConnectionsWithCleanup(List<String> connectionIds) async {
+    _errorMessage = null;
+    notifyListeners();
+    try {
+      for (final id in connectionIds) {
+        await _sshService.disconnectSessionsForConnection(id);
+        await _sftpService.disconnectConnection(id, forgetPath: true);
+        _performanceService.stopForConnection(id);
+      }
+      await _connectionRepository.deleteConnections(connectionIds);
+      _connections = _connectionRepository.connections;
+    } catch (e) {
+      _errorMessage = e.toString();
+    } finally {
+      notifyListeners();
+    }
   }
 }

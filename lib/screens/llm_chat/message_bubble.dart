@@ -871,9 +871,9 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
   String? _getServerDisplayName(BuildContext context, String? connectionId) {
     if (connectionId == null || connectionId.trim().isEmpty) return null;
     try {
-      final connections = context.read<StorageService>().connections;
-      final conn = connections.firstWhere((c) => c.id == connectionId);
-      return conn.name;
+      final viewModel = context.read<AiChatViewModel>();
+      final conn = viewModel.getConnection(connectionId);
+      return conn?.name ?? 'Server';
     } catch (_) {
       return 'Server';
     }

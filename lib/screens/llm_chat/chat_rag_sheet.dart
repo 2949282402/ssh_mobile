@@ -4,8 +4,8 @@ extension _ChatRagSheet on _LlmChatScreenBodyState {
   Future<void> _showRagBottomSheet(
       BuildContext context, _AiStrings strings) async {
     final appSettings = context.read<AppSettings>();
-    final storage = context.read<StorageService>();
-    final aliyunKey = await storage.getAliyunApiKey();
+    final viewModel = context.read<AiChatViewModel>();
+    final aliyunKey = await viewModel.getAliyunApiKey();
     final hasAliyunKey = aliyunKey != null && aliyunKey.isNotEmpty;
 
     if (!context.mounted) return;

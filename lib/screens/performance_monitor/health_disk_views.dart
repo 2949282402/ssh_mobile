@@ -3,7 +3,7 @@ part of '../performance_monitor_screen.dart';
 class _DiskUsagePanel extends StatelessWidget {
   final AppStrings strings;
   final List<ConnectionConfig> connections;
-  final PerformanceMonitorService monitor;
+  final PerformanceMonitorViewModel monitor;
   final bool expanded;
   final VoidCallback onToggle;
 
@@ -128,7 +128,7 @@ class _DiskUsageServerBlock extends StatelessWidget {
 class _HealthAlertPanel extends StatelessWidget {
   final AppStrings strings;
   final List<ConnectionConfig> connections;
-  final PerformanceMonitorService monitor;
+  final PerformanceMonitorViewModel monitor;
 
   const _HealthAlertPanel({
     required this.strings,

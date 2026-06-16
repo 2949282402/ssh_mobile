@@ -67,10 +67,10 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
     final storageReady = !connectionVm.isLoading;
     final connections = connectionVm.connections;
 
-    final monitor = context.read<PerformanceMonitorService>();
+    final monitor = performanceVm;
     final monitorShell =
-        context.select<PerformanceMonitorService, _MonitorShellSnapshot>(
-      (monitor) => _MonitorShellSnapshot.from(monitor),
+        context.select<PerformanceMonitorViewModel, _MonitorShellSnapshot>(
+      (vm) => _MonitorShellSnapshot.from(vm),
     );
     final desktop = isDesktopLayout(context);
     final monitoringConnections = _connectionsByIds(
@@ -127,8 +127,8 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
                       curve: Curves.easeOutCubic,
                       width: serversCollapsed ? 64 : 320,
                       child: serversCollapsed
-                          ? Selector<PerformanceMonitorService, bool>(
-                              selector: (_, monitor) => monitor.isSampling,
+                          ? Selector<PerformanceMonitorViewModel, bool>(
+                              selector: (_, vm) => vm.isSampling,
                               builder: (context, sampling, _) =>
                                   _CollapsedDesktopMonitorRail(
                                 connections: railConnections,
@@ -180,9 +180,9 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
                       switchInCurve: Curves.easeOutCubic,
                       switchOutCurve: Curves.easeInCubic,
                       child: serversCollapsed
-                          ? Selector<PerformanceMonitorService, bool>(
+                          ? Selector<PerformanceMonitorViewModel, bool>(
                               key: const ValueKey('monitor-server-collapsed'),
-                              selector: (_, monitor) => monitor.isSampling,
+                              selector: (_, vm) => vm.isSampling,
                               builder: (context, sampling, _) =>
                                   _CollapsedMobileMonitorBar(
                                 connections: railConnections,
@@ -282,7 +282,7 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
 
   void _handleServerSelection(
     BuildContext context,
-    PerformanceMonitorService monitor,
+    PerformanceMonitorViewModel monitor,
     String connectionId,
   ) {
     final tabIndex = context.read<PerformanceMonitorViewModel>().activeTabIndex;
@@ -324,7 +324,7 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
 
 class _MonitorContent extends StatefulWidget {
   final AppStrings strings;
-  final PerformanceMonitorService monitor;
+  final PerformanceMonitorViewModel monitor;
   final int tabIndex;
   final int selectionVersion;
   final List<ConnectionConfig> selectedConnections;
@@ -367,7 +367,7 @@ class _MonitorContentState extends State<_MonitorContent> {
   final Set<String> _collapsedChartKeys = {};
 
   AppStrings get strings => widget.strings;
-  PerformanceMonitorService get monitor => widget.monitor;
+  PerformanceMonitorViewModel get monitor => widget.monitor;
   List<ConnectionConfig> get activeConnections {
     return monitor.isRunning
         ? widget.monitoringConnections
@@ -448,7 +448,7 @@ class _MonitorContentState extends State<_MonitorContent> {
     return Column(
       children: [
         if (widget.tabIndex == 0)
-          Selector<PerformanceMonitorService, _MonitorConfigSnapshot>(
+          Selector<PerformanceMonitorViewModel, _MonitorConfigSnapshot>(
             selector: (_, monitor) => _MonitorConfigSnapshot.from(monitor),
             builder: (context, snapshot, _) {
               if (snapshot.isRunning && !_wasRunning) {
@@ -492,7 +492,7 @@ class _MonitorContentState extends State<_MonitorContent> {
       index: widget.tabIndex,
       children: [
         // Tab 0: Performance
-        Selector<PerformanceMonitorService, _MonitorPerformanceSnapshot>(
+        Selector<PerformanceMonitorViewModel, _MonitorPerformanceSnapshot>(
           selector: (_, monitor) => _MonitorPerformanceSnapshot.from(
             monitor,
             widget.monitoringConnections,

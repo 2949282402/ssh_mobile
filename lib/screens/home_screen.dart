@@ -8,11 +8,14 @@ import 'package:provider/provider.dart';
 import '../features/connection/models/connection.dart';
 import '../features/connection/viewmodels/connection_viewmodel.dart';
 import '../features/settings/viewmodels/settings_viewmodel.dart';
+import '../features/system_admin/viewmodels/system_admin_viewmodel.dart';
+import '../features/developer_log/viewmodels/developer_log_viewmodel.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../services/sftp_service.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
+import '../services/system_admin_service.dart';
 import '../utils/responsive.dart';
 import '../widgets/connection_progress_dialog.dart';
 import '../widgets/overflow_scroll_text.dart';
@@ -56,7 +59,6 @@ class _HomeScreenState extends State<HomeScreen> {
   late int _settledIndex;
   final Set<String> _expandedConnectionWindowIds = {};
   bool _aiHistoryVisible = false;
-  bool _appDataBusy = false;
   bool _serverSelectionMode = false;
   final Set<String> _selectedServerIds = {};
 
@@ -85,6 +87,9 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     final strings = AppStrings(language);
     final desktop = isDesktopLayout(context);
+    final settingsVm = context.watch<SettingsViewModel>();
+    final isBusy = settingsVm.isImporting || settingsVm.isExporting;
+
     final content = NotificationListener<SwitchToAiTabNotification>(
       onNotification: (notification) {
         _switchPage(_aiPage);
@@ -135,7 +140,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: const SizedBox.expand(),
               ),
             ),
-            if (_appDataBusy)
+            if (isBusy)
               ColoredBox(
                 color: Theme.of(context)
                     .colorScheme
@@ -337,10 +342,22 @@ class _HomeScreenState extends State<HomeScreen> {
             case _performancePage:
               return const PerformanceMonitorScreen();
             case _adminPage:
-              return const SystemAdminScreen();
+              return ChangeNotifierProvider(
+                create: (context) => SystemAdminViewModel(
+                  adminService: context.read<SystemAdminService>(),
+                  storageService: context.read<StorageService>(),
+                ),
+                child: const SystemAdminScreen(),
+              );
             case _logPage:
             default:
-              return const DeveloperLogPage();
+              return ChangeNotifierProvider(
+                create: (context) => DeveloperLogViewModel(
+                  logService: context.read<AppLogService>(),
+                  appSettings: context.read<AppSettings>(),
+                ),
+                child: const DeveloperLogPage(),
+              );
           }
         },
       ),
@@ -359,34 +376,26 @@ class _HomeScreenState extends State<HomeScreen> {
     AppStrings strings,
   ) async {
     final messenger = ScaffoldMessenger.of(context);
+    final settingsVm = context.read<SettingsViewModel>();
     try {
-      if (mounted) setState(() => _appDataBusy = true);
-      final jsonText = await context.read<StorageService>().exportAppDataJson();
+      final success = await settingsVm.exportAppData((fileName, bytes) async {
+        return await FilePicker.saveFile(
+          dialogTitle: strings.exportAppData,
+          fileName: fileName,
+          bytes: Uint8List.fromList(bytes),
+        );
+      });
       if (!context.mounted) return;
-      final now = DateTime.now();
-      final fileName =
-          'ssh_mobile_backup_${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}.json';
-      final path = await FilePicker.saveFile(
-        dialogTitle: strings.exportAppData,
-        fileName: fileName,
-        bytes: utf8.encode(jsonText),
-      );
-      if (!context.mounted || path == null) return;
-      messenger.showSnackBar(
-        SnackBar(content: Text(strings.exportComplete)),
-      );
-    } catch (e, stackTrace) {
-      AppLogService.instance.error(
-        'Export app data failed',
-        error: e,
-        stackTrace: stackTrace,
-      );
+      if (success) {
+        messenger.showSnackBar(
+          SnackBar(content: Text(strings.exportComplete)),
+        );
+      }
+    } catch (e) {
       if (!context.mounted) return;
       messenger.showSnackBar(
         SnackBar(content: Text(strings.exportFailed(e))),
       );
-    } finally {
-      if (mounted) setState(() => _appDataBusy = false);
     }
   }
 
@@ -413,38 +422,33 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
     if (confirmed != true || !context.mounted) return;
+    final settingsVm = context.read<SettingsViewModel>();
     try {
-      final result = await FilePicker.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: const ['json'],
-        withData: true,
-      );
-      if (!context.mounted || result == null || result.files.isEmpty) return;
-      final bytes = result.files.single.bytes;
-      if (bytes == null) {
-        throw StateError('Unable to read selected file.');
-      }
-      if (mounted) setState(() => _appDataBusy = true);
-      await context
-          .read<StorageService>()
-          .importAppDataJson(utf8.decode(bytes));
+      final success = await settingsVm.importAppData(() async {
+        final result = await FilePicker.pickFiles(
+          type: FileType.custom,
+          allowedExtensions: const ['json'],
+          withData: true,
+        );
+        if (result == null || result.files.isEmpty) return null;
+        final bytes = result.files.single.bytes;
+        if (bytes == null) {
+          throw StateError('Unable to read selected file.');
+        }
+        return bytes;
+      });
       if (!context.mounted) return;
-      messenger.showSnackBar(
-        SnackBar(content: Text(strings.importComplete)),
-      );
-      _switchPage(_serverPage);
-    } catch (e, stackTrace) {
-      AppLogService.instance.error(
-        'Import app data failed',
-        error: e,
-        stackTrace: stackTrace,
-      );
+      if (success) {
+        messenger.showSnackBar(
+          SnackBar(content: Text(strings.importComplete)),
+        );
+        _switchPage(_serverPage);
+      }
+    } catch (e) {
       if (!context.mounted) return;
       messenger.showSnackBar(
         SnackBar(content: Text(strings.importFailed(e))),
       );
-    } finally {
-      if (mounted) setState(() => _appDataBusy = false);
     }
   }
 

@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 
+import '../../../../services/app_log_service.dart';
 import '../../../../services/app_settings.dart';
 import '../../../../services/storage_service.dart';
 
@@ -93,5 +95,70 @@ class SettingsViewModel extends ChangeNotifier {
 
   Future<void> importBackup(String json) async {
     await _storageService.importAppDataJson(json);
+  }
+
+  bool _isImporting = false;
+  bool _isExporting = false;
+  String? _lastOperationMessage;
+
+  bool get isImporting => _isImporting;
+  bool get isExporting => _isExporting;
+  String? get lastOperationMessage => _lastOperationMessage;
+
+  Future<bool> exportAppData(
+      Future<String?> Function(String fileName, List<int> bytes) saveFileCallback) async {
+    _isExporting = true;
+    _lastOperationMessage = null;
+    notifyListeners();
+    try {
+      final jsonText = await _storageService.exportAppDataJson();
+      final now = DateTime.now();
+      final fileName =
+          'ssh_mobile_backup_${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}.json';
+      final path = await saveFileCallback(fileName, utf8.encode(jsonText));
+      if (path != null) {
+        _lastOperationMessage = 'success';
+        return true;
+      }
+      return false;
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Export app data failed',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      _lastOperationMessage = e.toString();
+      rethrow;
+    } finally {
+      _isExporting = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> importAppData(
+      Future<List<int>?> Function() pickFileCallback) async {
+    _isImporting = true;
+    _lastOperationMessage = null;
+    notifyListeners();
+    try {
+      final bytes = await pickFileCallback();
+      if (bytes == null) {
+        return false;
+      }
+      await _storageService.importAppDataJson(utf8.decode(bytes));
+      _lastOperationMessage = 'success';
+      return true;
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Import app data failed',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      _lastOperationMessage = e.toString();
+      rethrow;
+    } finally {
+      _isImporting = false;
+      notifyListeners();
+    }
   }
 }

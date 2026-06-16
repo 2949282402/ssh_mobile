@@ -21,6 +21,8 @@ import '../../../services/rag_service.dart';
 import '../../../services/sftp_service.dart';
 import '../../../services/ssh_service.dart';
 import '../../../services/storage_service.dart';
+import '../../../services/client_webview_service.dart';
+import '../../connection/models/connection.dart';
 import '../../../utils/text_chunker.dart';
 
 @visibleForTesting
@@ -106,7 +108,30 @@ class PendingToolApproval {
 }
 
 class AiChatViewModel extends ChangeNotifier {
+  static List<String> resolveFetchedModelOptions({
+    required Iterable<String> fetchedModels,
+    required Iterable<String> fallbackModels,
+  }) {
+    final normalizedFetched = fetchedModels
+        .map((model) => model.trim())
+        .where((model) => model.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    if (normalizedFetched.isNotEmpty) {
+      return normalizedFetched;
+    }
+
+    return fallbackModels
+        .map((model) => model.trim())
+        .where((model) => model.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+  }
+
   final StorageService _storageService;
+  final PlaybookService _playbookService;
   final AppSettings _appSettings;
   final AiChatRuntimeFactory _runtimeFactory;
   late final AiChatContextBuilder _contextBuilder;
@@ -163,6 +188,7 @@ class AiChatViewModel extends ChangeNotifier {
     AiChatMessageMapper? messageMapper,
     AiChatTokenEstimator? tokenEstimator,
   })  : _storageService = storageService,
+        _playbookService = playbookService,
         _appSettings = appSettings,
         _runtimeFactory = runtimeFactory ??
             AiChatRuntimeFactory(
@@ -308,6 +334,7 @@ class AiChatViewModel extends ChangeNotifier {
     if (deleted?.messages.isNotEmpty == true) {
       await _storageService.deleteAiChat(id);
     }
+    ClientWebViewService.instance.clearSession(id);
     _triggerScroll();
   }
 
@@ -340,6 +367,193 @@ class AiChatViewModel extends ChangeNotifier {
     _selectedConnectionIds.clear();
     _selectedConnectionIds.addAll(connectionIds);
     notifyListeners();
+  }
+
+  ConnectionConfig? getConnection(String id) {
+    return _storageService.getConnection(id);
+  }
+
+  List<ConnectionConfig> get connections => _storageService.connections;
+
+  String? checkPendingDiagnosticPrompt() {
+    final prompt = _playbookService.pendingDiagnosticPrompt;
+    if (prompt != null) {
+      _playbookService.pendingDiagnosticPrompt = null;
+    }
+    return prompt;
+  }
+
+  Future<Map<String, dynamic>> loadLlmSettingsData() async {
+    final settings = await _storageService.loadAiConnectionSettings();
+    final cachedModels = await _storageService.loadCachedAiModels(baseUrl: settings.baseUrl);
+    final baseUrlHistory = await _storageService.loadAiBaseUrlHistory();
+    final apiKeyHistory = await _storageService.loadAiApiKeyHistory();
+    return {
+      'settings': settings,
+      'cachedModels': cachedModels,
+      'baseUrlHistory': baseUrlHistory,
+      'apiKeyHistory': apiKeyHistory,
+    };
+  }
+
+  void logLlmSettingsOpened(AiConnectionSettings settings) {
+    AppLogService.instance.info(
+      'LLM settings page opened',
+      details: 'baseUrl=${settings.baseUrl} model=${settings.model} hasApiKey=${settings.hasApiKey}',
+    );
+  }
+
+  Future<AiConnectionSettings> loadAiConnectionSettings() async {
+    return await _storageService.loadAiConnectionSettings();
+  }
+
+  Future<void> saveAiConnectionSettings({
+    required String baseUrl,
+    required String model,
+    String? helperModel,
+    String? auditModel,
+    String? modelFallbackPolicy,
+    int? contextWindowTokens,
+    int? timeoutSeconds,
+    bool? deepSeekThinkingEnabled,
+    String? deepSeekReasoningEffort,
+    String? openAiReasoningEffort,
+    bool? webSearchEnabled,
+    int? webSearchMaxResults,
+    String? webSearchEngine,
+    bool? multiAgentEnabled,
+    int? multiAgentMaxAgents,
+    int? toolCallBudget,
+    int? maxImageSizeBytes,
+    int? maxFileSizeBytes,
+    String? apiKey,
+    String? selectedApiKeyId,
+    bool clearApiKey = false,
+    String? quarkSearchEndpoint,
+    String? quarkApiKey,
+    bool clearQuarkApiKey = false,
+    bool? useCustomPrompts,
+    String? customSystemPrompt,
+    String? customPlannerPrompt,
+    String? customOperatorPrompt,
+    String? customExplorePrompt,
+    String? customReviewerPrompt,
+    String? customSummarizerPrompt,
+    String? customCoordinatorPrompt,
+  }) async {
+    try {
+      await _storageService.saveAiConnectionSettings(
+        baseUrl: baseUrl,
+        model: model,
+        helperModel: helperModel,
+        auditModel: auditModel,
+        modelFallbackPolicy: modelFallbackPolicy,
+        contextWindowTokens: contextWindowTokens,
+        timeoutSeconds: timeoutSeconds,
+        deepSeekThinkingEnabled: deepSeekThinkingEnabled,
+        deepSeekReasoningEffort: deepSeekReasoningEffort,
+        openAiReasoningEffort: openAiReasoningEffort,
+        webSearchEnabled: webSearchEnabled,
+        webSearchMaxResults: webSearchMaxResults,
+        webSearchEngine: webSearchEngine,
+        multiAgentEnabled: multiAgentEnabled,
+        multiAgentMaxAgents: multiAgentMaxAgents,
+        toolCallBudget: toolCallBudget,
+        maxImageSizeBytes: maxImageSizeBytes,
+        maxFileSizeBytes: maxFileSizeBytes,
+        apiKey: apiKey,
+        selectedApiKeyId: selectedApiKeyId,
+        clearApiKey: clearApiKey,
+        quarkSearchEndpoint: quarkSearchEndpoint,
+        quarkApiKey: quarkApiKey,
+        clearQuarkApiKey: clearQuarkApiKey,
+        useCustomPrompts: useCustomPrompts,
+        customSystemPrompt: customSystemPrompt,
+        customPlannerPrompt: customPlannerPrompt,
+        customOperatorPrompt: customOperatorPrompt,
+        customExplorePrompt: customExplorePrompt,
+        customReviewerPrompt: customReviewerPrompt,
+        customSummarizerPrompt: customSummarizerPrompt,
+        customCoordinatorPrompt: customCoordinatorPrompt,
+      );
+      notifyListeners();
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'LLM settings save failed',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'baseUrl=$baseUrl model=$model',
+      );
+      rethrow;
+    }
+  }
+
+  Future<List<String>> loadCachedAiModels({String? baseUrl}) async {
+    return await _storageService.loadCachedAiModels(baseUrl: baseUrl);
+  }
+
+  Future<void> removeAiBaseUrlHistoryEntry(String baseUrl) async {
+    await _storageService.removeAiBaseUrlHistoryEntry(baseUrl);
+  }
+
+  Future<void> removeAiApiKeyHistoryEntry(String id) async {
+    await _storageService.removeAiApiKeyHistoryEntry(id);
+  }
+
+  Future<List<AiApiKeyHistoryEntry>> loadAiApiKeyHistory() async {
+    return await _storageService.loadAiApiKeyHistory();
+  }
+
+  Future<String?> getAiApiKeyById(String id) async {
+    return await _storageService.getAiApiKeyById(id);
+  }
+
+  Future<String?> getAliyunApiKey() async {
+    return await _storageService.getAliyunApiKey();
+  }
+
+  Future<void> saveCachedAiModels({
+    required String baseUrl,
+    required List<String> models,
+  }) async {
+    await _storageService.saveCachedAiModels(baseUrl: baseUrl, models: models);
+  }
+
+  Future<List<String>> fetchModelsFromProvider({
+    required String baseUrl,
+    required String? typedApiKey,
+    required String? selectedApiKeyId,
+    required List<String> fallbackModels,
+  }) async {
+    final settings = await _storageService.loadAiConnectionSettings();
+    final resolvedApiKey = typedApiKey?.trim().isNotEmpty == true
+        ? typedApiKey!.trim()
+        : (selectedApiKeyId == null
+            ? null
+            : await _storageService.getAiApiKeyById(selectedApiKeyId));
+
+    final service = _runtimeFactory.createLlmChatService(
+      settings: settings,
+      model: settings.model,
+      chatId: _activeChatId ?? '',
+    );
+
+    final fetched = await service.fetchModels(
+      baseUrl: baseUrl.trim(),
+      apiKey: resolvedApiKey,
+    );
+
+    final resolvedModels = resolveFetchedModelOptions(
+      fetchedModels: fetched,
+      fallbackModels: fallbackModels,
+    );
+
+    await _storageService.saveCachedAiModels(
+      baseUrl: baseUrl.trim(),
+      models: resolvedModels,
+    );
+
+    return resolvedModels;
   }
 
   void updateAllowedTools(String chatId, Set<String> allowedTools) {
@@ -1256,6 +1470,11 @@ class AiChatViewModel extends ChangeNotifier {
         .map((item) => item.trim())
         .where((item) => item.isNotEmpty)
         .toList();
+  }
+
+  Future<List<Map<String, dynamic>>> loadToolDefinitions() async {
+    final service = _runtimeFactory.createToolService(chatId: _activeChatId);
+    return await service.toolDefinitions();
   }
 
   String? _toolNameFromDefinition(Map<String, dynamic> definition) {

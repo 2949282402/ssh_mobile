@@ -157,18 +157,8 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
       return null;
     }
     try {
-      final storage = context.read<StorageService>();
-      final toolService = AiToolService(
-        storageService: storage,
-        sshService: context.read<SshService>(),
-        sftpService: context.read<SftpService>(),
-        performanceMonitorToolService: PerformanceMonitorToolService(
-          context.read<PerformanceMonitorService>(),
-        ),
-        appSettings: context.read<AppSettings>(),
-        playbookService: context.read<PlaybookService>(),
-      );
-      final definitions = await toolService.toolDefinitions();
+      final viewModel = context.read<AiChatViewModel>();
+      final definitions = await viewModel.loadToolDefinitions();
       final tools = <_ToolOption>[];
       for (final definition in definitions) {
         final name = _toolNameFromDefinition(definition);
@@ -185,15 +175,10 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
       }
       tools.sort((a, b) => a.name.compareTo(b.name));
       return tools;
-    } catch (error, stackTrace) {
+    } catch (error) {
       if (!mounted || !context.mounted) {
         return null;
       }
-      AppLogService.instance.error(
-        'Failed to load tools for slash command',
-        error: error,
-        stackTrace: stackTrace,
-      );
       _showCommandFeedback(strings.commandToolsLoadFailed, context);
       return null;
     }

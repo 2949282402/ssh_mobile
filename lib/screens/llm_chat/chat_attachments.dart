@@ -33,8 +33,7 @@ extension _ChatAttachments on _LlmChatScreenBodyState {
       if (!mounted) return;
 
       final viewModel = context.read<AiChatViewModel>();
-      final storage = context.read<StorageService>();
-      final settings = await storage.loadAiConnectionSettings();
+      final settings = await viewModel.loadAiConnectionSettings();
       final maxBytes = settings.maxImageSizeBytes;
 
       for (final file in result.files) {
@@ -61,10 +60,7 @@ extension _ChatAttachments on _LlmChatScreenBodyState {
         ));
       }
     } catch (e) {
-      AppLogService.instance.warning(
-        'Image pick failed',
-        details: '$e',
-      );
+      debugPrint('Image pick failed: $e');
     }
   }
 
@@ -78,8 +74,7 @@ extension _ChatAttachments on _LlmChatScreenBodyState {
       if (!mounted) return;
 
       final viewModel = context.read<AiChatViewModel>();
-      final storage = context.read<StorageService>();
-      final settings = await storage.loadAiConnectionSettings();
+      final settings = await viewModel.loadAiConnectionSettings();
       final maxBytes = settings.maxFileSizeBytes;
 
       for (final file in result.files) {
@@ -106,10 +101,7 @@ extension _ChatAttachments on _LlmChatScreenBodyState {
         ));
       }
     } catch (e) {
-      AppLogService.instance.warning(
-        'File pick failed',
-        details: '$e',
-      );
+      debugPrint('File pick failed: $e');
     }
   }
 

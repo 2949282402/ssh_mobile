@@ -179,5 +179,57 @@ void main() {
       final openSelector = result as SendTextSlashCommandOpenToolsSelector;
       expect(openSelector.currentAllowedTools, containsAll(['tool1', 'tool2']));
     });
+
+    test('getConnection and connections returns expected values', () async {
+      final viewModel = AiChatViewModel(
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+      );
+
+      expect(viewModel.connections, isEmpty);
+      expect(viewModel.getConnection('non_existent'), isNull);
+    });
+
+    test('checkPendingDiagnosticPrompt retrieves and clears pending prompt', () async {
+      final viewModel = AiChatViewModel(
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+      );
+
+      playbookService.pendingDiagnosticPrompt = 'diagnose_me';
+      expect(viewModel.checkPendingDiagnosticPrompt(), 'diagnose_me');
+      expect(playbookService.pendingDiagnosticPrompt, isNull);
+      expect(viewModel.checkPendingDiagnosticPrompt(), isNull);
+    });
+
+    test('loadLlmSettingsData and logLlmSettingsOpened works without errors', () async {
+      final viewModel = AiChatViewModel(
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+      );
+
+      final data = await viewModel.loadLlmSettingsData();
+      expect(data, isNotNull);
+      expect(data['settings'], isNotNull);
+
+      // Verify that calling logLlmSettingsOpened runs without throwing
+      final settings = data['settings'] as AiConnectionSettings;
+      expect(() => viewModel.logLlmSettingsOpened(settings), returnsNormally);
+    });
   });
 }

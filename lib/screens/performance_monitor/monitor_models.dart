@@ -11,7 +11,7 @@ class _MonitorShellSnapshot {
     required this.monitoringConnectionIds,
   });
 
-  factory _MonitorShellSnapshot.from(PerformanceMonitorService monitor) {
+  factory _MonitorShellSnapshot.from(PerformanceMonitorViewModel monitor) {
     return _MonitorShellSnapshot(
       isRunning: monitor.isRunning,
       selectedConnectionIds: monitor.selectedConnectionIds,
@@ -56,7 +56,7 @@ class _MonitorConfigSnapshot {
     required this.monitoringCount,
   });
 
-  factory _MonitorConfigSnapshot.from(PerformanceMonitorService monitor) {
+  factory _MonitorConfigSnapshot.from(PerformanceMonitorViewModel monitor) {
     return _MonitorConfigSnapshot(
       isRunning: monitor.isRunning,
       isSampling: monitor.isSampling,
@@ -113,7 +113,7 @@ class _MonitorPerformanceSnapshot {
   });
 
   factory _MonitorPerformanceSnapshot.from(
-    PerformanceMonitorService monitor,
+    PerformanceMonitorViewModel monitor,
     List<ConnectionConfig> connections,
   ) {
     return _MonitorPerformanceSnapshot(
@@ -171,7 +171,7 @@ class _MonitorConnectionRenderToken {
   });
 
   factory _MonitorConnectionRenderToken.from(
-    PerformanceMonitorService monitor,
+    PerformanceMonitorViewModel monitor,
     String connectionId,
   ) {
     final visibleSamples = monitor.visibleSamplesFor(connectionId);

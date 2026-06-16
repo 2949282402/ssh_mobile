@@ -114,9 +114,9 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       supportsOpenAiReasoningEffort(_modelController.text);
 
   Future<void> _applyBaseUrlSelection(String baseUrl) async {
-    final storage = context.read<StorageService>();
+    final viewModel = context.read<AiChatViewModel>();
     _baseUrlController.text = baseUrl;
-    final cachedModels = await storage.loadCachedAiModels(baseUrl: baseUrl);
+    final cachedModels = await viewModel.loadCachedAiModels(baseUrl: baseUrl);
     if (!mounted) return;
     setState(() {
       _models = buildInitialModelOptions(
@@ -146,8 +146,8 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   }
 
   Future<void> _deleteBaseUrlHistoryEntry(String baseUrl) async {
-    final storage = context.read<StorageService>();
-    await storage.removeAiBaseUrlHistoryEntry(baseUrl);
+    final viewModel = context.read<AiChatViewModel>();
+    await viewModel.removeAiBaseUrlHistoryEntry(baseUrl);
     if (!mounted) return;
     setState(() {
       _baseUrlHistory =
@@ -156,9 +156,9 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   }
 
   Future<void> _deleteApiKeyHistoryEntry(String id) async {
-    final storage = context.read<StorageService>();
-    await storage.removeAiApiKeyHistoryEntry(id);
-    final refreshed = await storage.loadAiApiKeyHistory();
+    final viewModel = context.read<AiChatViewModel>();
+    await viewModel.removeAiApiKeyHistoryEntry(id);
+    final refreshed = await viewModel.loadAiApiKeyHistory();
     if (!mounted) return;
     final preferredSelectedId = _selectedApiKeyId;
     String? nextSelectedId = preferredSelectedId;
@@ -251,51 +251,18 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   }
 
   Future<void> _refreshModels(_AiStrings strings) async {
-    final storage = context.read<StorageService>();
+    final viewModel = context.read<AiChatViewModel>();
     setState(() {
       _loadingModels = true;
       _errorText = null;
     });
     try {
-      final settings = widget.initialSettings;
-      final service = LlmChatService(
-        storageService: storage,
-        toolService: AiToolService(
-          storageService: storage,
-          sshService: context.read<SshService>(),
-          sftpService: context.read<SftpService>(),
-          performanceMonitorToolService: PerformanceMonitorToolService(
-            context.read<PerformanceMonitorService>(),
-          ),
-          appSettings: context.read<AppSettings>(),
-          playbookService: context.read<PlaybookService>(),
-        ),
-        useCustomPrompts: settings.useCustomPrompts,
-        customSystemPrompt: settings.customSystemPrompt,
-        customPlannerPrompt: settings.customPlannerPrompt,
-        customOperatorPrompt: settings.customOperatorPrompt,
-        customExplorePrompt: settings.customExplorePrompt,
-        customReviewerPrompt: settings.customReviewerPrompt,
-        customSummarizerPrompt: settings.customSummarizerPrompt,
-        customCoordinatorPrompt: settings.customCoordinatorPrompt,
-      );
       final typedApiKey = _apiKeyController.text.trim();
-      final resolvedApiKey = typedApiKey.isNotEmpty
-          ? typedApiKey
-          : (_selectedApiKeyId == null
-              ? null
-              : await storage.getAiApiKeyById(_selectedApiKeyId!));
-      final fetched = await service.fetchModels(
+      final resolvedModels = await viewModel.fetchModelsFromProvider(
         baseUrl: _baseUrlController.text.trim(),
-        apiKey: resolvedApiKey,
-      );
-      final resolvedModels = resolveFetchedModelOptions(
-        fetchedModels: fetched,
+        typedApiKey: typedApiKey.isNotEmpty ? typedApiKey : null,
+        selectedApiKeyId: _selectedApiKeyId,
         fallbackModels: _models,
-      );
-      await storage.saveCachedAiModels(
-        baseUrl: _baseUrlController.text.trim(),
-        models: resolvedModels,
       );
       if (!mounted) return;
       setState(() {
@@ -305,13 +272,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
           _modelController.text = _models.first;
         }
       });
-    } catch (e, stackTrace) {
-      AppLogService.instance.error(
-        'LLM model refresh failed in settings',
-        error: e,
-        stackTrace: stackTrace,
-        details: 'baseUrl=${_baseUrlController.text.trim()}',
-      );
+    } catch (e) {
       if (!mounted) return;
       setState(() {
         _loadingModels = false;
@@ -322,7 +283,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
 
   Future<void> _save(_AiStrings strings) async {
     FocusScope.of(context).unfocus();
-    final storage = context.read<StorageService>();
+    final viewModel = context.read<AiChatViewModel>();
     final appSettings = context.read<AppSettings>();
     final pending = _PendingAiSettings(
       baseUrl: _baseUrlController.text,
@@ -353,7 +314,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       _errorText = null;
     });
     try {
-      await storage.saveAiConnectionSettings(
+      await viewModel.saveAiConnectionSettings(
         baseUrl: pending.baseUrl,
         model: pending.model,
         helperModel: pending.helperModel,
@@ -383,14 +344,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       }
       if (!mounted) return;
       Navigator.pop(context, pending);
-    } catch (e, stackTrace) {
-      AppLogService.instance.error(
-        'LLM settings save failed',
-        error: e,
-        stackTrace: stackTrace,
-        details:
-            'baseUrl=${pending.baseUrl.trim()} model=${pending.model.trim()} apiKeyProvided=${pending.apiKey.trim().isNotEmpty}',
-      );
+    } catch (e) {
       if (!mounted) return;
       setState(() {
         _saving = false;

@@ -79,4 +79,18 @@ class SftpViewModel extends ChangeNotifier {
       updateState: updateState,
     );
   }
+
+  Future<String> readTextFile(
+    SftpEntry entry, {
+    required int maxBytes,
+  }) async {
+    return await _sftpService.readTextFile(entry, maxBytes: maxBytes);
+  }
+
+  Future<void> saveTextFile(
+    SftpEntry entry,
+    String content,
+  ) async {
+    await _sftpService.saveTextFile(entry, content);
+  }
 }

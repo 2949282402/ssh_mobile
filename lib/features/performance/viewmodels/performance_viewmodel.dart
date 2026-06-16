@@ -5,6 +5,9 @@ import '../../../../services/performance_monitor_service.dart';
 import '../../../../services/server_status_probe.dart';
 
 class PerformanceMonitorViewModel extends ChangeNotifier {
+  static const List<Duration> intervalOptions = PerformanceMonitorService.intervalOptions;
+  static const List<Duration> historyWindowOptions = PerformanceMonitorService.historyWindowOptions;
+
   final PerformanceMonitorService _monitorService;
 
   int _activeTabIndex = 0;
@@ -74,5 +77,51 @@ class PerformanceMonitorViewModel extends ChangeNotifier {
 
   void forceRefresh() {
     unawaited(_monitorService.sampleNow());
+  }
+
+  Future<void> sampleNow() async {
+    await _monitorService.sampleNow();
+  }
+
+  Duration get interval => _monitorService.interval;
+  Duration get historyWindow => _monitorService.historyWindow;
+  Duration get effectiveInterval => _monitorService.effectiveInterval;
+  DateTime? get startedAt => _monitorService.startedAt;
+  List<MonitorAlert> get alerts => _monitorService.alerts;
+
+  void setInterval(Duration val) {
+    _monitorService.setInterval(val);
+  }
+
+  void setHistoryWindow(Duration val) {
+    _monitorService.setHistoryWindow(val);
+  }
+
+  void toggleSelection(String connectionId) {
+    _monitorService.toggleSelection(connectionId);
+  }
+
+  Future<List<PortProcessSnapshot>> fetchPorts(String connectionId) {
+    return _monitorService.fetchPorts(connectionId);
+  }
+
+  Future<List<ApplicationMemorySnapshot>> fetchApplications(String connectionId) {
+    return _monitorService.fetchApplications(connectionId);
+  }
+
+  Future<List<ServiceStatusSnapshot>> fetchServices(String connectionId) {
+    return _monitorService.fetchServices(connectionId);
+  }
+
+  List<PerformanceSample> visibleSamplesFor(String connectionId) {
+    return _monitorService.visibleSamplesFor(connectionId);
+  }
+
+  List<DiskUsageSnapshot> diskUsageFor(String connectionId) {
+    return _monitorService.diskUsageFor(connectionId);
+  }
+
+  ServerHealthSnapshot healthFor(String connectionId) {
+    return _monitorService.healthFor(connectionId);
   }
 }

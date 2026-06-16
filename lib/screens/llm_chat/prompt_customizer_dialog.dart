@@ -41,8 +41,8 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
   }
 
   Future<void> _loadSettings() async {
-    final storage = context.read<StorageService>();
-    final settings = await storage.loadAiConnectionSettings();
+    final viewModel = context.read<AiChatViewModel>();
+    final settings = await viewModel.loadAiConnectionSettings();
     if (!mounted) return;
 
     setState(() {
@@ -123,11 +123,11 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
       _customPrompts[_activeType] = _textController.text;
     }
 
-    final storage = context.read<StorageService>();
-    final settings = await storage.loadAiConnectionSettings();
+    final viewModel = context.read<AiChatViewModel>();
+    final settings = await viewModel.loadAiConnectionSettings();
 
     try {
-      await storage.saveAiConnectionSettings(
+      await viewModel.saveAiConnectionSettings(
         baseUrl: settings.baseUrl,
         model: settings.model,
         useCustomPrompts: _useCustomPrompts,

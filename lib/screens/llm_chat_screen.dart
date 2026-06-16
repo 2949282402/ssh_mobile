@@ -14,15 +14,11 @@ import 'client_webview_screen.dart';
 import '../features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
 import '../features/ai_chat/services/ai_chat_message_mapper.dart';
 import '../features/playbook/models/playbook.dart';
-import '../services/ai_tool_service.dart';
 import '../services/agent_model_profile.dart';
-import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
-import '../services/client_webview_service.dart';
 import '../services/llm_chat_service.dart';
 import '../services/multi_agent_coordinator.dart';
 import '../services/performance_monitor_service.dart';
-import '../services/performance_monitor_tool_service.dart';
 import '../services/sftp_service.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
@@ -53,22 +49,10 @@ List<String> resolveFetchedModelOptions({
   required Iterable<String> fetchedModels,
   required Iterable<String> fallbackModels,
 }) {
-  final normalizedFetched = fetchedModels
-      .map((model) => model.trim())
-      .where((model) => model.isNotEmpty)
-      .toSet()
-      .toList()
-    ..sort();
-  if (normalizedFetched.isNotEmpty) {
-    return normalizedFetched;
-  }
-
-  return fallbackModels
-      .map((model) => model.trim())
-      .where((model) => model.isNotEmpty)
-      .toSet()
-      .toList()
-    ..sort();
+  return AiChatViewModel.resolveFetchedModelOptions(
+    fetchedModels: fetchedModels,
+    fallbackModels: fallbackModels,
+  );
 }
 
 @visibleForTesting
@@ -349,10 +333,10 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
 
   void _checkPendingDiagnosticPrompt() {
     try {
-      final playbookService = context.read<PlaybookService>();
-      if (playbookService.pendingDiagnosticPrompt != null) {
-        _inputController.text = playbookService.pendingDiagnosticPrompt!;
-        playbookService.pendingDiagnosticPrompt = null;
+      final viewModel = context.read<AiChatViewModel>();
+      final prompt = viewModel.checkPendingDiagnosticPrompt();
+      if (prompt != null) {
+        _inputController.text = prompt;
       }
     } catch (_) {}
   }
@@ -756,7 +740,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     if (viewModel.selectedConnectionIds.isEmpty) return strings.serverTarget;
     if (viewModel.selectedConnectionIds.length == 1) {
       final id = viewModel.selectedConnectionIds.first;
-      final connection = context.read<StorageService>().getConnection(id);
+      final connection = viewModel.getConnection(id);
       return connection == null ? strings.serverTarget : connection.name;
     }
     return strings.language == AppLanguage.en
@@ -765,8 +749,8 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
   }
 
   Future<void> _selectTargetServer(_AiStrings strings) async {
-    final storage = context.read<StorageService>();
-    if (storage.connections.isEmpty) {
+    final viewModel = context.read<AiChatViewModel>();
+    if (viewModel.connections.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -779,7 +763,6 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
       return;
     }
 
-    final viewModel = context.read<AiChatViewModel>();
     final selected = Set<String>.from(viewModel.selectedConnectionIds);
     final result = await showModalBottomSheet<Set<String>?>(
       context: context,
@@ -826,7 +809,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
                       child: ListView(
                         shrinkWrap: true,
                         children: [
-                          for (final connection in storage.connections)
+                          for (final connection in viewModel.connections)
                             CheckboxListTile(
                               value: selected.contains(connection.id),
                               title: Text(connection.name),
@@ -933,19 +916,15 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
   }
 
   Future<void> _showSettings(BuildContext context, _AiStrings strings) async {
-    final storage = context.read<StorageService>();
-    final settings = await storage.loadAiConnectionSettings();
-    final cachedModels = await storage.loadCachedAiModels(
-      baseUrl: settings.baseUrl,
-    );
-    final baseUrlHistory = await storage.loadAiBaseUrlHistory();
-    final apiKeyHistory = await storage.loadAiApiKeyHistory();
+    final viewModel = context.read<AiChatViewModel>();
+    final settingsData = await viewModel.loadLlmSettingsData();
+    final settings = settingsData['settings'] as AiConnectionSettings;
+    final cachedModels = settingsData['cachedModels'] as List<String>;
+    final baseUrlHistory = settingsData['baseUrlHistory'] as List<String>;
+    final apiKeyHistory = settingsData['apiKeyHistory'] as List<AiApiKeyHistoryEntry>;
+
     if (!context.mounted) return;
-    AppLogService.instance.info(
-      'LLM settings page opened',
-      details:
-          'baseUrl=${settings.baseUrl} model=${settings.model} hasApiKey=${settings.hasApiKey}',
-    );
+    viewModel.logLlmSettingsOpened(settings);
 
     if (mounted) {
       final nextSettings = await Navigator.of(context).push<_PendingAiSettings>(
@@ -964,7 +943,6 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
       );
       if (nextSettings == null) return;
       if (!mounted) return;
-      final viewModel = context.read<AiChatViewModel>();
       final activeChat = viewModel.activeChat;
       final nextModel = nextSettings.model.trim();
       if (activeChat != null &&
@@ -984,7 +962,6 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
   Future<void> _deleteChat(String id) async {
     final viewModel = context.read<AiChatViewModel>();
     await viewModel.deleteChat(id);
-    ClientWebViewService.instance.clearSession(id);
     _scrollToBottom(jump: true);
   }
 

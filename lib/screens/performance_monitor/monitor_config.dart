@@ -2,7 +2,7 @@ part of '../performance_monitor_screen.dart';
 
 class _MonitorConfigPanelV2 extends StatelessWidget {
   final AppStrings strings;
-  final PerformanceMonitorService monitor;
+  final PerformanceMonitorViewModel monitor;
   final int serversPerChart;
   final bool expanded;
   final VoidCallback onToggle;
@@ -151,7 +151,7 @@ class _MonitorConfigPanelV2 extends StatelessWidget {
                         _DurationMenu(
                           label: _monitorText(strings, 'Interval', '刷新间隔'),
                           value: monitor.interval,
-                          values: PerformanceMonitorService.intervalOptions,
+                          values: PerformanceMonitorViewModel.intervalOptions,
                           onChanged: monitor.setInterval,
                           onCustom: onCustomInterval,
                           strings: strings,
@@ -185,7 +185,7 @@ class _MonitorConfigPanelV2 extends StatelessWidget {
                           label: _monitorText(strings, 'Range', '时间范围'),
                           value: monitor.historyWindow,
                           values:
-                              PerformanceMonitorService.historyWindowOptions,
+                              PerformanceMonitorViewModel.historyWindowOptions,
                           onChanged: monitor.setHistoryWindow,
                           onCustom: onCustomWindow,
                           strings: strings,

@@ -7,6 +7,7 @@ import 'package:printing/printing.dart';
 import 'package:provider/provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../features/sftp/viewmodels/sftp_viewmodel.dart';
 import '../services/app_settings.dart';
 import '../services/sftp_service.dart';
 
@@ -50,7 +51,7 @@ class _SftpFileViewerScreenState extends State<SftpFileViewerScreen> {
     if (_kind != _PreviewKind.unsupported) {
       final settings = context.read<AppSettings>();
       final limit = _previewLimitFor(_kind, settings);
-      final download = context.read<SftpService>().downloadBytes(
+      final download = context.read<SftpViewModel>().downloadBytes(
             widget.entry,
             maxBytes: limit,
           );
