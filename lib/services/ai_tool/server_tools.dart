@@ -43,6 +43,12 @@ class ServerToolsProvider implements AiToolProvider {
         return _serverStatus(service, arguments);
       case 'generate_ops_report':
         return _opsReport(service, arguments);
+      case 'inspect_service_health':
+        return _inspectServiceHealth(service, arguments);
+      case 'collect_incident_context':
+        return _collectIncidentContext(service, arguments);
+      case 'compare_server_states':
+        return _compareServerStates(service, arguments);
       default:
         return null;
     }
@@ -238,12 +244,102 @@ class ServerToolsProvider implements AiToolProvider {
   String get _windowsPermissionMessage =>
       'Windows permission denied: the current account does not have enough privileges for this operation. Use an Administrator or elevated account, or grant the required permission and try again.';
 
+  Future<String> _inspectServiceHealth(
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
+    final connectionId = service._arg(arguments, 'connectionId');
+    final serviceName = service._arg(arguments, 'serviceName');
+    final os = await serverDiagnosticsService.detectOs(connectionId);
+    final command = os['os'] == 'windows'
+        ? 'powershell -NoProfile -Command "Get-Service -Name \'$serviceName\' | Select-Object Name, Status, StartType | ConvertTo-Json -Compress"'
+        : 'systemctl status --no-pager --full $serviceName';
+    final result = await service.sshService.runOneShotCommand(
+      connectionId: connectionId,
+      command: command,
+      timeout: const Duration(seconds: 12),
+    );
+    final report =
+        await serverDiagnosticsService.generateOpsReport(connectionId);
+    return jsonEncode({
+      'connectionId': connectionId,
+      'serviceName': serviceName,
+      'os': os,
+      'serviceStatus': {
+        'exitCode': result.exitCode,
+        'stdout': service._truncate(result.stdout),
+        'stderr': service._truncate(result.stderr),
+      },
+      'opsReport': report,
+    });
+  }
+
+  Future<String> _collectIncidentContext(
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
+    final connectionId = service._arg(arguments, 'connectionId');
+    final focus = service._optionalString(arguments, 'focus');
+    final path = service._optionalString(arguments, 'path');
+    final report =
+        await serverDiagnosticsService.generateOpsReport(connectionId);
+    final health = service.performanceMonitorToolService.getHealth(
+      connectionIds: [connectionId],
+    );
+    final alerts = service.performanceMonitorToolService.getAlerts(limit: 10);
+    Map<String, dynamic>? fileContext;
+    if (path != null && path.trim().isNotEmpty) {
+      final blocked = service._secretPathBlocked(path);
+      if (blocked == null) {
+        final info = await service.sftpService.statPathForConnection(
+          connectionId: connectionId,
+          path: path,
+        );
+        fileContext = info.toJson();
+      }
+    }
+    return jsonEncode({
+      'connectionId': connectionId,
+      if (focus?.trim().isNotEmpty == true) 'focus': focus,
+      'opsReport': report,
+      'monitorHealth': health,
+      'monitorAlerts': alerts,
+      if (fileContext != null) 'pathContext': fileContext,
+    });
+  }
+
+  Future<String> _compareServerStates(
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
+    final connectionIds = service._stringList(arguments['connectionIds']);
+    final mode = service._optionalString(arguments, 'mode');
+    final reports = await Future.wait(
+      connectionIds.map(
+        (connectionId) => serverDiagnosticsService.getStatus(
+          connectionId: connectionId,
+          mode: mode,
+        ),
+      ),
+    );
+    return jsonEncode({
+      'mode': mode ?? 'all',
+      'servers': reports,
+      'connectionIds': connectionIds,
+      'compared': reports.length,
+    });
+  }
+
   List<AiTool> _getServerTools(AiToolService service) {
     return [
       AiTool(
         name: 'list_servers',
         description: 'List saved SSH servers. Does not reveal credentials.',
         properties: const {},
+        capabilities: const {
+          AiToolCapability.server,
+          AiToolCapability.diagnostics,
+        },
         handler: (_) async =>
             jsonEncode({'servers': serverCatalogService.listServerSummaries()}),
       ),
@@ -255,6 +351,10 @@ class ServerToolsProvider implements AiToolProvider {
           'connectionId': _string('Server connection id.'),
         },
         required: const ['connectionId'],
+        capabilities: const {
+          AiToolCapability.server,
+          AiToolCapability.diagnostics,
+        },
         handler: (args) => _getServerDetails(service, args),
       ),
       AiTool(
@@ -293,6 +393,10 @@ class ServerToolsProvider implements AiToolProvider {
         },
         required: const ['connectionId'],
         executionMode: AiToolExecutionMode.stateChanging,
+        capabilities: const {
+          AiToolCapability.server,
+          AiToolCapability.settings,
+        },
         handler: (arguments) => _updateServerMetadata(
           service,
           arguments,
@@ -308,6 +412,10 @@ class ServerToolsProvider implements AiToolProvider {
         },
         required: const ['connectionId'],
         executionMode: AiToolExecutionMode.stateChanging,
+        capabilities: const {
+          AiToolCapability.server,
+          AiToolCapability.settings,
+        },
         handler: (arguments) =>
             _deleteServer(service, arguments, approvedWrite: false),
       ),
@@ -323,6 +431,10 @@ class ServerToolsProvider implements AiToolProvider {
         },
         required: const ['orderedIds'],
         executionMode: AiToolExecutionMode.stateChanging,
+        capabilities: const {
+          AiToolCapability.server,
+          AiToolCapability.settings,
+        },
         handler: (arguments) => _reorderServers(
           service,
           arguments,
@@ -337,6 +449,11 @@ class ServerToolsProvider implements AiToolProvider {
           'connectionId': _string('Server connection id.'),
         },
         required: const ['connectionId'],
+        requiresServerSelection: true,
+        capabilities: const {
+          AiToolCapability.server,
+          AiToolCapability.diagnostics,
+        },
         handler: (args) => _detectOsTool(service, args),
       ),
       AiTool(
@@ -350,6 +467,12 @@ class ServerToolsProvider implements AiToolProvider {
           ),
         },
         required: const ['connectionId', 'command'],
+        requiresServerSelection: true,
+        capabilities: const {
+          AiToolCapability.server,
+          AiToolCapability.diagnostics,
+        },
+        cacheTtl: const Duration(seconds: 10),
         handler: (arguments) =>
             _runCommand(service, arguments, approvedWrite: false),
       ),
@@ -364,6 +487,13 @@ class ServerToolsProvider implements AiToolProvider {
           ),
         },
         required: const ['connectionId'],
+        requiresServerSelection: true,
+        capabilities: const {
+          AiToolCapability.server,
+          AiToolCapability.monitor,
+          AiToolCapability.diagnostics,
+        },
+        cacheTtl: const Duration(seconds: 15),
         handler: (args) => _serverStatus(service, args),
       ),
       AiTool(
@@ -374,7 +504,77 @@ class ServerToolsProvider implements AiToolProvider {
           'connectionId': _string('Server connection id.'),
         },
         required: const ['connectionId'],
+        requiresServerSelection: true,
+        capabilities: const {
+          AiToolCapability.server,
+          AiToolCapability.monitor,
+          AiToolCapability.diagnostics,
+        },
+        cacheTtl: const Duration(seconds: 20),
         handler: (args) => _opsReport(service, args),
+      ),
+      AiTool(
+        name: 'inspect_service_health',
+        description:
+            'Collect a structured service-health snapshot for one server and one service name, combining read-only service status with the current ops report.',
+        properties: {
+          'connectionId': _string('Server connection id.'),
+          'serviceName':
+              _string('Service name such as nginx, sshd, docker, or mysql.'),
+        },
+        required: const ['connectionId', 'serviceName'],
+        requiresServerSelection: true,
+        capabilities: const {
+          AiToolCapability.server,
+          AiToolCapability.monitor,
+          AiToolCapability.diagnostics,
+        },
+        cacheTtl: const Duration(seconds: 15),
+        handler: (args) => _inspectServiceHealth(service, args),
+      ),
+      AiTool(
+        name: 'collect_incident_context',
+        description:
+            'Collect a structured incident context bundle for one server, including ops report, monitor health, alerts, and optional remote path metadata.',
+        properties: {
+          'connectionId': _string('Server connection id.'),
+          'focus': _string(
+              'Optional incident focus such as nginx, disk, memory, ports, or login failures.'),
+          'path':
+              _string('Optional remote file path to inspect metadata only.'),
+        },
+        required: const ['connectionId'],
+        requiresServerSelection: true,
+        capabilities: const {
+          AiToolCapability.server,
+          AiToolCapability.monitor,
+          AiToolCapability.sftp,
+          AiToolCapability.diagnostics,
+        },
+        cacheTtl: const Duration(seconds: 15),
+        handler: (args) => _collectIncidentContext(service, args),
+      ),
+      AiTool(
+        name: 'compare_server_states',
+        description:
+            'Compare the structured status of two or more servers in one read-only call. Useful for drift checks and incident diffs.',
+        properties: {
+          'connectionIds': _stringArray(
+            'Two or more server connection ids to compare.',
+            minimumItems: 2,
+          ),
+          'mode': _string(
+            'Optional status mode: performance, ports, applications, or all.',
+          ),
+        },
+        required: const ['connectionIds'],
+        capabilities: const {
+          AiToolCapability.server,
+          AiToolCapability.monitor,
+          AiToolCapability.diagnostics,
+        },
+        cacheTtl: const Duration(seconds: 15),
+        handler: (args) => _compareServerStates(service, args),
       ),
     ];
   }

@@ -20,6 +20,8 @@ class _LlmSettingsScreen extends StatefulWidget {
 class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   late final TextEditingController _baseUrlController;
   late final TextEditingController _modelController;
+  late final TextEditingController _helperModelController;
+  late final TextEditingController _auditModelController;
   late final TextEditingController _apiKeyController;
   late final TextEditingController _quarkApiKeyController;
   late final TextEditingController _quarkEndpointController;
@@ -38,6 +40,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   late String _ragSearchMode;
   late bool _multiAgentEnabled;
   late int _multiAgentMaxAgents;
+  late String _modelFallbackPolicy;
   late int _toolCallBudget;
   late int _maxImageSizeBytes;
   late int _maxFileSizeBytes;
@@ -53,6 +56,10 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         TextEditingController(text: widget.initialSettings.baseUrl);
     _modelController =
         TextEditingController(text: widget.initialSettings.model);
+    _helperModelController =
+        TextEditingController(text: widget.initialSettings.helperModel);
+    _auditModelController =
+        TextEditingController(text: widget.initialSettings.auditModel);
     _apiKeyController = TextEditingController();
     _quarkApiKeyController = TextEditingController();
     _quarkEndpointController =
@@ -73,6 +80,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _ragSearchMode = context.read<AppSettings>().ragSearchMode;
     _multiAgentEnabled = widget.initialSettings.multiAgentEnabled;
     _multiAgentMaxAgents = widget.initialSettings.multiAgentMaxAgents;
+    _modelFallbackPolicy = widget.initialSettings.modelFallbackPolicy;
     _toolCallBudget = widget.initialSettings.toolCallBudget;
     _maxImageSizeBytes = widget.initialSettings.maxImageSizeBytes;
     _maxFileSizeBytes = widget.initialSettings.maxFileSizeBytes;
@@ -83,6 +91,8 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   void dispose() {
     _baseUrlController.dispose();
     _modelController.dispose();
+    _helperModelController.dispose();
+    _auditModelController.dispose();
     _apiKeyController.dispose();
     _quarkApiKeyController.dispose();
     _quarkEndpointController.dispose();
@@ -317,6 +327,9 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     final pending = _PendingAiSettings(
       baseUrl: _baseUrlController.text,
       model: _modelController.text,
+      helperModel: _helperModelController.text,
+      auditModel: _auditModelController.text,
+      modelFallbackPolicy: _modelFallbackPolicy,
       contextWindowTokens: _contextWindowTokens,
       timeoutSeconds: _timeoutSeconds,
       deepSeekThinkingEnabled: _deepSeekThinkingEnabled,
@@ -343,6 +356,9 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       await storage.saveAiConnectionSettings(
         baseUrl: pending.baseUrl,
         model: pending.model,
+        helperModel: pending.helperModel,
+        auditModel: pending.auditModel,
+        modelFallbackPolicy: pending.modelFallbackPolicy,
         contextWindowTokens: pending.contextWindowTokens,
         timeoutSeconds: pending.timeoutSeconds,
         deepSeekThinkingEnabled: pending.deepSeekThinkingEnabled,
@@ -540,6 +556,50 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                       : const Icon(Icons.sync_rounded),
                 ),
               ],
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _helperModelController,
+              enabled: !_saving,
+              decoration: InputDecoration(
+                labelText: strings.helperModel,
+                helperText: strings.helperModelHint,
+                helperMaxLines: 2,
+              ),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _auditModelController,
+              enabled: !_saving,
+              decoration: InputDecoration(
+                labelText: strings.auditModel,
+                helperText: strings.auditModelHint,
+                helperMaxLines: 2,
+              ),
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<String>(
+              initialValue: AgentModelFallbackPolicy.normalize(
+                _modelFallbackPolicy,
+              ),
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: strings.modelFallbackPolicy,
+              ),
+              items: [
+                for (final value in AgentModelFallbackPolicy.values)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text(strings.modelFallbackPolicyLabel(value)),
+                  ),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        setState(() => _modelFallbackPolicy = value);
+                      }
+                    },
             ),
             const SizedBox(height: 14),
             DropdownButtonFormField<int>(
@@ -1023,6 +1083,9 @@ class _HistoryActionSheet<T> extends StatelessWidget {
 class _PendingAiSettings {
   final String baseUrl;
   final String model;
+  final String helperModel;
+  final String auditModel;
+  final String modelFallbackPolicy;
   final int contextWindowTokens;
   final int timeoutSeconds;
   final bool deepSeekThinkingEnabled;
@@ -1044,6 +1107,9 @@ class _PendingAiSettings {
   const _PendingAiSettings({
     required this.baseUrl,
     required this.model,
+    required this.helperModel,
+    required this.auditModel,
+    required this.modelFallbackPolicy,
     required this.contextWindowTokens,
     required this.timeoutSeconds,
     required this.deepSeekThinkingEnabled,

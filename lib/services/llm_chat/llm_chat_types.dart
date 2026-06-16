@@ -64,6 +64,15 @@ class LlmRunStats {
   final int contextTokensBeforeCompression;
   final int contextWindowTokens;
   final bool compressed;
+  final int toolCalls;
+  final int cacheHits;
+  final int dedupBlockedCalls;
+  final int helperFanout;
+  final int auditEscalationLevel;
+  final List<String> selectedToolSet;
+  final List<String> memorySources;
+  final int approvalCount;
+  final int approvedCount;
 
   const LlmRunStats({
     required this.promptTokens,
@@ -77,6 +86,15 @@ class LlmRunStats {
     required this.contextTokensBeforeCompression,
     required this.contextWindowTokens,
     required this.compressed,
+    this.toolCalls = 0,
+    this.cacheHits = 0,
+    this.dedupBlockedCalls = 0,
+    this.helperFanout = 0,
+    this.auditEscalationLevel = 0,
+    this.selectedToolSet = const [],
+    this.memorySources = const [],
+    this.approvalCount = 0,
+    this.approvedCount = 0,
   });
 }
 
@@ -223,6 +241,9 @@ class LlmToolLedgerEntry {
   final bool failed;
   final bool emptyResult;
   final String resultPreview;
+  final bool cacheHit;
+  final bool dedupBlocked;
+  final int auditEscalationLevel;
 
   const LlmToolLedgerEntry({
     required this.index,
@@ -235,6 +256,9 @@ class LlmToolLedgerEntry {
     required this.failed,
     required this.emptyResult,
     required this.resultPreview,
+    this.cacheHit = false,
+    this.dedupBlocked = false,
+    this.auditEscalationLevel = 0,
   });
 
   static String buildSignature(
@@ -270,6 +294,9 @@ class LlmToolLedgerEntry {
       'failed': failed,
       'emptyResult': emptyResult,
       'resultPreview': resultPreview,
+      'cacheHit': cacheHit,
+      'dedupBlocked': dedupBlocked,
+      'auditEscalationLevel': auditEscalationLevel,
     };
   }
 }
@@ -434,6 +461,18 @@ class LlmToolSafetyAuditResult {
       'recommendedNextAction': recommendedNextAction,
     };
   }
+}
+
+class _CachedToolResult {
+  final String result;
+  final DateTime expiresAt;
+
+  const _CachedToolResult({
+    required this.result,
+    required this.expiresAt,
+  });
+
+  bool get isExpired => DateTime.now().isAfter(expiresAt);
 }
 
 class LlmTokenUsage {

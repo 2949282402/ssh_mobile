@@ -1,3 +1,5 @@
+// ignore_for_file: unused_element
+
 part of '../llm_chat_screen.dart';
 
 extension _ChatTokenCompression on _LlmChatScreenState {

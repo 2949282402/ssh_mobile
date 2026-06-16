@@ -1,4 +1,4 @@
-// ignore_for_file: invalid_use_of_protected_member
+// ignore_for_file: invalid_use_of_protected_member, unused_element
 part of '../llm_chat_screen.dart';
 
 extension _ChatGeneration on _LlmChatScreenState {
@@ -38,6 +38,16 @@ extension _ChatGeneration on _LlmChatScreenState {
     final storage = context.read<StorageService>();
     final appSettings = context.read<AppSettings>();
     final ragService = context.read<RagService>();
+    final orchestrator = ChatOrchestrator(
+      storageService: storage,
+      contextAssembler: ChatContextAssembler(
+        storageService: storage,
+      ),
+      memoryRetriever: OperationalMemoryRetriever(
+        storageService: storage,
+        ragService: ragService,
+      ),
+    );
 
     final settings = await storage.loadAiConnectionSettings();
     final currentModel = settings.model.trim();
@@ -55,36 +65,23 @@ extension _ChatGeneration on _LlmChatScreenState {
     final now = DateTime.now();
 
     // RAG 知识库检索
-    List<RagChunk> ragChunks = const [];
-    if (appSettings.ragEnabled) {
-      try {
-        ragChunks = await ragService.retrieve(normalizedText);
-      } catch (e) {
-        AppLogService.instance.warning('RAG retrieval failed in sendText: $e');
-      }
-    }
-
-    final approvedPlanMessage = approvedPlanRef == null
-        ? null
-        : approvedPlanMessageForChat(
-            activeChat.copyWith(approvedPlan: approvedPlanRef),
-          );
-    final userContextText = await _contextTextForUser(
-      text,
-      ragChunks: ragChunks,
-      approvedPlanMessage: approvedPlanMessage,
-    );
     final attachments = List<AiChatAttachment>.from(_pendingAttachments);
-    final userMessage = AiChatMessageRecord(
-      role: 'user',
+    final preparedTurn = await orchestrator.prepareTurn(
+      chat: activeChat,
       text: text,
-      contextText: userContextText,
-      attachments: attachments,
       createdAt: now,
+      language: appSettings.language,
+      attachments: attachments,
+      selectedConnectionIds: _selectedConnectionIds,
+      approvedPlanRef: approvedPlanRef,
+      ragEnabled: appSettings.ragEnabled,
     );
+    final userMessage = preparedTurn.userMessage;
+    final ragChunks = const <RagChunk>[];
 
     // 构建 RAG 的 UI 引用痕迹 (Citation Traces)
-    final assistantTraces = <AiMessageTrace>[];
+    final assistantTraces =
+        List<AiMessageTrace>.from(preparedTurn.assistantMessage.traces);
     if (ragChunks.isNotEmpty) {
       final traceContent = StringBuffer();
       final isEn = appSettings.isEnglish;
@@ -121,6 +118,7 @@ extension _ChatGeneration on _LlmChatScreenState {
       model: currentModel.isNotEmpty ? currentModel : activeChat.model,
       messages: nextMessages,
       updatedAt: now,
+      approvedPlan: approvedPlanRef,
     );
 
     setState(() {
@@ -144,6 +142,9 @@ extension _ChatGeneration on _LlmChatScreenState {
       assistantMessage: assistantMessage,
       model: currentModel.isNotEmpty ? currentModel : nextChat.model,
       requestMessages: nextMessages,
+      userRequest: normalizedText,
+      memorySources: preparedTurn.memorySources,
+      ragHits: preparedTurn.ragHits,
       strings: strings,
     );
   }
@@ -168,6 +169,9 @@ extension _ChatGeneration on _LlmChatScreenState {
     required AiChatMessageRecord assistantMessage,
     required String model,
     required List<AiChatMessageRecord> requestMessages,
+    required String userRequest,
+    required List<String> memorySources,
+    required int ragHits,
     required _AiStrings strings,
   }) async {
     final storage = context.read<StorageService>();
@@ -176,9 +180,26 @@ extension _ChatGeneration on _LlmChatScreenState {
     final performanceMonitor = context.read<PerformanceMonitorService>();
     final appSettings = context.read<AppSettings>();
     final playbookService = context.read<PlaybookService>();
+    final ragService = context.read<RagService>();
     final language = appSettings.language;
+    final orchestrator = ChatOrchestrator(
+      storageService: storage,
+      contextAssembler: ChatContextAssembler(
+        storageService: storage,
+      ),
+      memoryRetriever: OperationalMemoryRetriever(
+        storageService: storage,
+        ragService: ragService,
+      ),
+    );
 
     final settings = await storage.loadAiConnectionSettings();
+    final modelProfile = AgentModelProfile(
+      mainModel: model,
+      helperModel: settings.helperModel,
+      auditModel: settings.auditModel,
+      fallbackPolicy: settings.modelFallbackPolicy,
+    );
     final service = LlmChatService(
       storageService: storage,
       toolService: AiToolService(
@@ -243,6 +264,11 @@ extension _ChatGeneration on _LlmChatScreenState {
         forceContextCompression: forceContextCompression,
         cancellationToken: cancellationToken,
         planMode: initialChat.planMode,
+        userRequest: userRequest,
+        selectedConnectionIds: _selectedConnectionIds,
+        hasWebViewSession: true,
+        hasApprovedPlan: initialChat.approvedPlan != null,
+        memorySources: memorySources,
         messages: _messagesForRequest(
           requestMessages,
           placeholder: assistantMessage,
@@ -269,34 +295,14 @@ extension _ChatGeneration on _LlmChatScreenState {
             message.createdAt == assistantMessage.createdAt,
       );
       if (assistantIndex >= 0) {
-        final existingSteps = completedMessages[assistantIndex].todoSteps;
-        final parsedSteps = initialChat.planMode
-            ? _parseTodoStepsFromText(
-                answer.toString(),
-                assistantCreatedAt: assistantMessage.createdAt,
-              )
-            : const <AiTodoStep>[];
-        final todoSteps = existingSteps.isNotEmpty
-            ? existingSteps
-            : parsedSteps;
-        final traces = [...completedMessages[assistantIndex].traces];
-        if (initialChat.planMode && todoSteps.isEmpty) {
-          traces.add(
-            AiMessageTrace.create(
-              kind: 'plan_error',
-              title: 'Plan persistence failed',
-              content:
-                  'The response did not persist any executable todoSteps. Return a valid ```playbook JSON block or call client_task_create before leaving Plan Mode.',
-            ),
-          );
-        }
+        final completion = orchestrator.finalizeAssistantTurn(
+          initialChat: initialChat,
+          assistantMessage: completedMessages[assistantIndex],
+          answerText: answer.toString(),
+          traces: [...completedMessages[assistantIndex].traces],
+        );
         completedMessages[assistantIndex] =
-            completedMessages[assistantIndex].copyWith(
-          text: answer.toString(),
-          contextText: _contextTextForAssistant(
-            answer.toString(),
-            traces: traces,
-          ),
+            completion.assistantMessage.copyWith(
           promptTokens: runStats?.promptTokens,
           completionTokens: runStats?.completionTokens,
           totalTokens: runStats?.totalTokens,
@@ -306,8 +312,6 @@ extension _ChatGeneration on _LlmChatScreenState {
           promptCacheHitTokens: runStats?.promptCacheHitTokens,
           promptCacheMissTokens: runStats?.promptCacheMissTokens,
           reasoningTokens: runStats?.reasoningTokens,
-          traces: traces,
-          todoSteps: todoSteps,
         );
       }
       final latestAssistant = latestAssistantMessageForChat(
@@ -328,6 +332,16 @@ extension _ChatGeneration on _LlmChatScreenState {
         _replaceChat(answeredChat);
       });
       await storage.saveAiChat(answeredChat);
+      await _persistAgentRunMetrics(
+        storage: storage,
+        modelProfile: modelProfile,
+        model: model,
+        startedAt: assistantMessage.createdAt,
+        finishedAt: DateTime.now(),
+        runStats: runStats,
+        ragHits: ragHits,
+        success: true,
+      );
     } on LlmCancelledException {
       AppLogService.instance.info(
         'LLM chat UI request cancelled',
@@ -372,6 +386,15 @@ extension _ChatGeneration on _LlmChatScreenState {
         _replaceChat(cancelledChat);
       });
       await storage.saveAiChat(cancelledChat);
+      await _persistAgentRunMetrics(
+        storage: storage,
+        modelProfile: modelProfile,
+        model: model,
+        startedAt: assistantMessage.createdAt,
+        finishedAt: DateTime.now(),
+        ragHits: ragHits,
+        success: false,
+      );
     } catch (e, stackTrace) {
       AppLogService.instance.error(
         'LLM chat UI request failed',
@@ -422,6 +445,15 @@ extension _ChatGeneration on _LlmChatScreenState {
         _replaceChat(errorChat);
       });
       await storage.saveAiChat(errorChat);
+      await _persistAgentRunMetrics(
+        storage: storage,
+        modelProfile: modelProfile,
+        model: model,
+        startedAt: assistantMessage.createdAt,
+        finishedAt: DateTime.now(),
+        ragHits: ragHits,
+        success: false,
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -593,6 +625,9 @@ extension _ChatGeneration on _LlmChatScreenState {
       assistantMessage: assistantMessage,
       model: nextModel,
       requestMessages: nextMessages,
+      userRequest: prefix.lastWhere((message) => message.role == 'user').text,
+      memorySources: const [],
+      ragHits: 0,
       strings: strings,
     );
   }
@@ -671,6 +706,9 @@ extension _ChatGeneration on _LlmChatScreenState {
       assistantMessage: assistantMessage,
       model: nextModel,
       requestMessages: nextMessages,
+      userRequest: trimmedEditedText,
+      memorySources: const [],
+      ragHits: 0,
       strings: strings,
     );
   }
@@ -852,6 +890,50 @@ extension _ChatGeneration on _LlmChatScreenState {
         curve: Curves.easeOutCubic,
       );
     });
+  }
+
+  Future<void> _persistAgentRunMetrics({
+    required StorageService storage,
+    required AgentModelProfile modelProfile,
+    required String model,
+    required DateTime startedAt,
+    required DateTime finishedAt,
+    LlmRunStats? runStats,
+    required int ragHits,
+    required bool success,
+  }) async {
+    final promptTokens = runStats?.promptTokens ?? 0;
+    final completionTokens = runStats?.completionTokens ?? 0;
+    final totalTokens =
+        runStats?.totalTokens ?? promptTokens + completionTokens;
+    final helperModel = modelProfile.resolve(AgentModelRole.helper);
+    final auditModel = modelProfile.resolve(AgentModelRole.audit);
+    await storage.saveAgentRunMetrics(
+      AgentRunMetrics(
+        id: 'run-${startedAt.microsecondsSinceEpoch}',
+        startedAt: startedAt,
+        finishedAt: finishedAt,
+        model: model,
+        helperModel: helperModel == model ? '' : helperModel,
+        auditModel: auditModel == model ? '' : auditModel,
+        promptTokens: promptTokens,
+        completionTokens: completionTokens,
+        totalTokens: totalTokens,
+        elapsedMs: runStats?.elapsedMs ??
+            finishedAt.difference(startedAt).inMilliseconds,
+        toolCalls: runStats?.toolCalls ?? 0,
+        cacheHits: runStats?.cacheHits ?? 0,
+        dedupBlockedCalls: runStats?.dedupBlockedCalls ?? 0,
+        ragHits: ragHits,
+        approvalCount: runStats?.approvalCount ?? 0,
+        approvedCount: runStats?.approvedCount ?? 0,
+        auditCount: runStats?.auditEscalationLevel ?? 0,
+        helperFanout: runStats?.helperFanout ?? 0,
+        success: success,
+        selectedToolSet: runStats?.selectedToolSet ?? const [],
+        memorySources: runStats?.memorySources ?? const [],
+      ),
+    );
   }
 
   List<AiTodoStep> _parseTodoStepsFromText(

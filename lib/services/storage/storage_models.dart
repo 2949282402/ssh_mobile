@@ -73,6 +73,9 @@ List<Playbook> upsertPlaybooksByUpdatedAt(
 class AiConnectionSettings {
   final String baseUrl;
   final String model;
+  final String helperModel;
+  final String auditModel;
+  final String modelFallbackPolicy;
   final int contextWindowTokens;
   final int timeoutSeconds;
   final bool deepSeekThinkingEnabled;
@@ -103,6 +106,9 @@ class AiConnectionSettings {
   const AiConnectionSettings({
     required this.baseUrl,
     required this.model,
+    this.helperModel = '',
+    this.auditModel = '',
+    this.modelFallbackPolicy = AgentModelFallbackPolicy.defaultValue,
     required this.contextWindowTokens,
     required this.timeoutSeconds,
     required this.deepSeekThinkingEnabled,
@@ -130,6 +136,13 @@ class AiConnectionSettings {
     required this.customSummarizerPrompt,
     required this.customCoordinatorPrompt,
   });
+
+  AgentModelProfile get agentModelProfile => AgentModelProfile(
+        mainModel: model,
+        helperModel: helperModel,
+        auditModel: auditModel,
+        fallbackPolicy: modelFallbackPolicy,
+      );
 }
 
 class AiApiKeyHistoryEntry {
@@ -489,6 +502,114 @@ class AiSkillRecord {
   }
 }
 
+class AgentRunMetrics {
+  final String id;
+  final DateTime startedAt;
+  final DateTime finishedAt;
+  final String model;
+  final String helperModel;
+  final String auditModel;
+  final int promptTokens;
+  final int completionTokens;
+  final int totalTokens;
+  final int elapsedMs;
+  final int toolCalls;
+  final int cacheHits;
+  final int dedupBlockedCalls;
+  final int ragHits;
+  final int approvalCount;
+  final int approvedCount;
+  final int auditCount;
+  final int helperFanout;
+  final bool success;
+  final List<String> selectedToolSet;
+  final List<String> memorySources;
+
+  const AgentRunMetrics({
+    required this.id,
+    required this.startedAt,
+    required this.finishedAt,
+    required this.model,
+    this.helperModel = '',
+    this.auditModel = '',
+    required this.promptTokens,
+    required this.completionTokens,
+    required this.totalTokens,
+    required this.elapsedMs,
+    this.toolCalls = 0,
+    this.cacheHits = 0,
+    this.dedupBlockedCalls = 0,
+    this.ragHits = 0,
+    this.approvalCount = 0,
+    this.approvedCount = 0,
+    this.auditCount = 0,
+    this.helperFanout = 0,
+    this.success = true,
+    this.selectedToolSet = const [],
+    this.memorySources = const [],
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'startedAt': startedAt.toIso8601String(),
+      'finishedAt': finishedAt.toIso8601String(),
+      'model': model,
+      if (helperModel.trim().isNotEmpty) 'helperModel': helperModel,
+      if (auditModel.trim().isNotEmpty) 'auditModel': auditModel,
+      'promptTokens': promptTokens,
+      'completionTokens': completionTokens,
+      'totalTokens': totalTokens,
+      'elapsedMs': elapsedMs,
+      'toolCalls': toolCalls,
+      'cacheHits': cacheHits,
+      'dedupBlockedCalls': dedupBlockedCalls,
+      'ragHits': ragHits,
+      'approvalCount': approvalCount,
+      'approvedCount': approvedCount,
+      'auditCount': auditCount,
+      'helperFanout': helperFanout,
+      'success': success,
+      if (selectedToolSet.isNotEmpty) 'selectedToolSet': selectedToolSet,
+      if (memorySources.isNotEmpty) 'memorySources': memorySources,
+    };
+  }
+
+  factory AgentRunMetrics.fromJson(Map<String, dynamic> json) {
+    return AgentRunMetrics(
+      id: json['id'] as String? ?? _traceUuid.v4(),
+      startedAt: DateTime.tryParse(json['startedAt'] as String? ?? '') ??
+          DateTime.now(),
+      finishedAt: DateTime.tryParse(json['finishedAt'] as String? ?? '') ??
+          DateTime.now(),
+      model: json['model'] as String? ?? '',
+      helperModel: json['helperModel'] as String? ?? '',
+      auditModel: json['auditModel'] as String? ?? '',
+      promptTokens: json['promptTokens'] as int? ?? 0,
+      completionTokens: json['completionTokens'] as int? ?? 0,
+      totalTokens: json['totalTokens'] as int? ?? 0,
+      elapsedMs: json['elapsedMs'] as int? ?? 0,
+      toolCalls: json['toolCalls'] as int? ?? 0,
+      cacheHits: json['cacheHits'] as int? ?? 0,
+      dedupBlockedCalls: json['dedupBlockedCalls'] as int? ?? 0,
+      ragHits: json['ragHits'] as int? ?? 0,
+      approvalCount: json['approvalCount'] as int? ?? 0,
+      approvedCount: json['approvedCount'] as int? ?? 0,
+      auditCount: json['auditCount'] as int? ?? 0,
+      helperFanout: json['helperFanout'] as int? ?? 0,
+      success: json['success'] as bool? ?? true,
+      selectedToolSet:
+          ((json['selectedToolSet'] as List<dynamic>?) ?? const <dynamic>[])
+              .map((item) => '$item')
+              .toList(growable: false),
+      memorySources:
+          ((json['memorySources'] as List<dynamic>?) ?? const <dynamic>[])
+              .map((item) => '$item')
+              .toList(growable: false),
+    );
+  }
+}
+
 class AiApprovedPlanRef {
   final DateTime assistantCreatedAt;
   final DateTime approvedAt;
@@ -510,9 +631,8 @@ class AiApprovedPlanRef {
       assistantCreatedAt:
           DateTime.tryParse(json['assistantCreatedAt'] as String? ?? '') ??
               DateTime.now(),
-      approvedAt:
-          DateTime.tryParse(json['approvedAt'] as String? ?? '') ??
-              DateTime.now(),
+      approvedAt: DateTime.tryParse(json['approvedAt'] as String? ?? '') ??
+          DateTime.now(),
     );
   }
 }

@@ -117,4 +117,46 @@ extension AiChatOps on StorageService {
       immediate: immediate,
     );
   }
+
+  Future<List<AgentRunMetrics>> _loadAgentRunMetrics() async {
+    if (!_initialized || _prefs == null) return const [];
+    final cached = _agentRunMetricsCache;
+    if (cached != null) return cached;
+    final jsonStr =
+        await _readProtectedPref(StorageService._agentRunMetricsKey);
+    if (jsonStr == null || jsonStr.isEmpty) {
+      return _agentRunMetricsCache = const [];
+    }
+
+    try {
+      final list = jsonDecode(jsonStr) as List<dynamic>;
+      final metrics = list
+          .map((item) => AgentRunMetrics.fromJson(item as Map<String, dynamic>))
+          .toList()
+        ..sort((a, b) => b.finishedAt.compareTo(a.finishedAt));
+      return _agentRunMetricsCache = List.unmodifiable(metrics);
+    } catch (e) {
+      AppLogService.instance
+          .error('Failed to load agent run metrics', error: e);
+      return _agentRunMetricsCache = const [];
+    }
+  }
+
+  Future<void> _saveAgentRunMetrics(AgentRunMetrics metrics) async {
+    if (!_initialized || _prefs == null) return;
+    final current = await loadAgentRunMetrics();
+    final next = <AgentRunMetrics>[
+      metrics,
+      ...current.where((item) => item.id != metrics.id),
+    ];
+    if (next.length > 200) {
+      next.removeRange(200, next.length);
+    }
+    _agentRunMetricsCache = List.unmodifiable(next);
+    await _writeProtectedPrefBuffered(
+      StorageService._agentRunMetricsKey,
+      jsonEncode(next.map((item) => item.toJson()).toList()),
+      immediate: false,
+    );
+  }
 }

@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 
 import '../models/connection.dart';
 import '../models/playbook.dart';
+import 'agent_model_profile.dart';
 import 'app_log_service.dart';
 import 'data_protection_service.dart';
 import 'multi_agent_coordinator.dart';
@@ -45,6 +46,11 @@ abstract interface class AiSkillRepository {
   Future<void> deleteAiSkill(String id);
 }
 
+abstract interface class AgentRunMetricsRepository {
+  Future<List<AgentRunMetrics>> loadAgentRunMetrics();
+  Future<void> saveAgentRunMetrics(AgentRunMetrics metrics);
+}
+
 abstract interface class TerminalHistoryRepository {
   Future<List<TerminalHistoryRecord>> loadTerminalHistoryRecords();
   Future<void> saveTerminalHistoryRecord(TerminalHistoryRecord record);
@@ -66,6 +72,7 @@ class StorageService extends ChangeNotifier
     implements
         AiChatRepository,
         AiSkillRepository,
+        AgentRunMetricsRepository,
         TerminalHistoryRepository,
         PlaybookRepository,
         AppBackupRepository {
@@ -76,6 +83,9 @@ class StorageService extends ChangeNotifier
   static const _aiBaseUrlKey = 'ai_base_url';
   static const _aiBaseUrlHistoryKey = 'ai_base_url_history';
   static const _aiModelKey = 'ai_model';
+  static const _aiHelperModelKey = 'ai_helper_model';
+  static const _aiAuditModelKey = 'ai_audit_model';
+  static const _aiModelFallbackPolicyKey = 'ai_model_fallback_policy';
   static const _aiContextWindowKey = 'ai_context_window';
   static const _aiTimeoutSecondsKey = 'ai_timeout_seconds';
   static const _aiDeepSeekThinkingEnabledKey = 'ai_deepseek_thinking_enabled';
@@ -107,6 +117,7 @@ class StorageService extends ChangeNotifier
   static const _aiApiKeyEntryPrefix = 'ai_api_key_entry_';
   static const _aiChatsKey = 'ai_chats';
   static const _aiSkillsKey = 'ai_skills';
+  static const _agentRunMetricsKey = 'agent_run_metrics';
   static const _playbooksKey = 'custom_playbooks';
   static const _secretCacheEnabledKey = 'secret_cache_enabled';
   static const _secretCacheTtlSecondsKey = 'secret_cache_ttl_seconds';
@@ -172,6 +183,7 @@ class StorageService extends ChangeNotifier
   List<ConnectionConfig> _connectionsView = const [];
   List<AiChatRecord>? _aiChatsCache;
   List<AiSkillRecord>? _aiSkillsCache;
+  List<AgentRunMetrics>? _agentRunMetricsCache;
   List<Playbook>? _playbooksCache;
   List<RestorableTmuxSession>? _restorableTmuxSessionsCache;
   List<TerminalHistoryRecord>? _terminalHistoryRecordsCache;
@@ -246,6 +258,13 @@ class StorageService extends ChangeNotifier
 
   @override
   Future<void> deleteAiSkill(String id) => _deleteAiSkill(id);
+
+  @override
+  Future<List<AgentRunMetrics>> loadAgentRunMetrics() => _loadAgentRunMetrics();
+
+  @override
+  Future<void> saveAgentRunMetrics(AgentRunMetrics metrics) =>
+      _saveAgentRunMetrics(metrics);
 
   @override
   Future<List<Playbook>> loadPlaybooks() => _loadPlaybooks();

@@ -262,4 +262,43 @@ extension LlmChatServiceUtils on LlmChatService {
       );
     }
   }
+
+  AgentModelProfile _modelProfileForSettings(
+    AiConnectionSettings settings, {
+    String? mainModelOverride,
+  }) {
+    return AgentModelProfile(
+      mainModel: mainModelOverride?.trim().isNotEmpty == true
+          ? mainModelOverride!.trim()
+          : settings.model,
+      helperModel: settings.helperModel,
+      auditModel: settings.auditModel,
+      fallbackPolicy: settings.modelFallbackPolicy,
+    );
+  }
+
+  int _nextRepeatedSignatureStreak(
+    List<LlmToolLedgerEntry> ledger,
+    String nextSignature,
+  ) {
+    var streak = 1;
+    for (final entry in ledger.reversed) {
+      if (entry.signature != nextSignature) {
+        break;
+      }
+      streak += 1;
+    }
+    return streak;
+  }
+
+  bool _wouldTriggerAlternatingLoop(
+    List<LlmToolLedgerEntry> ledger,
+    String nextSignature,
+  ) {
+    if (ledger.length < 3) return false;
+    final a = ledger[ledger.length - 3].signature;
+    final b = ledger[ledger.length - 2].signature;
+    final c = ledger[ledger.length - 1].signature;
+    return a == c && a != b && nextSignature == b;
+  }
 }

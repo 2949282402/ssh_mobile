@@ -13,11 +13,15 @@ import 'package:provider/provider.dart';
 import 'client_webview_screen.dart';
 import '../models/playbook.dart';
 import '../services/ai_tool_service.dart';
+import '../services/agent_model_profile.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
+import '../services/chat_context_assembler.dart';
+import '../services/chat_orchestrator.dart';
 import '../services/client_webview_service.dart';
 import '../services/llm_chat_service.dart';
 import '../services/multi_agent_coordinator.dart';
+import '../services/operational_memory_retriever.dart';
 import '../services/performance_monitor_service.dart';
 import '../services/performance_monitor_tool_service.dart';
 import '../services/sftp_service.dart';
@@ -686,8 +690,10 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         (() {
-                          final isPlanInput = _inputController.text.trim().startsWith('/plan');
-                          final showPlanMode = activeChat.planMode || isPlanInput;
+                          final isPlanInput =
+                              _inputController.text.trim().startsWith('/plan');
+                          final showPlanMode =
+                              activeChat.planMode || isPlanInput;
                           if (!showPlanMode) return const SizedBox.shrink();
                           return Container(
                             margin: const EdgeInsets.only(bottom: 8),
@@ -697,8 +703,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                               color: colorScheme.primaryContainer,
                               borderRadius: BorderRadius.circular(8),
                               border: Border.all(
-                                color: colorScheme.primary
-                                    .withValues(alpha: 0.24),
+                                color:
+                                    colorScheme.primary.withValues(alpha: 0.24),
                               ),
                             ),
                             child: Row(

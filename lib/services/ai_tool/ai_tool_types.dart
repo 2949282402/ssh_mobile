@@ -114,6 +114,11 @@ class AiTool {
   final Map<String, dynamic> properties;
   final List<String> required;
   final AiToolExecutionMode executionMode;
+  final Set<AiToolCapability> capabilities;
+  final bool requiresServerSelection;
+  final bool requiresWebViewSession;
+  final bool preferredInPlanMode;
+  final Duration? cacheTtl;
   final Future<String> Function(Map<String, dynamic> arguments) handler;
 
   const AiTool({
@@ -123,7 +128,77 @@ class AiTool {
     required this.handler,
     this.required = const [],
     this.executionMode = AiToolExecutionMode.readOnly,
+    this.capabilities = const {},
+    this.requiresServerSelection = false,
+    this.requiresWebViewSession = false,
+    this.preferredInPlanMode = false,
+    this.cacheTtl,
   });
+
+  Set<AiToolCapability> get effectiveCapabilities {
+    if (capabilities.isNotEmpty) return capabilities;
+    if (name == 'web_search' || name.startsWith('client_webview_')) {
+      return const {AiToolCapability.web, AiToolCapability.client};
+    }
+    if (name.startsWith('client_task_') || name == 'client_set_plan_mode') {
+      return const {AiToolCapability.planning, AiToolCapability.client};
+    }
+    if (name.startsWith('client_')) {
+      if (name.contains('log')) {
+        return const {AiToolCapability.client, AiToolCapability.logs};
+      }
+      if (name.contains('setting') || name.contains('permission')) {
+        return const {AiToolCapability.client, AiToolCapability.settings};
+      }
+      return const {AiToolCapability.client};
+    }
+    if (name.startsWith('ssh_')) {
+      return const {AiToolCapability.ssh, AiToolCapability.server};
+    }
+    if (name.startsWith('sftp_')) {
+      return const {AiToolCapability.sftp, AiToolCapability.server};
+    }
+    if (name.startsWith('monitor_')) {
+      return const {AiToolCapability.monitor, AiToolCapability.diagnostics};
+    }
+    if (name.contains('playbook')) {
+      return const {AiToolCapability.playbook, AiToolCapability.planning};
+    }
+    if (name.contains('server') ||
+        name.contains('ops') ||
+        name == 'run_command') {
+      return const {AiToolCapability.server, AiToolCapability.diagnostics};
+    }
+    return const {};
+  }
+
+  bool get needsServerSelection {
+    if (requiresServerSelection) return true;
+    return name == 'run_command' ||
+        name == 'detect_os' ||
+        name == 'get_server_status' ||
+        name == 'generate_ops_report' ||
+        name.startsWith('sftp_') ||
+        name.startsWith('monitor_get_') ||
+        name.startsWith('monitor_stop_for_') ||
+        name.startsWith('ssh_open_') ||
+        name.startsWith('ssh_close_server_') ||
+        name.startsWith('inspect_') ||
+        name.startsWith('collect_incident_');
+  }
+
+  bool get needsWebViewSession {
+    return requiresWebViewSession ||
+        name == 'web_search' ||
+        name.startsWith('client_webview_');
+  }
+
+  Duration get effectiveCacheTtl {
+    if (cacheTtl != null) return cacheTtl!;
+    return executionMode == AiToolExecutionMode.readOnly
+        ? const Duration(seconds: 20)
+        : Duration.zero;
+  }
 
   Map<String, dynamic> get definition {
     return {

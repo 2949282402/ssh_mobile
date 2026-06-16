@@ -5,10 +5,12 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import 'ai_tool_service.dart';
+import 'agent_model_profile.dart';
 import 'app_log_service.dart';
 import 'app_settings.dart';
 import 'multi_agent_coordinator.dart';
 import 'storage_service.dart';
+import 'tool_exposure_router.dart';
 import 'tool_secret_policy.dart';
 
 part 'llm_chat/llm_chat_types.dart';
@@ -32,6 +34,11 @@ abstract interface class LlmClientAdapter {
     void Function(LlmRunStats stats)? onStats,
     void Function(LlmTraceEvent event)? onTrace,
     LlmCancellationToken? cancellationToken,
+    String userRequest = '',
+    Set<String> selectedConnectionIds = const {},
+    bool hasWebViewSession = false,
+    bool hasApprovedPlan = false,
+    List<String> memorySources = const [],
     bool planMode = false,
   });
 
@@ -44,6 +51,11 @@ abstract interface class LlmClientAdapter {
     void Function(LlmTraceEvent event)? onTrace,
     LlmCancellationToken? cancellationToken,
     Set<String>? allowedTools,
+    String userRequest = '',
+    Set<String> selectedConnectionIds = const {},
+    bool hasWebViewSession = false,
+    bool hasApprovedPlan = false,
+    List<String> memorySources = const [],
     bool forceContextCompression = false,
     bool planMode = false,
   });
@@ -56,6 +68,7 @@ class LlmChatService implements LlmClientAdapter {
   final StorageService storageService;
   final AiToolExecutor toolService;
   final MultiAgentCoordinatorAdapter multiAgentCoordinator;
+  final ToolExposureRouter toolExposureRouter;
   final AppLanguage language;
   final bool useCustomPrompts;
   final String customSystemPrompt;
@@ -80,8 +93,10 @@ class LlmChatService implements LlmClientAdapter {
     this.customSummarizerPrompt = '',
     this.customCoordinatorPrompt = '',
     MultiAgentCoordinatorAdapter? multiAgentCoordinator,
-  }) : multiAgentCoordinator =
-            multiAgentCoordinator ?? const MultiAgentCoordinator();
+    ToolExposureRouter? toolExposureRouter,
+  })  : multiAgentCoordinator =
+            multiAgentCoordinator ?? const MultiAgentCoordinator(),
+        toolExposureRouter = toolExposureRouter ?? const ToolExposureRouter();
 
   String get systemPrompt {
     return systemPromptFor(planMode: false);
@@ -91,30 +106,44 @@ class LlmChatService implements LlmClientAdapter {
   List<AiTool> filterVisibleTools(
     Iterable<AiTool> tools, {
     Set<String>? allowedTools,
+    String userRequest = '',
+    Set<String> selectedConnectionIds = const {},
+    bool hasWebViewSession = false,
+    bool hasApprovedPlan = false,
     bool planMode = false,
   }) {
-    final normalizedAllowedTools = _normalizeToolNames(allowedTools);
-    return tools.where((tool) {
-      if (normalizedAllowedTools != null &&
-          !normalizedAllowedTools.contains(tool.name.toLowerCase())) {
-        return false;
-      }
-      if (planMode && !tool.executionMode.allowedInPlanMode) {
-        return false;
-      }
-      return true;
-    }).toList(growable: false);
+    return toolExposureRouter
+        .selectTools(
+          tools,
+          context: ToolExposureContext(
+            userRequest: userRequest,
+            planMode: planMode,
+            hasWebViewSession: hasWebViewSession,
+            hasApprovedPlan: hasApprovedPlan,
+            selectedConnectionIds: selectedConnectionIds,
+            allowedTools: allowedTools,
+          ),
+        )
+        .tools;
   }
 
   @visibleForTesting
   Future<List<Map<String, dynamic>>> visibleToolDefinitions({
     Set<String>? allowedTools,
+    String userRequest = '',
+    Set<String> selectedConnectionIds = const {},
+    bool hasWebViewSession = false,
+    bool hasApprovedPlan = false,
     bool planMode = false,
   }) async {
     final tools = await toolService.tools();
     return filterVisibleTools(
       tools,
       allowedTools: allowedTools,
+      userRequest: userRequest,
+      selectedConnectionIds: selectedConnectionIds,
+      hasWebViewSession: hasWebViewSession,
+      hasApprovedPlan: hasApprovedPlan,
       planMode: planMode,
     ).map((tool) => tool.definition).toList(growable: false);
   }
@@ -199,8 +228,12 @@ class LlmChatService implements LlmClientAdapter {
 
   String get plannerPrompt {
     final isEn = language == AppLanguage.en;
-    final basePersona = isEn ? multiAgentPlannerPromptEnPersona : multiAgentPlannerPromptZhPersona;
-    final baseSafety = isEn ? multiAgentPlannerPromptEnSafety : multiAgentPlannerPromptZhSafety;
+    final basePersona = isEn
+        ? multiAgentPlannerPromptEnPersona
+        : multiAgentPlannerPromptZhPersona;
+    final baseSafety = isEn
+        ? multiAgentPlannerPromptEnSafety
+        : multiAgentPlannerPromptZhSafety;
 
     final persona = (useCustomPrompts && customPlannerPrompt.trim().isNotEmpty)
         ? customPlannerPrompt.trim()
@@ -211,8 +244,12 @@ class LlmChatService implements LlmClientAdapter {
 
   String get operatorPrompt {
     final isEn = language == AppLanguage.en;
-    final basePersona = isEn ? multiAgentOperatorPromptEnPersona : multiAgentOperatorPromptZhPersona;
-    final baseSafety = isEn ? multiAgentOperatorPromptEnSafety : multiAgentOperatorPromptZhSafety;
+    final basePersona = isEn
+        ? multiAgentOperatorPromptEnPersona
+        : multiAgentOperatorPromptZhPersona;
+    final baseSafety = isEn
+        ? multiAgentOperatorPromptEnSafety
+        : multiAgentOperatorPromptZhSafety;
 
     final persona = (useCustomPrompts && customOperatorPrompt.trim().isNotEmpty)
         ? customOperatorPrompt.trim()
@@ -223,8 +260,12 @@ class LlmChatService implements LlmClientAdapter {
 
   String get explorePrompt {
     final isEn = language == AppLanguage.en;
-    final basePersona = isEn ? multiAgentExplorePromptEnPersona : multiAgentExplorePromptZhPersona;
-    final baseSafety = isEn ? multiAgentExplorePromptEnSafety : multiAgentExplorePromptZhSafety;
+    final basePersona = isEn
+        ? multiAgentExplorePromptEnPersona
+        : multiAgentExplorePromptZhPersona;
+    final baseSafety = isEn
+        ? multiAgentExplorePromptEnSafety
+        : multiAgentExplorePromptZhSafety;
 
     final persona = (useCustomPrompts && customExplorePrompt.trim().isNotEmpty)
         ? customExplorePrompt.trim()
@@ -235,8 +276,12 @@ class LlmChatService implements LlmClientAdapter {
 
   String get reviewerPrompt {
     final isEn = language == AppLanguage.en;
-    final basePersona = isEn ? multiAgentReviewerPromptEnPersona : multiAgentReviewerPromptZhPersona;
-    final baseSafety = isEn ? multiAgentReviewerPromptEnSafety : multiAgentReviewerPromptZhSafety;
+    final basePersona = isEn
+        ? multiAgentReviewerPromptEnPersona
+        : multiAgentReviewerPromptZhPersona;
+    final baseSafety = isEn
+        ? multiAgentReviewerPromptEnSafety
+        : multiAgentReviewerPromptZhSafety;
 
     final persona = (useCustomPrompts && customReviewerPrompt.trim().isNotEmpty)
         ? customReviewerPrompt.trim()
@@ -247,18 +292,25 @@ class LlmChatService implements LlmClientAdapter {
 
   String get summarizerPrompt {
     final isEn = language == AppLanguage.en;
-    final basePersona = isEn ? multiAgentSummarizerPromptEnPersona : multiAgentSummarizerPromptZhPersona;
-    final baseSafety = isEn ? multiAgentSummarizerPromptEnSafety : multiAgentSummarizerPromptZhSafety;
+    final basePersona = isEn
+        ? multiAgentSummarizerPromptEnPersona
+        : multiAgentSummarizerPromptZhPersona;
+    final baseSafety = isEn
+        ? multiAgentSummarizerPromptEnSafety
+        : multiAgentSummarizerPromptZhSafety;
 
-    final persona = (useCustomPrompts && customSummarizerPrompt.trim().isNotEmpty)
-        ? customSummarizerPrompt.trim()
-        : basePersona.trim();
+    final persona =
+        (useCustomPrompts && customSummarizerPrompt.trim().isNotEmpty)
+            ? customSummarizerPrompt.trim()
+            : basePersona.trim();
 
     return '$persona $baseSafety';
   }
 
   String get coordinatorPrompt {
-    return language == AppLanguage.en ? multiAgentCoordinatorPromptEn : multiAgentCoordinatorPromptZh;
+    return language == AppLanguage.en
+        ? multiAgentCoordinatorPromptEn
+        : multiAgentCoordinatorPromptZh;
   }
 
   @override
@@ -347,6 +399,11 @@ class LlmChatService implements LlmClientAdapter {
     void Function(LlmRunStats stats)? onStats,
     void Function(LlmTraceEvent event)? onTrace,
     LlmCancellationToken? cancellationToken,
+    String userRequest = '',
+    Set<String> selectedConnectionIds = const {},
+    bool hasWebViewSession = false,
+    bool hasApprovedPlan = false,
+    List<String> memorySources = const [],
     bool planMode = false,
   }) {
     return _sendImpl(
@@ -356,6 +413,11 @@ class LlmChatService implements LlmClientAdapter {
       onStats: onStats,
       onTrace: onTrace,
       cancellationToken: cancellationToken,
+      userRequest: userRequest,
+      selectedConnectionIds: selectedConnectionIds,
+      hasWebViewSession: hasWebViewSession,
+      hasApprovedPlan: hasApprovedPlan,
+      memorySources: memorySources,
       planMode: planMode,
     );
   }
@@ -370,6 +432,11 @@ class LlmChatService implements LlmClientAdapter {
     void Function(LlmTraceEvent event)? onTrace,
     LlmCancellationToken? cancellationToken,
     Set<String>? allowedTools,
+    String userRequest = '',
+    Set<String> selectedConnectionIds = const {},
+    bool hasWebViewSession = false,
+    bool hasApprovedPlan = false,
+    List<String> memorySources = const [],
     bool forceContextCompression = false,
     bool planMode = false,
   }) {
@@ -381,6 +448,11 @@ class LlmChatService implements LlmClientAdapter {
       onTrace: onTrace,
       cancellationToken: cancellationToken,
       allowedTools: allowedTools,
+      userRequest: userRequest,
+      selectedConnectionIds: selectedConnectionIds,
+      hasWebViewSession: hasWebViewSession,
+      hasApprovedPlan: hasApprovedPlan,
+      memorySources: memorySources,
       forceContextCompression: forceContextCompression,
       planMode: planMode,
     );

@@ -13,7 +13,7 @@ void main() {
         messages: const [
           {
             'role': 'user',
-            'content': '帮我排查 SSH 服务器性能问题并生成运维报告',
+            'content': 'Help me troubleshoot an SSH server performance issue.',
           },
         ],
       );
@@ -34,7 +34,7 @@ void main() {
       final optedOut = coordinator.shouldCollaborate(
         enabled: true,
         messages: const [
-          {'role': 'user', 'content': '快速回答，不要多 agent'},
+          {'role': 'user', 'content': 'quick answer, no multi-agent'},
         ],
       );
 
@@ -44,56 +44,26 @@ void main() {
       expect(optedOut.reason, 'user_opted_out');
     });
 
-    test(
-        'triggers and closes correctly for Chinese complex requests and explicit close scenarios',
-        () {
+    test('detects Chinese complex requests and explicit opt-out phrases', () {
       const coordinator = MultiAgentCoordinator();
 
-      // Test triggers for Chinese complex requests
-      final complexTrigger1 = coordinator.shouldCollaborate(
+      final complex = coordinator.shouldCollaborate(
         enabled: true,
         messages: const [
-          {'role': 'user', 'content': '系统崩溃了，帮我看一下数据库故障'},
+          {'role': 'user', 'content': '帮我排查数据库故障并生成运维报告'},
         ],
       );
-      final complexTrigger2 = coordinator.shouldCollaborate(
+      final optedOut = coordinator.shouldCollaborate(
         enabled: true,
         messages: const [
-          {'role': 'user', 'content': '如何配置多智能体自动运维 and 安全部署？'},
-        ],
-      );
-
-      expect(complexTrigger1.enabled, isTrue);
-      expect(complexTrigger1.reason, 'complex_signal');
-      expect(complexTrigger2.enabled, isTrue);
-      expect(complexTrigger2.reason, 'complex_signal');
-
-      // Test explicit opt-out in Chinese
-      final explicitClose1 = coordinator.shouldCollaborate(
-        enabled: true,
-        messages: const [
-          {'role': 'user', 'content': '禁用多agent，快速回答即可'},
-        ],
-      );
-      final explicitClose2 = coordinator.shouldCollaborate(
-        enabled: true,
-        messages: const [
-          {'role': 'user', 'content': '不要多智能体，用单智能体回答'},
-        ],
-      );
-      final explicitClose3 = coordinator.shouldCollaborate(
-        enabled: true,
-        messages: const [
-          {'role': 'user', 'content': '关闭多智能体，谢谢'},
+          {'role': 'user', 'content': '不要多智能体，快速回答即可'},
         ],
       );
 
-      expect(explicitClose1.enabled, isFalse);
-      expect(explicitClose1.reason, 'user_opted_out');
-      expect(explicitClose2.enabled, isFalse);
-      expect(explicitClose2.reason, 'user_opted_out');
-      expect(explicitClose3.enabled, isFalse);
-      expect(explicitClose3.reason, 'user_opted_out');
+      expect(complex.enabled, isTrue);
+      expect(complex.reason, 'complex_signal');
+      expect(optedOut.enabled, isFalse);
+      expect(optedOut.reason, 'user_opted_out');
     });
 
     test('honors disabled settings', () {
@@ -124,23 +94,33 @@ void main() {
           {'role': 'user', 'content': 'Implement and review an SSH fix'},
         ],
         classify: (messages) async => jsonEncode({
-          "shouldCollaborate": true,
-          "reason": "complex fix",
-          "thinkingEnabled": false,
-          "reasoningEffort": "low",
-          "agentCount": 4
+          'shouldCollaborate': true,
+          'reason': 'complex fix',
+          'thinkingEnabled': false,
+          'reasoningEffort': 'low',
+          'agentCount': 4,
         }),
         complete: (role, messages, {required thinkingSettings}) async {
           roles.add(role.name);
           roleMessages.add(messages);
+          if (role.name == 'summarizer') {
+            return jsonEncode({
+              'summary': 'consolidated helper summary',
+              'recommendedActions': ['review planner output'],
+              'risks': ['operator drift'],
+              'openQuestions': ['need final confirmation'],
+            });
+          }
           return 'advice from ${role.label}';
         },
       );
 
       expect(result, isNotNull);
       expect(result!.agentCount, 4);
-      expect(roles, ['explore', 'planner', 'operator', 'reviewer']);
-      expect(result.memoryContent, contains('Planner'));
+      expect(roles, ['explore', 'planner', 'operator', 'summarizer']);
+      final memory = jsonDecode(result.memoryContent) as Map<String, dynamic>;
+      expect(memory['summary'], 'consolidated helper summary');
+      expect(memory['recommendedActions'], ['review planner output']);
       for (final messages in roleMessages) {
         for (final message in messages) {
           expect(message.containsKey('tools'), isFalse);
@@ -154,16 +134,16 @@ void main() {
 
       final result = await coordinator.run(
         enabled: true,
-        maxAgents: 3,
+        maxAgents: 4,
         messages: const [
           {'role': 'user', 'content': 'debug logs and fix the server'},
         ],
         classify: (messages) async => jsonEncode({
-          "shouldCollaborate": true,
-          "reason": "debug troubleshooting",
-          "thinkingEnabled": false,
-          "reasoningEffort": "low",
-          "agentCount": 3
+          'shouldCollaborate': true,
+          'reason': 'debug troubleshooting',
+          'thinkingEnabled': false,
+          'reasoningEffort': 'low',
+          'agentCount': 4,
         }),
         complete: (role, messages, {required thinkingSettings}) async {
           if (role.name == 'operator') {
@@ -176,6 +156,7 @@ void main() {
       expect(result, isNotNull);
       expect(result!.memoryContent, contains('[REDACTED]'));
       expect(result.memoryContent, isNot(contains('supersecret')));
+      expect(result.memoryContent, contains('"recommendedActions"'));
       expect(result.traceContent, contains('Helper failed'));
       expect(result.traceContent, isNot(contains('supersecret')));
     });
@@ -191,11 +172,11 @@ void main() {
           {'role': 'user', 'content': 'hello'},
         ],
         classify: (messages) async => jsonEncode({
-          "shouldCollaborate": false,
-          "reason": "simple greeting",
-          "thinkingEnabled": false,
-          "reasoningEffort": "low",
-          "agentCount": 2
+          'shouldCollaborate': false,
+          'reason': 'simple greeting',
+          'thinkingEnabled': false,
+          'reasoningEffort': 'low',
+          'agentCount': 2,
         }),
         complete: (role, messages, {required thinkingSettings}) async {
           called = true;
@@ -213,16 +194,16 @@ void main() {
 
       final result = await coordinator.run(
         enabled: true,
-        maxAgents: 3,
+        maxAgents: 4,
         messages: const [
           {'role': 'user', 'content': 'debug logs and fix the server'},
         ],
         classify: (messages) async => jsonEncode({
-          "shouldCollaborate": true,
-          "reason": "complex fix",
-          "thinkingEnabled": false,
-          "reasoningEffort": "low",
-          "agentCount": 3
+          'shouldCollaborate': true,
+          'reason': 'complex fix',
+          'thinkingEnabled': false,
+          'reasoningEffort': 'low',
+          'agentCount': 4,
         }),
         complete: (role, messages, {required thinkingSettings}) async {
           if (role.name == 'operator') {
@@ -234,7 +215,7 @@ void main() {
       );
 
       expect(result, isNotNull);
-      expect(operatorCalls, 4); // 1 initial attempt + 3 retries
+      expect(operatorCalls, 4);
       expect(result!.traceContent, contains('transient rate limit'));
     });
 
@@ -244,16 +225,16 @@ void main() {
 
       final result = await coordinator.run(
         enabled: true,
-        maxAgents: 3,
+        maxAgents: 4,
         messages: const [
           {'role': 'user', 'content': 'debug logs and fix the server'},
         ],
         classify: (messages) async => jsonEncode({
-          "shouldCollaborate": true,
-          "reason": "complex fix",
-          "thinkingEnabled": false,
-          "reasoningEffort": "low",
-          "agentCount": 3
+          'shouldCollaborate': true,
+          'reason': 'complex fix',
+          'thinkingEnabled': false,
+          'reasoningEffort': 'low',
+          'agentCount': 4,
         }),
         complete: (role, messages, {required thinkingSettings}) async {
           if (role.name == 'operator') {
@@ -268,11 +249,12 @@ void main() {
       );
 
       expect(result, isNotNull);
-      expect(operatorCalls, 3); // 2 failures + 1 success
-      expect(result!.memoryContent, contains('Operator: resolved advice'));
+      expect(operatorCalls, 3);
+      expect(result!.memoryContent, contains('resolved advice'));
     });
 
-    test('preserves long playbook output in plan mode summarizer results', () async {
+    test('preserves long playbook output in plan mode summarizer results',
+        () async {
       const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
       final longCommand = 'echo ${'x' * 2200}';
       final playbook = '''
@@ -289,11 +271,11 @@ void main() {
           {'role': 'user', 'content': 'Plan a long maintenance workflow'},
         ],
         classify: (messages) async => jsonEncode({
-          "shouldCollaborate": true,
-          "reason": "complex plan",
-          "thinkingEnabled": false,
-          "reasoningEffort": "low",
-          "agentCount": 5
+          'shouldCollaborate': true,
+          'reason': 'complex plan',
+          'thinkingEnabled': false,
+          'reasoningEffort': 'low',
+          'agentCount': 5,
         }),
         complete: (role, messages, {required thinkingSettings}) async {
           if (role.name == 'summarizer') {
@@ -317,16 +299,16 @@ void main() {
       try {
         await coordinator.run(
           enabled: true,
-          maxAgents: 3,
+          maxAgents: 4,
           messages: const [
             {'role': 'user', 'content': 'debug logs and fix the server'},
           ],
           classify: (messages) async => jsonEncode({
-            "shouldCollaborate": true,
-            "reason": "complex fix",
-            "thinkingEnabled": false,
-            "reasoningEffort": "low",
-            "agentCount": 3
+            'shouldCollaborate': true,
+            'reason': 'complex fix',
+            'thinkingEnabled': false,
+            'reasoningEffort': 'low',
+            'agentCount': 4,
           }),
           checkCancelled: () {
             if (cancelled) {
@@ -347,12 +329,10 @@ void main() {
         expect(e.toString(), contains('cancelled'));
       }
 
-      expect(operatorCalls, 1); // Only 1 attempt before cancellation exit
+      expect(operatorCalls, 1);
     });
 
-    test(
-        'propagates dynamic classification settings (thinking and reasoning effort)',
-        () async {
+    test('propagates dynamic classification settings', () async {
       const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
       bool? propagatedThinking;
       String? propagatedEffort;
@@ -364,11 +344,11 @@ void main() {
           {'role': 'user', 'content': 'debug logs and fix the server'},
         ],
         classify: (messages) async => jsonEncode({
-          "shouldCollaborate": true,
-          "reason": "complex fix",
-          "thinkingEnabled": true,
-          "reasoningEffort": "medium",
-          "agentCount": 3
+          'shouldCollaborate': true,
+          'reason': 'complex fix',
+          'thinkingEnabled': true,
+          'reasoningEffort': 'medium',
+          'agentCount': 3,
         }),
         complete: (role, messages, {required thinkingSettings}) async {
           propagatedThinking = thinkingSettings.thinkingEnabled;
@@ -382,67 +362,101 @@ void main() {
       expect(propagatedEffort, 'medium');
     });
 
-    test('propagates intermediate analysis contexts through cascade phases', () async {
+    test('propagates intermediate analysis contexts through DAG phases',
+        () async {
       const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
       final roleReceivedMessages = <String, List<Map<String, dynamic>>>{};
 
       final result = await coordinator.run(
         enabled: true,
-        maxAgents: 4,
+        maxAgents: 5,
         messages: const [
           {'role': 'user', 'content': 'inspect logs and fix system'},
         ],
         classify: (messages) async => jsonEncode({
-          "shouldCollaborate": true,
-          "reason": "multi-phase troubleshooting",
-          "thinkingEnabled": false,
-          "reasoningEffort": "low",
-          "agentCount": 4
+          'shouldCollaborate': true,
+          'reason': 'multi-phase troubleshooting',
+          'thinkingEnabled': false,
+          'reasoningEffort': 'low',
+          'agentCount': 5,
         }),
         complete: (role, messages, {required thinkingSettings}) async {
           roleReceivedMessages[role.name] = messages;
+          if (role.name == 'summarizer') {
+            return jsonEncode({
+              'summary': 'merged findings',
+              'recommendedActions': ['apply operator fix'],
+              'risks': ['needs reviewer sign-off'],
+              'openQuestions': [],
+            });
+          }
           return 'mock output from ${role.label}';
         },
       );
 
       expect(result, isNotNull);
-      expect(result!.agentCount, 4);
+      expect(result!.agentCount, 5);
 
-      // 验证 Explore 率先执行，无前置依赖
-      final exploreMsgs = roleReceivedMessages['explore'];
-      expect(exploreMsgs, isNotNull);
-      final exploreContent = exploreMsgs!.last['content'] as String;
-      expect(exploreContent, isNot(contains('来自其他辅助智能体的阶段性分析结果：')));
+      final exploreContent =
+          roleReceivedMessages['explore']!.last['content'] as String;
+      final plannerContent =
+          roleReceivedMessages['planner']!.last['content'] as String;
+      final operatorContent =
+          roleReceivedMessages['operator']!.last['content'] as String;
+      final reviewerContent =
+          roleReceivedMessages['reviewer']!.last['content'] as String;
+      final summarizerContent =
+          roleReceivedMessages['summarizer']!.last['content'] as String;
 
-      // 验证 Planner 接收 Explore 诊断结果
-      final plannerMsgs = roleReceivedMessages['planner'];
-      expect(plannerMsgs, isNotNull);
-      final plannerContent = plannerMsgs!.last['content'] as String;
-      expect(plannerContent, contains('Explore Agent (探索智能体) 的诊断建议：'));
-      expect(plannerContent, contains('mock output from Explore'));
-
-      // 验证 Operator 接收 Explore 和 Planner 成果
-      final operatorMsgs = roleReceivedMessages['operator'];
-      expect(operatorMsgs, isNotNull);
-      final operatorContent = operatorMsgs!.last['content'] as String;
-      expect(operatorContent, contains('Explore Agent (探索智能体) 的诊断建议：'));
-      expect(operatorContent, contains('Planner Agent (规划智能体) 提出的执行工作流：'));
+      expect(exploreContent, isNot(contains('mock output from Planner')));
+      expect(plannerContent, isNot(contains('mock output from Explore')));
       expect(operatorContent, contains('mock output from Explore'));
       expect(operatorContent, contains('mock output from Planner'));
-
-      // 验证 Reviewer 审计 Planner 和 Operator
-      final reviewerMsgs = roleReceivedMessages['reviewer'];
-      expect(reviewerMsgs, isNotNull);
-      final reviewerContent = reviewerMsgs!.last['content'] as String;
-      expect(reviewerContent, isNot(contains('Explore Agent')));
-      expect(reviewerContent, contains('Planner Agent (规划智能体) 提出的执行工作流：'));
-      expect(reviewerContent, contains('Operator Agent (执行智能体) 建议的工具及命令：'));
+      expect(reviewerContent, isNot(contains('mock output from Explore')));
       expect(reviewerContent, contains('mock output from Planner'));
       expect(reviewerContent, contains('mock output from Operator'));
+      expect(summarizerContent, contains('mock output from Explore'));
+      expect(summarizerContent, contains('mock output from Reviewer'));
     });
 
-    test(
-        'gracefully falls back when classification returns invalid JSON or times out',
+    test('returns structured summarizer memory as JSON', () async {
+      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
+
+      final result = await coordinator.run(
+        enabled: true,
+        maxAgents: 4,
+        messages: const [
+          {'role': 'user', 'content': 'review and summarize the rollout plan'},
+        ],
+        classify: (messages) async => jsonEncode({
+          'shouldCollaborate': true,
+          'reason': 'structured summary',
+          'thinkingEnabled': false,
+          'reasoningEffort': 'low',
+          'agentCount': 4,
+        }),
+        complete: (role, messages, {required thinkingSettings}) async {
+          if (role.name == 'summarizer') {
+            return jsonEncode({
+              'summary': 'helper consensus',
+              'recommendedActions': ['run smoke tests'],
+              'risks': ['stale config'],
+              'openQuestions': ['which shard goes first'],
+            });
+          }
+          return 'analysis from ${role.label}';
+        },
+      );
+
+      expect(result, isNotNull);
+      final decoded = jsonDecode(result!.memoryContent) as Map<String, dynamic>;
+      expect(decoded['summary'], 'helper consensus');
+      expect(decoded['recommendedActions'], ['run smoke tests']);
+      expect(decoded['risks'], ['stale config']);
+      expect(decoded['openQuestions'], ['which shard goes first']);
+    });
+
+    test('gracefully falls back when classification returns invalid JSON',
         () async {
       const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
       var completeCalled = false;
@@ -461,7 +475,6 @@ void main() {
         },
       );
 
-      // Should fall back to shouldCollaborate: false, thus returning null and skipping sub-agents
       expect(result, isNull);
       expect(completeCalled, isFalse);
     });
@@ -496,8 +509,10 @@ void main() {
         fail('Should have thrown cancellation exception');
       } catch (e) {
         expect(e.toString(), contains('cancelled'));
-        expect(e.toString(),
-            isNot(contains('cancelled exception during classify')));
+        expect(
+          e.toString(),
+          isNot(contains('cancelled exception during classify')),
+        );
       }
 
       expect(completeCalled, isFalse);

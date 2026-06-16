@@ -38,6 +38,9 @@ extension BackupOps on StorageService {
       'aiSettings': {
         'baseUrl': settings.baseUrl,
         'model': settings.model,
+        'helperModel': settings.helperModel,
+        'auditModel': settings.auditModel,
+        'modelFallbackPolicy': settings.modelFallbackPolicy,
         'contextWindowTokens': settings.contextWindowTokens,
         'timeoutSeconds': settings.timeoutSeconds,
         'deepSeekThinkingEnabled': settings.deepSeekThinkingEnabled,
@@ -77,6 +80,8 @@ extension BackupOps on StorageService {
       },
       'aiChats': (await loadAiChats()).map((item) => item.toJson()).toList(),
       'aiSkills': (await loadAiSkills()).map((item) => item.toJson()).toList(),
+      'agentRunMetrics':
+          (await loadAgentRunMetrics()).map((item) => item.toJson()).toList(),
       'playbooks':
           (await loadPlaybooks()).map((item) => item.toJson()).toList(),
       'powerGuideSeen': _powerGuideSeen,
@@ -128,6 +133,9 @@ extension BackupOps on StorageService {
       await saveAiConnectionSettings(
         baseUrl: aiSettings['baseUrl'] as String? ?? 'https://api.deepseek.com',
         model: aiSettings['model'] as String? ?? 'deepseek-v4-flash',
+        helperModel: aiSettings['helperModel'] as String?,
+        auditModel: aiSettings['auditModel'] as String?,
+        modelFallbackPolicy: aiSettings['modelFallbackPolicy'] as String?,
         contextWindowTokens:
             (aiSettings['contextWindowTokens'] as num?)?.toInt(),
         timeoutSeconds: (aiSettings['timeoutSeconds'] as num?)?.toInt(),
@@ -255,6 +263,17 @@ extension BackupOps on StorageService {
           .whereType<Map<String, dynamic>>()
           .map(AiSkillRecord.fromJson)
           .toList(),
+      immediate: true,
+    );
+    final importedMetrics =
+        ((decoded['agentRunMetrics'] as List<dynamic>?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(AgentRunMetrics.fromJson)
+            .toList();
+    _agentRunMetricsCache = List.unmodifiable(importedMetrics);
+    await _writeProtectedPrefBuffered(
+      StorageService._agentRunMetricsKey,
+      jsonEncode(importedMetrics.map((item) => item.toJson()).toList()),
       immediate: true,
     );
     await _savePlaybooks(

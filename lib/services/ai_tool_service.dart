@@ -16,6 +16,7 @@ import 'server_diagnostics_service.dart';
 import 'sftp_service.dart';
 import 'ssh_service.dart';
 import 'storage_service.dart';
+import 'tool_exposure_router.dart';
 import 'tool_secret_policy.dart';
 
 part 'ai_tool/ai_tool_types.dart';

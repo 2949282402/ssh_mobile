@@ -9,6 +9,11 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     void Function(LlmRunStats stats)? onStats,
     void Function(LlmTraceEvent event)? onTrace,
     LlmCancellationToken? cancellationToken,
+    String userRequest = '',
+    Set<String> selectedConnectionIds = const {},
+    bool hasWebViewSession = false,
+    bool hasApprovedPlan = false,
+    List<String> memorySources = const [],
     bool planMode = false,
   }) async {
     final buffer = StringBuffer();
@@ -19,6 +24,11 @@ extension LlmChatServiceStreamHandler on LlmChatService {
       onStats: onStats,
       onTrace: onTrace,
       cancellationToken: cancellationToken,
+      userRequest: userRequest,
+      selectedConnectionIds: selectedConnectionIds,
+      hasWebViewSession: hasWebViewSession,
+      hasApprovedPlan: hasApprovedPlan,
+      memorySources: memorySources,
       planMode: planMode,
     )) {
       buffer.write(chunk);
@@ -35,14 +45,23 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     void Function(LlmTraceEvent event)? onTrace,
     LlmCancellationToken? cancellationToken,
     Set<String>? allowedTools,
+    String userRequest = '',
+    Set<String> selectedConnectionIds = const {},
+    bool hasWebViewSession = false,
+    bool hasApprovedPlan = false,
+    List<String> memorySources = const [],
     bool forceContextCompression = false,
     bool planMode = false,
   }) async* {
     final settings = await storageService.loadAiConnectionSettings();
     final runStartedAt = DateTime.now();
-    final model = modelOverride?.trim().isNotEmpty == true
-        ? modelOverride!.trim()
-        : settings.model;
+    final modelProfile = _modelProfileForSettings(
+      settings,
+      mainModelOverride: modelOverride,
+    );
+    final model = modelProfile.resolve(AgentModelRole.main);
+    final helperModel = modelProfile.resolve(AgentModelRole.helper);
+    final auditModel = modelProfile.resolve(AgentModelRole.audit);
     final apiKey = await storageService.getAiApiKey();
     if (apiKey == null || apiKey.isEmpty) {
       AppLogService.instance.warning('LLM request blocked: API key missing');
@@ -52,7 +71,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     AppLogService.instance.info(
       'LLM chat started',
       details:
-          'baseUrl=${settings.baseUrl} model=$model userMessages=${messages.length} forceContextCompression=$forceContextCompression planMode=$planMode',
+          'baseUrl=${settings.baseUrl} model=$model helperModel=$helperModel auditModel=$auditModel userMessages=${messages.length} forceContextCompression=$forceContextCompression planMode=$planMode',
     );
 
     var workingMessages = <Map<String, dynamic>>[
@@ -93,10 +112,24 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     final visibleTools = filterVisibleTools(
       availableTools,
       allowedTools: normalizedAllowedTools,
+      userRequest: userRequest,
+      selectedConnectionIds: selectedConnectionIds,
+      hasWebViewSession: hasWebViewSession,
+      hasApprovedPlan: hasApprovedPlan,
       planMode: planMode,
     );
+    final selectedToolSet =
+        visibleTools.map((tool) => tool.name).toList(growable: false);
+    final visibleToolsByName = {
+      for (final tool in visibleTools) tool.name: tool,
+    };
     var currentToolDefinitions =
         visibleTools.map((tool) => tool.definition).toList(growable: false);
+    final readOnlyToolCache = <String, _CachedToolResult>{};
+    var cacheHitCount = 0;
+    var dedupBlockedCount = 0;
+    var approvalCount = 0;
+    var approvedCount = 0;
 
     final toolBudget = LlmToolBudgetController(
       baseBudget: settings.toolCallBudget,
@@ -106,7 +139,8 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     if (normalizedAllowedTools == null) {
       AppLogService.instance.info(
         'LLM tool filter skipped',
-        details: 'availableTools=${availableTools.length} filteredTools=${currentToolDefinitions.length} planMode=$planMode',
+        details:
+            'availableTools=${availableTools.length} filteredTools=${currentToolDefinitions.length} planMode=$planMode',
       );
     } else {
       AppLogService.instance.info(
@@ -136,7 +170,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         final response = await _chatCompletion(
           baseUrl: settings.baseUrl,
           apiKey: apiKey,
-          model: model,
+          model: helperModel,
           messages: classificationMessages,
           deepSeekThinkingEnabled: false,
           deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
@@ -150,7 +184,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         final response = await _chatCompletion(
           baseUrl: settings.baseUrl,
           apiKey: apiKey,
-          model: model,
+          model: helperModel,
           messages: roleMessages,
           deepSeekThinkingEnabled: thinkingSettings.thinkingEnabled,
           deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
@@ -180,8 +214,8 @@ extension LlmChatServiceStreamHandler on LlmChatService {
             DateTime.now().difference(runStartedAt).inMilliseconds;
         final promptTokens =
             LlmChatService.estimateMessagesTokens(workingMessages);
-        final completionTokens = LlmChatService.estimateTextTokens(
-            multiAgentResult.memoryContent);
+        final completionTokens =
+            LlmChatService.estimateTextTokens(multiAgentResult.memoryContent);
         onStats?.call(
           LlmRunStats(
             promptTokens: promptTokens,
@@ -192,6 +226,9 @@ extension LlmChatServiceStreamHandler on LlmChatService {
             contextTokensBeforeCompression: estimatedBeforeCompression,
             contextWindowTokens: settings.contextWindowTokens,
             compressed: compressed,
+            helperFanout: multiAgentResult.agentCount,
+            selectedToolSet: selectedToolSet,
+            memorySources: memorySources,
           ),
         );
         return;
@@ -278,6 +315,15 @@ extension LlmChatServiceStreamHandler on LlmChatService {
             contextTokensBeforeCompression: estimatedBeforeCompression,
             contextWindowTokens: settings.contextWindowTokens,
             compressed: compressed,
+            toolCalls: toolLedger.length,
+            cacheHits: cacheHitCount,
+            dedupBlockedCalls: dedupBlockedCount,
+            helperFanout: multiAgentResult?.agentCount ?? 0,
+            auditEscalationLevel: toolBudget.auditCount,
+            selectedToolSet: selectedToolSet,
+            memorySources: memorySources,
+            approvalCount: approvalCount,
+            approvedCount: approvedCount,
           ),
         );
         return;
@@ -323,6 +369,13 @@ extension LlmChatServiceStreamHandler on LlmChatService {
               'arguments': _toolSecretPolicy.redactValue(arguments),
             }),
           ),
+        );
+        final tool = visibleToolsByName[call.name];
+        final redactedArguments = _toolSecretPolicy.redactValue(arguments);
+        final signatureArguments = _mapFromValue(redactedArguments);
+        final signature = LlmToolLedgerEntry.buildSignature(
+          call.name,
+          signatureArguments,
         );
         final budgetCheck = toolBudget.checkBeforeToolCall();
         if (budgetCheck.requiresAudit) {
@@ -418,7 +471,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
           final auditResult = await _runToolSafetyAudit(
             baseUrl: settings.baseUrl,
             apiKey: apiKey,
-            model: model,
+            model: auditModel,
             deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
             deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
             openAiReasoningEffort: settings.openAiReasoningEffort,
@@ -510,18 +563,57 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         var approvalRequired = false;
         var approvedWrite = false;
         var stopAfterToolResult = false;
+        var cacheHit = false;
+        var dedupBlocked = false;
         String? stopMessage;
         try {
+          final repeatedStreak = _nextRepeatedSignatureStreak(
+            toolLedger,
+            signature,
+          );
+          if (tool != null &&
+              tool.executionMode == AiToolExecutionMode.readOnly &&
+              (repeatedStreak >= 3 ||
+                  _wouldTriggerAlternatingLoop(toolLedger, signature))) {
+            dedupBlocked = true;
+            dedupBlockedCount += 1;
+            outcome = 'loop_guard_blocked';
+            result = jsonEncode({
+              'error':
+                  'Deterministic loop guard blocked a repeated read-only tool cycle. Summarize the current findings or choose a different next step.',
+              'tool': call.name,
+            });
+            currentToolDefinitions = const [];
+            workingMessages.add({
+              'role': 'system',
+              'content':
+                  'The deterministic loop guard blocked repeated tool usage. Stop calling the same read-only tools and finish with the best available answer unless the user gives new instructions.',
+            });
+          }
+          final cacheEntry = tool == null ? null : readOnlyToolCache[signature];
+          if (!dedupBlocked &&
+              tool != null &&
+              tool.executionMode == AiToolExecutionMode.readOnly &&
+              tool.effectiveCacheTtl > Duration.zero &&
+              cacheEntry != null &&
+              !cacheEntry.isExpired) {
+            cacheHit = true;
+            cacheHitCount += 1;
+            outcome = 'cache_hit';
+            result = cacheEntry.result;
+          }
           final approvalRequest = toolService.approvalRequestFor(
             call.name,
             arguments,
           );
           approvalRequired = approvalRequest != null;
-          if (approvalRequest != null) {
+          if (!dedupBlocked && !cacheHit && approvalRequest != null) {
+            approvalCount += 1;
             if (planMode) {
               outcome = 'blocked_in_plan_mode';
               result = jsonEncode({
-                'error': 'This write operation or state-changing action is blocked because PLAN MODE is active. You must only outline your plan without execution.',
+                'error':
+                    'This write operation or state-changing action is blocked because PLAN MODE is active. You must only outline your plan without execution.',
                 'command': approvalRequest.command,
               });
               onTrace?.call(
@@ -585,6 +677,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
                 }
               } else {
                 approvedWrite = true;
+                approvedCount += 1;
                 onTrace?.call(
                   LlmTraceEvent(
                     kind: 'approval',
@@ -605,7 +698,9 @@ extension LlmChatServiceStreamHandler on LlmChatService {
               }
             }
           }
-          if (approvedWrite || !approvalRequired) {
+          if (!dedupBlocked &&
+              !cacheHit &&
+              (approvedWrite || !approvalRequired)) {
             result = await toolService.execute(
               call.name,
               arguments,
@@ -613,6 +708,14 @@ extension LlmChatServiceStreamHandler on LlmChatService {
             );
             cancellationToken?.throwIfCancelled();
             outcome = _classifyToolResultOutcome(result);
+            if (tool != null &&
+                tool.executionMode == AiToolExecutionMode.readOnly &&
+                tool.effectiveCacheTtl > Duration.zero) {
+              readOnlyToolCache[signature] = _CachedToolResult(
+                result: result,
+                expiresAt: DateTime.now().add(tool.effectiveCacheTtl),
+              );
+            }
           }
         } on LlmCancelledException {
           rethrow;
@@ -628,16 +731,11 @@ extension LlmChatServiceStreamHandler on LlmChatService {
           'tool_call_id': call.id,
           'content': result,
         });
-        final redactedArguments = _toolSecretPolicy.redactValue(arguments);
-        final signatureArguments = _mapFromValue(redactedArguments);
         toolLedger.add(
           LlmToolLedgerEntry(
             index: toolBudget.usedCalls,
             toolName: call.name,
-            signature: LlmToolLedgerEntry.buildSignature(
-              call.name,
-              signatureArguments,
-            ),
+            signature: signature,
             argumentsPreview: _toolSecretPolicy.previewText(
               _prettyJson(redactedArguments),
               maxChars: 400,
@@ -647,6 +745,9 @@ extension LlmChatServiceStreamHandler on LlmChatService {
             approved: approvedWrite,
             failed: outcome != 'success',
             emptyResult: _looksLikeEmptyToolResult(result),
+            cacheHit: cacheHit,
+            dedupBlocked: dedupBlocked,
+            auditEscalationLevel: toolBudget.auditCount,
             resultPreview: _toolSecretPolicy.previewText(
               _prettyJsonString(result),
               maxChars: 600,

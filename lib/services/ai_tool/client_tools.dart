@@ -645,7 +645,8 @@ class ClientToolsProvider implements AiToolProvider {
 
     if (!enabled && !canExitPlanMode(currentChat)) {
       return jsonEncode({
-        'error': 'Cannot exit Plan Mode. You must persist executable TODO steps on the latest assistant planning message before switching to execution mode.',
+        'error':
+            'Cannot exit Plan Mode. You must persist executable TODO steps on the latest assistant planning message before switching to execution mode.',
       });
     }
 
@@ -683,7 +684,8 @@ class ClientToolsProvider implements AiToolProvider {
 
     if (!currentChat.planMode) {
       return jsonEncode({
-        'error': 'Task creation is blocked. client_task_create can ONLY be called during Plan Mode.',
+        'error':
+            'Task creation is blocked. client_task_create can ONLY be called during Plan Mode.',
       });
     }
 
@@ -697,9 +699,11 @@ class ClientToolsProvider implements AiToolProvider {
       return jsonEncode({'error': 'No messages to bind the task to.'});
     }
 
-    final assistantIndex = messages.lastIndexWhere((m) => m.role == 'assistant');
+    final assistantIndex =
+        messages.lastIndexWhere((m) => m.role == 'assistant');
     if (assistantIndex == -1) {
-      return jsonEncode({'error': 'No assistant message found to bind the task.'});
+      return jsonEncode(
+          {'error': 'No assistant message found to bind the task.'});
     }
 
     final targetMsg = messages[assistantIndex];
@@ -730,7 +734,8 @@ class ClientToolsProvider implements AiToolProvider {
       'name': name,
       'command': command,
       'description': description,
-      'message': 'Task step successfully created and appended to the plan list.',
+      'message':
+          'Task step successfully created and appended to the plan list.',
     });
   }
 
@@ -752,7 +757,8 @@ class ClientToolsProvider implements AiToolProvider {
 
     if (currentChat.planMode) {
       return jsonEncode({
-        'error': 'Task status update is blocked. client_task_update can ONLY be called during Execution Mode.',
+        'error':
+            'Task status update is blocked. client_task_update can ONLY be called during Execution Mode.',
       });
     }
 
@@ -791,7 +797,8 @@ class ClientToolsProvider implements AiToolProvider {
 
     if (!foundAndUpdated) {
       return jsonEncode({
-        'error': 'Task step not found. No task with id: $taskId exists in this chat session.',
+        'error':
+            'Task step not found. No task with id: $taskId exists in this chat session.',
       });
     }
 
@@ -843,6 +850,12 @@ class ClientToolsProvider implements AiToolProvider {
             ),
           },
           required: const ['query'],
+          requiresWebViewSession: true,
+          capabilities: const {
+            AiToolCapability.web,
+            AiToolCapability.client,
+          },
+          cacheTtl: const Duration(seconds: 30),
           handler: (args) => _webSearch(service, args),
         ),
       AiTool(
@@ -981,6 +994,11 @@ class ClientToolsProvider implements AiToolProvider {
             defaultValue: 50,
           ),
         },
+        capabilities: const {
+          AiToolCapability.client,
+          AiToolCapability.logs,
+        },
+        cacheTtl: const Duration(seconds: 8),
         handler: (args) => _clientQueryLogs(service, args),
       ),
       AiTool(
@@ -1044,6 +1062,11 @@ class ClientToolsProvider implements AiToolProvider {
             'Optional maximum characters to return. Defaults to 40000 and is capped at 100000.',
           ),
         },
+        requiresWebViewSession: true,
+        capabilities: const {
+          AiToolCapability.web,
+          AiToolCapability.client,
+        },
         handler: (args) => _clientWebViewGetPageText(service, args),
       ),
       AiTool(
@@ -1051,6 +1074,11 @@ class ClientToolsProvider implements AiToolProvider {
         description:
             'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Get the current WebView state for the page bound to this chat session.',
         properties: const {},
+        requiresWebViewSession: true,
+        capabilities: const {
+          AiToolCapability.web,
+          AiToolCapability.client,
+        },
         handler: (args) => _clientWebViewGetState(service, args),
       ),
       AiTool(
@@ -1069,6 +1097,11 @@ class ClientToolsProvider implements AiToolProvider {
         },
         required: const ['action'],
         executionMode: AiToolExecutionMode.stateChanging,
+        requiresWebViewSession: true,
+        capabilities: const {
+          AiToolCapability.web,
+          AiToolCapability.client,
+        },
         handler: (args) => _clientWebViewNavigate(service, args),
       ),
       AiTool(
@@ -1131,10 +1164,16 @@ class ClientToolsProvider implements AiToolProvider {
         description:
             'CLIENT tool. Toggle Plan Mode for the active chat thread. Set enabled=true to enter read-only planning when you need to replan. Set enabled=false to exit to execution mode ONLY after you have outlined a structured step-by-step playbook plan beforehand.',
         properties: {
-          'enabled': _bool('true to enter plan mode, false to exit to execution mode.'),
+          'enabled': _bool(
+              'true to enter plan mode, false to exit to execution mode.'),
         },
         required: const ['enabled'],
         executionMode: AiToolExecutionMode.planControl,
+        preferredInPlanMode: true,
+        capabilities: const {
+          AiToolCapability.planning,
+          AiToolCapability.client,
+        },
         handler: (args) => _clientSetPlanMode(service, args),
       ),
       AiTool(
@@ -1143,12 +1182,20 @@ class ClientToolsProvider implements AiToolProvider {
             'CLIENT tool. Create a new step in the TODO task plan. This tool is ONLY allowed during Plan Mode (read-only stage). Returns a generated unique taskId. Complex planning flows may also persist todoSteps from a valid ```playbook JSON block without calling this tool.',
         properties: {
           'name': _string('The name/title of the planned step.'),
-          'command': _string('The exact shell/remote command recommended for execution in this step.'),
-          'description': _string('The purpose or explanation of what this step accomplishes.'),
-          'connectionId': _string('Optional. The unique connectionId of the server to execute this step on. Use list_servers to find available ids.'),
+          'command': _string(
+              'The exact shell/remote command recommended for execution in this step.'),
+          'description': _string(
+              'The purpose or explanation of what this step accomplishes.'),
+          'connectionId': _string(
+              'Optional. The unique connectionId of the server to execute this step on. Use list_servers to find available ids.'),
         },
         required: const ['name'],
         executionMode: AiToolExecutionMode.planOnly,
+        preferredInPlanMode: true,
+        capabilities: const {
+          AiToolCapability.planning,
+          AiToolCapability.client,
+        },
         handler: (args) => _clientTaskCreate(service, args),
       ),
       AiTool(
@@ -1159,14 +1206,27 @@ class ClientToolsProvider implements AiToolProvider {
           'taskId': _string('The unique taskId of the step to update.'),
           'status': {
             'type': 'string',
-            'enum': const ['pending', 'running', 'success', 'failed', 'skipped'],
-            'description': 'The new execution status of the step. The legacy alias in_progress is still accepted.',
+            'enum': const [
+              'pending',
+              'running',
+              'success',
+              'failed',
+              'skipped'
+            ],
+            'description':
+                'The new execution status of the step. The legacy alias in_progress is still accepted.',
           },
-          'stdout': _string('Optional stdout log response from executing the command.'),
-          'stderr': _string('Optional stderr log response if execution failed.'),
+          'stdout': _string(
+              'Optional stdout log response from executing the command.'),
+          'stderr':
+              _string('Optional stderr log response if execution failed.'),
         },
         required: const ['taskId', 'status'],
         executionMode: AiToolExecutionMode.executionOnly,
+        capabilities: const {
+          AiToolCapability.planning,
+          AiToolCapability.client,
+        },
         handler: (args) => _clientTaskUpdate(service, args),
       ),
     ];

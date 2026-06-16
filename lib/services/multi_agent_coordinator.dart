@@ -145,9 +145,34 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
       return null;
     }
 
+    final parallelRoles = [
+      if (roleMap['explore'] != null) roleMap['explore']!,
+      if (roleMap['planner'] != null) roleMap['planner']!,
+    ];
+    if (parallelRoles.isNotEmpty) {
+      checkCancelled?.call();
+      final parallelOutputs = await Future.wait(
+        parallelRoles.map(
+          (role) => _runRole(
+            role: role,
+            latestUser: latestUser,
+            contextText: contextText,
+            complete: complete,
+            thinkingSettings: thinkingSettings,
+            checkCancelled: checkCancelled,
+            language: language,
+          ),
+        ),
+      );
+      outputs.addAll(
+        _orderedOutputs(parallelOutputs, const ['explore', 'planner']),
+      );
+    }
+
     // --- Phase 1: Explore ---
     final exploreRole = roleMap['explore'];
-    if (exploreRole != null) {
+    if (exploreRole != null &&
+        outputs.where((out) => out.role.name == 'explore').isEmpty) {
       checkCancelled?.call();
       final out = await _runRole(
         role: exploreRole,
@@ -163,14 +188,16 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
 
     // --- Phase 2: Planner ---
     final plannerRole = roleMap['planner'];
-    if (plannerRole != null) {
+    if (plannerRole != null &&
+        outputs.where((out) => out.role.name == 'planner').isEmpty) {
       checkCancelled?.call();
       final exploreContext = getOutputOf('explore');
-      final intermediateContext = exploreContext != null && exploreContext.isNotEmpty
-          ? (language == AppLanguage.en
-              ? 'Explore Agent diagnostics:\n$exploreContext'
-              : 'Explore Agent (探索智能体) 的诊断建议：\n$exploreContext')
-          : null;
+      final intermediateContext =
+          exploreContext != null && exploreContext.isNotEmpty
+              ? (language == AppLanguage.en
+                  ? 'Explore Agent diagnostics:\n$exploreContext'
+                  : 'Explore Agent (探索智能体) 的诊断建议：\n$exploreContext')
+              : null;
 
       final out = await _runRole(
         role: plannerRole,
@@ -220,7 +247,13 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     }
 
     // 3.2 Reviewer
-    final reviewerRole = roleMap['reviewer'];
+    final reviewerRole = _shouldRunReviewer(
+      latestUser: latestUser,
+      planMode: planMode,
+      agentCount: classification.agentCount,
+    )
+        ? roleMap['reviewer']
+        : null;
     if (reviewerRole != null) {
       checkCancelled?.call();
       final plannerContext = getOutputOf('planner');
@@ -275,6 +308,7 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
         checkCancelled: checkCancelled,
         language: language,
         allowFullOutput: planMode,
+        structuredOutput: !planMode,
       );
       outputs.add(out);
     }
@@ -282,13 +316,14 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     checkCancelled?.call();
 
     final successful = outputs.where((output) => output.succeeded).toList();
+    final executedAgentCount = outputs.length;
     if (successful.isEmpty) {
       AppLogService.instance.warning(
         'LLM multi-agent collaboration produced no successful outputs',
         details: outputs.map((output) => output.traceLine).join(' | '),
       );
       return MultiAgentRunResult(
-        agentCount: roles.length,
+        agentCount: executedAgentCount,
         memoryContent: language == AppLanguage.en
             ? 'Multi-agent collaboration was attempted, but every helper failed. Continue with the primary assistant only.'
             : '尝试了多智能体协作，但所有辅助智能体都失败了。仅使用主助手继续。',
@@ -302,14 +337,14 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
         orElse: () => successful.last,
       );
       final result = MultiAgentRunResult(
-        agentCount: roles.length,
+        agentCount: executedAgentCount,
         memoryContent: secretPolicy.redactText(summarizerOut.content.trim()),
         traceContent: _traceContent(outputs),
       );
       AppLogService.instance.info(
         'LLM multi-agent plan mode collaboration completed',
         details:
-            'roles=${roles.length} successful=${successful.length} memoryChars=${result.memoryContent.length}',
+            'roles=$executedAgentCount successful=${successful.length} memoryChars=${result.memoryContent.length}',
       );
       return result;
     }
@@ -326,16 +361,28 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
       memory.writeln('- ${output.role.label}: ${output.content}');
     }
     memory.writeln(footer);
+    final summarizerCandidates =
+        successful.where((out) => out.role.name == 'summarizer').toList();
+    final summarizerOut =
+        summarizerCandidates.isEmpty ? null : summarizerCandidates.first;
+    final structuredSummary = summarizerOut != null
+        ? _parseStructuredSummary(summarizerOut.content, outputs)
+        : _fallbackStructuredSummary(
+            outputs,
+            fallbackSummary: memory.toString().trim(),
+          );
 
     final result = MultiAgentRunResult(
-      agentCount: roles.length,
-      memoryContent: secretPolicy.redactText(memory.toString().trim()),
+      agentCount: executedAgentCount,
+      memoryContent: secretPolicy.redactText(
+        jsonEncode(structuredSummary.toJson()),
+      ),
       traceContent: _traceContent(outputs),
     );
     AppLogService.instance.info(
       'LLM multi-agent collaboration completed',
       details:
-          'roles=${roles.length} successful=${successful.length} memoryChars=${result.memoryContent.length}',
+          'roles=$executedAgentCount successful=${successful.length} memoryChars=${result.memoryContent.length}',
     );
     return result;
   }
@@ -464,6 +511,7 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     void Function()? checkCancelled,
     AppLanguage language = AppLanguage.zh,
     bool allowFullOutput = false,
+    bool structuredOutput = false,
   }) async {
     int attempts = 0;
     const maxRetries = 3;
@@ -479,13 +527,14 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
             contextText: contextText,
             intermediateContext: intermediateContext,
             language: language,
+            structuredOutput: structuredOutput,
           ),
           thinkingSettings: thinkingSettings,
         );
         checkCancelled?.call();
         final content = secretPolicy.redactText(raw.trim());
         final normalized =
-            allowFullOutput ? content : _truncate(content);
+            allowFullOutput || structuredOutput ? content : _truncate(content);
         return _RoleOutput.success(role, normalized);
       } catch (e, stackTrace) {
         // Bubble up cancellation exceptions immediately.
@@ -529,14 +578,21 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     required String contextText,
     String? intermediateContext,
     AppLanguage language = AppLanguage.zh,
+    bool structuredOutput = false,
   }) {
     final footer = language == AppLanguage.en
         ? 'Return concise advisory notes for the primary assistant. Do not write the final user-facing answer.'
         : '为主要助手返回简明扼要的咨询建议。不要编写最终面向用户的解答。';
+    final outputContract = structuredOutput
+        ? (language == AppLanguage.en
+            ? 'Return JSON only with keys summary, recommendedActions, risks, and openQuestions. Do not wrap it in Markdown and do not write the final user-facing answer.'
+            : '浠呰繑鍥?JSON锛屽寘鍚?summary銆乺ecommendedActions銆乺isks銆乷penQuestions 杩欏洓涓瓧娈点€備笉瑕佺敤 Markdown 鍖呰９锛屼篃涓嶈鐩存帴缂栧啓闈㈠悜鐢ㄦ埛鐨勬渶缁堝洖绛?')
+        : footer;
 
-    final intermediateSection = (intermediateContext != null && intermediateContext.trim().isNotEmpty)
-        ? intermediateContext.trim()
-        : '';
+    final intermediateSection =
+        (intermediateContext != null && intermediateContext.trim().isNotEmpty)
+            ? intermediateContext.trim()
+            : '';
 
     return [
       {
@@ -560,11 +616,127 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
             'Recent conversation context:',
             contextText,
             '',
-            footer,
+            outputContract,
           ].join('\n'),
         ),
       },
     ];
+  }
+
+  List<_RoleOutput> _orderedOutputs(
+    Iterable<_RoleOutput> outputs,
+    List<String> order,
+  ) {
+    final ranked = {
+      for (var i = 0; i < order.length; i++) order[i]: i,
+    };
+    final list = outputs.toList(growable: false);
+    list.sort((a, b) {
+      final rankA = ranked[a.role.name] ?? order.length;
+      final rankB = ranked[b.role.name] ?? order.length;
+      return rankA.compareTo(rankB);
+    });
+    return list;
+  }
+
+  bool _shouldRunReviewer({
+    required String latestUser,
+    required bool planMode,
+    required int agentCount,
+  }) {
+    if (planMode) return true;
+    if (agentCount >= 5) return true;
+    final request = latestUser.toLowerCase();
+    const highRiskSignals = [
+      'write',
+      'delete',
+      'modify',
+      'change',
+      'restart',
+      'deploy',
+      'migration',
+      'rollback',
+      'approval',
+      'sftp',
+      'run command',
+      '鍐欏叆',
+      '鍒犻櫎',
+      '淇敼',
+      '鏇存敼',
+      '閲嶅惎',
+      '閮ㄧ讲',
+      '杩佺Щ',
+      '鍥炴粴',
+      '瀹℃壒',
+    ];
+    return highRiskSignals.any(request.contains);
+  }
+
+  MultiAgentStructuredSummary _parseStructuredSummary(
+    String raw,
+    List<_RoleOutput> outputs,
+  ) {
+    try {
+      var cleaned = raw.trim();
+      if (cleaned.startsWith('```')) {
+        cleaned = cleaned.replaceFirst(RegExp(r'^```(?:json)?\s*'), '');
+        cleaned = cleaned.replaceFirst(RegExp(r'\s*```$'), '');
+      }
+      final decoded = jsonDecode(cleaned);
+      if (decoded is Map<String, dynamic>) {
+        List<String> readList(String key) {
+          final value = decoded[key];
+          if (value is! List) return const [];
+          return value
+              .map((item) => '$item'.trim())
+              .where((item) => item.isNotEmpty)
+              .toList(growable: false);
+        }
+
+        final summary = ('${decoded['summary'] ?? ''}').trim();
+        if (summary.isNotEmpty) {
+          return MultiAgentStructuredSummary(
+            summary: summary,
+            recommendedActions: readList('recommendedActions'),
+            risks: readList('risks'),
+            openQuestions: readList('openQuestions'),
+          );
+        }
+      }
+    } catch (_) {}
+    return _fallbackStructuredSummary(outputs, fallbackSummary: raw.trim());
+  }
+
+  MultiAgentStructuredSummary _fallbackStructuredSummary(
+    List<_RoleOutput> outputs, {
+    String? fallbackSummary,
+  }) {
+    final successful = outputs.where((output) => output.succeeded).toList();
+    final summary = fallbackSummary?.trim().isNotEmpty == true
+        ? fallbackSummary!.trim()
+        : successful.isEmpty
+            ? 'No helper advice returned.'
+            : successful
+                .map((output) => '${output.role.label}: ${output.content}')
+                .join('\n');
+    final recommendedActions = successful
+        .take(3)
+        .map((output) => '${output.role.label}: ${_singleLine(output.content)}')
+        .toList(growable: false);
+    final risks = outputs
+        .where((output) => !output.succeeded)
+        .map((output) => '${output.role.label}: ${_singleLine(output.content)}')
+        .toList(growable: false);
+    return MultiAgentStructuredSummary(
+      summary: summary,
+      recommendedActions: recommendedActions,
+      risks: risks,
+      openQuestions: const [],
+    );
+  }
+
+  String _singleLine(String value) {
+    return value.replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
   List<MultiAgentRole> _rolesFor(
@@ -589,9 +761,10 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     final operatorDefault = isEn
         ? '$multiAgentOperatorPromptEnPersona $multiAgentOperatorPromptEnSafety'
         : '$multiAgentOperatorPromptZhPersona $multiAgentOperatorPromptZhSafety';
-    final operator = (operatorPrompt != null && operatorPrompt.trim().isNotEmpty)
-        ? operatorPrompt.trim()
-        : operatorDefault;
+    final operator =
+        (operatorPrompt != null && operatorPrompt.trim().isNotEmpty)
+            ? operatorPrompt.trim()
+            : operatorDefault;
 
     final exploreDefault = isEn
         ? '$multiAgentExplorePromptEnPersona $multiAgentExplorePromptEnSafety'
@@ -603,18 +776,25 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     final reviewerDefault = isEn
         ? '$multiAgentReviewerPromptEnPersona $multiAgentReviewerPromptEnSafety'
         : '$multiAgentReviewerPromptZhPersona $multiAgentReviewerPromptZhSafety';
-    final reviewer = (reviewerPrompt != null && reviewerPrompt.trim().isNotEmpty)
-        ? reviewerPrompt.trim()
-        : reviewerDefault;
+    final reviewer =
+        (reviewerPrompt != null && reviewerPrompt.trim().isNotEmpty)
+            ? reviewerPrompt.trim()
+            : reviewerDefault;
 
     final summarizerDefault = isEn
         ? '$multiAgentSummarizerPromptEnPersona $multiAgentSummarizerPromptEnSafety'
         : '$multiAgentSummarizerPromptZhPersona $multiAgentSummarizerPromptZhSafety';
-    final summarizer = (summarizerPrompt != null && summarizerPrompt.trim().isNotEmpty)
-        ? summarizerPrompt.trim()
-        : summarizerDefault;
+    final summarizer =
+        (summarizerPrompt != null && summarizerPrompt.trim().isNotEmpty)
+            ? summarizerPrompt.trim()
+            : summarizerDefault;
 
     final roles = [
+      MultiAgentRole(
+        name: 'explore',
+        label: 'Explore',
+        systemPrompt: explore,
+      ),
       MultiAgentRole(
         name: 'planner',
         label: 'Planner',
@@ -624,11 +804,6 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
         name: 'operator',
         label: 'Operator',
         systemPrompt: operator,
-      ),
-      MultiAgentRole(
-        name: 'explore',
-        label: 'Explore',
-        systemPrompt: explore,
       ),
       MultiAgentRole(
         name: 'reviewer',
@@ -641,7 +816,28 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
         systemPrompt: summarizer,
       ),
     ];
-    return roles.take(maxAgents).toList(growable: false);
+    switch (maxAgents) {
+      case 2:
+        return [
+          roles.firstWhere((role) => role.name == 'planner'),
+          roles.firstWhere((role) => role.name == 'summarizer'),
+        ];
+      case 3:
+        return [
+          roles.firstWhere((role) => role.name == 'explore'),
+          roles.firstWhere((role) => role.name == 'planner'),
+          roles.firstWhere((role) => role.name == 'summarizer'),
+        ];
+      case 4:
+        return [
+          roles.firstWhere((role) => role.name == 'explore'),
+          roles.firstWhere((role) => role.name == 'planner'),
+          roles.firstWhere((role) => role.name == 'operator'),
+          roles.firstWhere((role) => role.name == 'summarizer'),
+        ];
+      default:
+        return roles;
+    }
   }
 
   String _latestUserContent(List<Map<String, dynamic>> messages) {
@@ -697,9 +893,12 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
       final latestUser = _latestUserContent(messages);
       final contextText = _recentConversationText(messages);
 
-      final coordinator = (coordinatorPrompt != null && coordinatorPrompt.trim().isNotEmpty)
-          ? coordinatorPrompt.trim()
-          : (language == AppLanguage.en ? multiAgentCoordinatorPromptEn : multiAgentCoordinatorPromptZh);
+      final coordinator =
+          (coordinatorPrompt != null && coordinatorPrompt.trim().isNotEmpty)
+              ? coordinatorPrompt.trim()
+              : (language == AppLanguage.en
+                  ? multiAgentCoordinatorPromptEn
+                  : multiAgentCoordinatorPromptZh);
 
       final classificationMessages = [
         {
@@ -766,6 +965,29 @@ class MultiAgentRunResult {
     required this.memoryContent,
     required this.traceContent,
   });
+}
+
+class MultiAgentStructuredSummary {
+  final String summary;
+  final List<String> recommendedActions;
+  final List<String> risks;
+  final List<String> openQuestions;
+
+  const MultiAgentStructuredSummary({
+    required this.summary,
+    this.recommendedActions = const [],
+    this.risks = const [],
+    this.openQuestions = const [],
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'summary': summary,
+      'recommendedActions': recommendedActions,
+      'risks': risks,
+      'openQuestions': openQuestions,
+    };
+  }
 }
 
 class MultiAgentRole {

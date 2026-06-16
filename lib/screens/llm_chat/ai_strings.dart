@@ -24,6 +24,25 @@ class _AiStrings {
   String get noBaseUrlHistory =>
       _en ? 'No saved Base URLs yet' : '还没有保存过 Base URL';
   String get model => _en ? 'Model' : '模型';
+  String get helperModel => _en ? 'Helper model (optional)' : '辅助模型（可选）';
+  String get helperModelHint => _en
+      ? 'Used for helper agents and fast classification. Leave blank to reuse the main model.'
+      : '用于 helper agent 和快速分类。留空时回退到主模型。';
+  String get auditModel => _en ? 'Audit model (optional)' : '审计模型（可选）';
+  String get auditModelHint => _en
+      ? 'Used for tool-budget audits and safety checks. Leave blank to reuse the main model.'
+      : '用于工具预算审计和安全检查。留空时回退到主模型。';
+  String get modelFallbackPolicy => _en ? 'Secondary model policy' : '副模型策略';
+  String modelFallbackPolicyLabel(String value) {
+    switch (AgentModelFallbackPolicy.normalize(value)) {
+      case AgentModelFallbackPolicy.mainOnly:
+        return _en ? 'Always use main model' : '始终使用主模型';
+      case AgentModelFallbackPolicy.fallbackToMain:
+      default:
+        return _en ? 'Fallback to main model' : '缺失时回退到主模型';
+    }
+  }
+
   String get refreshModels => _en ? 'Refresh models' : '刷新模型';
   String get requestTimeout => _en ? 'Request timeout' : '请求超时';
   String get deepSeekThinking => _en ? 'DeepSeek thinking' : 'DeepSeek 思考模式';
