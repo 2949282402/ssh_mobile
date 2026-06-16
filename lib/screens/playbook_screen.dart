@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../models/connection.dart';
-import '../models/playbook.dart';
+import '../features/connection/models/connection.dart';
+import '../features/playbook/models/playbook.dart';
 import '../services/app_settings.dart';
 import '../services/playbook_service.dart';
 import '../services/storage_service.dart';

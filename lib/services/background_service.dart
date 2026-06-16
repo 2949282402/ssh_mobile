@@ -8,8 +8,8 @@ import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-import '../models/connection.dart';
-import 'ssh_client_factory.dart';
+import '../features/connection/models/connection.dart';
+import '../core/services/ssh_client_factory.dart';
 
 /// Android/iOS 前台服务管理。
 ///

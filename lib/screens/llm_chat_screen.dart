@@ -11,7 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'client_webview_screen.dart';
-import '../models/playbook.dart';
+import '../features/playbook/models/playbook.dart';
 import '../services/ai_tool_service.dart';
 import '../services/agent_model_profile.dart';
 import '../services/app_log_service.dart';

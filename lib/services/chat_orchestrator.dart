@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import '../models/playbook.dart';
+import '../features/playbook/models/playbook.dart';
 import 'chat_context_assembler.dart';
 import 'operational_memory_retriever.dart';
 import 'storage_service.dart';

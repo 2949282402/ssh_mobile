@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/models/connection.dart';
-import 'package:ssh_mobile/services/ssh_client_factory.dart';
+import 'package:ssh_mobile/features/connection/models/connection.dart';
+import 'package:ssh_mobile/core/services/ssh_client_factory.dart';
 
 void main() {
   group('SshClientFactory', () {

@@ -1,6 +1,6 @@
-import '../models/connection.dart';
+import '../features/connection/models/connection.dart';
 import 'sftp_service.dart';
-import 'ssh_client_factory.dart';
+import '../core/services/ssh_client_factory.dart';
 import 'ssh_service.dart';
 import 'storage_service.dart';
 

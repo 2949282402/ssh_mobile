@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/models/connection.dart';
+import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 
 void main() {

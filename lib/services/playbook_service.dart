@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import '../models/playbook.dart';
+import '../features/playbook/models/playbook.dart';
 import 'storage_service.dart';
 import 'ssh_service.dart';
 import 'app_log_service.dart';

@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 
-import '../models/connection.dart';
+import '../features/connection/models/connection.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../services/sftp_service.dart';

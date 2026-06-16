@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import '../models/connection.dart';
-import '../models/playbook.dart';
+import '../features/connection/models/connection.dart';
+import '../features/playbook/models/playbook.dart';
 import 'app_log_service.dart';
 import 'app_settings.dart';
 import 'client_system_tool_service.dart';

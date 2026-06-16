@@ -1,9 +1,9 @@
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart';
 
-import '../models/connection.dart';
-import 'app_log_service.dart';
-import 'storage_service.dart';
+import '../../features/connection/models/connection.dart';
+import '../../services/app_log_service.dart';
+import '../../services/storage_service.dart';
 
 class SshCredentials {
   final String? password;

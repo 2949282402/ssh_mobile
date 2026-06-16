@@ -7,10 +7,10 @@ import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 
-import '../models/connection.dart';
+import '../features/connection/models/connection.dart';
 import 'app_log_service.dart';
 import 'background_service.dart';
-import 'ssh_client_factory.dart';
+import '../core/services/ssh_client_factory.dart';
 import 'storage_service.dart';
 import 'terminal_history_service.dart';
 

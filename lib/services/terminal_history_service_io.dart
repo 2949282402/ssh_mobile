@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-import 'data_protection_service.dart';
+import '../core/services/data_protection_service.dart';
 import 'app_log_service.dart';
 
 class TerminalHistoryService {

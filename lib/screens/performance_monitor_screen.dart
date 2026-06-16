@@ -7,7 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../models/connection.dart';
+import '../features/connection/models/connection.dart';
 import '../services/app_settings.dart';
 import '../services/performance_monitor_service.dart';
 import '../services/server_status_probe.dart';

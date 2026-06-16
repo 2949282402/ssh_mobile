@@ -3,7 +3,7 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 
-import '../models/connection.dart';
+import '../features/connection/models/connection.dart';
 import 'app_log_service.dart';
 import 'background_service.dart';
 import 'server_status_probe.dart';

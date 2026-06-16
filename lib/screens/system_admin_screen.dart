@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../models/connection.dart';
+import '../features/connection/models/connection.dart';
 import '../models/system_admin.dart';
 import '../services/app_settings.dart';
 import '../services/sftp_service.dart';

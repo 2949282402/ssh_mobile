@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
-import 'app_log_service.dart';
+import '../../services/app_log_service.dart';
 
 /// AES-256-GCM 加密/解密层，用于保护持久化到 SharedPreferences 的敏感数据。
 ///

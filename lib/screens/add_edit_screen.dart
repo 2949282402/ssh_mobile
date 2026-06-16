@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
-import '../models/connection.dart';
+import '../features/connection/models/connection.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
-import '../services/ssh_client_factory.dart';
+import '../core/services/ssh_client_factory.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
 

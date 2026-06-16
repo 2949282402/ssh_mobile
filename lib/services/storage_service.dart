@@ -6,11 +6,11 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
-import '../models/connection.dart';
-import '../models/playbook.dart';
+import '../features/connection/models/connection.dart';
+import '../features/playbook/models/playbook.dart';
 import 'agent_model_profile.dart';
 import 'app_log_service.dart';
-import 'data_protection_service.dart';
+import '../core/services/data_protection_service.dart';
 import 'multi_agent_coordinator.dart';
 
 part 'storage/storage_models.dart';

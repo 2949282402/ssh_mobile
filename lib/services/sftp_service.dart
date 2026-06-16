@@ -9,9 +9,9 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-import '../models/connection.dart';
+import '../features/connection/models/connection.dart';
 import 'app_log_service.dart';
-import 'ssh_client_factory.dart';
+import '../core/services/ssh_client_factory.dart';
 import 'storage_service.dart';
 
 part 'sftp/sftp_models.dart';

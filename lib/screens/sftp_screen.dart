@@ -4,7 +4,7 @@ import 'package:path/path.dart' as p;
 import 'package:provider/provider.dart';
 import 'package:animations/animations.dart';
 
-import '../models/connection.dart';
+import '../features/connection/models/connection.dart';
 import '../services/app_settings.dart';
 import '../services/sftp_service.dart';
 import '../services/storage_service.dart';

@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:dartssh2/dartssh2.dart';
 import '../models/system_admin.dart';
 import 'ssh_service.dart';
-import 'ssh_client_factory.dart';
+import '../core/services/ssh_client_factory.dart';
 import 'storage_service.dart';
 import 'app_log_service.dart';
 
