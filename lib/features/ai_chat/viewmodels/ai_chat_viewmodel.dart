@@ -1,6 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import '../services/ai_chat_status_translator.dart';
+import '../services/ai_chat_run_metrics_recorder.dart';
+import '../services/ai_chat_generation_runner.dart';
+
+export '../services/ai_chat_status_translator.dart' show AgentStatusString;
 import '../../../services/ai_tool_service.dart';
 import '../../../services/agent_model_profile.dart';
 import '../../../services/app_log_service.dart';
@@ -816,11 +821,9 @@ class AiChatViewModel extends ChangeNotifier {
       fallbackPolicy: settings.modelFallbackPolicy,
     );
 
-    final service = _runtimeFactory.createLlmChatService(
-      settings: settings,
-      model: model,
-      chatId: chatId,
-    );
+    final translator = AiChatStatusTranslator(_appSettings.language);
+    final metricsRecorder = AiChatRunMetricsRecorder(_storageService);
+    final runner = AiChatGenerationRunner(runtimeFactory: _runtimeFactory);
 
     final cancellationToken = LlmCancellationToken();
     _activeCancellationToken = cancellationToken;
@@ -831,18 +834,40 @@ class AiChatViewModel extends ChangeNotifier {
     _beginStreamingAssistant(
       chatId: chatId,
       assistantCreatedAt: assistantMessage.createdAt,
-      status: _assistantStatusForString(AgentStatusString.preparing),
+      status: translator.translateStatus(AgentStatusString.preparing),
     );
 
     try {
-      LlmRunStats? runStats;
       var lastStreamUiUpdate = DateTime.fromMillisecondsSinceEpoch(0);
 
-      await for (final chunk in service.stream(
-        modelOverride: model,
-        onStats: (stats) => runStats = stats,
+      final runResult = await runner.run(
+        chatId: chatId,
+        initialChat: initialChat,
+        model: model,
+        userRequest: userRequest,
+        memorySources: memorySources,
+        allowedTools: allowedTools,
+        forceContextCompression: forceContextCompression,
+        cancellationToken: cancellationToken,
+        selectedConnectionIds: _selectedConnectionIds,
+        requestMessagesJson: _messagesForRequest(
+          requestMessages,
+          placeholder: assistantMessage,
+        ),
+        onTextChunk: (chunk) {
+          answer.write(chunk);
+          _updateStreamingAssistantStatus(
+              translator.translateStatus(AgentStatusString.responding));
+
+          final now = DateTime.now();
+          if (now.difference(lastStreamUiUpdate) >= const Duration(milliseconds: 120)) {
+            lastStreamUiUpdate = now;
+            _updateStreamingAssistant(answer.toString());
+            _triggerScroll();
+          }
+        },
         onTrace: (event) {
-          _updateStreamingAssistantStatus(_assistantStatusForTrace(event));
+          _updateStreamingAssistantStatus(translator.translateTrace(event));
           _appendTraceToAssistant(
             chatId: chatId,
             assistantCreatedAt: assistantMessage.createdAt,
@@ -853,207 +878,186 @@ class AiChatViewModel extends ChangeNotifier {
           return _requestToolApproval(
             chatId: chatId,
             request: request,
+            translator: translator,
           );
         },
-        allowedTools: allowedTools,
-        forceContextCompression: forceContextCompression,
-        cancellationToken: cancellationToken,
-        planMode: initialChat.planMode,
-        userRequest: userRequest,
-        selectedConnectionIds: _selectedConnectionIds,
-        hasWebViewSession: true,
-        hasApprovedPlan: initialChat.approvedPlan != null,
-        memorySources: memorySources,
-        messages: _messagesForRequest(
-          requestMessages,
-          placeholder: assistantMessage,
-        ),
-      )) {
-        answer.write(chunk);
-        _updateStreamingAssistantStatus(
-            _assistantStatusForString(AgentStatusString.responding));
-        final now = DateTime.now();
-        if (now.difference(lastStreamUiUpdate) <
-            const Duration(milliseconds: 120)) {
-          continue;
+      );
+
+      if (runResult is AiChatRunSuccess) {
+        final currentChat = _chatById(chatId) ?? initialChat;
+        final completedMessages = [...currentChat.messages];
+        final assistantIndex = completedMessages.indexWhere(
+          (message) =>
+              message.role == 'assistant' &&
+              message.createdAt == assistantMessage.createdAt,
+        );
+
+        final orchestrator = _runtimeFactory.createOrchestrator();
+
+        if (assistantIndex >= 0) {
+          final completion = orchestrator.finalizeAssistantTurn(
+            initialChat: initialChat,
+            assistantMessage: completedMessages[assistantIndex],
+            answerText: runResult.answer,
+            traces: [...completedMessages[assistantIndex].traces],
+          );
+          completedMessages[assistantIndex] =
+              completion.assistantMessage.copyWith(
+            promptTokens: runResult.runStats?.promptTokens,
+            completionTokens: runResult.runStats?.completionTokens,
+            totalTokens: runResult.runStats?.totalTokens,
+            elapsedMs: runResult.runStats?.elapsedMs,
+            tokenUsageEstimated:
+                runResult.runStats == null ? null : !runResult.runStats!.usageFromProvider,
+            promptCacheHitTokens: runResult.runStats?.promptCacheHitTokens,
+            promptCacheMissTokens: runResult.runStats?.promptCacheMissTokens,
+            reasoningTokens: runResult.runStats?.reasoningTokens,
+          );
         }
-        lastStreamUiUpdate = now;
-        _updateStreamingAssistant(answer.toString());
-        _triggerScroll();
-      }
 
-      final currentChat = _chatById(chatId) ?? initialChat;
-      final completedMessages = [...currentChat.messages];
-      final assistantIndex = completedMessages.indexWhere(
-        (message) =>
-            message.role == 'assistant' &&
-            message.createdAt == assistantMessage.createdAt,
-      );
-
-      final orchestrator = _runtimeFactory.createOrchestrator();
-
-      if (assistantIndex >= 0) {
-        final completion = orchestrator.finalizeAssistantTurn(
-          initialChat: initialChat,
-          assistantMessage: completedMessages[assistantIndex],
-          answerText: answer.toString(),
-          traces: [...completedMessages[assistantIndex].traces],
+        final latestAssistant = latestAssistantMessageForChat(
+          currentChat.copyWith(messages: completedMessages),
         );
-        completedMessages[assistantIndex] =
-            completion.assistantMessage.copyWith(
-          promptTokens: runStats?.promptTokens,
-          completionTokens: runStats?.completionTokens,
-          totalTokens: runStats?.totalTokens,
-          elapsedMs: runStats?.elapsedMs,
-          tokenUsageEstimated:
-              runStats == null ? null : !runStats!.usageFromProvider,
-          promptCacheHitTokens: runStats?.promptCacheHitTokens,
-          promptCacheMissTokens: runStats?.promptCacheMissTokens,
-          reasoningTokens: runStats?.reasoningTokens,
+        final shouldExitPlanMode =
+            initialChat.planMode && latestAssistant?.todoSteps.isNotEmpty == true;
+        final answeredChat = currentChat.copyWith(
+          messages: completedMessages,
+          updatedAt: DateTime.now(),
+          planMode: shouldExitPlanMode ? false : currentChat.planMode,
+        );
+
+        _clearStreamingAssistant(
+          chatId: chatId,
+          assistantCreatedAt: assistantMessage.createdAt,
+        );
+        _replaceChat(answeredChat);
+        _sending = false;
+        notifyListeners();
+        await _storageService.saveAiChat(answeredChat);
+
+        await metricsRecorder.record(
+          modelProfile: modelProfile,
+          model: model,
+          startedAt: assistantMessage.createdAt,
+          finishedAt: DateTime.now(),
+          runStats: runResult.runStats,
+          ragHits: ragHits,
+          success: true,
+        );
+      } else if (runResult is AiChatRunCancelled) {
+        AppLogService.instance.info(
+          'LLM chat UI request cancelled',
+          details: 'chatId=$chatId model=$model',
+        );
+        final currentChat = _chatById(chatId) ?? initialChat;
+        final cancelledMessages = [...currentChat.messages];
+        final assistantIndex = cancelledMessages.indexWhere(
+          (message) =>
+              message.role == 'assistant' &&
+              message.createdAt == assistantMessage.createdAt,
+        );
+        final stopStr = translator.translateStatus(AgentStatusString.stopped);
+        if (assistantIndex >= 0) {
+          final stoppedText = runResult.partialAnswer.trim().isEmpty
+              ? stopStr
+              : '${runResult.partialAnswer}\n\n$stopStr';
+          final traces = [
+            ...cancelledMessages[assistantIndex].traces,
+            AiMessageTrace.create(
+              kind: 'approval',
+              title: 'Stopped by user',
+              content: stopStr,
+            ),
+          ];
+          cancelledMessages[assistantIndex] =
+              cancelledMessages[assistantIndex].copyWith(
+            text: stoppedText,
+            traces: traces,
+            contextText: _contextTextForAssistant(stoppedText, traces: traces),
+          );
+        }
+        final cancelledChat = currentChat.copyWith(
+          messages: cancelledMessages,
+          updatedAt: DateTime.now(),
+        );
+
+        _clearStreamingAssistant(
+          chatId: chatId,
+          assistantCreatedAt: assistantMessage.createdAt,
+        );
+        _replaceChat(cancelledChat);
+        _sending = false;
+        notifyListeners();
+        await _storageService.saveAiChat(cancelledChat);
+
+        await metricsRecorder.record(
+          modelProfile: modelProfile,
+          model: model,
+          startedAt: assistantMessage.createdAt,
+          finishedAt: DateTime.now(),
+          ragHits: ragHits,
+          success: false,
+        );
+      } else if (runResult is AiChatRunFailed) {
+        final currentChat = _chatById(chatId) ?? initialChat;
+        final errorMessages = [...currentChat.messages];
+        final assistantIndex = errorMessages.indexWhere(
+          (message) =>
+              message.role == 'assistant' &&
+              message.createdAt == assistantMessage.createdAt,
+        );
+        if (assistantIndex >= 0) {
+          final partialText = runResult.partialAnswer;
+          if (partialText.trim().isEmpty &&
+              errorMessages[assistantIndex].text.isEmpty) {
+            errorMessages.removeAt(assistantIndex);
+          } else if (partialText.isNotEmpty) {
+            errorMessages[assistantIndex] =
+                errorMessages[assistantIndex].copyWith(
+              text: partialText,
+              contextText: _contextTextForAssistant(
+                partialText,
+                traces: errorMessages[assistantIndex].traces,
+              ),
+            );
+          }
+        }
+        final errorChat = currentChat.copyWith(
+          messages: [
+            ...errorMessages,
+            AiChatMessageRecord(
+              role: 'error',
+              text: translator.translateFailed(runResult.error),
+              createdAt: DateTime.now(),
+            ),
+          ],
+          updatedAt: DateTime.now(),
+        );
+
+        _clearStreamingAssistant(
+          chatId: chatId,
+          assistantCreatedAt: assistantMessage.createdAt,
+        );
+        _replaceChat(errorChat);
+        _sending = false;
+        notifyListeners();
+        await _storageService.saveAiChat(errorChat);
+
+        await metricsRecorder.record(
+          modelProfile: modelProfile,
+          model: model,
+          startedAt: assistantMessage.createdAt,
+          finishedAt: DateTime.now(),
+          ragHits: ragHits,
+          success: false,
         );
       }
-
-      final latestAssistant = latestAssistantMessageForChat(
-        currentChat.copyWith(messages: completedMessages),
-      );
-      final shouldExitPlanMode =
-          initialChat.planMode && latestAssistant?.todoSteps.isNotEmpty == true;
-      final answeredChat = currentChat.copyWith(
-        messages: completedMessages,
-        updatedAt: DateTime.now(),
-        planMode: shouldExitPlanMode ? false : currentChat.planMode,
-      );
-
-      _clearStreamingAssistant(
-        chatId: chatId,
-        assistantCreatedAt: assistantMessage.createdAt,
-      );
-      _replaceChat(answeredChat);
-      _sending = false;
-      notifyListeners();
-      await _storageService.saveAiChat(answeredChat);
-
-      await _persistAgentRunMetrics(
-        modelProfile: modelProfile,
-        model: model,
-        startedAt: assistantMessage.createdAt,
-        finishedAt: DateTime.now(),
-        runStats: runStats,
-        ragHits: ragHits,
-        success: true,
-      );
-    } on LlmCancelledException {
-      AppLogService.instance.info(
-        'LLM chat UI request cancelled',
-        details: 'chatId=$chatId model=$model',
-      );
-      final currentChat = _chatById(chatId) ?? initialChat;
-      final cancelledMessages = [...currentChat.messages];
-      final assistantIndex = cancelledMessages.indexWhere(
-        (message) =>
-            message.role == 'assistant' &&
-            message.createdAt == assistantMessage.createdAt,
-      );
-      final stopStr = _assistantStatusForString(AgentStatusString.stopped);
-      if (assistantIndex >= 0) {
-        final stoppedText = answer.toString().trim().isEmpty
-            ? stopStr
-            : '${answer.toString()}\n\n$stopStr';
-        final traces = [
-          ...cancelledMessages[assistantIndex].traces,
-          AiMessageTrace.create(
-            kind: 'approval',
-            title: 'Stopped by user',
-            content: stopStr,
-          ),
-        ];
-        cancelledMessages[assistantIndex] =
-            cancelledMessages[assistantIndex].copyWith(
-          text: stoppedText,
-          traces: traces,
-          contextText: _contextTextForAssistant(stoppedText, traces: traces),
-        );
-      }
-      final cancelledChat = currentChat.copyWith(
-        messages: cancelledMessages,
-        updatedAt: DateTime.now(),
-      );
-
-      _clearStreamingAssistant(
-        chatId: chatId,
-        assistantCreatedAt: assistantMessage.createdAt,
-      );
-      _replaceChat(cancelledChat);
-      _sending = false;
-      notifyListeners();
-      await _storageService.saveAiChat(cancelledChat);
-
-      await _persistAgentRunMetrics(
-        modelProfile: modelProfile,
-        model: model,
-        startedAt: assistantMessage.createdAt,
-        finishedAt: DateTime.now(),
-        ragHits: ragHits,
-        success: false,
-      );
     } catch (e, stackTrace) {
       AppLogService.instance.error(
-        'LLM chat UI request failed',
+        'LLM chat UI request failed unexpectedly',
         error: e,
         stackTrace: stackTrace,
         details: 'chatId=$chatId model=$model',
-      );
-      final currentChat = _chatById(chatId) ?? initialChat;
-      final errorMessages = [...currentChat.messages];
-      final assistantIndex = errorMessages.indexWhere(
-        (message) =>
-            message.role == 'assistant' &&
-            message.createdAt == assistantMessage.createdAt,
-      );
-      if (assistantIndex >= 0) {
-        final partialText = answer.toString();
-        if (partialText.trim().isEmpty &&
-            errorMessages[assistantIndex].text.isEmpty) {
-          errorMessages.removeAt(assistantIndex);
-        } else if (partialText.isNotEmpty) {
-          errorMessages[assistantIndex] =
-              errorMessages[assistantIndex].copyWith(
-            text: partialText,
-            contextText: _contextTextForAssistant(
-              partialText,
-              traces: errorMessages[assistantIndex].traces,
-            ),
-          );
-        }
-      }
-      final errorChat = currentChat.copyWith(
-        messages: [
-          ...errorMessages,
-          AiChatMessageRecord(
-            role: 'error',
-            text: _assistantFailedString(e),
-            createdAt: DateTime.now(),
-          ),
-        ],
-        updatedAt: DateTime.now(),
-      );
-
-      _clearStreamingAssistant(
-        chatId: chatId,
-        assistantCreatedAt: assistantMessage.createdAt,
-      );
-      _replaceChat(errorChat);
-      _sending = false;
-      notifyListeners();
-      await _storageService.saveAiChat(errorChat);
-
-      await _persistAgentRunMetrics(
-        modelProfile: modelProfile,
-        model: model,
-        startedAt: assistantMessage.createdAt,
-        finishedAt: DateTime.now(),
-        ragHits: ragHits,
-        success: false,
       );
     } finally {
       _clearStreamingAssistant(
@@ -1075,9 +1079,10 @@ class AiChatViewModel extends ChangeNotifier {
   Future<AiToolApprovalDecision> _requestToolApproval({
     required String chatId,
     required AiToolApprovalRequest request,
+    required AiChatStatusTranslator translator,
   }) {
     final completer = Completer<AiToolApprovalDecision>();
-    final prompt = _assistantAwaitingApprovalStatus(request.connectionName);
+    final prompt = translator.translateAwaitingApproval(request.connectionName);
     _updateStreamingAssistantStatus(prompt);
 
     _pendingApproval = PendingToolApproval(
@@ -1264,144 +1269,4 @@ class AiChatViewModel extends ChangeNotifier {
     final name = function['name'];
     return name is String ? name : null;
   }
-
-  Future<void> _persistAgentRunMetrics({
-    required AgentModelProfile modelProfile,
-    required String model,
-    required DateTime startedAt,
-    required DateTime finishedAt,
-    LlmRunStats? runStats,
-    required int ragHits,
-    required bool success,
-  }) async {
-    final promptTokens = runStats?.promptTokens ?? 0;
-    final completionTokens = runStats?.completionTokens ?? 0;
-    final totalTokens =
-        runStats?.totalTokens ?? promptTokens + completionTokens;
-    final helperModel = modelProfile.resolve(AgentModelRole.helper);
-    final auditModel = modelProfile.resolve(AgentModelRole.audit);
-
-    await _storageService.saveAgentRunMetrics(
-      AgentRunMetrics(
-        id: 'run-${startedAt.microsecondsSinceEpoch}',
-        startedAt: startedAt,
-        finishedAt: finishedAt,
-        model: model,
-        helperModel: helperModel == model ? '' : helperModel,
-        auditModel: auditModel == model ? '' : auditModel,
-        promptTokens: promptTokens,
-        completionTokens: completionTokens,
-        totalTokens: totalTokens,
-        elapsedMs: runStats?.elapsedMs ??
-            finishedAt.difference(startedAt).inMilliseconds,
-        toolCalls: runStats?.toolCalls ?? 0,
-        cacheHits: runStats?.cacheHits ?? 0,
-        dedupBlockedCalls: runStats?.dedupBlockedCalls ?? 0,
-        ragHits: ragHits,
-        approvalCount: runStats?.approvalCount ?? 0,
-        approvedCount: runStats?.approvedCount ?? 0,
-        auditCount: runStats?.auditEscalationLevel ?? 0,
-        helperFanout: runStats?.helperFanout ?? 0,
-        success: success,
-        selectedToolSet: runStats?.selectedToolSet ?? const [],
-        memorySources: runStats?.memorySources ?? const [],
-      ),
-    );
-  }
-
-  // 状态字符串的多语言逻辑封装
-  String _assistantStatusForString(AgentStatusString status) {
-    final isEn = _appSettings.language == AppLanguage.en;
-    switch (status) {
-      case AgentStatusString.preparing:
-        return isEn ? 'Preparing response...' : '模型正在准备回答...';
-      case AgentStatusString.thinking:
-        return isEn ? 'Thinking...' : '模型正在思考...';
-      case AgentStatusString.responding:
-        return isEn ? 'Generating answer...' : '正在输出回答...';
-      case AgentStatusString.processingToolResult:
-        return isEn ? 'Processing tool result...' : '正在处理工具结果...';
-      case AgentStatusString.processingApproval:
-        return isEn ? 'Processing approval decision...' : '正在处理审批结果...';
-      case AgentStatusString.collaborating:
-        return isEn ? 'Coordinating helper agents...' : '正在协调多 Agent 协作...';
-      case AgentStatusString.stopped:
-        return isEn ? 'Generation stopped.' : '输出已停止。';
-    }
-  }
-
-  String _assistantStatusForTrace(LlmTraceEvent event) {
-    switch (event.kind) {
-      case 'reasoning':
-        return _assistantStatusForString(AgentStatusString.thinking);
-      case 'tool_request':
-        return _assistantRunningToolStatus(_traceToolName(event.title));
-      case 'tool_result':
-        return _assistantStatusForString(
-            AgentStatusString.processingToolResult);
-      case 'approval':
-        return _assistantStatusForString(AgentStatusString.processingApproval);
-      case 'multi_agent':
-        return _assistantStatusForString(AgentStatusString.collaborating);
-      case 'budget':
-        final lowerTitle = event.title.toLowerCase();
-        final isEn = _appSettings.language == AppLanguage.en;
-        if (lowerTitle.contains('running')) {
-          return isEn
-              ? 'Auditing tool usage before continuing...'
-              : '继续前正在审计工具调用...';
-        }
-        if (lowerTitle.contains('rejected')) {
-          return isEn
-              ? 'Tool usage stopped after safety audit...'
-              : '安全审计后已停止继续调用工具...';
-        }
-        return isEn
-            ? 'Tool budget extended. Please review tool use...'
-            : '工具预算已扩展，请留意工具调用是否合理...';
-      default:
-        return _assistantStatusForString(AgentStatusString.preparing);
-    }
-  }
-
-  String _traceToolName(String title) {
-    final index = title.indexOf(':');
-    if (index < 0 || index == title.length - 1) return title;
-    return title.substring(index + 1).trim();
-  }
-
-  String _assistantRunningToolStatus(String toolName) {
-    final name = toolName.trim();
-    final isEn = _appSettings.language == AppLanguage.en;
-    if (isEn) {
-      return name.isEmpty ? 'Running tool...' : 'Running tool: $name';
-    }
-    return name.isEmpty ? '正在调用工具...' : '正在调用工具：$name';
-  }
-
-  String _assistantAwaitingApprovalStatus(String serverName) {
-    final name = serverName.trim();
-    final isEn = _appSettings.language == AppLanguage.en;
-    if (isEn) {
-      return name.isEmpty
-          ? 'Waiting for tool approval...'
-          : 'Waiting for tool approval on $name...';
-    }
-    return name.isEmpty ? '等待确认工具操作...' : '等待确认 $name 上的工具操作...';
-  }
-
-  String _assistantFailedString(Object e) {
-    final isEn = _appSettings.language == AppLanguage.en;
-    return isEn ? 'Request failed: $e' : '请求失败: $e';
-  }
-}
-
-enum AgentStatusString {
-  preparing,
-  thinking,
-  responding,
-  processingToolResult,
-  processingApproval,
-  collaborating,
-  stopped,
 }
