@@ -59,6 +59,25 @@ class FakeLlmChatService implements LlmChatService {
         compressed: false,
       ));
     }
+    if (onTrace != null) {
+      onTrace(const LlmTraceEvent(
+        kind: 'reasoning',
+        title: 'Thinking',
+        content: 'Thinking process',
+      ));
+    }
+    if (requestToolApproval != null) {
+      requestToolApproval(
+        const AiToolApprovalRequest(
+          toolName: 'run_command',
+          approvalType: 'execute',
+          connectionId: 'conn-123',
+          connectionName: 'test-conn',
+          command: 'run_cmd',
+          reason: 'diagnostics',
+        ),
+      );
+    }
     return onStream(cancellationToken);
   }
 
@@ -145,6 +164,8 @@ void main() {
 
       final runner = AiChatGenerationRunner(runtimeFactory: factory);
       final receivedChunks = <String>[];
+      final receivedTraces = <LlmTraceEvent>[];
+      final receivedApprovals = <AiToolApprovalRequest>[];
 
       final result = await runner.run(
         chatId: 'test_chat',
@@ -165,8 +186,11 @@ void main() {
         selectedConnectionIds: const {},
         requestMessagesJson: const [],
         onTextChunk: (chunk) => receivedChunks.add(chunk),
-        onTrace: (event) {},
-        requestToolApproval: (req) async => const AiToolApprovalDecision.approved(),
+        onTrace: (event) => receivedTraces.add(event),
+        requestToolApproval: (req) async {
+          receivedApprovals.add(req);
+          return const AiToolApprovalDecision.approved();
+        },
       );
 
       expect(result, isA<AiChatRunSuccess>());
@@ -175,6 +199,10 @@ void main() {
       expect(success.runStats?.promptTokens, 10);
       expect(success.runStats?.completionTokens, 20);
       expect(receivedChunks, ['hello', ' world']);
+      expect(receivedTraces, hasLength(1));
+      expect(receivedTraces.first.kind, 'reasoning');
+      expect(receivedApprovals, hasLength(1));
+      expect(receivedApprovals.first.connectionName, 'test-conn');
     });
 
     test('run handles cancellation', () async {

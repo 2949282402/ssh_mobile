@@ -24,7 +24,6 @@ import '../../../services/storage_service.dart';
 import '../../../utils/text_chunker.dart';
 
 @visibleForTesting
-@visibleForTesting
 String buildApprovedPlanExecutionContext({
   required String userText,
   required AiChatMessageRecord planMessage,
@@ -110,9 +109,9 @@ class AiChatViewModel extends ChangeNotifier {
   final StorageService _storageService;
   final AppSettings _appSettings;
   final AiChatRuntimeFactory _runtimeFactory;
-  final AiChatContextBuilder _contextBuilder;
-  final AiChatMessageMapper _messageMapper;
-  final AiChatTokenEstimator _tokenEstimator;
+  late final AiChatContextBuilder _contextBuilder;
+  late final AiChatMessageMapper _messageMapper;
+  late final AiChatTokenEstimator _tokenEstimator;
 
   // 聊天会话状态列表
   List<AiChatRecord> _chats = const [];
@@ -174,20 +173,16 @@ class AiChatViewModel extends ChangeNotifier {
               playbookService: playbookService,
               ragService: ragService,
               appSettings: appSettings,
-            ),
-        _contextBuilder = contextBuilder ?? const AiChatContextBuilder(),
-        _messageMapper = messageMapper ??
-            AiChatMessageMapper(
-              contextBuilder: contextBuilder ?? const AiChatContextBuilder(),
-            ),
-        _tokenEstimator = tokenEstimator ??
-            AiChatTokenEstimator(
-              messageMapper: messageMapper ??
-                  AiChatMessageMapper(
-                    contextBuilder:
-                        contextBuilder ?? const AiChatContextBuilder(),
-                  ),
-            );
+            ) {
+    final resolvedContextBuilder = contextBuilder ?? const AiChatContextBuilder();
+    final resolvedMessageMapper = messageMapper ??
+        AiChatMessageMapper(contextBuilder: resolvedContextBuilder);
+
+    _contextBuilder = resolvedContextBuilder;
+    _messageMapper = resolvedMessageMapper;
+    _tokenEstimator = tokenEstimator ??
+        AiChatTokenEstimator(messageMapper: resolvedMessageMapper);
+  }
 
   // Getters
   List<AiChatRecord> get chats => _chats;
