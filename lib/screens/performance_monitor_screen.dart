@@ -8,6 +8,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../features/connection/models/connection.dart';
+import '../features/connection/viewmodels/connection_viewmodel.dart';
+import '../features/performance/viewmodels/performance_viewmodel.dart';
 import '../services/app_settings.dart';
 import '../services/performance_monitor_service.dart';
 import '../services/server_status_probe.dart';
@@ -34,9 +36,7 @@ class PerformanceMonitorScreen extends StatefulWidget {
 class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
   static const _serversCollapsedStorageKey = 'performance_servers_collapsed';
 
-  bool _serversCollapsed = false;
   bool _restoredServersCollapsed = false;
-  int _tabIndex = 0;
   int _selectionVersion = 0;
   String? _portConnectionId;
   String? _appConnectionId;
@@ -51,7 +51,9 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
       context,
       identifier: _serversCollapsedStorageKey,
     );
-    if (stored is bool) _serversCollapsed = stored;
+    if (stored is bool) {
+      context.read<PerformanceMonitorViewModel>().setServersCollapsed(stored);
+    }
   }
 
   @override
@@ -60,12 +62,11 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
       (settings) => settings.language,
     );
     final strings = AppStrings(language);
-    final storageReady = context.select<StorageService, bool>(
-      (storage) => storage.initialized,
-    );
-    final connections = context.select<StorageService, List<ConnectionConfig>>(
-      (storage) => storage.connections,
-    );
+    final connectionVm = context.watch<ConnectionViewModel>();
+    final performanceVm = context.watch<PerformanceMonitorViewModel>();
+    final storageReady = !connectionVm.isLoading;
+    final connections = connectionVm.connections;
+
     final monitor = context.read<PerformanceMonitorService>();
     final monitorShell =
         context.select<PerformanceMonitorService, _MonitorShellSnapshot>(
@@ -90,13 +91,14 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
         ? const <ConnectionConfig>[]
         : _connectionsByIds(connections, {_serviceConnectionId!});
 
-    final tabSelectedIds = _selectedIdsForTab(monitorShell);
+    final tabIndex = performanceVm.activeTabIndex;
+    final tabSelectedIds = _selectedIdsForTab(monitorShell, tabIndex);
     final tabSelectedConnections =
         _connectionsByIds(connections, tabSelectedIds);
-    final railConnections = _tabIndex == 0 && monitorShell.isRunning
+    final railConnections = tabIndex == 0 && monitorShell.isRunning
         ? monitoringConnections
         : tabSelectedConnections;
-    final serversCollapsed = _serversCollapsed && connections.isNotEmpty;
+    final serversCollapsed = performanceVm.serversCollapsed && connections.isNotEmpty;
 
     if (!storageReady) {
       return const Center(
@@ -111,9 +113,9 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
     return Column(
       children: [
         _MonitorTopTabs(
-          selectedIndex: _tabIndex,
+          selectedIndex: tabIndex,
           strings: strings,
-          onChanged: (index) => _setMonitorTab(index),
+          onChanged: (index) => _setMonitorTab(context, index),
         ),
         Expanded(
           child: desktop
@@ -129,7 +131,7 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
                               builder: (context, sampling, _) =>
                                   _CollapsedDesktopMonitorRail(
                                 connections: railConnections,
-                                sampling: sampling && _tabIndex == 0,
+                                sampling: sampling && tabIndex == 0,
                                 strings: strings,
                                 onExpand: _expandServers,
                               ),
@@ -139,7 +141,7 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
                               strings: strings,
                               selectedConnectionIds: tabSelectedIds,
                               disabled:
-                                  _tabIndex == 0 && monitorShell.isRunning,
+                                  tabIndex == 0 && monitorShell.isRunning,
                               onConnectionTap: (id) =>
                                   _handleServerSelection(context, monitor, id),
                               onDisabledTap: () =>
@@ -156,7 +158,7 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
                       child: _MonitorContent(
                         strings: strings,
                         monitor: monitor,
-                        tabIndex: _tabIndex,
+                        tabIndex: tabIndex,
                         selectionVersion: _selectionVersion,
                         selectedConnections: selectedConnections,
                         monitoringConnections: monitoringConnections,
@@ -164,7 +166,7 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
                         appConnections: appConnections,
                         serviceConnections: serviceConnections,
                         onStartMonitoring: () async {
-                          await monitor.startMonitoring();
+                          await performanceVm.startMonitoring();
                           if (mounted) _collapseServers();
                         },
                       ),
@@ -184,7 +186,7 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
                               builder: (context, sampling, _) =>
                                   _CollapsedMobileMonitorBar(
                                 connections: railConnections,
-                                sampling: sampling && _tabIndex == 0,
+                                sampling: sampling && tabIndex == 0,
                                 strings: strings,
                                 onExpand: _expandServers,
                               ),
@@ -195,7 +197,7 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
                               strings: strings,
                               selectedConnectionIds: tabSelectedIds,
                               disabled:
-                                  _tabIndex == 0 && monitorShell.isRunning,
+                                  tabIndex == 0 && monitorShell.isRunning,
                               onConnectionTap: (id) =>
                                   _handleServerSelection(context, monitor, id),
                               onDisabledTap: () =>
@@ -212,7 +214,7 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
                       child: _MonitorContent(
                         strings: strings,
                         monitor: monitor,
-                        tabIndex: _tabIndex,
+                        tabIndex: tabIndex,
                         selectionVersion: _selectionVersion,
                         selectedConnections: selectedConnections,
                         monitoringConnections: monitoringConnections,
@@ -220,7 +222,7 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
                         appConnections: appConnections,
                         serviceConnections: serviceConnections,
                         onStartMonitoring: () async {
-                          await monitor.startMonitoring();
+                          await performanceVm.startMonitoring();
                           if (mounted) _collapseServers();
                         },
                       ),
@@ -247,8 +249,7 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
   void _expandServers() => _setServersCollapsed(false);
 
   void _setServersCollapsed(bool collapsed) {
-    if (_serversCollapsed == collapsed) return;
-    setState(() => _serversCollapsed = collapsed);
+    context.read<PerformanceMonitorViewModel>().setServersCollapsed(collapsed);
     PageStorage.maybeOf(context)?.writeState(
       context,
       collapsed,
@@ -256,8 +257,8 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
     );
   }
 
-  Set<String> _selectedIdsForTab(_MonitorShellSnapshot monitorShell) {
-    switch (_tabIndex) {
+  Set<String> _selectedIdsForTab(_MonitorShellSnapshot monitorShell, int tabIndex) {
+    switch (tabIndex) {
       case 1:
         return _portConnectionId == null ? const {} : {_portConnectionId!};
       case 2:
@@ -272,9 +273,9 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
     }
   }
 
-  void _setMonitorTab(int index) {
+  void _setMonitorTab(BuildContext context, int index) {
+    context.read<PerformanceMonitorViewModel>().setTabIndex(index);
     setState(() {
-      _tabIndex = index;
       _selectionVersion++;
     });
   }
@@ -284,7 +285,8 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
     PerformanceMonitorService monitor,
     String connectionId,
   ) {
-    if (_tabIndex == 0) {
+    final tabIndex = context.read<PerformanceMonitorViewModel>().activeTabIndex;
+    if (tabIndex == 0) {
       if (monitor.isRunning) {
         _showSelectionFrozenHint(
             context, AppStrings(context.read<AppSettings>().language));
@@ -294,9 +296,9 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
       return;
     }
     setState(() {
-      if (_tabIndex == 1) {
+      if (tabIndex == 1) {
         _portConnectionId = connectionId;
-      } else if (_tabIndex == 2) {
+      } else if (tabIndex == 2) {
         _appConnectionId = connectionId;
       } else {
         _serviceConnectionId = connectionId;

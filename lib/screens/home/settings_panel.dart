@@ -114,15 +114,15 @@ class _SettingsPanelState extends State<_SettingsPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final appSnapshot = context.select<AppSettings, _SettingsAppSnapshot>(
+    final appSnapshot = context.select<SettingsViewModel, _SettingsAppSnapshot>(
       _SettingsAppSnapshot.from,
     );
     final secretSnapshot =
-        context.select<StorageService, _SettingsSecretSnapshot>(
+        context.select<SettingsViewModel, _SettingsSecretSnapshot>(
       _SettingsSecretSnapshot.from,
     );
-    final settings = context.read<AppSettings>();
-    final storage = context.read<StorageService>();
+    final settings = context.read<SettingsViewModel>();
+    final storage = context.read<SettingsViewModel>();
     final strings = AppStrings(appSnapshot.language);
     final colorScheme = Theme.of(context).colorScheme;
     final cacheEnabled = secretSnapshot.cacheEnabled;
@@ -184,7 +184,11 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                         : strings.switchToEnglish,
                     style: const TextStyle(fontSize: 13),
                   ),
-                  onTap: settings.toggleLanguage,
+                  onTap: () => settings.changeLanguage(
+                    settings.language == AppLanguage.en
+                        ? AppLanguage.zh
+                        : AppLanguage.en,
+                  ),
                 ),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
@@ -199,7 +203,9 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                     style: const TextStyle(fontSize: 13),
                   ),
                   value: appSnapshot.isDarkMode,
-                  onChanged: (_) => settings.toggleTheme(),
+                  onChanged: (_) => settings.changeThemeMode(
+                    settings.isDarkMode ? ThemeMode.light : ThemeMode.dark,
+                  ),
                 ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
@@ -231,7 +237,7 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                         ],
                         onChanged: (value) {
                           if (value != null) {
-                            settings.setFontFamilyId(value);
+                            settings.changeFontFamily(value);
                           }
                         },
                       ),
@@ -307,7 +313,8 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                   onTap: () => _editSftpLimit(
                     title: strings.sftpDownloadLimit,
                     currentBytes: appSnapshot.sftpDownloadLimitBytes,
-                    onChanged: settings.setSftpDownloadLimitBytes,
+                    onChanged: (bytes) =>
+                        settings.setSftpLimits(downloadLimit: bytes),
                   ),
                 ),
                 _SftpLimitTile(
@@ -318,7 +325,8 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                   onTap: () => _editSftpLimit(
                     title: strings.sftpTextPreviewLimit,
                     currentBytes: appSnapshot.sftpTextPreviewLimitBytes,
-                    onChanged: settings.setSftpTextPreviewLimitBytes,
+                    onChanged: (bytes) =>
+                        settings.setSftpLimits(textPreviewLimit: bytes),
                   ),
                 ),
                 _SftpLimitTile(
@@ -329,7 +337,8 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                   onTap: () => _editSftpLimit(
                     title: strings.sftpRichPreviewLimit,
                     currentBytes: appSnapshot.sftpRichPreviewLimitBytes,
-                    onChanged: settings.setSftpRichPreviewLimitBytes,
+                    onChanged: (bytes) =>
+                        settings.setSftpLimits(richPreviewLimit: bytes),
                   ),
                 ),
                 _SftpLimitTile(
@@ -339,7 +348,8 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                   onTap: () => _editSftpLimit(
                     title: strings.sftpEditLimit,
                     currentBytes: appSnapshot.sftpTextEditLimitBytes,
-                    onChanged: settings.setSftpTextEditLimitBytes,
+                    onChanged: (bytes) =>
+                        settings.setSftpLimits(textEditLimit: bytes),
                   ),
                 ),
               ],
@@ -361,7 +371,7 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                   ),
                   value: cacheEnabled,
                   onChanged: (value) async {
-                    await storage.setSecretCacheEnabled(value);
+                    await storage.configureSecretCache(value, cacheTimeoutMinutes);
                   },
                 ),
                 ListTile(
@@ -394,8 +404,9 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                         onChanged: cacheEnabled
                             ? (minutes) async {
                                 if (minutes == null) return;
-                                await storage.setSecretCacheTtl(
-                                  Duration(minutes: minutes),
+                                await storage.configureSecretCache(
+                                  cacheEnabled,
+                                  minutes,
                                 );
                               }
                             : null,
@@ -470,7 +481,7 @@ class _SettingsAppSnapshot {
     required this.sftpTextEditLimitBytes,
   });
 
-  factory _SettingsAppSnapshot.from(AppSettings settings) {
+  factory _SettingsAppSnapshot.from(SettingsViewModel settings) {
     return _SettingsAppSnapshot(
       language: settings.language,
       isEnglish: settings.isEnglish,
@@ -523,11 +534,11 @@ class _SettingsSecretSnapshot {
     required this.cacheOptions,
   });
 
-  factory _SettingsSecretSnapshot.from(StorageService storage) {
+  factory _SettingsSecretSnapshot.from(SettingsViewModel settings) {
     return _SettingsSecretSnapshot(
-      cacheEnabled: storage.isSecretCacheEnabled,
-      cacheTimeoutMinutes: storage.secretCacheTtlMinutes,
-      cacheOptions: storage.secretCacheTtlOptionsMinutes,
+      cacheEnabled: settings.secretCacheEnabled,
+      cacheTimeoutMinutes: settings.secretCacheTtlMinutes,
+      cacheOptions: settings.secretCacheTtlOptionsMinutes,
     );
   }
 

@@ -5,6 +5,8 @@ import 'package:provider/provider.dart';
 
 import 'features/connection/views/add_edit_screen.dart';
 import 'features/connection/viewmodels/connection_viewmodel.dart';
+import 'features/settings/viewmodels/settings_viewmodel.dart';
+import 'features/performance/viewmodels/performance_viewmodel.dart';
 import 'screens/ai_skills_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/performance_monitor_screen.dart';
@@ -107,6 +109,17 @@ Future<void> main() async {
                 connectionRepository: context.read<StorageService>(),
                 sshService: context.read<SshService>(),
               )..fetchConnections(),
+            ),
+            ChangeNotifierProvider(
+              create: (context) => SettingsViewModel(
+                appSettings: context.read<AppSettings>(),
+                storageService: context.read<StorageService>(),
+              ),
+            ),
+            ChangeNotifierProvider(
+              create: (context) => PerformanceMonitorViewModel(
+                monitorService: context.read<PerformanceMonitorService>(),
+              ),
             ),
           ],
           child: const SshMobileApp(),
