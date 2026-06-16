@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../features/client_webview/viewmodels/client_webview_viewmodel.dart';
 import '../services/app_settings.dart';
-import '../services/client_webview_service.dart';
 import '../widgets/overflow_scroll_text.dart';
 
 class ClientWebViewScreen extends StatefulWidget {
@@ -20,205 +20,103 @@ class ClientWebViewScreen extends StatefulWidget {
 }
 
 class _ClientWebViewScreenState extends State<ClientWebViewScreen> {
-  final ClientWebViewService _service = ClientWebViewService.instance;
-  late final ClientWebViewSession _session;
-  late final TextEditingController _urlController;
-  late final FocusNode _urlFocusNode;
-
-  @override
-  void initState() {
-    super.initState();
-    _session = _service.sessionFor(widget.chatId);
-    _urlController = TextEditingController(
-      text: _session.url ?? ClientWebViewService.defaultUrl,
-    );
-    _urlFocusNode = FocusNode();
-    _service.addListener(_syncUrlText);
-  }
-
-  @override
-  void dispose() {
-    _service.removeListener(_syncUrlText);
-    _urlController.dispose();
-    _urlFocusNode.dispose();
-    super.dispose();
-  }
-
-  void _syncUrlText() {
-    if (_session.isAiBrowsing && _urlFocusNode.hasFocus) {
-      _urlFocusNode.unfocus();
-    }
-    if (_urlFocusNode.hasFocus) return;
-    final url = _session.url ?? '';
-    if (url.isNotEmpty && _urlController.text != url) {
-      _urlController.text = url;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final language = context.select<AppSettings, AppLanguage>(
-      (settings) => settings.language,
-    );
-    final strings = _WebViewStrings(language);
+    return ChangeNotifierProvider<ClientWebViewViewModel>(
+      create: (context) => ClientWebViewViewModel(
+        appSettings: context.read<AppSettings>(),
+      )..init(widget.chatId),
+      child: Consumer<ClientWebViewViewModel>(
+        builder: (context, viewModel, child) {
+          final strings = _WebViewStrings(viewModel.language);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: AnimatedBuilder(
-          animation: _service,
-          builder: (context, _) {
-            return OverflowScrollText(
-              _session.title?.trim().isNotEmpty == true
-                  ? _session.title!
-                  : strings.title,
-              selectable: false,
-              maxLines: 1,
-            );
-          },
-        ),
-      ),
-      body: !_session.supported || _session.controller == null
-          ? _UnsupportedWebView(strings: strings)
-          : Column(
-              children: [
-                AnimatedBuilder(
-                  animation: _service,
-                  builder: (context, _) {
-                    return _WebAddressBar(
-                      controller: _urlController,
-                      focusNode: _urlFocusNode,
-                      strings: strings,
-                      enabled: !_session.isAiBrowsing,
-                      onSubmitted: (value) =>
-                          _service.load(widget.chatId, value),
-                      onBack: _goBack,
-                      onForward: _goForward,
-                      onRefresh: _refresh,
-                    );
-                  },
-                ),
-                AnimatedBuilder(
-                  animation: _service,
-                  builder: (context, _) {
-                    final progress = _session.progress;
-                    if (!_session.isLoading || progress >= 100) {
-                      return const SizedBox.shrink();
-                    }
-                    return LinearProgressIndicator(
-                      minHeight: 2,
-                      value: progress <= 0 ? null : progress / 100,
-                    );
-                  },
-                ),
-                Expanded(
-                  child: Stack(
+          return Scaffold(
+            appBar: AppBar(
+              title: OverflowScrollText(
+                viewModel.title?.trim().isNotEmpty == true
+                    ? viewModel.title!
+                    : strings.title,
+                selectable: false,
+                maxLines: 1,
+              ),
+            ),
+            body: !viewModel.supported || !viewModel.hasController
+                ? _UnsupportedWebView(strings: strings)
+                : Column(
                     children: [
-                      AnimatedBuilder(
-                        animation: _service,
-                        child: WebViewWidget(controller: _session.controller!),
-                        builder: (context, child) {
-                          return AbsorbPointer(
-                            absorbing: _session.isAiBrowsing,
-                            child: child,
-                          );
-                        },
+                      _WebAddressBar(
+                        controller: viewModel.urlController,
+                        focusNode: viewModel.urlFocusNode,
+                        strings: strings,
+                        enabled: !viewModel.isAiBrowsing,
+                        onSubmitted: (value) => viewModel.load(value),
+                        onBack: viewModel.goBack,
+                        onForward: viewModel.goForward,
+                        onRefresh: viewModel.refresh,
                       ),
-                      AnimatedBuilder(
-                        animation: _service,
-                        builder: (context, _) {
-                          if (!_session.isAiBrowsing) {
-                            return const SizedBox.shrink();
-                          }
-                          return const Positioned.fill(
-                            child: ModalBarrier(
-                              dismissible: false,
-                              color: Colors.transparent,
+                      if (viewModel.isLoading && viewModel.progress < 100)
+                        LinearProgressIndicator(
+                          minHeight: 2,
+                          value: viewModel.progress <= 0 ? null : viewModel.progress / 100,
+                        ),
+                      Expanded(
+                        child: Stack(
+                          children: [
+                            AbsorbPointer(
+                              absorbing: viewModel.isAiBrowsing,
+                              child: WebViewWidget(controller: viewModel.session.controller!),
                             ),
-                          );
-                        },
-                      ),
-                      AnimatedBuilder(
-                        animation: _service,
-                        builder: (context, _) {
-                          if (!_session.isAiBrowsing) {
-                            return const SizedBox.shrink();
-                          }
-                          return _AiBrowsingBanner(
-                            strings: strings,
-                            label: _session.aiBrowsingLabel,
-                            onInterrupt: () =>
-                                _service.interruptAiBrowsing(widget.chatId),
-                          );
-                        },
-                      ),
-                      AnimatedBuilder(
-                        animation: _service,
-                        builder: (context, _) {
-                          final error = _session.lastError;
-                          if (error == null || error.trim().isEmpty) {
-                            return const SizedBox.shrink();
-                          }
-                          return Align(
-                            alignment: Alignment.bottomCenter,
-                            child: SafeArea(
-                              top: false,
-                              child: Container(
-                                width: double.infinity,
-                                margin: const EdgeInsets.all(12),
-                                padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .errorContainer,
-                                  borderRadius: BorderRadius.circular(8),
+                            if (viewModel.isAiBrowsing) ...[
+                              const Positioned.fill(
+                                child: ModalBarrier(
+                                  dismissible: false,
+                                  color: Colors.transparent,
                                 ),
-                                child: OverflowScrollText(
-                                  error,
-                                  selectable: true,
-                                  maxLines: 2,
-                                  style: TextStyle(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onErrorContainer,
-                                    fontSize: 12,
+                              ),
+                              _AiBrowsingBanner(
+                                strings: strings,
+                                label: viewModel.aiBrowsingLabel,
+                                onInterrupt: viewModel.interruptAiBrowsing,
+                              ),
+                            ],
+                            if (viewModel.lastError != null && viewModel.lastError!.trim().isNotEmpty)
+                              Align(
+                                alignment: Alignment.bottomCenter,
+                                child: SafeArea(
+                                  top: false,
+                                  child: Container(
+                                    width: double.infinity,
+                                    margin: const EdgeInsets.all(12),
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .errorContainer,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: OverflowScrollText(
+                                      viewModel.lastError!,
+                                      selectable: true,
+                                      maxLines: 2,
+                                      style: TextStyle(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onErrorContainer,
+                                        fontSize: 12,
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                          );
-                        },
+                          ],
+                        ),
                       ),
                     ],
                   ),
-                ),
-              ],
-            ),
+          );
+        },
+      ),
     );
-  }
-
-  Future<void> _goBack() async {
-    if (_session.isAiBrowsing) return;
-    final controller = _session.controller;
-    if (controller == null) return;
-    if (await controller.canGoBack()) {
-      await controller.goBack();
-    }
-  }
-
-  Future<void> _goForward() async {
-    if (_session.isAiBrowsing) return;
-    final controller = _session.controller;
-    if (controller == null) return;
-    if (await controller.canGoForward()) {
-      await controller.goForward();
-    }
-  }
-
-  Future<void> _refresh() async {
-    if (_session.isAiBrowsing) return;
-    final controller = _session.controller;
-    if (controller == null) return;
-    await controller.reload();
   }
 }
 
@@ -426,8 +324,8 @@ class _WebViewStrings {
   String get forward => _en ? 'Forward' : '前进';
   String get refresh => _en ? 'Refresh' : '刷新';
   String get aiBrowsing =>
-      _en ? 'AI is browsing' : 'AI \u6b63\u5728\u6d4f\u89c8';
-  String get interruptAiBrowsing => _en ? 'Interrupt' : '\u6253\u65ad';
+      _en ? 'AI is browsing' : 'AI 正在浏览';
+  String get interruptAiBrowsing => _en ? 'Interrupt' : '打断';
   String get unsupported => _en
       ? 'Client WebView is currently available on Android and iOS.'
       : '客户端 WebView 当前支持 Android 和 iOS。';

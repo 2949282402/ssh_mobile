@@ -12,7 +12,7 @@ class _AdminConnectionStatusSnapshot {
   });
 
   factory _AdminConnectionStatusSnapshot.from(
-    SystemAdminService service,
+    SystemAdminViewModel viewModel,
     String? connectionId,
   ) {
     if (connectionId == null || connectionId.isEmpty) {
@@ -23,9 +23,9 @@ class _AdminConnectionStatusSnapshot {
       );
     }
     return _AdminConnectionStatusSnapshot(
-      selected: service.connectionId == connectionId,
-      busy: service.connectionId == connectionId && service.isConnecting,
-      connected: service.connectionId == connectionId && service.isConnected,
+      selected: viewModel.connectionId == connectionId,
+      busy: viewModel.connectionId == connectionId && viewModel.isConnecting,
+      connected: viewModel.connectionId == connectionId && viewModel.isConnected,
     );
   }
 
@@ -42,11 +42,13 @@ class _AdminConnectionStatusSnapshot {
 }
 
 class _AdminServerPane extends StatelessWidget {
+  final SystemAdminViewModel viewModel;
   final List<ConnectionConfig> connections;
   final AppStrings strings;
   final VoidCallback onCollapse;
 
   const _AdminServerPane({
+    required this.viewModel,
     required this.connections,
     required this.strings,
     required this.onCollapse,
@@ -144,12 +146,14 @@ class _AdminServerPane extends StatelessWidget {
 }
 
 class _AdminMobileServerStrip extends StatelessWidget {
+  final SystemAdminViewModel viewModel;
   final List<ConnectionConfig> connections;
   final AppStrings strings;
   final VoidCallback onCollapse;
 
   const _AdminMobileServerStrip({
     super.key,
+    required this.viewModel,
     required this.connections,
     required this.strings,
     required this.onCollapse,
@@ -484,16 +488,16 @@ class _AdminServerTileBinding extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Selector<SystemAdminService, _AdminConnectionStatusSnapshot>(
-      selector: (_, service) =>
-          _AdminConnectionStatusSnapshot.from(service, connection.id),
+    return Selector<SystemAdminViewModel, _AdminConnectionStatusSnapshot>(
+      selector: (_, viewModel) =>
+          _AdminConnectionStatusSnapshot.from(viewModel, connection.id),
       builder: (context, status, _) => _AdminServerTile(
         connection: connection,
         selected: status.selected,
         busy: status.busy,
         connected: status.connected,
         compact: compact,
-        onTap: () => context.read<SystemAdminService>().connect(connection.id),
+        onTap: () => context.read<SystemAdminViewModel>().connect(connection.id),
       ),
     );
   }

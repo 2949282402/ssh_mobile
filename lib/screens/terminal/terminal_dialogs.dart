@@ -237,13 +237,24 @@ extension _TerminalDialogs on _TerminalScreenState {
     _replaceWithTerminalSession(target);
   }
 
-  Future<void> _showTerminalEditMenu() async {
+  SshSession? _nextSessionAfterClose(SshService ssh) {
+    final otherSessions = ssh.sessions
+        .where((session) => session.id != widget.sessionId)
+        .toList()
+        .reversed;
+    for (final session in otherSessions) {
+      if (session.isConnected) return session;
+    }
+    return otherSessions.isEmpty ? null : otherSessions.first;
+  }
+
+  Future<void> _showTerminalEditMenu(TerminalSessionViewModel viewModel) async {
     if (_terminalMenuOpen) return;
     _terminalMenuOpen = true;
-    _requestWindowsAwareTerminalFocus();
+    _requestWindowsAwareTerminalFocus(viewModel);
     final strings = _strings(context);
 
-    final selectedText = _selectedTerminalText();
+    final selectedText = viewModel.getSelectedText();
     final action = await showMenu<_TerminalEditAction>(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -266,7 +277,7 @@ extension _TerminalDialogs on _TerminalScreenState {
           value: _TerminalEditAction.paste,
           child: Text(strings.paste),
         ),
-        if (_isDesktopTerminalTarget)
+        if (!_isWindowsTerminalTarget) // Non-Windows selects all text from terminal view anchor
           PopupMenuItem(
             value: _TerminalEditAction.selectAll,
             child: Text(_selectAllLabel(context)),
@@ -280,30 +291,26 @@ extension _TerminalDialogs on _TerminalScreenState {
 
     switch (action) {
       case _TerminalEditAction.selectCopy:
-        _clearTerminalSelection();
-        await _showSelectableCopyLayer();
+        viewModel.clearSelection();
+        await _showSelectableCopyLayer(viewModel);
         break;
       case _TerminalEditAction.copy:
         if (selectedText.trim().isEmpty) return;
-        await Clipboard.setData(ClipboardData(text: selectedText));
-        _clearTerminalSelection();
+        await viewModel.copySelectedText();
+        viewModel.clearSelection();
         break;
       case _TerminalEditAction.paste:
-        final clipboard = await Clipboard.getData(Clipboard.kTextPlain);
-        final text = clipboard?.text;
-        if (text == null || text.isEmpty) return;
-        if (!mounted) return;
-        context.read<SshService>().sendData(widget.sessionId, text);
+        await viewModel.pasteClipboardText();
         break;
       case _TerminalEditAction.selectAll:
-        _selectAllTerminalText();
+        viewModel.selectAllText();
         break;
     }
   }
 
-  Future<void> _showSelectableCopyLayer() async {
+  Future<void> _showSelectableCopyLayer(TerminalSessionViewModel viewModel) async {
     final strings = _strings(context);
-    final text = _terminal.buffer.getText().trimRight();
+    final text = viewModel.terminal.buffer.getText().trimRight();
     if (text.isEmpty) return;
 
     await Navigator.of(context).push(
@@ -317,12 +324,13 @@ extension _TerminalDialogs on _TerminalScreenState {
       ),
     );
 
-    _requestWindowsAwareTerminalFocus();
+    _requestWindowsAwareTerminalFocus(viewModel);
   }
 
   void _confirmDisconnect(BuildContext context) {
     final strings = _strings(context);
-    final session = context.read<SshService>().getSession(widget.sessionId);
+    final ssh = context.read<SshService>();
+    final session = ssh.getSession(widget.sessionId);
     final windowName =
         session?.displayName ?? _serverName ?? strings.defaultTerminal;
     final isConnected = session?.isConnected == true;
@@ -345,7 +353,6 @@ extension _TerminalDialogs on _TerminalScreenState {
           ),
           TextButton(
             onPressed: () async {
-              final ssh = context.read<SshService>();
               Navigator.pop(ctx);
               await ssh.disconnectSession(widget.sessionId);
               if (!context.mounted) return;

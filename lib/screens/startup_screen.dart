@@ -1,10 +1,8 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../services/background_service.dart';
+import '../features/startup/viewmodels/startup_viewmodel.dart';
 import '../services/app_settings.dart';
-import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import 'home_screen.dart';
 
@@ -16,89 +14,35 @@ class StartupScreen extends StatefulWidget {
 }
 
 class _StartupScreenState extends State<StartupScreen> {
-  bool _checkingPowerStatus = false;
-  bool _powerStatusChecked = false;
-  bool _powerStatusCheckScheduled = false;
-  bool _shouldShowPowerGuide = false;
-
-  bool get _isAndroidTarget {
-    return !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
-  }
-
-  Future<void> _checkPowerGuideStatus() async {
-    if (_powerStatusChecked || _checkingPowerStatus) return;
-    if (!_isAndroidTarget) {
-      setState(() {
-        _powerStatusChecked = true;
-        _shouldShowPowerGuide = false;
-      });
-      return;
-    }
-
-    setState(() => _checkingPowerStatus = true);
-    var isExempt = false;
-    try {
-      isExempt = await BackgroundServiceManager.isIgnoringBatteryOptimizations()
-          .timeout(const Duration(seconds: 2));
-    } catch (_) {
-      isExempt = false;
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _checkingPowerStatus = false;
-      _powerStatusChecked = true;
-      _shouldShowPowerGuide = !isExempt;
-    });
-  }
-
-  void _enterAppForThisLaunch() {
-    setState(() => _shouldShowPowerGuide = false);
-  }
-
   @override
   Widget build(BuildContext context) {
-    final storageInitialized = context.select<StorageService, bool>(
-      (storage) => storage.initialized,
-    );
-    final settingsInitialized = context.select<AppSettings, bool>(
-      (settings) => settings.initialized,
-    );
+    final viewModel = context.watch<StartupViewModel>();
 
-    if (!storageInitialized || !settingsInitialized) {
+    if (!viewModel.storageInitialized || !viewModel.settingsInitialized) {
       return const _StartupLoadingScreen();
     }
 
-    if (!_isAndroidTarget) {
+    if (!viewModel.isAndroidTarget) {
       return const HomeScreen();
     }
 
-    _schedulePowerGuideCheck();
+    viewModel.schedulePowerGuideCheck(() {
+      if (mounted) {
+        viewModel.checkPowerGuideStatus();
+      }
+    });
 
-    if (!_powerStatusChecked) {
+    if (!viewModel.powerStatusChecked) {
       return const _StartupLoadingScreen();
     }
 
-    if (_shouldShowPowerGuide) {
-      return PowerGuideScreen(onContinue: _enterAppForThisLaunch);
+    if (viewModel.shouldShowPowerGuide) {
+      return PowerGuideScreen(
+        viewModel: viewModel,
+      );
     }
 
     return const HomeScreen();
-  }
-
-  void _schedulePowerGuideCheck() {
-    if (_powerStatusChecked ||
-        _checkingPowerStatus ||
-        _powerStatusCheckScheduled) {
-      return;
-    }
-    _powerStatusCheckScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _powerStatusCheckScheduled = false;
-      if (mounted) {
-        _checkPowerGuideStatus();
-      }
-    });
   }
 }
 
@@ -120,50 +64,26 @@ class _StartupLoadingScreen extends StatelessWidget {
 }
 
 class PowerGuideScreen extends StatefulWidget {
-  final VoidCallback? onContinue;
+  final StartupViewModel viewModel;
 
-  const PowerGuideScreen({super.key, this.onContinue});
+  const PowerGuideScreen({super.key, required this.viewModel});
 
   @override
   State<PowerGuideScreen> createState() => _PowerGuideScreenState();
 }
 
 class _PowerGuideScreenState extends State<PowerGuideScreen> {
-  bool _isExempt = false;
-
   @override
   void initState() {
     super.initState();
-    _refreshStatus();
-  }
-
-  Future<void> _refreshStatus() async {
-    try {
-      final exempt =
-          await BackgroundServiceManager.isIgnoringBatteryOptimizations()
-              .timeout(const Duration(seconds: 2));
-      if (mounted) {
-        setState(() => _isExempt = exempt);
-      }
-    } catch (_) {
-      if (mounted) {
-        setState(() => _isExempt = false);
-      }
-    }
-  }
-
-  Future<void> _continue() async {
-    await context.read<StorageService>().markPowerGuideSeen();
-    widget.onContinue?.call();
+    widget.viewModel.refreshBatteryExemptionStatus();
   }
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final language = context.select<AppSettings, AppLanguage>(
-      (settings) => settings.language,
-    );
-    final strings = AppStrings(language);
+    final strings = AppStrings(widget.viewModel.language);
+    final viewModel = widget.viewModel;
 
     return Scaffold(
       appBar: AppBar(title: Text(strings.backgroundConnectionSettings)),
@@ -191,21 +111,16 @@ class _PowerGuideScreenState extends State<PowerGuideScreen> {
               ),
             ),
             const SizedBox(height: 24),
-            _StatusTile(isExempt: _isExempt),
+            _StatusTile(isExempt: viewModel.isExempt, strings: strings),
             const SizedBox(height: 20),
             FilledButton.icon(
-              onPressed: () async {
-                await BackgroundServiceManager
-                        .requestBatteryOptimizationExemption()
-                    .timeout(const Duration(seconds: 2), onTimeout: () {});
-                await _refreshStatus();
-              },
+              onPressed: () => viewModel.requestBatteryExemption(),
               icon: const Icon(Icons.power_settings_new),
               label: Text(strings.adjustPowerLimit),
             ),
             const SizedBox(height: 10),
             OutlinedButton.icon(
-              onPressed: BackgroundServiceManager.openAppSettings,
+              onPressed: () => viewModel.openAppSettings(),
               icon: const Icon(Icons.settings_outlined),
               label: Text(strings.openAppSettings),
             ),
@@ -220,7 +135,7 @@ class _PowerGuideScreenState extends State<PowerGuideScreen> {
             ),
             const SizedBox(height: 28),
             TextButton(
-              onPressed: _continue,
+              onPressed: () => viewModel.markPowerGuideSeen(),
               child: Text(strings.enterApp),
             ),
           ],
@@ -232,16 +147,13 @@ class _PowerGuideScreenState extends State<PowerGuideScreen> {
 
 class _StatusTile extends StatelessWidget {
   final bool isExempt;
+  final AppStrings strings;
 
-  const _StatusTile({required this.isExempt});
+  const _StatusTile({required this.isExempt, required this.strings});
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final language = context.select<AppSettings, AppLanguage>(
-      (settings) => settings.language,
-    );
-    final strings = AppStrings(language);
     final statusColor =
         isExempt ? colorScheme.secondary : AppTheme.terminalAmber;
 

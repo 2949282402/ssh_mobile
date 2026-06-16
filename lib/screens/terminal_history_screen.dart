@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../features/terminal/viewmodels/terminal_history_viewmodel.dart';
 import '../services/app_settings.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
@@ -24,18 +25,6 @@ class TerminalHistoryPage extends StatefulWidget {
 }
 
 class _TerminalHistoryPageState extends State<TerminalHistoryPage> {
-  late Future<List<TerminalHistoryRecord>> _recordsFuture;
-
-  @override
-  void initState() {
-    super.initState();
-    _reload();
-  }
-
-  void _reload() {
-    _recordsFuture = context.read<SshService>().loadTerminalHistoryRecords();
-  }
-
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -43,65 +32,75 @@ class _TerminalHistoryPageState extends State<TerminalHistoryPage> {
       (settings) => settings.language,
     );
     final strings = AppStrings(language);
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.fromLTRB(8, 8, 12, 8),
-          decoration: BoxDecoration(
-            color: Theme.of(context).scaffoldBackgroundColor,
-            border: Border(
-              bottom: BorderSide(color: colorScheme.outlineVariant),
-            ),
-          ),
-          child: Row(
+
+    return ChangeNotifierProvider<TerminalHistoryViewModel>(
+      create: (context) => TerminalHistoryViewModel(
+        sshService: context.read<SshService>(),
+      ),
+      child: Consumer<TerminalHistoryViewModel>(
+        builder: (context, viewModel, child) {
+          return Column(
             children: [
-              IconButton(
-                icon: const Icon(Icons.arrow_back_rounded),
-                onPressed: () => Navigator.maybePop(context),
-              ),
-              Expanded(
-                child: Text(
-                  strings.connectionHistory,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
+              Container(
+                padding: const EdgeInsets.fromLTRB(8, 8, 12, 8),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).scaffoldBackgroundColor,
+                  border: Border(
+                    bottom: BorderSide(color: colorScheme.outlineVariant),
                   ),
                 ),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.arrow_back_rounded),
+                      onPressed: () => Navigator.maybePop(context),
+                    ),
+                    Expanded(
+                      child: Text(
+                        strings.connectionHistory,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.refresh_rounded),
+                      onPressed: viewModel.reload,
+                    ),
+                  ],
+                ),
               ),
-              IconButton(
-                icon: const Icon(Icons.refresh_rounded),
-                onPressed: () => setState(_reload),
+              Expanded(
+                child: FutureBuilder<List<TerminalHistoryRecord>>(
+                  future: viewModel.recordsFuture,
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState != ConnectionState.done) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+
+                    final records = snapshot.data ?? const [];
+                    if (records.isEmpty) {
+                      return Center(child: Text(strings.noConnectionHistory));
+                    }
+
+                    return ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+                      itemCount: records.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 10),
+                      itemBuilder: (context, index) => _HistoryItem(
+                        record: records[index],
+                        strings: strings,
+                        viewModel: viewModel,
+                      ),
+                    );
+                  },
+                ),
               ),
             ],
-          ),
-        ),
-        Expanded(
-          child: FutureBuilder<List<TerminalHistoryRecord>>(
-            future: _recordsFuture,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState != ConnectionState.done) {
-                return const Center(child: CircularProgressIndicator());
-              }
-
-              final records = snapshot.data ?? const [];
-              if (records.isEmpty) {
-                return Center(child: Text(strings.noConnectionHistory));
-              }
-
-              return ListView.separated(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
-                itemCount: records.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 10),
-                itemBuilder: (context, index) => _HistoryItem(
-                  record: records[index],
-                  strings: strings,
-                  onDeleted: () => setState(_reload),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
+          );
+        },
+      ),
     );
   }
 }
@@ -109,12 +108,12 @@ class _TerminalHistoryPageState extends State<TerminalHistoryPage> {
 class _HistoryItem extends StatelessWidget {
   final TerminalHistoryRecord record;
   final AppStrings strings;
-  final VoidCallback onDeleted;
+  final TerminalHistoryViewModel viewModel;
 
   const _HistoryItem({
     required this.record,
     required this.strings,
-    required this.onDeleted,
+    required this.viewModel,
   });
 
   @override
@@ -222,7 +221,7 @@ class _HistoryItem extends StatelessWidget {
   }
 
   Future<void> _copyCommand(BuildContext context, String command) async {
-    await Clipboard.setData(ClipboardData(text: command));
+    await viewModel.copyCleanupCommand(command);
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(strings.copiedCleanupCommand)),
@@ -230,10 +229,7 @@ class _HistoryItem extends StatelessWidget {
   }
 
   Future<void> _deleteRecord(BuildContext context) async {
-    await context.read<SshService>().removeTerminalHistoryRecord(
-          record.sessionId,
-        );
-    onDeleted();
+    await viewModel.deleteRecord(record.sessionId);
   }
 
   String _formatTime(DateTime time) {

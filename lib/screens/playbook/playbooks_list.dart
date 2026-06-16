@@ -2,11 +2,11 @@ part of '../playbook_screen.dart';
 
 extension _PlaybookScreenPlaybooksList on _PlaybookScreenState {
   Widget _buildPlaybooksList(
-    PlaybookService service,
+    PlaybookViewModel viewModel,
     _PlaybookStrings strings,
     ColorScheme colorScheme,
   ) {
-    final playbooks = service.playbooks;
+    final playbooks = viewModel.playbooks;
 
     if (playbooks.isEmpty) {
       return Padding(
@@ -34,7 +34,12 @@ extension _PlaybookScreenPlaybooksList on _PlaybookScreenState {
             ),
             const SizedBox(height: 24),
             FilledButton.icon(
-              onPressed: _startNewPlaybook,
+              onPressed: () {
+                viewModel.startNewPlaybook();
+                if (_isCompactLayout) {
+                  _mobileTabs.animateTo(1);
+                }
+              },
               icon: const Icon(Icons.add_rounded),
               label: Text(strings.newPlaybook),
             ),
@@ -49,7 +54,7 @@ extension _PlaybookScreenPlaybooksList on _PlaybookScreenState {
       separatorBuilder: (_, __) => const SizedBox(height: 8),
       itemBuilder: (context, index) {
         final playbook = playbooks[index];
-        final isSelected = service.activePlaybook?.id == playbook.id;
+        final isSelected = viewModel.activePlaybook?.id == playbook.id;
 
         return Card(
           elevation: 0,
@@ -67,15 +72,10 @@ extension _PlaybookScreenPlaybooksList on _PlaybookScreenState {
           child: InkWell(
             borderRadius: BorderRadius.circular(8),
             onTap: () {
-              if (_isEditing) {
-                // If editing, cancel first
-                _updateState(() {
-                  _isEditing = false;
-                  _editingPlaybook = null;
-                  _clearStepControllers();
-                });
+              if (viewModel.isEditing) {
+                viewModel.cancelEditing();
               }
-              service.selectPlaybook(playbook.id);
+              viewModel.selectPlaybook(playbook.id);
               if (_isCompactLayout) {
                 _mobileTabs.animateTo(1);
               }
@@ -133,7 +133,7 @@ extension _PlaybookScreenPlaybooksList on _PlaybookScreenState {
                           color: colorScheme.onSurfaceVariant,
                         ),
                       ),
-                      if (!service.isRunning && !service.isPaused) ...[
+                      if (!viewModel.isRunning && !viewModel.isPaused) ...[
                         Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -142,7 +142,12 @@ extension _PlaybookScreenPlaybooksList on _PlaybookScreenState {
                                   size: 18),
                               visualDensity: VisualDensity.compact,
                               padding: EdgeInsets.zero,
-                              onPressed: () => _startEditing(playbook),
+                              onPressed: () {
+                                viewModel.startEditing(playbook);
+                                if (_isCompactLayout) {
+                                  _mobileTabs.animateTo(1);
+                                }
+                              },
                             ),
                             IconButton(
                               icon: const Icon(Icons.delete_outline_rounded,
@@ -150,7 +155,7 @@ extension _PlaybookScreenPlaybooksList on _PlaybookScreenState {
                               visualDensity: VisualDensity.compact,
                               padding: EdgeInsets.zero,
                               onPressed: () => _confirmDeletePlaybook(
-                                  service, playbook, strings),
+                                  viewModel, playbook, strings),
                             ),
                           ],
                         ),
@@ -167,7 +172,7 @@ extension _PlaybookScreenPlaybooksList on _PlaybookScreenState {
   }
 
   Future<void> _confirmDeletePlaybook(
-    PlaybookService service,
+    PlaybookViewModel viewModel,
     Playbook playbook,
     _PlaybookStrings strings,
   ) async {
@@ -191,7 +196,7 @@ extension _PlaybookScreenPlaybooksList on _PlaybookScreenState {
     );
 
     if (confirmed == true) {
-      await service.deletePlaybook(playbook.id);
+      await viewModel.deletePlaybook(playbook.id);
     }
   }
 }

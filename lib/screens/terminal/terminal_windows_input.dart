@@ -3,6 +3,7 @@ part of '../terminal_screen.dart';
 extension _TerminalWindowsInput on _TerminalScreenState {
   Widget _buildWindowsCommandInput(
     BuildContext context,
+    TerminalSessionViewModel viewModel,
     Color toolbarColor,
     TerminalStrings strings,
   ) {
@@ -23,10 +24,10 @@ extension _TerminalWindowsInput on _TerminalScreenState {
           children: [
             Expanded(
               child: Focus(
-                onKeyEvent: _handleWindowsCommandInputKeyEvent,
+                onKeyEvent: (focusNode, event) => _handleWindowsCommandInputKeyEvent(focusNode, event, viewModel),
                 child: TextField(
-                  controller: _windowsCommandInputController,
-                  focusNode: _windowsCommandInputFocusNode,
+                  controller: viewModel.commandInputController,
+                  focusNode: viewModel.commandInputFocusNode,
                   autofocus: true,
                   minLines: 1,
                   maxLines: 4,
@@ -57,7 +58,7 @@ extension _TerminalWindowsInput on _TerminalScreenState {
               child: IconButton(
                 icon: const Icon(Icons.send, size: 20),
                 tooltip: strings.send,
-                onPressed: _sendWindowsCommandInput,
+                onPressed: () => _sendWindowsCommandInput(viewModel),
               ),
             ),
           ],
@@ -66,17 +67,18 @@ extension _TerminalWindowsInput on _TerminalScreenState {
     );
   }
 
-  void _requestWindowsAwareTerminalFocus() {
+  void _requestWindowsAwareTerminalFocus(TerminalSessionViewModel viewModel) {
     if (_isWindowsTerminalTarget) {
-      _windowsCommandInputFocusNode.requestFocus();
+      viewModel.commandInputFocusNode.requestFocus();
     } else {
-      _terminalFocusNode.requestFocus();
+      viewModel.terminalFocusNode.requestFocus();
     }
   }
 
   KeyEventResult _handleWindowsCommandInputKeyEvent(
     FocusNode focusNode,
     KeyEvent event,
+    TerminalSessionViewModel viewModel,
   ) {
     if (!_isWindowsTerminalTarget || event is KeyUpEvent) {
       return KeyEventResult.ignored;
@@ -86,17 +88,17 @@ extension _TerminalWindowsInput on _TerminalScreenState {
         HardwareKeyboard.instance.isControlPressed &&
         !HardwareKeyboard.instance.isAltPressed &&
         !HardwareKeyboard.instance.isMetaPressed) {
-      final inputSelection = _windowsCommandInputController.selection;
+      final inputSelection = viewModel.commandInputController.selection;
       if (inputSelection.isValid && !inputSelection.isCollapsed) {
         return KeyEventResult.ignored;
       }
 
-      final selectedText = _selectedTerminalText();
+      final selectedText = viewModel.getSelectedText();
       if (selectedText.isNotEmpty) {
         Clipboard.setData(ClipboardData(text: selectedText));
         return KeyEventResult.handled;
       }
-      return _sendTerminalKey(TerminalKey.keyC, ctrl: true);
+      return _sendTerminalKey(viewModel, TerminalKey.keyC, ctrl: true);
     }
 
     if (event.logicalKey != LogicalKeyboardKey.enter &&
@@ -104,20 +106,20 @@ extension _TerminalWindowsInput on _TerminalScreenState {
       return KeyEventResult.ignored;
     }
 
-    final value = _windowsCommandInputController.value;
+    final value = viewModel.commandInputController.value;
     if (!value.composing.isCollapsed) return KeyEventResult.ignored;
 
     if (HardwareKeyboard.instance.isShiftPressed) {
-      _insertWindowsCommandInputText('\n');
+      _insertWindowsCommandInputText(viewModel, '\n');
       return KeyEventResult.handled;
     }
 
-    _sendWindowsCommandInput();
+    _sendWindowsCommandInput(viewModel);
     return KeyEventResult.handled;
   }
 
-  void _insertWindowsCommandInputText(String text) {
-    final value = _windowsCommandInputController.value;
+  void _insertWindowsCommandInputText(TerminalSessionViewModel viewModel, String text) {
+    final value = viewModel.commandInputController.value;
     final selection = value.selection.isValid
         ? value.selection
         : TextSelection.collapsed(offset: value.text.length);
@@ -127,21 +129,37 @@ extension _TerminalWindowsInput on _TerminalScreenState {
       text,
     );
     final offset = selection.start + text.length;
-    _windowsCommandInputController.value = TextEditingValue(
+    viewModel.commandInputController.value = TextEditingValue(
       text: nextText,
       selection: TextSelection.collapsed(offset: offset),
     );
   }
 
-  void _sendWindowsCommandInput() {
-    final text = _windowsCommandInputController.text;
+  void _sendWindowsCommandInput(TerminalSessionViewModel viewModel) {
+    final text = viewModel.commandInputController.text;
     if (text.isEmpty) {
-      _sendTerminalKey(TerminalKey.enter);
+      _sendTerminalKey(viewModel, TerminalKey.enter);
       return;
     }
 
-    context.read<SshService>().sendData(widget.sessionId, '$text\r');
-    _windowsCommandInputController.clear();
-    _requestWindowsAwareTerminalFocus();
+    viewModel.sendData('$text\r');
+    viewModel.commandInputController.clear();
+    _requestWindowsAwareTerminalFocus(viewModel);
+  }
+
+  KeyEventResult _sendTerminalKey(
+    TerminalSessionViewModel viewModel,
+    TerminalKey key, {
+    bool ctrl = false,
+    bool alt = false,
+    bool shift = false,
+  }) {
+    final handled = viewModel.terminal.keyInput(
+      key,
+      ctrl: ctrl,
+      alt: alt,
+      shift: shift,
+    );
+    return handled ? KeyEventResult.handled : KeyEventResult.ignored;
   }
 }

@@ -3,18 +3,12 @@ part of '../system_admin_screen.dart';
 class _ServicesTab extends StatefulWidget {
   final AppStrings strings;
   final ColorScheme colorScheme;
-  final String connectionId;
-  final List<SystemdService> services;
-  final bool isLoading;
-  final RefreshCallback onRefresh;
+  final SystemAdminViewModel viewModel;
 
   const _ServicesTab({
     required this.strings,
     required this.colorScheme,
-    required this.connectionId,
-    required this.services,
-    required this.isLoading,
-    required this.onRefresh,
+    required this.viewModel,
   });
 
   @override
@@ -34,13 +28,13 @@ class _ServicesTabState extends State<_ServicesTab>
   void initState() {
     super.initState();
     _serviceSearchController.addListener(_filterServices);
-    _filteredServices = List.from(widget.services);
+    _filteredServices = List.from(widget.viewModel.services);
   }
 
   @override
   void didUpdateWidget(covariant _ServicesTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.services != oldWidget.services) {
+    if (widget.viewModel.services != oldWidget.viewModel.services) {
       _filterServices();
     }
   }
@@ -56,9 +50,9 @@ class _ServicesTabState extends State<_ServicesTab>
     final query = _serviceSearchController.text.trim().toLowerCase();
     setState(() {
       if (query.isEmpty) {
-        _filteredServices = List.from(widget.services);
+        _filteredServices = List.from(widget.viewModel.services);
       } else {
-        _filteredServices = widget.services
+        _filteredServices = widget.viewModel.services
             .where((s) =>
                 s.name.toLowerCase().contains(query) ||
                 s.description.toLowerCase().contains(query))
@@ -70,12 +64,16 @@ class _ServicesTabState extends State<_ServicesTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    if (widget.isLoading) {
+    final viewModel = widget.viewModel;
+    if (viewModel.loadingServices) {
       return const Center(child: CircularProgressIndicator());
     }
 
+    final id = viewModel.connectionId;
+    if (id == null) return const SizedBox.shrink();
+
     return RefreshIndicator(
-      onRefresh: widget.onRefresh,
+      onRefresh: () => viewModel.fetchServices(id),
       child: Column(
         children: [
           Padding(
@@ -132,8 +130,7 @@ class _ServicesTabState extends State<_ServicesTab>
                             ),
                           ),
                           trailing: PopupMenuButton<String>(
-                            onSelected: (action) => _manageService(
-                                service.name, action, widget.connectionId),
+                            onSelected: (action) => _manageService(service.name, action),
                             itemBuilder: (context) => [
                               PopupMenuItem(
                                   value: 'start',
@@ -162,8 +159,7 @@ class _ServicesTabState extends State<_ServicesTab>
     );
   }
 
-  Future<void> _manageService(
-      String name, String action, String connectionId) async {
+  Future<void> _manageService(String name, String action) async {
     final language = context.read<AppSettings>().language;
     final strings = AppStrings(language);
 
@@ -191,11 +187,7 @@ class _ServicesTabState extends State<_ServicesTab>
     }
 
     try {
-      await context
-          .read<SystemAdminService>()
-          .manageSystemdService(connectionId, name, action);
-      if (!mounted) return;
-      widget.onRefresh();
+      await widget.viewModel.manageSystemdService(name, action);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)

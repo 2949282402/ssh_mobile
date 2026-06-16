@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../features/developer_log/viewmodels/developer_log_viewmodel.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../widgets/overflow_scroll_text.dart';
@@ -25,123 +26,57 @@ class DeveloperLogPage extends StatefulWidget {
 }
 
 class _DeveloperLogPageState extends State<DeveloperLogPage> {
-  AppLogLevel _selectedLevel = AppLogLevel.all;
-  final Set<int> _selectedIds = {};
-
-  bool get _selectionMode => _selectedIds.isNotEmpty;
-
   @override
   Widget build(BuildContext context) {
-    final language = context.select<AppSettings, AppLanguage>(
-      (settings) => settings.language,
-    );
-    final strings = AppStrings(language);
+    final viewModel = context.watch<DeveloperLogViewModel>();
+    final strings = AppStrings(viewModel.language);
 
     return Column(
       children: [
-        if (_selectionMode)
+        if (viewModel.selectionMode)
           _SelectedLogPruner(
-            selectedIds: _selectedIds,
-            onPruned: () {
-              if (mounted) setState(() {});
-            },
+            viewModel: viewModel,
           ),
         _DeveloperLogToolbar(
           strings: strings,
-          selectedLevel: _selectedLevel,
-          selectedIds: _selectedIds,
-          onLevelChanged: (level) => setState(() => _selectedLevel = level),
-          onClearSelection: () => setState(_selectedIds.clear),
-          onCopyEntries: (entries) => _copyEntries(context, entries, strings),
-          onDeleteSelected: () => _deleteSelectedLogs(
-            context,
-            context.read<AppLogService>(),
-            strings,
-          ),
-          onClearLogs: () => _clearLogs(
-            context,
-            context.read<AppLogService>(),
-            strings,
-          ),
+          viewModel: viewModel,
+          onCopySuccess: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(strings.copiedFilteredLogs)),
+            );
+          },
+          onDeleteSuccess: (count) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(strings.selectedLogsDeleted(count))),
+            );
+          },
+          onClearSuccess: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(strings.logsCleared)),
+            );
+          },
         ),
         Expanded(
           child: _DeveloperLogList(
             strings: strings,
-            selectedLevel: _selectedLevel,
-            selectedIds: _selectedIds,
-            selectionMode: _selectionMode,
-            onEntryTap: _handleEntryTap,
-            onEntryLongPress: _selectEntry,
+            viewModel: viewModel,
+            onCopySingleSuccess: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(strings.copiedSingleLog)),
+              );
+            },
           ),
         ),
       ],
     );
   }
-
-  void _handleEntryTap(AppLogEntry entry) {
-    if (!_selectionMode) return;
-    setState(() {
-      if (!_selectedIds.add(entry.id)) {
-        _selectedIds.remove(entry.id);
-      }
-    });
-  }
-
-  void _selectEntry(AppLogEntry entry) {
-    setState(() => _selectedIds.add(entry.id));
-  }
-
-  Future<void> _copyEntries(
-    BuildContext context,
-    List<AppLogEntry> entries,
-    AppStrings strings,
-  ) async {
-    await Clipboard.setData(
-      ClipboardData(text: entries.reversed.map((e) => e.text).join('\n\n')),
-    );
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(strings.copiedFilteredLogs)),
-    );
-  }
-
-  void _deleteSelectedLogs(
-    BuildContext context,
-    AppLogService logService,
-    AppStrings strings,
-  ) {
-    final count = _selectedIds.length;
-    logService.deleteEntriesById(_selectedIds);
-    setState(_selectedIds.clear);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(strings.selectedLogsDeleted(count))),
-    );
-  }
-
-  void _clearLogs(
-    BuildContext context,
-    AppLogService logService,
-    AppStrings strings,
-  ) {
-    FocusManager.instance.primaryFocus?.unfocus();
-    logService.clear();
-    setState(() {
-      _selectedLevel = AppLogLevel.all;
-      _selectedIds.clear();
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(strings.logsCleared)),
-    );
-  }
 }
 
 class _SelectedLogPruner extends StatelessWidget {
-  final Set<int> selectedIds;
-  final VoidCallback onPruned;
+  final DeveloperLogViewModel viewModel;
 
   const _SelectedLogPruner({
-    required this.selectedIds,
-    required this.onPruned,
+    required this.viewModel,
   });
 
   @override
@@ -150,13 +85,12 @@ class _SelectedLogPruner extends StatelessWidget {
       (service) => service.entryIds,
     );
     final staleIds = [
-      for (final id in selectedIds)
+      for (final id in viewModel.selectedIds)
         if (!entryIds.contains(id)) id,
     ];
     if (staleIds.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        selectedIds.removeAll(staleIds);
-        onPruned();
+        viewModel.pruneStaleSelections();
       });
     }
     return const SizedBox.shrink();
@@ -165,37 +99,21 @@ class _SelectedLogPruner extends StatelessWidget {
 
 class _DeveloperLogToolbar extends StatelessWidget {
   final AppStrings strings;
-  final AppLogLevel selectedLevel;
-  final Set<int> selectedIds;
-  final ValueChanged<AppLogLevel> onLevelChanged;
-  final VoidCallback onClearSelection;
-  final ValueChanged<List<AppLogEntry>> onCopyEntries;
-  final VoidCallback onDeleteSelected;
-  final VoidCallback onClearLogs;
+  final DeveloperLogViewModel viewModel;
+  final VoidCallback onCopySuccess;
+  final ValueChanged<int> onDeleteSuccess;
+  final VoidCallback onClearSuccess;
 
   const _DeveloperLogToolbar({
     required this.strings,
-    required this.selectedLevel,
-    required this.selectedIds,
-    required this.onLevelChanged,
-    required this.onClearSelection,
-    required this.onCopyEntries,
-    required this.onDeleteSelected,
-    required this.onClearLogs,
+    required this.viewModel,
+    required this.onCopySuccess,
+    required this.onDeleteSuccess,
+    required this.onClearSuccess,
   });
-
-  bool get _selectionMode => selectedIds.isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
-    final snapshot =
-        context.select<AppLogService, _DeveloperLogToolbarSnapshot>(
-      (service) => _DeveloperLogToolbarSnapshot.from(
-        service,
-        selectedLevel,
-        selectedIds,
-      ),
-    );
     final colorScheme = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 8, 8, 10),
@@ -211,8 +129,8 @@ class _DeveloperLogToolbar extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  _selectionMode
-                      ? strings.selectedLogs(selectedIds.length)
+                  viewModel.selectionMode
+                      ? strings.selectedLogs(viewModel.selectedIds.length)
                       : strings.developerLogs,
                   style: const TextStyle(
                     fontSize: 16,
@@ -220,39 +138,38 @@ class _DeveloperLogToolbar extends StatelessWidget {
                   ),
                 ),
               ),
-              if (_selectionMode)
+              if (viewModel.selectionMode)
                 IconButton(
                   icon: const Icon(Icons.close_rounded),
                   tooltip: strings.cancel,
-                  onPressed: onClearSelection,
+                  onPressed: viewModel.clearSelection,
                 ),
               IconButton(
                 icon: Icon(
-                  _selectionMode ? Icons.copy_rounded : Icons.copy_all_rounded,
+                  viewModel.selectionMode ? Icons.copy_rounded : Icons.copy_all_rounded,
                 ),
-                tooltip: _selectionMode
+                tooltip: viewModel.selectionMode
                     ? strings.copySelectedLogs
                     : strings.copyFilteredLogs,
-                onPressed: _selectionMode
-                    ? snapshot.selectedEntries.isEmpty
-                        ? null
-                        : () => onCopyEntries(snapshot.selectedEntries)
-                    : snapshot.filteredEntries.isEmpty
-                        ? null
-                        : () => onCopyEntries(snapshot.filteredEntries),
+                onPressed: () async {
+                  final success = await viewModel.copySelectedOrFilteredLogs();
+                  if (success) onCopySuccess();
+                },
               ),
               IconButton(
                 icon: const Icon(Icons.delete_outline_rounded),
-                tooltip: _selectionMode
+                tooltip: viewModel.selectionMode
                     ? strings.deleteSelectedLogs
                     : strings.clearLogs,
-                onPressed: _selectionMode
-                    ? snapshot.selectedEntries.isEmpty
-                        ? null
-                        : onDeleteSelected
-                    : snapshot.hasEntries
-                        ? onClearLogs
-                        : null,
+                onPressed: () {
+                  if (viewModel.selectionMode) {
+                    final count = viewModel.deleteSelectedLogs();
+                    onDeleteSuccess(count);
+                  } else {
+                    viewModel.clearLogs();
+                    onClearSuccess();
+                  }
+                },
               ),
             ],
           ),
@@ -271,11 +188,11 @@ class _DeveloperLogToolbar extends StatelessWidget {
                   separatorBuilder: (_, __) => const SizedBox(width: 8),
                   itemBuilder: (context, index) {
                     final level = AppLogLevel.values[index];
-                    final count = snapshot.levelCounts[level] ?? 0;
+                    final count = viewModel.levelCounts[level] ?? 0;
                     return FilterChip(
                       label: Text('${level.labelFor(strings.language)} $count'),
-                      selected: selectedLevel == level,
-                      onSelected: (_) => onLevelChanged(level),
+                      selected: viewModel.selectedLevel == level,
+                      onSelected: (_) => viewModel.setSelectedLevel(level),
                     );
                   },
                 ),
@@ -290,30 +207,21 @@ class _DeveloperLogToolbar extends StatelessWidget {
 
 class _DeveloperLogList extends StatelessWidget {
   final AppStrings strings;
-  final AppLogLevel selectedLevel;
-  final Set<int> selectedIds;
-  final bool selectionMode;
-  final ValueChanged<AppLogEntry> onEntryTap;
-  final ValueChanged<AppLogEntry> onEntryLongPress;
+  final DeveloperLogViewModel viewModel;
+  final VoidCallback onCopySingleSuccess;
 
   const _DeveloperLogList({
     required this.strings,
-    required this.selectedLevel,
-    required this.selectedIds,
-    required this.selectionMode,
-    required this.onEntryTap,
-    required this.onEntryLongPress,
+    required this.viewModel,
+    required this.onCopySingleSuccess,
   });
 
   @override
   Widget build(BuildContext context) {
-    final snapshot = context.select<AppLogService, _DeveloperLogListSnapshot>(
-      (service) => _DeveloperLogListSnapshot.from(service, selectedLevel),
-    );
-    if (!snapshot.hasEntries) {
+    if (!viewModel.hasEntries) {
       return Center(child: Text(strings.noLogs));
     }
-    final entries = snapshot.filteredEntries;
+    final entries = viewModel.filteredEntries;
     if (entries.isEmpty) {
       return Center(child: Text(strings.noLogsForLevel));
     }
@@ -331,79 +239,17 @@ class _DeveloperLogList extends StatelessWidget {
           child: _LogEntryTile(
             entry: entry,
             strings: strings,
-            selected: selectedIds.contains(entry.id),
-            selectionMode: selectionMode,
-            onTap: () => onEntryTap(entry),
-            onLongPress: () => onEntryLongPress(entry),
+            selected: viewModel.selectedIds.contains(entry.id),
+            selectionMode: viewModel.selectionMode,
+            onTap: () => viewModel.toggleEntrySelection(entry),
+            onLongPress: () => viewModel.selectEntry(entry),
+            viewModel: viewModel,
+            onCopySingleSuccess: onCopySingleSuccess,
           ),
         );
       },
     );
   }
-}
-
-class _DeveloperLogToolbarSnapshot {
-  final Map<AppLogLevel, int> levelCounts;
-  final List<AppLogEntry> filteredEntries;
-  final List<AppLogEntry> selectedEntries;
-  final bool hasEntries;
-
-  const _DeveloperLogToolbarSnapshot({
-    required this.levelCounts,
-    required this.filteredEntries,
-    required this.selectedEntries,
-    required this.hasEntries,
-  });
-
-  factory _DeveloperLogToolbarSnapshot.from(
-    AppLogService service,
-    AppLogLevel selectedLevel,
-    Set<int> selectedIds,
-  ) {
-    final allEntries = service.entries;
-    return _DeveloperLogToolbarSnapshot(
-      levelCounts: service.levelCounts,
-      filteredEntries: service.entriesForLevel(selectedLevel),
-      selectedEntries: selectedIds.isEmpty
-          ? const <AppLogEntry>[]
-          : [
-              for (final entry in allEntries)
-                if (selectedIds.contains(entry.id)) entry,
-            ],
-      hasEntries: allEntries.isNotEmpty,
-    );
-  }
-}
-
-class _DeveloperLogListSnapshot {
-  final List<AppLogEntry> filteredEntries;
-  final bool hasEntries;
-
-  const _DeveloperLogListSnapshot({
-    required this.filteredEntries,
-    required this.hasEntries,
-  });
-
-  factory _DeveloperLogListSnapshot.from(
-    AppLogService service,
-    AppLogLevel selectedLevel,
-  ) {
-    return _DeveloperLogListSnapshot(
-      filteredEntries: service.entriesForLevel(selectedLevel),
-      hasEntries: service.entries.isNotEmpty,
-    );
-  }
-
-  @override
-  bool operator ==(Object other) {
-    return other is _DeveloperLogListSnapshot &&
-        identical(other.filteredEntries, filteredEntries) &&
-        other.hasEntries == hasEntries;
-  }
-
-  @override
-  int get hashCode =>
-      Object.hash(identityHashCode(filteredEntries), hasEntries);
 }
 
 class _LogEntryTile extends StatefulWidget {
@@ -413,6 +259,8 @@ class _LogEntryTile extends StatefulWidget {
   final bool selectionMode;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
+  final DeveloperLogViewModel viewModel;
+  final VoidCallback onCopySingleSuccess;
 
   const _LogEntryTile({
     required this.entry,
@@ -421,6 +269,8 @@ class _LogEntryTile extends StatefulWidget {
     required this.selectionMode,
     required this.onTap,
     required this.onLongPress,
+    required this.viewModel,
+    required this.onCopySingleSuccess,
   });
 
   @override
@@ -500,7 +350,10 @@ class _LogEntryTileState extends State<_LogEntryTile> {
                     visualDensity: VisualDensity.compact,
                     iconSize: 18,
                     tooltip: strings.copySingleLog,
-                    onPressed: () => _copySingle(context, entry.text, strings),
+                    onPressed: () async {
+                      await widget.viewModel.copySingleLog(entry.text);
+                      widget.onCopySingleSuccess();
+                    },
                     icon: const Icon(Icons.copy_rounded),
                   ),
                 if (isLong)
@@ -543,18 +396,6 @@ class _LogEntryTileState extends State<_LogEntryTile> {
 
   bool _isLong(String text) {
     return text.length > 360 || '\n'.allMatches(text).length >= _collapsedLines;
-  }
-
-  Future<void> _copySingle(
-    BuildContext context,
-    String text,
-    AppStrings strings,
-  ) async {
-    await Clipboard.setData(ClipboardData(text: text));
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(strings.copiedSingleLog)),
-    );
   }
 
   Color _levelColor(BuildContext context, AppLogLevel level) {

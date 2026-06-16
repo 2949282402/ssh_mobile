@@ -3,9 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../features/rag/viewmodels/rag_knowledge_viewmodel.dart';
 import '../services/app_settings.dart';
 import '../services/rag_service.dart';
-import '../services/storage_service.dart';
 
 class _RagStrings {
   final bool isEn;
@@ -31,6 +31,7 @@ class _RagStrings {
       isEn ? 'No valid text found in this document.' : '未在文档中提取到有效文本内容。';
   String get successAdded =>
       isEn ? 'Document indexed successfully' : '文档上传并构建索引成功';
+  String get deleteFailed => isEn ? 'Delete failed' : '删除失败';
   String get errorAdd => isEn ? 'Failed to process document' : '上传/处理文档失败';
   String get aliyunSettings =>
       isEn ? 'Aliyun DashScope Settings' : '阿里云 DashScope 设置';
@@ -51,21 +52,17 @@ class RagKnowledgeScreen extends StatefulWidget {
 }
 
 class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
-  bool _isProcessing = false;
-
   @override
   void initState() {
     super.initState();
-    // 异步触发服务初始化
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<RagService>().init();
+      context.read<RagKnowledgeViewModel>().initRag();
     });
   }
 
   Future<void> _showAliyunSettings(
-      BuildContext context, _RagStrings strings) async {
-    final storage = context.read<StorageService>();
-    final currentKey = await storage.getAliyunApiKey() ?? '';
+      BuildContext context, _RagStrings strings, RagKnowledgeViewModel viewModel) async {
+    final currentKey = await viewModel.getAliyunApiKey() ?? '';
     final controller = TextEditingController(text: currentKey);
     var isObscured = true;
 
@@ -112,7 +109,7 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
             ),
             ElevatedButton(
               onPressed: () async {
-                await storage.saveAliyunApiKey(controller.text.trim());
+                await viewModel.saveAliyunApiKey(controller.text.trim());
                 if (context.mounted) Navigator.pop(context);
               },
               child: Text(strings.save),
@@ -123,9 +120,8 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
     );
   }
 
-  Future<void> _handleUpload(BuildContext context, _RagStrings strings) async {
+  Future<void> _handleUpload(BuildContext context, _RagStrings strings, RagKnowledgeViewModel viewModel) async {
     final messenger = ScaffoldMessenger.of(context);
-    final ragService = context.read<RagService>();
 
     try {
       final result = await FilePicker.pickFiles(
@@ -148,12 +144,10 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
       final file = result.files.first;
       if (file.bytes == null || file.bytes!.isEmpty) return;
 
-      if (mounted) setState(() => _isProcessing = true);
-
-      await ragService.addDocument(
-        name: file.name,
-        bytes: file.bytes!,
-        mimeType: file.extension == 'pdf' ? 'application/pdf' : 'text/plain',
+      await viewModel.addDocument(
+        file.name,
+        file.bytes!,
+        file.extension == 'pdf' ? 'application/pdf' : 'text/plain',
       );
 
       messenger.showSnackBar(
@@ -163,20 +157,16 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
       messenger.showSnackBar(
         SnackBar(content: Text('${strings.errorAdd}: $e')),
       );
-    } finally {
-      if (mounted) {
-        setState(() => _isProcessing = false);
-      }
     }
   }
 
   Future<void> _handleDelete(
     BuildContext context,
     _RagStrings strings,
+    RagKnowledgeViewModel viewModel,
     RagDocumentMetadata doc,
   ) async {
     final messenger = ScaffoldMessenger.of(context);
-    final ragService = context.read<RagService>();
 
     final confirm = await showDialog<bool>(
       context: context,
@@ -200,18 +190,13 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
       ),
     );
 
-    if (confirm == true && mounted) {
-      setState(() => _isProcessing = true);
+    if (confirm == true) {
       try {
-        await ragService.deleteDocument(doc.id);
+        await viewModel.deleteDocument(doc.id);
       } catch (e) {
         messenger.showSnackBar(
-          SnackBar(content: Text('Delete failed: $e')),
+          SnackBar(content: Text('${strings.deleteFailed}: $e')),
         );
-      } finally {
-        if (mounted) {
-          setState(() => _isProcessing = false);
-        }
       }
     }
   }
@@ -226,7 +211,7 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
-    final ragService = context.watch<RagService>();
+    final viewModel = context.watch<RagKnowledgeViewModel>();
     final strings = _RagStrings(settings.isEnglish);
     final theme = Theme.of(context);
 
@@ -238,13 +223,13 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
           IconButton(
             icon: const Icon(Icons.settings_outlined),
             tooltip: strings.aliyunSettings,
-            onPressed: () => _showAliyunSettings(context, strings),
+            onPressed: () => _showAliyunSettings(context, strings, viewModel),
           ),
         ],
       ),
       body: Stack(
         children: [
-          if (ragService.documents.isEmpty && !ragService.isLoading)
+          if (viewModel.documents.isEmpty && !viewModel.isLoading)
             Center(
               child: Padding(
                 padding: const EdgeInsets.all(32.0),
@@ -278,9 +263,9 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
           else
             ListView.builder(
               padding: const EdgeInsets.all(12),
-              itemCount: ragService.documents.length,
+              itemCount: viewModel.documents.length,
               itemBuilder: (context, index) {
-                final doc = ragService.documents[index];
+                final doc = viewModel.documents[index];
                 final isPdf = doc.name.toLowerCase().endsWith('.pdf');
                 final dateStr =
                     DateFormat('yyyy-MM-dd HH:mm').format(doc.uploadedAt);
@@ -354,13 +339,13 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
                     trailing: IconButton(
                       icon: const Icon(Icons.delete_outline),
                       color: theme.colorScheme.error,
-                      onPressed: () => _handleDelete(context, strings, doc),
+                      onPressed: () => _handleDelete(context, strings, viewModel, doc),
                     ),
                   ),
                 );
               },
             ),
-          if (_isProcessing || ragService.isLoading)
+          if (viewModel.isProcessing || viewModel.isLoading)
             Container(
               color: Colors.black.withValues(alpha: 0.3),
               child: Center(
@@ -385,7 +370,7 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _isProcessing ? null : () => _handleUpload(context, strings),
+        onPressed: viewModel.isProcessing ? null : () => _handleUpload(context, strings, viewModel),
         tooltip: strings.title,
         child: const Icon(Icons.add),
       ),

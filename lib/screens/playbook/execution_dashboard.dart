@@ -2,12 +2,12 @@ part of '../playbook_screen.dart';
 
 extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
   Widget _buildExecutionDashboard(
-    PlaybookService service,
+    PlaybookViewModel viewModel,
     List<ConnectionConfig> connections,
     _PlaybookStrings strings,
     ColorScheme colorScheme,
   ) {
-    final playbook = service.activePlaybook;
+    final playbook = viewModel.activePlaybook;
     if (playbook == null) {
       return Center(
         child: Column(
@@ -27,7 +27,7 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
     }
 
     final hasConnectedServer =
-        connections.any((c) => c.id == _selectedConnectionId);
+        connections.any((c) => c.id == viewModel.selectedConnectionId);
 
     return Column(
       children: [
@@ -57,9 +57,9 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                       const SizedBox(height: 4),
                       DropdownButtonHideUnderline(
                         child: DropdownButton<String>(
-                          value: connections
-                                  .any((c) => c.id == _selectedConnectionId)
-                              ? _selectedConnectionId
+                          value: connections.any((c) =>
+                                  c.id == viewModel.selectedConnectionId)
+                              ? viewModel.selectedConnectionId
                               : null,
                           hint: Text(strings.selectServerHint),
                           isExpanded: true,
@@ -74,12 +74,10 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                               ),
                             );
                           }).toList(),
-                          onChanged: service.isRunning
+                          onChanged: viewModel.isRunning
                               ? null
                               : (v) {
-                                  _updateState(() {
-                                    _selectedConnectionId = v;
-                                  });
+                                  viewModel.setSelectedConnectionId(v);
                                 },
                         ),
                       ),
@@ -130,15 +128,15 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
             itemCount: playbook.steps.length,
             itemBuilder: (context, index) {
               final step = playbook.steps[index];
-              final isCurrent = service.currentStepIndex == index;
-              return _buildStepCard(index, step, isCurrent, playbook, service,
+              final isCurrent = viewModel.currentStepIndex == index;
+              return _buildStepCard(index, step, isCurrent, playbook, viewModel,
                   strings, colorScheme);
             },
           ),
         ),
 
         // Execution Floating Control Bar
-        _buildControlBar(service, hasConnectedServer, strings, colorScheme),
+        _buildControlBar(viewModel, hasConnectedServer, strings, colorScheme),
       ],
     );
   }
@@ -148,11 +146,11 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
     PlaybookStep step,
     bool isCurrent,
     Playbook playbook,
-    PlaybookService service,
+    PlaybookViewModel viewModel,
     _PlaybookStrings strings,
     ColorScheme colorScheme,
   ) {
-    final isExpanded = _expandedSteps.contains(index);
+    final isExpanded = viewModel.expandedSteps.contains(index);
     final hasOutput = (step.stdout != null && step.stdout!.isNotEmpty) ||
         (step.stderr != null && step.stderr!.isNotEmpty);
 
@@ -209,13 +207,7 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
             borderRadius: BorderRadius.circular(8),
             onTap: hasOutput
                 ? () {
-                    _updateState(() {
-                      if (isExpanded) {
-                        _expandedSteps.remove(index);
-                      } else {
-                        _expandedSteps.add(index);
-                      }
-                    });
+                    viewModel.toggleStepExpanded(index);
                   }
                 : null,
             child: Padding(
@@ -413,16 +405,16 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
   }
 
   Widget _buildControlBar(
-    PlaybookService service,
+    PlaybookViewModel viewModel,
     bool hasConnectedServer,
     _PlaybookStrings strings,
     ColorScheme colorScheme,
   ) {
-    final activePlaybook = service.activePlaybook;
+    final activePlaybook = viewModel.activePlaybook;
     if (activePlaybook == null) return const SizedBox.shrink();
 
-    final isRunning = service.isRunning;
-    final isPaused = service.isPaused;
+    final isRunning = viewModel.isRunning;
+    final isPaused = viewModel.isPaused;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -445,26 +437,25 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                     icon: const Icon(Icons.pause_rounded),
                     label: Text(strings.pause),
                     onPressed: () {
-                      service.pauseExecution();
+                      viewModel.pausePlaybook();
                     },
                   );
                 } else if (isPaused) {
                   return FilledButton.icon(
                     icon: const Icon(Icons.play_arrow_rounded),
                     label: Text(strings.resume),
-                    onPressed: _selectedConnectionId == null
+                    onPressed: viewModel.selectedConnectionId == null
                         ? null
-                        : () => service.resumeExecution(_selectedConnectionId!),
+                        : () => viewModel.resumePlaybook(viewModel.selectedConnectionId!),
                   );
                 } else {
                   return FilledButton.icon(
                     icon: const Icon(Icons.play_arrow_rounded),
                     label: Text(strings.start),
-                    onPressed: _selectedConnectionId == null
+                    onPressed: viewModel.selectedConnectionId == null
                         ? null
                         : () {
-                            service.startExecution(
-                                activePlaybook.id, _selectedConnectionId!);
+                            viewModel.runPlaybook(viewModel.selectedConnectionId!);
                           },
                   );
                 }
@@ -478,9 +469,9 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
               OutlinedButton.icon(
                 icon: const Icon(Icons.skip_next_rounded),
                 label: Text(strings.skip),
-                onPressed: _selectedConnectionId == null
+                onPressed: viewModel.selectedConnectionId == null
                     ? null
-                    : () => service.skipCurrentStep(_selectedConnectionId!),
+                    : () => viewModel.skipCurrentStep(viewModel.selectedConnectionId!),
               ),
               const SizedBox(width: 8),
             ],
@@ -490,10 +481,9 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
               icon: const Icon(Icons.replay_rounded),
               label: Text(strings.reset),
               onPressed: () {
-                service.resetPlaybook(activePlaybook.id);
-                _updateState(() {
-                  _expandedSteps.clear();
-                });
+                viewModel.resetPlaybook(activePlaybook.id);
+                // Clear local expanded steps
+                viewModel.expandedSteps.clear();
               },
             ),
           ],
@@ -527,10 +517,10 @@ Please analyze what went wrong and provide:
 1. An explanation of why the command failed.
 2. A corrected command or setup steps to fix this problem.""";
 
-    // Set the prompt in the service
-    context.read<PlaybookService>().pendingDiagnosticPrompt = prompt;
+    // Set the prompt in the viewModel/service
+    context.read<PlaybookViewModel>().pendingDiagnosticPrompt = prompt;
 
-    // 发送通知让上层的 HomeScreen 切换到 AI tab
+    // Send notification to switch to AI tab
     const SwitchToAiTabNotification().dispatch(context);
 
     // Pop current screen (if it was pushed on top of Home)

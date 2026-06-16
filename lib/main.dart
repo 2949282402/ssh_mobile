@@ -6,9 +6,14 @@ import 'package:provider/provider.dart';
 import 'features/connection/views/add_edit_screen.dart';
 import 'features/connection/viewmodels/connection_viewmodel.dart';
 import 'features/settings/viewmodels/settings_viewmodel.dart';
+import 'features/playbook/viewmodels/playbook_viewmodel.dart';
+import 'features/system_admin/viewmodels/system_admin_viewmodel.dart';
+import 'features/rag/viewmodels/rag_knowledge_viewmodel.dart';
+import 'features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
+import 'features/developer_log/viewmodels/developer_log_viewmodel.dart';
+import 'features/startup/viewmodels/startup_viewmodel.dart';
 import 'features/performance/viewmodels/performance_viewmodel.dart';
 import 'features/sftp/viewmodels/sftp_viewmodel.dart';
-import 'features/terminal/viewmodels/terminal_viewmodel.dart';
 import 'screens/ai_skills_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/performance_monitor_screen.dart';
@@ -119,6 +124,42 @@ Future<void> main() async {
               ),
             ),
             ChangeNotifierProvider(
+              create: (context) => PlaybookViewModel(
+                playbookService: context.read<PlaybookService>(),
+                storageService: context.read<StorageService>(),
+              ),
+            ),
+            ChangeNotifierProvider(
+              create: (context) => SystemAdminViewModel(
+                adminService: context.read<SystemAdminService>(),
+                storageService: context.read<StorageService>(),
+              ),
+            ),
+            ChangeNotifierProvider(
+              create: (context) => RagKnowledgeViewModel(
+                ragService: context.read<RagService>(),
+                storageService: context.read<StorageService>(),
+              ),
+            ),
+            ChangeNotifierProvider(
+              create: (context) => AiSkillsViewModel(
+                storageService: context.read<StorageService>(),
+                appSettings: context.read<AppSettings>(),
+              ),
+            ),
+            ChangeNotifierProvider(
+              create: (context) => DeveloperLogViewModel(
+                logService: context.read<AppLogService>(),
+                appSettings: context.read<AppSettings>(),
+              ),
+            ),
+            ChangeNotifierProvider(
+              create: (context) => StartupViewModel(
+                storageService: context.read<StorageService>(),
+                appSettings: context.read<AppSettings>(),
+              ),
+            ),
+            ChangeNotifierProvider(
               create: (context) => PerformanceMonitorViewModel(
                 monitorService: context.read<PerformanceMonitorService>(),
               ),
@@ -126,11 +167,6 @@ Future<void> main() async {
             ChangeNotifierProvider(
               create: (context) => SftpViewModel(
                 sftpService: context.read<SftpService>(),
-              ),
-            ),
-            ChangeNotifierProvider(
-              create: (context) => TerminalViewModel(
-                sshService: context.read<SshService>(),
               ),
             ),
           ],

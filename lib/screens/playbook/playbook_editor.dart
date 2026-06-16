@@ -2,19 +2,19 @@ part of '../playbook_screen.dart';
 
 extension _PlaybookScreenPlaybookEditor on _PlaybookScreenState {
   Widget _buildPlaybookEditor(
-    PlaybookService service,
+    PlaybookViewModel viewModel,
     _PlaybookStrings strings,
     ColorScheme colorScheme,
   ) {
     return Form(
-        key: _formKey,
+        key: viewModel.formKey,
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                _editingPlaybook?.name.isEmpty == true
+                viewModel.editingPlaybook?.name.isEmpty == true
                     ? strings.newPlaybook
                     : strings.editPlaybook,
                 style:
@@ -22,7 +22,7 @@ extension _PlaybookScreenPlaybookEditor on _PlaybookScreenState {
               ),
               const SizedBox(height: 16),
               TextFormField(
-                controller: _nameController,
+                controller: viewModel.nameController,
                 decoration: InputDecoration(
                   labelText: strings.name,
                   hintText: 'e.g. Deploy Web Service',
@@ -33,7 +33,7 @@ extension _PlaybookScreenPlaybookEditor on _PlaybookScreenState {
               ),
               const SizedBox(height: 12),
               TextFormField(
-                controller: _descriptionController,
+                controller: viewModel.descriptionController,
                 decoration: InputDecoration(
                   labelText: strings.description,
                   hintText: 'Describe what this playbook does...',
@@ -52,14 +52,14 @@ extension _PlaybookScreenPlaybookEditor on _PlaybookScreenState {
                         fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                   OutlinedButton.icon(
-                    onPressed: _addStepToEditing,
+                    onPressed: () => viewModel.addStepToEditing(),
                     icon: const Icon(Icons.add_rounded, size: 16),
                     label: Text(strings.addStep),
                   ),
                 ],
               ),
               const SizedBox(height: 12),
-              if (_stepControllers.isEmpty)
+              if (viewModel.stepControllers.isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 24),
                   child: Text(
@@ -69,8 +69,8 @@ extension _PlaybookScreenPlaybookEditor on _PlaybookScreenState {
                     textAlign: TextAlign.center,
                   ),
                 ),
-              ...List.generate(_stepControllers.length, (index) {
-                final controllers = _stepControllers[index];
+              ...List.generate(viewModel.stepControllers.length, (index) {
+                final controllers = viewModel.stepControllers[index];
                 return Card(
                   key: ValueKey(controllers.hashCode),
                   margin: const EdgeInsets.only(bottom: 16),
@@ -105,13 +105,14 @@ extension _PlaybookScreenPlaybookEditor on _PlaybookScreenState {
                                   const TextStyle(fontWeight: FontWeight.bold),
                             ),
                             const Spacer(),
-                            if (_stepControllers.length > 1)
+                            if (viewModel.stepControllers.length > 1)
                               IconButton(
                                 icon: const Icon(Icons.delete_outline,
                                     color: Colors.red, size: 20),
                                 padding: EdgeInsets.zero,
                                 constraints: const BoxConstraints(),
-                                onPressed: () => _removeStepFromEditing(index),
+                                onPressed: () =>
+                                    viewModel.removeStepFromEditing(index),
                               ),
                           ],
                         ),
@@ -169,12 +170,12 @@ extension _PlaybookScreenPlaybookEditor on _PlaybookScreenState {
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   OutlinedButton(
-                    onPressed: () => _cancelEditing(service),
+                    onPressed: () => viewModel.cancelEditing(),
                     child: Text(strings.cancel),
                   ),
                   const SizedBox(width: 12),
                   FilledButton(
-                    onPressed: () => _savePlaybook(service, strings),
+                    onPressed: () => viewModel.savePlaybook(),
                     child: Text(strings.save),
                   ),
                 ],

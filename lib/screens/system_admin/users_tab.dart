@@ -3,18 +3,12 @@ part of '../system_admin_screen.dart';
 class _UsersTab extends StatefulWidget {
   final AppStrings strings;
   final ColorScheme colorScheme;
-  final String connectionId;
-  final List<LinuxUserAccount> accounts;
-  final bool isLoading;
-  final RefreshCallback onRefresh;
+  final SystemAdminViewModel viewModel;
 
   const _UsersTab({
     required this.strings,
     required this.colorScheme,
-    required this.connectionId,
-    required this.accounts,
-    required this.isLoading,
-    required this.onRefresh,
+    required this.viewModel,
   });
 
   @override
@@ -29,9 +23,13 @@ class _UsersTabState extends State<_UsersTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    if (widget.isLoading) {
+    final viewModel = widget.viewModel;
+    if (viewModel.loadingAccounts) {
       return const Center(child: CircularProgressIndicator());
     }
+
+    final id = viewModel.connectionId;
+    if (id == null) return const SizedBox.shrink();
 
     return Column(
       children: [
@@ -49,21 +47,21 @@ class _UsersTabState extends State<_UsersTab>
                 icon: const Icon(Icons.person_add),
                 label: Text(widget.strings.createUser),
                 onPressed: () =>
-                    _openCreateUserDialog(widget.strings, widget.connectionId),
+                    _openCreateUserDialog(widget.strings, viewModel),
               ),
             ],
           ),
         ),
         Expanded(
           child: RefreshIndicator(
-            onRefresh: widget.onRefresh,
-            child: widget.accounts.isEmpty
+            onRefresh: () => viewModel.fetchAccounts(id),
+            child: viewModel.accounts.isEmpty
                 ? const Center(child: Text('No accounts found.'))
                 : ListView.builder(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
-                    itemCount: widget.accounts.length,
+                    itemCount: viewModel.accounts.length,
                     itemBuilder: (context, index) {
-                      final account = widget.accounts[index];
+                      final account = viewModel.accounts[index];
                       return Card(
                         child: ExpansionTile(
                           leading: CircleAvatar(
@@ -137,11 +135,10 @@ class _UsersTabState extends State<_UsersTab>
                           ),
                           children: [
                             _UserDetailActions(
-                              connectionId: widget.connectionId,
+                              viewModel: viewModel,
                               account: account,
                               strings: widget.strings,
                               colorScheme: widget.colorScheme,
-                              onStatusChanged: widget.onRefresh,
                             ),
                           ],
                         ),
@@ -154,31 +151,28 @@ class _UsersTabState extends State<_UsersTab>
     );
   }
 
-  void _openCreateUserDialog(AppStrings strings, String connectionId) {
+  void _openCreateUserDialog(AppStrings strings, SystemAdminViewModel viewModel) {
     showDialog(
       context: context,
       builder: (context) => _CreateUserDialog(
-        connectionId: connectionId,
+        viewModel: viewModel,
         strings: strings,
-        onCreated: widget.onRefresh,
       ),
     );
   }
 }
 
 class _UserDetailActions extends StatefulWidget {
-  final String connectionId;
+  final SystemAdminViewModel viewModel;
   final LinuxUserAccount account;
   final AppStrings strings;
   final ColorScheme colorScheme;
-  final VoidCallback onStatusChanged;
 
   const _UserDetailActions({
-    required this.connectionId,
+    required this.viewModel,
     required this.account,
     required this.strings,
     required this.colorScheme,
-    required this.onStatusChanged,
   });
 
   @override
@@ -198,9 +192,7 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
   }
 
   Future<void> _loadStorageInfo() async {
-    final adminService = context.read<SystemAdminService>();
-    final size = await adminService.getUserHomeStorageUsage(
-        widget.connectionId, widget.account.homeDir);
+    final size = await widget.viewModel.getUserHomeStorageUsage(widget.account.homeDir);
     if (!mounted) return;
     setState(() {
       _storageUsed = size;
@@ -208,9 +200,7 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
   }
 
   Future<void> _loadSudoInfo() async {
-    final adminService = context.read<SystemAdminService>();
-    final isAdmin = await adminService.checkUserSudo(
-        widget.connectionId, widget.account.username);
+    final isAdmin = await widget.viewModel.checkUserSudo(widget.account.username);
     if (!mounted) return;
     setState(() {
       _isAdmin = isAdmin;
@@ -221,9 +211,7 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
   Future<void> _toggleSudoPrivilege() async {
     setState(() => _loadingSudo = true);
     try {
-      final admin = context.read<SystemAdminService>();
-      await admin.setUserSudo(
-          widget.connectionId, widget.account.username, !_isAdmin);
+      await widget.viewModel.setUserSudo(widget.account.username, !_isAdmin);
       await _loadSudoInfo();
     } catch (e) {
       if (!mounted) return;
@@ -303,13 +291,11 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
 
   Future<void> _toggleUserLock() async {
     try {
-      final admin = context.read<SystemAdminService>();
       if (widget.account.isLocked) {
-        await admin.unlockUser(widget.connectionId, widget.account.username);
+        await widget.viewModel.unlockUser(widget.account.username);
       } else {
-        await admin.lockUser(widget.connectionId, widget.account.username);
+        await widget.viewModel.lockUser(widget.account.username);
       }
-      widget.onStatusChanged();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -321,7 +307,7 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
     showDialog(
       context: context,
       builder: (context) => _ChangePasswordDialog(
-        connectionId: widget.connectionId,
+        viewModel: widget.viewModel,
         username: widget.account.username,
         strings: widget.strings,
       ),
@@ -329,10 +315,12 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
   }
 
   void _openHomeExplorer() {
+    final connId = widget.viewModel.connectionId;
+    if (connId == null) return;
     showDialog(
       context: context,
       builder: (context) => _HomeDirectoryExplorerDialog(
-        connectionId: widget.connectionId,
+        connectionId: connId,
         homeDir: widget.account.homeDir,
         strings: widget.strings,
       ),
@@ -343,7 +331,7 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
     showDialog(
       context: context,
       builder: (context) => _UserProcessesDialog(
-        connectionId: widget.connectionId,
+        viewModel: widget.viewModel,
         username: widget.account.username,
         strings: widget.strings,
       ),
@@ -353,12 +341,12 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
 
 // --- Change Password Dialog ---
 class _ChangePasswordDialog extends StatefulWidget {
-  final String connectionId;
+  final SystemAdminViewModel viewModel;
   final String username;
   final AppStrings strings;
 
   const _ChangePasswordDialog({
-    required this.connectionId,
+    required this.viewModel,
     required this.username,
     required this.strings,
   });
@@ -407,11 +395,10 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
 
     setState(() => _busy = true);
     try {
-      await context.read<SystemAdminService>().changePassword(
-            widget.connectionId,
-            widget.username,
-            newPwd,
-          );
+      await widget.viewModel.changePassword(
+        widget.username,
+        newPwd,
+      );
       if (!mounted) return;
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -606,12 +593,12 @@ class _HomeDirectoryExplorerDialogState
 
 // --- User Processes and Resource Usage Dialog ---
 class _UserProcessesDialog extends StatefulWidget {
-  final String connectionId;
+  final SystemAdminViewModel viewModel;
   final String username;
   final AppStrings strings;
 
   const _UserProcessesDialog({
-    required this.connectionId,
+    required this.viewModel,
     required this.username,
     required this.strings,
   });
@@ -633,9 +620,7 @@ class _UserProcessesDialogState extends State<_UserProcessesDialog> {
 
   Future<void> _loadProcesses() async {
     setState(() => _loading = true);
-    final admin = context.read<SystemAdminService>();
-    final list = await admin.getUserProcessesAndMemory(
-        widget.connectionId, widget.username);
+    final list = await widget.viewModel.getUserProcessesAndMemory(widget.username);
 
     // Sum memory
     int totalBytes = 0;
@@ -742,14 +727,12 @@ class _UserProcessesDialogState extends State<_UserProcessesDialog> {
 }
 
 class _CreateUserDialog extends StatefulWidget {
-  final String connectionId;
+  final SystemAdminViewModel viewModel;
   final AppStrings strings;
-  final VoidCallback onCreated;
 
   const _CreateUserDialog({
-    required this.connectionId,
+    required this.viewModel,
     required this.strings,
-    required this.onCreated,
   });
 
   @override
@@ -831,11 +814,9 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
 
     setState(() => _busy = true);
     try {
-      final admin = context.read<SystemAdminService>();
-      await admin.createUser(
-        widget.connectionId,
-        username: user,
-        password: pwd,
+      await widget.viewModel.createUser(
+        user,
+        pwd,
         shell: sh,
       );
       if (!mounted) return;
@@ -843,7 +824,6 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(widget.strings.userCreatedSuccess)),
       );
-      widget.onCreated();
     } catch (e) {
       if (!mounted) return;
       setState(() => _busy = false);

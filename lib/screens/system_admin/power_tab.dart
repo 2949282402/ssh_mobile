@@ -3,12 +3,12 @@ part of '../system_admin_screen.dart';
 class _PowerTab extends StatefulWidget {
   final AppStrings strings;
   final ColorScheme colorScheme;
-  final String connectionId;
+  final SystemAdminViewModel viewModel;
 
   const _PowerTab({
     required this.strings,
     required this.colorScheme,
-    required this.connectionId,
+    required this.viewModel,
   });
 
   @override
@@ -53,7 +53,7 @@ class _PowerTabState extends State<_PowerTab>
                   padding: const EdgeInsets.all(16),
                 ),
                 onPressed: () =>
-                    _confirmPowerAction('reboot', widget.connectionId),
+                    _confirmPowerAction('reboot'),
               ),
             ),
             const SizedBox(height: 16),
@@ -68,7 +68,7 @@ class _PowerTabState extends State<_PowerTab>
                   padding: const EdgeInsets.all(16),
                 ),
                 onPressed: () =>
-                    _confirmPowerAction('shutdown', widget.connectionId),
+                    _confirmPowerAction('shutdown'),
               ),
             ),
           ],
@@ -77,7 +77,7 @@ class _PowerTabState extends State<_PowerTab>
     );
   }
 
-  Future<void> _confirmPowerAction(String action, String connectionId) async {
+  Future<void> _confirmPowerAction(String action) async {
     final colorScheme = Theme.of(context).colorScheme;
     final language = context.read<AppSettings>().language;
     final strings = AppStrings(language);
@@ -104,17 +104,16 @@ class _PowerTabState extends State<_PowerTab>
     if (!mounted) return;
     if (confirm == true) {
       try {
-        final adminService = context.read<SystemAdminService>();
         if (action == 'reboot') {
-          await adminService.rebootServer(connectionId);
+          await widget.viewModel.rebootServer();
         } else {
-          await adminService.shutdownServer(connectionId);
+          await widget.viewModel.shutdownServer();
         }
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Command executed. Disconnecting...')),
         );
-        adminService.disconnect();
+        widget.viewModel.disconnect();
       } catch (e) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(

@@ -3,18 +3,12 @@ part of '../system_admin_screen.dart';
 class _PortsTab extends StatefulWidget {
   final AppStrings strings;
   final ColorScheme colorScheme;
-  final String connectionId;
-  final List<ListeningPort> ports;
-  final bool isLoading;
-  final RefreshCallback onRefresh;
+  final SystemAdminViewModel viewModel;
 
   const _PortsTab({
     required this.strings,
     required this.colorScheme,
-    required this.connectionId,
-    required this.ports,
-    required this.isLoading,
-    required this.onRefresh,
+    required this.viewModel,
   });
 
   @override
@@ -29,13 +23,17 @@ class _PortsTabState extends State<_PortsTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    if (widget.isLoading) {
+    final viewModel = widget.viewModel;
+    if (viewModel.loadingPorts) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (widget.ports.isEmpty) {
+    final id = viewModel.connectionId;
+    if (id == null) return const SizedBox.shrink();
+
+    if (viewModel.ports.isEmpty) {
       return RefreshIndicator(
-        onRefresh: widget.onRefresh,
+        onRefresh: () => viewModel.fetchPorts(id),
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
           children: const [
@@ -47,12 +45,12 @@ class _PortsTabState extends State<_PortsTab>
     }
 
     return RefreshIndicator(
-      onRefresh: widget.onRefresh,
+      onRefresh: () => viewModel.fetchPorts(id),
       child: ListView.builder(
         padding: const EdgeInsets.all(12),
-        itemCount: widget.ports.length,
+        itemCount: viewModel.ports.length,
         itemBuilder: (context, index) {
-          final p = widget.ports[index];
+          final p = viewModel.ports[index];
           return Card(
             child: ListTile(
               leading: Icon(

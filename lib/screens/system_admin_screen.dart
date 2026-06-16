@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../features/connection/models/connection.dart';
+import '../features/system_admin/viewmodels/system_admin_viewmodel.dart';
 import '../models/system_admin.dart';
 import '../services/app_settings.dart';
 import '../services/sftp_service.dart';
@@ -26,151 +27,10 @@ class SystemAdminScreen extends StatefulWidget {
 }
 
 class _SystemAdminScreenState extends State<SystemAdminScreen> {
-  static const _serversCollapsedStorageKey = 'system_admin_servers_collapsed';
-
-  bool _serversCollapsed = false;
-  bool _restoredServersCollapsed = false;
-
-  SystemAdminService? _adminService;
-  String? _lastConnectedId;
-
-  // Active user accounts
-  List<LinuxUserAccount> _accounts = [];
-  bool _loadingAccounts = false;
-
-  // Active tty sessions
-  List<ActiveSession> _sessions = [];
-  bool _loadingSessions = false;
-
-  // Systemd services
-  List<SystemdService> _services = [];
-  bool _loadingServices = false;
-
-  // Listening ports
-  List<ListeningPort> _ports = [];
-  bool _loadingPorts = false;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _adminService = context.read<SystemAdminService>();
-      _adminService!.addListener(_onAdminServiceChanged);
-      if (_adminService!.isConnected) {
-        _lastConnectedId = _adminService!.connectionId;
-        _refreshAllData();
-      }
-    });
-  }
-
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_restoredServersCollapsed) return;
-    _restoredServersCollapsed = true;
-    final stored = PageStorage.maybeOf(context)?.readState(
-      context,
-      identifier: _serversCollapsedStorageKey,
-    );
-    if (stored is bool) _serversCollapsed = stored;
-  }
-
-  @override
-  void dispose() {
-    _adminService?.removeListener(_onAdminServiceChanged);
-    super.dispose();
-  }
-
-  void _collapseServers() {
-    _setServersCollapsed(true);
-  }
-
-  void _expandServers() {
-    _setServersCollapsed(false);
-  }
-
-  void _setServersCollapsed(bool collapsed) {
-    if (_serversCollapsed == collapsed) return;
-    setState(() => _serversCollapsed = collapsed);
-    PageStorage.maybeOf(context)?.writeState(
-      context,
-      collapsed,
-      identifier: _serversCollapsedStorageKey,
-    );
-  }
-
-  void _onAdminServiceChanged() {
-    if (!mounted) return;
-    final service = _adminService;
-    if (service == null) return;
-
-    if (service.isConnected) {
-      if (_lastConnectedId != service.connectionId) {
-        _lastConnectedId = service.connectionId;
-        _refreshAllData();
-      }
-    } else {
-      _lastConnectedId = null;
-      setState(() {
-        _accounts.clear();
-        _sessions.clear();
-        _services.clear();
-        _ports.clear();
-      });
-    }
-  }
-
-  Future<void> _refreshAllData() async {
-    final id = _adminService?.connectionId;
-    if (id == null) return;
-    _fetchAccounts(id);
-    _fetchSessions(id);
-    _fetchServices(id);
-    _fetchPorts(id);
-  }
-
-  Future<void> _fetchAccounts(String connectionId) async {
-    setState(() => _loadingAccounts = true);
-    final adminService = context.read<SystemAdminService>();
-    final accounts = await adminService.getUserAccounts(connectionId);
-    if (!mounted) return;
-    setState(() {
-      _accounts = accounts;
-      _loadingAccounts = false;
-    });
-  }
-
-  Future<void> _fetchSessions(String connectionId) async {
-    setState(() => _loadingSessions = true);
-    final adminService = context.read<SystemAdminService>();
-    final sessions = await adminService.getActiveSessions(connectionId);
-    if (!mounted) return;
-    setState(() {
-      _sessions = sessions;
-      _loadingSessions = false;
-    });
-  }
-
-  Future<void> _fetchServices(String connectionId) async {
-    setState(() => _loadingServices = true);
-    final adminService = context.read<SystemAdminService>();
-    final services = await adminService.getSystemdServices(connectionId);
-    if (!mounted) return;
-    setState(() {
-      _services = services;
-      _loadingServices = false;
-    });
-  }
-
-  Future<void> _fetchPorts(String connectionId) async {
-    setState(() => _loadingPorts = true);
-    final adminService = context.read<SystemAdminService>();
-    final ports = await adminService.getListeningPorts(connectionId);
-    if (!mounted) return;
-    setState(() {
-      _ports = ports;
-      _loadingPorts = false;
-    });
+    context.read<SystemAdminViewModel>().restoreServersCollapsed(context);
   }
 
   @override
@@ -179,35 +39,22 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
       (settings) => settings.language,
     );
     final strings = AppStrings(language);
-    final storageReady = context.select<StorageService, bool>(
-      (storage) => storage.initialized,
-    );
-    final connections = context.select<StorageService, List<ConnectionConfig>>(
-      (storage) => storage.connections,
-    );
+    final viewModel = context.watch<SystemAdminViewModel>();
+    final storageReady = viewModel.storageInitialized;
+    final connections = viewModel.connections;
 
-    final selectedConnectionId = context.select<SystemAdminService, String?>(
-      (service) => service.connectionId,
-    );
-    final isConnecting = context.select<SystemAdminService, bool>(
-      (service) => service.isConnecting,
-    );
-    final isConnected = context.select<SystemAdminService, bool>(
-      (service) => service.isConnected,
-    );
-    final errorMessage = context.select<SystemAdminService, String?>(
-      (service) => service.errorMessage,
-    );
-    final isRoot = context.select<SystemAdminService, bool>(
-      (service) => service.isRoot,
-    );
+    final selectedConnectionId = viewModel.connectionId;
+    final isConnecting = viewModel.isConnecting;
+    final isConnected = viewModel.isConnected;
+    final errorMessage = viewModel.errorMessage;
+    final isRoot = viewModel.isRoot;
 
     final desktop = isDesktopLayout(context);
     final colorScheme = Theme.of(context).colorScheme;
 
     final selectedConnection =
         _selectedConnection(connections, selectedConnectionId);
-    final serversCollapsed = _serversCollapsed && connections.isNotEmpty;
+    final serversCollapsed = viewModel.serversCollapsed;
 
     if (!storageReady) {
       return const Center(
@@ -220,6 +67,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
     }
 
     final bodyContent = _buildMainContent(
+      viewModel,
       strings,
       colorScheme,
       desktop,
@@ -237,7 +85,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
           if (selectedConnectionId != null && isConnected && isRoot)
             IconButton(
               icon: const Icon(Icons.refresh),
-              onPressed: _refreshAllData,
+              onPressed: viewModel.refreshAllData,
               tooltip: strings.refreshAll,
             ),
         ],
@@ -256,12 +104,13 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                           busy: isConnecting,
                           connected: isConnected,
                           strings: strings,
-                          onExpand: _expandServers,
+                          onExpand: () => viewModel.setServersCollapsed(context, false),
                         )
                       : _AdminServerPane(
+                          viewModel: viewModel,
                           connections: connections,
                           strings: strings,
-                          onCollapse: _collapseServers,
+                          onCollapse: () => viewModel.setServersCollapsed(context, true),
                         ),
                 ),
                 VerticalDivider(
@@ -287,13 +136,14 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                           busy: isConnecting,
                           connected: isConnected,
                           strings: strings,
-                          onExpand: _expandServers,
+                          onExpand: () => viewModel.setServersCollapsed(context, false),
                         )
                       : _AdminMobileServerStrip(
                           key: const ValueKey('admin-server-expanded'),
+                          viewModel: viewModel,
                           connections: connections,
                           strings: strings,
-                          onCollapse: _collapseServers,
+                          onCollapse: () => viewModel.setServersCollapsed(context, true),
                         ),
                 ),
                 Divider(
@@ -321,6 +171,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
   }
 
   Widget _buildMainContent(
+    SystemAdminViewModel viewModel,
     AppStrings strings,
     ColorScheme colorScheme,
     bool desktop,
@@ -455,39 +306,27 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                 _UsersTab(
                   strings: strings,
                   colorScheme: colorScheme,
-                  connectionId: selectedConnectionId,
-                  accounts: _accounts,
-                  isLoading: _loadingAccounts,
-                  onRefresh: () => _fetchAccounts(selectedConnectionId),
+                  viewModel: viewModel,
                 ),
                 _SessionsTab(
                   strings: strings,
                   colorScheme: colorScheme,
-                  connectionId: selectedConnectionId,
-                  sessions: _sessions,
-                  isLoading: _loadingSessions,
-                  onRefresh: () => _fetchSessions(selectedConnectionId),
+                  viewModel: viewModel,
                 ),
                 _ServicesTab(
                   strings: strings,
                   colorScheme: colorScheme,
-                  connectionId: selectedConnectionId,
-                  services: _services,
-                  isLoading: _loadingServices,
-                  onRefresh: () => _fetchServices(selectedConnectionId),
+                  viewModel: viewModel,
                 ),
                 _PortsTab(
                   strings: strings,
                   colorScheme: colorScheme,
-                  connectionId: selectedConnectionId,
-                  ports: _ports,
-                  isLoading: _loadingPorts,
-                  onRefresh: () => _fetchPorts(selectedConnectionId),
+                  viewModel: viewModel,
                 ),
                 _PowerTab(
                   strings: strings,
                   colorScheme: colorScheme,
-                  connectionId: selectedConnectionId,
+                  viewModel: viewModel,
                 ),
               ],
             ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
 import '../services/app_settings.dart';
 import '../services/storage_service.dart';
 import '../widgets/overflow_scroll_text.dart';
@@ -14,55 +15,58 @@ class AiSkillsScreen extends StatefulWidget {
 
 class _AiSkillsScreenState extends State<AiSkillsScreen>
     with SingleTickerProviderStateMixin {
-  final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _descriptionController = TextEditingController();
-  final TextEditingController _contentController = TextEditingController();
   late final TabController _mobileTabs;
-  List<AiSkillRecord> _skills = const [];
-  String? _selectedId;
-  bool _enabled = true;
-  bool _loading = true;
-  bool _dirty = false;
-
-  AiSkillRecord? get _selectedSkill {
-    for (final skill in _skills) {
-      if (skill.id == _selectedId) return skill;
-    }
-    return null;
-  }
 
   @override
   void initState() {
     super.initState();
     _mobileTabs = TabController(length: 2, vsync: this);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadSkills());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<AiSkillsViewModel>().loadSkills();
+    });
   }
 
   @override
   void dispose() {
     _mobileTabs.dispose();
-    _nameController.dispose();
-    _descriptionController.dispose();
-    _contentController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadSkills() async {
-    final skills = await context.read<StorageService>().loadAiSkills();
-    if (!mounted) return;
-    setState(() {
-      _skills = skills;
-      _loading = false;
-    });
-    if (skills.isNotEmpty) _selectSkill(skills.first);
+  bool get _isCompactLayout {
+    final width = MediaQuery.maybeSizeOf(context)?.width;
+    return width != null && width < 760;
+  }
+
+  String _skillTemplate(String name, DateTime now) {
+    return '''---
+name: $name
+description: Describe when this skill should be used.
+---
+
+# $name
+
+## When To Use
+
+- Describe the trigger, scenario, or user request this skill supports.
+
+## Workflow
+
+1. Inspect the current context.
+2. Follow the project-specific steps.
+3. Update related references when behavior changes.
+
+## References
+
+- references/example.md
+
+<!-- Created ${now.toIso8601String()} -->
+''';
   }
 
   @override
   Widget build(BuildContext context) {
-    final language = context.select<AppSettings, AppLanguage>(
-      (settings) => settings.language,
-    );
-    final strings = _SkillStrings(language);
+    final viewModel = context.watch<AiSkillsViewModel>();
+    final strings = _SkillStrings(viewModel.language);
     final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
@@ -72,22 +76,30 @@ class _AiSkillsScreenState extends State<AiSkillsScreen>
           IconButton(
             tooltip: strings.newSkill,
             icon: const Icon(Icons.add_rounded),
-            onPressed: _newSkill,
+            onPressed: () {
+              viewModel.newSkill(
+                strings.defaultName,
+                _skillTemplate(strings.defaultName, DateTime.now()),
+              );
+              if (_isCompactLayout) {
+                _mobileTabs.animateTo(1);
+              }
+            },
           ),
           IconButton(
             tooltip: strings.save,
             icon: const Icon(Icons.save_outlined),
-            onPressed: _canSave ? () => _saveSkill(strings) : null,
+            onPressed: viewModel.canSave ? () => viewModel.saveSkill(strings.defaultName) : null,
           ),
         ],
       ),
-      body: _loading
+      body: viewModel.loading
           ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
           : LayoutBuilder(
               builder: (context, constraints) {
                 final wide = constraints.maxWidth >= 760;
-                final list = _buildSkillList(strings, colorScheme);
-                final editor = _buildEditor(strings, colorScheme);
+                final list = _buildSkillList(viewModel, strings, colorScheme);
+                final editor = _buildEditor(viewModel, strings, colorScheme);
                 if (wide) {
                   return Row(
                     children: [
@@ -126,14 +138,10 @@ class _AiSkillsScreenState extends State<AiSkillsScreen>
     );
   }
 
-  bool get _canSave {
-    return _nameController.text.trim().isNotEmpty ||
-        _descriptionController.text.trim().isNotEmpty ||
-        _contentController.text.trim().isNotEmpty;
-  }
+  Widget _buildSkillList(AiSkillsViewModel viewModel, _SkillStrings strings, ColorScheme colorScheme) {
+    final skills = viewModel.skills;
 
-  Widget _buildSkillList(_SkillStrings strings, ColorScheme colorScheme) {
-    if (_skills.isEmpty) {
+    if (skills.isEmpty) {
       return Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -150,7 +158,15 @@ class _AiSkillsScreenState extends State<AiSkillsScreen>
             ),
             const SizedBox(height: 16),
             FilledButton.icon(
-              onPressed: _newSkill,
+              onPressed: () {
+                viewModel.newSkill(
+                  strings.defaultName,
+                  _skillTemplate(strings.defaultName, DateTime.now()),
+                );
+                if (_isCompactLayout) {
+                  _mobileTabs.animateTo(1);
+                }
+              },
               icon: const Icon(Icons.add_rounded),
               label: Text(strings.newSkill),
             ),
@@ -161,11 +177,11 @@ class _AiSkillsScreenState extends State<AiSkillsScreen>
 
     return ListView.separated(
       padding: const EdgeInsets.all(8),
-      itemCount: _skills.length,
+      itemCount: skills.length,
       separatorBuilder: (_, __) => const SizedBox(height: 4),
       itemBuilder: (context, index) {
-        final skill = _skills[index];
-        final selected = skill.id == _selectedId;
+        final skill = skills[index];
+        final selected = skill.id == viewModel.selectedId;
         return ListTile(
           selected: selected,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -186,15 +202,20 @@ class _AiSkillsScreenState extends State<AiSkillsScreen>
           ),
           trailing: Switch(
             value: skill.enabled,
-            onChanged: (value) => _setSkillEnabled(skill, value),
+            onChanged: (value) => viewModel.setSkillEnabled(skill, value),
           ),
-          onTap: () => _selectSkill(skill),
+          onTap: () {
+            viewModel.selectSkill(skill);
+            if (_isCompactLayout) {
+              _mobileTabs.animateTo(1);
+            }
+          },
         );
       },
     );
   }
 
-  Widget _buildEditor(_SkillStrings strings, ColorScheme colorScheme) {
+  Widget _buildEditor(AiSkillsViewModel viewModel, _SkillStrings strings, ColorScheme colorScheme) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Align(
@@ -208,7 +229,7 @@ class _AiSkillsScreenState extends State<AiSkillsScreen>
                 children: [
                   Expanded(
                     child: Text(
-                      '${_selectedId == null ? strings.newSkill : strings.editSkill}${_dirty ? ' *' : ''}',
+                      '${viewModel.selectedId == null ? strings.newSkill : strings.editSkill}${viewModel.dirty ? ' *' : ''}',
                       style: const TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.w800,
@@ -218,45 +239,42 @@ class _AiSkillsScreenState extends State<AiSkillsScreen>
                   IconButton(
                     tooltip: strings.delete,
                     icon: const Icon(Icons.delete_outline),
-                    onPressed: _selectedSkill == null
+                    onPressed: viewModel.selectedSkill == null
                         ? null
-                        : () => _deleteSkill(strings),
+                        : () => _deleteSkill(viewModel, strings),
                   ),
                 ],
               ),
               const SizedBox(height: 12),
               TextField(
-                controller: _nameController,
+                controller: viewModel.nameController,
                 decoration: InputDecoration(labelText: strings.name),
-                onChanged: (_) => _markDirty(),
+                onChanged: (_) => viewModel.markDirty(),
               ),
               const SizedBox(height: 12),
               TextField(
-                controller: _descriptionController,
+                controller: viewModel.descriptionController,
                 minLines: 3,
                 maxLines: 5,
                 decoration: InputDecoration(
                   labelText: strings.description,
                   alignLabelWithHint: true,
                 ),
-                onChanged: (_) => _markDirty(),
+                onChanged: (_) => viewModel.markDirty(),
               ),
               const SizedBox(height: 12),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: Text(strings.available),
                 subtitle: Text(strings.availableHint),
-                value: _enabled,
+                value: viewModel.enabled,
                 onChanged: (value) {
-                  setState(() {
-                    _enabled = value;
-                    _dirty = true;
-                  });
+                  viewModel.updateEnabled(value);
                 },
               ),
               const SizedBox(height: 12),
               TextField(
-                controller: _contentController,
+                controller: viewModel.contentController,
                 minLines: 14,
                 maxLines: 26,
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
@@ -265,7 +283,7 @@ class _AiSkillsScreenState extends State<AiSkillsScreen>
                   helperText: strings.contentHelp,
                   alignLabelWithHint: true,
                 ),
-                onChanged: (_) => _markDirty(),
+                onChanged: (_) => viewModel.markDirty(),
               ),
               const SizedBox(height: 12),
               Container(
@@ -294,13 +312,18 @@ class _AiSkillsScreenState extends State<AiSkillsScreen>
                   alignment: WrapAlignment.end,
                   children: [
                     OutlinedButton.icon(
-                      onPressed: _newSkill,
+                      onPressed: () {
+                        viewModel.newSkill(
+                          strings.defaultName,
+                          _skillTemplate(strings.defaultName, DateTime.now()),
+                        );
+                      },
                       icon: const Icon(Icons.add_rounded),
                       label: Text(strings.newSkill),
                     ),
                     const SizedBox(width: 8),
                     FilledButton.icon(
-                      onPressed: _canSave ? () => _saveSkill(strings) : null,
+                      onPressed: viewModel.canSave ? () => viewModel.saveSkill(strings.defaultName) : null,
                       icon: const Icon(Icons.save_outlined),
                       label: Text(strings.save),
                     ),
@@ -314,98 +337,9 @@ class _AiSkillsScreenState extends State<AiSkillsScreen>
     );
   }
 
-  void _selectSkill(AiSkillRecord skill) {
-    setState(() {
-      _selectedId = skill.id;
-      _nameController.text = skill.name;
-      _descriptionController.text = skill.description;
-      _contentController.text = skill.content;
-      _enabled = skill.enabled;
-      _dirty = false;
-    });
-    if (_isCompactLayout) {
-      _mobileTabs.animateTo(1);
-    }
-  }
-
-  void _newSkill() {
-    final strings = _SkillStrings(context.read<AppSettings>().language);
-    final now = DateTime.now();
-    setState(() {
-      _selectedId = null;
-      _nameController.text = strings.defaultName;
-      _descriptionController.text = '';
-      _contentController.text = _skillTemplate(strings.defaultName, now);
-      _enabled = true;
-      _dirty = true;
-    });
-    if (_isCompactLayout) {
-      _mobileTabs.animateTo(1);
-    }
-  }
-
-  bool get _isCompactLayout {
-    final width = MediaQuery.maybeSizeOf(context)?.width;
-    return width != null && width < 760;
-  }
-
-  Future<void> _saveSkill(_SkillStrings strings) async {
-    final storage = context.read<StorageService>();
-    final now = DateTime.now();
-    final current = _selectedSkill;
-    final skill = current == null
-        ? AiSkillRecord(
-            id: 'skill-${now.microsecondsSinceEpoch}',
-            name: _nameController.text.trim().isEmpty
-                ? strings.defaultName
-                : _nameController.text.trim(),
-            description: _descriptionController.text.trim(),
-            content: _contentController.text,
-            enabled: _enabled,
-            createdAt: now,
-            updatedAt: now,
-          )
-        : current.copyWith(
-            name: _nameController.text.trim().isEmpty
-                ? strings.defaultName
-                : _nameController.text.trim(),
-            description: _descriptionController.text.trim(),
-            content: _contentController.text,
-            enabled: _enabled,
-            updatedAt: now,
-          );
-    await storage.saveAiSkill(skill);
-    final skills = await storage.loadAiSkills();
-    if (!mounted) return;
-    setState(() {
-      _skills = skills;
-      _selectedId = skill.id;
-      _dirty = false;
-    });
-    for (final item in skills) {
-      if (item.id == skill.id) {
-        _selectSkill(item);
-        break;
-      }
-    }
-  }
-
-  Future<void> _setSkillEnabled(AiSkillRecord skill, bool enabled) async {
-    final storage = context.read<StorageService>();
-    final updated = skill.copyWith(enabled: enabled, updatedAt: DateTime.now());
-    await storage.saveAiSkill(updated);
-    final skills = await storage.loadAiSkills();
-    if (!mounted) return;
-    setState(() => _skills = skills);
-    if (_selectedId == skill.id) {
-      _selectSkill(updated);
-    }
-  }
-
-  Future<void> _deleteSkill(_SkillStrings strings) async {
-    final skill = _selectedSkill;
+  Future<void> _deleteSkill(AiSkillsViewModel viewModel, _SkillStrings strings) async {
+    final skill = viewModel.selectedSkill;
     if (skill == null) return;
-    final storage = context.read<StorageService>();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -423,51 +357,9 @@ class _AiSkillsScreenState extends State<AiSkillsScreen>
         ],
       ),
     );
-    if (confirmed != true || !mounted) return;
-    await storage.deleteAiSkill(skill.id);
-    final skills = await storage.loadAiSkills();
-    if (!mounted) return;
-    setState(() {
-      _skills = skills;
-      _selectedId = null;
-      _nameController.clear();
-      _descriptionController.clear();
-      _contentController.clear();
-      _enabled = true;
-      _dirty = false;
-    });
-    if (skills.isNotEmpty) _selectSkill(skills.first);
-  }
-
-  void _markDirty() {
-    if (_dirty) return;
-    setState(() => _dirty = true);
-  }
-
-  String _skillTemplate(String name, DateTime now) {
-    return '''---
-name: $name
-description: Describe when this skill should be used.
----
-
-# $name
-
-## When To Use
-
-- Describe the trigger, scenario, or user request this skill supports.
-
-## Workflow
-
-1. Inspect the current context.
-2. Follow the project-specific steps.
-3. Update related references when behavior changes.
-
-## References
-
-- references/example.md
-
-<!-- Created ${now.toIso8601String()} -->
-''';
+    if (confirmed == true) {
+      await viewModel.deleteSkill();
+    }
   }
 }
 
