@@ -39,7 +39,7 @@ class TerminalShortcutPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final borderColor = colorScheme.outlineVariant;
-    final scale = mobileUiScaleFor(MediaQuery.of(context));
+    final scale = mobileUiScaleOf(context);
 
     return DecoratedBox(
       decoration: BoxDecoration(

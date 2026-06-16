@@ -14,8 +14,25 @@ class SshCredentials {
   });
 }
 
+class SshClientAuthOptions {
+  final List<SSHKeyPair>? identities;
+  final SSHPasswordRequestHandler? onPasswordRequest;
+  final SSHUserInfoRequestHandler? onUserInfoRequest;
+
+  const SshClientAuthOptions({
+    required this.identities,
+    required this.onPasswordRequest,
+    required this.onUserInfoRequest,
+  });
+}
+
 class SshClientFactory {
   final StorageService _storageService;
+  static final Map<_IdentityCacheKey, List<SSHKeyPair>> _identityCache = {};
+  static final RegExp _passwordPromptPattern = RegExp(
+    r'password|passphrase|pass phrase',
+    caseSensitive: false,
+  );
 
   const SshClientFactory(this._storageService);
 
@@ -41,6 +58,10 @@ class SshClientFactory {
       password: resolvedCredentials.password,
       privateKey: resolvedCredentials.privateKey,
     );
+    final authOptions = buildAuthOptions(
+      config: config,
+      credentials: resolvedCredentials,
+    );
     AppLogService.instance.info(
       'SshClientFactory: connecting socket',
       details:
@@ -56,11 +77,9 @@ class SshClientFactory {
       return SSHClient(
         socket,
         username: config.username,
-        identities: identitiesFor(config, resolvedCredentials),
-        onPasswordRequest: () {
-          if (config.authMethod == AuthMethod.privateKey) return null;
-          return resolvedCredentials.password!;
-        },
+        identities: authOptions.identities,
+        onPasswordRequest: authOptions.onPasswordRequest,
+        onUserInfoRequest: authOptions.onUserInfoRequest,
       );
     } catch (e, stackTrace) {
       AppLogService.instance.error(
@@ -74,7 +93,26 @@ class SshClientFactory {
     }
   }
 
-  List<SSHKeyPair>? identitiesFor(
+  static SshClientAuthOptions buildAuthOptions({
+    required ConnectionConfig config,
+    required SshCredentials credentials,
+  }) {
+    final password =
+        credentials.password?.isNotEmpty == true ? credentials.password : null;
+    final usesPassword = config.authMethod != AuthMethod.privateKey;
+    return SshClientAuthOptions(
+      identities: identitiesFor(config, credentials),
+      onPasswordRequest: usesPassword ? () => password : null,
+      onUserInfoRequest: usesPassword && password != null
+          ? (request) => keyboardInteractiveResponsesForPassword(
+                request,
+                password,
+              )
+          : null,
+    );
+  }
+
+  static List<SSHKeyPair>? identitiesFor(
     ConnectionConfig config,
     SshCredentials credentials,
   ) {
@@ -83,7 +121,61 @@ class SshClientFactory {
     if (!shouldUseKey || credentials.privateKey?.isNotEmpty != true) {
       return null;
     }
-    return SSHKeyPair.fromPem(credentials.privateKey!, credentials.password);
+    final key = _IdentityCacheKey(
+      privateKey: credentials.privateKey!,
+      password: credentials.password,
+    );
+    final cached = _identityCache[key];
+    if (cached != null) {
+      return cached;
+    }
+    final identities =
+        SSHKeyPair.fromPem(credentials.privateKey!, credentials.password);
+    _identityCache[key] = identities;
+    return identities;
+  }
+
+  static List<String>? keyboardInteractiveResponsesForPassword(
+    Object request,
+    String password,
+  ) {
+    if (password.isEmpty) return null;
+    final prompts = _keyboardInteractivePrompts(request);
+    if (prompts.isEmpty) return const [];
+
+    final canAnswer = prompts.every((prompt) {
+      final text = prompt.promptText.trim();
+      if (prompt.echo) return false;
+      if (prompts.length == 1) return true;
+      return text.isEmpty || _passwordPromptPattern.hasMatch(text);
+    });
+    if (!canAnswer) return null;
+    return List<String>.filled(prompts.length, password);
+  }
+
+  static List<_KeyboardInteractivePrompt> _keyboardInteractivePrompts(
+    Object request,
+  ) {
+    final dynamic dynamicRequest = request;
+    final prompts = dynamicRequest.prompts;
+    if (prompts is! Iterable) {
+      return const [];
+    }
+    return prompts
+        .map<_KeyboardInteractivePrompt?>((prompt) {
+          final dynamic dynamicPrompt = prompt;
+          final promptText = dynamicPrompt.promptText;
+          final echo = dynamicPrompt.echo;
+          if (promptText is! String || echo is! bool) {
+            return null;
+          }
+          return _KeyboardInteractivePrompt(
+            promptText: promptText,
+            echo: echo,
+          );
+        })
+        .whereType<_KeyboardInteractivePrompt>()
+        .toList(growable: false);
   }
 
   static void validateAuthSecrets({
@@ -133,4 +225,34 @@ class SshClientFactory {
         break;
     }
   }
+}
+
+class _IdentityCacheKey {
+  final String privateKey;
+  final String? password;
+
+  const _IdentityCacheKey({
+    required this.privateKey,
+    required this.password,
+  });
+
+  @override
+  bool operator ==(Object other) {
+    return other is _IdentityCacheKey &&
+        other.privateKey == privateKey &&
+        other.password == password;
+  }
+
+  @override
+  int get hashCode => Object.hash(privateKey, password);
+}
+
+class _KeyboardInteractivePrompt {
+  final String promptText;
+  final bool echo;
+
+  const _KeyboardInteractivePrompt({
+    required this.promptText,
+    required this.echo,
+  });
 }

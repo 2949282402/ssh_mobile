@@ -30,11 +30,13 @@ bool isMobileTargetPlatform() {
           defaultTargetPlatform == TargetPlatform.iOS);
 }
 
-double mobileUiScaleFor(MediaQueryData mediaQuery) {
+double mobileUiScaleForMetrics({
+  required Size size,
+  required double devicePixelRatio,
+}) {
   if (!isMobileTargetPlatform()) return 1.0;
 
-  final physicalShortestSide =
-      mediaQuery.size.shortestSide * mediaQuery.devicePixelRatio;
+  final physicalShortestSide = size.shortestSide * devicePixelRatio;
   // Android/iOS already normalize layout with dp/pt. This is only a narrow
   // correction for 1.5K-class phones whose OEM density bucket makes app UI
   // visibly larger than 2K-class phones of similar physical size.
@@ -43,6 +45,20 @@ double mobileUiScaleFor(MediaQueryData mediaQuery) {
 
   final ratio = (physicalShortestSide - 1240) / (1440 - 1240);
   return 0.82 + ratio * 0.10;
+}
+
+double mobileUiScaleFor(MediaQueryData mediaQuery) {
+  return mobileUiScaleForMetrics(
+    size: mediaQuery.size,
+    devicePixelRatio: mediaQuery.devicePixelRatio,
+  );
+}
+
+double mobileUiScaleOf(BuildContext context) {
+  return mobileUiScaleForMetrics(
+    size: MediaQuery.sizeOf(context),
+    devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
+  );
 }
 
 MediaQueryData adaptMobileMediaQuery(MediaQueryData mediaQuery) {

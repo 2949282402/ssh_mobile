@@ -209,7 +209,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
     AppStrings strings, {
     required int connIndex,
   }) {
-    final scale = mobileUiScaleFor(MediaQuery.of(context));
+    final scale = mobileUiScaleOf(context);
     final isActive = sessionSummary.hasConnected;
     final sessionCount = sessionSummary.count;
     final latestState = sessionSummary.latestState;

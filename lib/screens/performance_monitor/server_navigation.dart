@@ -403,7 +403,7 @@ class _MonitorServerTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final scale = mobileUiScaleFor(MediaQuery.of(context));
+    final scale = mobileUiScaleOf(context);
     final borderColor = selected
         ? colorScheme.primary.withValues(alpha: 0.54)
         : colorScheme.outlineVariant;
@@ -487,7 +487,7 @@ class _MonitorStatusIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final scale = mobileUiScaleFor(MediaQuery.of(context));
+    final scale = mobileUiScaleOf(context);
     final size = (compact ? 28.0 : 30.0) * scale;
     return Container(
       width: size,

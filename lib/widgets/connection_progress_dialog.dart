@@ -2,9 +2,16 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 
+const Duration _connectionProgressAnimationDuration = Duration(
+  milliseconds: 180,
+);
+
 Future<void> waitForConnectionProgressFrame() async {
   await WidgetsBinding.instance.endOfFrame;
-  await Future<void>.delayed(const Duration(milliseconds: 90));
+  // Let the entrance animation settle before SSH setup starts. Connection
+  // preparation can parse keys or hit secure storage and otherwise steals the
+  // spinner's first frames on the UI isolate.
+  await Future<void>.delayed(_connectionProgressAnimationDuration);
 }
 
 class ConnectionProgressDialog extends StatelessWidget {
@@ -26,7 +33,7 @@ class ConnectionProgressDialog extends StatelessWidget {
       child: Center(
         child: TweenAnimationBuilder<double>(
           tween: Tween(begin: 0, end: 1),
-          duration: const Duration(milliseconds: 180),
+          duration: _connectionProgressAnimationDuration,
           curve: Curves.easeOutCubic,
           builder: (context, value, child) {
             return Opacity(

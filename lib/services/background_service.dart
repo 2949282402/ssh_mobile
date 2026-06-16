@@ -8,6 +8,9 @@ import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../models/connection.dart';
+import 'ssh_client_factory.dart';
+
 /// Android/iOS 前台服务管理。
 ///
 /// 职责：
@@ -442,20 +445,27 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
         details: 'sessionId=$sessionId host=$host:$port',
       );
 
-      final identities = (authMethod == 'privateKey' || authMethod == 'both') &&
-              privateKey != null &&
-              privateKey.isNotEmpty
-          ? SSHKeyPair.fromPem(privateKey, password)
-          : null;
+      final authOptions = SshClientFactory.buildAuthOptions(
+        config: ConnectionConfig(
+          id: connectionId ?? sessionId,
+          name: name,
+          host: host,
+          port: port,
+          username: username,
+          authMethod: AuthMethod.fromName(authMethod),
+        ),
+        credentials: SshCredentials(
+          password: password,
+          privateKey: privateKey,
+        ),
+      );
 
       final client = SSHClient(
         socket,
         username: username,
-        identities: identities,
-        onPasswordRequest: () {
-          if (authMethod == 'privateKey') return null;
-          return password?.isNotEmpty == true ? password : null;
-        },
+        identities: authOptions.identities,
+        onPasswordRequest: authOptions.onPasswordRequest,
+        onUserInfoRequest: authOptions.onUserInfoRequest,
       );
 
       if (launchMode == 'tmux') {

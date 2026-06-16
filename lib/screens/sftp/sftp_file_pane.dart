@@ -358,7 +358,7 @@ class _SftpEntryList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scale = mobileUiScaleFor(MediaQuery.of(context));
+    final scale = mobileUiScaleOf(context);
     final snapshot = context.select<SftpService, _SftpEntriesSnapshot>(
       _SftpEntriesSnapshot.from,
     );

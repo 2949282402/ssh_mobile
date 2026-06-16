@@ -19,6 +19,15 @@ across sessions.
 
 ## Notes
 
+- 2026-06-16: On keyboard-heavy mobile flows, avoid `MediaQuery.of(context)`
+  in large server/file list rows when only size/density is needed. Prefer
+  narrow helpers such as `MediaQuery.sizeOf` +
+  `MediaQuery.devicePixelRatioOf` (`mobileUiScaleOf`) so keyboard
+  `viewInsets` changes do not rebuild whole card lists.
+- 2026-06-16: SSH password auth must also wire a keyboard-interactive fallback
+  for servers that do not offer plain `password`, and parsed private-key
+  identities are worth caching in memory to avoid repeat UI-isolate stalls
+  during connection setup.
 - 2026-05-18: Codex and Claude Code share SSH Mobile maintenance guidance
   through `.agents/skills/ssh-mobile-maintenance/SKILL.md` and
   `.claude/skills/ssh-mobile-maintenance/SKILL.md`. Use
