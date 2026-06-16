@@ -2,12 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
-import '../features/connection/models/connection.dart';
-import '../services/app_log_service.dart';
-import '../services/app_settings.dart';
-import '../core/services/ssh_client_factory.dart';
-import '../services/ssh_service.dart';
-import '../services/storage_service.dart';
+import '../models/connection.dart';
+import '../../../../services/app_log_service.dart';
+import '../../../../services/app_settings.dart';
+import '../viewmodels/connection_viewmodel.dart';
 
 class AddEditScreen extends StatefulWidget {
   final String? editId;
@@ -36,7 +34,6 @@ class _AddEditScreenState extends State<AddEditScreen> {
   ServerPlatform _serverPlatform = ServerPlatform.linux;
   bool _keepAlive = true;
   bool _obscurePassword = true;
-  bool _isSaving = false;
   bool _isLoadingSecrets = false;
 
   bool get isEditing => widget.editId != null;
@@ -64,8 +61,8 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   void _loadExistingConfig() {
-    final storage = context.read<StorageService>();
-    final config = storage.getConnection(widget.editId!);
+    final connectionViewModel = context.read<ConnectionViewModel>();
+    final config = connectionViewModel.getConnection(widget.editId!);
     if (config == null) return;
 
     _nameController.text = config.name;
@@ -92,9 +89,9 @@ class _AddEditScreenState extends State<AddEditScreen> {
   Future<void> _loadSecrets(String id) async {
     setState(() => _isLoadingSecrets = true);
 
-    final storage = context.read<StorageService>();
-    final password = await storage.getPassword(id);
-    final privateKey = await storage.getPrivateKey(id);
+    final connectionViewModel = context.read<ConnectionViewModel>();
+    final password = await connectionViewModel.getPassword(id);
+    final privateKey = await connectionViewModel.getPrivateKey(id);
 
     if (!mounted) return;
     _passwordController.text = password ?? '';
@@ -120,20 +117,22 @@ class _AddEditScreenState extends State<AddEditScreen> {
   @override
   Widget build(BuildContext context) {
     final strings = _strings(context);
+    final isSaving =
+        context.select<ConnectionViewModel, bool>((vm) => vm.isSaving);
     return Scaffold(
       appBar: AppBar(
         title: Text(isEditing ? strings.editConnection : strings.addConnection),
         actions: [
           TextButton.icon(
-            onPressed: _isSaving || _isLoadingSecrets ? null : _save,
-            icon: _isSaving
+            onPressed: isSaving || _isLoadingSecrets ? null : _save,
+            icon: isSaving
                 ? const SizedBox(
                     width: 16,
                     height: 16,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.check),
-            label: Text(_isSaving ? strings.saving : strings.save),
+            label: Text(isSaving ? strings.saving : strings.save),
           ),
         ],
       ),
@@ -553,15 +552,10 @@ class _AddEditScreenState extends State<AddEditScreen> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final ssh = context.read<SshService>();
-    final relatedWindowCount =
-        isEditing ? ssh.sessionCountForConnection(widget.editId!) : 0;
-
-    setState(() => _isSaving = true);
+    final connectionViewModel = context.read<ConnectionViewModel>();
 
     ConnectionConfig? config;
     try {
-      final storage = context.read<StorageService>();
       final effectiveLaunchMode = _serverPlatform == ServerPlatform.windows
           ? TerminalLaunchMode.ssh
           : _launchMode;
@@ -589,28 +583,17 @@ class _AddEditScreenState extends State<AddEditScreen> {
             : null,
       );
 
-      await _verifySshLogin(config);
-      if (!mounted) return;
+      final success = await connectionViewModel.verifyAndSaveConnection(
+        config: config,
+        isEditing: isEditing,
+        rawPassword: _passwordController.text,
+        rawPrivateKey: _privateKeyController.text,
+        confirmDisconnectCallback: _confirmDisconnectActiveWindows,
+      );
 
-      if (relatedWindowCount > 0) {
-        setState(() => _isSaving = false);
-        final confirmed = await _confirmDisconnectActiveWindows(
-          relatedWindowCount,
-        );
-        if (!confirmed || !mounted) return;
-        setState(() => _isSaving = true);
+      if (success && mounted) {
+        Navigator.pop(context, config.id);
       }
-
-      if (isEditing) {
-        await storage.updateConnection(config);
-        if (relatedWindowCount > 0) {
-          await ssh.disconnectSessionsForConnection(config.id);
-        }
-      } else {
-        await storage.addConnection(config);
-      }
-
-      if (mounted) Navigator.pop(context, config.id);
     } catch (e, stackTrace) {
       AppLogService.instance.error(
         'Failed to save connection config or verify SSH login',
@@ -623,25 +606,6 @@ class _AddEditScreenState extends State<AddEditScreen> {
       if (mounted) {
         await _showSaveError(e);
       }
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
-    }
-  }
-
-  Future<void> _verifySshLogin(ConnectionConfig config) async {
-    final factory = SshClientFactory(context.read<StorageService>());
-    final client = await factory.connectClient(
-      config,
-      timeout: const Duration(seconds: 12),
-      credentials: SshCredentials(
-        password: config.password,
-        privateKey: config.privateKey,
-      ),
-    );
-    try {
-      await client.ping().timeout(const Duration(seconds: 8));
-    } finally {
-      client.close();
     }
   }
 

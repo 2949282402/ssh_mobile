@@ -5,11 +5,11 @@ extension _HomeScreenStateServerList on _HomeScreenState {
     BuildContext context,
     AppStrings strings,
   ) {
-    final storageReady = context.select<StorageService, bool>(
-      (storage) => storage.initialized,
+    final storageReady = context.select<ConnectionViewModel, bool>(
+      (vm) => vm.isLoading == false,
     );
-    final connections = context.select<StorageService, List<ConnectionConfig>>(
-      (storage) => storage.connections,
+    final connections = context.select<ConnectionViewModel, List<ConnectionConfig>>(
+      (vm) => vm.connections,
     );
     return connections.isEmpty
         ? storageReady
@@ -122,7 +122,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                   ),
                   onReorder: (oldIndex, newIndex) {
                     context
-                        .read<StorageService>()
+                        .read<ConnectionViewModel>()
                         .reorderConnections(oldIndex, newIndex);
                   },
                 ),
@@ -838,7 +838,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
 
   void _confirmDelete(BuildContext context, ConnectionConfig conn) {
     final strings = AppStrings(context.read<AppSettings>().language);
-    final storage = context.read<StorageService>();
+    final storage = context.read<ConnectionViewModel>();
     final ssh = context.read<SshService>();
     final sftp = context.read<SftpService>();
     final performance = context.read<PerformanceMonitorService>();
@@ -919,7 +919,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
       ),
     );
     if (confirmed != true || !context.mounted) return;
-    final storage = context.read<StorageService>();
+    final storage = context.read<ConnectionViewModel>();
     final ssh = context.read<SshService>();
     final sftp = context.read<SftpService>();
     final performance = context.read<PerformanceMonitorService>();
