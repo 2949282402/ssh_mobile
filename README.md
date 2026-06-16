@@ -15,6 +15,7 @@ SSH Mobile is a Flutter-based cross-platform SSH / SFTP client for long-running 
 
 ## Highlights
 
+- MVVM 架构：`lib/main.dart` 负责依赖装配，`lib/features/*` 负责 feature 状态和动作，`lib/services/*` 负责协议与存储基础设施。
 - SSH 连接管理：支持密码、私钥、私钥密码、跳板机和服务器平台选择。
 - 多终端窗口：同一服务器可创建多个窗口，窗口名固定，用于稳定绑定 tmux 会话。
 - SFTP：支持目录浏览、上传、下载、文本编辑、文件预览和输入名称确认删除。
@@ -27,11 +28,14 @@ SSH Mobile is a Flutter-based cross-platform SSH / SFTP client for long-running 
 
 ## Project Structure
 
-大型页面和服务普遍使用 Dart `part` 文件拆分，维护时优先沿用现有特征目录结构。
+当前仓库采用 feature-first 的 MVVM 结构。新增业务优先落在对应 feature，而不是继续把状态堆到 screen 类里。
 
-- `lib/screens/`: 页面入口和对应的 `home/`、`llm_chat/`、`performance_monitor/`、`sftp/`、`terminal/` 等拆分目录
-- `lib/services/`: SSH、SFTP、LLM、AI tools、监控、存储及配套子目录 `ai_tool/`、`llm_chat/`、`storage/`
-- `lib/models/`: 连接等核心数据模型
+- `lib/main.dart`: 应用启动和 `MultiProvider` 装配入口，注册基础 service 与 feature ViewModel。
+- `lib/features/`: feature 自有目录。当前重点包括 `connection/models|viewmodels|views`、`ai_chat/viewmodels|services`、`settings/viewmodels`、`performance/viewmodels`、`sftp/viewmodels`、`terminal/viewmodels`。
+- `lib/screens/`: 导航壳、页面入口和基于 Dart `part` 的复合 UI 目录，例如 `home/`、`llm_chat/`、`performance_monitor/`、`sftp/`、`terminal/`。这些 screen 主要负责布局、路由和少量瞬时 UI 状态。
+- `lib/services/`: SSH、SFTP、LLM、AI tools、监控、存储等基础设施与 repository-style service，子目录包括 `ai_tool/`、`client_webview/`、`llm_chat/`、`ssh/`、`sftp/`、`storage/`。
+- `lib/core/services/`: 更底层的跨 feature 服务与工厂，例如 `ssh_client_factory.dart`、`data_protection_service.dart`。
+- `lib/models/`: 仍未迁入 feature 的共享模型。
 - `lib/theme/`, `lib/utils/`, `lib/widgets/`: 主题、工具和复用组件
 - `assets/`: 静态资源
 - `docs/`: 设计与维护文档
@@ -187,8 +191,9 @@ AI 聊天的 tool 调用现在有按单次请求计算的预算保护：默认�
 
 #### Agent Runtime
 
-Recent agent architecture upgrades in the Flutter client:
+Current agent architecture in the Flutter client:
 
+- `lib/screens/llm_chat_screen.dart` 保持页面组合与路由职责，`lib/features/ai_chat/viewmodels/ai_chat_viewmodel.dart` 负责聊天状态与动作调度，`lib/features/ai_chat/services/` 承担上下文构建、生成执行、状态翻译和 metrics 持久化等非 UI 逻辑。
 - `ChatOrchestrator` and `ChatContextAssembler` now own RAG injection, approved-plan execution context, assistant trace compaction, and todo step finalization instead of spreading prompt assembly across UI code.
 - AI settings now support `mainModel`, `helperModel`, `auditModel`, and a fallback policy so lightweight helper and audit turns can run on cheaper/faster models while the main assistant keeps the primary tool loop.
 - `ToolExposureRouter` trims the tool set per request based on plan mode, approved plans, selected servers, and WebView availability to reduce prompt noise.

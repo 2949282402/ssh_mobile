@@ -7,10 +7,13 @@ description: Use when modifying or debugging this SSH Mobile Flutter project, es
 
 ## Quick Start
 
-Before changing code, inspect the existing pattern in `lib/screens/` and
-`lib/services/`. Most large screens and services are split with `part` files
-under feature folders, so follow the nearest feature's composition style rather
-than adding new flat files. Keep changes narrow and run validation afterward.
+Before changing code, inspect the nearest feature under `lib/features/` plus
+the coordinating page in `lib/screens/`. The project now uses a feature-first
+MVVM split: feature-owned state/actions live in `viewmodels`, feature-owned
+models/forms live in `models` or `views`, large page shells still use Dart
+`part` files under `lib/screens/`, and protocol/storage infrastructure stays in
+`lib/services/` plus `lib/core/services/`. Keep changes narrow and run
+validation afterward.
 Resolve the local Flutter SDK dynamically; different machines may use different
 SDK locations:
 
@@ -65,9 +68,28 @@ or maintenance lesson should be shared across Codex and Claude Code sessions.
 
 ## Current Product Shape
 
+### Connections and Terminal
+
+Primary entry points are `lib/features/connection/models/connection.dart`,
+`lib/features/connection/viewmodels/connection_viewmodel.dart`,
+`lib/features/connection/views/add_edit_screen.dart`,
+`lib/features/terminal/viewmodels/terminal_viewmodel.dart`,
+`lib/screens/home_screen.dart`, and `lib/screens/terminal_screen.dart` with
+their `lib/screens/home/` and `lib/screens/terminal/` part files.
+
+- Keep saved-connection CRUD, validation, and verify-before-save flow in
+  `ConnectionViewModel` plus repository/service seams rather than burying that
+  logic in page widgets.
+- Terminal session orchestration belongs in `TerminalViewModel` and
+  `SshService`; keep screen state limited to layout, route args, and short-lived
+  UI affordances.
+- Window names stay stable because they bind tmux or plain-session restoration
+  state.
+
 ### LLM Chat and Tools
 
-Primary entry points are `lib/services/llm_chat_service.dart`,
+Primary entry points are `lib/features/ai_chat/viewmodels/ai_chat_viewmodel.dart`,
+`lib/features/ai_chat/services/`, `lib/services/llm_chat_service.dart`,
 `lib/services/ai_tool_service.dart`, and `lib/screens/llm_chat_screen.dart`
 with its `lib/screens/llm_chat/` part files.
 
@@ -107,8 +129,9 @@ with its `lib/screens/llm_chat/` part files.
 
 ### SFTP
 
-Primary entry points are `lib/services/sftp_service.dart`,
-`lib/screens/sftp_screen.dart`, and `lib/screens/sftp/`.
+Primary entry points are `lib/features/sftp/viewmodels/sftp_viewmodel.dart`,
+`lib/services/sftp_service.dart`, `lib/screens/sftp_screen.dart`, and
+`lib/screens/sftp/`.
 
 - Keep multi-server switching warm when practical.
 - Restore the last remote path after reconnect.
@@ -121,7 +144,9 @@ Primary entry points are `lib/services/sftp_service.dart`,
 
 ### Performance Monitor
 
-Primary entry points are `lib/services/performance_monitor_service.dart`,
+Primary entry points are
+`lib/features/performance/viewmodels/performance_viewmodel.dart`,
+`lib/services/performance_monitor_service.dart`,
 `lib/services/server_status_probe.dart`,
 `lib/screens/performance_monitor_screen.dart`, and
 `lib/screens/performance_monitor/`.
@@ -146,6 +171,11 @@ Primary entry points are `lib/services/performance_monitor_service.dart`,
 
 ### Navigation and Settings
 
+- `lib/main.dart` composes infrastructure services and feature ViewModels
+  through `MultiProvider`.
+- `lib/features/settings/viewmodels/settings_viewmodel.dart` bridges
+  `AppSettings` plus `StorageService`, while `lib/screens/home_screen.dart`
+  remains the navigation shell and settings entry surface.
 - Main page order is AI, Servers, SFTP, Performance Monitor, then Logs.
 - App launch still lands on Servers even though AI is the first navigation item.
 - The shell has no global top app bar. App settings open from the AI page's
@@ -172,4 +202,6 @@ was already built.
   streaming, DeepSeek errors, SFTP reconnects, navigation animation, README
   encoding, or Android install/debug issues.
 - Before finishing a code-change task, check whether `README.md` or this skill
-  needs to change.
+  needs to change. When citing entry points, prefer the current
+  `lib/features/*` ViewModel/view path plus the coordinating screen/service over
+  older screen-only descriptions.

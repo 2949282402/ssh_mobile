@@ -34,17 +34,33 @@ D:/coding/ssh_mobile_android/
 ssh-mobile-native/
 ```
 
-当前 Flutter 项目只作为功能参考。很多大页面已经拆成 `part` 结构，所以你主要对照这些当前入口页和服务文件理解业务：
+当前 Flutter 项目只作为功能参考。它已经重构为 feature-first 的 MVVM：`lib/features/*` 放模型、ViewModel 和 feature 自有 view，`lib/screens/*` 保留导航壳与复合页面入口，`lib/services/*` 负责 SSH / SFTP / LLM / 存储等基础设施。你在做 Android 原生版时，应该先看“状态和动作在谁手里”，再看具体页面怎么摆。
+
+先看 MVVM / feature 层：
 
 | 当前 Flutter 文件 | 你要在 Android 原生版实现的功能 |
 | --- | --- |
-| `lib/models/connection.dart` | 服务器配置模型 |
-| `lib/services/storage_service.dart` | 本地存储、密钥、备份 |
+| `lib/main.dart` | Provider 装配入口，决定全局依赖怎么注入 |
+| `lib/features/connection/models/connection.dart` | 服务器配置模型 |
+| `lib/features/connection/viewmodels/connection_viewmodel.dart` | 服务器列表、保存、删除、校验和 SSH 验证状态 |
+| `lib/features/connection/views/add_edit_screen.dart` | 服务器新增/编辑表单 |
+| `lib/features/settings/viewmodels/settings_viewmodel.dart` | 语言、主题、字体、SFTP 限制和密钥缓存设置 |
+| `lib/features/terminal/viewmodels/terminal_viewmodel.dart` | 终端会话级状态与动作 |
+| `lib/features/sftp/viewmodels/sftp_viewmodel.dart` | SFTP 连接、路径、目录项和文件操作状态 |
+| `lib/features/performance/viewmodels/performance_viewmodel.dart` | 监控页 tab、选中服务器和采样状态 |
+| `lib/features/ai_chat/viewmodels/ai_chat_viewmodel.dart` | AI 聊天会话、流式输出、审批和工具运行状态 |
+| `lib/features/ai_chat/services/` | AI 聊天上下文构建、生成执行、消息映射、token 估算和 metrics 持久化 |
+
+再看基础设施和页面壳：
+
+| 当前 Flutter 文件 | 你要在 Android 原生版实现的功能 |
+| --- | --- |
+| `lib/services/storage_service.dart` | 本地存储、密钥、备份和多个 repository 合同实现 |
 | `lib/services/ssh_service.dart` | SSH 会话、多窗口、tmux |
 | `lib/services/sftp_service.dart` | SFTP 文件管理 |
 | `lib/services/performance_monitor_service.dart` | 性能监控 |
 | `lib/services/server_status_probe.dart` | Linux / Windows 只读状态命令和解析 |
-| `lib/services/llm_chat_service.dart` | AI 流式聊天 |
+| `lib/services/llm_chat_service.dart` | AI 流式聊天网络层 |
 | `lib/services/ai_tool_service.dart` | AI tools 和命令审批 |
 | `lib/services/client_system_tool_service.dart` | 手机本机工具 |
 | `lib/services/client_webview_service.dart` | 聊天绑定的客户端 WebView 状态 |
@@ -52,17 +68,16 @@ ssh-mobile-native/
 | `lib/services/rag_service.dart` | RAG 知识库 |
 | `lib/services/system_admin_service.dart` | 系统管理 |
 | `lib/services/app_log_service.dart` | 开发日志 |
-| `lib/screens/home_screen.dart` | 主导航和设置 |
-| `lib/screens/add_edit_screen.dart` | 服务器新增/编辑 |
+| `lib/screens/home_screen.dart` | 主导航壳、服务器列表和设置入口 |
 | `lib/screens/startup_screen.dart` | 启动页 |
-| `lib/screens/terminal_screen.dart` | 终端页 |
+| `lib/screens/terminal_screen.dart` | 终端页入口 |
 | `lib/screens/terminal_windows_screen.dart` | 终端窗口总览 |
 | `lib/screens/terminal_history_screen.dart` | 终端历史 |
-| `lib/screens/sftp_screen.dart` | SFTP 页 |
+| `lib/screens/sftp_screen.dart` | SFTP 页入口 |
 | `lib/screens/sftp_editor_screen.dart` | 远程文本编辑 |
 | `lib/screens/sftp_file_viewer_screen.dart` | 文件预览 |
-| `lib/screens/performance_monitor_screen.dart` | 性能页 |
-| `lib/screens/llm_chat_screen.dart` | AI 页 |
+| `lib/screens/performance_monitor_screen.dart` | 性能页入口 |
+| `lib/screens/llm_chat_screen.dart` | AI 页入口 |
 | `lib/screens/ai_skills_screen.dart` | 自定义 AI Skills 管理 |
 | `lib/screens/client_webview_screen.dart` | 聊天绑定的客户端 WebView |
 | `lib/screens/developer_log_screen.dart` | 开发日志 |
