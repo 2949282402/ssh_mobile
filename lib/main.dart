@@ -9,6 +9,7 @@ import 'features/settings/viewmodels/settings_viewmodel.dart';
 import 'features/performance/viewmodels/performance_viewmodel.dart';
 import 'features/sftp/viewmodels/sftp_viewmodel.dart';
 import 'features/terminal/viewmodels/terminal_viewmodel.dart';
+import 'features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
 import 'screens/ai_skills_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/performance_monitor_screen.dart';
@@ -131,6 +132,17 @@ Future<void> main() async {
             ChangeNotifierProvider(
               create: (context) => TerminalViewModel(
                 sshService: context.read<SshService>(),
+              ),
+            ),
+            ChangeNotifierProvider(
+              create: (context) => AiChatViewModel(
+                storageService: context.read<StorageService>(),
+                sshService: context.read<SshService>(),
+                sftpService: context.read<SftpService>(),
+                performanceMonitorService: context.read<PerformanceMonitorService>(),
+                playbookService: context.read<PlaybookService>(),
+                ragService: context.read<RagService>(),
+                appSettings: context.read<AppSettings>(),
               ),
             ),
           ],

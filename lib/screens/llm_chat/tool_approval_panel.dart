@@ -1,19 +1,7 @@
 part of '../llm_chat_screen.dart';
 
-class _PendingToolApproval {
-  final String chatId;
-  final AiToolApprovalRequest request;
-  final Completer<AiToolApprovalDecision> completer;
-
-  const _PendingToolApproval({
-    required this.chatId,
-    required this.request,
-    required this.completer,
-  });
-}
-
 class _ToolApprovalPanel extends StatelessWidget {
-  final _PendingToolApproval pending;
+  final PendingToolApproval pending;
   final _AiStrings strings;
   final VoidCallback onApprove;
   final VoidCallback onReject;

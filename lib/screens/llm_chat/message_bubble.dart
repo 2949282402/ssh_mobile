@@ -1,14 +1,5 @@
 part of '../llm_chat_screen.dart';
 
-class _StreamingAssistantTarget {
-  final String chatId;
-  final DateTime assistantCreatedAt;
-
-  const _StreamingAssistantTarget({
-    required this.chatId,
-    required this.assistantCreatedAt,
-  });
-}
 
 class _MessageBubble extends StatelessWidget {
   final String chatId;
@@ -37,7 +28,7 @@ class _MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final state = context.findAncestorStateOfType<_LlmChatScreenState>();
+    final state = context.findAncestorStateOfType<_LlmChatScreenBodyState>();
     final activeChat = state?._activeChat;
     final isLatestAssistant = activeChat != null &&
         activeChat.messages.lastIndexWhere((m) => m.role == 'assistant') ==
@@ -263,7 +254,7 @@ class _MessageBubble extends StatelessWidget {
         child: FilledButton.icon(
           onPressed: () {
             final state =
-                context.findAncestorStateOfType<_LlmChatScreenState>();
+                context.findAncestorStateOfType<_LlmChatScreenBodyState>();
             if (state == null) return;
             state.approvePlanAndExecute(message.createdAt);
             return;

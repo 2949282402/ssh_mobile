@@ -11,17 +11,15 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'client_webview_screen.dart';
+import '../features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
 import '../features/playbook/models/playbook.dart';
 import '../services/ai_tool_service.dart';
 import '../services/agent_model_profile.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
-import '../services/chat_context_assembler.dart';
-import '../services/chat_orchestrator.dart';
 import '../services/client_webview_service.dart';
 import '../services/llm_chat_service.dart';
 import '../services/multi_agent_coordinator.dart';
-import '../services/operational_memory_retriever.dart';
 import '../services/performance_monitor_service.dart';
 import '../services/performance_monitor_tool_service.dart';
 import '../services/sftp_service.dart';
@@ -29,7 +27,6 @@ import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
 import '../services/playbook_service.dart';
 import '../services/rag_service.dart';
-import '../utils/text_chunker.dart';
 import '../widgets/overflow_scroll_text.dart';
 
 part 'llm_chat/assistant_run_indicator.dart';
@@ -43,24 +40,12 @@ part 'llm_chat/chat_slash_commands.dart';
 part 'llm_chat/chat_attachments.dart';
 part 'llm_chat/chat_rag_sheet.dart';
 part 'llm_chat/chat_generation.dart';
-part 'llm_chat/chat_token_compression.dart';
-part 'llm_chat/chat_controller_ops.dart';
 part 'llm_chat/prompt_customizer_dialog.dart';
 
 const List<String> _defaultModels = [
   'deepseek-v4-flash',
   'deepseek-v4-pro',
 ];
-
-class _ToolOption {
-  final String name;
-  final String description;
-
-  const _ToolOption({
-    required this.name,
-    required this.description,
-  });
-}
 
 @visibleForTesting
 List<String> resolveFetchedModelOptions({
@@ -135,7 +120,7 @@ String buildApprovedPlanExecutionContext({
   ].join('\n');
 }
 
-class LlmChatScreen extends StatefulWidget {
+class LlmChatScreen extends StatelessWidget {
   final bool active;
   final ValueChanged<bool>? onHistoryVisibilityChanged;
   final String? initialText;
@@ -151,11 +136,44 @@ class LlmChatScreen extends StatefulWidget {
     String textContent,
     List<AiChatAttachment> attachments,
   ) {
-    return _ChatControllerOps.buildMultipartContent(textContent, attachments);
+    return AiChatViewModel.buildMultipartContent(textContent, attachments);
   }
 
   @override
-  State<LlmChatScreen> createState() => _LlmChatScreenState();
+  Widget build(BuildContext context) {
+    return ChangeNotifierProvider<AiChatViewModel>(
+      create: (context) => AiChatViewModel(
+        storageService: context.read<StorageService>(),
+        sshService: context.read<SshService>(),
+        sftpService: context.read<SftpService>(),
+        performanceMonitorService: context.read<PerformanceMonitorService>(),
+        playbookService: context.read<PlaybookService>(),
+        ragService: context.read<RagService>(),
+        appSettings: context.read<AppSettings>(),
+      )..loadInitialDraft(),
+      child: _LlmChatScreenBody(
+        active: active,
+        onHistoryVisibilityChanged: onHistoryVisibilityChanged,
+        initialText: initialText,
+      ),
+    );
+  }
+}
+
+class _LlmChatScreenBody extends StatefulWidget {
+  final bool active;
+  final ValueChanged<bool>? onHistoryVisibilityChanged;
+  final String? initialText;
+
+  const _LlmChatScreenBody({
+    super.key,
+    required this.active,
+    this.onHistoryVisibilityChanged,
+    this.initialText,
+  });
+
+  @override
+  State<_LlmChatScreenBody> createState() => _LlmChatScreenBodyState();
 }
 
 extension _AiMessageActionStrings on _AiStrings {
@@ -239,9 +257,9 @@ extension _AiRunStatusStrings on _AiStrings {
   }
 }
 
-class _LlmChatScreenState extends State<LlmChatScreen>
+class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     with
-        AutomaticKeepAliveClientMixin<LlmChatScreen>,
+        AutomaticKeepAliveClientMixin<_LlmChatScreenBody>,
         SingleTickerProviderStateMixin {
   static const double _scrollBottomDistance = 48;
   final TextEditingController _inputController = TextEditingController();
@@ -250,40 +268,69 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   late final AnimationController _historySlideController;
   Animation<double>? _historySlideAnimation;
   final ValueNotifier<double> _historyPanelExtent = ValueNotifier(0);
-  List<AiChatRecord> _chats = const [];
-  List<AiChatRecord> _savedHistoryChats = const [];
-  String? _activeChatId;
-  _PendingToolApproval? _pendingApproval;
-  LlmCancellationToken? _activeCancellationToken;
-  int _contextWindowTokens = AiContextWindowSize.k259;
-  bool _loading = true;
-  bool _settingsLoadStarted = false;
-  bool _historyLoadStarted = false;
-  bool _historyLoading = false;
-  bool _sending = false;
   bool _toolsExpanded = false;
   bool _isUserAtBottom = true;
-  final Set<String> _selectedConnectionIds = {};
-  final Map<String, Set<String>> _chatAllowedTools = {};
-  final Set<String> _pendingForceCompressionChats = {};
-  final List<AiChatAttachment> _pendingAttachments = [];
-  String? _contextTokenCacheKey;
-  String? _contextTokenCacheChatId;
-  int _cachedContextTokens = 0;
-  DateTime _lastContextTokenEstimateAt = DateTime.fromMillisecondsSinceEpoch(0);
   bool _scrollToBottomScheduled = false;
   bool _pendingScrollJump = false;
-  final ValueNotifier<String> _streamingAssistantText =
-      ValueNotifier<String>('');
-  final ValueNotifier<String> _streamingAssistantStatus =
-      ValueNotifier<String>('');
-  _StreamingAssistantTarget? _streamingAssistantTarget;
+  StreamSubscription? _scrollSubscription;
 
-  AiChatRecord? get _activeChat {
-    for (final chat in _chats) {
-      if (chat.id == _activeChatId) return chat;
+  AiChatRecord? get _activeChat => context.read<AiChatViewModel>().activeChat;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialText != null && widget.initialText!.isNotEmpty) {
+      _inputController.text = widget.initialText!;
     }
-    return _chats.isEmpty ? null : _chats.first;
+    _checkPendingDiagnosticPrompt();
+    _inputFocusNode = FocusNode(onKeyEvent: _handleInputKeyEvent);
+    _inputFocusNode.addListener(_onInputFocusChanged);
+    _historySlideController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 240),
+    )..addListener(() {
+        final animation = _historySlideAnimation;
+        if (animation == null || !mounted) return;
+        _setHistoryPanelExtent(animation.value);
+      });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final viewModel = context.read<AiChatViewModel>();
+      _scrollSubscription = viewModel.scrollRequests.listen((_) {
+        _scrollToBottom();
+      });
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _LlmChatScreenBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && !oldWidget.active) {
+      _scrollToBottom(jump: true);
+    }
+    if (widget.active) {
+      _checkPendingDiagnosticPrompt();
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollSubscription?.cancel();
+    _historySlideController.dispose();
+    _historyPanelExtent.dispose();
+    _inputFocusNode.removeListener(_onInputFocusChanged);
+    _inputFocusNode.dispose();
+    _inputController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void sendDirectCommand(String text) {
+    final viewModel = context.read<AiChatViewModel>();
+    if (viewModel.sending) return;
+    final strings = _AiStrings(context.read<AppSettings>().language);
+    _sendText(context, strings, text: text, clearInput: true);
   }
 
   void _setUserAtBottom(bool atBottom) {
@@ -293,24 +340,6 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       return;
     }
     setState(() => _isUserAtBottom = atBottom);
-  }
-
-  bool _isNearBottom(ScrollMetrics metrics) {
-    return (metrics.maxScrollExtent - metrics.pixels) <= _scrollBottomDistance;
-  }
-
-  void _updateUserScrollPosition(ScrollMetrics metrics) {
-    _setUserAtBottom(_isNearBottom(metrics));
-  }
-
-  bool _shouldShowJumpToBottomButton() {
-    if (!_sending) return false;
-    if (!_scrollController.hasClients) return false;
-    if (_isUserAtBottom) return false;
-    if (_scrollController.position.maxScrollExtent <= _scrollBottomDistance) {
-      return false;
-    }
-    return true;
   }
 
   void _checkPendingDiagnosticPrompt() {
@@ -333,147 +362,6 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   }
 
   @override
-  void initState() {
-    super.initState();
-    if (widget.initialText != null && widget.initialText!.isNotEmpty) {
-      _inputController.text = widget.initialText!;
-    }
-    _checkPendingDiagnosticPrompt();
-    _inputFocusNode = FocusNode(onKeyEvent: _handleInputKeyEvent);
-    _inputFocusNode.addListener(_onInputFocusChanged);
-    _historySlideController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 240),
-    )..addListener(() {
-        final animation = _historySlideAnimation;
-        if (animation == null || !mounted) return;
-        _setHistoryPanelExtent(animation.value);
-      });
-    if (widget.active) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _loadInitialDraft();
-      });
-    }
-  }
-
-  @override
-  void didUpdateWidget(covariant LlmChatScreen oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.active && !_settingsLoadStarted) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _loadInitialDraft();
-      });
-    }
-    if (widget.active && !oldWidget.active) {
-      _scrollToBottom(jump: true);
-    }
-    if (widget.active) {
-      _checkPendingDiagnosticPrompt();
-    }
-  }
-
-  @override
-  void dispose() {
-    if (_pendingApproval?.completer.isCompleted == false) {
-      _pendingApproval!.completer.complete(
-        const AiToolApprovalDecision.rejected(),
-      );
-    }
-    _activeCancellationToken?.cancel();
-    _historySlideController.dispose();
-    _historyPanelExtent.dispose();
-    _streamingAssistantText.dispose();
-    _streamingAssistantStatus.dispose();
-    _inputFocusNode.removeListener(_onInputFocusChanged);
-    _inputFocusNode.dispose();
-    _inputController.dispose();
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  void sendDirectCommand(String text) {
-    if (_sending) return;
-    final strings = _AiStrings(context.read<AppSettings>().language);
-    _sendText(context, strings, text: text, clearInput: true);
-  }
-
-  Future<void> approvePlanAndExecute(DateTime assistantCreatedAt) async {
-    if (_sending) return;
-    final activeChat = _activeChat;
-    if (activeChat == null) return;
-    final planMessage =
-        chatAssistantMessageByCreatedAt(activeChat, assistantCreatedAt);
-    final strings = _AiStrings(context.read<AppSettings>().language);
-    if (planMessage == null || planMessage.todoSteps.isEmpty) {
-      _showCommandFeedback(
-        strings.language == AppLanguage.en
-            ? 'This plan has no persisted executable steps yet.'
-            : '该计划还没有持久化的可执行步骤。',
-        context,
-      );
-      return;
-    }
-
-    final approvedAt = DateTime.now();
-    final approvedPlan = AiApprovedPlanRef(
-      assistantCreatedAt: assistantCreatedAt,
-      approvedAt: approvedAt,
-    );
-    final updatedChat = activeChat.copyWith(
-      planMode: false,
-      approvedPlan: approvedPlan,
-      updatedAt: approvedAt,
-    );
-    setState(() => _replaceChat(updatedChat));
-    await context.read<StorageService>().saveAiChat(updatedChat);
-    if (!mounted) return;
-
-    await _sendText(
-      context,
-      strings,
-      text: strings.language == AppLanguage.en
-          ? 'Execute the approved plan.'
-          : '执行已批准的计划。',
-      clearInput: true,
-      approvedPlanRef: approvedPlan,
-    );
-  }
-
-  Future<void> _loadInitialDraft() async {
-    if (_settingsLoadStarted) return;
-    _settingsLoadStarted = true;
-    final storage = context.read<StorageService>();
-    final settings = await storage.loadAiConnectionSettings();
-    if (!mounted) return;
-    setState(() {
-      final draft = _newChatRecord(settings.model);
-      _chats = [draft];
-      _activeChatId = draft.id;
-      _contextWindowTokens = settings.contextWindowTokens;
-      _loading = false;
-    });
-  }
-
-  Future<void> _loadHistoryChatsIfNeeded() async {
-    if (_historyLoadStarted || _historyLoading) return;
-    setState(() => _historyLoading = true);
-    final chats = await context.read<StorageService>().loadAiChats();
-    if (!mounted) return;
-    setState(() {
-      _historyLoadStarted = true;
-      _historyLoading = false;
-      _savedHistoryChats = chats;
-      final drafts = _chats.where((chat) => chat.messages.isEmpty).toList();
-      final draftIds = drafts.map((chat) => chat.id).toSet();
-      _chats = [
-        ...drafts,
-        ...chats.where((chat) => !draftIds.contains(chat.id)),
-      ];
-      _activeChatId ??= _chats.isEmpty ? null : _chats.first.id;
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
     super.build(context);
     final language = context.select<AppSettings, AppLanguage>(
@@ -481,9 +369,10 @@ class _LlmChatScreenState extends State<LlmChatScreen>
     );
     final strings = _AiStrings(language);
     final colorScheme = Theme.of(context).colorScheme;
-    final activeChat = _activeChat;
+    final viewModel = context.watch<AiChatViewModel>();
+    final activeChat = viewModel.activeChat;
 
-    if (_loading || activeChat == null) {
+    if (viewModel.loading || activeChat == null) {
       return const Center(
         child: SizedBox(
           width: 28,
@@ -502,9 +391,9 @@ class _LlmChatScreenState extends State<LlmChatScreen>
             ),
           ]
         : activeChat.messages;
-    final contextTokens = _contextTokensFor(activeChat);
+    final contextTokens = viewModel.contextTokensFor(activeChat);
     final contextPercent =
-        _contextWindowTokens <= 0 ? 0.0 : contextTokens / _contextWindowTokens;
+        viewModel.contextWindowTokens <= 0 ? 0.0 : contextTokens / viewModel.contextWindowTokens;
 
     return Scaffold(
       body: Stack(
@@ -527,8 +416,6 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                       onPressed: () => _showHistory(context, strings),
                     ),
                     Expanded(
-                      // Keyed builders make chat switches perceptible without
-                      // replacing the stable toolbar or input controls.
                       child: TweenAnimationBuilder<double>(
                         key: ValueKey('chat-title-${activeChat.id}'),
                         tween: Tween(begin: 0, end: 1),
@@ -558,7 +445,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                             OverflowScrollText(
                               _contextUsage(
                                 contextTokens,
-                                _contextWindowTokens,
+                                viewModel.contextWindowTokens,
                                 contextPercent,
                               ),
                               selectable: false,
@@ -577,7 +464,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                       tooltip: strings.newChat,
                       icon: const Icon(Icons.add_comment_outlined),
                       onPressed:
-                          _sending ? null : () => _createChatFromSettings(),
+                          viewModel.sending ? null : () => viewModel.createChatFromSettings(),
                     ),
                     IconButton(
                       tooltip: strings.settings,
@@ -588,8 +475,6 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                 ),
               ),
               Expanded(
-                // Avoid AnimatedSwitcher here: it would briefly mount two
-                // ListViews that share the same ScrollController.
                 child: TweenAnimationBuilder<double>(
                   key: ValueKey('chat-body-${activeChat.id}'),
                   tween: Tween(begin: 0, end: 1),
@@ -621,9 +506,9 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                       itemBuilder: (context, index) {
                         final message = visibleMessages[index];
                         final streamingTextListenable =
-                            _streamingTextFor(activeChat.id, message);
+                            viewModel.streamingTextFor(activeChat.id, message);
                         final streamingStatusListenable =
-                            _streamingStatusFor(activeChat.id, message);
+                            viewModel.streamingStatusFor(activeChat.id, message);
                         return RepaintBoundary(
                           key: ValueKey(
                             '${message.role}-${message.createdAt.microsecondsSinceEpoch}',
@@ -635,7 +520,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                             streamingTextListenable: streamingTextListenable,
                             streamingStatusListenable:
                                 streamingStatusListenable,
-                            canAct: !_sending &&
+                            canAct: !viewModel.sending &&
                                 activeChat.messages == visibleMessages,
                             onEditUser: message.role == 'user'
                                 ? () => _editUserMessage(index, strings)
@@ -660,7 +545,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                   ),
                 ),
               ),
-              if (_pendingApproval?.chatId == activeChat.id)
+              if (viewModel.pendingApproval?.chatId == activeChat.id)
                 ConstrainedBox(
                   constraints: BoxConstraints(
                     maxHeight: MediaQuery.sizeOf(context).height < 700
@@ -668,10 +553,10 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                         : 420,
                   ),
                   child: _ToolApprovalPanel(
-                    pending: _pendingApproval!,
+                    pending: viewModel.pendingApproval!,
                     strings: strings,
-                    onApprove: () => _resolvePendingApproval(approved: true),
-                    onReject: () => _resolvePendingApproval(approved: false),
+                    onApprove: () => viewModel.resolvePendingApproval(approved: true),
+                    onReject: () => viewModel.resolvePendingApproval(approved: false),
                   ),
                 ),
               SafeArea(
@@ -754,7 +639,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                         })(),
                         if (_shouldShowSlashCommandPanel)
                           _buildSlashCommandPanel(context, strings),
-                        if (_pendingAttachments.isNotEmpty)
+                        if (viewModel.pendingAttachments.isNotEmpty)
                           _buildAttachmentPreview(),
                         Row(
                           children: [
@@ -788,13 +673,13 @@ class _LlmChatScreenState extends State<LlmChatScreen>
                             ),
                             const SizedBox(width: 4),
                             IconButton.filled(
-                              tooltip: _sending ? strings.stop : strings.send,
+                              tooltip: viewModel.sending ? strings.stop : strings.send,
                               icon: Icon(
-                                _sending
+                                viewModel.sending
                                     ? Icons.stop_rounded
                                     : Icons.send_rounded,
                               ),
-                              onPressed: _sending
+                              onPressed: viewModel.sending
                                   ? _stopGeneration
                                   : () => _send(context, strings),
                             ),
@@ -856,15 +741,16 @@ class _LlmChatScreenState extends State<LlmChatScreen>
   }
 
   String _selectedServerLabel(_AiStrings strings) {
-    if (_selectedConnectionIds.isEmpty) return strings.serverTarget;
-    if (_selectedConnectionIds.length == 1) {
-      final id = _selectedConnectionIds.first;
+    final viewModel = context.read<AiChatViewModel>();
+    if (viewModel.selectedConnectionIds.isEmpty) return strings.serverTarget;
+    if (viewModel.selectedConnectionIds.length == 1) {
+      final id = viewModel.selectedConnectionIds.first;
       final connection = context.read<StorageService>().getConnection(id);
       return connection == null ? strings.serverTarget : connection.name;
     }
     return strings.language == AppLanguage.en
-        ? '${_selectedConnectionIds.length} Servers'
-        : '${_selectedConnectionIds.length} 台服务器';
+        ? '${viewModel.selectedConnectionIds.length} Servers'
+        : '${viewModel.selectedConnectionIds.length} 台服务器';
   }
 
   Future<void> _selectTargetServer(_AiStrings strings) async {
@@ -882,7 +768,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       return;
     }
 
-    final selected = Set<String>.from(_selectedConnectionIds);
+    final viewModel = context.read<AiChatViewModel>();
+    final selected = Set<String>.from(viewModel.selectedConnectionIds);
     final result = await showModalBottomSheet<Set<String>?>(
       context: context,
       showDragHandle: true,
@@ -974,10 +861,7 @@ class _LlmChatScreenState extends State<LlmChatScreen>
 
     if (!mounted) return;
     if (result != null) {
-      setState(() {
-        _selectedConnectionIds.clear();
-        _selectedConnectionIds.addAll(result);
-      });
+      viewModel.updateSelectedConnections(result);
     }
   }
 
@@ -1069,8 +953,8 @@ class _LlmChatScreenState extends State<LlmChatScreen>
       );
       if (nextSettings == null) return;
       if (!mounted) return;
-      setState(() => _contextWindowTokens = nextSettings.contextWindowTokens);
-      final activeChat = _activeChat;
+      final viewModel = context.read<AiChatViewModel>();
+      final activeChat = viewModel.activeChat;
       final nextModel = nextSettings.model.trim();
       if (activeChat != null &&
           nextModel.isNotEmpty &&
@@ -1079,65 +963,33 @@ class _LlmChatScreenState extends State<LlmChatScreen>
           model: nextModel,
           updatedAt: DateTime.now(),
         );
-        if (activeChat.messages.isEmpty) {
-          setState(() => _replaceChat(updatedChat));
-        } else {
-          await _updateActiveChat(updatedChat);
-        }
+        await viewModel.updateActiveChat(updatedChat);
       }
-      return;
+      // Reload VM draft values
+      await viewModel.loadInitialDraft();
     }
-  }
-
-  Future<void> _createChatFromSettings() async {
-    final settings =
-        await context.read<StorageService>().loadAiConnectionSettings();
-    if (!mounted) return;
-    _createChat(settings.model);
-  }
-
-  void _createChat(String model) {
-    final chat = _newChatRecord(model);
-    setState(() {
-      _chats = [
-        chat,
-        ..._chats.where((item) => item.messages.isNotEmpty),
-      ];
-      _activeChatId = chat.id;
-    });
-    _scrollToBottom();
   }
 
   Future<void> _deleteChat(String id) async {
-    if (_chats.isEmpty && _savedHistoryChats.isEmpty) return;
-    final storage = context.read<StorageService>();
-    final deleted = _chatById(id);
-    _chatAllowedTools.remove(id);
-    _pendingForceCompressionChats.remove(id);
-    final nextChats = _chats.where((chat) => chat.id != id).toList();
-    if (nextChats.isEmpty) {
-      final settings = await storage.loadAiConnectionSettings();
-      if (!mounted) return;
-      nextChats.add(_newChatRecord(settings.model));
-    }
-    setState(() {
-      _chats = nextChats;
-      _savedHistoryChats =
-          _savedHistoryChats.where((chat) => chat.id != id).toList();
-      if (_activeChatId == id || _activeChatId == null) {
-        _activeChatId = nextChats.first.id;
-      }
-    });
-    if (deleted?.messages.isNotEmpty == true) {
-      await storage.deleteAiChat(id);
-    }
+    final viewModel = context.read<AiChatViewModel>();
+    await viewModel.deleteChat(id);
     ClientWebViewService.instance.clearSession(id);
     _scrollToBottom(jump: true);
   }
 
-  Future<void> _updateActiveChat(AiChatRecord chat) async {
-    setState(() => _replaceChat(chat));
-    await context.read<StorageService>().saveAiChat(chat);
+  String _contextUsage(int used, int limit, double ratio) {
+    final percent = (ratio * 100).clamp(0, 999).toStringAsFixed(1);
+    return '${_compactTokens(used)} / ${AiContextWindowSize.label(limit)} ($percent%)';
+  }
+
+  String _compactTokens(int value) {
+    if (value >= 1000000) {
+      return '${(value / 1000000).toStringAsFixed(2)}M';
+    }
+    if (value >= 1000) {
+      return '${(value / 1000).toStringAsFixed(1)}K';
+    }
+    return value.toString();
   }
 
   @override

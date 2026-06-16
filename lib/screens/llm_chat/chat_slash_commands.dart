@@ -13,11 +13,14 @@ class _SlashCommandMeta {
   });
 }
 
-class _ParsedSlashCommand {
-  final String command;
-  final String arguments;
+class _ToolOption {
+  final String name;
+  final String description;
 
-  const _ParsedSlashCommand(this.command, this.arguments);
+  const _ToolOption({
+    required this.name,
+    required this.description,
+  });
 }
 
 const List<_SlashCommandMeta> _defaultSlashCommands = [
@@ -43,7 +46,7 @@ const List<_SlashCommandMeta> _defaultSlashCommands = [
   ),
 ];
 
-extension _ChatSlashCommands on _LlmChatScreenState {
+extension _ChatSlashCommands on _LlmChatScreenBodyState {
   static const int _maxToolSelectorHeightPercent = 78;
 
   bool get _shouldShowSlashCommandPanel {
@@ -147,148 +150,7 @@ extension _ChatSlashCommands on _LlmChatScreenState {
     );
   }
 
-  Future<bool> _executeSlashCommand({
-    required String chatId,
-    required String input,
-    required _AiStrings strings,
-  }) async {
-    if (!mounted) {
-      return false;
-    }
-    final parsed = _parseSlashCommand(input);
-    if (parsed == null || parsed.command.isEmpty) {
-      _showCommandFeedback(strings.commandUnknown, context);
-      return false;
-    }
-    switch (parsed.command) {
-      case 'compact':
-        _pendingForceCompressionChats.add(chatId);
-        AppLogService.instance.info(
-          'Slash command executed',
-          details:
-              'chatId=$chatId command=compact forceContextCompression=true',
-        );
-        _showCommandFeedback(strings.commandCompact, context);
-        return true;
-      case 'tools':
-        final handled = await _executeToolsCommand(
-          chatId: chatId,
-          arguments: parsed.arguments,
-          strings: strings,
-        );
-        if (handled) {
-          _inputController.clear();
-        }
-        return handled;
-      case 'plan':
-        final handled = await _executePlanCommand(
-          chatId: chatId,
-          arguments: parsed.arguments,
-          strings: strings,
-        );
-        if (handled) {
-          _inputController.clear();
-        }
-        return handled;
-      case 'skills':
-        if (!context.mounted) {
-          return false;
-        }
-        await Navigator.of(context).pushNamed('/ai-skills');
-        if (!mounted) {
-          return false;
-        }
-        _showCommandFeedback(strings.commandSkillsOpened, context);
-        return true;
-    }
-    if (!mounted) return false;
-    _showCommandFeedback(strings.commandUnknown, context);
-    return false;
-  }
 
-  Future<bool> _executeToolsCommand({
-    required String chatId,
-    required String arguments,
-    required _AiStrings strings,
-  }) async {
-    final commandChatId = chatId;
-    if (!mounted) {
-      return false;
-    }
-    if (arguments.isEmpty) {
-      final availableTools = await _loadAvailableTools(strings);
-      if (!mounted || !context.mounted || _activeChat?.id != commandChatId) {
-        return false;
-      }
-      if (availableTools == null) return false;
-      final next = await _openToolsSelector(
-        context: context,
-        strings: strings,
-        availableTools: availableTools,
-        initialTools: _chatAllowedTools[chatId] ?? const {},
-      );
-      if (!mounted || !context.mounted || _activeChat?.id != commandChatId) {
-        return false;
-      }
-      if (next == null) return false;
-      _chatAllowedTools[chatId] = {...next};
-      _showCommandFeedback(strings.commandToolsUpdated(next.length), context);
-      AppLogService.instance.info(
-        'Slash /tools applied',
-        details: 'chatId=$chatId source=picker count=${next.length}',
-      );
-      return true;
-    }
-
-    final requested = _parseToolList(arguments);
-    if (!mounted || _activeChat?.id != commandChatId) {
-      return false;
-    }
-    final availableTools = await _loadAvailableTools(strings);
-    if (!mounted || !context.mounted || _activeChat?.id != commandChatId) {
-      return false;
-    }
-    if (availableTools == null) return false;
-    final availableMap = <String, String>{};
-    for (final tool in availableTools) {
-      availableMap[tool.name.toLowerCase()] = tool.name;
-    }
-    final unknown = <String>[];
-    final selected = <String>{};
-    for (final raw in requested) {
-      final normalized = raw.toLowerCase();
-      final canonical = availableMap[normalized];
-      if (canonical == null) {
-        unknown.add(raw);
-      } else {
-        selected.add(canonical);
-      }
-    }
-    if (selected.isEmpty && unknown.isNotEmpty) {
-      _showCommandFeedback(
-        strings.commandToolsUnknown(unknown),
-        context,
-      );
-      return true;
-    }
-    if (selected.isNotEmpty) {
-      _chatAllowedTools[chatId] = selected;
-      _showCommandFeedback(
-          strings.commandToolsUpdated(selected.length), context);
-    }
-    if (unknown.isNotEmpty) {
-      _showCommandFeedback(
-        strings.commandToolsUnknown(unknown),
-        context,
-      );
-    }
-    AppLogService.instance.info(
-      'Slash /tools applied',
-      details:
-          'chatId=$chatId source=inline requested=${requested.join(',')} accepted=${selected.join(',')} unknown=${unknown.join(',')}',
-    );
-    return selected.isNotEmpty || unknown.isNotEmpty;
-  }
 
   Future<List<_ToolOption>?> _loadAvailableTools(_AiStrings strings) async {
     if (!mounted || !context.mounted) {
@@ -469,37 +331,16 @@ extension _ChatSlashCommands on _LlmChatScreenState {
     return selectedSet;
   }
 
-  _ParsedSlashCommand? _parseSlashCommand(String input) {
-    final trimmed = input.trim();
-    if (!trimmed.startsWith('/')) return null;
-    if (trimmed == '/') return const _ParsedSlashCommand('', '');
-    final body = trimmed.substring(1).trimLeft();
-    if (body.isEmpty) return const _ParsedSlashCommand('', '');
-    final split = body.split(RegExp(r'\s+'));
-    if (split.isEmpty || split.first.isEmpty) return null;
-    final command = split.first.toLowerCase();
-    final arguments =
-        split.length == 1 ? '' : body.substring(split.first.length).trim();
-    return _ParsedSlashCommand(command, arguments);
-  }
-
-  List<String> _parseToolList(String text) {
-    return text
-        .split(RegExp(r'[,\s]+'))
-        .map((item) => item.trim())
-        .where((item) => item.isNotEmpty)
-        .toList();
-  }
-
-  bool _consumeContextCompression(String chatId) {
-    return _pendingForceCompressionChats.remove(chatId);
-  }
-
-  String? _toolNameFromDefinition(Map<String, dynamic> definition) {
-    final function = definition['function'];
-    if (function is! Map) return null;
-    final name = function['name'];
-    return name is String ? name : null;
+  void _showCommandFeedback(String message, BuildContext context) {
+    if (!context.mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   Future<bool> _setPlanModeFromUi({
@@ -520,13 +361,13 @@ extension _ChatSlashCommands on _LlmChatScreenState {
       return false;
     }
 
+    final viewModel = context.read<AiChatViewModel>();
     final updatedChat = chat.copyWith(
       planMode: enabled,
       updatedAt: DateTime.now(),
       clearApprovedPlan: enabled,
     );
-    setState(() => _replaceChat(updatedChat));
-    await context.read<StorageService>().saveAiChat(updatedChat);
+    await viewModel.updateActiveChat(updatedChat);
 
     if (showFeedback && mounted && context.mounted) {
       final msg = strings.language == AppLanguage.en
@@ -537,83 +378,10 @@ extension _ChatSlashCommands on _LlmChatScreenState {
     return true;
   }
 
-  void _showCommandFeedback(String message, BuildContext context) {
-    if (!context.mounted) {
-      return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        duration: const Duration(seconds: 2),
-      ),
-    );
-  }
-
-  Future<bool> _executePlanCommand({
-    required String chatId,
-    required String arguments,
-    required _AiStrings strings,
-  }) async {
-    final activeChat = _activeChat;
-    if (activeChat == null || activeChat.id != chatId) return false;
-    if (arguments.trim().isEmpty) {
-      final nextPlanMode = !activeChat.planMode;
-      return _setPlanModeFromUi(
-        chat: activeChat,
-        enabled: nextPlanMode,
-        strings: strings,
-      );
-    }
-
-    final enabled = await _setPlanModeFromUi(
-      chat: activeChat,
-      enabled: true,
-      strings: strings,
-      showFeedback: false,
-    );
-    if (!enabled || !mounted || !context.mounted) return true;
-    scheduleMicrotask(() {
-      if (mounted) {
-        _sendText(context, strings, text: arguments, clearInput: true);
-      }
-    });
-    return true;
-    /*
-
-    final storage = context.read<StorageService>();
-
-    if (arguments.trim().isEmpty) {
-      final nextPlanMode = !activeChat.planMode;
-      final updatedChat = activeChat.copyWith(planMode: nextPlanMode);
-
-      setState(() {
-        _replaceChat(updatedChat);
-      });
-      await storage.saveAiChat(updatedChat);
-
-      if (!mounted || !context.mounted) return true;
-
-      final msg = strings.language == AppLanguage.en
-          ? (nextPlanMode ? 'Plan Mode Enabled' : 'Plan Mode Disabled')
-          : (nextPlanMode ? '规划模式已启用' : '规划模式已关闭');
-      _showCommandFeedback(msg, context);
-      return true;
-    }
-
-    final updatedChat = activeChat.copyWith(planMode: true);
-    setState(() {
-      _replaceChat(updatedChat);
-    });
-    await storage.saveAiChat(updatedChat);
-
-    if (!mounted || !context.mounted) return true;
-
-    scheduleMicrotask(() {
-      if (mounted) {
-        _sendText(context, strings, text: arguments, clearInput: true);
-      }
-    });
-    return true;
-    */
+  String? _toolNameFromDefinition(Map<String, dynamic> definition) {
+    final function = definition['function'];
+    if (function is! Map) return null;
+    final name = function['name'];
+    return name is String ? name : null;
   }
 }

@@ -1,19 +1,20 @@
 // ignore_for_file: invalid_use_of_protected_member
 part of '../llm_chat_screen.dart';
 
-extension _ChatAttachments on _LlmChatScreenState {
+extension _ChatAttachments on _LlmChatScreenBodyState {
   Widget _buildAttachmentPreview() {
+    final viewModel = context.watch<AiChatViewModel>();
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Wrap(
         spacing: 8,
         runSpacing: 6,
         children: [
-          for (var i = 0; i < _pendingAttachments.length; i++)
+          for (var i = 0; i < viewModel.pendingAttachments.length; i++)
             _AttachmentChip(
-              attachment: _pendingAttachments[i],
+              attachment: viewModel.pendingAttachments[i],
               onRemove: () {
-                setState(() => _pendingAttachments.removeAt(i));
+                viewModel.removeAttachmentAt(i);
               },
             ),
         ],
@@ -30,9 +31,12 @@ extension _ChatAttachments on _LlmChatScreenState {
       );
       if (result == null || result.files.isEmpty) return;
       if (!mounted) return;
+
+      final viewModel = context.read<AiChatViewModel>();
       final storage = context.read<StorageService>();
       final settings = await storage.loadAiConnectionSettings();
       final maxBytes = settings.maxImageSizeBytes;
+
       for (final file in result.files) {
         if (file.bytes == null || file.size == 0) continue;
         if (file.size > maxBytes) {
@@ -49,14 +53,12 @@ extension _ChatAttachments on _LlmChatScreenState {
           continue;
         }
         final mimeType = _guessMimeType(file.name, fallback: 'image/png');
-        setState(() {
-          _pendingAttachments.add(AiChatAttachment(
-            fileName: file.name,
-            mimeType: mimeType,
-            sizeBytes: file.size,
-            dataBase64: base64Encode(file.bytes!),
-          ));
-        });
+        viewModel.addAttachment(AiChatAttachment(
+          fileName: file.name,
+          mimeType: mimeType,
+          sizeBytes: file.size,
+          dataBase64: base64Encode(file.bytes!),
+        ));
       }
     } catch (e) {
       AppLogService.instance.warning(
@@ -74,9 +76,12 @@ extension _ChatAttachments on _LlmChatScreenState {
       );
       if (result == null || result.files.isEmpty) return;
       if (!mounted) return;
+
+      final viewModel = context.read<AiChatViewModel>();
       final storage = context.read<StorageService>();
       final settings = await storage.loadAiConnectionSettings();
       final maxBytes = settings.maxFileSizeBytes;
+
       for (final file in result.files) {
         if (file.bytes == null || file.size == 0) continue;
         if (file.size > maxBytes) {
@@ -93,14 +98,12 @@ extension _ChatAttachments on _LlmChatScreenState {
           continue;
         }
         final mimeType = _guessMimeType(file.name);
-        setState(() {
-          _pendingAttachments.add(AiChatAttachment(
-            fileName: file.name,
-            mimeType: mimeType,
-            sizeBytes: file.size,
-            dataBase64: base64Encode(file.bytes!),
-          ));
-        });
+        viewModel.addAttachment(AiChatAttachment(
+          fileName: file.name,
+          mimeType: mimeType,
+          sizeBytes: file.size,
+          dataBase64: base64Encode(file.bytes!),
+        ));
       }
     } catch (e) {
       AppLogService.instance.warning(

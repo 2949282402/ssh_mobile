@@ -1,6 +1,6 @@
 part of '../llm_chat_screen.dart';
 
-extension _ChatRagSheet on _LlmChatScreenState {
+extension _ChatRagSheet on _LlmChatScreenBodyState {
   Future<void> _showRagBottomSheet(
       BuildContext context, _AiStrings strings) async {
     final appSettings = context.read<AppSettings>();

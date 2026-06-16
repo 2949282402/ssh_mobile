@@ -181,10 +181,11 @@ class _HistoryPanelState extends State<_HistoryPanel> {
   }
 }
 
-extension _LlmChatScreenStateHistory on _LlmChatScreenState {
+extension _LlmChatScreenBodyStateHistory on _LlmChatScreenBodyState {
   Future<void> _showHistory(BuildContext context, _AiStrings strings) async {
     _openHistoryPanel(context);
-    unawaited(_loadHistoryChatsIfNeeded());
+    final viewModel = context.read<AiChatViewModel>();
+    unawaited(viewModel.loadHistoryChatsIfNeeded());
   }
 
   double _historyPanelWidth(BuildContext context) {
@@ -192,8 +193,9 @@ extension _LlmChatScreenStateHistory on _LlmChatScreenState {
   }
 
   void _openHistoryPanel(BuildContext context) {
+    final viewModel = context.read<AiChatViewModel>();
     _animateHistoryPanel(context, _historyPanelWidth(context));
-    unawaited(_loadHistoryChatsIfNeeded());
+    unawaited(viewModel.loadHistoryChatsIfNeeded());
   }
 
   void _closeHistoryPanel(BuildContext context) {
@@ -229,6 +231,8 @@ extension _LlmChatScreenStateHistory on _LlmChatScreenState {
   Widget _buildHistoryOverlay(BuildContext context, _AiStrings strings) {
     final width = _historyPanelWidth(context);
     final colorScheme = Theme.of(context).colorScheme;
+    final viewModel = context.watch<AiChatViewModel>();
+
     return ValueListenableBuilder<double>(
       valueListenable: _historyPanelExtent,
       builder: (context, rawExtent, _) {
@@ -263,35 +267,22 @@ extension _LlmChatScreenStateHistory on _LlmChatScreenState {
                       ),
                     ),
                     child: _HistoryPanel(
-                      chats: _savedHistoryChats,
-                      activeChatId: _activeChatId,
-                      loading: _historyLoading,
+                      chats: viewModel.savedHistoryChats,
+                      activeChatId: viewModel.activeChatId,
+                      loading: viewModel.historyLoading,
                       strings: strings,
                       formatTime: _formatTime,
                       onClose: () => _closeHistoryPanel(context),
                       onNewChat: () {
                         _closeHistoryPanel(context);
-                        _createChatFromSettings();
+                        viewModel.createChatFromSettings();
                       },
                       onDeleteChat: (chatId) async {
                         await _deleteChat(chatId);
                       },
                       onSelectChat: (chatId) {
-                        final selected = _chatById(chatId);
-                        updateState(() {
-                          if (selected != null &&
-                              !_chats.any((chat) => chat.id == selected.id)) {
-                            _chats = [
-                              selected,
-                              ..._chats
-                                  .where((chat) => chat.messages.isNotEmpty),
-                              ..._chats.where((chat) => chat.messages.isEmpty),
-                            ];
-                          }
-                          _activeChatId = chatId;
-                        });
+                        viewModel.selectChat(chatId);
                         _closeHistoryPanel(context);
-                        _scrollToBottom();
                       },
                     ),
                   ),
@@ -302,5 +293,10 @@ extension _LlmChatScreenStateHistory on _LlmChatScreenState {
         );
       },
     );
+  }
+
+  String _formatTime(DateTime time) {
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${two(time.month)}-${two(time.day)} ${two(time.hour)}:${two(time.minute)}';
   }
 }
