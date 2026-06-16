@@ -6,7 +6,8 @@ class _PromptCustomizerDialog extends StatefulWidget {
   const _PromptCustomizerDialog({required this.strings});
 
   @override
-  State<_PromptCustomizerDialog> createState() => _PromptCustomizerDialogState();
+  State<_PromptCustomizerDialog> createState() =>
+      _PromptCustomizerDialogState();
 }
 
 class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
@@ -64,15 +65,25 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
       case 'system':
         return isEn ? systemPromptEnPersona : systemPromptZhPersona;
       case 'planner':
-        return isEn ? multiAgentPlannerPromptEnPersona : multiAgentPlannerPromptZhPersona;
+        return isEn
+            ? multiAgentPlannerPromptEnPersona
+            : multiAgentPlannerPromptZhPersona;
       case 'operator':
-        return isEn ? multiAgentOperatorPromptEnPersona : multiAgentOperatorPromptZhPersona;
+        return isEn
+            ? multiAgentOperatorPromptEnPersona
+            : multiAgentOperatorPromptZhPersona;
       case 'explore':
-        return isEn ? multiAgentExplorePromptEnPersona : multiAgentExplorePromptZhPersona;
+        return isEn
+            ? multiAgentExplorePromptEnPersona
+            : multiAgentExplorePromptZhPersona;
       case 'reviewer':
-        return isEn ? multiAgentReviewerPromptEnPersona : multiAgentReviewerPromptZhPersona;
+        return isEn
+            ? multiAgentReviewerPromptEnPersona
+            : multiAgentReviewerPromptZhPersona;
       case 'summarizer':
-        return isEn ? multiAgentSummarizerPromptEnPersona : multiAgentSummarizerPromptZhPersona;
+        return isEn
+            ? multiAgentSummarizerPromptEnPersona
+            : multiAgentSummarizerPromptZhPersona;
       default:
         return '';
     }
@@ -252,7 +263,8 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                       if (val) {
                         final currentVal = _customPrompts[_activeType] ?? '';
                         if (currentVal.trim().isEmpty) {
-                          _customPrompts[_activeType] = _getDefaultPrompt(_activeType);
+                          _customPrompts[_activeType] =
+                              _getDefaultPrompt(_activeType);
                         }
                       }
                       _textController.text = _getCurrentPromptValue();
@@ -272,9 +284,17 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                         initialValue: _activeType,
                         decoration: const InputDecoration(
                           isDense: true,
-                          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          contentPadding:
+                              EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                         ),
-                        items: ['system', 'planner', 'explore', 'operator', 'reviewer', 'summarizer']
+                        items: [
+                          'system',
+                          'planner',
+                          'explore',
+                          'operator',
+                          'reviewer',
+                          'summarizer'
+                        ]
                             .map((type) => DropdownMenuItem<String>(
                                   value: type,
                                   child: Text(_getPromptLabel(type)),
@@ -292,7 +312,8 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                     padding: const EdgeInsets.all(12),
                     margin: const EdgeInsets.only(bottom: 12),
                     decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                      color: colorScheme.surfaceContainerHighest
+                          .withValues(alpha: 0.5),
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(color: colorScheme.outlineVariant),
                     ),
@@ -314,7 +335,8 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                           icon: const Icon(Icons.copy_rounded, size: 16),
                           label: Text(en ? 'Copy to Edit' : '复制默认并编辑'),
                           style: ElevatedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 6),
                           ),
                         ),
                       ],
@@ -326,13 +348,16 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                     padding: const EdgeInsets.all(8),
                     margin: const EdgeInsets.only(bottom: 12),
                     decoration: BoxDecoration(
-                      color: colorScheme.primaryContainer.withValues(alpha: 0.15),
+                      color:
+                          colorScheme.primaryContainer.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: colorScheme.primary.withValues(alpha: 0.3)),
+                      border: Border.all(
+                          color: colorScheme.primary.withValues(alpha: 0.3)),
                     ),
                     child: Row(
                       children: [
-                        Icon(Icons.shield_outlined, size: 16, color: colorScheme.primary),
+                        Icon(Icons.shield_outlined,
+                            size: 16, color: colorScheme.primary),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
@@ -364,7 +389,8 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                       filled: true,
                       fillColor: _useCustomPrompts
                           ? colorScheme.surface
-                          : colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                          : colorScheme.surfaceContainerHighest
+                              .withValues(alpha: 0.3),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
                       ),

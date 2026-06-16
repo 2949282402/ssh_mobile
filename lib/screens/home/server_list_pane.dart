@@ -8,7 +8,8 @@ extension _HomeScreenStateServerList on _HomeScreenState {
     final storageReady = context.select<ConnectionViewModel, bool>(
       (vm) => vm.isLoading == false,
     );
-    final connections = context.select<ConnectionViewModel, List<ConnectionConfig>>(
+    final connections =
+        context.select<ConnectionViewModel, List<ConnectionConfig>>(
       (vm) => vm.connections,
     );
     return connections.isEmpty

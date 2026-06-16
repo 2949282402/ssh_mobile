@@ -177,7 +177,8 @@ void main() {
       final decoded = AiChatRecord.fromJson(json);
       expect(decoded.planMode, isTrue);
       expect(decoded.title, 'Plan Chat');
-      expect(decoded.approvedPlan?.assistantCreatedAt, approvedPlan.assistantCreatedAt);
+      expect(decoded.approvedPlan?.assistantCreatedAt,
+          approvedPlan.assistantCreatedAt);
       expect(decoded.approvedPlan?.approvedAt, approvedPlan.approvedAt);
     });
 
@@ -237,7 +238,9 @@ void main() {
       expect(approvedPlanMessageForChat(chat)?.todoSteps.single.id, 'task-1');
     });
 
-    test('canExitPlanMode only accepts persisted todoSteps on the latest assistant message', () {
+    test(
+        'canExitPlanMode only accepts persisted todoSteps on the latest assistant message',
+        () {
       final base = DateTime.utc(2026, 1, 1, 12, 0);
       final oldPlan = AiChatMessageRecord(
         role: 'assistant',
@@ -324,7 +327,8 @@ void main() {
       expect(decodedStep.exitCode, 0);
     });
 
-    test('backward compatibility: defaults todoSteps to empty list when absent', () {
+    test('backward compatibility: defaults todoSteps to empty list when absent',
+        () {
       final time = DateTime.utc(2026, 1, 1, 12, 0);
       final oldJson = {
         'role': 'assistant',

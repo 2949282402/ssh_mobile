@@ -220,11 +220,13 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
     for (final session in sessions.values) {
       final connId = session.connectionId;
       if (connId != null) {
-        final current = byConnection.putIfAbsent(connId, () => {
-          'count': 0,
-          'latestState': 'connected',
-          'hasConnected': true,
-        });
+        final current = byConnection.putIfAbsent(
+            connId,
+            () => {
+                  'count': 0,
+                  'latestState': 'connected',
+                  'hasConnected': true,
+                });
         current['count'] = (current['count'] as int) + 1;
       }
     }
@@ -479,7 +481,8 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
         privateKey: privateKey,
       );
 
-      final identities = await SshClientFactory.identitiesFor(config, credentials);
+      final identities =
+          await SshClientFactory.identitiesFor(config, credentials);
 
       final authOptions = SshClientFactory.buildAuthOptions(
         config: config,

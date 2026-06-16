@@ -42,7 +42,8 @@ const List<_SlashCommandMeta> _defaultSlashCommands = [
   _SlashCommandMeta(
     command: '/plan',
     summary: 'Toggle plan mode or run a plan task.',
-    details: 'Design a structured execution plan without modifying server state.',
+    details:
+        'Design a structured execution plan without modifying server state.',
   ),
 ];
 
@@ -136,8 +137,9 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
                     final nextText = '$canonicalCmd$arguments';
                     _inputController.text = nextText;
 
-                    final nextCursorOffset =
-                        arguments.isEmpty ? nextText.length : canonicalCmd.length;
+                    final nextCursorOffset = arguments.isEmpty
+                        ? nextText.length
+                        : canonicalCmd.length;
 
                     setState(() => _inputController.selection =
                         TextSelection.collapsed(offset: nextCursorOffset));
@@ -149,8 +151,6 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
       ),
     );
   }
-
-
 
   Future<List<_ToolOption>?> _loadAvailableTools(_AiStrings strings) async {
     if (!mounted || !context.mounted) {

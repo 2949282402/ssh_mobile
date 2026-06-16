@@ -141,6 +141,11 @@ class LlmChatScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Provider Lifecycle choice: AiChatViewModel is registered locally here
+    // rather than globally in main.dart because the chat state is only consumed
+    // within the LlmChatScreen subtree. The parent HomeScreen keeps this tab's
+    // state alive using keepAliveAfterFirstBuild, ensuring it behaves as a
+    // single instance while the app is running.
     return ChangeNotifierProvider<AiChatViewModel>(
       create: (context) => AiChatViewModel(
         storageService: context.read<StorageService>(),
@@ -166,7 +171,6 @@ class _LlmChatScreenBody extends StatefulWidget {
   final String? initialText;
 
   const _LlmChatScreenBody({
-    super.key,
     required this.active,
     this.onHistoryVisibilityChanged,
     this.initialText,
@@ -392,8 +396,9 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
           ]
         : activeChat.messages;
     final contextTokens = viewModel.contextTokensFor(activeChat);
-    final contextPercent =
-        viewModel.contextWindowTokens <= 0 ? 0.0 : contextTokens / viewModel.contextWindowTokens;
+    final contextPercent = viewModel.contextWindowTokens <= 0
+        ? 0.0
+        : contextTokens / viewModel.contextWindowTokens;
 
     return Scaffold(
       body: Stack(
@@ -463,8 +468,9 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
                     IconButton(
                       tooltip: strings.newChat,
                       icon: const Icon(Icons.add_comment_outlined),
-                      onPressed:
-                          viewModel.sending ? null : () => viewModel.createChatFromSettings(),
+                      onPressed: viewModel.sending
+                          ? null
+                          : () => viewModel.createChatFromSettings(),
                     ),
                     IconButton(
                       tooltip: strings.settings,
@@ -507,8 +513,8 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
                         final message = visibleMessages[index];
                         final streamingTextListenable =
                             viewModel.streamingTextFor(activeChat.id, message);
-                        final streamingStatusListenable =
-                            viewModel.streamingStatusFor(activeChat.id, message);
+                        final streamingStatusListenable = viewModel
+                            .streamingStatusFor(activeChat.id, message);
                         return RepaintBoundary(
                           key: ValueKey(
                             '${message.role}-${message.createdAt.microsecondsSinceEpoch}',
@@ -555,8 +561,10 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
                   child: _ToolApprovalPanel(
                     pending: viewModel.pendingApproval!,
                     strings: strings,
-                    onApprove: () => viewModel.resolvePendingApproval(approved: true),
-                    onReject: () => viewModel.resolvePendingApproval(approved: false),
+                    onApprove: () =>
+                        viewModel.resolvePendingApproval(approved: true),
+                    onReject: () =>
+                        viewModel.resolvePendingApproval(approved: false),
                   ),
                 ),
               SafeArea(
@@ -673,7 +681,9 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
                             ),
                             const SizedBox(width: 4),
                             IconButton.filled(
-                              tooltip: viewModel.sending ? strings.stop : strings.send,
+                              tooltip: viewModel.sending
+                                  ? strings.stop
+                                  : strings.send,
                               icon: Icon(
                                 viewModel.sending
                                     ? Icons.stop_rounded

@@ -1,6 +1,5 @@
 part of '../llm_chat_screen.dart';
 
-
 class _MessageBubble extends StatelessWidget {
   final String chatId;
   final int index;
@@ -917,7 +916,8 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
           ),
           const Divider(height: 12),
           for (var i = 0; i < widget.message.todoSteps.length; i++) ...[
-            _buildStepRow(context, i, widget.message.todoSteps[i], colorScheme, isEn),
+            _buildStepRow(
+                context, i, widget.message.todoSteps[i], colorScheme, isEn),
             if (i < widget.message.todoSteps.length - 1)
               const SizedBox(height: 8),
           ],
@@ -1038,7 +1038,8 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                   width: double.infinity,
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.48),
+                    color: colorScheme.surfaceContainerHighest
+                        .withValues(alpha: 0.48),
                     borderRadius: BorderRadius.circular(4),
                     border: Border.all(color: colorScheme.outlineVariant),
                   ),
@@ -1083,7 +1084,9 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
   Widget _buildStatusIcon(StepStatus status, ColorScheme colorScheme) {
     switch (status) {
       case StepStatus.pending:
-        return Icon(Icons.circle_outlined, size: 16, color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6));
+        return Icon(Icons.circle_outlined,
+            size: 16,
+            color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6));
       case StepStatus.running:
         return const SizedBox(
           width: 16,
@@ -1091,11 +1094,13 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
           child: CircularProgressIndicator(strokeWidth: 2),
         );
       case StepStatus.success:
-        return const Icon(Icons.check_circle_rounded, size: 16, color: Colors.green);
+        return const Icon(Icons.check_circle_rounded,
+            size: 16, color: Colors.green);
       case StepStatus.failed:
         return const Icon(Icons.cancel_rounded, size: 16, color: Colors.red);
       case StepStatus.skipped:
-        return Icon(Icons.next_plan_outlined, size: 16, color: colorScheme.onSurfaceVariant);
+        return Icon(Icons.next_plan_outlined,
+            size: 16, color: colorScheme.onSurfaceVariant);
     }
   }
 }

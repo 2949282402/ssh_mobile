@@ -29,8 +29,10 @@ class PerformanceMonitorViewModel extends ChangeNotifier {
 
   bool get isRunning => _monitorService.isRunning;
   bool get isSampling => _monitorService.isSampling;
-  Set<String> get selectedConnectionIds => _monitorService.selectedConnectionIds;
-  Set<String> get monitoringConnectionIds => _monitorService.monitoringConnectionIds;
+  Set<String> get selectedConnectionIds =>
+      _monitorService.selectedConnectionIds;
+  Set<String> get monitoringConnectionIds =>
+      _monitorService.monitoringConnectionIds;
 
   List<PerformanceSample> getSamples(String connectionId) {
     return _monitorService.visibleSamplesFor(connectionId);

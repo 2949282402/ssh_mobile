@@ -18,7 +18,8 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
     final viewModel = context.read<AiChatViewModel>();
     if (viewModel.sending) return;
 
-    final result = await viewModel.sendText(text: text, approvedPlanRef: approvedPlanRef);
+    final result =
+        await viewModel.sendText(text: text, approvedPlanRef: approvedPlanRef);
     if (!mounted) return;
 
     if (result is SendTextApiKeyMissing) {
@@ -216,7 +217,8 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
   }
 
   bool _isNearBottom(ScrollMetrics metrics) {
-    return (metrics.maxScrollExtent - metrics.pixels) <= _LlmChatScreenBodyState._scrollBottomDistance;
+    return (metrics.maxScrollExtent - metrics.pixels) <=
+        _LlmChatScreenBodyState._scrollBottomDistance;
   }
 
   void _updateUserScrollPosition(ScrollMetrics metrics) {
@@ -228,7 +230,8 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
     if (!viewModel.sending) return false;
     if (!_scrollController.hasClients) return false;
     if (_isUserAtBottom) return false;
-    if (_scrollController.position.maxScrollExtent <= _LlmChatScreenBodyState._scrollBottomDistance) {
+    if (_scrollController.position.maxScrollExtent <=
+        _LlmChatScreenBodyState._scrollBottomDistance) {
       return false;
     }
     return true;

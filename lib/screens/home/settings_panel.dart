@@ -371,7 +371,8 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                   ),
                   value: cacheEnabled,
                   onChanged: (value) async {
-                    await storage.configureSecretCache(value, cacheTimeoutMinutes);
+                    await storage.configureSecretCache(
+                        value, cacheTimeoutMinutes);
                   },
                 ),
                 ListTile(

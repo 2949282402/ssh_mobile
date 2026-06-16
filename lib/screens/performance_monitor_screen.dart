@@ -98,7 +98,8 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
     final railConnections = tabIndex == 0 && monitorShell.isRunning
         ? monitoringConnections
         : tabSelectedConnections;
-    final serversCollapsed = performanceVm.serversCollapsed && connections.isNotEmpty;
+    final serversCollapsed =
+        performanceVm.serversCollapsed && connections.isNotEmpty;
 
     if (!storageReady) {
       return const Center(
@@ -140,8 +141,7 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
                               connections: connections,
                               strings: strings,
                               selectedConnectionIds: tabSelectedIds,
-                              disabled:
-                                  tabIndex == 0 && monitorShell.isRunning,
+                              disabled: tabIndex == 0 && monitorShell.isRunning,
                               onConnectionTap: (id) =>
                                   _handleServerSelection(context, monitor, id),
                               onDisabledTap: () =>
@@ -196,8 +196,7 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
                               connections: connections,
                               strings: strings,
                               selectedConnectionIds: tabSelectedIds,
-                              disabled:
-                                  tabIndex == 0 && monitorShell.isRunning,
+                              disabled: tabIndex == 0 && monitorShell.isRunning,
                               onConnectionTap: (id) =>
                                   _handleServerSelection(context, monitor, id),
                               onDisabledTap: () =>
@@ -257,7 +256,8 @@ class _PerformanceMonitorScreenState extends State<PerformanceMonitorScreen> {
     );
   }
 
-  Set<String> _selectedIdsForTab(_MonitorShellSnapshot monitorShell, int tabIndex) {
+  Set<String> _selectedIdsForTab(
+      _MonitorShellSnapshot monitorShell, int tabIndex) {
     switch (tabIndex) {
       case 1:
         return _portConnectionId == null ? const {} : {_portConnectionId!};

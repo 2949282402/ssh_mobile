@@ -97,7 +97,8 @@ abstract interface class AiSettingsRepository {
   Future<void> removeAiApiKeyHistoryEntry(String id);
   Future<List<AiApiKeyHistoryEntry>> loadAiApiKeyHistory();
   Future<String?> getAiApiKeyById(String id);
-  Future<void> saveCachedAiModels({required String baseUrl, required Iterable<String> models});
+  Future<void> saveCachedAiModels(
+      {required String baseUrl, required Iterable<String> models});
   Future<void> clearCachedAiModels({String? baseUrl});
   Future<int> getAiRequestTimeoutSeconds();
   Future<void> selectAiApiKey(String id);
@@ -179,8 +180,7 @@ class StorageService extends ChangeNotifier
       ConnectionOps(this).getConnection(id);
 
   @override
-  Future<String?> getPassword(String id) =>
-      ConnectionOps(this).getPassword(id);
+  Future<String?> getPassword(String id) => ConnectionOps(this).getPassword(id);
 
   @override
   Future<String?> getPrivateKey(String id) =>
@@ -281,7 +281,8 @@ class StorageService extends ChangeNotifier
       SettingsOps(this).getAiApiKeyById(id);
 
   @override
-  Future<void> saveCachedAiModels({required String baseUrl, required Iterable<String> models}) =>
+  Future<void> saveCachedAiModels(
+          {required String baseUrl, required Iterable<String> models}) =>
       SettingsOps(this).saveCachedAiModels(baseUrl: baseUrl, models: models);
 
   @override

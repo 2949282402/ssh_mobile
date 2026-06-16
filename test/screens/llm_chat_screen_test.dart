@@ -134,7 +134,9 @@ void main() {
         result[0]['text'], contains('[Attached file: archive.zip (3.0 MB)]'));
   });
 
-  test('approved plan execution context uses persisted todo steps as source of truth', () {
+  test(
+      'approved plan execution context uses persisted todo steps as source of truth',
+      () {
     final planMessage = AiChatMessageRecord(
       role: 'assistant',
       text: 'Plan',

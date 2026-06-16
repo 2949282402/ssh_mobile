@@ -168,8 +168,9 @@ class _TerminalScreenState extends State<TerminalScreen>
         : _terminalFocusNode;
     _complexInputController = TextEditingController();
     _windowsCommandInputController = TextEditingController();
-    final sessionFontSize = _sshService.getSession(widget.sessionId)?.fontSize ??
-        SshSession.defaultTerminalFontSize;
+    final sessionFontSize =
+        _sshService.getSession(widget.sessionId)?.fontSize ??
+            SshSession.defaultTerminalFontSize;
     context.read<TerminalViewModel>().setFontSize(sessionFontSize);
 
     _loadServerInfo();
@@ -373,8 +374,7 @@ class _TerminalScreenState extends State<TerminalScreen>
     var written = 0;
     final flushLimit = _maxTerminalFlushChars;
 
-    while (
-        _pendingTerminalWrites.isNotEmpty && written < flushLimit) {
+    while (_pendingTerminalWrites.isNotEmpty && written < flushLimit) {
       final chunk = _pendingTerminalWrites.removeFirst();
       final remainingBudget = flushLimit - written;
       if (chunk.length <= remainingBudget) {

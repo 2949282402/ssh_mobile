@@ -214,7 +214,8 @@ void main() {
         controller.recordAcceptedToolCall();
       }
       expect(controller.checkBeforeToolCall().requiresAudit, isFalse);
-      controller.recordAcceptedToolCall(); // 闂佸搫顦弲婊堟偡閵堝洨鍗氶柡澶嬪焾濞?usedCalls = 10闂備焦瀵х粙鎴︽儗娓氣偓瀹曢潧顭ㄩ崼婵堫槷闂侀潧顭粻鎴﹀煕閺嶎厽鐓?limit 闂?15
+      controller
+          .recordAcceptedToolCall(); // 闂佸搫顦弲婊堟偡閵堝洨鍗氶柡澶嬪焾濞?usedCalls = 10闂備焦瀵х粙鎴︽儗娓氣偓瀹曢潧顭ㄩ崼婵堫槷闂侀潧顭粻鎴﹀煕閺嶎厽鐓?limit 闂?15
 
       // 缂傚倷鐒﹂〃蹇涘礂濞戞俺濮抽柍鍝勬噺閳锋捇鏌ら崨濠庡晱闁哥偘绮欓弻銊モ槈濞嗘劗娈ら梺杞伴檷閸婃洟鈥?15闂備焦瀵х粙鎴︽嚐椤栫偞鍤愰柣鏃傚劋閸犲棝鏌ㄩ弴妤€浜鹃悷婊勬緲閸婅崵鍒?1 婵犵數鍋涘Λ宀勫焵椤掆偓绾绢參寮抽弮鍫熺厱闊洤顑呮俊鍏笺亜閹捐櫕鎲搁柟?
       for (var i = 0; i < 4; i++) {
@@ -308,7 +309,8 @@ void main() {
   });
 
   group('LlmChatService Plan Mode', () {
-    test('systemPromptFor appends plan mode instructions when planMode is true', () {
+    test('systemPromptFor appends plan mode instructions when planMode is true',
+        () {
       final storage = StorageService();
       final llmZh = LlmChatService(
         storageService: storage,
@@ -333,7 +335,8 @@ void main() {
       expect(enPlan, contains('[PLAN MODE ACTIVE]'));
     });
 
-    test('filters state-changing and execution-only tools out of plan mode', () async {
+    test('filters state-changing and execution-only tools out of plan mode',
+        () async {
       Future<String> noop(Map<String, dynamic> _) async => '{}';
 
       final executor = _MockAiToolExecutor([
@@ -442,7 +445,10 @@ void main() {
           .map((tool) => tool.name)
           .toList();
 
-      expect(names, containsAll(['list_servers', 'client_task_create', 'client_set_plan_mode']));
+      expect(
+          names,
+          containsAll(
+              ['list_servers', 'client_task_create', 'client_set_plan_mode']));
       expect(names, isNot(contains('client_set_clipboard')));
       expect(names, isNot(contains('client_set_alarm')));
       expect(names, isNot(contains('client_cancel_alarm')));
@@ -470,11 +476,16 @@ class _MockAiToolExecutor implements AiToolExecutor {
       availableTools.map((tool) => tool.definition).toList(growable: false);
 
   @override
-  AiToolApprovalRequest? approvalRequestFor(String name, Map<String, dynamic> arguments) => null;
+  AiToolApprovalRequest? approvalRequestFor(
+          String name, Map<String, dynamic> arguments) =>
+      null;
 
   @override
-  Future<String> execute(String name, Map<String, dynamic> arguments, {bool approvedWrite = false}) async => '';
+  Future<String> execute(String name, Map<String, dynamic> arguments,
+          {bool approvedWrite = false}) async =>
+      '';
 
   @override
-  AiCommandReview reviewCommand(String command, {ServerPlatform? platform}) => const AiCommandReview.readOnly();
+  AiCommandReview reviewCommand(String command, {ServerPlatform? platform}) =>
+      const AiCommandReview.readOnly();
 }

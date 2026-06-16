@@ -35,8 +35,10 @@ void main() {
 
     sshService = SshService(storageService);
     sftpService = SftpService(storageService);
-    performanceMonitorService = PerformanceMonitorService(sshService, storageService);
-    playbookService = PlaybookService(storageService: storageService, sshService: sshService);
+    performanceMonitorService =
+        PerformanceMonitorService(sshService, storageService);
+    playbookService =
+        PlaybookService(storageService: storageService, sshService: sshService);
     ragService = RagService(storageService: storageService);
   });
 
@@ -86,7 +88,8 @@ void main() {
       expect(result, isA<SendTextEmptyText>());
     });
 
-    test('sendText returns SendTextApiKeyMissing if api key is missing', () async {
+    test('sendText returns SendTextApiKeyMissing if api key is missing',
+        () async {
       final viewModel = AiChatViewModel(
         storageService: storageService,
         sshService: sshService,
@@ -146,6 +149,8 @@ void main() {
 
       await viewModel.loadInitialDraft();
       final originalId = viewModel.activeChatId!;
+
+      await Future.delayed(const Duration(milliseconds: 1));
 
       await viewModel.deleteChat(originalId);
 
