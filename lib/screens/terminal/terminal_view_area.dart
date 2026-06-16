@@ -67,6 +67,8 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
   bool _draggingScrollbar = false;
   bool _userReadingHistory = false;
   bool _metricsUpdateScheduled = false;
+  bool _isSyncing = false;
+  bool _jumpScheduled = false;
 
   bool get _isWindowsTerminalTarget {
     return !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
@@ -173,44 +175,61 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
   }
 
   void _syncScrollMetrics() {
-    _metricsUpdateScheduled = false;
-    if (!_scrollController.hasClients) return;
-    final position = _scrollController.position;
-    final nextMax = position.maxScrollExtent;
-    var nextPixels = position.pixels.clamp(
-      position.minScrollExtent,
-      position.maxScrollExtent,
-    );
+    if (!mounted || _isSyncing) return;
+    _isSyncing = true;
+    try {
+      _metricsUpdateScheduled = false;
+      if (!_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      final nextMax = position.maxScrollExtent;
+      var nextPixels = position.pixels.clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      );
 
-    final shouldFollowOutput = !_draggingScrollbar && !_userReadingHistory;
-    if (shouldFollowOutput && nextMax > 0) {
-      final distanceFromBottom = nextMax - nextPixels;
-      if (distanceFromBottom > _bottomTolerance) {
-        nextPixels = nextMax;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted ||
-              !_scrollController.hasClients ||
-              _draggingScrollbar ||
-              _userReadingHistory) {
-            return;
-          }
-          final max = _scrollController.position.maxScrollExtent;
-          _scrollController.jumpTo(max);
-          _syncScrollMetrics();
-        });
+      final shouldFollowOutput = !_draggingScrollbar && !_userReadingHistory;
+      if (shouldFollowOutput && nextMax > 0) {
+        final distanceFromBottom = nextMax - nextPixels;
+        if (distanceFromBottom > _bottomTolerance) {
+          nextPixels = nextMax;
+          _scheduleFollowOutputJump();
+        }
       }
-    }
 
-    final current = _scrollMetrics.value;
-    if ((nextPixels - current.pixels).abs() < 0.5 &&
-        (nextMax - current.maxScrollExtent).abs() < 0.5) {
-      return;
+      final current = _scrollMetrics.value;
+      if ((nextPixels - current.pixels).abs() < 0.5 &&
+          (nextMax - current.maxScrollExtent).abs() < 0.5) {
+        return;
+      }
+      _scrollMetrics.value = _TerminalScrollMetrics(
+        pixels: nextPixels,
+        maxScrollExtent: nextMax,
+      );
+    } finally {
+      _isSyncing = false;
     }
-    if (!mounted) return;
-    _scrollMetrics.value = _TerminalScrollMetrics(
-      pixels: nextPixels,
-      maxScrollExtent: nextMax,
-    );
+  }
+
+  void _scheduleFollowOutputJump() {
+    if (_jumpScheduled) return;
+    _jumpScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _jumpScheduled = false;
+      if (!mounted ||
+          !_scrollController.hasClients ||
+          _draggingScrollbar ||
+          _userReadingHistory) {
+        return;
+      }
+      final max = _scrollController.position.maxScrollExtent;
+      _isSyncing = true;
+      try {
+        _scrollController.jumpTo(max);
+      } finally {
+        _isSyncing = false;
+      }
+      _syncScrollMetrics();
+    });
   }
 
   bool _handleScrollNotification(ScrollNotification notification) {
@@ -339,7 +358,12 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
     if (!_scrollController.hasClients || maxScrollExtent <= 0) return;
     final target = (maxScrollExtent * fraction).clamp(0.0, maxScrollExtent);
     _userReadingHistory = (maxScrollExtent - target) > _bottomTolerance;
-    _jumpToScrollOffset(target);
+    _isSyncing = true;
+    try {
+      _jumpToScrollOffset(target);
+    } finally {
+      _isSyncing = false;
+    }
     _syncScrollMetrics();
   }
 
@@ -446,13 +470,15 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
         // The xterm render object may be briefly detached during page switches.
       }
       if (!_userReadingHistory && _scrollController.hasClients) {
-        _jumpToScrollOffset(_scrollController.position.maxScrollExtent);
+        final max = _scrollController.position.maxScrollExtent;
+        _isSyncing = true;
+        try {
+          _scrollController.jumpTo(max);
+        } finally {
+          _isSyncing = false;
+        }
       }
       _scheduleMetricsUpdate();
-
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _syncScrollMetrics();
-      });
     });
   }
 }

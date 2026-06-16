@@ -43,8 +43,19 @@ class _TerminalScreenState extends State<TerminalScreen>
     with WidgetsBindingObserver {
   static const double _minTerminalFontSize = SshSession.minTerminalFontSize;
   static const double _maxTerminalFontSize = SshSession.maxTerminalFontSize;
-  static const int _maxTerminalFlushChars = 6000;
+  static const int _baseTerminalFlushChars = 12000;
+  static const int _highTerminalFlushChars = 40000;
   static const int _terminalScrollbackLines = 4000;
+
+  Timer? _throttleTimer;
+  DateTime _lastFlushTime = DateTime.fromMillisecondsSinceEpoch(0);
+
+  int get _maxTerminalFlushChars {
+    if (_pendingTerminalWriteChars > 15000) {
+      return _highTerminalFlushChars;
+    }
+    return _baseTerminalFlushChars;
+  }
 
   late final Terminal _terminal;
   late final TerminalController _terminalController;
@@ -322,13 +333,32 @@ class _TerminalScreenState extends State<TerminalScreen>
     }
 
     if (_terminalWriteScheduled) return;
+
+    // Adaptive throttle check:
+    // If the stream is high-frequency (short interval since last flush)
+    // or we already have a significant backlog (> 2000 chars),
+    // throttle updates to protect main thread (~40 FPS via 25ms delay).
+    final now = DateTime.now();
+    final elapsed = now.difference(_lastFlushTime).inMilliseconds;
+    final isHighFrequency = elapsed < 50 || _pendingTerminalWriteChars > 2000;
+
     _terminalWriteScheduled = true;
-    WidgetsBinding.instance.scheduleFrameCallback((_) {
-      _flushTerminalWrites();
-    });
+    if (isHighFrequency) {
+      _throttleTimer = Timer(const Duration(milliseconds: 25), () {
+        _throttleTimer = null;
+        _flushTerminalWrites();
+      });
+    } else {
+      WidgetsBinding.instance.scheduleFrameCallback((_) {
+        _flushTerminalWrites();
+      });
+    }
   }
 
   void _flushTerminalWrites() {
+    _throttleTimer?.cancel();
+    _throttleTimer = null;
+
     if (!mounted) {
       _pendingTerminalWrites.clear();
       _pendingTerminalWriteChars = 0;
@@ -337,16 +367,18 @@ class _TerminalScreenState extends State<TerminalScreen>
     }
 
     _terminalWriteScheduled = false;
+    _lastFlushTime = DateTime.now();
     if (_pendingTerminalWrites.isEmpty) return;
 
     _clearTerminalSelection();
     final buffer = StringBuffer();
     var written = 0;
+    final flushLimit = _maxTerminalFlushChars;
 
     while (
-        _pendingTerminalWrites.isNotEmpty && written < _maxTerminalFlushChars) {
+        _pendingTerminalWrites.isNotEmpty && written < flushLimit) {
       final chunk = _pendingTerminalWrites.removeFirst();
-      final remainingBudget = _maxTerminalFlushChars - written;
+      final remainingBudget = flushLimit - written;
       if (chunk.length <= remainingBudget) {
         buffer.write(chunk);
         written += chunk.length;
@@ -373,7 +405,9 @@ class _TerminalScreenState extends State<TerminalScreen>
 
     if (_pendingTerminalWrites.isNotEmpty || _pendingTerminalWriteChars > 0) {
       _terminalWriteScheduled = true;
-      WidgetsBinding.instance.scheduleFrameCallback((_) {
+      // Continue with throttle timer to prevent main thread starvation during huge backlogs
+      _throttleTimer = Timer(const Duration(milliseconds: 25), () {
+        _throttleTimer = null;
         _flushTerminalWrites();
       });
     }
@@ -771,6 +805,7 @@ class _TerminalScreenState extends State<TerminalScreen>
     WidgetsBinding.instance.removeObserver(this);
     _longPressTimer?.cancel();
     _resizeTimer?.cancel();
+    _throttleTimer?.cancel();
     final listener = _sshListener;
     if (listener != null) {
       _sshService.removeListener(listener);
