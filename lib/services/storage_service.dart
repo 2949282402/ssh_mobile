@@ -34,6 +34,82 @@ const Uuid _traceUuid = Uuid();
 ///
 /// 高频写操作（AI 聊天、tmux 会话、终端历史）使用 700ms 防抖批量写入，
 /// App 进入后台时调用 flushPendingWrites() 确保数据落盘。
+abstract interface class ConnectionRepository {
+  List<ConnectionConfig> get connections;
+  Future<void> addConnection(ConnectionConfig config);
+  Future<void> updateConnection(ConnectionConfig config);
+  Future<void> deleteConnection(String id);
+  Future<void> deleteConnections(List<String> ids);
+  Future<void> reorderConnections(int oldIndex, int newIndex);
+  ConnectionConfig? getConnection(String id);
+  Future<String?> getPassword(String id);
+  Future<String?> getPrivateKey(String id);
+}
+
+abstract interface class AiSettingsRepository {
+  Future<AiConnectionSettings> loadAiConnectionSettings();
+
+  Future<void> saveAiConnectionSettings({
+    required String baseUrl,
+    required String model,
+    String? helperModel,
+    String? auditModel,
+    String? modelFallbackPolicy,
+    int? contextWindowTokens,
+    int? timeoutSeconds,
+    bool? deepSeekThinkingEnabled,
+    String? deepSeekReasoningEffort,
+    String? openAiReasoningEffort,
+    bool? webSearchEnabled,
+    int? webSearchMaxResults,
+    String? webSearchEngine,
+    bool? multiAgentEnabled,
+    int? multiAgentMaxAgents,
+    int? toolCallBudget,
+    int? maxImageSizeBytes,
+    int? maxFileSizeBytes,
+    String? apiKey,
+    String? selectedApiKeyId,
+    bool clearApiKey,
+    String? quarkSearchEndpoint,
+    String? quarkApiKey,
+    bool clearQuarkApiKey,
+    bool? useCustomPrompts,
+    String? customSystemPrompt,
+    String? customPlannerPrompt,
+    String? customOperatorPrompt,
+    String? customExplorePrompt,
+    String? customReviewerPrompt,
+    String? customSummarizerPrompt,
+    String? customCoordinatorPrompt,
+  });
+
+  Future<String?> getAiApiKey();
+  Future<String?> getQuarkApiKey();
+  Future<void> saveQuarkApiKey(String key);
+  Future<String?> getAliyunApiKey();
+  Future<void> saveAliyunApiKey(String key);
+  Future<String?> getSelectedAiApiKeyId();
+
+  Future<List<String>> loadAiBaseUrlHistory();
+  Future<List<String>> loadCachedAiModels({String? baseUrl});
+  Future<void> removeAiBaseUrlHistoryEntry(String baseUrl);
+  Future<void> removeAiApiKeyHistoryEntry(String id);
+  Future<List<AiApiKeyHistoryEntry>> loadAiApiKeyHistory();
+  Future<String?> getAiApiKeyById(String id);
+  Future<void> saveCachedAiModels({required String baseUrl, required Iterable<String> models});
+  Future<void> clearCachedAiModels({String? baseUrl});
+  Future<int> getAiRequestTimeoutSeconds();
+  Future<void> selectAiApiKey(String id);
+  Future<void> deleteAiApiKey(String id);
+
+  bool get isSecretCacheEnabled;
+  Future<void> setSecretCacheEnabled(bool enabled);
+  Duration get secretCacheTtl;
+  Future<void> setSecretCacheTtl(Duration ttl);
+  void clearSecretCache();
+}
+
 abstract interface class AiChatRepository {
   Future<List<AiChatRecord>> loadAiChats();
   Future<void> saveAiChat(AiChatRecord chat);
@@ -70,12 +146,197 @@ abstract interface class AppBackupRepository {
 
 class StorageService extends ChangeNotifier
     implements
+        ConnectionRepository,
+        AiSettingsRepository,
         AiChatRepository,
         AiSkillRepository,
         AgentRunMetricsRepository,
         TerminalHistoryRepository,
         PlaybookRepository,
         AppBackupRepository {
+  @override
+  Future<void> addConnection(ConnectionConfig config) =>
+      ConnectionOps(this).addConnection(config);
+
+  @override
+  Future<void> updateConnection(ConnectionConfig config) =>
+      ConnectionOps(this).updateConnection(config);
+
+  @override
+  Future<void> deleteConnection(String id) =>
+      ConnectionOps(this).deleteConnection(id);
+
+  @override
+  Future<void> deleteConnections(List<String> ids) =>
+      ConnectionOps(this).deleteConnections(ids);
+
+  @override
+  Future<void> reorderConnections(int oldIndex, int newIndex) =>
+      ConnectionOps(this).reorderConnections(oldIndex, newIndex);
+
+  @override
+  ConnectionConfig? getConnection(String id) =>
+      ConnectionOps(this).getConnection(id);
+
+  @override
+  Future<String?> getPassword(String id) =>
+      ConnectionOps(this).getPassword(id);
+
+  @override
+  Future<String?> getPrivateKey(String id) =>
+      ConnectionOps(this).getPrivateKey(id);
+
+  @override
+  Future<AiConnectionSettings> loadAiConnectionSettings() =>
+      SettingsOps(this).loadAiConnectionSettings();
+
+  @override
+  Future<void> saveAiConnectionSettings({
+    required String baseUrl,
+    required String model,
+    String? helperModel,
+    String? auditModel,
+    String? modelFallbackPolicy,
+    int? contextWindowTokens,
+    int? timeoutSeconds,
+    bool? deepSeekThinkingEnabled,
+    String? deepSeekReasoningEffort,
+    String? openAiReasoningEffort,
+    bool? webSearchEnabled,
+    int? webSearchMaxResults,
+    String? webSearchEngine,
+    bool? multiAgentEnabled,
+    int? multiAgentMaxAgents,
+    int? toolCallBudget,
+    int? maxImageSizeBytes,
+    int? maxFileSizeBytes,
+    String? apiKey,
+    String? selectedApiKeyId,
+    bool clearApiKey = false,
+    String? quarkSearchEndpoint,
+    String? quarkApiKey,
+    bool clearQuarkApiKey = false,
+    bool? useCustomPrompts,
+    String? customSystemPrompt,
+    String? customPlannerPrompt,
+    String? customOperatorPrompt,
+    String? customExplorePrompt,
+    String? customReviewerPrompt,
+    String? customSummarizerPrompt,
+    String? customCoordinatorPrompt,
+  }) =>
+      SettingsOps(this).saveAiConnectionSettings(
+        baseUrl: baseUrl,
+        model: model,
+        helperModel: helperModel,
+        auditModel: auditModel,
+        modelFallbackPolicy: modelFallbackPolicy,
+        contextWindowTokens: contextWindowTokens,
+        timeoutSeconds: timeoutSeconds,
+        deepSeekThinkingEnabled: deepSeekThinkingEnabled,
+        deepSeekReasoningEffort: deepSeekReasoningEffort,
+        openAiReasoningEffort: openAiReasoningEffort,
+        webSearchEnabled: webSearchEnabled,
+        webSearchMaxResults: webSearchMaxResults,
+        webSearchEngine: webSearchEngine,
+        multiAgentEnabled: multiAgentEnabled,
+        multiAgentMaxAgents: multiAgentMaxAgents,
+        toolCallBudget: toolCallBudget,
+        maxImageSizeBytes: maxImageSizeBytes,
+        maxFileSizeBytes: maxFileSizeBytes,
+        apiKey: apiKey,
+        selectedApiKeyId: selectedApiKeyId,
+        clearApiKey: clearApiKey,
+        quarkSearchEndpoint: quarkSearchEndpoint,
+        quarkApiKey: quarkApiKey,
+        clearQuarkApiKey: clearQuarkApiKey,
+        useCustomPrompts: useCustomPrompts,
+        customSystemPrompt: customSystemPrompt,
+        customPlannerPrompt: customPlannerPrompt,
+        customOperatorPrompt: customOperatorPrompt,
+        customExplorePrompt: customExplorePrompt,
+        customReviewerPrompt: customReviewerPrompt,
+        customSummarizerPrompt: customSummarizerPrompt,
+        customCoordinatorPrompt: customCoordinatorPrompt,
+      );
+
+  @override
+  Future<List<String>> loadCachedAiModels({String? baseUrl}) =>
+      SettingsOps(this).loadCachedAiModels(baseUrl: baseUrl);
+
+  @override
+  Future<void> removeAiBaseUrlHistoryEntry(String baseUrl) =>
+      SettingsOps(this).removeAiBaseUrlHistoryEntry(baseUrl);
+
+  @override
+  Future<void> removeAiApiKeyHistoryEntry(String id) =>
+      SettingsOps(this).removeAiApiKeyHistoryEntry(id);
+
+  @override
+  Future<List<AiApiKeyHistoryEntry>> loadAiApiKeyHistory() =>
+      SettingsOps(this).loadAiApiKeyHistory();
+
+  @override
+  Future<String?> getAiApiKeyById(String id) =>
+      SettingsOps(this).getAiApiKeyById(id);
+
+  @override
+  Future<void> saveCachedAiModels({required String baseUrl, required Iterable<String> models}) =>
+      SettingsOps(this).saveCachedAiModels(baseUrl: baseUrl, models: models);
+
+  @override
+  Future<void> clearCachedAiModels({String? baseUrl}) =>
+      SettingsOps(this).clearCachedAiModels(baseUrl: baseUrl);
+
+  @override
+  Future<int> getAiRequestTimeoutSeconds() =>
+      SettingsOps(this).getAiRequestTimeoutSeconds();
+
+  @override
+  Future<void> selectAiApiKey(String id) =>
+      SettingsOps(this).selectAiApiKey(id);
+
+  @override
+  Future<void> deleteAiApiKey(String id) =>
+      SettingsOps(this).deleteAiApiKey(id);
+
+  @override
+  @override
+  Future<String?> getAiApiKey() => SettingsOps(this).getAiApiKey();
+
+  @override
+  Future<String?> getQuarkApiKey() => SettingsOps(this).getQuarkApiKey();
+
+  @override
+  Future<void> saveQuarkApiKey(String key) =>
+      SettingsOps(this).saveQuarkApiKey(key);
+
+  @override
+  Future<String?> getAliyunApiKey() => SettingsOps(this).getAliyunApiKey();
+
+  @override
+  Future<void> saveAliyunApiKey(String key) =>
+      SettingsOps(this).saveAliyunApiKey(key);
+
+  @override
+  Future<String?> getSelectedAiApiKeyId() =>
+      SettingsOps(this).getSelectedAiApiKeyId();
+
+  @override
+  Future<List<String>> loadAiBaseUrlHistory() =>
+      SettingsOps(this).loadAiBaseUrlHistory();
+
+  @override
+  Future<void> setSecretCacheEnabled(bool enabled) =>
+      SettingsOps(this).setSecretCacheEnabled(enabled);
+
+  @override
+  Future<void> setSecretCacheTtl(Duration ttl) =>
+      SettingsOps(this).setSecretCacheTtl(ttl);
+
+  @override
+  void clearSecretCache() => SettingsOps(this).clearSecretCache();
+
   static const _connectionsKey = 'ssh_connections';
   static const _powerGuideSeenKey = 'power_guide_seen';
   static const _restorableTmuxSessionsKey = 'restorable_tmux_sessions';
@@ -209,8 +470,11 @@ class StorageService extends ChangeNotifier
     notifyListeners();
   }
 
+  @override
   List<ConnectionConfig> get connections => _connectionsView;
+  @override
   bool get isSecretCacheEnabled => _secretCacheEnabled;
+  @override
   Duration get secretCacheTtl => _secretCacheTtl;
   int get secretCacheTtlMinutes => _secretCacheTtl.inMinutes;
   List<int> get secretCacheTtlOptionsMinutes =>
