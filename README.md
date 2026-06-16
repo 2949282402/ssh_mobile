@@ -185,6 +185,17 @@ LLM 设置集中在单独的设置页中，包含 Base URL、API Key 历史、�
 
 AI 聊天的 tool 调用现在有按单次请求计算的预算保护：默认预算为 20 次，首次达到预算会自动增加一半，并在 trace 中提醒用户观察工具调用是否仍然合理；之后每次继续扩容前都会运行一次内部安全审计，必要时会停止继续调用工具，并强制模型给出一次无工具的总结与下一步建议。
 
+#### Agent Runtime
+
+Recent agent architecture upgrades in the Flutter client:
+
+- `ChatOrchestrator` and `ChatContextAssembler` now own RAG injection, approved-plan execution context, assistant trace compaction, and todo step finalization instead of spreading prompt assembly across UI code.
+- AI settings now support `mainModel`, `helperModel`, `auditModel`, and a fallback policy so lightweight helper and audit turns can run on cheaper/faster models while the main assistant keeps the primary tool loop.
+- `ToolExposureRouter` trims the tool set per request based on plan mode, approved plans, selected servers, and WebView availability to reduce prompt noise.
+- The LLM tool loop now includes deterministic read-only loop blocking, short-TTL cache reuse, richer ledger metadata, and persisted `AgentRunMetrics`.
+- New composite diagnostic tools are available for higher-signal troubleshooting: `inspect_service_health`, `collect_incident_context`, and `compare_server_states`.
+- Operational memory retrieval now mixes RAG chunks, AI skills, prior todo/playbook wins, and useful traces before each run.
+
 ### AI Tools
 
 AI tools 以能力分组维护在 `lib/services/ai_tool/` 中，而不是把逻辑散在聊天页里。当前主要包括：

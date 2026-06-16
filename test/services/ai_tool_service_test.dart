@@ -249,6 +249,9 @@ void main() {
         'update_server_metadata',
         'delete_server',
         'reorder_servers',
+        'inspect_service_health',
+        'collect_incident_context',
+        'compare_server_states',
         'ssh_list_sessions',
         'sftp_download_file',
         'sftp_write_text',
@@ -569,6 +572,26 @@ void main() {
     expect(report['health']['level'], 'healthy');
   });
 
+  test('composite diagnostic tools return structured JSON payloads', () async {
+    final incidentRaw = await tools.execute('collect_incident_context', {
+      'connectionId': 'server-1',
+      'focus': 'nginx',
+      'path': '/var/log/nginx/error.log',
+    });
+    final compareRaw = await tools.execute('compare_server_states', {
+      'connectionIds': ['server-1', 'server-1'],
+      'mode': 'performance',
+    });
+
+    final incident = jsonDecode(incidentRaw) as Map<String, dynamic>;
+    final compare = jsonDecode(compareRaw) as Map<String, dynamic>;
+
+    expect(incident['focus'], 'nginx');
+    expect(incident['pathContext'], isNotNull);
+    expect(compare['compared'], 2);
+    expect(compare['mode'], 'performance');
+  });
+
   test('server detail tool uses the injected server catalog adapter', () async {
     final raw = await tools.execute('get_server_details', {
       'connectionId': 'server-1',
@@ -622,7 +645,9 @@ void main() {
   });
 
   group('client_set_plan_mode tool', () {
-    test('switches planMode to true, clears approved plan, and exits only with persisted latest todo steps', () async {
+    test(
+        'switches planMode to true, clears approved plan, and exits only with persisted latest todo steps',
+        () async {
       final now = DateTime.now();
       var chat = AiChatRecord(
         id: 'chat-1',
@@ -640,21 +665,25 @@ void main() {
       await storage.saveAiChat(chat);
 
       // 1. 开启 planMode
-      final rawTrue = await tools.execute('client_set_plan_mode', {'enabled': true});
+      final rawTrue =
+          await tools.execute('client_set_plan_mode', {'enabled': true});
       final decodedTrue = jsonDecode(rawTrue) as Map<String, dynamic>;
       expect(decodedTrue['status'], 'success');
       expect(decodedTrue['planMode'], isTrue);
 
-      final chatTrue = (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      final chatTrue =
+          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
       expect(chatTrue.planMode, isTrue);
       expect(chatTrue.approvedPlan, isNull);
 
       // 2. 尝试关闭 planMode（因为没有任何 playbook 计划，应该被拦截报错）
-      final rawFalse = await tools.execute('client_set_plan_mode', {'enabled': false});
+      final rawFalse =
+          await tools.execute('client_set_plan_mode', {'enabled': false});
       final decodedFalse = jsonDecode(rawFalse) as Map<String, dynamic>;
       expect(decodedFalse['error'], contains('Cannot exit Plan Mode'));
 
-      final chatStillTrue = (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      final chatStillTrue =
+          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
       expect(chatStillTrue.planMode, isTrue);
 
       // 3. 往会话中添加一条带有 playbook 计划步骤的消息
@@ -691,12 +720,14 @@ void main() {
       await storage.saveAiChat(updatedChat);
 
       // 4. 再次尝试关闭 planMode（此时符合条件，应允许退出）
-      final rawExit = await tools.execute('client_set_plan_mode', {'enabled': false});
+      final rawExit =
+          await tools.execute('client_set_plan_mode', {'enabled': false});
       final decodedExit = jsonDecode(rawExit) as Map<String, dynamic>;
       expect(decodedExit['status'], 'success');
       expect(decodedExit['planMode'], isFalse);
 
-      final chatFalse = (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      final chatFalse =
+          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
       expect(chatFalse.planMode, isFalse);
     });
   });
@@ -735,7 +766,8 @@ void main() {
       expect(taskId, startsWith('task-'));
 
       // 验证是否已存入助理消息的 todoSteps
-      final chatAfterCreate = (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      final chatAfterCreate =
+          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
       expect(chatAfterCreate.messages.last.todoSteps.length, 1);
       expect(chatAfterCreate.messages.last.todoSteps.first.id, taskId);
 
@@ -744,8 +776,12 @@ void main() {
         'taskId': taskId,
         'status': 'success',
       });
-      final decodedUpdateInPlan = jsonDecode(rawUpdateInPlan) as Map<String, dynamic>;
-      expect(decodedUpdateInPlan['error'], contains('client_task_update can ONLY be called during Execution Mode'));
+      final decodedUpdateInPlan =
+          jsonDecode(rawUpdateInPlan) as Map<String, dynamic>;
+      expect(
+          decodedUpdateInPlan['error'],
+          contains(
+              'client_task_update can ONLY be called during Execution Mode'));
 
       // 4. 将 Chat 设为 planMode = false (执行模式)
       final chatExecution = chatAfterCreate.copyWith(planMode: false);
@@ -755,8 +791,10 @@ void main() {
       final rawCreateInExec = await tools.execute('client_task_create', {
         'name': 'Another Step',
       });
-      final decodedCreateInExec = jsonDecode(rawCreateInExec) as Map<String, dynamic>;
-      expect(decodedCreateInExec['error'], contains('client_task_create can ONLY be called during Plan Mode'));
+      final decodedCreateInExec =
+          jsonDecode(rawCreateInExec) as Map<String, dynamic>;
+      expect(decodedCreateInExec['error'],
+          contains('client_task_create can ONLY be called during Plan Mode'));
 
       // 6. 处于 Execution Mode，调用 TaskUpdate 应该成功并更新状态
       final rawRunningAlias = await tools.execute('client_task_update', {
@@ -768,8 +806,10 @@ void main() {
       expect(decodedRunningAlias['status'], 'success');
       expect(decodedRunningAlias['newStatus'], 'running');
 
-      final chatAfterAlias = (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
-      expect(chatAfterAlias.messages.last.todoSteps.first.status.name, 'running');
+      final chatAfterAlias =
+          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      expect(
+          chatAfterAlias.messages.last.todoSteps.first.status.name, 'running');
 
       final rawUpdate = await tools.execute('client_task_update', {
         'taskId': taskId,
@@ -780,7 +820,8 @@ void main() {
       expect(decodedUpdate['status'], 'success');
       expect(decodedUpdate['newStatus'], 'success');
 
-      final chatAfterUpdate = (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      final chatAfterUpdate =
+          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
       final updatedStep = chatAfterUpdate.messages.last.todoSteps.first;
       expect(updatedStep.status.name, 'success');
       expect(updatedStep.stdout, 'Docker version 24.0.7');
@@ -790,7 +831,8 @@ void main() {
         'taskId': 'invalid-id',
         'status': 'success',
       });
-      final decodedUpdateInvalid = jsonDecode(rawUpdateInvalid) as Map<String, dynamic>;
+      final decodedUpdateInvalid =
+          jsonDecode(rawUpdateInvalid) as Map<String, dynamic>;
       expect(decodedUpdateInvalid['error'], contains('Task step not found'));
     });
   });
