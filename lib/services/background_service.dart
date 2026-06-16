@@ -207,11 +207,31 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
   final sessions = <String, _BackgroundSshSession>{};
 
   void emitLog(String level, String message, {String? details}) {
-    service.invoke('appLog', {
+    service.invoke('sshLogReceived', {
       'level': level,
       'message': message,
       if (details != null && details.isNotEmpty) 'details': details,
       'timestamp': DateTime.now().toIso8601String(),
+    });
+  }
+
+  void emitOverview() {
+    final byConnection = <String, Map<String, dynamic>>{};
+    for (final session in sessions.values) {
+      final connId = session.connectionId;
+      if (connId != null) {
+        final current = byConnection.putIfAbsent(connId, () => {
+          'count': 0,
+          'latestState': 'connected',
+          'hasConnected': true,
+        });
+        current['count'] = (current['count'] as int) + 1;
+      }
+    }
+
+    service.invoke('sshOverviewUpdated', {
+      'overview': byConnection,
+      'windowCount': sessions.length,
     });
   }
 
@@ -239,7 +259,7 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
           'sessionId=$sessionId connection=${connectionName ?? connectionId ?? ''}'
           '${message == null ? '' : ' message=$message'}',
     );
-    service.invoke('sshState', {
+    service.invoke('sshStateChanged', {
       'sessionId': sessionId,
       'state': state,
       if (message != null) 'message': message,
@@ -285,6 +305,7 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
       );
       setNotification(notificationSummary());
     }
+    emitOverview();
   }
 
   Future<void> closeAll({bool notify = true}) async {
@@ -518,7 +539,7 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
 
       runtime.stdoutSub = shell.stdout.listen(
         (bytes) {
-          service.invoke('sshOutput', {
+          service.invoke('sshDataReceived', {
             'sessionId': sessionId,
             'data': utf8.decode(bytes, allowMalformed: true),
           });
@@ -540,7 +561,7 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
 
       runtime.stderrSub = shell.stderr.listen(
         (bytes) {
-          service.invoke('sshOutput', {
+          service.invoke('sshDataReceived', {
             'sessionId': sessionId,
             'data': utf8.decode(bytes, allowMalformed: true),
           });
@@ -601,6 +622,7 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
         connectionId: connectionId,
         connectionName: name,
       );
+      emitOverview();
       setNotification(notificationSummary());
       emitLog(
         'service',
