@@ -343,6 +343,8 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     _notifySessionMetadataChanged();
 
     try {
+      // Allow UI to render the connecting state and connection dialog entrance
+      await Future<void>.delayed(const Duration(milliseconds: 16));
       final credentials = await _clientFactory.loadCredentials(config);
 
       if (launchMode == TerminalLaunchMode.tmux) {
@@ -363,6 +365,8 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
         await BackgroundServiceManager.start(
           connectionName: _notificationSummary(),
         );
+        // Let the UI render while foreground service is starting up
+        await Future<void>.delayed(const Duration(milliseconds: 16));
         _backgroundService.invoke('sshConnect', {
           'sessionId': id,
           'id': config.id,
@@ -381,6 +385,8 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
           'tmuxAutoDeleteSeconds': config.tmuxAutoDeleteSeconds,
         });
       } else {
+        // Allow UI rendering before initiating local cryptographic handshake
+        await Future<void>.delayed(const Duration(milliseconds: 16));
         await _connectLocalSession(
           session: session,
           config: config,
