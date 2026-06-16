@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import '../../../services/ai_tool_service.dart';
@@ -7,6 +6,9 @@ import '../../../services/agent_model_profile.dart';
 import '../../../services/app_log_service.dart';
 import '../../../services/app_settings.dart';
 import '../services/ai_chat_runtime_factory.dart';
+import '../services/ai_chat_context_builder.dart';
+import '../services/ai_chat_message_mapper.dart';
+import '../services/ai_chat_token_estimator.dart';
 import '../../../services/llm_chat_service.dart';
 import '../../../services/performance_monitor_service.dart';
 import '../../../services/playbook_service.dart';
@@ -17,36 +19,17 @@ import '../../../services/storage_service.dart';
 import '../../../utils/text_chunker.dart';
 
 @visibleForTesting
+@visibleForTesting
 String buildApprovedPlanExecutionContext({
   required String userText,
   required AiChatMessageRecord planMessage,
   required AppLanguage language,
 }) {
-  final isEn = language == AppLanguage.en;
-  final steps = planMessage.todoSteps
-      .map((step) => {
-            'taskId': step.id,
-            'name': step.name,
-            'command': step.command,
-            'description': step.description,
-            if (step.connectionId?.trim().isNotEmpty == true)
-              'connectionId': step.connectionId,
-          })
-      .toList(growable: false);
-  return [
-    isEn ? 'Approved execution plan:' : '已批准执行计划：',
-    isEn
-        ? 'Use these persisted todoSteps as the source of truth. Execute them sequentially in order. Do not recreate task ids or reparse any earlier playbook text.'
-        : '以下持久化 todoSteps 是唯一执行依据。请严格按顺序执行，不要重新创建 taskId，也不要重新解析旧的 playbook 文本。',
-    isEn
-        ? 'Call client_task_update with status="running" when each step starts, then update it to success, failed, or skipped with stdout/stderr when the step finishes.'
-        : '每一步开始时调用 client_task_update(status="running")，完成后再更新为 success、failed 或 skipped，并尽量写入 stdout/stderr。',
-    isEn ? 'Persisted steps:' : '持久化步骤：',
-    jsonEncode(steps),
-    '',
-    isEn ? 'User execution trigger:' : '用户执行触发：',
-    userText,
-  ].join('\n');
+  return const AiChatContextBuilder().buildApprovedPlanExecutionContext(
+    userText: userText,
+    planMessage: planMessage,
+    language: language,
+  );
 }
 
 // ViewModel与View层通信的状态和返回结果
@@ -122,6 +105,9 @@ class AiChatViewModel extends ChangeNotifier {
   final StorageService _storageService;
   final AppSettings _appSettings;
   final AiChatRuntimeFactory _runtimeFactory;
+  final AiChatContextBuilder _contextBuilder;
+  final AiChatMessageMapper _messageMapper;
+  final AiChatTokenEstimator _tokenEstimator;
 
   // 聊天会话状态列表
   List<AiChatRecord> _chats = const [];
@@ -149,12 +135,6 @@ class AiChatViewModel extends ChangeNotifier {
   // 上下文限制
   int _contextWindowTokens = AiContextWindowSize.k259;
 
-  // 估计Token的缓存机制
-  String? _contextTokenCacheKey;
-  String? _contextTokenCacheChatId;
-  int _cachedContextTokens = 0;
-  DateTime _lastContextTokenEstimateAt = DateTime.fromMillisecondsSinceEpoch(0);
-
   // 流式输出ValueNotifier
   final ValueNotifier<String> streamingAssistantText =
       ValueNotifier<String>('');
@@ -175,6 +155,9 @@ class AiChatViewModel extends ChangeNotifier {
     required RagService ragService,
     required AppSettings appSettings,
     AiChatRuntimeFactory? runtimeFactory,
+    AiChatContextBuilder? contextBuilder,
+    AiChatMessageMapper? messageMapper,
+    AiChatTokenEstimator? tokenEstimator,
   })  : _storageService = storageService,
         _appSettings = appSettings,
         _runtimeFactory = runtimeFactory ??
@@ -186,6 +169,19 @@ class AiChatViewModel extends ChangeNotifier {
               playbookService: playbookService,
               ragService: ragService,
               appSettings: appSettings,
+            ),
+        _contextBuilder = contextBuilder ?? const AiChatContextBuilder(),
+        _messageMapper = messageMapper ??
+            AiChatMessageMapper(
+              contextBuilder: contextBuilder ?? const AiChatContextBuilder(),
+            ),
+        _tokenEstimator = tokenEstimator ??
+            AiChatTokenEstimator(
+              messageMapper: messageMapper ??
+                  AiChatMessageMapper(
+                    contextBuilder:
+                        contextBuilder ?? const AiChatContextBuilder(),
+                  ),
             );
 
   // Getters
@@ -658,181 +654,44 @@ class AiChatViewModel extends ChangeNotifier {
   }
 
   // 上下文 Token 压缩与估计逻辑 (吸收自原 chat_token_compression.dart)
+  // 上下文 Token 压缩与估计逻辑
   Future<String?> contextTextForUser(
     String text, {
     List<RagChunk> ragChunks = const [],
     AiChatMessageRecord? approvedPlanMessage,
   }) async {
-    final lines = <String>[];
-    if (_selectedConnectionIds.isNotEmpty) {
-      final serverInfos = <String>[];
-      for (final id in _selectedConnectionIds) {
-        final connection = _storageService.getConnection(id);
-        if (connection != null) {
-          serverInfos.add(
-            '- ${connection.name} (id: ${connection.id}, host: ${connection.username}@${connection.host}:${connection.port})',
-          );
-        }
-      }
-      if (serverInfos.isNotEmpty) {
-        lines.add('Target servers:\n${serverInfos.join('\n')}');
+    final selected = <AiChatSelectedConnectionContext>[];
+    for (final id in _selectedConnectionIds) {
+      final conn = _storageService.getConnection(id);
+      if (conn != null) {
+        selected.add(AiChatSelectedConnectionContext(
+          id: conn.id,
+          name: conn.name,
+          username: conn.username,
+          host: conn.host,
+          port: conn.port,
+        ));
       }
     }
-
-    if (ragChunks.isNotEmpty) {
-      final isEn = _appSettings.isEnglish;
-      final ragLines = <String>[];
-      ragLines.add(isEn
-          ? '【Ops Knowledge Base Reference Information】:'
-          : '【运维知识库参考信息】：');
-      for (final chunk in ragChunks) {
-        ragLines.add('---');
-        ragLines.add(isEn
-            ? 'Source: [${chunk.documentName}] (Chunk #${chunk.metadata['chunkIndex'] ?? 0})'
-            : '来源: [${chunk.documentName}] (分块 #${chunk.metadata['chunkIndex'] ?? 0})');
-        ragLines.add('${isEn ? 'Content' : '内容'}:\n${chunk.text}');
-      }
-      ragLines.add('---');
-      lines.add(ragLines.join('\n'));
-    }
-
-    final requestBlock =
-        approvedPlanMessage != null && approvedPlanMessage.todoSteps.isNotEmpty
-            ? buildApprovedPlanExecutionContext(
-                userText: text,
-                planMessage: approvedPlanMessage,
-                language: _appSettings.language,
-              )
-            : 'User request:\n$text';
-    if (lines.isEmpty) return requestBlock;
-    return '${lines.join('\n\n')}\n\n$requestBlock';
+    return _contextBuilder.buildUserContextText(
+      text: text,
+      language: _appSettings.language,
+      isEnglish: _appSettings.isEnglish,
+      selectedConnections: selected,
+      ragChunks: ragChunks,
+      approvedPlanMessage: approvedPlanMessage,
+    );
   }
 
   String _contextTextForAssistant(
     String text, {
     List<AiMessageTrace> traces = const [],
   }) {
-    final trimmed = text.trim();
-    final body = trimmed.isEmpty
-        ? trimmed
-        : !_shouldOmitAssistantBody(trimmed)
-            ? trimmed
-            : _slimAssistantBody(trimmed);
-    if (traces.isEmpty) return body;
-
-    final buffer = StringBuffer();
-    if (body.isNotEmpty) {
-      buffer.writeln(body);
-      buffer.writeln();
-    }
-    buffer.writeln('Assistant execution memory:');
-    for (final trace in traces) {
-      buffer
-        ..writeln('[${trace.kind}] ${trace.title}')
-        ..writeln(_traceMemoryContent(trace))
-        ..writeln();
-    }
-    return buffer.toString().trimRight();
-  }
-
-  String _traceMemoryContent(AiMessageTrace trace) {
-    final trimmed = trace.content.trim();
-    if (trimmed.length <= 2500) return trimmed;
-    final preview =
-        trimmed.replaceAll(RegExp(r'\s+'), ' ').trim().runes.take(900);
-    return '[Large ${trace.kind} output omitted from future context. '
-        'The full trace remains visible in chat history. '
-        'Length: ${trimmed.length} chars. '
-        'Preview: ${String.fromCharCodes(preview)}]';
-  }
-
-  String _slimAssistantBody(String trimmed) {
-    final preview =
-        trimmed.replaceAll(RegExp(r'\s+'), ' ').trim().runes.take(420);
-    final type = _largeAssistantBodyType(trimmed);
-    return '[Large $type output omitted from future context. '
-        'The full content remains visible in chat history. '
-        'Length: ${trimmed.length} chars. '
-        'Preview: ${String.fromCharCodes(preview)}]';
-  }
-
-  bool _shouldOmitAssistantBody(String text) {
-    final lowerText = text.toLowerCase();
-    if (text.length > 6000) return true;
-    if (text.length > 2500 && _codeFenceCount(text) >= 2) return true;
-    if (text.length > 2500 &&
-        (lowerText.contains('<html') || lowerText.contains('<!doctype'))) {
-      return true;
-    }
-    if (text.length > 3000 && _markdownDocumentScore(text) >= 10) return true;
-    return false;
-  }
-
-  String _largeAssistantBodyType(String text) {
-    final lowerText = text.toLowerCase();
-    if (lowerText.contains('<html') || lowerText.contains('<!doctype')) {
-      return 'HTML';
-    }
-    if (_codeFenceCount(text) >= 2) return 'code/document';
-    if (_markdownDocumentScore(text) >= 10) return 'Markdown/document';
-    return 'document';
-  }
-
-  int _codeFenceCount(String text) {
-    return RegExp(r'```').allMatches(text).length;
-  }
-
-  int _markdownDocumentScore(String text) {
-    var score = 0;
-    for (final line in text.split('\n')) {
-      final trimmed = line.trimLeft();
-      if (trimmed.startsWith('#')) score += 2;
-      if (trimmed.startsWith('|')) score++;
-      if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) score++;
-      if (RegExp(r'^\d+\. ').hasMatch(trimmed)) score++;
-    }
-    return score;
+    return _contextBuilder.buildAssistantContextText(text, traces: traces);
   }
 
   int contextTokensFor(AiChatRecord chat) {
-    final key = _contextTokenKey(chat);
-    if (_contextTokenCacheKey == key) return _cachedContextTokens;
-    final now = DateTime.now();
-    if (_sending &&
-        _contextTokenCacheChatId == chat.id &&
-        _contextTokenCacheKey != null &&
-        now.difference(_lastContextTokenEstimateAt) <
-            const Duration(milliseconds: 1500)) {
-      return _cachedContextTokens;
-    }
-    _contextTokenCacheKey = key;
-    _contextTokenCacheChatId = chat.id;
-    _lastContextTokenEstimateAt = now;
-    _cachedContextTokens = _estimatedContextTokens(chat.messages);
-    return _cachedContextTokens;
-  }
-
-  String _contextTokenKey(AiChatRecord chat) {
-    final messages = chat.messages;
-    if (messages.isEmpty) return '${chat.id}:0';
-    final last = messages.last;
-    return [
-      chat.id,
-      messages.length,
-      last.role,
-      last.createdAt.microsecondsSinceEpoch,
-      last.text.length,
-      last.contextText?.length ?? 0,
-      last.traces.length,
-    ].join(':');
-  }
-
-  int _estimatedContextTokens(List<AiChatMessageRecord> messages) {
-    final mapped = <Map<String, dynamic>>[
-      <String, dynamic>{'role': 'system', 'content': 'system'},
-      ..._messagesForRequest(messages),
-    ];
-    return LlmChatService.estimateMessagesTokens(mapped);
+    return _tokenEstimator.contextTokensFor(chat, sending: _sending);
   }
 
   ValueListenable<String>? streamingTextFor(
@@ -895,14 +754,11 @@ class AiChatViewModel extends ChangeNotifier {
     AiChatRecord chat, {
     bool insertIfMissing = true,
   }) {
-    final next = [...chats];
-    final index = next.indexWhere((item) => item.id == chat.id);
+    final index = chats.indexWhere((item) => item.id == chat.id);
     if (index >= 0) {
-      next[index] = chat;
-    } else if (insertIfMissing) {
-      next.insert(0, chat);
+      return [...chats]..[index] = chat;
     }
-    return next;
+    return insertIfMissing ? [chat, ...chats] : chats;
   }
 
   AiChatRecord _newChatRecord(String model) {
@@ -930,90 +786,15 @@ class AiChatViewModel extends ChangeNotifier {
     List<AiChatMessageRecord> messages, {
     AiChatMessageRecord? placeholder,
   }) {
-    return messages
-        .where((message) => message.role != 'error')
-        .where((message) => message != placeholder)
-        .map((message) {
-          final textContent = _contextContentFor(message);
-          if (textContent.trim().isEmpty && message.attachments.isEmpty) {
-            return null;
-          }
-          final role = message.role == 'user' ? 'user' : 'assistant';
-          if (message.role == 'user' && message.attachments.isNotEmpty) {
-            return <String, dynamic>{
-              'role': role,
-              'content':
-                  buildMultipartContent(textContent, message.attachments),
-            };
-          }
-          return <String, dynamic>{
-            'role': role,
-            'content': textContent,
-          };
-        })
-        .nonNulls
-        .toList();
+    return _messageMapper.messagesForRequest(messages,
+        placeholder: placeholder);
   }
 
   static List<Map<String, dynamic>> buildMultipartContent(
     String textContent,
     List<AiChatAttachment> attachments,
   ) {
-    final textWithFiles = StringBuffer(textContent);
-    for (final attachment in attachments) {
-      if (!attachment.isImage) {
-        if (attachment.isTextFile && attachment.dataBase64.isNotEmpty) {
-          try {
-            final decoded = utf8.decode(base64Decode(attachment.dataBase64));
-            textWithFiles.write('\n\n[File: ${attachment.fileName}]\n$decoded');
-          } catch (_) {
-            textWithFiles.write(
-              '\n\n[Attached file: ${attachment.fileName} (${_formatAttachmentSize(attachment.sizeBytes)})]',
-            );
-          }
-        } else {
-          textWithFiles.write(
-            '\n\n[Attached file: ${attachment.fileName} (${_formatAttachmentSize(attachment.sizeBytes)})]',
-          );
-        }
-      }
-    }
-    final parts = <Map<String, dynamic>>[
-      {'type': 'text', 'text': textWithFiles.toString()},
-    ];
-    for (final attachment in attachments) {
-      if (attachment.isImage && attachment.dataBase64.isNotEmpty) {
-        parts.add({
-          'type': 'image_url',
-          'image_url': {
-            'url':
-                'data:${attachment.mimeType};base64,${attachment.dataBase64}',
-          },
-        });
-      }
-    }
-    return parts;
-  }
-
-  static String _formatAttachmentSize(int bytes) {
-    if (bytes >= 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    }
-    if (bytes >= 1024) {
-      return '${(bytes / 1024).toStringAsFixed(0)} KB';
-    }
-    return '$bytes B';
-  }
-
-  String _contextContentFor(AiChatMessageRecord message) {
-    if (message.role == 'user' && message.contextText != null) {
-      return message.contextText!;
-    }
-    if (message.role == 'assistant') {
-      return message.contextText ??
-          _contextTextForAssistant(message.text, traces: message.traces);
-    }
-    return message.text;
+    return AiChatMessageMapper.buildMultipartContent(textContent, attachments);
   }
 
   // LLM流输出核心实现
@@ -1283,7 +1064,7 @@ class AiChatViewModel extends ChangeNotifier {
       if (_pendingApproval?.chatId == chatId) {
         _pendingApproval = null;
       }
-      if (identical(_activeCancellationToken, _activeCancellationToken)) {
+      if (identical(_activeCancellationToken, cancellationToken)) {
         _activeCancellationToken = null;
       }
       notifyListeners();
