@@ -1,4 +1,4 @@
-part of '../performance_monitor_screen.dart';
+part of '../system_admin_screen.dart';
 
 class _FlatSnapshotItem<T> {
   final ConnectionConfig connection;
@@ -40,7 +40,7 @@ class _ServerSnapshotTab<T> extends StatelessWidget {
     if (connections.isEmpty) {
       return Center(
         child: Text(_monitorText(
-            strings, 'Select at least one server first.', '请先选择至少一台服务器。')),
+            strings, 'Select a server first.', '请先选择一台服务器。')),
       );
     }
     return FutureBuilder<Map<String, List<T>>>(

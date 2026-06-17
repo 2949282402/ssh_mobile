@@ -19,16 +19,62 @@ class _ServicesTabState extends State<_ServicesTab>
     with AutomaticKeepAliveClientMixin {
   final TextEditingController _serviceSearchController =
       TextEditingController();
+  final TextEditingController _snapshotSearchController =
+      TextEditingController();
   List<SystemdService> _filteredServices = [];
+  List<ServiceStatusSnapshot> _filteredSnapshotServices = [];
+  Map<String, List<ServiceStatusSnapshot>> _rawSnapshotData = {};
+
+  bool _isManageMode = true;
+  Future<Map<String, List<ServiceStatusSnapshot>>>? _servicesFuture;
+  String? _servicesSelectionKey;
 
   @override
   bool get wantKeepAlive => true;
 
+  bool get _isLinux {
+    final connectionId = widget.viewModel.connectionId;
+    if (connectionId == null) return false;
+    final config = widget.viewModel.connections.firstWhere((c) => c.id == connectionId);
+    return config.serverPlatform == ServerPlatform.linux;
+  }
+
+  bool get _isManageModeAvailable {
+    return widget.viewModel.isConnected && widget.viewModel.isRoot && _isLinux;
+  }
+
+  void _refreshServicesFuture({bool force = false}) {
+    final connectionId = widget.viewModel.connectionId;
+    if (connectionId == null) {
+      _servicesSelectionKey = null;
+      _servicesFuture = null;
+      return;
+    }
+    final monitorViewModel = context.read<PerformanceMonitorViewModel>();
+    if (force || _servicesFuture == null || _servicesSelectionKey != connectionId) {
+      _servicesSelectionKey = connectionId;
+      _servicesFuture = _loadServices(monitorViewModel, connectionId);
+    }
+  }
+
+  Future<Map<String, List<ServiceStatusSnapshot>>> _loadServices(
+      PerformanceMonitorViewModel monitorViewModel, String connectionId) async {
+    final result = <String, List<ServiceStatusSnapshot>>{};
+    final list = await monitorViewModel.fetchServices(connectionId);
+    result[connectionId] = list;
+    _rawSnapshotData = result;
+    _filterSnapshotServices();
+    return result;
+  }
+
   @override
   void initState() {
     super.initState();
+    _isManageMode = _isManageModeAvailable;
     _serviceSearchController.addListener(_filterServices);
+    _snapshotSearchController.addListener(_filterSnapshotServices);
     _filteredServices = List.from(widget.viewModel.services);
+    _refreshServicesFuture();
   }
 
   @override
@@ -37,11 +83,20 @@ class _ServicesTabState extends State<_ServicesTab>
     if (widget.viewModel.services != oldWidget.viewModel.services) {
       _filterServices();
     }
+    if (widget.viewModel.connectionId != oldWidget.viewModel.connectionId) {
+      _refreshServicesFuture();
+      if (!_isManageModeAvailable) {
+        _isManageMode = false;
+      } else {
+        _isManageMode = true;
+      }
+    }
   }
 
   @override
   void dispose() {
     _serviceSearchController.dispose();
+    _snapshotSearchController.dispose();
     super.dispose();
   }
 
@@ -61,16 +116,100 @@ class _ServicesTabState extends State<_ServicesTab>
     });
   }
 
+  void _filterSnapshotServices() {
+    if (!mounted) return;
+    final query = _snapshotSearchController.text.trim().toLowerCase();
+    final connectionId = widget.viewModel.connectionId;
+    if (connectionId == null) return;
+    final list = _rawSnapshotData[connectionId] ?? [];
+    setState(() {
+      if (query.isEmpty) {
+        _filteredSnapshotServices = List.from(list);
+      } else {
+        _filteredSnapshotServices = list
+            .where((s) =>
+                s.name.toLowerCase().contains(query) ||
+                s.displayName.toLowerCase().contains(query))
+            .toList();
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
     final viewModel = widget.viewModel;
+    final id = viewModel.connectionId;
+
+    if (id == null) {
+      return Center(
+        child: Text(_monitorText(
+            widget.strings,
+            'Please select a server on the left to view services.',
+            '请先在左侧选择要查看的服务器。')),
+      );
+    }
+
+    if (!_isManageModeAvailable && _isManageMode) {
+      _isManageMode = false;
+    }
+
+    return Column(
+      children: [
+        if (_isManageModeAvailable) ...[
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8.0),
+            child: SegmentedButton<bool>(
+              segments: [
+                ButtonSegment(
+                  value: true,
+                  icon: const Icon(Icons.admin_panel_settings_rounded),
+                  label: Text(_monitorText(widget.strings, 'Manage Mode', '管理模式')),
+                ),
+                ButtonSegment(
+                  value: false,
+                  icon: const Icon(Icons.analytics_rounded),
+                  label: Text(_monitorText(widget.strings, 'Snapshot Mode', '快照模式')),
+                ),
+              ],
+              selected: {_isManageMode},
+              onSelectionChanged: (values) {
+                setState(() {
+                  _isManageMode = values.first;
+                });
+              },
+            ),
+          ),
+        ] else ...[
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            color: widget.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+            child: Text(
+              _monitorText(
+                widget.strings,
+                'Manage mode unavailable (root required). Switched to snapshot mode.',
+                '当前无法使用管理模式（需要 root 权限），已自动切换为快照模式。',
+              ),
+              style: TextStyle(
+                color: widget.colorScheme.onSurfaceVariant,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ],
+        Expanded(
+          child: _isManageMode ? _buildManageView(id) : _buildSnapshotView(id),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildManageView(String id) {
+    final viewModel = widget.viewModel;
     if (viewModel.loadingServices) {
       return const Center(child: CircularProgressIndicator());
     }
-
-    final id = viewModel.connectionId;
-    if (id == null) return const SizedBox.shrink();
 
     return RefreshIndicator(
       onRefresh: () => viewModel.fetchServices(id),
@@ -157,6 +296,60 @@ class _ServicesTabState extends State<_ServicesTab>
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildSnapshotView(String id) {
+    final currentConfigList = widget.viewModel.connections
+        .where((c) => c.id == id)
+        .toList();
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: TextField(
+            controller: _snapshotSearchController,
+            decoration: InputDecoration(
+              hintText: widget.strings.searchService,
+              prefixIcon: const Icon(Icons.search),
+              border: const OutlineInputBorder(),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+            ),
+          ),
+        ),
+        Expanded(
+          child: _filteredSnapshotServices.isEmpty && _snapshotSearchController.text.isNotEmpty
+              ? ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  children: const [
+                    SizedBox(height: 100),
+                    Center(child: Text('No matching services found.')),
+                  ],
+                )
+              : _ServerSnapshotTab<ServiceStatusSnapshot>(
+                  strings: widget.strings,
+                  connections: currentConfigList,
+                  emptyText: _monitorText(
+                      widget.strings, 'No running services found', '未发现运行中的服务'),
+                  future: _servicesFuture,
+                  onRefresh: () => setState(() => _refreshServicesFuture(force: true)),
+                  itemBuilder: (context, service) {
+                    // Filter if query is present, since itemBuilder runs on individual items
+                    final query = _snapshotSearchController.text.trim().toLowerCase();
+                    if (query.isNotEmpty &&
+                        !service.name.toLowerCase().contains(query) &&
+                        !service.displayName.toLowerCase().contains(query)) {
+                      return const SizedBox.shrink();
+                    }
+                    return _ServiceStatusTile(
+                      strings: widget.strings,
+                      service: service,
+                    );
+                  },
+                ),
+        ),
+      ],
     );
   }
 

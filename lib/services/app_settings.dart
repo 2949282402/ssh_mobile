@@ -659,6 +659,7 @@ class AppStrings {
   String get userAccounts => _en ? 'User Accounts' : '用户账号';
   String get systemServices => _en ? 'Services' : '系统服务';
   String get listeningPorts => _en ? 'Ports' : '监听端口';
+  String get applications => _en ? 'Applications' : '应用/进程';
   String get systemPower => _en ? 'Power' : '系统电源';
   String get lockUser => _en ? 'Lock User' : '禁用账号';
   String get unlockUser => _en ? 'Unlock User' : '启用账号';

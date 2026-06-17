@@ -20,7 +20,6 @@ import '../widgets/tactile_feedback.dart';
 import '../widgets/window_name_dialog.dart';
 import 'developer_log_screen.dart';
 import 'llm_chat_screen.dart';
-import 'performance_monitor_screen.dart';
 import 'sftp_screen.dart';
 import 'system_admin_screen.dart';
 import 'terminal_windows_screen.dart';
@@ -45,9 +44,8 @@ class _HomeScreenState extends State<HomeScreen> {
   static const int _aiPage = 0;
   static const int _serverPage = 1;
   static const int _sftpPage = 2;
-  static const int _performancePage = 3;
-  static const int _adminPage = 4;
-  static const int _logPage = 5;
+  static const int _adminPage = 3;
+  static const int _logPage = 4;
   static const int _firstPage = _aiPage;
   static const int _lastPage = _logPage;
 
@@ -193,11 +191,6 @@ class _HomeScreenState extends State<HomeScreen> {
               label: Text(strings.sftp),
             ),
             NavigationRailDestination(
-              icon: const Icon(Icons.monitor_heart_outlined),
-              selectedIcon: const Icon(Icons.monitor_heart_rounded),
-              label: Text(strings.monitor),
-            ),
-            NavigationRailDestination(
               icon: const Icon(Icons.admin_panel_settings_outlined),
               selectedIcon: const Icon(Icons.admin_panel_settings_rounded),
               label: Text(strings.admin),
@@ -242,11 +235,6 @@ class _HomeScreenState extends State<HomeScreen> {
           label: strings.sftp,
         ),
         NavigationDestination(
-          icon: const Icon(Icons.monitor_heart_outlined),
-          selectedIcon: const Icon(Icons.monitor_heart_rounded),
-          label: strings.monitor,
-        ),
-        NavigationDestination(
           icon: const Icon(Icons.admin_panel_settings_outlined),
           selectedIcon: const Icon(Icons.admin_panel_settings_rounded),
           label: strings.admin,
@@ -257,13 +245,13 @@ class _HomeScreenState extends State<HomeScreen> {
 
   int get _navigationIndex {
     if (_selectedIndex == _logPage) {
-      return 5;
+      return 4;
     }
     return _selectedIndex;
   }
 
   void _switchNavigationPage(int index) {
-    if (index == 5) {
+    if (index == 4) {
       _switchPage(_logPage);
     } else {
       _switchPage(index);
@@ -336,8 +324,6 @@ class _HomeScreenState extends State<HomeScreen> {
               return _buildServerPage(context, strings);
             case _sftpPage:
               return const SftpScreen();
-            case _performancePage:
-              return const PerformanceMonitorScreen();
             case _adminPage:
               return ChangeNotifierProvider(
                 create: (context) => SystemAdminViewModel(

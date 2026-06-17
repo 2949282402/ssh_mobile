@@ -1,12 +1,19 @@
+import 'dart:math';
+
+import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../features/connection/models/connection.dart';
 import '../features/system_admin/viewmodels/system_admin_viewmodel.dart';
+import '../features/performance/viewmodels/performance_viewmodel.dart';
 import '../models/system_admin.dart';
 import '../services/app_settings.dart';
 import '../services/sftp_service.dart';
 import '../services/storage_service.dart';
+import '../services/performance_monitor_service.dart';
+import '../services/server_status_probe.dart';
 import '../utils/responsive.dart';
 import '../widgets/tactile_feedback.dart';
 import '../widgets/overflow_scroll_text.dart';
@@ -17,6 +24,13 @@ part 'system_admin/sessions_tab.dart';
 part 'system_admin/services_tab.dart';
 part 'system_admin/ports_tab.dart';
 part 'system_admin/power_tab.dart';
+part 'system_admin/monitor_models.dart';
+part 'system_admin/performance_charts.dart';
+part 'system_admin/health_disk_views.dart';
+part 'system_admin/details_views.dart';
+part 'system_admin/monitor_config.dart';
+part 'system_admin/monitor_tab.dart';
+part 'system_admin/applications_tab.dart';
 
 class SystemAdminScreen extends StatefulWidget {
   const SystemAdminScreen({super.key});
@@ -25,7 +39,30 @@ class SystemAdminScreen extends StatefulWidget {
   State<SystemAdminScreen> createState() => _SystemAdminScreenState();
 }
 
-class _SystemAdminScreenState extends State<SystemAdminScreen> {
+class _SystemAdminScreenState extends State<SystemAdminScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 7, vsync: this);
+    _tabController.addListener(_handleTabSelection);
+  }
+
+  void _handleTabSelection() {
+    if (_tabController.indexIsChanging) {
+      setState(() {});
+    }
+  }
+
+  @override
+  void dispose() {
+    _tabController.removeListener(_handleTabSelection);
+    _tabController.dispose();
+    super.dispose();
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -39,6 +76,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
     );
     final strings = AppStrings(language);
     final viewModel = context.watch<SystemAdminViewModel>();
+    final monitorVm = context.watch<PerformanceMonitorViewModel>();
     final storageReady = viewModel.storageInitialized;
     final connections = viewModel.connections;
 
@@ -46,13 +84,17 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
     final isConnecting = viewModel.isConnecting;
     final isConnected = viewModel.isConnected;
     final errorMessage = viewModel.errorMessage;
-    final isRoot = viewModel.isRoot;
 
     final desktop = isDesktopLayout(context);
     final colorScheme = Theme.of(context).colorScheme;
 
+    final isMonitorTab = _tabController.index == 0;
+
     final selectedConnection =
         _selectedConnection(connections, selectedConnectionId);
+    final selectedMonitorConnections = connections
+        .where((c) => monitorVm.selectedConnectionIds.contains(c.id))
+        .toList();
     final serversCollapsed = viewModel.serversCollapsed;
 
     if (!storageReady) {
@@ -67,6 +109,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
 
     final bodyContent = _buildMainContent(
       viewModel,
+      monitorVm,
       strings,
       colorScheme,
       desktop,
@@ -74,14 +117,14 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
       isConnecting,
       isConnected,
       errorMessage,
-      isRoot,
+      connections,
     );
 
     return Scaffold(
       appBar: AppBar(
         title: Text(strings.systemAdmin),
         actions: [
-          if (selectedConnectionId != null && isConnected && isRoot)
+          if (!isMonitorTab && selectedConnectionId != null && isConnected && viewModel.isRoot)
             IconButton(
               icon: const Icon(Icons.refresh),
               onPressed: viewModel.refreshAllData,
@@ -98,11 +141,13 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                   width: serversCollapsed ? 64 : 320,
                   child: serversCollapsed
                       ? _AdminCollapsedDesktopServerRail(
-                          key: const ValueKey('admin-server-rail-collapsed'),
+                          key: ValueKey(isMonitorTab ? 'admin-monitor-server-rail-collapsed' : 'admin-server-rail-collapsed'),
                           selectedConnection: selectedConnection,
-                          busy: isConnecting,
-                          connected: isConnected,
+                          connections: selectedMonitorConnections,
+                          busy: isMonitorTab ? (monitorVm.isSampling && monitorVm.isRunning) : isConnecting,
+                          connected: isMonitorTab ? monitorVm.isRunning : isConnected,
                           strings: strings,
+                          isMonitorTab: isMonitorTab,
                           onExpand: () =>
                               viewModel.setServersCollapsed(context, false),
                         )
@@ -110,6 +155,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                           viewModel: viewModel,
                           connections: connections,
                           strings: strings,
+                          isMonitorTab: isMonitorTab,
                           onCollapse: () =>
                               viewModel.setServersCollapsed(context, true),
                         ),
@@ -132,19 +178,22 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                   switchOutCurve: Curves.easeInCubic,
                   child: serversCollapsed
                       ? _AdminCollapsedMobileServerBar(
-                          key: const ValueKey('admin-server-collapsed'),
+                          key: ValueKey(isMonitorTab ? 'admin-monitor-server-collapsed' : 'admin-server-collapsed'),
                           selectedConnection: selectedConnection,
-                          busy: isConnecting,
-                          connected: isConnected,
+                          connections: selectedMonitorConnections,
+                          busy: isMonitorTab ? (monitorVm.isSampling && monitorVm.isRunning) : isConnecting,
+                          connected: isMonitorTab ? monitorVm.isRunning : isConnected,
                           strings: strings,
+                          isMonitorTab: isMonitorTab,
                           onExpand: () =>
                               viewModel.setServersCollapsed(context, false),
                         )
                       : _AdminMobileServerStrip(
-                          key: const ValueKey('admin-server-expanded'),
+                          key: ValueKey(isMonitorTab ? 'admin-monitor-server-expanded' : 'admin-server-expanded'),
                           viewModel: viewModel,
                           connections: connections,
                           strings: strings,
+                          isMonitorTab: isMonitorTab,
                           onCollapse: () =>
                               viewModel.setServersCollapsed(context, true),
                         ),
@@ -175,6 +224,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
 
   Widget _buildMainContent(
     SystemAdminViewModel viewModel,
+    PerformanceMonitorViewModel monitorVm,
     AppStrings strings,
     ColorScheme colorScheme,
     bool desktop,
@@ -182,10 +232,137 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
     bool isConnecting,
     bool isConnected,
     String? errorMessage,
-    bool isRoot,
+    List<ConnectionConfig> connections,
   ) {
+    // TabController organizes all Admin tabs
+    return Column(
+      children: [
+        TabBar(
+          controller: _tabController,
+          isScrollable: true,
+          tabAlignment: TabAlignment.start,
+          tabs: [
+            Tab(text: strings.monitor, icon: const Icon(Icons.monitor_heart_outlined)),
+            Tab(text: strings.listeningPorts, icon: const Icon(Icons.lan)),
+            Tab(text: strings.applications, icon: const Icon(Icons.apps_rounded)),
+            Tab(text: strings.systemServices, icon: const Icon(Icons.settings_suggest)),
+            Tab(text: strings.userAccounts, icon: const Icon(Icons.people)),
+            Tab(text: strings.activeSessions, icon: const Icon(Icons.co_present)),
+            Tab(text: strings.systemPower, icon: const Icon(Icons.power_settings_new)),
+          ],
+        ),
+        Expanded(
+          child: TabBarView(
+            controller: _tabController,
+            children: [
+              // Tab 0: Monitor
+              _MonitorTab(
+                strings: strings,
+                monitor: monitorVm,
+                connections: connections,
+                onStartMonitoring: () async {
+                  await monitorVm.startMonitoring();
+                  if (mounted) {
+                    viewModel.setServersCollapsed(context, true);
+                  }
+                },
+              ),
+              // Tab 1: Ports (Manage/Snapshot)
+              _PortsTab(
+                strings: strings,
+                colorScheme: colorScheme,
+                viewModel: viewModel,
+              ),
+              // Tab 2: Applications (Snapshot only)
+              _ApplicationsTab(
+                strings: strings,
+                colorScheme: colorScheme,
+                viewModel: viewModel,
+                monitorViewModel: monitorVm,
+              ),
+              // Tab 3: Services (Manage/Snapshot)
+              _ServicesTab(
+                strings: strings,
+                colorScheme: colorScheme,
+                viewModel: viewModel,
+              ),
+              // Tab 4: Users (Requires root connection)
+              _buildRootRequiredTab(
+                viewModel,
+                strings,
+                colorScheme,
+                _UsersTab(
+                  strings: strings,
+                  colorScheme: colorScheme,
+                  viewModel: viewModel,
+                ),
+              ),
+              // Tab 5: Sessions (Requires root connection)
+              _buildRootRequiredTab(
+                viewModel,
+                strings,
+                colorScheme,
+                _SessionsTab(
+                  strings: strings,
+                  colorScheme: colorScheme,
+                  viewModel: viewModel,
+                ),
+              ),
+              // Tab 6: Power (Requires root connection)
+              _buildRootRequiredTab(
+                viewModel,
+                strings,
+                colorScheme,
+                _PowerTab(
+                  strings: strings,
+                  colorScheme: colorScheme,
+                  viewModel: viewModel,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRootRequiredTab(
+    SystemAdminViewModel viewModel,
+    AppStrings strings,
+    ColorScheme colorScheme,
+    Widget child,
+  ) {
+    final selectedConnectionId = viewModel.connectionId;
+    final isConnecting = viewModel.isConnecting;
+    final isConnected = viewModel.isConnected;
+    final errorMessage = viewModel.errorMessage;
+    final isRoot = viewModel.isRoot;
+
     if (selectedConnectionId == null) {
-      return _AdminEmptyState(strings: strings);
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.admin_panel_settings_outlined,
+                color: colorScheme.primary,
+                size: 48,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                strings.selectServerToManage,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: colorScheme.onSurfaceVariant,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
     }
 
     if (isConnecting) {
@@ -205,56 +382,22 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
     }
 
     if (errorMessage != null) {
-      final isPrivilegeError =
-          errorMessage.toLowerCase().contains('privilege') ||
-              errorMessage.toLowerCase().contains('root required') ||
-              errorMessage.toLowerCase().contains('insufficient');
-
-      return Padding(
-        padding: const EdgeInsets.all(24),
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                isPrivilegeError ? Icons.gpp_bad : Icons.error_outline_rounded,
-                size: 80,
-                color: colorScheme.error,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                isPrivilegeError
-                    ? strings.rootRequiredMsg
-                    : 'Connection Failed',
-                textAlign: TextAlign.center,
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                errorMessage,
-                textAlign: TextAlign.center,
-                style: TextStyle(color: colorScheme.onSurfaceVariant),
-              ),
-              if (isPrivilegeError) ...[
-                const SizedBox(height: 16),
-                Text(
-                  strings.reconnectAsRootMsg,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: colorScheme.onSurfaceVariant),
-                ),
-              ],
-            ],
-          ),
-        ),
-      );
+      return _RootRequiredView(strings: strings, errorMessage: errorMessage);
     }
 
     if (!isConnected) {
-      return _AdminEmptyState(strings: strings);
+      return Center(
+        child: Text(_monitorText(strings, 'Connection lost', '连接断开')),
+      );
     }
 
     if (!isRoot) {
+      return _RootRequiredView(strings: strings);
+    }
+
+    // Is Linux check
+    final config = viewModel.connections.firstWhere((c) => c.id == selectedConnectionId);
+    if (config.serverPlatform != ServerPlatform.linux) {
       return Padding(
         padding: const EdgeInsets.all(24),
         child: Center(
@@ -264,16 +407,9 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
               Icon(Icons.gpp_bad, size: 80, color: colorScheme.error),
               const SizedBox(height: 16),
               Text(
-                strings.rootRequiredMsg,
+                strings.nonLinuxMsg,
                 textAlign: TextAlign.center,
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                strings.reconnectAsRootMsg,
-                textAlign: TextAlign.center,
-                style: TextStyle(color: colorScheme.onSurfaceVariant),
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
             ],
           ),
@@ -281,60 +417,64 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
       );
     }
 
-    // DefaultTabController organizes all Admin tabs
-    return DefaultTabController(
-      length: 5,
-      child: Column(
-        children: [
-          TabBar(
-            isScrollable: !desktop,
-            tabAlignment: !desktop ? TabAlignment.center : TabAlignment.fill,
-            tabs: [
-              Tab(text: strings.userAccounts, icon: const Icon(Icons.people)),
-              Tab(
-                  text: strings.activeSessions,
-                  icon: const Icon(Icons.co_present)),
-              Tab(
-                  text: strings.systemServices,
-                  icon: const Icon(Icons.settings_suggest)),
-              Tab(text: strings.listeningPorts, icon: const Icon(Icons.lan)),
-              Tab(
-                  text: strings.systemPower,
-                  icon: const Icon(Icons.power_settings_new)),
-            ],
-          ),
-          Expanded(
-            child: TabBarView(
-              children: [
-                _UsersTab(
-                  strings: strings,
-                  colorScheme: colorScheme,
-                  viewModel: viewModel,
-                ),
-                _SessionsTab(
-                  strings: strings,
-                  colorScheme: colorScheme,
-                  viewModel: viewModel,
-                ),
-                _ServicesTab(
-                  strings: strings,
-                  colorScheme: colorScheme,
-                  viewModel: viewModel,
-                ),
-                _PortsTab(
-                  strings: strings,
-                  colorScheme: colorScheme,
-                  viewModel: viewModel,
-                ),
-                _PowerTab(
-                  strings: strings,
-                  colorScheme: colorScheme,
-                  viewModel: viewModel,
-                ),
-              ],
+    return child;
+  }
+}
+
+class _RootRequiredView extends StatelessWidget {
+  final AppStrings strings;
+  final String? errorMessage;
+
+  const _RootRequiredView({
+    required this.strings,
+    this.errorMessage,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isPrivilegeError = errorMessage != null &&
+        (errorMessage!.toLowerCase().contains('privilege') ||
+            errorMessage!.toLowerCase().contains('root required') ||
+            errorMessage!.toLowerCase().contains('insufficient'));
+
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              isPrivilegeError || errorMessage == null
+                  ? Icons.gpp_bad
+                  : Icons.error_outline_rounded,
+              size: 80,
+              color: colorScheme.error,
             ),
-          ),
-        ],
+            const SizedBox(height: 16),
+            Text(
+              isPrivilegeError || errorMessage == null
+                  ? strings.rootRequiredMsg
+                  : 'Connection Failed',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            if (errorMessage != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                errorMessage!,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: colorScheme.onSurfaceVariant),
+              ),
+            ],
+            const SizedBox(height: 16),
+            Text(
+              strings.reconnectAsRootMsg,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -394,4 +534,163 @@ class _AdminEmptyState extends StatelessWidget {
       ),
     );
   }
+}
+
+class _MonitorResponsiveEmptyState extends StatelessWidget {
+  final AppStrings strings;
+  final String? message;
+
+  const _MonitorResponsiveEmptyState({
+    required this.strings,
+    this.message,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxHeight < 180;
+        final showIcon = constraints.maxHeight >= 150;
+        return Center(
+          child: SingleChildScrollView(
+            padding: EdgeInsets.all(compact ? 12 : 28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (showIcon) ...[
+                  Container(
+                    width: compact ? 44 : 72,
+                    height: compact ? 44 : 72,
+                    decoration: BoxDecoration(
+                      color: colorScheme.primary.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: colorScheme.primary.withValues(alpha: 0.18),
+                      ),
+                    ),
+                    child: Icon(
+                      Icons.monitor_heart_outlined,
+                      color: colorScheme.primary,
+                      size: compact ? 24 : 34,
+                    ),
+                  ),
+                  SizedBox(height: compact ? 8 : 14),
+                ],
+                Text(
+                  _monitorText(
+                      strings, 'Select servers to monitor', '选择要监控的服务器'),
+                  textAlign: TextAlign.center,
+                  maxLines: compact ? 1 : 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: colorScheme.onSurface,
+                    fontWeight: FontWeight.w800,
+                    fontSize: compact ? 14 : 16,
+                  ),
+                ),
+                SizedBox(height: compact ? 4 : 6),
+                Text(
+                  message ??
+                      _monitorText(
+                        strings,
+                        'Select one or more servers, then start monitoring. Sampling stays silent until started.',
+                        '可多选服务器，点击开始监控后才采样；未开始前保持静默。',
+                      ),
+                  textAlign: TextAlign.center,
+                  maxLines: compact ? 2 : null,
+                  overflow: compact ? TextOverflow.ellipsis : null,
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: compact ? 12 : 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// Helpers
+String _serverSummary(AppStrings strings, List<ConnectionConfig> connections) {
+  if (connections.isEmpty) {
+    return _monitorText(strings, 'Monitor servers', '监控服务器');
+  }
+  if (connections.length == 1) {
+    final connection = connections.first;
+    return '${connection.name}  ${connection.username}@${connection.host}';
+  }
+  return _monitorText(
+    strings,
+    '${connections.length} selected',
+    '已选择 ${connections.length} 台',
+  );
+}
+
+String _monitorText(AppStrings strings, String en, String zh) {
+  return strings.language == AppLanguage.en ? en : zh;
+}
+
+String _durationLabel(Duration duration) {
+  if (duration.inMinutes >= 1 && duration.inSeconds % 60 == 0) {
+    return '${duration.inMinutes}m';
+  }
+  return '${duration.inSeconds}s';
+}
+
+String _runDurationLabel(DateTime? startedAt) {
+  if (startedAt == null) return '0s';
+  final duration = DateTime.now().difference(startedAt);
+  final hours = duration.inHours;
+  final minutes = duration.inMinutes.remainder(60);
+  final seconds = duration.inSeconds.remainder(60);
+  if (hours > 0) return '${hours}h ${minutes}m';
+  if (minutes > 0) return '${minutes}m ${seconds}s';
+  return '${seconds}s';
+}
+
+Color _healthColor(BuildContext context, ServerHealthLevel level) {
+  final colorScheme = Theme.of(context).colorScheme;
+  return switch (level) {
+    ServerHealthLevel.healthy => colorScheme.secondary,
+    ServerHealthLevel.warning => Colors.orangeAccent.shade700,
+    ServerHealthLevel.critical => colorScheme.error,
+    ServerHealthLevel.unknown => colorScheme.onSurfaceVariant,
+  };
+}
+
+IconData _healthIcon(ServerHealthLevel level) {
+  return switch (level) {
+    ServerHealthLevel.healthy => Icons.verified_rounded,
+    ServerHealthLevel.warning => Icons.warning_amber_rounded,
+    ServerHealthLevel.critical => Icons.error_rounded,
+    ServerHealthLevel.unknown => Icons.help_outline_rounded,
+  };
+}
+
+String _healthLabel(AppStrings strings, ServerHealthLevel level) {
+  final en = strings.language == AppLanguage.en;
+  return switch (level) {
+    ServerHealthLevel.healthy => en ? 'Healthy' : '正常',
+    ServerHealthLevel.warning => en ? 'Warning' : '警告',
+    ServerHealthLevel.critical => en ? 'Critical' : '危险',
+    ServerHealthLevel.unknown => en ? 'No samples' : '暂无采样',
+  };
+}
+
+Color _monitorSeriesColor(int index) {
+  const palette = [
+    Colors.blue,
+    Colors.teal,
+    Colors.deepOrange,
+    Colors.indigo,
+    Colors.pink,
+    Colors.green,
+    Colors.cyan,
+    Colors.brown,
+  ];
+  return palette[index % palette.length];
 }

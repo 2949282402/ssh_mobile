@@ -47,12 +47,14 @@ class _AdminServerPane extends StatelessWidget {
   final List<ConnectionConfig> connections;
   final AppStrings strings;
   final VoidCallback onCollapse;
+  final bool isMonitorTab;
 
   const _AdminServerPane({
     required this.viewModel,
     required this.connections,
     required this.strings,
     required this.onCollapse,
+    required this.isMonitorTab,
   });
 
   @override
@@ -102,6 +104,7 @@ class _AdminServerPane extends StatelessWidget {
                       Expanded(
                         child: _AdminServerTileBinding(
                           connection: connection,
+                          isMonitorTab: isMonitorTab,
                         ),
                       ),
                     ],
@@ -127,7 +130,9 @@ class _AdminServerPane extends StatelessWidget {
         children: [
           Expanded(
             child: Text(
-              strings.omServers,
+              isMonitorTab
+                  ? _monitorText(strings, 'Monitor servers', '监控服务器')
+                  : strings.omServers,
               style: TextStyle(
                 color: colorScheme.onSurface,
                 fontSize: 13,
@@ -151,6 +156,7 @@ class _AdminMobileServerStrip extends StatelessWidget {
   final List<ConnectionConfig> connections;
   final AppStrings strings;
   final VoidCallback onCollapse;
+  final bool isMonitorTab;
 
   const _AdminMobileServerStrip({
     super.key,
@@ -158,6 +164,7 @@ class _AdminMobileServerStrip extends StatelessWidget {
     required this.connections,
     required this.strings,
     required this.onCollapse,
+    required this.isMonitorTab,
   });
 
   @override
@@ -192,6 +199,7 @@ class _AdminMobileServerStrip extends StatelessWidget {
             child: _AdminServerTileBinding(
               connection: connection,
               compact: true,
+              isMonitorTab: isMonitorTab,
             ),
           );
         },
@@ -233,18 +241,22 @@ class _AdminMobileCollapseButton extends StatelessWidget {
 
 class _AdminCollapsedMobileServerBar extends StatelessWidget {
   final ConnectionConfig? selectedConnection;
+  final List<ConnectionConfig> connections;
   final bool busy;
   final bool connected;
   final AppStrings strings;
   final VoidCallback onExpand;
+  final bool isMonitorTab;
 
   const _AdminCollapsedMobileServerBar({
     super.key,
     required this.selectedConnection,
+    required this.connections,
     required this.busy,
     required this.connected,
     required this.strings,
     required this.onExpand,
+    required this.isMonitorTab,
   });
 
   @override
@@ -271,13 +283,16 @@ class _AdminCollapsedMobileServerBar extends StatelessWidget {
                   busy: busy,
                   connected: connected,
                   compact: true,
+                  isMonitorTab: isMonitorTab,
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: OverflowScrollText(
-                    connection == null
-                        ? strings.omServers
-                        : '${connection.name}  ${connection.username}@${connection.host}',
+                    isMonitorTab
+                        ? _serverSummary(strings, connections)
+                        : (connection == null
+                            ? strings.omServers
+                            : '${connection.name}  ${connection.username}@${connection.host}'),
                     selectable: false,
                     maxLines: 1,
                     style: TextStyle(
@@ -297,18 +312,22 @@ class _AdminCollapsedMobileServerBar extends StatelessWidget {
 
 class _AdminCollapsedDesktopServerRail extends StatelessWidget {
   final ConnectionConfig? selectedConnection;
+  final List<ConnectionConfig> connections;
   final bool busy;
   final bool connected;
   final AppStrings strings;
   final VoidCallback onExpand;
+  final bool isMonitorTab;
 
   const _AdminCollapsedDesktopServerRail({
     super.key,
     required this.selectedConnection,
+    required this.connections,
     required this.busy,
     required this.connected,
     required this.strings,
     required this.onExpand,
+    required this.isMonitorTab,
   });
 
   @override
@@ -326,13 +345,16 @@ class _AdminCollapsedDesktopServerRail extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Tooltip(
-            message: selectedConnection == null
-                ? strings.omServers
-                : '${selectedConnection!.name}\n${selectedConnection!.username}@${selectedConnection!.host}',
+            message: isMonitorTab
+                ? _serverSummary(strings, connections)
+                : (selectedConnection == null
+                    ? strings.omServers
+                    : '${selectedConnection!.name}\n${selectedConnection!.username}@${selectedConnection!.host}'),
             child: _AdminServerStatusIcon(
               busy: busy,
               connected: connected,
-              selected: selectedConnection != null,
+              selected: isMonitorTab ? connections.isNotEmpty : selectedConnection != null,
+              isMonitorTab: isMonitorTab,
             ),
           ),
         ],
@@ -346,12 +368,14 @@ class _AdminServerStatusIcon extends StatelessWidget {
   final bool connected;
   final bool selected;
   final bool compact;
+  final bool isMonitorTab;
 
   const _AdminServerStatusIcon({
     required this.busy,
     required this.connected,
     this.selected = false,
     this.compact = false,
+    required this.isMonitorTab,
   });
 
   @override
@@ -378,9 +402,13 @@ class _AdminServerStatusIcon extends StatelessWidget {
               child: CircularProgressIndicator(strokeWidth: 2 * scale),
             )
           : Icon(
-              connected
-                  ? Icons.admin_panel_settings_rounded
-                  : Icons.admin_panel_settings_outlined,
+              isMonitorTab
+                  ? (connected
+                      ? Icons.monitor_heart_rounded
+                      : Icons.monitor_heart_outlined)
+                  : (connected
+                      ? Icons.admin_panel_settings_rounded
+                      : Icons.admin_panel_settings_outlined),
               color: colorScheme.primary,
               size: iconSize,
             ),
@@ -394,6 +422,7 @@ class _AdminServerTile extends StatelessWidget {
   final bool busy;
   final bool connected;
   final bool compact;
+  final bool isMonitorTab;
   final VoidCallback onTap;
 
   const _AdminServerTile({
@@ -402,6 +431,7 @@ class _AdminServerTile extends StatelessWidget {
     required this.busy,
     required this.connected,
     required this.onTap,
+    required this.isMonitorTab,
     this.compact = false,
   });
 
@@ -416,7 +446,7 @@ class _AdminServerTile extends StatelessWidget {
     return Padding(
       padding: EdgeInsets.only(bottom: compact ? 0 : 8 * scale),
       child: TactileFeedback(
-        onTap: busy ? null : onTap,
+        onTap: onTap,
         child: Container(
           padding: EdgeInsets.symmetric(
             horizontal: 10 * scale,
@@ -440,6 +470,7 @@ class _AdminServerTile extends StatelessWidget {
                   connected: connected,
                   selected: selected,
                   compact: true,
+                  isMonitorTab: isMonitorTab,
                 ),
               ),
               SizedBox(width: 8 * scale),
@@ -470,6 +501,10 @@ class _AdminServerTile extends StatelessWidget {
                   ],
                 ),
               ),
+              if (isMonitorTab && selected) ...[
+                SizedBox(width: 8 * scale),
+                Icon(Icons.check_rounded, size: 18 * scale),
+              ],
             ],
           ),
         ),
@@ -481,26 +516,61 @@ class _AdminServerTile extends StatelessWidget {
 class _AdminServerTileBinding extends StatelessWidget {
   final ConnectionConfig connection;
   final bool compact;
+  final bool isMonitorTab;
 
   const _AdminServerTileBinding({
     required this.connection,
     this.compact = false,
+    required this.isMonitorTab,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Selector<SystemAdminViewModel, _AdminConnectionStatusSnapshot>(
-      selector: (_, viewModel) =>
-          _AdminConnectionStatusSnapshot.from(viewModel, connection.id),
-      builder: (context, status, _) => _AdminServerTile(
+    if (isMonitorTab) {
+      final monitor = context.watch<PerformanceMonitorViewModel>();
+      final isSelected = monitor.selectedConnectionIds.contains(connection.id);
+      final isSampling = monitor.isSampling && monitor.monitoringConnectionIds.contains(connection.id);
+      final isRunning = monitor.isRunning;
+
+      return _AdminServerTile(
         connection: connection,
-        selected: status.selected,
-        busy: status.busy,
-        connected: status.connected,
+        selected: isSelected,
+        busy: isSampling && isRunning,
+        connected: monitor.monitoringConnectionIds.contains(connection.id),
         compact: compact,
-        onTap: () =>
-            context.read<SystemAdminViewModel>().connect(connection.id),
-      ),
-    );
+        isMonitorTab: true,
+        onTap: () {
+          if (isRunning) {
+            final strings = AppStrings(context.read<AppSettings>().language);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  strings.language == AppLanguage.en
+                      ? 'Stop monitoring before changing server selection.'
+                      : '请先结束监控后再重新选择服务器。',
+                ),
+              ),
+            );
+            return;
+          }
+          monitor.toggleSelection(connection.id);
+        },
+      );
+    } else {
+      return Selector<SystemAdminViewModel, _AdminConnectionStatusSnapshot>(
+        selector: (_, viewModel) =>
+            _AdminConnectionStatusSnapshot.from(viewModel, connection.id),
+        builder: (context, status, _) => _AdminServerTile(
+          connection: connection,
+          selected: status.selected,
+          busy: status.busy,
+          connected: status.connected,
+          compact: compact,
+          isMonitorTab: false,
+          onTap: () =>
+              context.read<SystemAdminViewModel>().connect(connection.id),
+        ),
+      );
+    }
   }
 }

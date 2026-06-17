@@ -1,4 +1,4 @@
-part of '../performance_monitor_screen.dart';
+part of '../system_admin_screen.dart';
 
 class _MetricChart extends StatelessWidget {
   static const int _maxChartPointsPerSeries = 140;

@@ -20,16 +20,138 @@ class _PortsTabState extends State<_PortsTab>
   @override
   bool get wantKeepAlive => true;
 
+  bool _isManageMode = true;
+  Future<Map<String, List<PortProcessSnapshot>>>? _portsFuture;
+  String? _portsSelectionKey;
+
+  bool get _isLinux {
+    final connectionId = widget.viewModel.connectionId;
+    if (connectionId == null) return false;
+    final config = widget.viewModel.connections.firstWhere((c) => c.id == connectionId);
+    return config.serverPlatform == ServerPlatform.linux;
+  }
+
+  bool get _isManageModeAvailable {
+    return widget.viewModel.isConnected && widget.viewModel.isRoot && _isLinux;
+  }
+
+  void _refreshPortsFuture({bool force = false}) {
+    final connectionId = widget.viewModel.connectionId;
+    if (connectionId == null) {
+      _portsSelectionKey = null;
+      _portsFuture = null;
+      return;
+    }
+    final monitorViewModel = context.read<PerformanceMonitorViewModel>();
+    if (force || _portsFuture == null || _portsSelectionKey != connectionId) {
+      _portsSelectionKey = connectionId;
+      _portsFuture = _loadPorts(monitorViewModel, connectionId);
+    }
+  }
+
+  Future<Map<String, List<PortProcessSnapshot>>> _loadPorts(
+      PerformanceMonitorViewModel monitorViewModel, String connectionId) async {
+    final result = <String, List<PortProcessSnapshot>>{};
+    result[connectionId] = await monitorViewModel.fetchPorts(connectionId);
+    return result;
+  }
+
+  @override
+  void didUpdateWidget(covariant _PortsTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.viewModel.connectionId != oldWidget.viewModel.connectionId) {
+      _refreshPortsFuture();
+      // Reset mode depending on availability
+      if (!_isManageModeAvailable) {
+        _isManageMode = false;
+      } else {
+        _isManageMode = true;
+      }
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _isManageMode = _isManageModeAvailable;
+    _refreshPortsFuture();
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
     final viewModel = widget.viewModel;
+    final id = viewModel.connectionId;
+
+    if (id == null) {
+      return Center(
+        child: Text(_monitorText(
+            widget.strings,
+            'Please select a server on the left to view ports.',
+            '请先在左侧选择要查看的服务器。')),
+      );
+    }
+
+    if (!_isManageModeAvailable && _isManageMode) {
+      _isManageMode = false;
+    }
+
+    return Column(
+      children: [
+        if (_isManageModeAvailable) ...[
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8.0),
+            child: SegmentedButton<bool>(
+              segments: [
+                ButtonSegment(
+                  value: true,
+                  icon: const Icon(Icons.admin_panel_settings_rounded),
+                  label: Text(_monitorText(widget.strings, 'Manage Mode', '管理模式')),
+                ),
+                ButtonSegment(
+                  value: false,
+                  icon: const Icon(Icons.analytics_rounded),
+                  label: Text(_monitorText(widget.strings, 'Snapshot Mode', '快照模式')),
+                ),
+              ],
+              selected: {_isManageMode},
+              onSelectionChanged: (values) {
+                setState(() {
+                  _isManageMode = values.first;
+                });
+              },
+            ),
+          ),
+        ] else ...[
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            color: widget.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+            child: Text(
+              _monitorText(
+                widget.strings,
+                'Manage mode unavailable (root required). Switched to snapshot mode.',
+                '当前无法使用管理模式（需要 root 权限），已自动切换为快照模式。',
+              ),
+              style: TextStyle(
+                color: widget.colorScheme.onSurfaceVariant,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ],
+        Expanded(
+          child: _isManageMode ? _buildManageView(id) : _buildSnapshotView(id),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildManageView(String id) {
+    final viewModel = widget.viewModel;
     if (viewModel.loadingPorts) {
       return const Center(child: CircularProgressIndicator());
     }
-
-    final id = viewModel.connectionId;
-    if (id == null) return const SizedBox.shrink();
 
     if (viewModel.ports.isEmpty) {
       return RefreshIndicator(
@@ -101,6 +223,27 @@ class _PortsTabState extends State<_PortsTab>
           );
         },
       ),
+    );
+  }
+
+  Widget _buildSnapshotView(String id) {
+    final currentConfigList = widget.viewModel.connections
+        .where((c) => c.id == id)
+        .toList();
+
+    return _ServerSnapshotTab<PortProcessSnapshot>(
+      strings: widget.strings,
+      connections: currentConfigList,
+      emptyText: _monitorText(
+          widget.strings, 'No listening ports found', '未发现监听端口'),
+      future: _portsFuture,
+      onRefresh: () => setState(() => _refreshPortsFuture(force: true)),
+      itemBuilder: (context, port) {
+        return _PortProcessTile(
+          strings: widget.strings,
+          port: port,
+        );
+      },
     );
   }
 }

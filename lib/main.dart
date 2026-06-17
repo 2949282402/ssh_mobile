@@ -15,7 +15,6 @@ import 'features/sftp/viewmodels/sftp_viewmodel.dart';
 import 'screens/ai_skills_screen.dart';
 import 'screens/ai_skill_edit_screen.dart';
 import 'screens/home_screen.dart';
-import 'screens/performance_monitor_screen.dart';
 import 'screens/playbook_screen.dart';
 import 'screens/sftp_screen.dart';
 import 'screens/startup_screen.dart';
@@ -257,7 +256,7 @@ class _SshMobileAppState extends State<SshMobileApp>
             );
           case '/performance':
             return MaterialPageRoute(
-              builder: (_) => const PerformanceMonitorScreen(),
+              builder: (_) => const HomeScreen(initialIndex: 3),
             );
           case '/ai-skills':
             return MaterialPageRoute(

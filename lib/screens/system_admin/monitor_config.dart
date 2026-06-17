@@ -1,4 +1,4 @@
-part of '../performance_monitor_screen.dart';
+part of '../system_admin_screen.dart';
 
 class _MonitorConfigPanelV2 extends StatelessWidget {
   final AppStrings strings;

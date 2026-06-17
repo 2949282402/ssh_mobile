@@ -1,39 +1,4 @@
-part of '../performance_monitor_screen.dart';
-
-class _MonitorShellSnapshot {
-  final bool isRunning;
-  final Set<String> selectedConnectionIds;
-  final Set<String> monitoringConnectionIds;
-
-  const _MonitorShellSnapshot({
-    required this.isRunning,
-    required this.selectedConnectionIds,
-    required this.monitoringConnectionIds,
-  });
-
-  factory _MonitorShellSnapshot.from(PerformanceMonitorViewModel monitor) {
-    return _MonitorShellSnapshot(
-      isRunning: monitor.isRunning,
-      selectedConnectionIds: monitor.selectedConnectionIds,
-      monitoringConnectionIds: monitor.monitoringConnectionIds,
-    );
-  }
-
-  @override
-  bool operator ==(Object other) {
-    return other is _MonitorShellSnapshot &&
-        other.isRunning == isRunning &&
-        setEquals(other.selectedConnectionIds, selectedConnectionIds) &&
-        setEquals(other.monitoringConnectionIds, monitoringConnectionIds);
-  }
-
-  @override
-  int get hashCode => Object.hash(
-        isRunning,
-        Object.hashAllUnordered(selectedConnectionIds),
-        Object.hashAllUnordered(monitoringConnectionIds),
-      );
-}
+part of '../system_admin_screen.dart';
 
 class _MonitorConfigSnapshot {
   final bool isRunning;
