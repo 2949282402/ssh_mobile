@@ -643,7 +643,7 @@ class ClientToolsProvider implements AiToolProvider {
     }
     final currentChat = chats[chatIndex];
 
-    if (!enabled && !canExitPlanMode(currentChat)) {
+    if (!enabled && !canExitPlanMode(currentChat, actor: PlanModeExitActor.llmTool)) {
       return jsonEncode({
         'error':
             'Cannot exit Plan Mode. You must persist executable TODO steps on the latest assistant planning message before switching to execution mode.',

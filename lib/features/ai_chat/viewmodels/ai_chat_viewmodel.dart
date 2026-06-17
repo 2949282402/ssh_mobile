@@ -569,19 +569,35 @@ class AiChatViewModel extends ChangeNotifier {
     required String text,
     AiApprovedPlanRef? approvedPlanRef,
   }) async {
-    final activeChat = this.activeChat;
+    var activeChat = this.activeChat;
     if (text.isEmpty) return const SendTextEmptyText();
     if (_sending) return const SendTextAlreadySending();
     if (activeChat == null) return const SendTextNoActiveChat();
 
-    final normalizedText = text.trim();
-    if (normalizedText.startsWith('/')) {
-      final handledResult = await _executeSlashCommand(
-        chatId: activeChat.id,
-        input: normalizedText,
-      );
-      if (handledResult != null) {
-        return handledResult;
+    var targetText = text.trim();
+    if (targetText.startsWith('/')) {
+      final parts = targetText.split(' ');
+      final cmd = parts[0].toLowerCase();
+      final args = parts.sublist(1).join(' ').trim();
+      if (cmd == '/plan' && args.isNotEmpty) {
+        final updated = activeChat.copyWith(
+          planMode: true,
+          updatedAt: DateTime.now(),
+        );
+        _replaceChat(updated);
+        notifyListeners();
+        await _storageService.saveAiChat(updated);
+
+        activeChat = updated;
+        targetText = args;
+      } else {
+        final handledResult = await _executeSlashCommand(
+          chatId: activeChat.id,
+          input: targetText,
+        );
+        if (handledResult != null) {
+          return handledResult;
+        }
       }
     }
 
@@ -605,7 +621,7 @@ class AiChatViewModel extends ChangeNotifier {
 
     final preparedTurn = await orchestrator.prepareTurn(
       chat: activeChat,
-      text: text,
+      text: targetText,
       createdAt: now,
       language: _appSettings.language,
       attachments: attachments,
@@ -651,7 +667,7 @@ class AiChatViewModel extends ChangeNotifier {
       assistantMessage,
     ];
     final nextChat = activeChat.copyWith(
-      title: activeChat.messages.isEmpty ? _titleFrom(text) : null,
+      title: activeChat.messages.isEmpty ? _titleFrom(targetText) : null,
       model: currentModel.isNotEmpty ? currentModel : activeChat.model,
       messages: nextMessages,
       updatedAt: now,
@@ -672,7 +688,7 @@ class AiChatViewModel extends ChangeNotifier {
       assistantMessage: assistantMessage,
       model: currentModel.isNotEmpty ? currentModel : nextChat.model,
       requestMessages: nextMessages,
-      userRequest: normalizedText,
+      userRequest: targetText,
       memorySources: preparedTurn.memorySources,
       ragHits: preparedTurn.ragHits,
     ));

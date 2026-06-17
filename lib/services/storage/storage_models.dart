@@ -738,13 +738,24 @@ AiChatMessageRecord? latestAssistantMessageForChat(AiChatRecord chat) {
   return null;
 }
 
+enum PlanModeExitActor {
+  userUi,
+  llmTool,
+}
+
 AiChatMessageRecord? approvedPlanMessageForChat(AiChatRecord chat) {
   final approvedPlan = chat.approvedPlan;
   if (approvedPlan == null) return null;
   return chatAssistantMessageByCreatedAt(chat, approvedPlan.assistantCreatedAt);
 }
 
-bool canExitPlanMode(AiChatRecord chat) {
+bool canExitPlanMode(
+  AiChatRecord chat, {
+  PlanModeExitActor actor = PlanModeExitActor.llmTool,
+}) {
+  if (actor == PlanModeExitActor.userUi) {
+    return true;
+  }
   final latestAssistant = latestAssistantMessageForChat(chat);
   return latestAssistant != null && latestAssistant.todoSteps.isNotEmpty;
 }

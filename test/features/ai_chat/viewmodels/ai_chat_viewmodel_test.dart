@@ -233,5 +233,53 @@ void main() {
       final settings = data['settings'] as AiConnectionSettings;
       expect(() => viewModel.logLlmSettingsOpened(settings), returnsNormally);
     });
+
+    test('/plan alone enables Plan Mode and returns slash-command handled feedback', () async {
+      final viewModel = AiChatViewModel(
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+      );
+
+      await viewModel.loadInitialDraft();
+      expect(viewModel.activeChat!.planMode, isFalse);
+
+      final result = await viewModel.sendText(text: '/plan');
+      expect(result, isA<SendTextSlashCommandHandled>());
+      expect(viewModel.activeChat!.planMode, isTrue);
+    });
+
+    test('/plan <args> enables Plan Mode and proceeds into the normal send flow', () async {
+      final viewModel = AiChatViewModel(
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+      );
+
+      await viewModel.loadInitialDraft();
+      expect(viewModel.activeChat!.planMode, isFalse);
+
+      await storageService.saveAiConnectionSettings(
+        baseUrl: 'https://api.example.com',
+        model: 'demo-model',
+        apiKey: 'dummy-key',
+      );
+
+      final result = await viewModel.sendText(text: '/plan diagnose nginx');
+      expect(result, isA<SendTextSuccess>());
+      expect(viewModel.activeChat!.planMode, isTrue);
+
+      final messages = viewModel.activeChat!.messages;
+      final userMessage = messages.firstWhere((m) => m.role == 'user');
+      expect(userMessage.text, equals('diagnose nginx'));
+    });
   });
 }

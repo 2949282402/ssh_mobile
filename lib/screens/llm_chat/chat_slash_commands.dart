@@ -41,9 +41,9 @@ const List<_SlashCommandMeta> _defaultSlashCommands = [
   ),
   _SlashCommandMeta(
     command: '/plan',
-    summary: 'Toggle plan mode or run a plan task.',
+    summary: 'Enable Plan Mode and optionally submit a request.',
     details:
-        'Design a structured execution plan without modifying server state.',
+        'Enter read-only planning mode. If a request is provided, it will be sent in Plan Mode.',
   ),
 ];
 
@@ -334,7 +334,7 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
     required _AiStrings strings,
     bool showFeedback = true,
   }) async {
-    if (!enabled && !canExitPlanMode(chat)) {
+    if (!enabled && !canExitPlanMode(chat, actor: PlanModeExitActor.userUi)) {
       if (showFeedback) {
         _showCommandFeedback(
           strings.language == AppLanguage.en

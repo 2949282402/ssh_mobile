@@ -289,6 +289,28 @@ void main() {
       );
       expect(canExitPlanMode(allowedChat), isTrue);
     });
+
+    test('canExitPlanMode respects PlanModeExitActor settings', () {
+      final base = DateTime.utc(2026, 1, 1, 12, 0);
+      final blockedChat = AiChatRecord(
+        id: 'chat-blocked',
+        title: 'Blocked',
+        model: 'model',
+        messages: [
+          AiChatMessageRecord(
+            role: 'assistant',
+            text: 'No steps',
+            createdAt: base,
+          ),
+        ],
+        createdAt: base,
+        updatedAt: base,
+        planMode: true,
+      );
+
+      expect(canExitPlanMode(blockedChat, actor: PlanModeExitActor.llmTool), isFalse);
+      expect(canExitPlanMode(blockedChat, actor: PlanModeExitActor.userUi), isTrue);
+    });
   });
 
   group('AiTodoStep and todoSteps serialization', () {
