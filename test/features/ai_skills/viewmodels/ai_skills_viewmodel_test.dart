@@ -82,5 +82,50 @@ void main() {
       viewModel.markDirty();
       expect(viewModel.dirty, isTrue);
     });
+
+    test('Parsing references from markdown content text', () {
+      final viewModel = AiSkillsViewModel(
+        storageService: storageService,
+        appSettings: appSettings,
+      );
+
+      viewModel.contentController.text =
+          'Some content here\n\n## References\n- references/a.md # Desc A\n- [Desc B](references/b.md)\n- references/c.md: Desc C\n- references/d.md';
+      viewModel.parseReferencesFromContent();
+
+      expect(viewModel.hasReferences, isTrue);
+      expect(viewModel.references, equals([
+        const SkillReferenceItem(path: 'references/a.md', description: 'Desc A'),
+        const SkillReferenceItem(path: 'references/b.md', description: 'Desc B'),
+        const SkillReferenceItem(path: 'references/c.md', description: 'Desc C'),
+        const SkillReferenceItem(path: 'references/d.md', description: ''),
+      ]));
+    });
+
+    test('Adding and removing references updates content text', () {
+      final viewModel = AiSkillsViewModel(
+        storageService: storageService,
+        appSettings: appSettings,
+      );
+
+      viewModel.contentController.text = 'Introductory text';
+      viewModel.toggleReferences(true);
+
+      expect(viewModel.hasReferences, isTrue);
+      expect(viewModel.contentController.text, contains('## References'));
+      expect(viewModel.contentController.text, contains('- references/example.md # Example reference document'));
+
+      viewModel.addReference('references/my_config.md', 'Configurations info');
+      expect(viewModel.references, contains(const SkillReferenceItem(path: 'references/my_config.md', description: 'Configurations info')));
+      expect(viewModel.contentController.text, contains('- references/my_config.md # Configurations info'));
+
+      viewModel.removeReference(0); // Removes example.md
+      expect(viewModel.references, equals([const SkillReferenceItem(path: 'references/my_config.md', description: 'Configurations info')]));
+      expect(viewModel.contentController.text, isNot(contains('- references/example.md')));
+
+      viewModel.toggleReferences(false);
+      expect(viewModel.hasReferences, isFalse);
+      expect(viewModel.contentController.text, equals('Introductory text'));
+    });
   });
 }

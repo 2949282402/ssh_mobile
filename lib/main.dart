@@ -13,6 +13,7 @@ import 'features/startup/viewmodels/startup_viewmodel.dart';
 import 'features/performance/viewmodels/performance_viewmodel.dart';
 import 'features/sftp/viewmodels/sftp_viewmodel.dart';
 import 'screens/ai_skills_screen.dart';
+import 'screens/ai_skill_edit_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/performance_monitor_screen.dart';
 import 'screens/playbook_screen.dart';
@@ -266,6 +267,15 @@ class _SshMobileAppState extends State<SshMobileApp>
                   appSettings: context.read<AppSettings>(),
                 ),
                 child: const AiSkillsScreen(),
+              ),
+            );
+          case '/ai-skills/edit':
+            final args = settings.arguments as Map<String, dynamic>;
+            final viewModel = args['viewModel'] as AiSkillsViewModel;
+            return MaterialPageRoute(
+              builder: (_) => ChangeNotifierProvider.value(
+                value: viewModel,
+                child: const AiSkillEditScreen(),
               ),
             );
           case '/playbooks':
