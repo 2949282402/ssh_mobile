@@ -224,6 +224,17 @@ void main() {
       );
       expect(res.allowed, isTrue);
     });
+
+    test('findCurrentStep delegates to snapshot currentStep', () {
+      final steps = [
+        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'c1', description: 'd', status: StepStatus.failed),
+        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'c2', description: 'd', status: StepStatus.pending),
+      ];
+
+      final current = PlanExecutionController.findCurrentStep(steps);
+      expect(current, isNotNull);
+      expect(current!.id, 't-2');
+    });
   });
 
   group('ApprovedPlanContext context rendering tests', () {

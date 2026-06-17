@@ -360,11 +360,71 @@ void main() {
 
       expect(loopResult.finalOutcome, AgentFinalOutcome.budgetAuditRejected);
       expect(mockCoordinator.lastTrigger, MultiAgentTrigger.postBudgetAudit);
+      expect(mockCoordinator.lastPostToolContext, contains('Plan execution phase: running'));
       expect(mockCoordinator.lastPostToolContext, contains('Current Plan Step:'));
       expect(mockCoordinator.lastPostToolContext, contains('- taskId: task-1'));
       expect(mockCoordinator.lastPostToolContext, contains('- name: Step 1'));
       expect(mockCoordinator.lastPostToolContext, contains('- command: cmd'));
       expect(mockCoordinator.lastPostToolContext, contains('- status: running'));
+    });
+
+    test('post-tool review context includes no active plan snapshot when snapshot is null', () async {
+      final budget = LlmToolBudgetController(baseBudget: 10);
+      for (var i = 0; i < 15; i++) {
+        budget.recordAcceptedToolCall();
+      }
+
+      final cache = <String, CachedToolResult>{};
+      final ledger = <LlmToolLedgerEntry>[];
+      final mockCoordinator = MockMultiAgentCoordinator();
+      final localLlm = LlmChatService(
+        storageService: storage,
+        toolService: tools,
+        multiAgentCoordinator: mockCoordinator,
+      );
+
+      final controller = ToolLoopController(
+        chatService: localLlm,
+        toolBudget: budget,
+        readOnlyToolCache: cache,
+        toolLedger: ledger,
+      );
+
+      final workingMessages = <Map<String, dynamic>>[];
+      final settings = await storage.loadAiConnectionSettings();
+
+      final loopResult = await controller.handleToolCalls(
+        toolCalls: [
+          StreamingToolCall(id: 'call_b', name: 'client_time', arguments: '{}'),
+        ],
+        visibleToolsByName: {
+          'client_time': AiTool(
+            name: 'client_time',
+            description: 'Get client time',
+            properties: const {},
+            required: const [],
+            executionMode: AiToolExecutionMode.readOnly,
+            handler: (args, {approvedWrite = false}) async => '{}',
+          ),
+        },
+        planMode: false,
+        language: AppLanguage.zh,
+        apiKey: 'key',
+        auditModel: 'audit-model',
+        originalUserGoal: 'Goal',
+        workingMessages: workingMessages,
+        requestToolApproval: (req) async => const AiToolApprovalDecision.rejected(abort: false),
+        onTrace: null,
+        cancellationToken: null,
+        settings: settings,
+        complete: (role, messages, {required thinkingSettings}) async => 'advice',
+        classify: (messages) async => '{}',
+        planExecutionSnapshot: null,
+      );
+
+      expect(loopResult.finalOutcome, AgentFinalOutcome.budgetAuditRejected);
+      expect(mockCoordinator.lastTrigger, MultiAgentTrigger.postBudgetAudit);
+      expect(mockCoordinator.lastPostToolContext, contains('No active plan snapshot.'));
     });
   });
 }

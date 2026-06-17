@@ -579,8 +579,13 @@ class ToolLoopController {
       recentStepText = 'No active plan step.';
     }
 
+    final planPhaseText = planExecutionSnapshot == null
+        ? 'No active plan snapshot.'
+        : 'Plan execution phase: ${planExecutionSnapshot.phase.name}';
+
     final postToolContext = [
       'Goal: $originalUserGoal',
+      planPhaseText,
       recentStepText,
       if (recentLedger != null) ...[
         'Last tool called: ${recentLedger.toolName}',

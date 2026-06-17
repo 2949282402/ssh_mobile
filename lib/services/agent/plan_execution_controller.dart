@@ -44,12 +44,7 @@ class PlanExecutionController {
   const PlanExecutionController();
 
   static AiTodoStep? findCurrentStep(List<AiTodoStep> steps) {
-    for (final step in steps) {
-      if (step.status == StepStatus.pending || step.status == StepStatus.running) {
-        return step;
-      }
-    }
-    return null;
+    return const PlanExecutionController().snapshot(steps).currentStep;
   }
 
   PlanExecutionSnapshot snapshot(List<AiTodoStep> steps) {
