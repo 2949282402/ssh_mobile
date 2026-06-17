@@ -189,4 +189,12 @@ udp UNCONN 0 0 127.0.0.53:53 0.0.0.0:* users:(("systemd-resolve",pid=42,fd=12))
     expect(service.errorMessage, contains('Connection config not found'));
     expect(notified, isTrue);
   });
+
+  test('disconnect clears preserved errorMessage', () async {
+    await service.connect('conn_invalid');
+    expect(service.errorMessage, isNotNull);
+
+    service.disconnect();
+    expect(service.errorMessage, isNull);
+  });
 }

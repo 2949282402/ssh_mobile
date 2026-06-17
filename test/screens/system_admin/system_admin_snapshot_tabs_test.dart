@@ -382,4 +382,115 @@ void main() {
     expect(find.textContaining('当前无法使用管理模式（需要 root 权限）'), findsOneWidget);
     expect(find.text('连接 Root'), findsOneWidget);
   });
+
+  testWidgets('SystemAdminScreen displays Applications snapshot when server is selected',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final adminVm = StubSystemAdminViewModel();
+    final monitorVm = StubPerformanceMonitorViewModel();
+    adminVm.connections = fakeConnections;
+
+    adminVm.selectConnection('conn_123');
+
+    await tester.pumpWidget(buildTestableWidget(
+      adminVm: adminVm,
+      monitorVm: monitorVm,
+    ));
+
+    await tester.pumpAndSettle();
+
+    // Switch to Tab 2 (applications)
+    await tester.tap(find.text('应用/进程'));
+    await tester.pumpAndSettle();
+
+    // Verify snapshot shows process 'nginx' and 'PID 101'
+    expect(find.text('nginx'), findsWidgets);
+    expect(find.textContaining('PID 101'), findsOneWidget);
+    // Applications does not display a manage mode or Connect Root warning
+    expect(find.textContaining('管理模式'), findsNothing);
+    expect(find.text('连接 Root'), findsNothing);
+  });
+
+  testWidgets('SystemAdminScreen displays Services snapshot when server is selected but not connected',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final adminVm = StubSystemAdminViewModel();
+    final monitorVm = StubPerformanceMonitorViewModel();
+    adminVm.connections = fakeConnections;
+
+    adminVm.selectConnection('conn_123');
+
+    await tester.pumpWidget(buildTestableWidget(
+      adminVm: adminVm,
+      monitorVm: monitorVm,
+    ));
+
+    await tester.pumpAndSettle();
+
+    // Switch to Tab 3 (systemServices)
+    await tester.tap(find.text('系统服务'));
+    await tester.pumpAndSettle();
+
+    // Verify snapshot mode active message
+    expect(find.textContaining('当前无法使用管理模式（需要 root 权限）'), findsOneWidget);
+    expect(find.text('连接 Root'), findsOneWidget);
+
+    // Verify service card nginx.service exists
+    expect(find.text('nginx.service'), findsWidgets);
+
+    // Snapshot mode does not have the trailing actions PopMenuButton
+    expect(find.byType(PopupMenuButton<String>), findsNothing);
+  });
+
+  testWidgets('SystemAdminScreen displays Services manage mode when root connected',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final adminVm = StubSystemAdminViewModel();
+    final monitorVm = StubPerformanceMonitorViewModel();
+    adminVm.connections = fakeConnections;
+
+    // Simulate root connected
+    adminVm.selectedConnectionId = 'conn_123';
+    adminVm.managementConnectionId = 'conn_123';
+    adminVm.isConnected = true;
+    adminVm.isRoot = true;
+
+    // Add some system services in viewModel
+    adminVm.services = [
+      SystemdService(name: 'nginx.service', loadState: 'loaded', activeState: 'active', subState: 'running', description: 'Nginx Service'),
+    ];
+
+    await tester.pumpWidget(buildTestableWidget(
+      adminVm: adminVm,
+      monitorVm: monitorVm,
+    ));
+
+    await tester.pumpAndSettle();
+
+    // Switch to Tab 3 (systemServices)
+    await tester.tap(find.text('系统服务'));
+    await tester.pumpAndSettle();
+
+    // Verify segmented button for Manage/Snapshot exists
+    expect(find.text('管理模式'), findsOneWidget);
+    expect(find.text('快照模式'), findsOneWidget);
+
+    // Verify nginx.service exists
+    expect(find.text('nginx.service'), findsWidgets);
+
+    // Manage mode has trailing actions PopMenuButton
+    expect(find.byType(PopupMenuButton<String>), findsWidgets);
+  });
 }

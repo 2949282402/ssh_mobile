@@ -145,21 +145,24 @@ Primary entry points are `lib/features/sftp/viewmodels/sftp_viewmodel.dart`,
 - Keep upload, download, preview, edit, and delete behavior aligned across
   mobile, Windows, and macOS.
 
-### Performance Monitor
+### Performance Monitor & System Administration
 
 Primary entry points are
 `lib/features/performance/viewmodels/performance_viewmodel.dart`,
 `lib/services/performance_monitor_service.dart`,
 `lib/services/server_status_probe.dart`,
-`lib/screens/performance_monitor_screen.dart`, and
-`lib/screens/performance_monitor/`.
+`lib/screens/system_admin_screen.dart`, and
+`lib/screens/system_admin/`.
 
-- The monitor page has four tabs: Performance, Ports, Applications, and
-  Services.
+- The performance monitor is integrated as the default "Monitor" tab in the
+  System Administration console.
 - Performance monitoring is user-started, supports multiple servers, and keeps
   at most ten minutes of in-memory samples.
 - Ports, Applications, and Services each operate on one selected server and
   fetch on open or manual refresh.
+- Snapshot modes do not require root, enabling non-root Linux and Windows
+  monitoring, while management tabs (Users, Sessions, Power) and management
+  modes require root Linux connections.
 - Collect data with read-only one-shot SSH exec commands. Do not attach to tmux
   or interactive terminal sessions.
 - Linux probes use `/proc` and `df -P`; Windows probes use the PowerShell JSON
