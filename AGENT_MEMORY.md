@@ -149,3 +149,4 @@ across sessions.
 
 - 2026-06-16: 完成 Phase 8B AI Chat Context / Message Pipeline 抽离。新建了 AiChatContextBuilder, AiChatMessageMapper, AiChatTokenEstimator，将上下文构建、历史消息映射、Token 估算及缓存控制等非状态逻辑彻底从 AiChatViewModel 中解耦抽离，使 ViewModel 进一步收敛为纯粹的状态与 Action 调度层；修复了流式回答 finally 块中 cancellationToken 清理逻辑的 identity 判定缺陷，避免并发或快速重入时可能误清理后续 cancel token 的隐患；运行 flutter analyze 和 flutter test 达到 100% 通过率且无 Warning。
 - 2026-06-16: 完成 Phase 9A & 9B AI Chat Generation Runner / Run Coordinator 抽离与审计清理。将生成迭代生命周期、流式节流渲染触发、中英文状态/Trace 本地化以及指标保存持久化逻辑从 ViewModel 解耦至 GenerationRunner、StatusTranslator、MetricsRecorder 三大独立服务。优化了 ViewModel 构造函数依赖引用避免重复分配，补齐了核心服务单元测试且通过率 100%，架构更加高内聚低耦合。
+- 2026-06-17: AI chat 的默认规划目标是当前请求的聊天内 `todoSteps`。只有当用户明确要求保存、复用、管理或运行可复用剧本/脚本时，才暴露或调用 `Playbook` 相关工具；回复中的 ` ```playbook ` 代码块仍只是 todo 计划的持久化格式。

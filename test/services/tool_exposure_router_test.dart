@@ -112,5 +112,42 @@ void main() {
 
       expect(selection.selectedToolSet, contains('run_command'));
     });
+
+    test('keeps saved playbook tools out of ordinary execution planning', () {
+      const router = ToolExposureRouter();
+      final tools = [
+        AiTool(
+          name: 'list_playbooks',
+          description: 'List saved playbooks',
+          properties: const {},
+          handler: _noop,
+        ),
+        AiTool(
+          name: 'create_playbook',
+          description: 'Create saved playbook',
+          properties: const {},
+          executionMode: AiToolExecutionMode.stateChanging,
+          handler: _noop,
+        ),
+      ];
+
+      final normalPlan = router.selectTools(
+        tools,
+        context: const ToolExposureContext(
+          userRequest: '请给我一个执行计划来排查 nginx 服务',
+        ),
+      );
+      final explicitSave = router.selectTools(
+        tools,
+        context: const ToolExposureContext(
+          userRequest: '请保存这次运维脚本，做成可复用 playbook',
+        ),
+      );
+
+      expect(normalPlan.selectedToolSet, isNot(contains('list_playbooks')));
+      expect(normalPlan.selectedToolSet, isNot(contains('create_playbook')));
+      expect(explicitSave.selectedToolSet, contains('list_playbooks'));
+      expect(explicitSave.selectedToolSet, contains('create_playbook'));
+    });
   });
 }

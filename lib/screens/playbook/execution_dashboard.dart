@@ -415,6 +415,9 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
 
     final isRunning = viewModel.isRunning;
     final isPaused = viewModel.isPaused;
+    final isFinished = activePlaybook.steps.isNotEmpty &&
+        activePlaybook.steps.every((s) =>
+            s.status == StepStatus.success || s.status == StepStatus.skipped);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -426,10 +429,19 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
         top: false,
         child: Row(
           children: [
-            // Start / Pause / Resume
+            // Start / Pause / Resume / AI Summary
             Expanded(
               child: () {
-                if (isRunning) {
+                if (isFinished) {
+                  return FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: colorScheme.primary,
+                    ),
+                    icon: const Icon(Icons.smart_toy_outlined),
+                    label: Text(strings.aiSummary),
+                    onPressed: () => _requestAiSummary(activePlaybook, strings),
+                  );
+                } else if (isRunning) {
                   return FilledButton.icon(
                     style: FilledButton.styleFrom(
                       backgroundColor: Colors.orangeAccent.shade700,
@@ -522,6 +534,65 @@ Please analyze what went wrong and provide:
 
     // Set the prompt in the viewModel/service
     context.read<PlaybookViewModel>().pendingDiagnosticPrompt = prompt;
+
+    // Send notification to switch to AI tab
+    const SwitchToAiTabNotification().dispatch(context);
+
+    // Pop current screen (if it was pushed on top of Home)
+    final rootNavigator = Navigator.of(context, rootNavigator: true);
+    if (rootNavigator.canPop()) {
+      rootNavigator.pop();
+    }
+  }
+
+  void _requestAiSummary(
+    Playbook playbook,
+    _PlaybookStrings strings,
+  ) {
+    String limitOutput(String? text) {
+      if (text == null || text.trim().isEmpty) return '(empty)';
+      final trimmed = text.trim();
+      if (trimmed.length > 500) {
+        return '${trimmed.substring(0, 500)}\n...[truncated]';
+      }
+      return trimmed;
+    }
+
+    final buffer = StringBuffer()
+      ..writeln(strings.language == AppLanguage.en
+          ? "I have finished executing the following playbook successfully! Please review the overall execution results and summarize them:"
+          : "我已成功执行完以下运维剧本！请评估整体的执行结果并做一个总结：")
+      ..writeln()
+      ..writeln("Playbook: ${playbook.name}")
+      ..writeln(
+          "Description: ${playbook.description.isEmpty ? '(none)' : playbook.description}")
+      ..writeln()
+      ..writeln("Execution Steps & Results:");
+
+    for (int i = 0; i < playbook.steps.length; i++) {
+      final step = playbook.steps[i];
+      buffer
+        ..writeln("---")
+        ..writeln("Step ${i + 1}: ${step.name}")
+        ..writeln("Command: `${step.command}`")
+        ..writeln("Status: ${step.status.name}")
+        ..writeln("Exit Code: ${step.exitCode ?? 'N/A'}")
+        ..writeln("Stdout:")
+        ..writeln(limitOutput(step.stdout))
+        ..writeln("Stderr:")
+        ..writeln(limitOutput(step.stderr));
+    }
+
+    buffer
+      ..writeln("---")
+      ..writeln()
+      ..writeln(strings.language == AppLanguage.en
+          ? "Please provide a quick summary confirming that everything is successful, highlight any potential post-run validation I should do, and give next step suggestions."
+          : "请提供一个简短的总结，确认所有操作均已成功执行。指出任何我可能需要进行的后续校验，并给出下一步建议。");
+
+    // Set the prompt in the viewModel/service
+    context.read<PlaybookViewModel>().pendingDiagnosticPrompt =
+        buffer.toString();
 
     // Send notification to switch to AI tab
     const SwitchToAiTabNotification().dispatch(context);

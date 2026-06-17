@@ -8,6 +8,9 @@ class _ChatToolsBar extends StatelessWidget {
   final String fileLabel;
   final String ragLabel;
   final String promptLabel;
+  final String planModeLabel;
+  final String playbooksLabel;
+  final bool isPlanModeActive;
   final VoidCallback onServerTap;
   final VoidCallback onSkillsTap;
   final VoidCallback onWebViewTap;
@@ -15,6 +18,8 @@ class _ChatToolsBar extends StatelessWidget {
   final VoidCallback onFileTap;
   final VoidCallback onRagTap;
   final VoidCallback onPromptTap;
+  final VoidCallback onPlanModeTap;
+  final VoidCallback onPlaybooksTap;
 
   const _ChatToolsBar({
     required this.skillsLabel,
@@ -24,6 +29,9 @@ class _ChatToolsBar extends StatelessWidget {
     required this.fileLabel,
     required this.ragLabel,
     required this.promptLabel,
+    required this.planModeLabel,
+    required this.playbooksLabel,
+    required this.isPlanModeActive,
     required this.onServerTap,
     required this.onSkillsTap,
     required this.onWebViewTap,
@@ -31,6 +39,8 @@ class _ChatToolsBar extends StatelessWidget {
     required this.onFileTap,
     required this.onRagTap,
     required this.onPromptTap,
+    required this.onPlanModeTap,
+    required this.onPlaybooksTap,
   });
 
   @override
@@ -102,6 +112,19 @@ class _ChatToolsBar extends StatelessWidget {
                   label: Text(promptLabel),
                   onPressed: onPromptTap,
                 ),
+                _ChatToolTile(
+                  width: tileWidth,
+                  icon: Icons.rocket_launch_outlined,
+                  label: Text(playbooksLabel),
+                  onPressed: onPlaybooksTap,
+                ),
+                _ChatToolTile(
+                  width: tileWidth,
+                  icon: Icons.edit_note_rounded,
+                  label: Text(planModeLabel),
+                  onPressed: onPlanModeTap,
+                  isActive: isPlanModeActive,
+                ),
               ],
             );
           },
@@ -116,12 +139,14 @@ class _ChatToolTile extends StatelessWidget {
   final IconData icon;
   final Widget label;
   final VoidCallback onPressed;
+  final bool isActive;
 
   const _ChatToolTile({
     required this.width,
     required this.icon,
     required this.label,
     required this.onPressed,
+    this.isActive = false,
   });
 
   @override
@@ -141,11 +166,23 @@ class _ChatToolTile extends StatelessWidget {
                 width: 38,
                 height: 38,
                 decoration: BoxDecoration(
-                  color: colorScheme.surface,
+                  color: isActive
+                      ? colorScheme.primaryContainer
+                      : colorScheme.surface,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: colorScheme.outlineVariant),
+                  border: Border.all(
+                    color: isActive
+                        ? colorScheme.primary
+                        : colorScheme.outlineVariant,
+                  ),
                 ),
-                child: Icon(icon, size: 20, color: colorScheme.primary),
+                child: Icon(
+                  icon,
+                  size: 20,
+                  color: isActive
+                      ? colorScheme.onPrimaryContainer
+                      : colorScheme.primary,
+                ),
               ),
               const SizedBox(height: 4),
               DefaultTextStyle.merge(
@@ -153,7 +190,9 @@ class _ChatToolTile extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: colorScheme.onSurfaceVariant,
+                  color: isActive
+                      ? colorScheme.primary
+                      : colorScheme.onSurfaceVariant,
                   fontSize: 11,
                   height: 1.15,
                   fontWeight: FontWeight.w600,

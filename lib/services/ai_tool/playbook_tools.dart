@@ -229,14 +229,14 @@ class PlaybookToolsProvider implements AiToolProvider {
       AiTool(
         name: 'list_playbooks',
         description:
-            'CLIENT tool. List all saved custom sequential task playbooks/scripts, including step names and commands.',
+            'CLIENT tool. List all saved reusable playbooks/scripts, including step names and commands. These are distinct from chat-bound todoSteps plans.',
         properties: const {},
         handler: (args) => _listPlaybooksTool(service, args),
       ),
       AiTool(
         name: 'create_playbook',
         description:
-            'CLIENT tool. Create a new visual sequential task playbook in storage. This updates local client data and requires user approval.',
+            'CLIENT tool. Create a new saved reusable playbook in local storage. Use this only when the user explicitly asks to save, persist, or reuse the script/workflow beyond the current chat plan. This updates local client data and requires user approval.',
         properties: {
           'name': _string('The display name for the playbook.'),
           'description':
@@ -266,7 +266,7 @@ class PlaybookToolsProvider implements AiToolProvider {
       AiTool(
         name: 'run_playbook',
         description:
-            'CLIENT tool. Trigger the async sequential execution of a saved playbook on a remote SSH server connection. This changes server state and requires user approval.',
+            'CLIENT tool. Trigger the async sequential execution of a previously saved reusable playbook on a remote SSH server connection. Do not use this for the ordinary current-chat execution plan; use it only when the user explicitly wants to run a saved playbook. This changes server state and requires user approval.',
         properties: {
           'playbookId': _string('The saved playbook ID.'),
           'connectionId': _string('The remote SSH server connection ID.'),
@@ -279,7 +279,7 @@ class PlaybookToolsProvider implements AiToolProvider {
       AiTool(
         name: 'get_playbook_status',
         description:
-            'CLIENT tool. Query the active or latest execution status of a playbook, including live step results, exit codes, and stdout/stderr.',
+            'CLIENT tool. Query the active or latest execution status of a saved playbook run, including live step results, exit codes, and stdout/stderr.',
         properties: {
           'playbookId': _string('The playbook ID to query.'),
         },

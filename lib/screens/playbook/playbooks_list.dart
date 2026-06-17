@@ -137,25 +137,33 @@ extension _PlaybookScreenPlaybooksList on _PlaybookScreenState {
                         Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            IconButton(
-                              icon: const Icon(Icons.edit_note_outlined,
-                                  size: 18),
-                              visualDensity: VisualDensity.compact,
-                              padding: EdgeInsets.zero,
-                              onPressed: () {
-                                viewModel.startEditing(playbook);
-                                if (_isCompactLayout) {
-                                  _mobileTabs.animateTo(1);
-                                }
-                              },
+                            GestureDetector(
+                              onTap:
+                                  () {}, // Prevent tap bubble to parent InkWell
+                              child: IconButton(
+                                icon: const Icon(Icons.edit_note_outlined,
+                                    size: 18),
+                                visualDensity: VisualDensity.compact,
+                                padding: EdgeInsets.zero,
+                                onPressed: () {
+                                  viewModel.startEditing(playbook);
+                                  if (_isCompactLayout) {
+                                    _mobileTabs.animateTo(1);
+                                  }
+                                },
+                              ),
                             ),
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline_rounded,
-                                  size: 18, color: Colors.red),
-                              visualDensity: VisualDensity.compact,
-                              padding: EdgeInsets.zero,
-                              onPressed: () => _confirmDeletePlaybook(
-                                  viewModel, playbook, strings),
+                            GestureDetector(
+                              onTap:
+                                  () {}, // Prevent tap bubble to parent InkWell
+                              child: IconButton(
+                                icon: const Icon(Icons.delete_outline_rounded,
+                                    size: 18, color: Colors.red),
+                                visualDensity: VisualDensity.compact,
+                                padding: EdgeInsets.zero,
+                                onPressed: () => _confirmDeletePlaybook(
+                                    viewModel, playbook, strings),
+                              ),
                             ),
                           ],
                         ),

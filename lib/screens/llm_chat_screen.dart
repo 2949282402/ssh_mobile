@@ -695,6 +695,9 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
                                     fileLabel: strings.attachFile,
                                     ragLabel: strings.ragTitle,
                                     promptLabel: strings.promptLabel,
+                                    planModeLabel: strings.planMode,
+                                    playbooksLabel: strings.playbooks,
+                                    isPlanModeActive: activeChat.planMode,
                                     onServerTap: () =>
                                         _selectTargetServer(strings),
                                     onSkillsTap: () {
@@ -709,6 +712,15 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
                                         _showRagBottomSheet(context, strings),
                                     onPromptTap: () =>
                                         _showPromptCustomizer(strings),
+                                    onPlanModeTap: () => _setPlanModeFromUi(
+                                      chat: activeChat,
+                                      enabled: !activeChat.planMode,
+                                      strings: strings,
+                                    ),
+                                    onPlaybooksTap: () {
+                                      Navigator.pushNamed(
+                                          context, '/playbooks');
+                                    },
                                   ),
                                 )
                               : const SizedBox(width: double.infinity),

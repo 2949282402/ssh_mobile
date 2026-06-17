@@ -557,14 +557,6 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                   ),
                 ),
                 IconButton(
-                  tooltip: context.read<AppSettings>().isEnglish
-                      ? 'Playbooks'
-                      : '运维剧本',
-                  icon: const Icon(Icons.rocket_launch_outlined),
-                  color: mutedTextColor,
-                  onPressed: () => Navigator.pushNamed(context, '/playbooks'),
-                ),
-                IconButton(
                   tooltip: strings.connectionHistory,
                   icon: const Icon(Icons.history_rounded),
                   color: mutedTextColor,

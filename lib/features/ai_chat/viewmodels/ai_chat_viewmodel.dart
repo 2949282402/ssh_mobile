@@ -1447,8 +1447,8 @@ class AiChatViewModel extends ChangeNotifier {
       await _storageService.saveAiChat(updated);
       return SendTextSlashCommandHandled(
         isEn
-            ? 'Plan Mode Enabled. Helper agents will analyze read-only details and prepare structured playbooks.'
-            : '规划模式已启用。多 Agent 协作将仅执行只读信息收集并生成 Playbook 步骤。',
+            ? 'Plan Mode Enabled. Helper agents will analyze read-only details and prepare a structured execution plan.'
+            : '规划模式已启用。多 Agent 协作将仅执行只读信息收集并生成结构化执行计划。',
       );
     }
 

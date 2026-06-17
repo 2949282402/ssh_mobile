@@ -50,6 +50,7 @@ class _PlaybookStrings {
   String get reset => _en ? 'Reset' : '重置状态';
 
   String get aiDiagnostic => _en ? 'Request AI Diagnostic' : '请求 AI 诊断';
+  String get aiSummary => _en ? 'Request AI Summary' : '请求 AI 总结';
 
   String get regex => _en ? 'Regex' : '预期正则';
   String get exitCode => _en ? 'Exit Code' : '退出状态码';

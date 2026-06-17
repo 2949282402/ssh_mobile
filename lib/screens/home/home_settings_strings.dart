@@ -5,11 +5,6 @@ extension _HomeSettingsStrings on AppStrings {
   String get appearance => language == AppLanguage.en ? 'Appearance' : '外观';
   String get toolsAndAutomation =>
       language == AppLanguage.en ? 'Tools & Automation' : '工具与自动化';
-  String get playbookOrchestrator =>
-      language == AppLanguage.en ? 'Playbook Orchestrator' : '运维剧本与AI编排';
-  String get playbookOrchestratorHint => language == AppLanguage.en
-      ? 'Run multi-step SSH tasks and use AI troubleshooting'
-      : '自动化的顺序执行剧本，支持一键 AI 排障';
   String get aiSkillsHint => language == AppLanguage.en
       ? 'Manage custom AI prompts, workflows, and references'
       : '管理自定义 AI 提示词、工作流及规则说明';

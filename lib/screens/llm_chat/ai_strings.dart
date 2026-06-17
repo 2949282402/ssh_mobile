@@ -163,6 +163,8 @@ class _AiStrings {
   String get save => _en ? 'Save' : '保存';
   String failed(Object error) => _en ? 'Failed: $error' : '失败：$error';
   String get commands => _en ? 'Commands' : '命令';
+  String get planMode => _en ? 'Plan Mode' : '规划模式';
+  String get playbooks => _en ? 'Playbooks' : '运维剧本';
   String get commandUnknownHint => _en
       ? 'Type a command to use. Available: /compact, /tools, /skills.'
       : '输入以 / 开头的命令，如 /compact、/tools 或 /skills';

@@ -189,6 +189,8 @@ LLM 设置集中在单独的设置页中，包含 Base URL、API Key 历史、�
 
 AI 聊天的 tool 调用现在有按单次请求计算的预算保护：默认预算为 20 次，首次达到预算会自动增加一半，并在 trace 中提醒用户观察工具调用是否仍然合理；之后每次继续扩容前都会运行一次内部安全审计，必要时会停止继续调用工具，并强制模型给出一次无工具的总结与下一步建议。
 
+默认情况下，AI 会先为当前聊天生成可批准执行的 `todoSteps` 计划；只有当用户明确要求保存、复用或管理这次运维脚本时，才应创建或运行独立的 `Playbook`。
+
 #### Agent Runtime
 
 Current agent architecture in the Flutter client:
@@ -213,6 +215,7 @@ AI tools 以能力分组维护在 `lib/services/ai_tool/` 中，而不是把逻�
 
 约束规则：
 
+- 普通运维请求默认使用当前聊天内的 `todoSteps` 执行计划；只有用户明确要求保存/复用剧本时，才使用 `create_playbook`、`run_playbook` 等 Playbook 工具。
 - `client_*` tools 运行在 SSH Mobile 客户端，不连接服务器。
 - `run_command` 会强制遵守保存的 `serverPlatform`。
 - 远程写入、本地导入、日志删除/清空、监控状态变更等操作必须经过统一审批。

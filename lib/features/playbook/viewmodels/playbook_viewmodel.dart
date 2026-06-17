@@ -113,13 +113,19 @@ class PlaybookViewModel extends ChangeNotifier {
 
   // Editor Actions
   void _clearStepControllers() {
-    for (final step in stepControllers) {
-      step['name']?.dispose();
-      step['command']?.dispose();
-      step['description']?.dispose();
-      step['expectedOutcomeRegex']?.dispose();
-    }
+    if (stepControllers.isEmpty) return;
+    final controllersToDispose =
+        List<Map<String, TextEditingController>>.from(stepControllers);
     stepControllers.clear();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      for (final step in controllersToDispose) {
+        step['name']?.dispose();
+        step['command']?.dispose();
+        step['description']?.dispose();
+        step['expectedOutcomeRegex']?.dispose();
+      }
+    });
   }
 
   void _initStepControllers(Playbook playbook) {

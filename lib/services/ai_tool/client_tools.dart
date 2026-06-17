@@ -643,7 +643,8 @@ class ClientToolsProvider implements AiToolProvider {
     }
     final currentChat = chats[chatIndex];
 
-    if (!enabled && !canExitPlanMode(currentChat, actor: PlanModeExitActor.llmTool)) {
+    if (!enabled &&
+        !canExitPlanMode(currentChat, actor: PlanModeExitActor.llmTool)) {
       return jsonEncode({
         'error':
             'Cannot exit Plan Mode. You must persist executable TODO steps on the latest assistant planning message before switching to execution mode.',
@@ -1162,7 +1163,7 @@ class ClientToolsProvider implements AiToolProvider {
       AiTool(
         name: 'client_set_plan_mode',
         description:
-            'CLIENT tool. Toggle Plan Mode for the active chat thread. Set enabled=true to enter read-only planning when you need to replan. Set enabled=false to exit to execution mode ONLY after you have outlined a structured step-by-step playbook plan beforehand.',
+            'CLIENT tool. Toggle Plan Mode for the active chat thread. Set enabled=true to enter read-only planning when you need to replan. Set enabled=false to exit to execution mode ONLY after you have outlined a structured step-by-step execution plan beforehand.',
         properties: {
           'enabled': _bool(
               'true to enter plan mode, false to exit to execution mode.'),
@@ -1179,7 +1180,7 @@ class ClientToolsProvider implements AiToolProvider {
       AiTool(
         name: 'client_task_create',
         description:
-            'CLIENT tool. Create a new step in the TODO task plan. This tool is ONLY allowed during Plan Mode (read-only stage). Returns a generated unique taskId. Complex planning flows may also persist todoSteps from a valid ```playbook JSON block without calling this tool.',
+            'CLIENT tool. Create a new step in the chat-bound TODO execution plan for the current request. This tool is ONLY allowed during Plan Mode (read-only stage). Returns a generated unique taskId. Complex planning flows may also persist todoSteps from a valid ```playbook JSON block without calling this tool. This does not create a saved reusable Playbook record.',
         properties: {
           'name': _string('The name/title of the planned step.'),
           'command': _string(

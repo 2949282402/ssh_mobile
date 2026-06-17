@@ -328,11 +328,14 @@ void main() {
       expect(zhNormal, isNot(contains('[PLAN MODE ACTIVE]')));
       expect(zhPlan, contains('[PLAN MODE ACTIVE]'));
       expect(zhPlan, contains('todoSteps'));
+      expect(zhPlan, contains('不会自动创建已保存的可复用 Playbook'));
 
       final enNormal = llmEn.systemPromptFor(planMode: false);
       final enPlan = llmEn.systemPromptFor(planMode: true);
       expect(enNormal, isNot(contains('[PLAN MODE ACTIVE]')));
       expect(enPlan, contains('[PLAN MODE ACTIVE]'));
+      expect(
+          enPlan, contains('does not create a saved reusable Playbook record'));
     });
 
     test('filters state-changing and execution-only tools out of plan mode',

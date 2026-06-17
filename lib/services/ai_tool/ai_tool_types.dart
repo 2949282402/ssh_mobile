@@ -162,7 +162,7 @@ class AiTool {
       return const {AiToolCapability.monitor, AiToolCapability.diagnostics};
     }
     if (name.contains('playbook')) {
-      return const {AiToolCapability.playbook, AiToolCapability.planning};
+      return const {AiToolCapability.playbook};
     }
     if (name.contains('server') ||
         name.contains('ops') ||

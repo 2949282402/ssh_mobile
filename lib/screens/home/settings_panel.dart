@@ -260,21 +260,6 @@ class _SettingsPanelState extends State<_SettingsPanel> {
               children: [
                 ListTile(
                   contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.rocket_launch_outlined, size: 20),
-                  title: Text(
-                    strings.playbookOrchestrator,
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                  subtitle: Text(
-                    strings.playbookOrchestratorHint,
-                    style: const TextStyle(fontSize: 11),
-                  ),
-                  onTap: () {
-                    Navigator.pushNamed(context, '/playbooks');
-                  },
-                ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.auto_awesome, size: 20),
                   title: Text(
                     strings.language == AppLanguage.en

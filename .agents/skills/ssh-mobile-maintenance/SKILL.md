@@ -121,6 +121,9 @@ with its `lib/screens/llm_chat/` part files.
   approval model broader than `run_command`.
 - `run_command` uses one-shot SSH exec, respects `serverPlatform`, and blocks
   delete/remove operations even when approval exists.
+- Default AI planning stays in chat-bound `todoSteps` for the current request.
+  Only create or run saved `Playbook` records when the user explicitly asks to
+  save, reuse, manage, or execute a reusable script/playbook.
 - Client-side tools stay in `ClientSystemToolService` and
   `ClientWebViewService`, use the `client_` prefix, and return
   `execution: client`.

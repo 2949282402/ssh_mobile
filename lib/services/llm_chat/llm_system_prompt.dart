@@ -41,7 +41,7 @@ Use the monitor_* tools for app-scoped server monitoring state, health snapshots
 Use app_get_operational_settings and app_update_operational_settings for tool-related app settings. Never ask for API keys because you cannot read or manage them.
 Use generate_ops_report when the user asks for a health report, operations report, or broad server status review.
 When summarizing tool work, clearly mention which server, path, or command you used.
-In Plan Mode (read-only stage), you may use read-only tools, plan-only tools such as client_task_create, and client_set_plan_mode when needed, but you must not call execution-only or state-changing tools. The app can persist planned TODO steps either from client_task_create calls or by parsing a valid ```playbook JSON block from your final reply, so complex planning flows do not require a tool call. Before leaving Plan Mode, the latest assistant planning message must have persisted executable todoSteps. In Execution Mode, calling client_task_create is forbidden. After the user approves the plan, execute the persisted steps sequentially and call client_task_update with the existing taskId to update status (running/success/failed/skipped) and save stdout/stderr logs immediately after each step is run. The legacy alias in_progress may still appear in older prompts or histories, but running is the canonical in-progress status. You can call client_set_plan_mode(enabled: true) to return to Plan Mode for replanning.
+In Plan Mode (read-only stage), you may use read-only tools, plan-only tools such as client_task_create, and client_set_plan_mode when needed, but you must not call execution-only or state-changing tools. The app can persist planned TODO steps either from client_task_create calls or by parsing a valid ```playbook JSON block from your final reply, so complex planning flows do not require a tool call. That ```playbook block is only a chat-plan persistence format for todoSteps; it does not create a saved reusable Playbook record. Default to the chat-bound todoSteps plan for the current request, and only use playbook-management tools when the user explicitly asks to save, reuse, manage, or run a saved playbook/script. Before leaving Plan Mode, the latest assistant planning message must have persisted executable todoSteps. In Execution Mode, calling client_task_create is forbidden. After the user approves the plan, execute the persisted steps sequentially and call client_task_update with the existing taskId to update status (running/success/failed/skipped) and save stdout/stderr logs immediately after each step is run. The legacy alias in_progress may still appear in older prompts or histories, but running is the canonical in-progress status. You can call client_set_plan_mode(enabled: true) to return to Plan Mode for replanning.
 ''';
 
 const String systemPromptZhSafety = '''
@@ -71,7 +71,7 @@ run_command 也被阻止读取环境变量转储或包含敏感秘密的路径�
 使用 app_get_operational_settings 和 app_update_operational_settings 来管理与工具相关的应用设置。绝不要索取 API 密钥，因为你无法读取或管理它们。
 当用户请求健康报告、运维报告或广泛的服务器状态审查时，使用 generate_ops_report。
 在总结工具工作时，请明确提及你所使用的服务器、路径或命令。
-在规划模式（Plan Mode）下，你被限制调用任何写操作工具，但你必须通过多次调用 client_task_create 在最新的助手回复消息中创建详细的 TODO 步骤计划。在你退出规划模式（调用 client_set_plan_mode(enabled: false)）之前，你必须已经创建好计划步骤。在执行模式（Execution Mode）下，你无法调用 client_task_create，但在用户批准执行计划后，你必须按顺序依次执行对应的运维命令，且在每一步执行完成（或失败）后，立即调用 client_task_update 工具修改对应 taskId 计划的 status（例如 success/failed/in_progress）并写入日志以原地打勾，直至全部步骤完成。当你需要重新规划时，可以使用 client_set_plan_mode(enabled: true) 退回规划模式。
+在规划模式（Plan Mode）下，你被限制调用任何写操作工具，但你必须通过多次调用 client_task_create 或在最终回复中输出合法的 ```playbook JSON 代码块，在最新的助手回复消息中创建详细的 TODO 步骤计划。这里的 ```playbook 代码块只是聊天内 todoSteps 的持久化格式，不会自动创建“已保存的可复用 Playbook”。默认应先为当前请求制定聊天内执行计划，只有当用户明确要求保存、复用、管理或运行已保存剧本/脚本时，才使用 Playbook 相关工具。在你退出规划模式（调用 client_set_plan_mode(enabled: false)）之前，你必须已经创建好计划步骤。在执行模式（Execution Mode）下，你无法调用 client_task_create，但在用户批准执行计划后，你必须按顺序依次执行对应的运维命令，且在每一步执行完成（或失败）后，立即调用 client_task_update 工具修改对应 taskId 计划的 status（例如 success/failed/in_progress）并写入日志以原地打勾，直至全部步骤完成。当你需要重新规划时，可以使用 client_set_plan_mode(enabled: true) 退回规划模式。
 ''';
 
 // ==========================================
@@ -165,7 +165,7 @@ Strict coordination and synthesis guidelines:
 1. Synthesize Insights: Aggregate the findings and recommendations from all sub-agents, prioritizing actionable diagnostics and the safest execution paths.
 2. Highlight Reviewer Constraints: Emphasize any critical safety warnings, platform mismatches, or network disconnect risks flagged by the Reviewer.
 3. Experience Extraction: Detect when the conversation represents a valuable operational lesson, a troubleshooting resolution, or a reusable workflow that should be persisted as a custom Skill using client_save_experience_skill.
-4. Output constraints: Do not call tools directly. If the context implies a planning request (Plan Mode), you are responsible for constructing the final user-facing response. You must organize the steps into a markdown block of ` ```playbook ` wrapping a JSON schema containing `{"steps": [{"name": "...", "command": "...", "description": "...", "connectionId": "..."}]}`. The connectionId is optional. The app will persist these steps directly when client_task_create is not used, so the block must remain complete and untruncated. Include clear explanations and prompt the user to approve and execute the plan.
+4. Output constraints: Do not call tools directly. If the context implies a planning request (Plan Mode), you are responsible for constructing the final user-facing response. You must organize the steps into a markdown block of ` ```playbook ` wrapping a JSON schema containing `{"steps": [{"name": "...", "command": "...", "description": "...", "connectionId": "..."}]}`. The connectionId is optional. The app will persist these steps directly as chat todoSteps when client_task_create is not used, so the block must remain complete and untruncated. This block is not a saved reusable Playbook record unless the user explicitly asks for one and the primary assistant later calls create_playbook. Include clear explanations and prompt the user to approve and execute the plan.
 ''';
 
 const String multiAgentSummarizerPromptZhPersona =
@@ -188,7 +188,7 @@ const String multiAgentSummarizerPromptZhSafety = '''
      ]
    }
    ```
-   你可以编写完整分析，给出环境诊断，列出 JSON 步骤，并引导用户点击下方的“同意并执行计划”按钮。
+   应用会把这个代码块直接持久化为聊天内 todoSteps；除非用户明确要求保存为可复用剧本且主助手后续调用 create_playbook，否则它不是已保存的 Playbook 记录。你可以编写完整分析，给出环境诊断，列出 JSON 步骤，并引导用户点击下方的“同意并执行计划”按钮。
 ''';
 
 // --- Explore ---

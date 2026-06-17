@@ -202,12 +202,7 @@ class ToolExposureRouter {
       caps.add(AiToolCapability.client);
       caps.add(AiToolCapability.settings);
     }
-    if (_containsAny(request, const [
-      'playbook',
-      'workflow',
-      '执行计划',
-      '剧本',
-    ])) {
+    if (_isExplicitPlaybookRequest(request)) {
       caps.add(AiToolCapability.playbook);
     }
     if (context.hasApprovedPlan) {
@@ -243,5 +238,40 @@ class ToolExposureRouter {
 
   bool _containsAny(String text, List<String> needles) {
     return needles.any(text.contains);
+  }
+
+  bool _isExplicitPlaybookRequest(String request) {
+    if (_containsAny(request, const [
+      'playbook',
+      'playbooks',
+      '剧本',
+      'runbook',
+    ])) {
+      return true;
+    }
+    final wantsPersistence = _containsAny(request, const [
+      'save',
+      'saved',
+      'persist',
+      'store',
+      'reuse',
+      'reusable',
+      'template',
+      '保存',
+      '持久化',
+      '存起来',
+      '复用',
+      '可复用',
+      '模板',
+    ]);
+    final mentionsScriptArtifact = _containsAny(request, const [
+      'script',
+      'scripts',
+      'workflow',
+      '运维脚本',
+      '脚本',
+      '命令集',
+    ]);
+    return wantsPersistence && mentionsScriptArtifact;
   }
 }
