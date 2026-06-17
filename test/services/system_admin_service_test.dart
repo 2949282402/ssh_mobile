@@ -174,4 +174,19 @@ udp UNCONN 0 0 127.0.0.53:53 0.0.0.0:* users:(("systemd-resolve",pid=42,fd=12))
     await service.setUserSudo('conn1', 'testuser', true);
     expect(lastCommand, contains('usermod -aG'));
   });
+
+  test('connect failure sets errorMessage and notifies listeners', () async {
+    bool notified = false;
+    service.addListener(() {
+      notified = true;
+    });
+
+    // conn_invalid does not exist in storage service, so config is null, connection fails
+    await service.connect('conn_invalid');
+    expect(service.connectionId, isNull);
+    expect(service.isConnected, isFalse);
+    expect(service.isConnecting, isFalse);
+    expect(service.errorMessage, contains('Connection config not found'));
+    expect(notified, isTrue);
+  });
 }

@@ -97,7 +97,7 @@ class SystemAdminService extends ChangeNotifier {
         error: e,
         stackTrace: stack,
       );
-      _disconnectActive();
+      _disconnectActive(clearError: false);
       notifyListeners();
     }
   }
@@ -108,13 +108,15 @@ class SystemAdminService extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _disconnectActive() {
+  void _disconnectActive({bool clearError = true}) {
     _activeClient?.close();
     _activeClient = null;
     _activeConnectionId = null;
     _isConnecting = false;
     _isConnected = false;
-    _errorMessage = null;
+    if (clearError) {
+      _errorMessage = null;
+    }
     _isRoot = false;
   }
 

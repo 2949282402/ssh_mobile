@@ -101,6 +101,54 @@ void main() {
       expect(notified, isTrue);
     });
 
+    test('selectConnection does not trigger root management connection', () {
+      final viewModel = SystemAdminViewModel(
+        adminService: adminService,
+        storageService: storageService,
+      );
+
+      viewModel.selectConnection('conn_123');
+      expect(viewModel.selectedConnectionId, equals('conn_123'));
+      expect(viewModel.managementConnectionId, isNull);
+      expect(viewModel.isConnected, isFalse);
+    });
+
+    test('failed connect retains selectedConnectionId', () async {
+      final viewModel = SystemAdminViewModel(
+        adminService: adminService,
+        storageService: storageService,
+      );
+
+      // stub connect failure
+      adminService.connectOverride = (id) async {
+        throw Exception('SSH connect timeout');
+      };
+
+      try {
+        await viewModel.connect('conn_123');
+      } catch (_) {}
+
+      expect(viewModel.selectedConnectionId, equals('conn_123'));
+      expect(viewModel.managementConnectionId, isNull);
+      expect(viewModel.isConnected, isFalse);
+    });
+
+    test('management actions use managementConnectionId and not selectedConnectionId', () async {
+      final viewModel = SystemAdminViewModel(
+        adminService: adminService,
+        storageService: storageService,
+      );
+
+      viewModel.selectConnection('conn_123'); // selection is conn_123
+      expect(viewModel.selectedConnectionId, equals('conn_123'));
+      expect(viewModel.managementConnectionId, isNull);
+
+      // Try checking user sudo. It reads managementConnectionId which is null, so it returns early false
+      final isSudo = await viewModel.checkUserSudo('admin');
+      expect(isSudo, isFalse);
+      expect(lastCommand, isNull); // Didn't execute SSH command
+    });
+
     test('fetchAccounts loads and parses user accounts correctly', () async {
       final viewModel = SystemAdminViewModel(
         adminService: adminService,
