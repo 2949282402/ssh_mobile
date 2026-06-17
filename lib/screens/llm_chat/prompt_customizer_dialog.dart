@@ -282,6 +282,7 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                     Expanded(
                       child: DropdownButtonFormField<String>(
                         initialValue: _activeType,
+                        isExpanded: true,
                         decoration: const InputDecoration(
                           isDense: true,
                           contentPadding:
@@ -297,7 +298,11 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                         ]
                             .map((type) => DropdownMenuItem<String>(
                                   value: type,
-                                  child: Text(_getPromptLabel(type)),
+                                  child: Text(
+                                    _getPromptLabel(type),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                 ))
                             .toList(),
                         onChanged: _onTypeChanged,
