@@ -23,10 +23,10 @@ class _AdminConnectionStatusSnapshot {
       );
     }
     return _AdminConnectionStatusSnapshot(
-      selected: viewModel.connectionId == connectionId,
-      busy: viewModel.connectionId == connectionId && viewModel.isConnecting,
+      selected: viewModel.selectedConnectionId == connectionId,
+      busy: viewModel.managementConnectionId == connectionId && viewModel.isConnecting,
       connected:
-          viewModel.connectionId == connectionId && viewModel.isConnected,
+          viewModel.managementConnectionId == connectionId && viewModel.isConnected,
     );
   }
 
@@ -48,6 +48,7 @@ class _AdminServerPane extends StatelessWidget {
   final AppStrings strings;
   final VoidCallback onCollapse;
   final bool isMonitorTab;
+  final bool isManagementTab;
 
   const _AdminServerPane({
     required this.viewModel,
@@ -55,6 +56,7 @@ class _AdminServerPane extends StatelessWidget {
     required this.strings,
     required this.onCollapse,
     required this.isMonitorTab,
+    required this.isManagementTab,
   });
 
   @override
@@ -105,6 +107,7 @@ class _AdminServerPane extends StatelessWidget {
                         child: _AdminServerTileBinding(
                           connection: connection,
                           isMonitorTab: isMonitorTab,
+                          isManagementTab: isManagementTab,
                         ),
                       ),
                     ],
@@ -157,6 +160,7 @@ class _AdminMobileServerStrip extends StatelessWidget {
   final AppStrings strings;
   final VoidCallback onCollapse;
   final bool isMonitorTab;
+  final bool isManagementTab;
 
   const _AdminMobileServerStrip({
     super.key,
@@ -165,6 +169,7 @@ class _AdminMobileServerStrip extends StatelessWidget {
     required this.strings,
     required this.onCollapse,
     required this.isMonitorTab,
+    required this.isManagementTab,
   });
 
   @override
@@ -200,6 +205,7 @@ class _AdminMobileServerStrip extends StatelessWidget {
               connection: connection,
               compact: true,
               isMonitorTab: isMonitorTab,
+              isManagementTab: isManagementTab,
             ),
           );
         },
@@ -517,11 +523,13 @@ class _AdminServerTileBinding extends StatelessWidget {
   final ConnectionConfig connection;
   final bool compact;
   final bool isMonitorTab;
+  final bool isManagementTab;
 
   const _AdminServerTileBinding({
     required this.connection,
     this.compact = false,
     required this.isMonitorTab,
+    this.isManagementTab = false,
   });
 
   @override
@@ -567,8 +575,13 @@ class _AdminServerTileBinding extends StatelessWidget {
           connected: status.connected,
           compact: compact,
           isMonitorTab: false,
-          onTap: () =>
-              context.read<SystemAdminViewModel>().connect(connection.id),
+          onTap: () {
+            if (isManagementTab) {
+              context.read<SystemAdminViewModel>().connect(connection.id);
+            } else {
+              context.read<SystemAdminViewModel>().selectConnection(connection.id);
+            }
+          },
         ),
       );
     }

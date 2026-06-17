@@ -28,7 +28,7 @@ class _SessionsTabState extends State<_SessionsTab>
       return const Center(child: CircularProgressIndicator());
     }
 
-    final id = viewModel.connectionId;
+    final id = viewModel.selectedConnectionId;
     if (id == null) return const SizedBox.shrink();
 
     if (viewModel.sessions.isEmpty) {

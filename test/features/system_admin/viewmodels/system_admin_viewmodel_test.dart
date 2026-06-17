@@ -59,12 +59,46 @@ void main() {
       );
 
       expect(viewModel.connectionId, isNull);
+      expect(viewModel.selectedConnectionId, isNull);
       expect(viewModel.isConnected, isFalse);
       expect(viewModel.isConnecting, isFalse);
       expect(viewModel.accounts, isEmpty);
       expect(viewModel.sessions, isEmpty);
       expect(viewModel.services, isEmpty);
       expect(viewModel.ports, isEmpty);
+    });
+
+    test('selectConnection updates selectedConnectionId and triggers notifyListeners', () {
+      final viewModel = SystemAdminViewModel(
+        adminService: adminService,
+        storageService: storageService,
+      );
+
+      bool notified = false;
+      viewModel.addListener(() {
+        notified = true;
+      });
+
+      viewModel.selectConnection('conn_123');
+      expect(viewModel.selectedConnectionId, equals('conn_123'));
+      expect(viewModel.connectionId, equals('conn_123'));
+      expect(notified, isTrue);
+    });
+
+    test('connect updates selectedConnectionId and calls adminService.connect', () async {
+      final viewModel = SystemAdminViewModel(
+        adminService: adminService,
+        storageService: storageService,
+      );
+
+      bool notified = false;
+      viewModel.addListener(() {
+        notified = true;
+      });
+
+      await viewModel.connect('conn_123');
+      expect(viewModel.selectedConnectionId, equals('conn_123'));
+      expect(notified, isTrue);
     });
 
     test('fetchAccounts loads and parses user accounts correctly', () async {

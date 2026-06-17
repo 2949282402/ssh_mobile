@@ -23,20 +23,24 @@ class _PortsTabState extends State<_PortsTab>
   bool _isManageMode = true;
   Future<Map<String, List<PortProcessSnapshot>>>? _portsFuture;
   String? _portsSelectionKey;
+  String? _lastSelectedConnectionId;
 
   bool get _isLinux {
-    final connectionId = widget.viewModel.connectionId;
+    final connectionId = widget.viewModel.selectedConnectionId;
     if (connectionId == null) return false;
     final config = widget.viewModel.connections.firstWhere((c) => c.id == connectionId);
     return config.serverPlatform == ServerPlatform.linux;
   }
 
   bool get _isManageModeAvailable {
-    return widget.viewModel.isConnected && widget.viewModel.isRoot && _isLinux;
+    return widget.viewModel.isConnected &&
+        widget.viewModel.isRoot &&
+        widget.viewModel.managementConnectionId == widget.viewModel.selectedConnectionId &&
+        _isLinux;
   }
 
   void _refreshPortsFuture({bool force = false}) {
-    final connectionId = widget.viewModel.connectionId;
+    final connectionId = widget.viewModel.selectedConnectionId;
     if (connectionId == null) {
       _portsSelectionKey = null;
       _portsFuture = null;
@@ -59,20 +63,13 @@ class _PortsTabState extends State<_PortsTab>
   @override
   void didUpdateWidget(covariant _PortsTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.viewModel.connectionId != oldWidget.viewModel.connectionId) {
-      _refreshPortsFuture();
-      // Reset mode depending on availability
-      if (!_isManageModeAvailable) {
-        _isManageMode = false;
-      } else {
-        _isManageMode = true;
-      }
-    }
+    // Since viewModel reference is the same, we check selectionId inside build() dynamically.
   }
 
   @override
   void initState() {
     super.initState();
+    _lastSelectedConnectionId = widget.viewModel.selectedConnectionId;
     _isManageMode = _isManageModeAvailable;
     _refreshPortsFuture();
   }
@@ -81,7 +78,13 @@ class _PortsTabState extends State<_PortsTab>
   Widget build(BuildContext context) {
     super.build(context);
     final viewModel = widget.viewModel;
-    final id = viewModel.connectionId;
+    final id = viewModel.selectedConnectionId;
+
+    if (id != _lastSelectedConnectionId) {
+      _lastSelectedConnectionId = id;
+      _refreshPortsFuture();
+      _isManageMode = _isManageModeAvailable;
+    }
 
     if (id == null) {
       return Center(
@@ -127,16 +130,28 @@ class _PortsTabState extends State<_PortsTab>
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             color: widget.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-            child: Text(
-              _monitorText(
-                widget.strings,
-                'Manage mode unavailable (root required). Switched to snapshot mode.',
-                '当前无法使用管理模式（需要 root 权限），已自动切换为快照模式。',
-              ),
-              style: TextStyle(
-                color: widget.colorScheme.onSurfaceVariant,
-                fontSize: 12,
-              ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _monitorText(
+                      widget.strings,
+                      'Manage mode unavailable (root required). Switched to snapshot mode.',
+                      '当前无法使用管理模式（需要 root 权限），已自动切换为快照模式。',
+                    ),
+                    style: TextStyle(
+                      color: widget.colorScheme.onSurfaceVariant,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                if (_isLinux)
+                  TextButton.icon(
+                    icon: const Icon(Icons.admin_panel_settings_rounded, size: 16),
+                    label: Text(_monitorText(widget.strings, 'Connect Root', '连接 Root')),
+                    onPressed: () => viewModel.connect(id),
+                  ),
+              ],
             ),
           ),
         ],

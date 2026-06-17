@@ -53,6 +53,18 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
   void _handleTabSelection() {
     if (_tabController.indexIsChanging) {
       setState(() {});
+      if (_tabController.index >= 4) {
+        final viewModel = context.read<SystemAdminViewModel>();
+        final selectedId = viewModel.selectedConnectionId;
+        if (selectedId != null &&
+            viewModel.managementConnectionId != selectedId &&
+            !viewModel.isConnecting) {
+          final config = viewModel.connections.firstWhere((c) => c.id == selectedId);
+          if (config.serverPlatform == ServerPlatform.linux) {
+            viewModel.connect(selectedId);
+          }
+        }
+      }
     }
   }
 
@@ -80,7 +92,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
     final storageReady = viewModel.storageInitialized;
     final connections = viewModel.connections;
 
-    final selectedConnectionId = viewModel.connectionId;
+    final selectedConnectionId = viewModel.selectedConnectionId;
     final isConnecting = viewModel.isConnecting;
     final isConnected = viewModel.isConnected;
     final errorMessage = viewModel.errorMessage;
@@ -89,6 +101,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
     final colorScheme = Theme.of(context).colorScheme;
 
     final isMonitorTab = _tabController.index == 0;
+    final isManagementTab = _tabController.index >= 4;
 
     final selectedConnection =
         _selectedConnection(connections, selectedConnectionId);
@@ -124,7 +137,11 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
       appBar: AppBar(
         title: Text(strings.systemAdmin),
         actions: [
-          if (!isMonitorTab && selectedConnectionId != null && isConnected && viewModel.isRoot)
+          if (!isMonitorTab &&
+              selectedConnectionId != null &&
+              isConnected &&
+              viewModel.managementConnectionId == selectedConnectionId &&
+              viewModel.isRoot)
             IconButton(
               icon: const Icon(Icons.refresh),
               onPressed: viewModel.refreshAllData,
@@ -144,8 +161,12 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                           key: ValueKey(isMonitorTab ? 'admin-monitor-server-rail-collapsed' : 'admin-server-rail-collapsed'),
                           selectedConnection: selectedConnection,
                           connections: selectedMonitorConnections,
-                          busy: isMonitorTab ? (monitorVm.isSampling && monitorVm.isRunning) : isConnecting,
-                          connected: isMonitorTab ? monitorVm.isRunning : isConnected,
+                          busy: isMonitorTab
+                              ? (monitorVm.isSampling && monitorVm.isRunning)
+                              : (isConnecting && viewModel.managementConnectionId == selectedConnectionId),
+                          connected: isMonitorTab
+                              ? monitorVm.isRunning
+                              : (isConnected && viewModel.managementConnectionId == selectedConnectionId),
                           strings: strings,
                           isMonitorTab: isMonitorTab,
                           onExpand: () =>
@@ -156,6 +177,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                           connections: connections,
                           strings: strings,
                           isMonitorTab: isMonitorTab,
+                          isManagementTab: isManagementTab,
                           onCollapse: () =>
                               viewModel.setServersCollapsed(context, true),
                         ),
@@ -181,8 +203,12 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                           key: ValueKey(isMonitorTab ? 'admin-monitor-server-collapsed' : 'admin-server-collapsed'),
                           selectedConnection: selectedConnection,
                           connections: selectedMonitorConnections,
-                          busy: isMonitorTab ? (monitorVm.isSampling && monitorVm.isRunning) : isConnecting,
-                          connected: isMonitorTab ? monitorVm.isRunning : isConnected,
+                          busy: isMonitorTab
+                              ? (monitorVm.isSampling && monitorVm.isRunning)
+                              : (isConnecting && viewModel.managementConnectionId == selectedConnectionId),
+                          connected: isMonitorTab
+                              ? monitorVm.isRunning
+                              : (isConnected && viewModel.managementConnectionId == selectedConnectionId),
                           strings: strings,
                           isMonitorTab: isMonitorTab,
                           onExpand: () =>
@@ -194,6 +220,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                           connections: connections,
                           strings: strings,
                           isMonitorTab: isMonitorTab,
+                          isManagementTab: isManagementTab,
                           onCollapse: () =>
                               viewModel.setServersCollapsed(context, true),
                         ),
@@ -332,11 +359,11 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
     ColorScheme colorScheme,
     Widget child,
   ) {
-    final selectedConnectionId = viewModel.connectionId;
-    final isConnecting = viewModel.isConnecting;
-    final isConnected = viewModel.isConnected;
-    final errorMessage = viewModel.errorMessage;
-    final isRoot = viewModel.isRoot;
+    final selectedConnectionId = viewModel.selectedConnectionId;
+    final isConnecting = viewModel.isConnecting && viewModel.managementConnectionId == selectedConnectionId;
+    final isConnected = viewModel.isConnected && viewModel.managementConnectionId == selectedConnectionId;
+    final errorMessage = viewModel.managementConnectionId == selectedConnectionId ? viewModel.errorMessage : null;
+    final isRoot = viewModel.isRoot && viewModel.managementConnectionId == selectedConnectionId;
 
     if (selectedConnectionId == null) {
       return Center(
@@ -381,20 +408,6 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
       );
     }
 
-    if (errorMessage != null) {
-      return _RootRequiredView(strings: strings, errorMessage: errorMessage);
-    }
-
-    if (!isConnected) {
-      return Center(
-        child: Text(_monitorText(strings, 'Connection lost', '连接断开')),
-      );
-    }
-
-    if (!isRoot) {
-      return _RootRequiredView(strings: strings);
-    }
-
     // Is Linux check
     final config = viewModel.connections.firstWhere((c) => c.id == selectedConnectionId);
     if (config.serverPlatform != ServerPlatform.linux) {
@@ -417,6 +430,14 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
       );
     }
 
+    if (!isConnected || !isRoot || errorMessage != null) {
+      return _RootRequiredView(
+        strings: strings,
+        errorMessage: errorMessage,
+        onConnect: () => viewModel.connect(selectedConnectionId),
+      );
+    }
+
     return child;
   }
 }
@@ -424,10 +445,12 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
 class _RootRequiredView extends StatelessWidget {
   final AppStrings strings;
   final String? errorMessage;
+  final VoidCallback? onConnect;
 
   const _RootRequiredView({
     required this.strings,
     this.errorMessage,
+    this.onConnect,
   });
 
   @override
@@ -473,6 +496,14 @@ class _RootRequiredView extends StatelessWidget {
               textAlign: TextAlign.center,
               style: TextStyle(color: colorScheme.onSurfaceVariant),
             ),
+            if (onConnect != null) ...[
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                icon: const Icon(Icons.admin_panel_settings_rounded),
+                label: Text(strings.language == AppLanguage.en ? 'Connect as Root' : '以 Root 连接'),
+                onPressed: onConnect,
+              ),
+            ],
           ],
         ),
       ),

@@ -28,23 +28,27 @@ class _ServicesTabState extends State<_ServicesTab>
   bool _isManageMode = true;
   Future<Map<String, List<ServiceStatusSnapshot>>>? _servicesFuture;
   String? _servicesSelectionKey;
+  String? _lastSelectedConnectionId;
 
   @override
   bool get wantKeepAlive => true;
 
   bool get _isLinux {
-    final connectionId = widget.viewModel.connectionId;
+    final connectionId = widget.viewModel.selectedConnectionId;
     if (connectionId == null) return false;
     final config = widget.viewModel.connections.firstWhere((c) => c.id == connectionId);
     return config.serverPlatform == ServerPlatform.linux;
   }
 
   bool get _isManageModeAvailable {
-    return widget.viewModel.isConnected && widget.viewModel.isRoot && _isLinux;
+    return widget.viewModel.isConnected &&
+        widget.viewModel.isRoot &&
+        widget.viewModel.managementConnectionId == widget.viewModel.selectedConnectionId &&
+        _isLinux;
   }
 
   void _refreshServicesFuture({bool force = false}) {
-    final connectionId = widget.viewModel.connectionId;
+    final connectionId = widget.viewModel.selectedConnectionId;
     if (connectionId == null) {
       _servicesSelectionKey = null;
       _servicesFuture = null;
@@ -70,6 +74,7 @@ class _ServicesTabState extends State<_ServicesTab>
   @override
   void initState() {
     super.initState();
+    _lastSelectedConnectionId = widget.viewModel.selectedConnectionId;
     _isManageMode = _isManageModeAvailable;
     _serviceSearchController.addListener(_filterServices);
     _snapshotSearchController.addListener(_filterSnapshotServices);
@@ -82,14 +87,6 @@ class _ServicesTabState extends State<_ServicesTab>
     super.didUpdateWidget(oldWidget);
     if (widget.viewModel.services != oldWidget.viewModel.services) {
       _filterServices();
-    }
-    if (widget.viewModel.connectionId != oldWidget.viewModel.connectionId) {
-      _refreshServicesFuture();
-      if (!_isManageModeAvailable) {
-        _isManageMode = false;
-      } else {
-        _isManageMode = true;
-      }
     }
   }
 
@@ -119,7 +116,7 @@ class _ServicesTabState extends State<_ServicesTab>
   void _filterSnapshotServices() {
     if (!mounted) return;
     final query = _snapshotSearchController.text.trim().toLowerCase();
-    final connectionId = widget.viewModel.connectionId;
+    final connectionId = widget.viewModel.selectedConnectionId;
     if (connectionId == null) return;
     final list = _rawSnapshotData[connectionId] ?? [];
     setState(() {
@@ -139,7 +136,13 @@ class _ServicesTabState extends State<_ServicesTab>
   Widget build(BuildContext context) {
     super.build(context);
     final viewModel = widget.viewModel;
-    final id = viewModel.connectionId;
+    final id = viewModel.selectedConnectionId;
+
+    if (id != _lastSelectedConnectionId) {
+      _lastSelectedConnectionId = id;
+      _refreshServicesFuture();
+      _isManageMode = _isManageModeAvailable;
+    }
 
     if (id == null) {
       return Center(
@@ -185,16 +188,28 @@ class _ServicesTabState extends State<_ServicesTab>
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             color: widget.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-            child: Text(
-              _monitorText(
-                widget.strings,
-                'Manage mode unavailable (root required). Switched to snapshot mode.',
-                '当前无法使用管理模式（需要 root 权限），已自动切换为快照模式。',
-              ),
-              style: TextStyle(
-                color: widget.colorScheme.onSurfaceVariant,
-                fontSize: 12,
-              ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _monitorText(
+                      widget.strings,
+                      'Manage mode unavailable (root required). Switched to snapshot mode.',
+                      '当前无法使用管理模式（需要 root 权限），已自动切换为快照模式。',
+                    ),
+                    style: TextStyle(
+                      color: widget.colorScheme.onSurfaceVariant,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                if (_isLinux)
+                  TextButton.icon(
+                    icon: const Icon(Icons.admin_panel_settings_rounded, size: 16),
+                    label: Text(_monitorText(widget.strings, 'Connect Root', '连接 Root')),
+                    onPressed: () => viewModel.connect(id),
+                  ),
+              ],
             ),
           ),
         ],

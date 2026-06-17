@@ -28,7 +28,7 @@ class _UsersTabState extends State<_UsersTab>
       return const Center(child: CircularProgressIndicator());
     }
 
-    final id = viewModel.connectionId;
+    final id = viewModel.selectedConnectionId;
     if (id == null) return const SizedBox.shrink();
 
     return Column(
@@ -318,7 +318,7 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
   }
 
   void _openHomeExplorer() {
-    final connId = widget.viewModel.connectionId;
+    final connId = widget.viewModel.selectedConnectionId;
     if (connId == null) return;
     showDialog(
       context: context,

@@ -24,9 +24,10 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
 
   Future<Map<String, List<ApplicationMemorySnapshot>>>? _appsFuture;
   String? _appsSelectionKey;
+  String? _lastSelectedConnectionId;
 
   void _refreshApplicationsFuture({bool force = false}) {
-    final connectionId = widget.viewModel.connectionId;
+    final connectionId = widget.viewModel.selectedConnectionId;
     if (connectionId == null) {
       _appsSelectionKey = null;
       _appsFuture = null;
@@ -49,21 +50,26 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
   @override
   void didUpdateWidget(covariant _ApplicationsTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.viewModel.connectionId != oldWidget.viewModel.connectionId) {
-      _refreshApplicationsFuture();
-    }
+    // Connection checking is handled dynamically in build() using _lastSelectedConnectionId.
   }
 
   @override
   void initState() {
     super.initState();
+    _lastSelectedConnectionId = widget.viewModel.selectedConnectionId;
     _refreshApplicationsFuture();
   }
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final connectionId = widget.viewModel.connectionId;
+    final connectionId = widget.viewModel.selectedConnectionId;
+
+    if (connectionId != _lastSelectedConnectionId) {
+      _lastSelectedConnectionId = connectionId;
+      _refreshApplicationsFuture();
+    }
+
     if (connectionId == null) {
       return Center(
         child: Text(_monitorText(

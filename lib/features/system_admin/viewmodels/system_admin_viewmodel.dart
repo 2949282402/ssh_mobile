@@ -13,6 +13,7 @@ class SystemAdminViewModel extends ChangeNotifier {
   static const _serversCollapsedStorageKey = 'system_admin_servers_collapsed';
   bool _serversCollapsed = false;
   bool _restoredServersCollapsed = false;
+  String? _selectedConnectionId;
 
   // Lists and Loadings
   List<LinuxUserAccount> _accounts = [];
@@ -36,6 +37,7 @@ class SystemAdminViewModel extends ChangeNotifier {
         _storageService = storageService {
     _adminService.addListener(_onAdminServiceChanged);
     if (_adminService.isConnected) {
+      _selectedConnectionId = _adminService.connectionId;
       _lastConnectedId = _adminService.connectionId;
       refreshAllData();
     }
@@ -48,7 +50,9 @@ class SystemAdminViewModel extends ChangeNotifier {
   }
 
   // Getters from service
-  String? get connectionId => _adminService.connectionId;
+  String? get managementConnectionId => _adminService.connectionId;
+  String? get selectedConnectionId => _selectedConnectionId;
+  String? get connectionId => _selectedConnectionId;
   bool get isConnecting => _adminService.isConnecting;
   bool get isConnected => _adminService.isConnected;
   String? get errorMessage => _adminService.errorMessage;
@@ -99,6 +103,9 @@ class SystemAdminViewModel extends ChangeNotifier {
     if (_adminService.isConnected) {
       if (_lastConnectedId != _adminService.connectionId) {
         _lastConnectedId = _adminService.connectionId;
+        if (_selectedConnectionId == null || _selectedConnectionId != _adminService.connectionId) {
+          _selectedConnectionId = _adminService.connectionId;
+        }
         refreshAllData();
       }
     } else {
@@ -112,7 +119,15 @@ class SystemAdminViewModel extends ChangeNotifier {
   }
 
   // Connect & Disconnect Actions
+  void selectConnection(String id) {
+    if (_selectedConnectionId == id) return;
+    _selectedConnectionId = id;
+    notifyListeners();
+  }
+
   Future<void> connect(String id) async {
+    _selectedConnectionId = id;
+    notifyListeners();
     await _adminService.connect(id);
   }
 
@@ -122,7 +137,7 @@ class SystemAdminViewModel extends ChangeNotifier {
 
   // Data retrieval wrapper methods
   Future<void> refreshAllData() async {
-    final id = connectionId;
+    final id = managementConnectionId;
     if (id == null) return;
     unawaited(fetchAccounts(id));
     unawaited(fetchSessions(id));
@@ -169,7 +184,7 @@ class SystemAdminViewModel extends ChangeNotifier {
   // Administration actions
   Future<void> createUser(String username, String password,
       {String shell = '/bin/bash'}) async {
-    final id = connectionId;
+    final id = managementConnectionId;
     if (id == null) return;
     await _adminService.createUser(id,
         username: username, password: password, shell: shell);
@@ -177,74 +192,74 @@ class SystemAdminViewModel extends ChangeNotifier {
   }
 
   Future<bool> checkUserSudo(String username) async {
-    final id = connectionId;
+    final id = managementConnectionId;
     if (id == null) return false;
     return await _adminService.checkUserSudo(id, username);
   }
 
   Future<void> setUserSudo(String username, bool grant) async {
-    final id = connectionId;
+    final id = managementConnectionId;
     if (id == null) return;
     await _adminService.setUserSudo(id, username, grant);
     await fetchAccounts(id);
   }
 
   Future<void> lockUser(String username) async {
-    final id = connectionId;
+    final id = managementConnectionId;
     if (id == null) return;
     await _adminService.lockUser(id, username);
     await fetchAccounts(id);
   }
 
   Future<void> unlockUser(String username) async {
-    final id = connectionId;
+    final id = managementConnectionId;
     if (id == null) return;
     await _adminService.unlockUser(id, username);
     await fetchAccounts(id);
   }
 
   Future<void> changePassword(String username, String newPassword) async {
-    final id = connectionId;
+    final id = managementConnectionId;
     if (id == null) return;
     await _adminService.changePassword(id, username, newPassword);
     await fetchAccounts(id);
   }
 
   Future<String> getUserHomeStorageUsage(String homeDir) async {
-    final id = connectionId;
+    final id = managementConnectionId;
     if (id == null) return 'N/A';
     return await _adminService.getUserHomeStorageUsage(id, homeDir);
   }
 
   Future<List<LinuxUserProcess>> getUserProcessesAndMemory(
       String username) async {
-    final id = connectionId;
+    final id = managementConnectionId;
     if (id == null) return [];
     return await _adminService.getUserProcessesAndMemory(id, username);
   }
 
   Future<void> killActiveSession(String tty) async {
-    final id = connectionId;
+    final id = managementConnectionId;
     if (id == null) return;
     await _adminService.killActiveSession(id, tty);
     await fetchSessions(id);
   }
 
   Future<void> manageSystemdService(String serviceName, String action) async {
-    final id = connectionId;
+    final id = managementConnectionId;
     if (id == null) return;
     await _adminService.manageSystemdService(id, serviceName, action);
     await fetchServices(id);
   }
 
   Future<void> rebootServer() async {
-    final id = connectionId;
+    final id = managementConnectionId;
     if (id == null) return;
     await _adminService.rebootServer(id);
   }
 
   Future<void> shutdownServer() async {
-    final id = connectionId;
+    final id = managementConnectionId;
     if (id == null) return;
     await _adminService.shutdownServer(id);
   }
