@@ -26,6 +26,15 @@ typedef MultiAgentCompletion = Future<String> Function(
   required SubAgentThinkingSettings thinkingSettings,
 });
 
+enum MultiAgentTrigger {
+  preflight,
+  planReview,
+  postToolFailure,
+  postApprovalRejection,
+  postBudgetAudit,
+  postLoopGuard,
+}
+
 abstract interface class MultiAgentCoordinatorAdapter {
   Future<MultiAgentRunResult?> run({
     required List<Map<String, dynamic>> messages,
@@ -42,6 +51,8 @@ abstract interface class MultiAgentCoordinatorAdapter {
     String? summarizerPrompt,
     String? coordinatorPrompt,
     bool planMode = false,
+    MultiAgentTrigger trigger = MultiAgentTrigger.preflight,
+    String? postToolContext,
   });
 }
 
@@ -73,64 +84,98 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     String? summarizerPrompt,
     String? coordinatorPrompt,
     bool planMode = false,
+    MultiAgentTrigger trigger = MultiAgentTrigger.preflight,
+    String? postToolContext,
   }) async {
     checkCancelled?.call();
-    final decision = shouldCollaborate(
-      messages: messages,
-      enabled: enabled,
-    );
-    if (!decision.enabled) {
-      AppLogService.instance.info(
-        'LLM multi-agent collaboration skipped by pre-check',
-        details: decision.reason,
+
+    final List<MultiAgentRole> roles;
+    final bool thinkingEnabled;
+    final String reasoningEffort;
+    final String collabReason;
+    int preflightAgentCount = 2;
+
+    if (trigger == MultiAgentTrigger.preflight) {
+      final decision = shouldCollaborate(
+        messages: messages,
+        enabled: enabled,
       );
-      return null;
+      if (!decision.enabled) {
+        AppLogService.instance.info(
+          'LLM multi-agent collaboration skipped by pre-check',
+          details: decision.reason,
+        );
+        return null;
+      }
+
+      AppLogService.instance.info(
+        'LLM multi-agent classification starting',
+        details: 'preCheckReason=${decision.reason}',
+      );
+
+      final classification = await _classifyRequest(
+        messages: messages,
+        classify: classify,
+        maxAgents: maxAgents,
+        checkCancelled: checkCancelled,
+        language: language,
+        coordinatorPrompt: coordinatorPrompt,
+      );
+
+      checkCancelled?.call();
+
+      if (!classification.shouldCollaborate) {
+        AppLogService.instance.info(
+          'LLM multi-agent collaboration skipped by classification',
+          details: classification.reason,
+        );
+        return null;
+      }
+
+      preflightAgentCount = classification.agentCount;
+      roles = _rolesFor(
+        classification.agentCount,
+        language: language,
+        plannerPrompt: plannerPrompt,
+        operatorPrompt: operatorPrompt,
+        explorePrompt: explorePrompt,
+        reviewerPrompt: reviewerPrompt,
+        summarizerPrompt: summarizerPrompt,
+      );
+      thinkingEnabled = classification.thinkingEnabled;
+      reasoningEffort = classification.reasoningEffort;
+      collabReason = classification.reason;
+    } else {
+      final allRoles = _rolesFor(
+        5,
+        language: language,
+        plannerPrompt: plannerPrompt,
+        operatorPrompt: operatorPrompt,
+        explorePrompt: explorePrompt,
+        reviewerPrompt: reviewerPrompt,
+        summarizerPrompt: summarizerPrompt,
+      );
+      if (trigger == MultiAgentTrigger.planReview) {
+        roles = allRoles.where((r) => r.name == 'planner' || r.name == 'reviewer' || r.name == 'summarizer').toList();
+      } else {
+        roles = allRoles.where((r) => r.name == 'reviewer' || r.name == 'summarizer').toList();
+      }
+      thinkingEnabled = false;
+      reasoningEffort = 'low';
+      collabReason = 'post_tool_trigger_${trigger.name}';
     }
 
-    AppLogService.instance.info(
-      'LLM multi-agent classification starting',
-      details: 'preCheckReason=${decision.reason}',
-    );
-
-    final classification = await _classifyRequest(
-      messages: messages,
-      classify: classify,
-      maxAgents: maxAgents,
-      checkCancelled: checkCancelled,
-      language: language,
-      coordinatorPrompt: coordinatorPrompt,
-    );
-
-    checkCancelled?.call();
-
-    if (!classification.shouldCollaborate) {
-      AppLogService.instance.info(
-        'LLM multi-agent collaboration skipped by classification',
-        details: classification.reason,
-      );
-      return null;
-    }
-
-    final roles = _rolesFor(
-      classification.agentCount,
-      language: language,
-      plannerPrompt: plannerPrompt,
-      operatorPrompt: operatorPrompt,
-      explorePrompt: explorePrompt,
-      reviewerPrompt: reviewerPrompt,
-      summarizerPrompt: summarizerPrompt,
-    );
     final latestUser = _latestUserContent(messages);
     final contextText = _recentConversationText(messages);
     AppLogService.instance.info(
       'LLM multi-agent collaboration started with dynamic settings',
       details:
-          'roles=${roles.map((role) => role.name).join(',')} thinkingEnabled=${classification.thinkingEnabled} reasoningEffort=${classification.reasoningEffort} reason=${classification.reason}',
+          'roles=${roles.map((role) => role.name).join(',')} thinkingEnabled=$thinkingEnabled reasoningEffort=$reasoningEffort reason=$collabReason',
     );
 
     final thinkingSettings = SubAgentThinkingSettings(
-      thinkingEnabled: classification.thinkingEnabled,
-      reasoningEffort: classification.reasoningEffort,
+      thinkingEnabled: thinkingEnabled,
+      reasoningEffort: reasoningEffort,
     );
 
     final outputs = <_RoleOutput>[];
@@ -247,36 +292,52 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     }
 
     // 3.2 Reviewer
-    final reviewerRole = _shouldRunReviewer(
-      latestUser: latestUser,
-      planMode: planMode,
-      agentCount: classification.agentCount,
-    )
+    final reviewerRole = (trigger != MultiAgentTrigger.preflight)
         ? roleMap['reviewer']
-        : null;
+        : (_shouldRunReviewer(
+            latestUser: latestUser,
+            planMode: planMode,
+            agentCount: preflightAgentCount,
+          )
+              ? (roleMap['reviewer'] ??
+                  _rolesFor(
+                    5,
+                    language: language,
+                    plannerPrompt: plannerPrompt,
+                    operatorPrompt: operatorPrompt,
+                    explorePrompt: explorePrompt,
+                    reviewerPrompt: reviewerPrompt,
+                    summarizerPrompt: summarizerPrompt,
+                  ).firstWhere((role) => role.name == 'reviewer'))
+              : null);
     if (reviewerRole != null) {
       checkCancelled?.call();
-      final plannerContext = getOutputOf('planner');
-      final operatorContext = getOutputOf('operator');
-      final buffer = StringBuffer();
-      if (plannerContext != null && plannerContext.isNotEmpty) {
-        buffer.writeln(language == AppLanguage.en
-            ? 'Planner Agent proposed steps:\n$plannerContext'
-            : 'Planner Agent (规划智能体) 提出的执行工作流：\n$plannerContext');
+      final String? finalIntermediateContext;
+      if (trigger != MultiAgentTrigger.preflight) {
+        finalIntermediateContext = postToolContext;
+      } else {
+        final plannerContext = getOutputOf('planner');
+        final operatorContext = getOutputOf('operator');
+        final buffer = StringBuffer();
+        if (plannerContext != null && plannerContext.isNotEmpty) {
+          buffer.writeln(language == AppLanguage.en
+              ? 'Planner Agent proposed steps:\n$plannerContext'
+              : 'Planner Agent (规划智能体) 提出的执行工作流：\n$plannerContext');
+        }
+        if (operatorContext != null && operatorContext.isNotEmpty) {
+          if (buffer.isNotEmpty) buffer.writeln();
+          buffer.writeln(language == AppLanguage.en
+              ? 'Operator Agent proposed actions and commands:\n$operatorContext'
+              : 'Operator Agent (执行智能体) 建议的工具及命令：\n$operatorContext');
+        }
+        finalIntermediateContext = buffer.isNotEmpty ? buffer.toString() : null;
       }
-      if (operatorContext != null && operatorContext.isNotEmpty) {
-        if (buffer.isNotEmpty) buffer.writeln();
-        buffer.writeln(language == AppLanguage.en
-            ? 'Operator Agent proposed actions and commands:\n$operatorContext'
-            : 'Operator Agent (执行智能体) 建议的工具及命令：\n$operatorContext');
-      }
-      final intermediateContext = buffer.isNotEmpty ? buffer.toString() : null;
 
       final out = await _runRole(
         role: reviewerRole,
         latestUser: latestUser,
         contextText: contextText,
-        intermediateContext: intermediateContext,
+        intermediateContext: finalIntermediateContext,
         complete: complete,
         thinkingSettings: thinkingSettings,
         checkCancelled: checkCancelled,
@@ -290,6 +351,10 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     if (summarizerRole != null) {
       checkCancelled?.call();
       final buffer = StringBuffer();
+      if (trigger != MultiAgentTrigger.preflight && postToolContext != null) {
+        buffer.writeln('=== Post-tool trigger context ===');
+        buffer.writeln(postToolContext);
+      }
       for (final out in outputs) {
         if (!out.succeeded || out.content.isEmpty) continue;
         if (buffer.isNotEmpty) buffer.writeln('\n');
@@ -586,7 +651,7 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
     final outputContract = structuredOutput
         ? (language == AppLanguage.en
             ? 'Return JSON only with keys summary, recommendedActions, risks, and openQuestions. Do not wrap it in Markdown and do not write the final user-facing answer.'
-            : '浠呰繑鍥?JSON锛屽寘鍚?summary銆乺ecommendedActions銆乺isks銆乷penQuestions 杩欏洓涓瓧娈点€備笉瑕佺敤 Markdown 鍖呰９锛屼篃涓嶈鐩存帴缂栧啓闈㈠悜鐢ㄦ埛鐨勬渶缁堝洖绛?')
+            : '仅返回 JSON，包含 summary、recommendedActions、risks、openQuestions 这四个字段。不要使用 Markdown 包裹，也不要直接编写面向用户的最终回答。')
         : footer;
 
     final intermediateSection =
@@ -659,15 +724,15 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
       'approval',
       'sftp',
       'run command',
-      '鍐欏叆',
-      '鍒犻櫎',
-      '淇敼',
-      '鏇存敼',
-      '閲嶅惎',
-      '閮ㄧ讲',
-      '杩佺Щ',
-      '鍥炴粴',
-      '瀹℃壒',
+      '写入',
+      '删除',
+      '修改',
+      '更改',
+      '重启',
+      '部署',
+      '迁移',
+      '回滚',
+      '审批',
     ];
     return highRiskSignals.any(request.contains);
   }

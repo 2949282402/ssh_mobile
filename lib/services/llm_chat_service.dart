@@ -12,6 +12,8 @@ import 'multi_agent_coordinator.dart';
 import 'storage_service.dart';
 import 'tool_exposure_router.dart';
 import 'tool_secret_policy.dart';
+import 'agent/plan_execution_controller.dart';
+import 'package:uuid/uuid.dart';
 
 part 'llm_chat/llm_chat_types.dart';
 part 'llm_chat/llm_system_prompt.dart';
@@ -19,6 +21,8 @@ part 'llm_chat/llm_context_compressor.dart';
 part 'llm_chat/llm_chat_utils.dart';
 part 'llm_chat/llm_safety_auditor.dart';
 part 'llm_chat/llm_stream_handler.dart';
+part 'llm_chat/tool_loop_controller.dart';
+part 'llm_chat/tool_result_classifier.dart';
 
 abstract interface class LlmClientAdapter {
   Future<List<String>> fetchModels({

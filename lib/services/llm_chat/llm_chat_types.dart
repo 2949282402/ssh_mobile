@@ -41,7 +41,7 @@ class LlmCancelledException implements Exception {
 class _StreamChatResult {
   final List<String> contentChunks;
   final String reasoningContent;
-  final List<_StreamingToolCall> toolCalls;
+  final List<StreamingToolCall> toolCalls;
   final LlmTokenUsage? usage;
 
   const _StreamChatResult({
@@ -244,6 +244,7 @@ class LlmToolLedgerEntry {
   final bool cacheHit;
   final bool dedupBlocked;
   final int auditEscalationLevel;
+  final String quality;
 
   const LlmToolLedgerEntry({
     required this.index,
@@ -259,6 +260,7 @@ class LlmToolLedgerEntry {
     this.cacheHit = false,
     this.dedupBlocked = false,
     this.auditEscalationLevel = 0,
+    this.quality = 'useful',
   });
 
   static String buildSignature(
@@ -297,6 +299,7 @@ class LlmToolLedgerEntry {
       'cacheHit': cacheHit,
       'dedupBlocked': dedupBlocked,
       'auditEscalationLevel': auditEscalationLevel,
+      'quality': quality,
     };
   }
 }
@@ -463,11 +466,11 @@ class LlmToolSafetyAuditResult {
   }
 }
 
-class _CachedToolResult {
+class CachedToolResult {
   final String result;
   final DateTime expiresAt;
 
-  const _CachedToolResult({
+  const CachedToolResult({
     required this.result,
     required this.expiresAt,
   });
@@ -510,14 +513,93 @@ class LlmTokenUsage {
   }
 }
 
-class _StreamingToolCall {
+class StreamingToolCall {
   String id;
   String name;
   String arguments;
 
-  _StreamingToolCall({
+  StreamingToolCall({
     required this.id,
     required this.name,
     required this.arguments,
   });
+}
+
+enum AgentFinalOutcome {
+  success,
+  cancelled,
+  modelError,
+  toolError,
+  approvalRejected,
+  planModeBlocked,
+  budgetAuditRejected,
+  loopGuardBlocked,
+}
+
+class AgentRunSummary {
+  final String runId;
+  final DateTime startedAt;
+  final DateTime finishedAt;
+  final String model;
+  final String helperModel;
+  final String auditModel;
+  final bool planMode;
+  final int promptTokens;
+  final int completionTokens;
+  final int toolCalls;
+  final int cacheHits;
+  final int dedupBlockedCalls;
+  final int approvalCount;
+  final int approvedCount;
+  final int helperFanout;
+  final int auditEscalationLevel;
+  final List<String> selectedToolSet;
+  final List<String> memorySources;
+  final AgentFinalOutcome finalOutcome;
+
+  const AgentRunSummary({
+    required this.runId,
+    required this.startedAt,
+    required this.finishedAt,
+    required this.model,
+    required this.helperModel,
+    required this.auditModel,
+    required this.planMode,
+    required this.promptTokens,
+    required this.completionTokens,
+    required this.toolCalls,
+    required this.cacheHits,
+    required this.dedupBlockedCalls,
+    required this.approvalCount,
+    required this.approvedCount,
+    required this.helperFanout,
+    required this.auditEscalationLevel,
+    required this.selectedToolSet,
+    required this.memorySources,
+    required this.finalOutcome,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'runId': runId,
+      'startedAt': startedAt.toIso8601String(),
+      'finishedAt': finishedAt.toIso8601String(),
+      'model': model,
+      'helperModel': helperModel,
+      'auditModel': auditModel,
+      'planMode': planMode,
+      'promptTokens': promptTokens,
+      'completionTokens': completionTokens,
+      'toolCalls': toolCalls,
+      'cacheHits': cacheHits,
+      'dedupBlockedCalls': dedupBlockedCalls,
+      'approvalCount': approvalCount,
+      'approvedCount': approvedCount,
+      'helperFanout': helperFanout,
+      'auditEscalationLevel': auditEscalationLevel,
+      'selectedToolSet': selectedToolSet,
+      'memorySources': memorySources,
+      'finalOutcome': finalOutcome.name,
+    };
+  }
 }

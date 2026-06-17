@@ -149,5 +149,44 @@ void main() {
       expect(explicitSave.selectedToolSet, contains('list_playbooks'));
       expect(explicitSave.selectedToolSet, contains('create_playbook'));
     });
+
+    test('contains explainable decisions showing why tools were selected or blocked', () {
+      const router = ToolExposureRouter();
+      final tools = [
+        AiTool(
+          name: 'client_webview_get_state',
+          description: 'Read webview state',
+          properties: const {},
+          requiresWebViewSession: true,
+          capabilities: const {AiToolCapability.web},
+          handler: _noop,
+        ),
+        AiTool(
+          name: 'client_task_update',
+          description: 'Update approved plan step',
+          properties: const {},
+          executionMode: AiToolExecutionMode.executionOnly,
+          capabilities: const {AiToolCapability.planning},
+          handler: _noop,
+        ),
+      ];
+
+      final selection = router.selectTools(
+        tools,
+        context: const ToolExposureContext(
+          userRequest: 'show the current web page and update the task',
+        ),
+      );
+
+      expect(selection.decisions, hasLength(2));
+
+      final webviewDecision = selection.decisions.firstWhere((d) => d.toolName == 'client_webview_get_state');
+      expect(webviewDecision.selected, isFalse);
+      expect(webviewDecision.blockedBy, contains('webview_session_missing'));
+
+      final taskUpdateDecision = selection.decisions.firstWhere((d) => d.toolName == 'client_task_update');
+      expect(taskUpdateDecision.selected, isFalse);
+      expect(taskUpdateDecision.blockedBy, contains('execution_only_without_approved_plan'));
+    });
   });
 }

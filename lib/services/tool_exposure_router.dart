@@ -32,13 +32,43 @@ class ToolExposureContext {
   });
 }
 
+class ToolExposureDecision {
+  final String toolName;
+  final bool selected;
+  final List<String> reasons;
+  final List<String> blockedBy;
+  final Set<AiToolCapability> toolCapabilities;
+
+  const ToolExposureDecision({
+    required this.toolName,
+    required this.selected,
+    required this.reasons,
+    required this.blockedBy,
+    required this.toolCapabilities,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'toolName': toolName,
+      'selected': selected,
+      'reasons': reasons,
+      'blockedBy': blockedBy,
+      'toolCapabilities': toolCapabilities.map((c) => c.name).toList(),
+    };
+  }
+}
+
 class ToolExposureSelection {
   final List<AiTool> tools;
   final Set<String> selectedToolSet;
+  final Set<AiToolCapability> requestedCapabilities;
+  final List<ToolExposureDecision> decisions;
 
   const ToolExposureSelection({
     required this.tools,
     required this.selectedToolSet,
+    required this.requestedCapabilities,
+    required this.decisions,
   });
 }
 
@@ -55,43 +85,75 @@ class ToolExposureRouter {
         .toSet();
     final requestedCaps = _requestedCapabilities(context);
     final selected = <AiTool>[];
+    final decisions = <ToolExposureDecision>[];
 
     for (final tool in tools) {
+      final blockedBy = <String>[];
+      final reasons = <String>[];
+
       if (normalizedAllowed != null &&
           !normalizedAllowed.contains(tool.name.toLowerCase())) {
-        continue;
+        blockedBy.add('allowedTools_filter');
       }
       if (context.planMode && !tool.executionMode.allowedInPlanMode) {
-        continue;
+        blockedBy.add('plan_mode_blocked');
       }
       if (!context.planMode &&
           tool.executionMode == AiToolExecutionMode.planOnly) {
-        continue;
+        blockedBy.add('plan_only_outside_plan_mode');
       }
       if (!context.hasApprovedPlan &&
           tool.executionMode == AiToolExecutionMode.executionOnly) {
-        continue;
+        blockedBy.add('execution_only_without_approved_plan');
       }
       if (tool.needsWebViewSession && !context.hasWebViewSession) {
-        continue;
+        blockedBy.add('webview_session_missing');
       }
       if (tool.needsServerSelection &&
           context.selectedConnectionIds.isEmpty &&
           !_isServerRelevantRequest(context.userRequest, requestedCaps)) {
-        continue;
+        blockedBy.add('server_selection_missing');
       }
-      if (requestedCaps.isNotEmpty &&
+      final hasCapabilityMismatch = requestedCaps.isNotEmpty &&
           tool.effectiveCapabilities.isNotEmpty &&
           requestedCaps.intersection(tool.effectiveCapabilities).isEmpty &&
-          !_isBaselineTool(tool, context)) {
-        continue;
+          !_isBaselineTool(tool, context);
+      if (hasCapabilityMismatch) {
+        blockedBy.add('capability_mismatch');
       }
-      selected.add(tool);
+
+      final isSelected = blockedBy.isEmpty;
+      if (isSelected) {
+        selected.add(tool);
+        reasons.add('selected');
+        if (_isBaselineTool(tool, context)) {
+          reasons.add('baseline_tool_allowed');
+        } else if (requestedCaps.isNotEmpty &&
+            tool.effectiveCapabilities.isNotEmpty &&
+            requestedCaps.intersection(tool.effectiveCapabilities).isNotEmpty) {
+          reasons.add('selected_by_capability');
+        } else if (normalizedAllowed != null &&
+            normalizedAllowed.contains(tool.name.toLowerCase())) {
+          reasons.add('selected_by_allowedTools');
+        } else if (context.planMode && tool.executionMode.allowedInPlanMode) {
+          reasons.add('selected_by_plan_mode');
+        }
+      }
+
+      decisions.add(ToolExposureDecision(
+        toolName: tool.name,
+        selected: isSelected,
+        reasons: reasons,
+        blockedBy: blockedBy,
+        toolCapabilities: tool.effectiveCapabilities,
+      ));
     }
 
     return ToolExposureSelection(
       tools: selected,
       selectedToolSet: selected.map((tool) => tool.name).toSet(),
+      requestedCapabilities: requestedCaps,
+      decisions: decisions,
     );
   }
 

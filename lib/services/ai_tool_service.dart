@@ -19,6 +19,7 @@ import 'storage_service.dart';
 import 'tool_exposure_router.dart';
 import 'tool_secret_policy.dart';
 import 'skill/skill_domain_service.dart';
+import 'agent/plan_execution_controller.dart';
 
 part 'ai_tool/ai_tool_types.dart';
 part 'ai_tool/client_tools.dart';

@@ -169,6 +169,20 @@ extension LlmChatServiceUtils on LlmChatService {
     );
   }
 
+  void _emitPostToolReviewTrace(
+    void Function(LlmTraceEvent event)? onTrace,
+    MultiAgentTrigger trigger,
+    String contextText,
+  ) {
+    onTrace?.call(
+      LlmTraceEvent(
+        kind: 'multi_agent_post_tool_review',
+        title: 'Post-tool multi-agent review triggered (${trigger.name})',
+        content: contextText,
+      ),
+    );
+  }
+
   String _prettyJsonString(String text) {
     try {
       return _prettyJson(_toolSecretPolicy.redactValue(jsonDecode(text)));

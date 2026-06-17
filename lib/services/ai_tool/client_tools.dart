@@ -872,6 +872,19 @@ class ClientToolsProvider implements AiToolProvider {
         final steps = [...msg.todoSteps];
         final currentStep = steps[sIdx];
 
+        const planController = PlanExecutionController();
+        final validation = planController.validateTransition(
+          steps: steps,
+          targetTaskId: taskId,
+          nextStatus: nextStatus,
+        );
+
+        if (!validation.allowed) {
+          return jsonEncode({
+            'error': 'Plan execution validation failed: ${validation.errorMessage}',
+          });
+        }
+
         steps[sIdx] = currentStep.copyWith(
           status: nextStatus,
           stdout: stdout ?? currentStep.stdout,

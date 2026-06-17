@@ -517,6 +517,115 @@ void main() {
 
       expect(completeCalled, isFalse);
     });
+    test('triggers reviewer for high-risk Chinese requests', () async {
+      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
+      final roles = <String>[];
+
+      final result = await coordinator.run(
+        enabled: true,
+        maxAgents: 4,
+        messages: const [
+          {'role': 'user', 'content': '帮我删除服务器上的旧日志文件'},
+        ],
+        classify: (messages) async => jsonEncode({
+          'shouldCollaborate': true,
+          'reason': 'high-risk chinese action',
+          'thinkingEnabled': false,
+          'reasoningEffort': 'low',
+          'agentCount': 3,
+        }),
+        complete: (role, messages, {required thinkingSettings}) async {
+          roles.add(role.name);
+          if (role.name == 'summarizer') {
+            return jsonEncode({
+              'summary': 'done',
+              'recommendedActions': [],
+              'risks': [],
+              'openQuestions': [],
+            });
+          }
+          return 'advice';
+        },
+      );
+
+      expect(result, isNotNull);
+      expect(roles, contains('reviewer'));
+    });
+
+    test('does not trigger reviewer for low-risk Chinese requests', () async {
+      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
+      final roles = <String>[];
+
+      final result = await coordinator.run(
+        enabled: true,
+        maxAgents: 4,
+        messages: const [
+          {'role': 'user', 'content': '帮我排查服务器的当前语言设置'},
+        ],
+        classify: (messages) async => jsonEncode({
+          'shouldCollaborate': true,
+          'reason': 'low-risk query',
+          'thinkingEnabled': false,
+          'reasoningEffort': 'low',
+          'agentCount': 3,
+        }),
+        complete: (role, messages, {required thinkingSettings}) async {
+          roles.add(role.name);
+          if (role.name == 'summarizer') {
+            return jsonEncode({
+              'summary': 'done',
+              'recommendedActions': [],
+              'risks': [],
+              'openQuestions': [],
+            });
+          }
+          return 'advice';
+        },
+      );
+
+      expect(result, isNotNull);
+      expect(roles, isNot(contains('reviewer')));
+    });
+
+    test('postToolFailure trigger runs only reviewer and summarizer with postToolContext', () async {
+      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
+      final roles = <String>[];
+      var summarizerReceivedContext = '';
+
+      final result = await coordinator.run(
+        enabled: true,
+        maxAgents: 5,
+        trigger: MultiAgentTrigger.postToolFailure,
+        postToolContext: 'Failed tool: run_command with exit code 127',
+        messages: const [
+          {'role': 'user', 'content': 'inspect logs and fix system'},
+        ],
+        classify: (messages) async => '{}', // 因为是非 preflight，这不会被调用
+        complete: (role, messages, {required thinkingSettings}) async {
+          roles.add(role.name);
+          if (role.name == 'summarizer') {
+            summarizerReceivedContext = messages.last['content'] as String;
+            return jsonEncode({
+              'summary': 'fixed',
+              'recommendedActions': [],
+              'risks': [],
+              'openQuestions': [],
+            });
+          }
+          return 'reviewer advice';
+        },
+      );
+
+      expect(result, isNotNull);
+      // 确认只执行了 reviewer 和 summarizer
+      expect(roles, containsAll(['reviewer', 'summarizer']));
+      expect(roles, isNot(contains('explore')));
+      expect(roles, isNot(contains('planner')));
+      expect(roles, isNot(contains('operator')));
+
+      // 确认 postToolContext 传给了 summarizer
+      expect(summarizerReceivedContext, contains('Failed tool: run_command with exit code 127'));
+    });
   });
 
   test('normalizes max agent count', () {
