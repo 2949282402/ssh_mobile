@@ -221,7 +221,7 @@ void main() {
     ).toJson();
 
     expect(payload['provider'], 'local_webview');
-    expect(payload['engine'], 'duckduckgo_html');
+    expect(payload['engine'], 'baidu_html');
   });
 
   test('defines the new client and sftp tools', () async {
@@ -1121,7 +1121,7 @@ class _FakeClientWebViewAdapter implements ClientWebViewAdapter {
       supported: true,
       query: query,
       results: const [],
-      engine: engine ?? 'duckduckgo',
+      engine: engine ?? 'baidu',
     );
   }
 

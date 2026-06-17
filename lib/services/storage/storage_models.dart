@@ -174,7 +174,7 @@ class AiWebSearchEngine {
   static const String duckDuckGo = 'duckduckgo';
   static const String quark = 'quark';
 
-  static const String defaultValue = duckDuckGo;
+  static const String defaultValue = baidu;
 
   static const List<String> values = [google, bing, baidu, duckDuckGo, quark];
 

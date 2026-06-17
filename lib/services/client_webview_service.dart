@@ -39,7 +39,7 @@ class ClientWebViewService extends ChangeNotifier
     implements ClientWebViewAdapter {
   static final ClientWebViewService instance = ClientWebViewService._();
 
-  static const String defaultUrl = 'https://html.duckduckgo.com/html/';
+  static const String defaultUrl = 'https://www.baidu.com';
   static const int defaultMaxChars = 40000;
 
   final Map<String, ClientWebViewSession> _sessions = {};
@@ -54,12 +54,12 @@ class ClientWebViewService extends ChangeNotifier
 
   void notify() => notifyListeners();
 
-  Future<void> load(String chatId, String input) async {
+  Future<void> load(String chatId, String input, {String? engine}) async {
     final session = sessionFor(chatId);
     if (session.isAiBrowsing) return;
     final controller = session.controller;
     if (controller == null) return;
-    final uri = _normalizeInput(input);
+    final uri = _normalizeInput(input, engine: engine ?? session.searchEngine);
     session._lastError = null;
     session._url = uri.toString();
     session._updatedAt = DateTime.now();
@@ -108,7 +108,7 @@ class ClientWebViewService extends ChangeNotifier
         supported: _supportsWebView,
         query: trimmedQuery,
         results: const [],
-        engine: engine ?? 'duckduckgo',
+        engine: engine ?? 'baidu',
         error: 'Search query is empty.',
       );
     }
@@ -121,7 +121,7 @@ class ClientWebViewService extends ChangeNotifier
         supported: false,
         query: trimmedQuery,
         results: const [],
-        engine: engine ?? 'duckduckgo',
+        engine: engine ?? 'baidu',
         error:
             'Client WebView search is only available on supported mobile targets.',
       );
@@ -152,7 +152,7 @@ class ClientWebViewService extends ChangeNotifier
           supported: true,
           query: trimmedQuery,
           results: const [],
-          engine: engine ?? 'duckduckgo',
+          engine: engine ?? 'baidu',
           error: 'WebView session was closed before search finished.',
         );
       }
@@ -171,7 +171,7 @@ class ClientWebViewService extends ChangeNotifier
           supported: true,
           query: trimmedQuery,
           results: const [],
-          engine: engine ?? 'duckduckgo',
+          engine: engine ?? 'baidu',
           error: 'WebView session was closed before search results were read.',
         );
       }
@@ -206,7 +206,7 @@ class ClientWebViewService extends ChangeNotifier
         query: trimmedQuery,
         results: results,
         capturedAt: capturedAt,
-        engine: engine ?? 'duckduckgo',
+        engine: engine ?? 'baidu',
         error: results.isEmpty
             ? 'No readable search results were found on the loaded page.'
             : null,
@@ -218,7 +218,7 @@ class ClientWebViewService extends ChangeNotifier
           supported: true,
           query: trimmedQuery,
           results: const [],
-          engine: engine ?? 'duckduckgo',
+          engine: engine ?? 'baidu',
           error: 'WebView session was closed before search finished.',
         );
       }
@@ -240,7 +240,7 @@ class ClientWebViewService extends ChangeNotifier
         searchUrl: session.url,
         title: session.title,
         results: const [],
-        engine: engine ?? 'duckduckgo',
+        engine: engine ?? 'baidu',
         error: e.toString(),
       );
     } finally {

@@ -247,7 +247,7 @@ extension ClientWebViewServiceOps on ClientWebViewService {
       searchUrl: session.url,
       title: session.title,
       results: const [],
-      engine: engine ?? 'duckduckgo',
+      engine: engine ?? 'baidu',
       error: 'AI WebView browsing was interrupted by the user.',
     );
   }
@@ -270,7 +270,7 @@ extension ClientWebViewServiceOps on ClientWebViewService {
     );
   }
 
-  Uri _normalizeInput(String input) {
+  Uri _normalizeInput(String input, {String? engine}) {
     final trimmed = input.trim();
     if (trimmed.isEmpty) return Uri.parse(ClientWebViewService.defaultUrl);
     final parsed = Uri.tryParse(trimmed);
@@ -282,11 +282,11 @@ extension ClientWebViewServiceOps on ClientWebViewService {
     if (!trimmed.contains(' ') && trimmed.contains('.')) {
       return Uri.parse('https://$trimmed');
     }
-    return _searchUri(trimmed);
+    return _searchUri(trimmed, engine: engine);
   }
 
   Uri _searchUri(String query, {String? engine}) {
-    final effectiveEngine = engine?.trim().toLowerCase() ?? 'duckduckgo';
+    final effectiveEngine = engine?.trim().toLowerCase() ?? 'baidu';
     switch (effectiveEngine) {
       case 'google':
         return Uri.https('www.google.com', '/search', {'q': query});
@@ -295,8 +295,9 @@ extension ClientWebViewServiceOps on ClientWebViewService {
       case 'baidu':
         return Uri.https('www.baidu.com', '/s', {'wd': query});
       case 'duckduckgo':
-      default:
         return Uri.https('html.duckduckgo.com', '/html/', {'q': query});
+      default:
+        return Uri.https('www.baidu.com', '/s', {'wd': query});
     }
   }
 

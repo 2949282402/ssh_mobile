@@ -53,6 +53,8 @@ class _ClientWebViewScreenState extends State<ClientWebViewScreen> {
                         onBack: viewModel.goBack,
                         onForward: viewModel.goForward,
                         onRefresh: viewModel.refresh,
+                        searchEngine: viewModel.searchEngine,
+                        onSearchEngineChanged: viewModel.updateSearchEngine,
                       ),
                       if (viewModel.isLoading && viewModel.progress < 100)
                         LinearProgressIndicator(
@@ -133,6 +135,8 @@ class _WebAddressBar extends StatelessWidget {
   final VoidCallback onBack;
   final VoidCallback onForward;
   final VoidCallback onRefresh;
+  final String searchEngine;
+  final ValueChanged<String> onSearchEngineChanged;
 
   const _WebAddressBar({
     required this.controller,
@@ -143,6 +147,8 @@ class _WebAddressBar extends StatelessWidget {
     required this.onBack,
     required this.onForward,
     required this.onRefresh,
+    required this.searchEngine,
+    required this.onSearchEngineChanged,
   });
 
   @override
@@ -196,6 +202,41 @@ class _WebAddressBar extends StatelessWidget {
                 tooltip: strings.refresh,
                 icon: const Icon(Icons.refresh_rounded),
                 onPressed: enabled ? onRefresh : null,
+              ),
+              PopupMenuButton<String>(
+                tooltip: strings.searchEngine,
+                initialValue: searchEngine,
+                enabled: enabled,
+                onSelected: onSearchEngineChanged,
+                icon: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.search_rounded),
+                    Icon(
+                      Icons.arrow_drop_down_rounded,
+                      size: 14,
+                      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                    ),
+                  ],
+                ),
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'baidu',
+                    child: Text('百度 (Baidu)'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'google',
+                    child: Text('谷歌 (Google)'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'bing',
+                    child: Text('必应 (Bing)'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'duckduckgo',
+                    child: Text('DuckDuckGo'),
+                  ),
+                ],
               ),
             ],
           ),
@@ -327,6 +368,7 @@ class _WebViewStrings {
   String get back => _en ? 'Back' : '后退';
   String get forward => _en ? 'Forward' : '前进';
   String get refresh => _en ? 'Refresh' : '刷新';
+  String get searchEngine => _en ? 'Search Engine' : '搜索引擎';
   String get aiBrowsing => _en ? 'AI is browsing' : 'AI 正在浏览';
   String get interruptAiBrowsing => _en ? 'Interrupt' : '打断';
   String get unsupported => _en

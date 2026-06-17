@@ -57,9 +57,39 @@ class ClientWebViewViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> load(String input) async {
-    await _webViewService.load(chatId, input);
+  Future<void> load(String input, {String? engine}) async {
+    await _webViewService.load(chatId, input, engine: engine);
     notifyListeners();
+  }
+
+  String get searchEngine => session.searchEngine;
+
+  void updateSearchEngine(String engine) {
+    if (session.searchEngine == engine) return;
+    session.searchEngine = engine;
+    _webViewService.notify();
+
+    final inputText = urlController.text.trim();
+    if (inputText.isNotEmpty && !_isDirectUrl(inputText)) {
+      load(inputText, engine: engine);
+    } else {
+      notifyListeners();
+    }
+  }
+
+  bool _isDirectUrl(String input) {
+    final trimmed = input.trim();
+    if (trimmed.isEmpty) return false;
+    final parsed = Uri.tryParse(trimmed);
+    if (parsed != null &&
+        (parsed.scheme.toLowerCase() == 'http' ||
+            parsed.scheme.toLowerCase() == 'https')) {
+      return true;
+    }
+    if (!trimmed.contains(' ') && trimmed.contains('.')) {
+      return true;
+    }
+    return false;
   }
 
   Future<void> goBack() async {

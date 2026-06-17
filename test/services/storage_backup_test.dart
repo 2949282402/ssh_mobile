@@ -316,9 +316,9 @@ void main() {
   test('web search engine settings persist, export, and import', () async {
     storage = await initializedStorage();
 
-    // 1. Verify default value is duckduckgo
+    // 1. Verify default value is baidu
     var settings = await storage.loadAiConnectionSettings();
-    expect(settings.webSearchEngine, 'duckduckgo');
+    expect(settings.webSearchEngine, 'baidu');
 
     // 2. Save custom search engine
     await storage.saveAiConnectionSettings(
@@ -336,7 +336,7 @@ void main() {
       webSearchEngine: 'invalid-engine-name',
     );
     settings = await storage.loadAiConnectionSettings();
-    expect(settings.webSearchEngine, 'duckduckgo');
+    expect(settings.webSearchEngine, 'baidu');
 
     // 4. Export verifies webSearchEngine is present
     await storage.saveAiConnectionSettings(

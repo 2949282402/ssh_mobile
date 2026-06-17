@@ -19,6 +19,7 @@ class ClientWebViewSession {
   String? _aiBrowsingLabel;
   DateTime? _aiBrowsingStartedAt;
   DateTime _updatedAt;
+  String _searchEngine = 'baidu';
 
   ClientWebViewSession._({
     required this.chatId,
@@ -27,8 +28,10 @@ class ClientWebViewSession {
     required this.supported,
     required DateTime updatedAt,
     required String? url,
+    String searchEngine = 'baidu',
   })  : _updatedAt = updatedAt,
-        _url = url;
+        _url = url,
+        _searchEngine = searchEngine;
 
   String? get url => _url;
   String? get title => _title;
@@ -43,6 +46,12 @@ class ClientWebViewSession {
   String? get aiBrowsingLabel => _aiBrowsingLabel;
   DateTime? get aiBrowsingStartedAt => _aiBrowsingStartedAt;
   DateTime get updatedAt => _updatedAt;
+  String get searchEngine => _searchEngine;
+
+  set searchEngine(String val) {
+    _searchEngine = val;
+    _updatedAt = DateTime.now();
+  }
 }
 
 class ClientWebViewSnapshot {
@@ -217,7 +226,7 @@ class ClientWebViewSearchResult {
     required this.supported,
     required this.query,
     required this.results,
-    this.engine = 'duckduckgo',
+    this.engine = 'baidu',
     this.searchUrl,
     this.title,
     this.capturedAt,
