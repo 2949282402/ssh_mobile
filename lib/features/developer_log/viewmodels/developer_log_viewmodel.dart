@@ -25,6 +25,7 @@ class DeveloperLogViewModel extends ChangeNotifier {
   }
 
   void _onLogsChanged() {
+    _pruneStaleSelections(notify: false);
     notifyListeners();
   }
 
@@ -36,7 +37,8 @@ class DeveloperLogViewModel extends ChangeNotifier {
 
   bool get hasEntries => _logService.entries.isNotEmpty;
   Map<AppLogLevel, int> get levelCounts => _logService.levelCounts;
-  List<AppLogEntry> get filteredEntries => _logService.entriesForLevel(_selectedLevel);
+  List<AppLogEntry> get filteredEntries =>
+      _logService.entriesForLevel(_selectedLevel);
 
   List<AppLogEntry> get selectedEntries {
     if (_selectedIds.isEmpty) return const <AppLogEntry>[];
@@ -71,6 +73,10 @@ class DeveloperLogViewModel extends ChangeNotifier {
   }
 
   void pruneStaleSelections() {
+    _pruneStaleSelections();
+  }
+
+  void _pruneStaleSelections({bool notify = true}) {
     final entryIds = _logService.entryIds;
     final staleIds = [
       for (final id in _selectedIds)
@@ -78,7 +84,7 @@ class DeveloperLogViewModel extends ChangeNotifier {
     ];
     if (staleIds.isNotEmpty) {
       _selectedIds.removeAll(staleIds);
-      notifyListeners();
+      if (notify) notifyListeners();
     }
   }
 

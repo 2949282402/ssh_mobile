@@ -57,8 +57,8 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                       const SizedBox(height: 4),
                       DropdownButtonHideUnderline(
                         child: DropdownButton<String>(
-                          value: connections.any((c) =>
-                                  c.id == viewModel.selectedConnectionId)
+                          value: connections.any(
+                                  (c) => c.id == viewModel.selectedConnectionId)
                               ? viewModel.selectedConnectionId
                               : null,
                           hint: Text(strings.selectServerHint),
@@ -446,7 +446,8 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                     label: Text(strings.resume),
                     onPressed: viewModel.selectedConnectionId == null
                         ? null
-                        : () => viewModel.resumePlaybook(viewModel.selectedConnectionId!),
+                        : () => viewModel
+                            .resumePlaybook(viewModel.selectedConnectionId!),
                   );
                 } else {
                   return FilledButton.icon(
@@ -455,7 +456,8 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                     onPressed: viewModel.selectedConnectionId == null
                         ? null
                         : () {
-                            viewModel.runPlaybook(viewModel.selectedConnectionId!);
+                            viewModel
+                                .runPlaybook(viewModel.selectedConnectionId!);
                           },
                   );
                 }
@@ -471,7 +473,8 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                 label: Text(strings.skip),
                 onPressed: viewModel.selectedConnectionId == null
                     ? null
-                    : () => viewModel.skipCurrentStep(viewModel.selectedConnectionId!),
+                    : () => viewModel
+                        .skipCurrentStep(viewModel.selectedConnectionId!),
               ),
               const SizedBox(width: 8),
             ],

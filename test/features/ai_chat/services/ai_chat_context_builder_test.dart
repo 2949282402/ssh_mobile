@@ -155,21 +155,21 @@ void main() {
           contains('Large document output omitted from future context.'));
 
       // Rule 2: length > 2500 && code fences >= 2
-      final codeFenceText = '```\n' + 'a' * 2500 + '\n```';
+      final codeFenceText = '```\n${'a' * 2500}\n```';
       final result2 = builder.buildAssistantContextText(codeFenceText);
       expect(result2,
           contains('Large code/document output omitted from future context.'));
 
       // Rule 3: length > 2500 && HTML
-      final htmlText = '<html>' + 'a' * 2500 + '</html>';
+      final htmlText = '<html>${'a' * 2500}</html>';
       final result3 = builder.buildAssistantContextText(htmlText);
       expect(
           result3, contains('Large HTML output omitted from future context.'));
 
       // Rule 4: length > 3000 && Markdown document score >= 10
       final mdText =
-          '# Header 1\n# Header 2\n# Header 3\n# Header 4\n# Header 5\n' +
-              'a' * 3000;
+          '# Header 1\n# Header 2\n# Header 3\n# Header 4\n# Header 5\n'
+          '${'a' * 3000}';
       final result4 = builder.buildAssistantContextText(mdText);
       expect(
           result4,

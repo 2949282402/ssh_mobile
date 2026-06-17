@@ -195,7 +195,8 @@ void main() {
       expect(viewModel.getConnection('non_existent'), isNull);
     });
 
-    test('checkPendingDiagnosticPrompt retrieves and clears pending prompt', () async {
+    test('checkPendingDiagnosticPrompt retrieves and clears pending prompt',
+        () async {
       final viewModel = AiChatViewModel(
         storageService: storageService,
         sshService: sshService,
@@ -212,7 +213,8 @@ void main() {
       expect(viewModel.checkPendingDiagnosticPrompt(), isNull);
     });
 
-    test('loadLlmSettingsData and logLlmSettingsOpened works without errors', () async {
+    test('loadLlmSettingsData and logLlmSettingsOpened works without errors',
+        () async {
       final viewModel = AiChatViewModel(
         storageService: storageService,
         sshService: sshService,

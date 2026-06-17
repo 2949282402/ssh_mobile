@@ -182,11 +182,13 @@ class ConnectionViewModel extends ChangeNotifier {
     return _connectionRepository.getPrivateKey(id);
   }
 
-  Future<String?> openTerminalSession(String connectionId, String windowName) async {
+  Future<String?> openTerminalSession(
+      String connectionId, String windowName) async {
     _errorMessage = null;
     notifyListeners();
     try {
-      final sessionId = await _sshService.openSession(connectionId, displayName: windowName);
+      final sessionId =
+          await _sshService.openSession(connectionId, displayName: windowName);
       if (sessionId == null) {
         _errorMessage = _sshService.errorMessage;
       }

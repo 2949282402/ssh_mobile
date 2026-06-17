@@ -62,7 +62,8 @@ void main() {
       expect(viewModel.connections.first.name, equals('Test Server'));
     });
 
-    test('deleteConnectionWithCleanup triggers disconnects and deletes', () async {
+    test('deleteConnectionWithCleanup triggers disconnects and deletes',
+        () async {
       final viewModel = ConnectionViewModel(
         connectionRepository: storageService,
         sshService: sshService,
@@ -122,7 +123,8 @@ void main() {
       expect(viewModel.connections, isEmpty);
     });
 
-    test('openTerminalSession handle error or returns null/session id', () async {
+    test('openTerminalSession handle error or returns null/session id',
+        () async {
       final viewModel = ConnectionViewModel(
         connectionRepository: storageService,
         sshService: sshService,
@@ -130,7 +132,8 @@ void main() {
         performanceService: performanceService,
       );
 
-      final sessionId = await viewModel.openTerminalSession('conn_1', 'my_window');
+      final sessionId =
+          await viewModel.openTerminalSession('conn_1', 'my_window');
       expect(sessionId, isNull);
     });
   });

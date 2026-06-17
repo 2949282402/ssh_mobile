@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 
 import '../features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
 import '../services/app_settings.dart';
-import '../services/storage_service.dart';
 import '../widgets/overflow_scroll_text.dart';
 
 class AiSkillsScreen extends StatefulWidget {
@@ -89,7 +88,9 @@ description: Describe when this skill should be used.
           IconButton(
             tooltip: strings.save,
             icon: const Icon(Icons.save_outlined),
-            onPressed: viewModel.canSave ? () => viewModel.saveSkill(strings.defaultName) : null,
+            onPressed: viewModel.canSave
+                ? () => viewModel.saveSkill(strings.defaultName)
+                : null,
           ),
         ],
       ),
@@ -138,7 +139,8 @@ description: Describe when this skill should be used.
     );
   }
 
-  Widget _buildSkillList(AiSkillsViewModel viewModel, _SkillStrings strings, ColorScheme colorScheme) {
+  Widget _buildSkillList(AiSkillsViewModel viewModel, _SkillStrings strings,
+      ColorScheme colorScheme) {
     final skills = viewModel.skills;
 
     if (skills.isEmpty) {
@@ -215,7 +217,8 @@ description: Describe when this skill should be used.
     );
   }
 
-  Widget _buildEditor(AiSkillsViewModel viewModel, _SkillStrings strings, ColorScheme colorScheme) {
+  Widget _buildEditor(AiSkillsViewModel viewModel, _SkillStrings strings,
+      ColorScheme colorScheme) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Align(
@@ -323,7 +326,9 @@ description: Describe when this skill should be used.
                     ),
                     const SizedBox(width: 8),
                     FilledButton.icon(
-                      onPressed: viewModel.canSave ? () => viewModel.saveSkill(strings.defaultName) : null,
+                      onPressed: viewModel.canSave
+                          ? () => viewModel.saveSkill(strings.defaultName)
+                          : null,
                       icon: const Icon(Icons.save_outlined),
                       label: Text(strings.save),
                     ),
@@ -337,7 +342,8 @@ description: Describe when this skill should be used.
     );
   }
 
-  Future<void> _deleteSkill(AiSkillsViewModel viewModel, _SkillStrings strings) async {
+  Future<void> _deleteSkill(
+      AiSkillsViewModel viewModel, _SkillStrings strings) async {
     final skill = viewModel.selectedSkill;
     if (skill == null) return;
     final confirmed = await showDialog<bool>(

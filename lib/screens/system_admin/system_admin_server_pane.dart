@@ -25,7 +25,8 @@ class _AdminConnectionStatusSnapshot {
     return _AdminConnectionStatusSnapshot(
       selected: viewModel.connectionId == connectionId,
       busy: viewModel.connectionId == connectionId && viewModel.isConnecting,
-      connected: viewModel.connectionId == connectionId && viewModel.isConnected,
+      connected:
+          viewModel.connectionId == connectionId && viewModel.isConnected,
     );
   }
 
@@ -497,7 +498,8 @@ class _AdminServerTileBinding extends StatelessWidget {
         busy: status.busy,
         connected: status.connected,
         compact: compact,
-        onTap: () => context.read<SystemAdminViewModel>().connect(connection.id),
+        onTap: () =>
+            context.read<SystemAdminViewModel>().connect(connection.id),
       ),
     );
   }

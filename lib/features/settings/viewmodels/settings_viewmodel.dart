@@ -106,7 +106,8 @@ class SettingsViewModel extends ChangeNotifier {
   String? get lastOperationMessage => _lastOperationMessage;
 
   Future<bool> exportAppData(
-      Future<String?> Function(String fileName, List<int> bytes) saveFileCallback) async {
+      Future<String?> Function(String fileName, List<int> bytes)
+          saveFileCallback) async {
     _isExporting = true;
     _lastOperationMessage = null;
     notifyListeners();

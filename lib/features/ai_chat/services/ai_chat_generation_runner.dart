@@ -44,7 +44,8 @@ class AiChatGenerationRunner {
     required List<Map<String, dynamic>> requestMessagesJson,
     required void Function(String chunk) onTextChunk,
     required void Function(LlmTraceEvent event) onTrace,
-    required Future<AiToolApprovalDecision> Function(AiToolApprovalRequest) requestToolApproval,
+    required Future<AiToolApprovalDecision> Function(AiToolApprovalRequest)
+        requestToolApproval,
   }) async {
     final service = _runtimeFactory.createLlmChatService(
       settings: await _runtimeFactory.storageService.loadAiConnectionSettings(),

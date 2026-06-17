@@ -24,7 +24,8 @@ class FakeLlmChatService implements LlmChatService {
   Stream<String> stream({
     required List<Map<String, dynamic>> messages,
     String? modelOverride,
-    Future<AiToolApprovalDecision> Function(AiToolApprovalRequest request)? requestToolApproval,
+    Future<AiToolApprovalDecision> Function(AiToolApprovalRequest request)?
+        requestToolApproval,
     void Function(LlmRunStats stats)? onStats,
     void Function(LlmTraceEvent event)? onTrace,
     LlmCancellationToken? cancellationToken,
@@ -261,7 +262,8 @@ void main() {
         requestMessagesJson: const [],
         onTextChunk: (chunk) {},
         onTrace: (event) {},
-        requestToolApproval: (req) async => const AiToolApprovalDecision.approved(),
+        requestToolApproval: (req) async =>
+            const AiToolApprovalDecision.approved(),
       );
 
       expect(result, isA<AiChatRunCancelled>());
@@ -307,7 +309,8 @@ void main() {
         requestMessagesJson: const [],
         onTextChunk: (chunk) {},
         onTrace: (event) {},
-        requestToolApproval: (req) async => const AiToolApprovalDecision.approved(),
+        requestToolApproval: (req) async =>
+            const AiToolApprovalDecision.approved(),
       );
 
       expect(result, isA<AiChatRunFailed>());

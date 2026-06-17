@@ -200,7 +200,8 @@ class AiChatViewModel extends ChangeNotifier {
               ragService: ragService,
               appSettings: appSettings,
             ) {
-    final resolvedContextBuilder = contextBuilder ?? const AiChatContextBuilder();
+    final resolvedContextBuilder =
+        contextBuilder ?? const AiChatContextBuilder();
     final resolvedMessageMapper = messageMapper ??
         AiChatMessageMapper(contextBuilder: resolvedContextBuilder);
 
@@ -385,7 +386,8 @@ class AiChatViewModel extends ChangeNotifier {
 
   Future<Map<String, dynamic>> loadLlmSettingsData() async {
     final settings = await _storageService.loadAiConnectionSettings();
-    final cachedModels = await _storageService.loadCachedAiModels(baseUrl: settings.baseUrl);
+    final cachedModels =
+        await _storageService.loadCachedAiModels(baseUrl: settings.baseUrl);
     final baseUrlHistory = await _storageService.loadAiBaseUrlHistory();
     final apiKeyHistory = await _storageService.loadAiApiKeyHistory();
     return {
@@ -399,7 +401,8 @@ class AiChatViewModel extends ChangeNotifier {
   void logLlmSettingsOpened(AiConnectionSettings settings) {
     AppLogService.instance.info(
       'LLM settings page opened',
-      details: 'baseUrl=${settings.baseUrl} model=${settings.model} hasApiKey=${settings.hasApiKey}',
+      details:
+          'baseUrl=${settings.baseUrl} model=${settings.model} hasApiKey=${settings.hasApiKey}',
     );
   }
 
@@ -1069,7 +1072,8 @@ class AiChatViewModel extends ChangeNotifier {
               translator.translateStatus(AgentStatusString.responding));
 
           final now = DateTime.now();
-          if (now.difference(lastStreamUiUpdate) >= const Duration(milliseconds: 120)) {
+          if (now.difference(lastStreamUiUpdate) >=
+              const Duration(milliseconds: 120)) {
             lastStreamUiUpdate = now;
             _updateStreamingAssistant(answer.toString());
             _triggerScroll();
@@ -1116,8 +1120,9 @@ class AiChatViewModel extends ChangeNotifier {
             completionTokens: runResult.runStats?.completionTokens,
             totalTokens: runResult.runStats?.totalTokens,
             elapsedMs: runResult.runStats?.elapsedMs,
-            tokenUsageEstimated:
-                runResult.runStats == null ? null : !runResult.runStats!.usageFromProvider,
+            tokenUsageEstimated: runResult.runStats == null
+                ? null
+                : !runResult.runStats!.usageFromProvider,
             promptCacheHitTokens: runResult.runStats?.promptCacheHitTokens,
             promptCacheMissTokens: runResult.runStats?.promptCacheMissTokens,
             reasoningTokens: runResult.runStats?.reasoningTokens,
@@ -1127,8 +1132,8 @@ class AiChatViewModel extends ChangeNotifier {
         final latestAssistant = latestAssistantMessageForChat(
           currentChat.copyWith(messages: completedMessages),
         );
-        final shouldExitPlanMode =
-            initialChat.planMode && latestAssistant?.todoSteps.isNotEmpty == true;
+        final shouldExitPlanMode = initialChat.planMode &&
+            latestAssistant?.todoSteps.isNotEmpty == true;
         final answeredChat = currentChat.copyWith(
           messages: completedMessages,
           updatedAt: DateTime.now(),

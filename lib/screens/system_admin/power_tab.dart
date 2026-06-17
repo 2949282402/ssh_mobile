@@ -52,8 +52,7 @@ class _PowerTabState extends State<_PowerTab>
                   backgroundColor: widget.colorScheme.tertiary,
                   padding: const EdgeInsets.all(16),
                 ),
-                onPressed: () =>
-                    _confirmPowerAction('reboot'),
+                onPressed: () => _confirmPowerAction('reboot'),
               ),
             ),
             const SizedBox(height: 16),
@@ -67,8 +66,7 @@ class _PowerTabState extends State<_PowerTab>
                   side: BorderSide(color: widget.colorScheme.error),
                   padding: const EdgeInsets.all(16),
                 ),
-                onPressed: () =>
-                    _confirmPowerAction('shutdown'),
+                onPressed: () => _confirmPowerAction('shutdown'),
               ),
             ),
           ],

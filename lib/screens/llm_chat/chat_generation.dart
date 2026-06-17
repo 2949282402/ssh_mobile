@@ -23,27 +23,30 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
     if (!mounted) return;
 
     if (result is SendTextApiKeyMissing) {
-      await _showSettings(context, strings);
+      await _showSettings(this.context, strings);
     } else if (result is SendTextSlashCommandOpenSkills) {
-      await Navigator.of(context).pushNamed('/ai-skills');
+      await Navigator.of(this.context).pushNamed('/ai-skills');
       if (mounted) {
-        _showCommandFeedback(strings.commandSkillsOpened, context);
+        _showCommandFeedback(strings.commandSkillsOpened, this.context);
       }
     } else if (result is SendTextSlashCommandOpenToolsSelector) {
       final availableTools = await _loadAvailableTools(strings);
       if (!mounted || availableTools == null) return;
       final next = await _openToolsSelector(
-        context: context,
+        context: this.context,
         strings: strings,
         availableTools: availableTools,
         initialTools: result.currentAllowedTools,
       );
       if (next != null && mounted) {
         viewModel.updateAllowedTools(viewModel.activeChatId!, next);
-        _showCommandFeedback(strings.commandToolsUpdated(next.length), context);
+        _showCommandFeedback(
+          strings.commandToolsUpdated(next.length),
+          this.context,
+        );
       }
     } else if (result is SendTextSlashCommandHandled) {
-      _showCommandFeedback(result.feedback, context);
+      _showCommandFeedback(result.feedback, this.context);
       if (clearInput) _inputController.clear();
       setState(() {
         _toolsExpanded = false;

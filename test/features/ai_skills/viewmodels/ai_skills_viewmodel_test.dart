@@ -54,7 +54,8 @@ void main() {
       expect(viewModel.enabled, isTrue);
     });
 
-    test('Saving a skill updates custom skills collection and selection', () async {
+    test('Saving a skill updates custom skills collection and selection',
+        () async {
       final viewModel = AiSkillsViewModel(
         storageService: storageService,
         appSettings: appSettings,

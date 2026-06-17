@@ -130,7 +130,8 @@ class _ServicesTabState extends State<_ServicesTab>
                             ),
                           ),
                           trailing: PopupMenuButton<String>(
-                            onSelected: (action) => _manageService(service.name, action),
+                            onSelected: (action) =>
+                                _manageService(service.name, action),
                             itemBuilder: (context) => [
                               PopupMenuItem(
                                   value: 'start',

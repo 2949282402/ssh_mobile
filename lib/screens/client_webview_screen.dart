@@ -57,14 +57,17 @@ class _ClientWebViewScreenState extends State<ClientWebViewScreen> {
                       if (viewModel.isLoading && viewModel.progress < 100)
                         LinearProgressIndicator(
                           minHeight: 2,
-                          value: viewModel.progress <= 0 ? null : viewModel.progress / 100,
+                          value: viewModel.progress <= 0
+                              ? null
+                              : viewModel.progress / 100,
                         ),
                       Expanded(
                         child: Stack(
                           children: [
                             AbsorbPointer(
                               absorbing: viewModel.isAiBrowsing,
-                              child: WebViewWidget(controller: viewModel.session.controller!),
+                              child: WebViewWidget(
+                                  controller: viewModel.session.controller!),
                             ),
                             if (viewModel.isAiBrowsing) ...[
                               const Positioned.fill(
@@ -79,7 +82,8 @@ class _ClientWebViewScreenState extends State<ClientWebViewScreen> {
                                 onInterrupt: viewModel.interruptAiBrowsing,
                               ),
                             ],
-                            if (viewModel.lastError != null && viewModel.lastError!.trim().isNotEmpty)
+                            if (viewModel.lastError != null &&
+                                viewModel.lastError!.trim().isNotEmpty)
                               Align(
                                 alignment: Alignment.bottomCenter,
                                 child: SafeArea(
@@ -323,8 +327,7 @@ class _WebViewStrings {
   String get back => _en ? 'Back' : '后退';
   String get forward => _en ? 'Forward' : '前进';
   String get refresh => _en ? 'Refresh' : '刷新';
-  String get aiBrowsing =>
-      _en ? 'AI is browsing' : 'AI 正在浏览';
+  String get aiBrowsing => _en ? 'AI is browsing' : 'AI 正在浏览';
   String get interruptAiBrowsing => _en ? 'Interrupt' : '打断';
   String get unsupported => _en
       ? 'Client WebView is currently available on Android and iOS.'

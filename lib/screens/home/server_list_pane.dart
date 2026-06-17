@@ -764,7 +764,8 @@ extension _HomeScreenStateServerList on _HomeScreenState {
     await waitForConnectionProgressFrame();
     if (!context.mounted) return;
 
-    final sessionId = await connectionVm.openTerminalSession(conn.id, windowName);
+    final sessionId =
+        await connectionVm.openTerminalSession(conn.id, windowName);
     if (!context.mounted) return;
     Navigator.of(context).pop();
 

@@ -52,8 +52,8 @@ class TerminalSessionViewModel extends ChangeNotifier {
   }) : _sshService = sshService {
     _sshService.addListener(_onSshServiceChanged);
 
-    final initialFontSize =
-        _sshService.getSession(sessionId)?.fontSize ?? SshSession.defaultTerminalFontSize;
+    final initialFontSize = _sshService.getSession(sessionId)?.fontSize ??
+        SshSession.defaultTerminalFontSize;
     _fontSize = initialFontSize;
 
     terminal = Terminal(
@@ -62,7 +62,8 @@ class TerminalSessionViewModel extends ChangeNotifier {
     );
     terminalController = TerminalController();
     terminalFocusNode = FocusNode();
-    commandInputFocusNode = FocusNode(debugLabel: 'Windows terminal command input');
+    commandInputFocusNode =
+        FocusNode(debugLabel: 'Windows terminal command input');
     complexInputController = TextEditingController();
     commandInputController = TextEditingController();
 
@@ -105,7 +106,8 @@ class TerminalSessionViewModel extends ChangeNotifier {
   bool get isConnected => session?.isConnected ?? false;
   String? get displayName => session?.displayName;
 
-  bool get isWindowsTarget => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  bool get isWindowsTarget =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   void toggleCtrl() {
     _ctrlActive = !_ctrlActive;
@@ -156,7 +158,8 @@ class TerminalSessionViewModel extends ChangeNotifier {
     _reconnectInProgress = true;
     notifyListeners();
 
-    final connected = await _sshService.ensureSessionConnected(sessionId, connectionId);
+    final connected =
+        await _sshService.ensureSessionConnected(sessionId, connectionId);
 
     if (connected) {
       _setupOutputStream();
@@ -174,7 +177,8 @@ class TerminalSessionViewModel extends ChangeNotifier {
       setCtrlActive(false);
       if (data.length == 1) {
         final charCode = data.codeUnitAt(0);
-        if ((charCode >= 97 && charCode <= 122) || (charCode >= 65 && charCode <= 90)) {
+        if ((charCode >= 97 && charCode <= 122) ||
+            (charCode >= 65 && charCode <= 90)) {
           final ctrlCode = charCode >= 97 ? charCode - 96 : charCode - 64;
           _sshService.sendData(sessionId, String.fromCharCode(ctrlCode));
           return;
@@ -202,7 +206,8 @@ class TerminalSessionViewModel extends ChangeNotifier {
       _hasShownDisconnectMessage = false;
     } else if (s != null) {
       _setupOutputStream();
-      if (s.state == SshConnectionState.disconnected || s.state == SshConnectionState.error) {
+      if (s.state == SshConnectionState.disconnected ||
+          s.state == SshConnectionState.error) {
         _showDisconnected(s.errorMessage);
       }
     }
@@ -239,8 +244,9 @@ class TerminalSessionViewModel extends ChangeNotifier {
       notifyListeners();
       try {
         final bufferedOutput = s.outputText;
-        final initialOutput =
-            bufferedOutput.isNotEmpty ? bufferedOutput : await _sshService.loadSessionHistoryText(s.id);
+        final initialOutput = bufferedOutput.isNotEmpty
+            ? bufferedOutput
+            : await _sshService.loadSessionHistoryText(s.id);
 
         if (!identical(_subscribedSession, s)) return;
 
@@ -281,7 +287,8 @@ class TerminalSessionViewModel extends ChangeNotifier {
     _pendingTerminalWrites.add(data);
     _pendingTerminalWriteChars += data.length;
 
-    while (_pendingTerminalWriteChars > 200000 && _pendingTerminalWrites.length > 1) {
+    while (_pendingTerminalWriteChars > 200000 &&
+        _pendingTerminalWrites.length > 1) {
       final removed = _pendingTerminalWrites.removeFirst();
       _pendingTerminalWriteChars -= removed.length;
     }
@@ -316,7 +323,9 @@ class TerminalSessionViewModel extends ChangeNotifier {
     _clearTerminalSelection();
     final buffer = StringBuffer();
     var written = 0;
-    final flushLimit = _pendingTerminalWriteChars > 15000 ? _highTerminalFlushChars : _baseTerminalFlushChars;
+    final flushLimit = _pendingTerminalWriteChars > 15000
+        ? _highTerminalFlushChars
+        : _baseTerminalFlushChars;
 
     while (_pendingTerminalWrites.isNotEmpty && written < flushLimit) {
       final chunk = _pendingTerminalWrites.removeFirst();
@@ -358,7 +367,8 @@ class TerminalSessionViewModel extends ChangeNotifier {
     } catch (_) {}
   }
 
-  void selectWordAtPosition(Offset globalPos, GlobalKey<TerminalViewState> viewKey) {
+  void selectWordAtPosition(
+      Offset globalPos, GlobalKey<TerminalViewState> viewKey) {
     final terminalView = viewKey.currentState;
     if (terminalView == null) return;
 

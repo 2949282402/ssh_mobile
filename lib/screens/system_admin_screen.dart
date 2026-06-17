@@ -7,7 +7,6 @@ import '../models/system_admin.dart';
 import '../services/app_settings.dart';
 import '../services/sftp_service.dart';
 import '../services/storage_service.dart';
-import '../services/system_admin_service.dart';
 import '../utils/responsive.dart';
 import '../widgets/tactile_feedback.dart';
 import '../widgets/overflow_scroll_text.dart';
@@ -104,13 +103,15 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                           busy: isConnecting,
                           connected: isConnected,
                           strings: strings,
-                          onExpand: () => viewModel.setServersCollapsed(context, false),
+                          onExpand: () =>
+                              viewModel.setServersCollapsed(context, false),
                         )
                       : _AdminServerPane(
                           viewModel: viewModel,
                           connections: connections,
                           strings: strings,
-                          onCollapse: () => viewModel.setServersCollapsed(context, true),
+                          onCollapse: () =>
+                              viewModel.setServersCollapsed(context, true),
                         ),
                 ),
                 VerticalDivider(
@@ -136,14 +137,16 @@ class _SystemAdminScreenState extends State<SystemAdminScreen> {
                           busy: isConnecting,
                           connected: isConnected,
                           strings: strings,
-                          onExpand: () => viewModel.setServersCollapsed(context, false),
+                          onExpand: () =>
+                              viewModel.setServersCollapsed(context, false),
                         )
                       : _AdminMobileServerStrip(
                           key: const ValueKey('admin-server-expanded'),
                           viewModel: viewModel,
                           connections: connections,
                           strings: strings,
-                          onCollapse: () => viewModel.setServersCollapsed(context, true),
+                          onCollapse: () =>
+                              viewModel.setServersCollapsed(context, true),
                         ),
                 ),
                 Divider(

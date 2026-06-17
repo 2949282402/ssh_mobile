@@ -46,7 +46,8 @@ class RagKnowledgeViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> addDocument(String name, Uint8List bytes, String mimeType) async {
+  Future<void> addDocument(
+      String name, Uint8List bytes, String mimeType) async {
     _isProcessing = true;
     notifyListeners();
     try {

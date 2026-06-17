@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../features/developer_log/viewmodels/developer_log_viewmodel.dart';
@@ -33,10 +32,6 @@ class _DeveloperLogPageState extends State<DeveloperLogPage> {
 
     return Column(
       children: [
-        if (viewModel.selectionMode)
-          _SelectedLogPruner(
-            viewModel: viewModel,
-          ),
         _DeveloperLogToolbar(
           strings: strings,
           viewModel: viewModel,
@@ -69,31 +64,6 @@ class _DeveloperLogPageState extends State<DeveloperLogPage> {
         ),
       ],
     );
-  }
-}
-
-class _SelectedLogPruner extends StatelessWidget {
-  final DeveloperLogViewModel viewModel;
-
-  const _SelectedLogPruner({
-    required this.viewModel,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final entryIds = context.select<AppLogService, Set<int>>(
-      (service) => service.entryIds,
-    );
-    final staleIds = [
-      for (final id in viewModel.selectedIds)
-        if (!entryIds.contains(id)) id,
-    ];
-    if (staleIds.isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        viewModel.pruneStaleSelections();
-      });
-    }
-    return const SizedBox.shrink();
   }
 }
 
@@ -146,7 +116,9 @@ class _DeveloperLogToolbar extends StatelessWidget {
                 ),
               IconButton(
                 icon: Icon(
-                  viewModel.selectionMode ? Icons.copy_rounded : Icons.copy_all_rounded,
+                  viewModel.selectionMode
+                      ? Icons.copy_rounded
+                      : Icons.copy_all_rounded,
                 ),
                 tooltip: viewModel.selectionMode
                     ? strings.copySelectedLogs

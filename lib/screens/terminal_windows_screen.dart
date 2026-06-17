@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../features/terminal/viewmodels/terminal_windows_viewmodel.dart';
@@ -55,7 +54,8 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
 
           return Column(
             children: [
-              if (widget.showHeader) _buildHeader(context, viewModel, sessions, strings),
+              if (widget.showHeader)
+                _buildHeader(context, viewModel, sessions, strings),
               Expanded(child: body),
             ],
           );
@@ -306,7 +306,8 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
             ),
             child: Row(
               children: [
-                _buildLeadingIcon(context, viewModel, session, selected, statusColor),
+                _buildLeadingIcon(
+                    context, viewModel, session, selected, statusColor),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -362,7 +363,8 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
                       _buildSessionMeta(context, session, strings),
                       if (cleanupCommand != null) ...[
                         const SizedBox(height: 8),
-                        _buildCleanupCommand(context, viewModel, cleanupCommand, strings),
+                        _buildCleanupCommand(
+                            context, viewModel, cleanupCommand, strings),
                       ],
                     ],
                   ),
@@ -378,7 +380,8 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
                   icon: const Icon(Icons.close_rounded),
                   tooltip: strings.closeWindow,
                   color: session.isConnected ? null : colorScheme.error,
-                  onPressed: () => _closeWindow(context, viewModel, session, strings),
+                  onPressed: () =>
+                      _closeWindow(context, viewModel, session, strings),
                 ),
               ],
             ),
@@ -630,7 +633,8 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
           if (cleanupCommand != null)
             TextButton.icon(
               onPressed: () {
-                _copyCleanupCommand(context, viewModel, cleanupCommand, strings);
+                _copyCleanupCommand(
+                    context, viewModel, cleanupCommand, strings);
                 Navigator.pop(ctx, false);
               },
               icon: const Icon(Icons.content_copy_rounded),
@@ -667,7 +671,8 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
     );
   }
 
-  Future<void> _closeSelectedWindows(BuildContext context, TerminalWindowsViewModel viewModel) async {
+  Future<void> _closeSelectedWindows(
+      BuildContext context, TerminalWindowsViewModel viewModel) async {
     final count = viewModel.selectedSessionIds.length;
     final strings = AppStrings(viewModel.language);
     final confirmed = await showDialog<bool>(

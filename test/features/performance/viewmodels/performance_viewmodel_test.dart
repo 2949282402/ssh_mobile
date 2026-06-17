@@ -33,7 +33,8 @@ void main() {
 
   group('PerformanceMonitorViewModel Tests', () {
     test('Initialization values', () {
-      final viewModel = PerformanceMonitorViewModel(monitorService: monitorService);
+      final viewModel =
+          PerformanceMonitorViewModel(monitorService: monitorService);
 
       expect(viewModel.activeTabIndex, equals(0));
       expect(viewModel.serversCollapsed, isFalse);
@@ -44,8 +45,10 @@ void main() {
       expect(viewModel.monitoringConnectionIds, isEmpty);
     });
 
-    test('TabIndex, serversCollapsed, and activeConnection state modifications', () {
-      final viewModel = PerformanceMonitorViewModel(monitorService: monitorService);
+    test('TabIndex, serversCollapsed, and activeConnection state modifications',
+        () {
+      final viewModel =
+          PerformanceMonitorViewModel(monitorService: monitorService);
 
       bool notified = false;
       viewModel.addListener(() {
@@ -68,7 +71,8 @@ void main() {
     });
 
     test('startMonitoring and stopMonitoring calls correctly', () {
-      final viewModel = PerformanceMonitorViewModel(monitorService: monitorService);
+      final viewModel =
+          PerformanceMonitorViewModel(monitorService: monitorService);
 
       expect(viewModel.isRunning, isFalse);
       viewModel.stopMonitoring();

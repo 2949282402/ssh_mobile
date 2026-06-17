@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -82,7 +81,9 @@ void main() {
       expect(viewModel.secretCacheEnabled, isFalse);
     });
 
-    test('exportAppData and importAppData handle state transitions and callbacks', () async {
+    test(
+        'exportAppData and importAppData handle state transitions and callbacks',
+        () async {
       final viewModel = SettingsViewModel(
         appSettings: appSettings,
         storageService: storageService,
@@ -90,7 +91,8 @@ void main() {
 
       List<int>? exportedBytes;
       bool saveCallbackCalled = false;
-      final exportSuccess = await viewModel.exportAppData((fileName, bytes) async {
+      final exportSuccess =
+          await viewModel.exportAppData((fileName, bytes) async {
         saveCallbackCalled = true;
         expect(fileName, startsWith('ssh_mobile_backup_'));
         expect(bytes, isNotEmpty);

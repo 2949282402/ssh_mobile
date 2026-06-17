@@ -24,7 +24,9 @@ extension _TerminalWindowsInput on _TerminalScreenState {
           children: [
             Expanded(
               child: Focus(
-                onKeyEvent: (focusNode, event) => _handleWindowsCommandInputKeyEvent(focusNode, event, viewModel),
+                onKeyEvent: (focusNode, event) =>
+                    _handleWindowsCommandInputKeyEvent(
+                        focusNode, event, viewModel),
                 child: TextField(
                   controller: viewModel.commandInputController,
                   focusNode: viewModel.commandInputFocusNode,
@@ -118,7 +120,8 @@ extension _TerminalWindowsInput on _TerminalScreenState {
     return KeyEventResult.handled;
   }
 
-  void _insertWindowsCommandInputText(TerminalSessionViewModel viewModel, String text) {
+  void _insertWindowsCommandInputText(
+      TerminalSessionViewModel viewModel, String text) {
     final value = viewModel.commandInputController.value;
     final selection = value.selection.isValid
         ? value.selection

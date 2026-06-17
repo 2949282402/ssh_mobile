@@ -308,7 +308,8 @@ extension _TerminalDialogs on _TerminalScreenState {
     }
   }
 
-  Future<void> _showSelectableCopyLayer(TerminalSessionViewModel viewModel) async {
+  Future<void> _showSelectableCopyLayer(
+      TerminalSessionViewModel viewModel) async {
     final strings = _strings(context);
     final text = viewModel.terminal.buffer.getText().trimRight();
     if (text.isEmpty) return;

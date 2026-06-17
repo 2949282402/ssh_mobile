@@ -40,7 +40,8 @@ class StartupViewModel extends ChangeNotifier {
   bool get settingsInitialized => _appSettings.initialized;
   AppLanguage get language => _appSettings.language;
 
-  bool get isAndroidTarget => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  bool get isAndroidTarget =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
   bool get checkingPowerStatus => _checkingPowerStatus;
   bool get powerStatusChecked => _powerStatusChecked;
   bool get powerStatusCheckScheduled => _powerStatusCheckScheduled;
@@ -76,8 +77,9 @@ class StartupViewModel extends ChangeNotifier {
 
   Future<void> refreshBatteryExemptionStatus() async {
     try {
-      final exempt = await BackgroundServiceManager.isIgnoringBatteryOptimizations()
-          .timeout(const Duration(seconds: 2));
+      final exempt =
+          await BackgroundServiceManager.isIgnoringBatteryOptimizations()
+              .timeout(const Duration(seconds: 2));
       _isExempt = exempt;
       notifyListeners();
     } catch (_) {
@@ -107,7 +109,9 @@ class StartupViewModel extends ChangeNotifier {
   }
 
   void schedulePowerGuideCheck(VoidCallback callback) {
-    if (_powerStatusChecked || _checkingPowerStatus || _powerStatusCheckScheduled) {
+    if (_powerStatusChecked ||
+        _checkingPowerStatus ||
+        _powerStatusCheckScheduled) {
       return;
     }
     _powerStatusCheckScheduled = true;

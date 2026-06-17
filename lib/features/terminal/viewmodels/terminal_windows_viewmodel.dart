@@ -32,7 +32,8 @@ class TerminalWindowsViewModel extends ChangeNotifier {
   // Getters
   List<SshSession> get sessions {
     return _sshService.sessions
-        .where((session) => connectionId == null || session.connectionId == connectionId)
+        .where((session) =>
+            connectionId == null || session.connectionId == connectionId)
         .toList();
   }
 

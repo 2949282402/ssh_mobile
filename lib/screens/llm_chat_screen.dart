@@ -921,7 +921,8 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     final settings = settingsData['settings'] as AiConnectionSettings;
     final cachedModels = settingsData['cachedModels'] as List<String>;
     final baseUrlHistory = settingsData['baseUrlHistory'] as List<String>;
-    final apiKeyHistory = settingsData['apiKeyHistory'] as List<AiApiKeyHistoryEntry>;
+    final apiKeyHistory =
+        settingsData['apiKeyHistory'] as List<AiApiKeyHistoryEntry>;
 
     if (!context.mounted) return;
     viewModel.logLlmSettingsOpened(settings);

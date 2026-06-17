@@ -88,7 +88,8 @@ void main() {
       expect(metric.memorySources, contains('memory_key'));
     });
 
-    test('record handles success false and missing runStats gracefully', () async {
+    test('record handles success false and missing runStats gracefully',
+        () async {
       final recorder = AiChatRunMetricsRecorder(storageService);
       final modelProfile = AgentModelProfile(
         mainModel: 'gpt-4o',

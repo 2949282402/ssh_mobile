@@ -167,10 +167,12 @@ class SystemAdminViewModel extends ChangeNotifier {
   }
 
   // Administration actions
-  Future<void> createUser(String username, String password, {String shell = '/bin/bash'}) async {
+  Future<void> createUser(String username, String password,
+      {String shell = '/bin/bash'}) async {
     final id = connectionId;
     if (id == null) return;
-    await _adminService.createUser(id, username: username, password: password, shell: shell);
+    await _adminService.createUser(id,
+        username: username, password: password, shell: shell);
     await fetchAccounts(id);
   }
 
@@ -214,7 +216,8 @@ class SystemAdminViewModel extends ChangeNotifier {
     return await _adminService.getUserHomeStorageUsage(id, homeDir);
   }
 
-  Future<List<LinuxUserProcess>> getUserProcessesAndMemory(String username) async {
+  Future<List<LinuxUserProcess>> getUserProcessesAndMemory(
+      String username) async {
     final id = connectionId;
     if (id == null) return [];
     return await _adminService.getUserProcessesAndMemory(id, username);

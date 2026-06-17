@@ -151,7 +151,8 @@ class _UsersTabState extends State<_UsersTab>
     );
   }
 
-  void _openCreateUserDialog(AppStrings strings, SystemAdminViewModel viewModel) {
+  void _openCreateUserDialog(
+      AppStrings strings, SystemAdminViewModel viewModel) {
     showDialog(
       context: context,
       builder: (context) => _CreateUserDialog(
@@ -192,7 +193,8 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
   }
 
   Future<void> _loadStorageInfo() async {
-    final size = await widget.viewModel.getUserHomeStorageUsage(widget.account.homeDir);
+    final size =
+        await widget.viewModel.getUserHomeStorageUsage(widget.account.homeDir);
     if (!mounted) return;
     setState(() {
       _storageUsed = size;
@@ -200,7 +202,8 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
   }
 
   Future<void> _loadSudoInfo() async {
-    final isAdmin = await widget.viewModel.checkUserSudo(widget.account.username);
+    final isAdmin =
+        await widget.viewModel.checkUserSudo(widget.account.username);
     if (!mounted) return;
     setState(() {
       _isAdmin = isAdmin;
@@ -620,7 +623,8 @@ class _UserProcessesDialogState extends State<_UserProcessesDialog> {
 
   Future<void> _loadProcesses() async {
     setState(() => _loading = true);
-    final list = await widget.viewModel.getUserProcessesAndMemory(widget.username);
+    final list =
+        await widget.viewModel.getUserProcessesAndMemory(widget.username);
 
     // Sum memory
     int totalBytes = 0;

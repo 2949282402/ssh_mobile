@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:collection';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -208,7 +207,8 @@ class _TerminalScreenState extends State<TerminalScreen>
           final altActive = viewModel.altActive;
           final terminalFontSize = viewModel.fontSize;
 
-          final appSettings = context.select<AppSettings, _TerminalSettingsSnapshot>(
+          final appSettings =
+              context.select<AppSettings, _TerminalSettingsSnapshot>(
             _TerminalSettingsSnapshot.from,
           );
           final strings = TerminalStrings(appSettings.language);
@@ -219,8 +219,10 @@ class _TerminalScreenState extends State<TerminalScreen>
           final toolbarColor = isDark
               ? const Color(0xFF161B22)
               : Theme.of(context).colorScheme.surface;
-          final useWideDesktopSideShortcutPanel = !_useWindowsBottomShortcutPanel &&
-              MediaQuery.sizeOf(context).width >= AppBreakpoints.wideDesktop;
+          final useWideDesktopSideShortcutPanel =
+              !_useWindowsBottomShortcutPanel &&
+                  MediaQuery.sizeOf(context).width >=
+                      AppBreakpoints.wideDesktop;
 
           final terminalView = TerminalViewArea(
             terminalViewKey: _terminalViewKey,
@@ -233,7 +235,8 @@ class _TerminalScreenState extends State<TerminalScreen>
             maxFontSize: _maxTerminalFontSize,
             onFontSizeChanged: (size) => viewModel.setFontSize(size),
             onScaleEnd: () => _syncTerminalSize(viewModel),
-            onPointerDown: (event) => _handleTerminalPointerDown(event, viewModel),
+            onPointerDown: (event) =>
+                _handleTerminalPointerDown(event, viewModel),
             onPointerMove: _handleTerminalPointerMove,
             onPointerUp: _handleTerminalPointerUp,
             onPointerCancel: _handleTerminalPointerCancel,
@@ -360,7 +363,8 @@ class _TerminalScreenState extends State<TerminalScreen>
     });
   }
 
-  void _handleTerminalPointerDown(PointerDownEvent event, TerminalSessionViewModel viewModel) {
+  void _handleTerminalPointerDown(
+      PointerDownEvent event, TerminalSessionViewModel viewModel) {
     _activePointers += 1;
     _lastLongPressPosition = event.position;
     _requestWindowsAwareTerminalFocus(viewModel);

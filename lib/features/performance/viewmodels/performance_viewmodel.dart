@@ -5,8 +5,10 @@ import '../../../../services/performance_monitor_service.dart';
 import '../../../../services/server_status_probe.dart';
 
 class PerformanceMonitorViewModel extends ChangeNotifier {
-  static const List<Duration> intervalOptions = PerformanceMonitorService.intervalOptions;
-  static const List<Duration> historyWindowOptions = PerformanceMonitorService.historyWindowOptions;
+  static const List<Duration> intervalOptions =
+      PerformanceMonitorService.intervalOptions;
+  static const List<Duration> historyWindowOptions =
+      PerformanceMonitorService.historyWindowOptions;
 
   final PerformanceMonitorService _monitorService;
 
@@ -105,7 +107,8 @@ class PerformanceMonitorViewModel extends ChangeNotifier {
     return _monitorService.fetchPorts(connectionId);
   }
 
-  Future<List<ApplicationMemorySnapshot>> fetchApplications(String connectionId) {
+  Future<List<ApplicationMemorySnapshot>> fetchApplications(
+      String connectionId) {
     return _monitorService.fetchApplications(connectionId);
   }
 

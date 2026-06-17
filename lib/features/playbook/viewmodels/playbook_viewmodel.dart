@@ -51,7 +51,8 @@ class PlaybookViewModel extends ChangeNotifier {
   bool get isRunning => _playbookService.isRunning;
   bool get isPaused => _playbookService.isPaused;
   String? get activeConnectionId => _playbookService.activeConnectionId;
-  String? get pendingDiagnosticPrompt => _playbookService.pendingDiagnosticPrompt;
+  String? get pendingDiagnosticPrompt =>
+      _playbookService.pendingDiagnosticPrompt;
 
   set pendingDiagnosticPrompt(String? value) {
     _playbookService.pendingDiagnosticPrompt = value;
