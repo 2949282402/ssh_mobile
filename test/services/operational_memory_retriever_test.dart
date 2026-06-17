@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/services/operational_memory_retriever.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
+import 'package:ssh_mobile/services/skill/skill_index_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -139,4 +140,35 @@ body instructions here''',
     expect(result.hits.first.title, equals('Legacy Imported Title'));
     expect(result.hits.first.content, contains('body instructions here'));
   });
+
+  test('fallbacks to legacy search when SkillIndexService throws Exception', () async {
+    final brokenRetriever = OperationalMemoryRetriever(
+      storageService: storage,
+      skillIndexService: _MockBrokenSkillIndexService(),
+    );
+
+    final skill = AiSkillRecord(
+      id: 'skill-fallback-test',
+      name: 'Nginx Service',
+      description: 'Setup nginx service web',
+      content: 'Nginx commands...',
+      enabled: true,
+      references: const [],
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    await storage.saveAiSkill(skill);
+
+    // Should successfully retrieve and fallback to legacy search without throwing exception
+    final result = await brokenRetriever.retrieve(query: 'nginx service web');
+    expect(result.hits, isNotEmpty);
+    expect(result.hits.first.title, equals('Nginx Service'));
+  });
+}
+
+class _MockBrokenSkillIndexService extends SkillIndexService {
+  @override
+  void updateIndex(List<AiSkillRecord> skills) {
+    throw StateError('Mock index error');
+  }
 }

@@ -6,6 +6,7 @@ class ClientToolsProvider implements AiToolProvider {
   final ClientWebViewAdapter clientWebViewService;
   final String? clientWebViewSessionId;
   final ToolSecretPolicy secretPolicy;
+  final SkillDomainService skillDomainService;
 
   const ClientToolsProvider({
     required this.storageService,
@@ -13,6 +14,7 @@ class ClientToolsProvider implements AiToolProvider {
     required this.clientWebViewService,
     this.clientWebViewSessionId,
     required this.secretPolicy,
+    required this.skillDomainService,
   });
 
   @override
@@ -46,7 +48,8 @@ class ClientToolsProvider implements AiToolProvider {
       case 'client_set_clipboard':
         return _clientSetClipboard(service, arguments);
       case 'client_save_experience_skill':
-        return _clientSaveExperienceSkill(service, arguments);
+        return _clientSaveExperienceSkill(service, arguments,
+            approvedWrite: approvedWrite);
       case 'client_list_skills':
         return _clientListSkills(service, arguments);
       case 'client_update_skill':
@@ -286,40 +289,48 @@ class ClientToolsProvider implements AiToolProvider {
 
   Future<String> _clientSaveExperienceSkill(
     AiToolService service,
-    Map<String, dynamic> arguments,
-  ) async {
+    Map<String, dynamic> arguments, {
+    required bool approvedWrite,
+  }) async {
+    if (!approvedWrite) {
+      return jsonEncode({
+        'error': 'Saving a local skill requires user approval before execution.',
+      });
+    }
+
     final summary = service._arg(arguments, 'summary');
-    final conciseSummary = _coerceConciseSkillSummary(summary);
-    final title = service._optionalString(arguments, 'title') ??
-        _defaultExperienceSkillTitle(conciseSummary);
+    final title = service._optionalString(arguments, 'title');
     final details = service._optionalString(arguments, 'content');
 
     final rawRefs = arguments['references'];
-    final references = <SkillReferenceItem>[];
+    final inputReferences = <SkillReferenceItem>[];
     if (rawRefs is List) {
       for (final item in rawRefs) {
         if (item is Map) {
           final t = (item['title'] as String?)?.trim() ?? '';
           final c = (item['content'] as String?)?.trim() ?? '';
-          if (t.isNotEmpty) {
-            references.add(SkillReferenceItem(title: t, content: c));
-          }
+          inputReferences.add(SkillReferenceItem(title: t, content: c));
         }
       }
     }
 
-    final baseContent = details == null || details.trim().isEmpty
-        ? conciseSummary
-        : '$summary\n\n${details.trim()}';
+    final buildResult = skillDomainService.buildCreateSkill(
+      title: title,
+      summary: summary,
+      content: details == null || details.trim().isEmpty
+          ? null
+          : '$summary\n\n${details.trim()}',
+      references: inputReferences,
+    );
 
     final now = DateTime.now();
     final record = AiSkillRecord(
       id: 'skill-${now.microsecondsSinceEpoch}',
-      name: title,
-      description: conciseSummary,
-      content: baseContent,
+      name: buildResult.name,
+      description: buildResult.description,
+      content: buildResult.content,
       enabled: true,
-      references: references,
+      references: buildResult.references,
       createdAt: now,
       updatedAt: now,
     );
@@ -385,19 +396,25 @@ class ClientToolsProvider implements AiToolProvider {
         if (item is Map) {
           final t = (item['title'] as String?)?.trim() ?? '';
           final c = (item['content'] as String?)?.trim() ?? '';
-          if (t.isNotEmpty) {
-            targetReferences.add(SkillReferenceItem(title: t, content: c));
-          }
+          targetReferences.add(SkillReferenceItem(title: t, content: c));
         }
       }
     }
 
+    final buildResult = skillDomainService.buildUpdateSkill(
+      current,
+      name: name,
+      description: description,
+      content: content,
+      references: targetReferences,
+    );
+
     final updated = current.copyWith(
-      name: name ?? current.name,
-      description: description ?? current.description,
-      content: content ?? current.content,
+      name: buildResult.name,
+      description: buildResult.description,
+      content: buildResult.content,
       enabled: enabled ?? current.enabled,
-      references: targetReferences ?? current.references,
+      references: buildResult.references,
       updatedAt: DateTime.now(),
     );
 
@@ -412,31 +429,6 @@ class ClientToolsProvider implements AiToolProvider {
       'description': updated.description,
       'enabled': updated.enabled,
     });
-  }
-
-  String _defaultExperienceSkillTitle(String summary) {
-    final lines = summary
-        .split(RegExp(r'[\r\n]+'))
-        .map((line) => line.trim())
-        .where((line) => line.isNotEmpty)
-        .toList();
-    if (lines.isEmpty) return 'Experience note';
-    final firstLine = lines.first;
-    if (firstLine.length <= 30) return firstLine;
-    return '${firstLine.substring(0, 27).trim()}...';
-  }
-
-  String _coerceConciseSkillSummary(String summary) {
-    final normalized = summary.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (normalized.length <= 140) {
-      return normalized;
-    }
-    final head = normalized.substring(0, 140).trim();
-    final lastWordBoundary = head.lastIndexOf(' ');
-    final truncated = lastWordBoundary >= 72
-        ? head.substring(0, lastWordBoundary).trim()
-        : head;
-    return '$truncated…';
   }
 
   Future<String> _clientQueryLogs(
@@ -1047,7 +1039,7 @@ class ClientToolsProvider implements AiToolProvider {
         },
         required: const ['summary'],
         executionMode: AiToolExecutionMode.stateChanging,
-        handler: (args) => _clientSaveExperienceSkill(service, args),
+        handler: (args) => _clientSaveExperienceSkill(service, args, approvedWrite: false),
       ),
       AiTool(
         name: 'client_list_skills',

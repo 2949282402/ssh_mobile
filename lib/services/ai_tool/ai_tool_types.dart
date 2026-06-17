@@ -16,7 +16,7 @@ abstract interface class AiToolExecutor {
 
   Future<List<Map<String, dynamic>>> toolDefinitions();
 
-  AiToolApprovalRequest? approvalRequestFor(
+  Future<AiToolApprovalRequest?> approvalRequestFor(
     String name,
     Map<String, dynamic> arguments,
   );

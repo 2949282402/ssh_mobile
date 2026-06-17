@@ -2,11 +2,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../services/app_settings.dart';
 import '../../../services/storage_service.dart';
+import '../../../services/skill/skill_domain_service.dart';
 import '../../../utils/skill_frontmatter.dart';
 
 class AiSkillsViewModel extends ChangeNotifier {
   final StorageService _storageService;
   final AppSettings _appSettings;
+  final SkillDomainService _skillDomainService;
 
   final TextEditingController nameController = TextEditingController();
   final TextEditingController descriptionController = TextEditingController();
@@ -23,8 +25,10 @@ class AiSkillsViewModel extends ChangeNotifier {
   AiSkillsViewModel({
     required StorageService storageService,
     required AppSettings appSettings,
+    SkillDomainService? skillDomainService,
   })  : _storageService = storageService,
-        _appSettings = appSettings;
+        _appSettings = appSettings,
+        _skillDomainService = skillDomainService ?? const SkillDomainService();
 
   @override
   void dispose() {
@@ -154,52 +158,31 @@ description: ""
     final now = DateTime.now();
     final current = selectedSkill;
     final isNew = current == null;
-    final fallbackName = defaultName;
     final activeReferences = _hasReferences ? _references : const <SkillReferenceItem>[];
 
     final inputName = nameController.text.trim();
     final inputDesc = descriptionController.text.trim();
     final rawContent = contentController.text;
 
-    final fm = SkillFrontmatter.parse(rawContent);
-    final finalName = inputName.isNotEmpty
-        ? inputName
-        : (fm?.name.isNotEmpty == true ? fm!.name : fallbackName);
-    final finalDesc = inputDesc.isNotEmpty
-        ? inputDesc
-        : (fm?.description.isNotEmpty == true ? fm!.description : '');
+    final buildResult = isNew
+        ? _skillDomainService.buildCreateSkill(
+            title: inputName,
+            summary: inputDesc,
+            content: rawContent,
+            references: activeReferences,
+          )
+        : _skillDomainService.buildUpdateSkill(
+            current,
+            name: inputName,
+            description: inputDesc,
+            content: rawContent,
+            references: activeReferences,
+          );
 
-    // 同步 content 的 frontmatter
-    String targetContent = rawContent;
-    if (fm != null) {
-      if (fm.name != finalName || fm.description != finalDesc) {
-        final buffer = StringBuffer()..writeln('---');
-        if (finalName.contains('\n')) {
-          buffer.writeln('name: >');
-          for (final line in finalName.split('\n')) {
-            buffer.writeln('  $line');
-          }
-        } else {
-          buffer.writeln('name: "${SkillFrontmatter.escapeString(finalName)}"');
-        }
-        if (finalDesc.contains('\n')) {
-          buffer.writeln('description: >');
-          for (final line in finalDesc.split('\n')) {
-            buffer.writeln('  $line');
-          }
-        } else {
-          buffer.writeln('description: "${SkillFrontmatter.escapeString(finalDesc)}"');
-        }
-        buffer.write('---');
-        final generatedHeader = buffer.toString();
-
-        final fmHeaderRegex = RegExp(r'^---\r?\n[\s\S]*?\r?\n---');
-        targetContent = rawContent.replaceFirst(fmHeaderRegex, generatedHeader);
-      }
-    } else {
-      // 没有任何 frontmatter，则保持正文不被改写注入
-      targetContent = rawContent;
-    }
+    final finalName = buildResult.name;
+    final finalDesc = buildResult.description;
+    final targetContent = buildResult.content;
+    final cleanedRefs = buildResult.references;
 
     // 更新 Controller 展现
     if (contentController.text != targetContent) {
@@ -219,7 +202,7 @@ description: ""
             description: finalDesc,
             content: targetContent,
             enabled: _enabled,
-            references: activeReferences,
+            references: cleanedRefs,
             createdAt: now,
             updatedAt: now,
           )
@@ -228,7 +211,7 @@ description: ""
             description: finalDesc,
             content: targetContent,
             enabled: _enabled,
-            references: activeReferences,
+            references: cleanedRefs,
             updatedAt: now,
           );
 

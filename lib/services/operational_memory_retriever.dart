@@ -3,6 +3,7 @@ import '../utils/text_chunker.dart';
 import 'app_log_service.dart';
 import 'rag_service.dart';
 import 'storage_service.dart';
+import 'skill/skill_index_service.dart';
 
 class OperationalMemoryHit {
   final String sourceType;
@@ -36,11 +37,13 @@ class OperationalMemoryBundle {
 class OperationalMemoryRetriever {
   final StorageService storageService;
   final RagService? ragService;
+  final SkillIndexService skillIndexService;
 
-  const OperationalMemoryRetriever({
+  OperationalMemoryRetriever({
     required this.storageService,
     this.ragService,
-  });
+    SkillIndexService? skillIndexService,
+  }) : skillIndexService = skillIndexService ?? SkillIndexService();
 
   Future<OperationalMemoryBundle> retrieve({
     required String query,
@@ -92,6 +95,56 @@ class OperationalMemoryRetriever {
   }
 
   Future<List<OperationalMemoryHit>> _skillHits(Set<String> keywords) async {
+    try {
+      final skills = await storageService.loadAiSkills();
+      final index = skillIndexService;
+      index.updateIndex(skills);
+      final indexHits = index.search(keywords);
+
+      final hits = <OperationalMemoryHit>[];
+      for (final hit in indexHits) {
+        final skill = hit.skill;
+        final fm = SkillFrontmatter.parse(skill.content);
+        final fmName = fm?.name ?? '';
+
+        final matchedRefs = <String>[];
+        for (final ref in skill.references) {
+          final refText = '${ref.title}\n${ref.content}'.toLowerCase();
+          final refScore = _keywordScore(refText, keywords);
+          if (refScore > 0) {
+            matchedRefs.add('### Reference: ${ref.title}\n${ref.content}');
+          }
+        }
+
+        final String finalContent;
+        if (matchedRefs.isNotEmpty) {
+          final limitRefs = matchedRefs.take(3).join('\n\n');
+          finalContent = _clip(limitRefs);
+        } else {
+          finalContent = _clip(skill.content.isNotEmpty ? skill.content : skill.description);
+        }
+
+        hits.add(
+          OperationalMemoryHit(
+            sourceType: 'skill',
+            title: skill.name.isNotEmpty ? skill.name : (fmName.isNotEmpty ? fmName : 'Skill'),
+            content: finalContent,
+            score: hit.score + 1.5,
+          ),
+        );
+      }
+      return hits;
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Operational memory skill index retrieval failed, falling back to legacy scan',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return _skillHitsLegacyFallback(keywords);
+    }
+  }
+
+  Future<List<OperationalMemoryHit>> _skillHitsLegacyFallback(Set<String> keywords) async {
     final hits = <OperationalMemoryHit>[];
     for (final skill in await storageService.loadAiSkills()) {
       if (!skill.enabled) continue;

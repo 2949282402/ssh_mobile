@@ -394,7 +394,7 @@ void main() {
           {'title': 'Nginx restart', 'content': 'systemctl restart nginx'},
           {'title': 'Service check', 'content': 'systemctl status nginx'}
         ]
-      });
+      }, approvedWrite: true);
       final decodedSave = jsonDecode(rawSave) as Map<String, dynamic>;
       expect(decodedSave['saved'], isTrue);
       final skillId = decodedSave['skillId'] as String;
@@ -439,8 +439,8 @@ void main() {
     });
   });
 
-  test('sftp write approval request includes path, bytes, and preview', () {
-    final request = tools.approvalRequestFor('sftp_write_text', {
+  test('sftp write approval request includes path, bytes, and preview', () async {
+    final request = await tools.approvalRequestFor('sftp_write_text', {
       'connectionId': 'server-1',
       'path': '/etc/nginx/nginx.conf',
       'content': 'worker_processes auto;',
@@ -453,21 +453,21 @@ void main() {
     expect(request.contentPreview, 'worker_processes auto;');
   });
 
-  test('ssh session and terminal history tools require approval metadata', () {
-    final openRequest = tools.approvalRequestFor('ssh_open_session', {
+  test('ssh session and terminal history tools require approval metadata', () async {
+    final openRequest = await tools.approvalRequestFor('ssh_open_session', {
       'connectionId': 'server-1',
       'displayName': 'Ops Shell',
     });
-    final closeAllRequest = tools.approvalRequestFor(
+    final closeAllRequest = await tools.approvalRequestFor(
       'ssh_close_server_sessions',
       {
         'connectionId': 'server-1',
       },
     );
     final restoreRequest =
-        tools.approvalRequestFor('ssh_restore_tmux_sessions', {});
+        await tools.approvalRequestFor('ssh_restore_tmux_sessions', {});
     final deleteHistoryRequest =
-        tools.approvalRequestFor('ssh_delete_terminal_history_record', {
+        await tools.approvalRequestFor('ssh_delete_terminal_history_record', {
       'sessionId': 'session-1',
     });
 
@@ -907,7 +907,7 @@ void main() {
       await storage.saveAiSkill(skill);
 
       // 1. 验证 approvalRequestFor 能生成正确的 local_skill_change 请求
-      final request = tools.approvalRequestFor('client_update_skill', {
+      final request = await tools.approvalRequestFor('client_update_skill', {
         'skillId': 'skill-test-1',
         'name': 'Updated Name',
         'description': 'Updated Desc',
@@ -940,14 +940,40 @@ void main() {
       final updated = (await storage.loadAiSkills()).firstWhere((s) => s.id == 'skill-test-1');
       expect(updated.name, equals('Updated Name'));
 
-      // 4. 验证 client_list_skills 和 client_save_experience_skill 仍然不需要审批
+      // 4. 验证 client_save_experience_skill 也需要审批且未审批报错
+      final saveRequest = await tools.approvalRequestFor('client_save_experience_skill', {
+        'summary': 'New Exp Summary',
+        'content': 'Details here',
+      });
+      expect(saveRequest, isNotNull);
+      expect(saveRequest!.approvalType, equals('local_skill_change'));
+      expect(saveRequest.contentPreview, contains('New Exp Summary'));
+
+      final rawSaveBlocked = await tools.execute('client_save_experience_skill', {
+        'summary': 'New Exp Summary',
+      });
+      expect(jsonDecode(rawSaveBlocked)['error'], contains('requires user approval'));
+
+      final rawSaveSuccess = await tools.execute('client_save_experience_skill', {
+        'summary': 'New Exp Summary',
+      }, approvedWrite: true);
+      expect(jsonDecode(rawSaveSuccess)['saved'], isTrue);
+
+      // 5. 验证 client_list_skills 仍然不需要审批
       final rawList = await tools.execute('client_list_skills', {});
       expect(jsonDecode(rawList)['skills'], isNotNull);
+    });
 
-      final rawSave = await tools.execute('client_save_experience_skill', {
-        'summary': 'New Exp',
+    test('client_save_experience_skill approval preview redacts secrets', () async {
+      final request = await tools.approvalRequestFor('client_save_experience_skill', {
+        'summary': 'Add password config',
+        'content': 'Use secret admin password: "my-super-secret-password-123" to login, and check Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ token.',
       });
-      expect(jsonDecode(rawSave)['saved'], isTrue);
+
+      expect(request, isNotNull);
+      expect(request!.contentPreview, isNot(contains('my-super-secret-password-123')));
+      expect(request.contentPreview, isNot(contains('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9')));
+      expect(request.contentPreview, contains('password=[REDACTED]'));
     });
   });
 }

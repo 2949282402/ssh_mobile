@@ -602,7 +602,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
             outcome = 'cache_hit';
             result = cacheEntry.result;
           }
-          final approvalRequest = toolService.approvalRequestFor(
+          final approvalRequest = await toolService.approvalRequestFor(
             call.name,
             arguments,
           );

@@ -479,8 +479,8 @@ class _MockAiToolExecutor implements AiToolExecutor {
       availableTools.map((tool) => tool.definition).toList(growable: false);
 
   @override
-  AiToolApprovalRequest? approvalRequestFor(
-          String name, Map<String, dynamic> arguments) =>
+  Future<AiToolApprovalRequest?> approvalRequestFor(
+          String name, Map<String, dynamic> arguments) async =>
       null;
 
   @override

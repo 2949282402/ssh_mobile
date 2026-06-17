@@ -18,6 +18,7 @@ import 'ssh_service.dart';
 import 'storage_service.dart';
 import 'tool_exposure_router.dart';
 import 'tool_secret_policy.dart';
+import 'skill/skill_domain_service.dart';
 
 part 'ai_tool/ai_tool_types.dart';
 part 'ai_tool/client_tools.dart';
@@ -45,6 +46,7 @@ class AiToolService implements AiToolExecutor {
   final AppSettings? appSettings;
   final PlaybookService? playbookService;
   final String? clientWebViewSessionId;
+  final SkillDomainService skillDomainService;
 
   final List<AiToolProvider> providers;
 
@@ -59,6 +61,7 @@ class AiToolService implements AiToolExecutor {
     PerformanceMonitorToolAdapter? performanceMonitorToolService,
     ServerDiagnosticsAdapter? serverDiagnosticsService,
     ToolSecretPolicy? secretPolicy,
+    SkillDomainService? skillDomainService,
     this.appSettings,
     this.playbookService,
     this.clientWebViewSessionId,
@@ -80,6 +83,7 @@ class AiToolService implements AiToolExecutor {
               sshService: sshService,
             ),
         secretPolicy = secretPolicy ?? const ToolSecretPolicy(),
+        skillDomainService = skillDomainService ?? const SkillDomainService(),
         providers = providers ??
             _buildDefaultProviders(
               storageService: storageService,
@@ -103,6 +107,7 @@ class AiToolService implements AiToolExecutor {
                     sshService: sshService,
                   ),
               secretPolicy: secretPolicy ?? const ToolSecretPolicy(),
+              skillDomainService: skillDomainService ?? const SkillDomainService(),
               appSettings: appSettings,
               playbookService: playbookService,
               clientWebViewSessionId: clientWebViewSessionId,
@@ -118,6 +123,7 @@ class AiToolService implements AiToolExecutor {
     required PerformanceMonitorToolAdapter performanceMonitorToolService,
     required ServerDiagnosticsAdapter serverDiagnosticsService,
     required ToolSecretPolicy secretPolicy,
+    required SkillDomainService skillDomainService,
     AppSettings? appSettings,
     PlaybookService? playbookService,
     String? clientWebViewSessionId,
@@ -129,6 +135,7 @@ class AiToolService implements AiToolExecutor {
         clientWebViewService: clientWebViewService,
         clientWebViewSessionId: clientWebViewSessionId,
         secretPolicy: secretPolicy,
+        skillDomainService: skillDomainService,
       ),
       ServerToolsProvider(
         serverCatalogService: serverCatalogService,
@@ -214,10 +221,10 @@ class AiToolService implements AiToolExecutor {
   }
 
   @override
-  AiToolApprovalRequest? approvalRequestFor(
+  Future<AiToolApprovalRequest?> approvalRequestFor(
     String name,
     Map<String, dynamic> arguments,
-  ) {
+  ) async {
     switch (name) {
       case 'run_command':
         final connectionId = _arg(arguments, 'connectionId');
@@ -395,16 +402,118 @@ class AiToolService implements AiToolExecutor {
           destructive: true,
           contentPreview: ids.join(', '),
         );
+      case 'client_save_experience_skill':
+        final summary = _arg(arguments, 'summary');
+        final title = _optionalString(arguments, 'title') ?? '';
+        final details = _optionalString(arguments, 'content') ?? '';
+        final rawRefs = arguments['references'];
+        final inputReferences = <SkillReferenceItem>[];
+        if (rawRefs is List) {
+          for (final item in rawRefs) {
+            if (item is Map) {
+              final t = (item['title'] as String?)?.trim() ?? '';
+              final c = (item['content'] as String?)?.trim() ?? '';
+              inputReferences.add(SkillReferenceItem(title: t, content: c));
+            }
+          }
+        }
+        final buildResult = skillDomainService.buildCreateSkill(
+          title: title.isEmpty ? null : title,
+          summary: summary,
+          content: details.trim().isEmpty ? null : '$summary\n\n${details.trim()}',
+          references: inputReferences,
+        );
+        final dummyRecord = AiSkillRecord(
+          id: 'temp',
+          name: buildResult.name,
+          description: buildResult.description,
+          content: buildResult.content,
+          enabled: true,
+          references: buildResult.references,
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        );
+        final preview = skillDomainService.generatePreview(null, dummyRecord);
+        return AiToolApprovalRequest(
+          toolName: name,
+          approvalType: 'local_skill_change',
+          connectionId: _clientScopeId,
+          connectionName: _clientScopeName,
+          command: 'CREATE LOCAL SKILL: "${preview.afterName}"',
+          reason: 'Saving a new local AI experience skill/note requires user approval.',
+          contentPreview: 'Name: ${preview.afterName}\nDescription: ${preview.afterDescription}\nContent: ${preview.afterContentSnippet}\nReferences: ${preview.addedReferencesCount} added',
+        );
       case 'client_update_skill':
         final skillId = _arg(arguments, 'skillId');
-        final skillName = _optionalString(arguments, 'name');
-        final skillDesc = _optionalString(arguments, 'description');
-        final enabled = _optionalBool(arguments, 'enabled');
-        final previews = <String>[
-          if (skillName != null) 'Name: $skillName',
-          if (skillDesc != null) 'Description: $skillDesc',
-          if (enabled != null) 'Enabled: $enabled',
-        ];
+        final skills = await storageService.loadAiSkills();
+        final idx = skills.indexWhere((s) => s.id == skillId);
+        if (idx == -1) return null;
+        final current = skills[idx];
+
+        final nameArg = _optionalString(arguments, 'name');
+        final descriptionArg = _optionalString(arguments, 'description');
+        final contentArg = _optionalString(arguments, 'content');
+        final enabledArg = _optionalBool(arguments, 'enabled');
+        final rawRefs = arguments['references'];
+        List<SkillReferenceItem>? targetReferences;
+        if (rawRefs is List) {
+          targetReferences = [];
+          for (final item in rawRefs) {
+            if (item is Map) {
+              final t = (item['title'] as String?)?.trim() ?? '';
+              final c = (item['content'] as String?)?.trim() ?? '';
+              targetReferences.add(SkillReferenceItem(title: t, content: c));
+            }
+          }
+        }
+
+        final buildResult = skillDomainService.buildUpdateSkill(
+          current,
+          name: nameArg,
+          description: descriptionArg,
+          content: contentArg,
+          references: targetReferences,
+        );
+
+        final updated = current.copyWith(
+          name: buildResult.name,
+          description: buildResult.description,
+          content: buildResult.content,
+          enabled: enabledArg ?? current.enabled,
+          references: buildResult.references,
+        );
+
+        final preview = skillDomainService.generatePreview(current, updated);
+        final buffer = StringBuffer();
+        if (preview.beforeName != preview.afterName) {
+          buffer.writeln('Name: "${preview.beforeName}" -> "${preview.afterName}"');
+        }
+        if (preview.beforeDescription != preview.afterDescription) {
+          buffer.writeln('Description: "${preview.beforeDescription}" -> "${preview.afterDescription}"');
+        }
+        if (preview.beforeEnabled != preview.afterEnabled) {
+          buffer.writeln('Enabled: ${preview.beforeEnabled} -> ${preview.afterEnabled}');
+        }
+        if (preview.beforeContentSnippet != preview.afterContentSnippet) {
+          buffer.writeln('Content modified');
+        }
+        final refChanges = <String>[];
+        if (preview.addedReferencesCount > 0) {
+          refChanges.add('${preview.addedReferencesCount} added');
+        }
+        if (preview.removedReferencesCount > 0) {
+          refChanges.add('${preview.removedReferencesCount} removed');
+        }
+        if (preview.modifiedReferencesCount > 0) {
+          refChanges.add('${preview.modifiedReferencesCount} modified');
+        }
+        if (refChanges.isNotEmpty) {
+          buffer.writeln('References: ${refChanges.join(', ')}');
+        }
+        if (buffer.isEmpty) {
+          buffer.write('No visible changes or updating other fields');
+        }
+
         return AiToolApprovalRequest(
           toolName: name,
           approvalType: 'local_skill_change',
@@ -412,7 +521,7 @@ class AiToolService implements AiToolExecutor {
           connectionName: _clientScopeName,
           command: 'UPDATE LOCAL SKILL: $skillId',
           reason: 'Updating a saved AI experience skill/note requires user approval.',
-          contentPreview: previews.isEmpty ? 'Update references or other properties' : previews.join('\n'),
+          contentPreview: buffer.toString(),
         );
       case 'client_clear_logs':
         return AiToolApprovalRequest(

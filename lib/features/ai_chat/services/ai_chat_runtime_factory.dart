@@ -11,6 +11,7 @@ import '../../../services/rag_service.dart';
 import '../../../services/sftp_service.dart';
 import '../../../services/ssh_service.dart';
 import '../../../services/storage_service.dart';
+import '../../../services/skill/skill_index_service.dart';
 
 class AiChatRuntimeFactory {
   final StorageService storageService;
@@ -20,6 +21,7 @@ class AiChatRuntimeFactory {
   final PlaybookService playbookService;
   final RagService ragService;
   final AppSettings appSettings;
+  final SkillIndexService _skillIndexService = SkillIndexService();
 
   AiChatRuntimeFactory({
     required this.storageService,
@@ -40,6 +42,7 @@ class AiChatRuntimeFactory {
       memoryRetriever: OperationalMemoryRetriever(
         storageService: storageService,
         ragService: ragService,
+        skillIndexService: _skillIndexService,
       ),
     );
   }
