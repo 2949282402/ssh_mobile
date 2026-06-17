@@ -45,11 +45,12 @@ void main() {
         appSettings: appSettings,
       );
 
-      viewModel.newSkill('My Skill', 'Markdown Content');
+      viewModel.newSkill();
 
       expect(viewModel.selectedId, isNull);
-      expect(viewModel.nameController.text, equals('My Skill'));
-      expect(viewModel.contentController.text, equals('Markdown Content'));
+      expect(viewModel.nameController.text, equals(viewModel.defaultName));
+      expect(viewModel.contentController.text, startsWith('---\nname:'));
+      expect(viewModel.contentController.text, contains('##'));
       expect(viewModel.dirty, isTrue);
       expect(viewModel.enabled, isTrue);
     });
@@ -61,8 +62,9 @@ void main() {
         appSettings: appSettings,
       );
 
-      viewModel.newSkill('Test Skill', 'Description and workflow');
-      await viewModel.saveSkill('Test Skill');
+      viewModel.newSkill();
+      viewModel.nameController.text = 'Test Skill';
+      await viewModel.saveSkill();
 
       expect(viewModel.skills, hasLength(1));
       expect(viewModel.selectedId, isNotNull);

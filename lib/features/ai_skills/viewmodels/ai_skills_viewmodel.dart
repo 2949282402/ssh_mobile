@@ -66,33 +66,94 @@ class AiSkillsViewModel extends ChangeNotifier {
   }
 
   void selectSkill(AiSkillRecord skill) {
+    final isSameId = _selectedId == skill.id;
     _selectedId = skill.id;
-    nameController.text = skill.name;
-    descriptionController.text = skill.description;
-    contentController.text = skill.content;
     _enabled = skill.enabled;
     _dirty = false;
+    if (!isSameId) {
+      nameController.text = skill.name;
+      descriptionController.text = skill.description;
+      contentController.text = skill.content;
+    }
     notifyListeners();
   }
 
-  void newSkill(String defaultNameTemplate, String initialMarkdownTemplate) {
+  String get defaultName => language == AppLanguage.en ? 'New Skill' : '新 Skill';
+
+  String get defaultContentTemplate {
+    final now = DateTime.now();
+    final name = defaultName;
+    if (language == AppLanguage.en) {
+      return '''---
+name: $name
+description: Describe when this skill should be used.
+---
+
+# $name
+
+## When To Use
+
+- Describe the trigger, scenario, or user request this skill supports.
+
+## Workflow
+
+1. Inspect the current context.
+2. Follow the project-specific steps.
+3. Update related references when behavior changes.
+
+## References
+
+- references/example.md
+
+<!-- Created ${now.toIso8601String()} -->
+''';
+    } else {
+      return '''---
+name: $name
+description: 描述此 skill 在何种情况下应当被使用。
+---
+
+# $name
+
+## 使用场景
+
+- 描述此 skill 支持的触发条件、场景或用户请求。
+
+## 工作流
+
+1. 检查当前上下文。
+2. 遵循特定于项目的步骤。
+3. 行为变更时更新相关 references。
+
+## 参考资料 (References)
+
+- references/example.md
+
+<!-- Created ${now.toIso8601String()} -->
+''';
+    }
+  }
+
+  void newSkill() {
     _selectedId = null;
-    nameController.text = defaultNameTemplate;
+    nameController.text = defaultName;
     descriptionController.text = '';
-    contentController.text = initialMarkdownTemplate;
+    contentController.text = defaultContentTemplate;
     _enabled = true;
     _dirty = true;
     notifyListeners();
   }
 
-  Future<void> saveSkill(String defaultName) async {
+  Future<void> saveSkill() async {
     final now = DateTime.now();
     final current = selectedSkill;
-    final skill = current == null
+    final isNew = current == null;
+    final fallbackName = defaultName;
+    final skill = isNew
         ? AiSkillRecord(
             id: 'skill-${now.microsecondsSinceEpoch}',
             name: nameController.text.trim().isEmpty
-                ? defaultName
+                ? fallbackName
                 : nameController.text.trim(),
             description: descriptionController.text.trim(),
             content: contentController.text,
@@ -102,7 +163,7 @@ class AiSkillsViewModel extends ChangeNotifier {
           )
         : current.copyWith(
             name: nameController.text.trim().isEmpty
-                ? defaultName
+                ? fallbackName
                 : nameController.text.trim(),
             description: descriptionController.text.trim(),
             content: contentController.text,
@@ -116,11 +177,11 @@ class AiSkillsViewModel extends ChangeNotifier {
     _selectedId = skill.id;
     _dirty = false;
 
-    for (final item in data) {
-      if (item.id == skill.id) {
-        selectSkill(item);
-        break;
-      }
+    if (isNew) {
+      final saved = data.firstWhere((item) => item.id == skill.id, orElse: () => skill);
+      selectSkill(saved);
+    } else {
+      notifyListeners();
     }
   }
 

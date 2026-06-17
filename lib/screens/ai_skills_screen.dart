@@ -36,32 +36,6 @@ class _AiSkillsScreenState extends State<AiSkillsScreen>
     return width != null && width < 760;
   }
 
-  String _skillTemplate(String name, DateTime now) {
-    return '''---
-name: $name
-description: Describe when this skill should be used.
----
-
-# $name
-
-## When To Use
-
-- Describe the trigger, scenario, or user request this skill supports.
-
-## Workflow
-
-1. Inspect the current context.
-2. Follow the project-specific steps.
-3. Update related references when behavior changes.
-
-## References
-
-- references/example.md
-
-<!-- Created ${now.toIso8601String()} -->
-''';
-  }
-
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<AiSkillsViewModel>();
@@ -76,10 +50,7 @@ description: Describe when this skill should be used.
             tooltip: strings.newSkill,
             icon: const Icon(Icons.add_rounded),
             onPressed: () {
-              viewModel.newSkill(
-                strings.defaultName,
-                _skillTemplate(strings.defaultName, DateTime.now()),
-              );
+              viewModel.newSkill();
               if (_isCompactLayout) {
                 _mobileTabs.animateTo(1);
               }
@@ -89,7 +60,7 @@ description: Describe when this skill should be used.
             tooltip: strings.save,
             icon: const Icon(Icons.save_outlined),
             onPressed: viewModel.canSave
-                ? () => viewModel.saveSkill(strings.defaultName)
+                ? () => viewModel.saveSkill()
                 : null,
           ),
         ],
@@ -161,10 +132,7 @@ description: Describe when this skill should be used.
             const SizedBox(height: 16),
             FilledButton.icon(
               onPressed: () {
-                viewModel.newSkill(
-                  strings.defaultName,
-                  _skillTemplate(strings.defaultName, DateTime.now()),
-                );
+                viewModel.newSkill();
                 if (_isCompactLayout) {
                   _mobileTabs.animateTo(1);
                 }
@@ -316,10 +284,7 @@ description: Describe when this skill should be used.
                   children: [
                     OutlinedButton.icon(
                       onPressed: () {
-                        viewModel.newSkill(
-                          strings.defaultName,
-                          _skillTemplate(strings.defaultName, DateTime.now()),
-                        );
+                        viewModel.newSkill();
                       },
                       icon: const Icon(Icons.add_rounded),
                       label: Text(strings.newSkill),
@@ -327,7 +292,7 @@ description: Describe when this skill should be used.
                     const SizedBox(width: 8),
                     FilledButton.icon(
                       onPressed: viewModel.canSave
-                          ? () => viewModel.saveSkill(strings.defaultName)
+                          ? () => viewModel.saveSkill()
                           : null,
                       icon: const Icon(Icons.save_outlined),
                       label: Text(strings.save),

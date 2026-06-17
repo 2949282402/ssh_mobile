@@ -17,6 +17,7 @@ part 'storage/storage_models.dart';
 part 'storage/settings_ops.dart';
 part 'storage/connection_ops.dart';
 part 'storage/ai_chat_ops.dart';
+part 'storage/ai_skill_ops.dart';
 part 'storage/terminal_ops.dart';
 part 'storage/playbook_ops.dart';
 part 'storage/backup_ops.dart';
