@@ -83,49 +83,28 @@ void main() {
       expect(viewModel.dirty, isTrue);
     });
 
-    test('Parsing references from markdown content text', () {
+    test('Adding and removing references updates ViewModel state', () {
       final viewModel = AiSkillsViewModel(
         storageService: storageService,
         appSettings: appSettings,
       );
 
-      viewModel.contentController.text =
-          'Some content here\n\n## References\n- references/a.md # Desc A\n- [Desc B](references/b.md)\n- references/c.md: Desc C\n- references/d.md';
-      viewModel.parseReferencesFromContent();
-
-      expect(viewModel.hasReferences, isTrue);
-      expect(viewModel.references, equals([
-        const SkillReferenceItem(path: 'references/a.md', description: 'Desc A'),
-        const SkillReferenceItem(path: 'references/b.md', description: 'Desc B'),
-        const SkillReferenceItem(path: 'references/c.md', description: 'Desc C'),
-        const SkillReferenceItem(path: 'references/d.md', description: ''),
-      ]));
-    });
-
-    test('Adding and removing references updates content text', () {
-      final viewModel = AiSkillsViewModel(
-        storageService: storageService,
-        appSettings: appSettings,
-      );
-
-      viewModel.contentController.text = 'Introductory text';
+      expect(viewModel.hasReferences, isFalse);
       viewModel.toggleReferences(true);
 
       expect(viewModel.hasReferences, isTrue);
-      expect(viewModel.contentController.text, contains('## References'));
-      expect(viewModel.contentController.text, contains('- references/example.md # Example reference document'));
+      expect(viewModel.references, hasLength(1));
+      expect(viewModel.references.first.title, equals('Example reference document'));
 
-      viewModel.addReference('references/my_config.md', 'Configurations info');
-      expect(viewModel.references, contains(const SkillReferenceItem(path: 'references/my_config.md', description: 'Configurations info')));
-      expect(viewModel.contentController.text, contains('- references/my_config.md # Configurations info'));
+      viewModel.addReference('My config rule', 'Configurations detailed command info');
+      expect(viewModel.references, contains(const SkillReferenceItem(title: 'My config rule', content: 'Configurations detailed command info')));
+      expect(viewModel.dirty, isTrue);
 
-      viewModel.removeReference(0); // Removes example.md
-      expect(viewModel.references, equals([const SkillReferenceItem(path: 'references/my_config.md', description: 'Configurations info')]));
-      expect(viewModel.contentController.text, isNot(contains('- references/example.md')));
+      viewModel.removeReference(0); // Removes example document
+      expect(viewModel.references, equals([const SkillReferenceItem(title: 'My config rule', content: 'Configurations detailed command info')]));
 
       viewModel.toggleReferences(false);
       expect(viewModel.hasReferences, isFalse);
-      expect(viewModel.contentController.text, equals('Introductory text'));
     });
   });
 }

@@ -194,10 +194,15 @@ class ToolExposureRouter {
       'permission',
       'device',
       'clipboard',
+      'skill',
+      'skills',
+      'experience',
       '设置',
       '权限',
       '设备',
       '剪贴板',
+      '技能',
+      '经验',
     ])) {
       caps.add(AiToolCapability.client);
       caps.add(AiToolCapability.settings);

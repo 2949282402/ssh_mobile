@@ -384,6 +384,57 @@ void main() {
     expect(decoded['error'], contains('AI WebView browsing'));
   });
 
+  group('AI Experience Skills tools management', () {
+    test('client_save_experience_skill, client_list_skills, and client_update_skill tools CRUD flow', () async {
+      final rawSave = await tools.execute('client_save_experience_skill', {
+        'summary': 'Short summary rule of deployment',
+        'title': 'Deploy Skill',
+        'content': 'Check server state first',
+        'references': [
+          {'title': 'Nginx restart', 'content': 'systemctl restart nginx'},
+          {'title': 'Service check', 'content': 'systemctl status nginx'}
+        ]
+      });
+      final decodedSave = jsonDecode(rawSave) as Map<String, dynamic>;
+      expect(decodedSave['saved'], isTrue);
+      final skillId = decodedSave['skillId'] as String;
+
+      final savedSkills = await storage.loadAiSkills();
+      expect(savedSkills, hasLength(1));
+      final skill = savedSkills.first;
+      expect(skill.id, skillId);
+      expect(skill.name, 'Deploy Skill');
+      expect(skill.references, hasLength(2));
+      expect(skill.references[0].title, equals('Nginx restart'));
+      expect(skill.references[0].content, equals('systemctl restart nginx'));
+
+      final rawList = await tools.execute('client_list_skills', {});
+      final decodedList = jsonDecode(rawList) as Map<String, dynamic>;
+      final skillItems = decodedList['skills'] as List<dynamic>;
+      expect(skillItems, hasLength(1));
+      expect(skillItems.first['id'], skillId);
+
+      final rawUpdate = await tools.execute('client_update_skill', {
+        'skillId': skillId,
+        'name': 'Updated Deploy Title',
+        'enabled': false,
+        'references': [
+          {'title': 'New backup step', 'content': 'tar -czf backup.tar.gz /var/www'}
+        ]
+      });
+      final decodedUpdate = jsonDecode(rawUpdate) as Map<String, dynamic>;
+      expect(decodedUpdate['updated'], isTrue);
+
+      final updatedSkills = await storage.loadAiSkills();
+      expect(updatedSkills, hasLength(1));
+      final updatedSkill = updatedSkills.first;
+      expect(updatedSkill.name, 'Updated Deploy Title');
+      expect(updatedSkill.enabled, isFalse);
+      expect(updatedSkill.references, hasLength(1));
+      expect(updatedSkill.references.first.title, equals('New backup step'));
+    });
+  });
+
   test('sftp write approval request includes path, bytes, and preview', () {
     final request = tools.approvalRequestFor('sftp_write_text', {
       'connectionId': 'server-1',

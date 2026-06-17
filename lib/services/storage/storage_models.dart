@@ -438,12 +438,48 @@ class AiContextWindowSize {
   }
 }
 
+class SkillReferenceItem {
+  final String title;
+  final String content;
+
+  const SkillReferenceItem({
+    required this.title,
+    required this.content,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'title': title,
+      'content': content,
+    };
+  }
+
+  factory SkillReferenceItem.fromJson(Map<String, dynamic> json) {
+    return SkillReferenceItem(
+      title: json['title'] as String? ?? '',
+      content: json['content'] as String? ?? '',
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SkillReferenceItem &&
+          runtimeType == other.runtimeType &&
+          title == other.title &&
+          content == other.content;
+
+  @override
+  int get hashCode => title.hashCode ^ content.hashCode;
+}
+
 class AiSkillRecord {
   final String id;
   final String name;
   final String description;
   final String content;
   final bool enabled;
+  final List<SkillReferenceItem> references;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -453,6 +489,7 @@ class AiSkillRecord {
     required this.description,
     required this.content,
     this.enabled = true,
+    this.references = const [],
     required this.createdAt,
     required this.updatedAt,
   });
@@ -462,6 +499,7 @@ class AiSkillRecord {
     String? description,
     String? content,
     bool? enabled,
+    List<SkillReferenceItem>? references,
     DateTime? updatedAt,
   }) {
     return AiSkillRecord(
@@ -470,6 +508,7 @@ class AiSkillRecord {
       description: description ?? this.description,
       content: content ?? this.content,
       enabled: enabled ?? this.enabled,
+      references: references ?? this.references,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -482,6 +521,7 @@ class AiSkillRecord {
       'description': description,
       'content': content,
       'enabled': enabled,
+      'references': references.map((item) => item.toJson()).toList(),
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
     };
@@ -494,6 +534,9 @@ class AiSkillRecord {
       description: json['description'] as String? ?? '',
       content: json['content'] as String? ?? '',
       enabled: json['enabled'] as bool? ?? true,
+      references: ((json['references'] as List<dynamic>?) ?? const [])
+          .map((item) => SkillReferenceItem.fromJson(item as Map<String, dynamic>))
+          .toList(),
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
       updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??

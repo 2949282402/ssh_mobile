@@ -47,6 +47,10 @@ class ClientToolsProvider implements AiToolProvider {
         return _clientSetClipboard(service, arguments);
       case 'client_save_experience_skill':
         return _clientSaveExperienceSkill(service, arguments);
+      case 'client_list_skills':
+        return _clientListSkills(service, arguments);
+      case 'client_update_skill':
+        return _clientUpdateSkill(service, arguments);
       case 'client_set_alarm':
         return _clientSetAlarm(service, arguments);
       case 'client_list_alarms':
@@ -288,14 +292,33 @@ class ClientToolsProvider implements AiToolProvider {
     final title = service._optionalString(arguments, 'title') ??
         _defaultExperienceSkillTitle(conciseSummary);
     final details = service._optionalString(arguments, 'content');
+
+    final rawRefs = arguments['references'];
+    final references = <SkillReferenceItem>[];
+    if (rawRefs is List) {
+      for (final item in rawRefs) {
+        if (item is Map) {
+          final t = (item['title'] as String?)?.trim() ?? '';
+          final c = (item['content'] as String?)?.trim() ?? '';
+          if (t.isNotEmpty) {
+            references.add(SkillReferenceItem(title: t, content: c));
+          }
+        }
+      }
+    }
+
+    final baseContent = details == null || details.trim().isEmpty
+        ? conciseSummary
+        : '$summary\n\n${details.trim()}';
+
     final now = DateTime.now();
     final record = AiSkillRecord(
       id: 'skill-${now.microsecondsSinceEpoch}',
       name: title,
       description: conciseSummary,
-      content: details == null || details.trim().isEmpty
-          ? conciseSummary
-          : '$summary\n\n${details.trim()}',
+      content: baseContent,
+      enabled: true,
+      references: references,
       createdAt: now,
       updatedAt: now,
     );
@@ -312,6 +335,75 @@ class ClientToolsProvider implements AiToolProvider {
       'skillId': record.id,
       'name': record.name,
       'description': record.description,
+    });
+  }
+
+  Future<String> _clientListSkills(
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
+    final skills = await storageService.loadAiSkills();
+    return jsonEncode({
+      'execution': 'client',
+      'target': 'local_skill',
+      'skills': skills.map((s) => s.toJson()).toList(),
+    });
+  }
+
+  Future<String> _clientUpdateSkill(
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
+    final skillId = service._arg(arguments, 'skillId');
+    final name = service._optionalString(arguments, 'name');
+    final description = service._optionalString(arguments, 'description');
+    final content = service._optionalString(arguments, 'content');
+    final enabled = service._optionalBool(arguments, 'enabled');
+    final rawRefs = arguments['references'];
+
+    final skills = await storageService.loadAiSkills();
+    final idx = skills.indexWhere((s) => s.id == skillId);
+    if (idx == -1) {
+      return jsonEncode({
+        'error': 'Skill not found with id: $skillId',
+      });
+    }
+
+    final current = skills[idx];
+    List<SkillReferenceItem>? targetReferences;
+
+    if (rawRefs is List) {
+      targetReferences = [];
+      for (final item in rawRefs) {
+        if (item is Map) {
+          final t = (item['title'] as String?)?.trim() ?? '';
+          final c = (item['content'] as String?)?.trim() ?? '';
+          if (t.isNotEmpty) {
+            targetReferences.add(SkillReferenceItem(title: t, content: c));
+          }
+        }
+      }
+    }
+
+    final updated = current.copyWith(
+      name: name ?? current.name,
+      description: description ?? current.description,
+      content: content ?? current.content,
+      enabled: enabled ?? current.enabled,
+      references: targetReferences ?? current.references,
+      updatedAt: DateTime.now(),
+    );
+
+    await storageService.saveAiSkill(updated);
+
+    return jsonEncode({
+      'execution': 'client',
+      'target': 'local_skill',
+      'updated': true,
+      'skillId': updated.id,
+      'name': updated.name,
+      'description': updated.description,
+      'enabled': updated.enabled,
     });
   }
 
@@ -933,10 +1025,59 @@ class ClientToolsProvider implements AiToolProvider {
           'content': _string(
             'Optional detailed content such as steps, caveats, commands, and lessons.',
           ),
+          'references': {
+            'type': 'array',
+            'description': 'Optional structured list of references containing description/title and concrete rule content.',
+            'items': {
+              'type': 'object',
+              'properties': {
+                'title': _string('The title or purpose of this reference.'),
+                'content': _string('The detailed instructions or commands of this reference.'),
+              },
+              'required': const ['title', 'content'],
+            },
+          },
         },
         required: const ['summary'],
         executionMode: AiToolExecutionMode.stateChanging,
         handler: (args) => _clientSaveExperienceSkill(service, args),
+      ),
+      AiTool(
+        name: 'client_list_skills',
+        description:
+            'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. List all saved local AI experience skills/notes that future chat sessions can load or reuse.',
+        properties: const {},
+        executionMode: AiToolExecutionMode.readOnly,
+        handler: (args) => _clientListSkills(service, args),
+      ),
+      AiTool(
+        name: 'client_update_skill',
+        description:
+            'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Update an existing saved AI experience skill/note by id.',
+        properties: {
+          'skillId': _string(
+            'The unique skillId of the experience skill/note to update.',
+          ),
+          'name': _string('Optional new short title for the skill.'),
+          'description': _string('Optional new concise summary of the experience.'),
+          'content': _string('Optional new detailed content, commands, or lessons.'),
+          'enabled': _bool('Optional flag to enable/disable the skill.'),
+          'references': {
+            'type': 'array',
+            'description': 'Optional new structured list of references containing description/title and concrete rule content.',
+            'items': {
+              'type': 'object',
+              'properties': {
+                'title': _string('The title or purpose of this reference.'),
+                'content': _string('The detailed instructions or commands of this reference.'),
+              },
+              'required': const ['title', 'content'],
+            },
+          },
+        },
+        required: const ['skillId'],
+        executionMode: AiToolExecutionMode.stateChanging,
+        handler: (args) => _clientUpdateSkill(service, args),
       ),
       AiTool(
         name: 'client_set_alarm',
