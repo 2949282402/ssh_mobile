@@ -119,7 +119,7 @@ class AiSkillEditScreen extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(strings.deleteSkill),
-        content: Text(strings.deleteSkillContent(skill.name)),
+        content: Text(strings.deleteSkillContent(skill.displayName)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),

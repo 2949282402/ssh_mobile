@@ -28,6 +28,7 @@ class _ToolApprovalPanel extends StatelessWidget {
       'terminal_history_change' =>
         en ? 'Approve terminal history change' : '确认终端历史变更',
       'local_import' => en ? 'Approve local import' : '确认本地导入操作',
+      'local_skill_change' => en ? 'Approve local skill change' : '确认本地技能变更',
       'local_log_change' => en ? 'Approve local log change' : '确认本地日志变更',
       'app_setting_change' => en ? 'Approve app settings change' : '确认应用设置变更',
       'budget_audit' => strings.budgetAuditTitle,

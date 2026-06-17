@@ -104,12 +104,12 @@ class _AiSkillsScreenState extends State<AiSkillsScreen> {
                 : Icons.visibility_off_outlined,
           ),
           title: OverflowScrollText(
-            skill.name,
+            skill.displayName,
             selectable: false,
             maxLines: 1,
           ),
           subtitle: Text(
-            '${skill.enabled ? strings.enabled : strings.disabled} · ${skill.description.isEmpty ? strings.noDescription : skill.description}',
+            '${skill.enabled ? strings.enabled : strings.disabled} · ${skill.displayDescription.isEmpty ? strings.noDescription : skill.displayDescription}',
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),

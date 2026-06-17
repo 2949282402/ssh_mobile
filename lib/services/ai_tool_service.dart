@@ -395,6 +395,25 @@ class AiToolService implements AiToolExecutor {
           destructive: true,
           contentPreview: ids.join(', '),
         );
+      case 'client_update_skill':
+        final skillId = _arg(arguments, 'skillId');
+        final skillName = _optionalString(arguments, 'name');
+        final skillDesc = _optionalString(arguments, 'description');
+        final enabled = _optionalBool(arguments, 'enabled');
+        final previews = <String>[
+          if (skillName != null) 'Name: $skillName',
+          if (skillDesc != null) 'Description: $skillDesc',
+          if (enabled != null) 'Enabled: $enabled',
+        ];
+        return AiToolApprovalRequest(
+          toolName: name,
+          approvalType: 'local_skill_change',
+          connectionId: _clientScopeId,
+          connectionName: _clientScopeName,
+          command: 'UPDATE LOCAL SKILL: $skillId',
+          reason: 'Updating a saved AI experience skill/note requires user approval.',
+          contentPreview: previews.isEmpty ? 'Update references or other properties' : previews.join('\n'),
+        );
       case 'client_clear_logs':
         return AiToolApprovalRequest(
           toolName: name,

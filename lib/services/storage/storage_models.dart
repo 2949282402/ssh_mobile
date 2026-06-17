@@ -494,6 +494,18 @@ class AiSkillRecord {
     required this.updatedAt,
   });
 
+  String get displayName {
+    if (name.isNotEmpty) return name;
+    final fm = SkillFrontmatter.parse(content);
+    return fm?.name.isNotEmpty == true ? fm!.name : 'Skill';
+  }
+
+  String get displayDescription {
+    if (description.isNotEmpty) return description;
+    final fm = SkillFrontmatter.parse(content);
+    return fm?.description.isNotEmpty == true ? fm!.description : '';
+  }
+
   AiSkillRecord copyWith({
     String? name,
     String? description,
@@ -530,7 +542,7 @@ class AiSkillRecord {
   factory AiSkillRecord.fromJson(Map<String, dynamic> json) {
     return AiSkillRecord(
       id: json['id'] as String,
-      name: json['name'] as String? ?? 'Skill',
+      name: json['name'] as String? ?? '',
       description: json['description'] as String? ?? '',
       content: json['content'] as String? ?? '',
       enabled: json['enabled'] as bool? ?? true,

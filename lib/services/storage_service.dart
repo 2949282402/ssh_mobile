@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 
 import '../features/connection/models/connection.dart';
 import '../features/playbook/models/playbook.dart';
+import '../utils/skill_frontmatter.dart';
 import 'agent_model_profile.dart';
 import 'app_log_service.dart';
 import '../core/services/data_protection_service.dart';

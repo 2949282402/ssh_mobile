@@ -50,7 +50,8 @@ class ClientToolsProvider implements AiToolProvider {
       case 'client_list_skills':
         return _clientListSkills(service, arguments);
       case 'client_update_skill':
-        return _clientUpdateSkill(service, arguments);
+        return _clientUpdateSkill(service, arguments,
+            approvedWrite: approvedWrite);
       case 'client_set_alarm':
         return _clientSetAlarm(service, arguments);
       case 'client_list_alarms':
@@ -352,8 +353,14 @@ class ClientToolsProvider implements AiToolProvider {
 
   Future<String> _clientUpdateSkill(
     AiToolService service,
-    Map<String, dynamic> arguments,
-  ) async {
+    Map<String, dynamic> arguments, {
+    required bool approvedWrite,
+  }) async {
+    if (!approvedWrite) {
+      return jsonEncode({
+        'error': 'Updating a local skill requires user approval before execution.',
+      });
+    }
     final skillId = service._arg(arguments, 'skillId');
     final name = service._optionalString(arguments, 'name');
     final description = service._optionalString(arguments, 'description');
@@ -1077,7 +1084,11 @@ class ClientToolsProvider implements AiToolProvider {
         },
         required: const ['skillId'],
         executionMode: AiToolExecutionMode.stateChanging,
-        handler: (args) => _clientUpdateSkill(service, args),
+        handler: (arguments) => _clientUpdateSkill(
+          service,
+          arguments,
+          approvedWrite: false,
+        ),
       ),
       AiTool(
         name: 'client_set_alarm',

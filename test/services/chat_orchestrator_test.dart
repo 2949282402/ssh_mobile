@@ -7,6 +7,7 @@ import 'package:ssh_mobile/services/chat_orchestrator.dart';
 import 'package:ssh_mobile/services/operational_memory_retriever.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
+import 'package:ssh_mobile/services/app_settings.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -114,6 +115,110 @@ void main() {
       ),
       isTrue,
     );
+
+    storage.dispose();
+  });
+
+  test('prepareTurn retrieves relevant skills, clips references and formats contextText', () async {
+    final storage = StorageService();
+    await storage.init();
+
+    // 注入启用和禁用的 Skill
+    final activeSkill = AiSkillRecord(
+      id: 'active-skill',
+      name: 'Docker Help',
+      description: 'Useful docker tips',
+      content: 'Docker main instructions.',
+      enabled: true,
+      references: const [
+        SkillReferenceItem(
+          title: 'Docker Cleanup',
+          content: 'Run docker system prune to free up space.',
+        ),
+        SkillReferenceItem(
+          title: 'Docker Build',
+          content: 'Use docker build -t image . to build container.',
+        ),
+      ],
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+
+    final disabledSkill = AiSkillRecord(
+      id: 'disabled-skill',
+      name: 'Nginx Help',
+      description: 'Nginx config guide',
+      content: 'Nginx main body.',
+      enabled: false,
+      references: const [
+        SkillReferenceItem(
+          title: 'Nginx Restart',
+          content: 'systemctl restart nginx',
+        ),
+      ],
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+
+    await storage.saveAiSkill(activeSkill);
+    await storage.saveAiSkill(disabledSkill);
+
+    final orchestrator = ChatOrchestrator(
+      storageService: storage,
+      contextAssembler: ChatContextAssembler(storageService: storage),
+      memoryRetriever: OperationalMemoryRetriever(
+        storageService: storage,
+      ),
+    );
+
+    final now = DateTime.now();
+    final chat = AiChatRecord(
+      id: 'chat-prepare-test',
+      title: 'Active Chat',
+      model: 'demo-model',
+      messages: const [],
+      createdAt: now,
+      updatedAt: now,
+      planMode: false,
+    );
+
+    // 1. 发起匹配启用 Skill reference 的查询
+    final prepMatched = await orchestrator.prepareTurn(
+      chat: chat,
+      text: 'prune cleanup',
+      createdAt: now,
+      language: AppLanguage.en,
+      attachments: const [],
+    );
+
+    expect(prepMatched.userMessage.contextText, isNotNull);
+    // 应当包含 【运维经验记忆】 或 [Operational memory references]
+    expect(prepMatched.userMessage.contextText, contains('[Operational memory references]'));
+    // 应当包含命中的 reference 标题和具体内容
+    expect(prepMatched.userMessage.contextText, contains('Docker Cleanup'));
+    expect(prepMatched.userMessage.contextText, contains('docker system prune'));
+    // 应当不包含未命中的 reference（因为 clips matches 逻辑只带回匹配的 references）
+    expect(prepMatched.userMessage.contextText, isNot(contains('Docker Build')));
+    expect(prepMatched.userMessage.contextText, isNot(contains('docker build -t')));
+
+    // 验证 traces 里也包含了 memory_context 记录
+    expect(prepMatched.assistantMessage.traces, hasLength(1));
+    expect(prepMatched.assistantMessage.traces.first.kind, equals('memory_context'));
+    expect(prepMatched.assistantMessage.traces.first.content, contains('Docker Cleanup'));
+
+    // 2. 发起匹配已禁用 Skill 的查询
+    final prepDisabled = await orchestrator.prepareTurn(
+      chat: chat,
+      text: 'restart nginx services',
+      createdAt: now,
+      language: AppLanguage.en,
+      attachments: const [],
+    );
+
+    // 禁用的 Skill 应该完全不参与召回
+    expect(prepDisabled.userMessage.contextText, isNot(contains('Nginx Restart')));
+    expect(prepDisabled.userMessage.contextText, isNot(contains('systemctl restart nginx')));
+    expect(prepDisabled.assistantMessage.traces, isEmpty);
 
     storage.dispose();
   });

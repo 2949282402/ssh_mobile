@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../services/app_settings.dart';
 import '../../../services/storage_service.dart';
+import '../../../utils/skill_frontmatter.dart';
 
 class AiSkillsViewModel extends ChangeNotifier {
   final StorageService _storageService;
@@ -77,8 +78,13 @@ class AiSkillsViewModel extends ChangeNotifier {
     _references = skill.references;
     _hasReferences = skill.references.isNotEmpty;
     if (!isSameId) {
-      nameController.text = skill.name;
-      descriptionController.text = skill.description;
+      final fm = SkillFrontmatter.parse(skill.content);
+      nameController.text = skill.name.isNotEmpty
+          ? skill.name
+          : (fm?.name ?? '');
+      descriptionController.text = skill.description.isNotEmpty
+          ? skill.description
+          : (fm?.description ?? '');
       contentController.text = skill.content;
     }
     notifyListeners();
@@ -92,7 +98,7 @@ class AiSkillsViewModel extends ChangeNotifier {
     if (language == AppLanguage.en) {
       return '''---
 name: $name
-description: Describe when this skill should be used.
+description: ""
 ---
 
 # $name
@@ -112,7 +118,7 @@ description: Describe when this skill should be used.
     } else {
       return '''---
 name: $name
-description: 描述此 skill 在何种情况下应当被使用。
+description: ""
 ---
 
 # $name
@@ -150,25 +156,77 @@ description: 描述此 skill 在何种情况下应当被使用。
     final isNew = current == null;
     final fallbackName = defaultName;
     final activeReferences = _hasReferences ? _references : const <SkillReferenceItem>[];
+
+    final inputName = nameController.text.trim();
+    final inputDesc = descriptionController.text.trim();
+    final rawContent = contentController.text;
+
+    final fm = SkillFrontmatter.parse(rawContent);
+    final finalName = inputName.isNotEmpty
+        ? inputName
+        : (fm?.name.isNotEmpty == true ? fm!.name : fallbackName);
+    final finalDesc = inputDesc.isNotEmpty
+        ? inputDesc
+        : (fm?.description.isNotEmpty == true ? fm!.description : '');
+
+    // 同步 content 的 frontmatter
+    String targetContent = rawContent;
+    if (fm != null) {
+      if (fm.name != finalName || fm.description != finalDesc) {
+        final buffer = StringBuffer()..writeln('---');
+        if (finalName.contains('\n')) {
+          buffer.writeln('name: >');
+          for (final line in finalName.split('\n')) {
+            buffer.writeln('  $line');
+          }
+        } else {
+          buffer.writeln('name: "${SkillFrontmatter.escapeString(finalName)}"');
+        }
+        if (finalDesc.contains('\n')) {
+          buffer.writeln('description: >');
+          for (final line in finalDesc.split('\n')) {
+            buffer.writeln('  $line');
+          }
+        } else {
+          buffer.writeln('description: "${SkillFrontmatter.escapeString(finalDesc)}"');
+        }
+        buffer.write('---');
+        final generatedHeader = buffer.toString();
+
+        final fmHeaderRegex = RegExp(r'^---\r?\n[\s\S]*?\r?\n---');
+        targetContent = rawContent.replaceFirst(fmHeaderRegex, generatedHeader);
+      }
+    } else {
+      // 没有任何 frontmatter，则保持正文不被改写注入
+      targetContent = rawContent;
+    }
+
+    // 更新 Controller 展现
+    if (contentController.text != targetContent) {
+      contentController.text = targetContent;
+    }
+    if (nameController.text != finalName) {
+      nameController.text = finalName;
+    }
+    if (descriptionController.text != finalDesc) {
+      descriptionController.text = finalDesc;
+    }
+
     final skill = isNew
         ? AiSkillRecord(
             id: 'skill-${now.microsecondsSinceEpoch}',
-            name: nameController.text.trim().isEmpty
-                ? fallbackName
-                : nameController.text.trim(),
-            description: descriptionController.text.trim(),
-            content: contentController.text,
+            name: finalName,
+            description: finalDesc,
+            content: targetContent,
             enabled: _enabled,
             references: activeReferences,
             createdAt: now,
             updatedAt: now,
           )
         : current.copyWith(
-            name: nameController.text.trim().isEmpty
-                ? fallbackName
-                : nameController.text.trim(),
-            description: descriptionController.text.trim(),
-            content: contentController.text,
+            name: finalName,
+            description: finalDesc,
+            content: targetContent,
             enabled: _enabled,
             references: activeReferences,
             updatedAt: now,

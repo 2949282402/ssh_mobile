@@ -1,3 +1,4 @@
+import '../utils/skill_frontmatter.dart';
 import '../utils/text_chunker.dart';
 import 'app_log_service.dart';
 import 'rag_service.dart';
@@ -94,16 +95,44 @@ class OperationalMemoryRetriever {
     final hits = <OperationalMemoryHit>[];
     for (final skill in await storageService.loadAiSkills()) {
       if (!skill.enabled) continue;
-      final haystack =
-          '${skill.name}\n${skill.description}\n${skill.content}'.toLowerCase();
+
+      final fm = SkillFrontmatter.parse(skill.content);
+      final fmName = fm?.name ?? '';
+      final fmDesc = fm?.description ?? '';
+      final fmBody = fm?.body ?? skill.content;
+
+      final refBuffer = StringBuffer();
+      for (final ref in skill.references) {
+        refBuffer.writeln(ref.title);
+        refBuffer.writeln(ref.content);
+      }
+
+      final haystack = '${skill.name}\n${skill.description}\n$fmName\n$fmDesc\n$fmBody\n${refBuffer.toString()}'.toLowerCase();
       final score = _keywordScore(haystack, keywords);
       if (score <= 0) continue;
+
+      final matchedRefs = <String>[];
+      for (final ref in skill.references) {
+        final refText = '${ref.title}\n${ref.content}'.toLowerCase();
+        final refScore = _keywordScore(refText, keywords);
+        if (refScore > 0) {
+          matchedRefs.add('### Reference: ${ref.title}\n${ref.content}');
+        }
+      }
+
+      final String finalContent;
+      if (matchedRefs.isNotEmpty) {
+        final limitRefs = matchedRefs.take(3).join('\n\n');
+        finalContent = _clip(limitRefs);
+      } else {
+        finalContent = _clip(skill.content.isNotEmpty ? skill.content : skill.description);
+      }
+
       hits.add(
         OperationalMemoryHit(
           sourceType: 'skill',
-          title: skill.name,
-          content: _clip(
-              skill.content.isNotEmpty ? skill.content : skill.description),
+          title: skill.name.isNotEmpty ? skill.name : (fmName.isNotEmpty ? fmName : 'Skill'),
+          content: finalContent,
           score: score + 1.5,
         ),
       );
@@ -220,13 +249,32 @@ class OperationalMemoryRetriever {
   }
 
   Set<String> _keywords(String text) {
-    return text
-        .toLowerCase()
-        .split(RegExp(r'[^a-z0-9_./:-]+'))
-        .map((item) => item.trim())
-        .where((item) => item.length >= 2)
-        .take(20)
-        .toSet();
+    final lower = text.toLowerCase();
+    final keywords = <String>{};
+
+    final englishParts = lower.split(RegExp(r'[^a-z0-9_./:-]+'));
+    for (final part in englishParts) {
+      final trimmed = part.trim();
+      if (trimmed.length >= 2) {
+        keywords.add(trimmed);
+      }
+    }
+
+    final chineseRegex = RegExp(r'[一-龥]+');
+    final matches = chineseRegex.allMatches(lower);
+    for (final match in matches) {
+      final block = match.group(0)!;
+      if (block.length >= 2) {
+        keywords.add(block);
+        if (block.length > 2) {
+          for (var i = 0; i <= block.length - 2; i++) {
+            keywords.add(block.substring(i, i + 2));
+          }
+        }
+      }
+    }
+
+    return keywords.take(20).toSet();
   }
 
   double _keywordScore(String haystack, Set<String> keywords) {

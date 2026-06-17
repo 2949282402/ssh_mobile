@@ -414,14 +414,18 @@ void main() {
       expect(skillItems, hasLength(1));
       expect(skillItems.first['id'], skillId);
 
-      final rawUpdate = await tools.execute('client_update_skill', {
-        'skillId': skillId,
-        'name': 'Updated Deploy Title',
-        'enabled': false,
-        'references': [
-          {'title': 'New backup step', 'content': 'tar -czf backup.tar.gz /var/www'}
-        ]
-      });
+      final rawUpdate = await tools.execute(
+        'client_update_skill',
+        {
+          'skillId': skillId,
+          'name': 'Updated Deploy Title',
+          'enabled': false,
+          'references': [
+            {'title': 'New backup step', 'content': 'tar -czf backup.tar.gz /var/www'}
+          ]
+        },
+        approvedWrite: true,
+      );
       final decodedUpdate = jsonDecode(rawUpdate) as Map<String, dynamic>;
       expect(decodedUpdate['updated'], isTrue);
 
@@ -885,6 +889,65 @@ void main() {
       final decodedUpdateInvalid =
           jsonDecode(rawUpdateInvalid) as Map<String, dynamic>;
       expect(decodedUpdateInvalid['error'], contains('Task step not found'));
+    });
+  });
+
+  group('client_update_skill approval and security flow', () {
+    test('requires approval before execution and succeeds after approved', () async {
+      final now = DateTime.now();
+      final skill = AiSkillRecord(
+        id: 'skill-test-1',
+        name: 'Original Name',
+        description: 'Original Desc',
+        content: 'Original Content',
+        enabled: true,
+        createdAt: now,
+        updatedAt: now,
+      );
+      await storage.saveAiSkill(skill);
+
+      // 1. 验证 approvalRequestFor 能生成正确的 local_skill_change 请求
+      final request = tools.approvalRequestFor('client_update_skill', {
+        'skillId': 'skill-test-1',
+        'name': 'Updated Name',
+        'description': 'Updated Desc',
+      });
+      expect(request, isNotNull);
+      expect(request!.approvalType, equals('local_skill_change'));
+      expect(request.connectionName, contains('client'));
+      expect(request.contentPreview, contains('Updated Name'));
+
+      // 2. 未通过审批执行，应当返回报错
+      final rawBlocked = await tools.execute('client_update_skill', {
+        'skillId': 'skill-test-1',
+        'name': 'Updated Name',
+      });
+      final decodedBlocked = jsonDecode(rawBlocked) as Map<String, dynamic>;
+      expect(decodedBlocked['error'], contains('requires user approval'));
+
+      // 3. 审批通过后执行，应当修改成功
+      final rawSuccess = await tools.execute(
+        'client_update_skill',
+        {
+          'skillId': 'skill-test-1',
+          'name': 'Updated Name',
+        },
+        approvedWrite: true,
+      );
+      final decodedSuccess = jsonDecode(rawSuccess) as Map<String, dynamic>;
+      expect(decodedSuccess['updated'], isTrue);
+
+      final updated = (await storage.loadAiSkills()).firstWhere((s) => s.id == 'skill-test-1');
+      expect(updated.name, equals('Updated Name'));
+
+      // 4. 验证 client_list_skills 和 client_save_experience_skill 仍然不需要审批
+      final rawList = await tools.execute('client_list_skills', {});
+      expect(jsonDecode(rawList)['skills'], isNotNull);
+
+      final rawSave = await tools.execute('client_save_experience_skill', {
+        'summary': 'New Exp',
+      });
+      expect(jsonDecode(rawSave)['saved'], isTrue);
     });
   });
 }
