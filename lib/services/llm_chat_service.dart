@@ -44,6 +44,7 @@ abstract interface class LlmClientAdapter {
     bool hasApprovedPlan = false,
     List<String> memorySources = const [],
     bool planMode = false,
+    AiChatMessageRecord? approvedPlanMessage,
   });
 
   Stream<String> stream({
@@ -62,6 +63,7 @@ abstract interface class LlmClientAdapter {
     List<String> memorySources = const [],
     bool forceContextCompression = false,
     bool planMode = false,
+    AiChatMessageRecord? approvedPlanMessage,
   });
 }
 
@@ -411,6 +413,7 @@ class LlmChatService implements LlmClientAdapter {
     bool hasApprovedPlan = false,
     List<String> memorySources = const [],
     bool planMode = false,
+    AiChatMessageRecord? approvedPlanMessage,
   }) {
     return _sendImpl(
       messages: messages,
@@ -425,6 +428,7 @@ class LlmChatService implements LlmClientAdapter {
       hasApprovedPlan: hasApprovedPlan,
       memorySources: memorySources,
       planMode: planMode,
+      approvedPlanMessage: approvedPlanMessage,
     );
   }
 
@@ -445,6 +449,7 @@ class LlmChatService implements LlmClientAdapter {
     List<String> memorySources = const [],
     bool forceContextCompression = false,
     bool planMode = false,
+    AiChatMessageRecord? approvedPlanMessage,
   }) {
     return _streamImpl(
       messages: messages,
@@ -461,6 +466,7 @@ class LlmChatService implements LlmClientAdapter {
       memorySources: memorySources,
       forceContextCompression: forceContextCompression,
       planMode: planMode,
+      approvedPlanMessage: approvedPlanMessage,
     );
   }
 

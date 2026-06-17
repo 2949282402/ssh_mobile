@@ -15,6 +15,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     bool hasApprovedPlan = false,
     List<String> memorySources = const [],
     bool planMode = false,
+    AiChatMessageRecord? approvedPlanMessage,
   }) async {
     final buffer = StringBuffer();
     await for (final chunk in _streamImpl(
@@ -30,6 +31,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
       hasApprovedPlan: hasApprovedPlan,
       memorySources: memorySources,
       planMode: planMode,
+      approvedPlanMessage: approvedPlanMessage,
     )) {
       buffer.write(chunk);
     }
@@ -52,8 +54,12 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     List<String> memorySources = const [],
     bool forceContextCompression = false,
     bool planMode = false,
+    AiChatMessageRecord? approvedPlanMessage,
   }) async* {
     final settings = await storageService.loadAiConnectionSettings();
+    final planExecutionSnapshot = approvedPlanMessage == null
+        ? null
+        : const PlanExecutionController().snapshot(approvedPlanMessage.todoSteps);
     final runStartedAt = DateTime.now();
     final runId = const Uuid().v4();
     var finalOutcome = AgentFinalOutcome.success;
@@ -400,6 +406,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         onTrace: onTrace,
         cancellationToken: cancellationToken,
         settings: settings,
+        planExecutionSnapshot: planExecutionSnapshot,
         complete: (role, roleMessages, {required thinkingSettings}) async {
           final response = await _chatCompletion(
             baseUrl: settings.baseUrl,

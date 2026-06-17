@@ -21,7 +21,9 @@ String buildApprovedPlanExecutionContext({
           })
       .toList(growable: false);
 
-  final currentTodoStep = PlanExecutionController.findCurrentStep(planMessage.todoSteps);
+  final snapshot = const PlanExecutionController().snapshot(planMessage.todoSteps);
+  final currentTodoStep = snapshot.currentStep;
+  final phaseName = snapshot.phase.name;
   final currentStepText = currentTodoStep == null
       ? (isEn ? 'All tasks in the plan are completed.' : '计划中的所有任务已完成。')
       : (isEn
@@ -58,6 +60,12 @@ String buildApprovedPlanExecutionContext({
         : '每一步开始时调用 client_task_update(status="running")，完成后再更新为 success、failed 或 skipped，并尽量写入 stdout/stderr。',
     isEn ? 'Persisted steps:' : '持久化步骤：',
     jsonEncode(steps),
+    '',
+    isEn ? 'Plan execution phase: $phaseName' : '计划执行阶段：$phaseName',
+    if (snapshot.phase == PlanExecutionPhase.blockedByFailure)
+      isEn
+          ? 'Warning: A preceding step has failed. Do not execute subsequent steps unless explicitly instructed by the user.'
+          : '警告：已有前置任务失败。除非用户明确要求继续，否则不要执行后续任务。',
     '',
     currentStepText,
     '',

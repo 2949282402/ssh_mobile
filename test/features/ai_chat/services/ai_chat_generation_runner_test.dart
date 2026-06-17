@@ -37,6 +37,7 @@ class FakeLlmChatService implements LlmChatService {
     List<String> memorySources = const [],
     bool forceContextCompression = false,
     bool planMode = false,
+    AiChatMessageRecord? approvedPlanMessage,
   }) {
     // 触发 stats 回调
     if (onStats != null) {

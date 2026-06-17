@@ -50,6 +50,7 @@ class ToolLoopController {
     required AiConnectionSettings settings,
     required MultiAgentCompletion complete,
     required MultiAgentClassificationCompletion classify,
+    PlanExecutionSnapshot? planExecutionSnapshot,
   }) async {
     for (var toolIndex = 0; toolIndex < toolCalls.length; toolIndex++) {
       final call = toolCalls[toolIndex];
@@ -148,6 +149,17 @@ class ToolLoopController {
               toolBudget: toolBudget,
             ),
           });
+          await _triggerPostToolReview(
+            finalOutcome: AgentFinalOutcome.budgetAuditRejected,
+            originalUserGoal: originalUserGoal,
+            workingMessages: workingMessages,
+            language: language,
+            complete: complete,
+            classify: classify,
+            onTrace: onTrace,
+            cancellationToken: cancellationToken,
+            planExecutionSnapshot: planExecutionSnapshot,
+          );
           return const ToolLoopResult(
             toolsShouldBeDisabled: true,
             finalOutcome: AgentFinalOutcome.budgetAuditRejected,
@@ -234,6 +246,17 @@ class ToolLoopController {
               toolBudget: toolBudget,
             ),
           });
+          await _triggerPostToolReview(
+            finalOutcome: AgentFinalOutcome.budgetAuditRejected,
+            originalUserGoal: originalUserGoal,
+            workingMessages: workingMessages,
+            language: language,
+            complete: complete,
+            classify: classify,
+            onTrace: onTrace,
+            cancellationToken: cancellationToken,
+            planExecutionSnapshot: planExecutionSnapshot,
+          );
           return const ToolLoopResult(
             toolsShouldBeDisabled: true,
             finalOutcome: AgentFinalOutcome.budgetAuditRejected,
@@ -489,6 +512,7 @@ class ToolLoopController {
           classify: classify,
           onTrace: onTrace,
           cancellationToken: cancellationToken,
+          planExecutionSnapshot: planExecutionSnapshot,
         );
         return ToolLoopResult(
           shouldStop: true,
@@ -509,6 +533,7 @@ class ToolLoopController {
       classify: classify,
       onTrace: onTrace,
       cancellationToken: cancellationToken,
+      planExecutionSnapshot: planExecutionSnapshot,
     );
 
     return ToolLoopResult(
@@ -527,30 +552,32 @@ class ToolLoopController {
     required MultiAgentClassificationCompletion classify,
     required void Function(LlmTraceEvent event)? onTrace,
     required LlmCancellationToken? cancellationToken,
+    PlanExecutionSnapshot? planExecutionSnapshot,
   }) async {
     final needsPostReview = (finalOutcome == AgentFinalOutcome.toolError ||
         finalOutcome == AgentFinalOutcome.loopGuardBlocked ||
-        finalOutcome == AgentFinalOutcome.approvalRejected);
+        finalOutcome == AgentFinalOutcome.approvalRejected ||
+        finalOutcome == AgentFinalOutcome.budgetAuditRejected);
 
     if (!needsPostReview) return;
 
-    AiTodoStep? currentTodoStep;
-    try {
-      final chats = await chatService.storageService.loadAiChats();
-      if (chats.isNotEmpty) {
-        final currentChat = chats.first;
-        final allSteps = <AiTodoStep>[];
-        for (final msg in currentChat.messages) {
-          allSteps.addAll(msg.todoSteps);
-        }
-        currentTodoStep = PlanExecutionController.findCurrentStep(allSteps);
-      }
-    } catch (_) {}
-
+    final currentTodoStep = planExecutionSnapshot?.currentStep;
     final recentLedger = toolLedger.isNotEmpty ? toolLedger.last : null;
-    final recentStepText = currentTodoStep != null
-        ? 'Current Plan Step: taskId=${currentTodoStep.id}, name=${currentTodoStep.name}, command=${currentTodoStep.command}'
-        : 'No active plan step.';
+
+    final String recentStepText;
+    if (currentTodoStep != null) {
+      recentStepText = [
+        'Current Plan Step:',
+        '- taskId: ${currentTodoStep.id}',
+        '- name: ${currentTodoStep.name}',
+        '- command: ${currentTodoStep.command}',
+        '- status: ${currentTodoStep.status.name}',
+        if (currentTodoStep.connectionId?.trim().isNotEmpty == true)
+          '- connectionId: ${currentTodoStep.connectionId}',
+      ].join('\n');
+    } else {
+      recentStepText = 'No active plan step.';
+    }
 
     final postToolContext = [
       'Goal: $originalUserGoal',
@@ -563,11 +590,12 @@ class ToolLoopController {
       ],
     ].join('\n');
 
-    final trigger = finalOutcome == AgentFinalOutcome.loopGuardBlocked
-        ? MultiAgentTrigger.postLoopGuard
-        : (finalOutcome == AgentFinalOutcome.approvalRejected
-            ? MultiAgentTrigger.postApprovalRejection
-            : MultiAgentTrigger.postToolFailure);
+    final trigger = switch (finalOutcome) {
+      AgentFinalOutcome.loopGuardBlocked => MultiAgentTrigger.postLoopGuard,
+      AgentFinalOutcome.approvalRejected => MultiAgentTrigger.postApprovalRejection,
+      AgentFinalOutcome.budgetAuditRejected => MultiAgentTrigger.postBudgetAudit,
+      _ => MultiAgentTrigger.postToolFailure,
+    };
 
     chatService._emitPostToolReviewTrace(onTrace, trigger, postToolContext);
 

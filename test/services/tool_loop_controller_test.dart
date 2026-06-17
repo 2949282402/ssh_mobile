@@ -12,6 +12,9 @@ import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/server_diagnostics_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
+import 'package:ssh_mobile/services/multi_agent_coordinator.dart';
+import 'package:ssh_mobile/services/agent/plan_execution_controller.dart';
+import 'package:ssh_mobile/features/playbook/models/playbook.dart';
 
 void main() {
   group('ToolLoopController integration tests', () {
@@ -287,5 +290,114 @@ void main() {
       expect(hasRejectedMsg, isTrue);
       expect(loopResult.finalOutcome, AgentFinalOutcome.approvalRejected);
     });
+
+    test('budget safety audit rejection triggers postBudgetAudit review', () async {
+      // Set budget count so that audit is triggered next call
+      final budget = LlmToolBudgetController(baseBudget: 10); // 10 base budget
+
+      // Simulate 15 accepted tool calls to reach the extended limit and force safety audit
+      for (var i = 0; i < 15; i++) {
+        budget.recordAcceptedToolCall();
+      }
+
+      final cache = <String, CachedToolResult>{};
+      final ledger = <LlmToolLedgerEntry>[];
+      final mockCoordinator = MockMultiAgentCoordinator();
+      final localLlm = LlmChatService(
+        storageService: storage,
+        toolService: tools,
+        multiAgentCoordinator: mockCoordinator,
+      );
+
+      final controller = ToolLoopController(
+        chatService: localLlm,
+        toolBudget: budget,
+        readOnlyToolCache: cache,
+        toolLedger: ledger,
+      );
+
+      final workingMessages = <Map<String, dynamic>>[];
+      final settings = await storage.loadAiConnectionSettings();
+
+      // Tool call: should immediately trigger safety audit because usedCalls (15) >= currentLimit (15)
+      final loopResult = await controller.handleToolCalls(
+        toolCalls: [
+          StreamingToolCall(id: 'call_b', name: 'client_time', arguments: '{}'),
+        ],
+        visibleToolsByName: {
+          'client_time': AiTool(
+            name: 'client_time',
+            description: 'Get client time',
+            properties: const {},
+            required: const [],
+            executionMode: AiToolExecutionMode.readOnly,
+            handler: (args, {approvedWrite = false}) async => '{}',
+          ),
+        },
+        planMode: false,
+        language: AppLanguage.zh,
+        apiKey: 'key',
+        auditModel: 'audit-model',
+        originalUserGoal: 'Goal',
+        workingMessages: workingMessages,
+        requestToolApproval: (req) async => const AiToolApprovalDecision.rejected(abort: false), // User rejects safety audit extension
+        onTrace: null,
+        cancellationToken: null,
+        settings: settings,
+        complete: (role, messages, {required thinkingSettings}) async => 'advice',
+        classify: (messages) async => '{}',
+        planExecutionSnapshot: const PlanExecutionSnapshot(
+          phase: PlanExecutionPhase.running,
+          steps: [
+            AiTodoStep(id: 'task-1', name: 'Step 1', command: 'cmd', description: 'desc', status: StepStatus.running),
+          ],
+          currentStepIndex: 0,
+          currentStep: AiTodoStep(id: 'task-1', name: 'Step 1', command: 'cmd', description: 'desc', status: StepStatus.running),
+          hasFailedStep: false,
+          isCompleted: false,
+        ),
+      );
+
+      expect(loopResult.finalOutcome, AgentFinalOutcome.budgetAuditRejected);
+      expect(mockCoordinator.lastTrigger, MultiAgentTrigger.postBudgetAudit);
+      expect(mockCoordinator.lastPostToolContext, contains('Current Plan Step:'));
+      expect(mockCoordinator.lastPostToolContext, contains('- taskId: task-1'));
+      expect(mockCoordinator.lastPostToolContext, contains('- name: Step 1'));
+      expect(mockCoordinator.lastPostToolContext, contains('- command: cmd'));
+      expect(mockCoordinator.lastPostToolContext, contains('- status: running'));
+    });
   });
+}
+
+class MockMultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
+  MultiAgentTrigger? lastTrigger;
+  String? lastPostToolContext;
+
+  @override
+  Future<MultiAgentRunResult?> run({
+    required List<Map<String, dynamic>> messages,
+    required bool enabled,
+    required int maxAgents,
+    required MultiAgentCompletion complete,
+    required MultiAgentClassificationCompletion classify,
+    void Function()? checkCancelled,
+    AppLanguage language = AppLanguage.zh,
+    String? plannerPrompt,
+    String? operatorPrompt,
+    String? explorePrompt,
+    String? reviewerPrompt,
+    String? summarizerPrompt,
+    String? coordinatorPrompt,
+    bool planMode = false,
+    MultiAgentTrigger trigger = MultiAgentTrigger.preflight,
+    String? postToolContext,
+  }) async {
+    lastTrigger = trigger;
+    lastPostToolContext = postToolContext;
+    return const MultiAgentRunResult(
+      memoryContent: 'mock memory',
+      traceContent: 'mock trace',
+      agentCount: 2,
+    );
+  }
 }

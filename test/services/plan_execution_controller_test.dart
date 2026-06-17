@@ -144,6 +144,85 @@ void main() {
       );
       expect(res.allowed, isFalse);
       expect(res.errorMessage, contains('Plan blocked: cannot execute "Step 2" because a prior step "Step 1" failed'));
+      expect(res.code, 'failed_dependency');
+    });
+
+    test('snapshot([]) returns phase none and isCompleted', () {
+      final snap = controller.snapshot([]);
+      expect(snap.phase, PlanExecutionPhase.none);
+      expect(snap.currentStep, isNull);
+      expect(snap.isCompleted, isTrue);
+    });
+
+    test('all pending steps -> phase pending, first is current', () {
+      final steps = [
+        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'c1', description: 'd', status: StepStatus.pending),
+        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'c2', description: 'd', status: StepStatus.pending),
+      ];
+      final snap = controller.snapshot(steps);
+      expect(snap.phase, PlanExecutionPhase.pending);
+      expect(snap.currentStep!.id, 't-1');
+      expect(snap.isCompleted, isFalse);
+    });
+
+    test('first running -> phase running, running is current', () {
+      final steps = [
+        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'c1', description: 'd', status: StepStatus.running),
+        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'c2', description: 'd', status: StepStatus.pending),
+      ];
+      final snap = controller.snapshot(steps);
+      expect(snap.phase, PlanExecutionPhase.running);
+      expect(snap.currentStep!.id, 't-1');
+      expect(snap.isCompleted, isFalse);
+    });
+
+    test('prior failed + later pending -> phase blockedByFailure', () {
+      final steps = [
+        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'c1', description: 'd', status: StepStatus.failed),
+        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'c2', description: 'd', status: StepStatus.pending),
+      ];
+      final snap = controller.snapshot(steps);
+      expect(snap.phase, PlanExecutionPhase.blockedByFailure);
+      expect(snap.currentStep!.id, 't-2');
+      expect(snap.isCompleted, isFalse);
+    });
+
+    test('all success or skipped -> phase completed', () {
+      final steps = [
+        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'c1', description: 'd', status: StepStatus.success),
+        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'c2', description: 'd', status: StepStatus.skipped),
+      ];
+      final snap = controller.snapshot(steps);
+      expect(snap.phase, PlanExecutionPhase.completed);
+      expect(snap.currentStep, isNull);
+      expect(snap.isCompleted, isTrue);
+    });
+
+    test('pending step 2 cannot be skipped while step 1 pending', () {
+      final steps = [
+        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'c1', description: 'd', status: StepStatus.pending),
+        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'c2', description: 'd', status: StepStatus.pending),
+      ];
+      final res = controller.validateTransition(
+        steps: steps,
+        targetTaskId: 't-2',
+        nextStatus: StepStatus.skipped,
+      );
+      expect(res.allowed, isFalse);
+      expect(res.code, 'order_violation');
+      expect(res.errorMessage, contains('cannot skip task "Step 2" because a preceding task "Step 1" is in state pending'));
+    });
+
+    test('running step can be skipped', () {
+      final steps = [
+        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'c1', description: 'd', status: StepStatus.running),
+      ];
+      final res = controller.validateTransition(
+        steps: steps,
+        targetTaskId: 't-1',
+        nextStatus: StepStatus.skipped,
+      );
+      expect(res.allowed, isTrue);
     });
   });
 
@@ -169,8 +248,32 @@ void main() {
 
       expect(contextText, contains('当前应执行任务：'));
       expect(contextText, contains('"taskId":"t-1"'));
+      expect(contextText, contains('计划执行阶段：pending'));
       expect(contextText, contains('执行规则：'));
       expect(contextText, contains('请勿跳步或无序执行。'));
+    });
+
+    test('blockedByFailure phase includes warning', () {
+      final steps = [
+        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'cmd 1', description: 'desc', status: StepStatus.failed),
+        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'cmd 2', description: 'desc', status: StepStatus.pending),
+      ];
+
+      final message = AiChatMessageRecord(
+        role: 'assistant',
+        text: 'plan text',
+        createdAt: DateTime.now(),
+        todoSteps: steps,
+      );
+
+      final contextText = buildApprovedPlanExecutionContext(
+        userText: 'lets go',
+        planMessage: message,
+        language: AppLanguage.zh,
+      );
+
+      expect(contextText, contains('计划执行阶段：blockedByFailure'));
+      expect(contextText, contains('警告：已有前置任务失败。除非用户明确要求继续，否则不要执行后续任务。'));
     });
   });
 }

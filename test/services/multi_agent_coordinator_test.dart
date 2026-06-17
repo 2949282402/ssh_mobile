@@ -626,6 +626,43 @@ void main() {
       // 确认 postToolContext 传给了 summarizer
       expect(summarizerReceivedContext, contains('Failed tool: run_command with exit code 127'));
     });
+
+    test('postBudgetAudit trigger runs only reviewer and summarizer with postToolContext', () async {
+      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
+      final roles = <String>[];
+      var summarizerReceivedContext = '';
+
+      final result = await coordinator.run(
+        enabled: true,
+        maxAgents: 5,
+        trigger: MultiAgentTrigger.postBudgetAudit,
+        postToolContext: 'Budget audit rejected context info',
+        messages: const [
+          {'role': 'user', 'content': 'inspect logs and fix system'},
+        ],
+        classify: (messages) async => '{}',
+        complete: (role, messages, {required thinkingSettings}) async {
+          roles.add(role.name);
+          if (role.name == 'summarizer') {
+            summarizerReceivedContext = messages.last['content'] as String;
+            return jsonEncode({
+              'summary': 'fixed',
+              'recommendedActions': [],
+              'risks': [],
+              'openQuestions': [],
+            });
+          }
+          return 'reviewer advice';
+        },
+      );
+
+      expect(result, isNotNull);
+      expect(roles, containsAll(['reviewer', 'summarizer']));
+      expect(roles, isNot(contains('explore')));
+      expect(roles, isNot(contains('planner')));
+      expect(roles, isNot(contains('operator')));
+      expect(summarizerReceivedContext, contains('Budget audit rejected context info'));
+    });
   });
 
   test('normalizes max agent count', () {

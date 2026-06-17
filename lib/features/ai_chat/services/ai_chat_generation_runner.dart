@@ -73,6 +73,9 @@ class AiChatGenerationRunner {
         hasApprovedPlan: initialChat.approvedPlan != null,
         memorySources: memorySources,
         messages: requestMessagesJson,
+        approvedPlanMessage: initialChat.approvedPlan == null
+            ? null
+            : approvedPlanMessageForChat(initialChat),
       )) {
         answer.write(chunk);
         onTextChunk(chunk);

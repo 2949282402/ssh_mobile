@@ -35,12 +35,12 @@ An Agent Run represents a single session starting from a user message, progressi
 ### 1.1 Multi-Agent Collaboration
 * **Preflight Trigger**: Evaluates user request complexity and risk. If high-risk keywords (e.g. `delete`, `restart`, `写入`, `删除`, `重启`) are detected, the `Reviewer` agent is dynamically loaded.
 * **DAG execution sequence**: Runs helpers in parallel (`explore` and `planner`), feeds outputs to subsequent tasks (`operator` and `reviewer`), and gathers advisory notes in `summarizer`.
-* **Runtime Post-Tool Review Trigger**: Activated dynamically if a critical tool fails, loop guard triggers, or safety budgets are exhausted, calling the `Reviewer` and `Summarizer` for diagnostic recovery steps.
+* **Runtime Post-Tool Review Trigger**: Activated dynamically if a critical tool fails (`toolError`), loop guard triggers (`loopGuardBlocked`), approval is rejected with abort (`approvalRejected`), or safety budgets are exhausted/safety audit is rejected (`budgetAuditRejected`). It maps these outcomes to the corresponding `MultiAgentTrigger` (e.g., `postBudgetAudit` for `budgetAuditRejected`), calling the `Reviewer` and `Summarizer` for diagnostic recovery steps. Post-tool reviews do not execute tools. Current active plan step is retrieved dynamically via an explicit `PlanExecutionSnapshot` passed from the chat stream runner, preventing errors from guessing the current session via storage loads.
 
 ### 1.2 Tool Loop Execution
 * **Loop Guard Protection**: A deterministic guard monitors repeating identical signature patterns. Read-only tool execution is terminated if a single tool is repeated $\ge 3$ times or alternating loop sequences are detected.
 * **Safety Audit Escalation**: Once tool calls reach the safety budget ceiling, the system performs an internal safety audit, asking the LLM to inspect the ledger log for loops or drift.
-* **Sequential Transitions**: Step execution progresses in strict order (`pending -> running -> success/failed`), blocked from jumping ahead or running tasks concurrently.
+* **Sequential Transitions**: Step execution progresses in strict order (`pending -> running -> success/failed/skipped`). Sequential constraints are strictly checked before starting (`running`) or skipping (`skipped`) any task step. If any preceding step is not completed, transition is blocked with code `order_violation`. Completed step mutations are locked (`completed_task_locked`). If a preceding step failed, subsequent execution is blocked with code `failed_dependency` (though skipping subsequent steps is permitted).
 
 ---
 
