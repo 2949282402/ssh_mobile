@@ -34,7 +34,7 @@ Future<SystemPowerConfirmationToken?> confirmSystemPowerAction(
           : '重启会中断当前服务器连接和运行中的任务。是否继续？',
       SystemPowerAction.shutdown => isEnglish
           ? 'Shutting down will interrupt current server connections and running tasks, and may not be remotely recoverable. Continue?'
-          : '关机会中断当前服务器连接 and 运行中的任务，且可能无法远程恢复。是否继续？',
+          : '关机会中断当前服务器连接和运行中的任务，且可能无法远程恢复。是否继续？',
     },
     cancelLabel: cancelLabel,
     confirmLabel: confirmLabel,
