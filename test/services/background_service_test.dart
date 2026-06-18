@@ -24,5 +24,27 @@ void main() {
       expect(sanitized['username'], 'user');
       expect(sanitized['hostKeyFingerprint'], 'MD5:00:01');
     });
+
+    test('tmux unexpected disconnect requires app reconnect', () {
+      final decision = decideBackgroundUnexpectedDisconnect(
+        launchMode: 'tmux',
+        reason: 'stdout closed',
+      );
+
+      expect(decision.reconnectInBackground, isFalse);
+      expect(decision.requiresAppReconnect, isTrue);
+      expect(decision.message, contains('Reconnect from the app'));
+    });
+
+    test('plain ssh unexpected disconnect does not background reconnect', () {
+      final decision = decideBackgroundUnexpectedDisconnect(
+        launchMode: 'ssh',
+        reason: 'socket closed',
+      );
+
+      expect(decision.reconnectInBackground, isFalse);
+      expect(decision.requiresAppReconnect, isFalse);
+      expect(decision.message, 'Connection lost: socket closed');
+    });
   });
 }

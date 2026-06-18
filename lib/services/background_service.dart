@@ -211,6 +211,38 @@ Map<String, dynamic> sanitizeBackgroundReconnectData(
     ..remove('privateKey');
 }
 
+class BackgroundReconnectDecision {
+  final bool reconnectInBackground;
+  final bool requiresAppReconnect;
+  final String message;
+
+  const BackgroundReconnectDecision({
+    required this.reconnectInBackground,
+    required this.requiresAppReconnect,
+    required this.message,
+  });
+}
+
+BackgroundReconnectDecision decideBackgroundUnexpectedDisconnect({
+  required String launchMode,
+  required String reason,
+}) {
+  if (launchMode == 'tmux') {
+    return BackgroundReconnectDecision(
+      reconnectInBackground: false,
+      requiresAppReconnect: true,
+      message:
+          'Connection lost: $reason. Reconnect from the app to restore this tmux session.',
+    );
+  }
+
+  return BackgroundReconnectDecision(
+    reconnectInBackground: false,
+    requiresAppReconnect: false,
+    message: 'Connection lost: $reason',
+  );
+}
+
 @pragma('vm:entry-point')
 void sshBackgroundServiceEntryPoint(ServiceInstance service) {
   final sessions = <String, _BackgroundSshSession>{};
@@ -342,24 +374,22 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
       return;
     }
 
-    if (runtime.launchMode == 'tmux') {
+    final decision = decideBackgroundUnexpectedDisconnect(
+      launchMode: runtime.launchMode,
+      reason: reason,
+    );
+    if (decision.requiresAppReconnect) {
       emitLog(
         'warning',
         'Background tmux reconnect requires app credentials',
         details:
             'sessionId=${runtime.sessionId} tmux=${runtime.tmuxSessionName} reason=$reason',
       );
-      await closeSsh(
-        runtime.sessionId,
-        message:
-            'Connection lost: $reason. Reconnect from the app to restore this tmux session.',
-      );
-      return;
     }
 
     await closeSsh(
       runtime.sessionId,
-      message: 'Connection lost: $reason',
+      message: decision.message,
     );
   }
 
