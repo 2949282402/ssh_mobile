@@ -37,7 +37,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
               height: 84,
               decoration: BoxDecoration(
                 color: colorScheme.primary.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                 border: Border.all(
                   color: colorScheme.primary.withValues(alpha: 0.18),
                 ),
@@ -247,12 +247,12 @@ extension _HomeScreenStateServerList on _HomeScreenState {
         padding: EdgeInsets.all(14 * scale),
         decoration: BoxDecoration(
           color: cardBgColor,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
           border: Border.all(
             color: activeBorderColor,
             width: 1,
           ),
-          boxShadow: _panelShadow(context),
+          boxShadow: const [],
         ),
         child: Column(
           children: [
@@ -282,7 +282,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                     color: isActive
                         ? success.withValues(alpha: 0.15)
                         : primary.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                   ),
                   child: Icon(
                     _getStatusIcon(conn, latestState),
@@ -350,7 +350,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                         horizontal: 7 * scale, vertical: 3 * scale),
                     decoration: BoxDecoration(
                       color: success.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(999),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusPill),
                       border:
                           Border.all(color: success.withValues(alpha: 0.35)),
                     ),
@@ -419,7 +419,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
             Divider(
                 height: 1, color: Theme.of(context).colorScheme.outlineVariant),
             InkWell(
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
               onTap: () => _toggleConnectionWindows(conn.id),
               child: Padding(
                 padding:
@@ -478,7 +478,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
+        borderRadius: BorderRadius.circular(AppTheme.radiusPill),
         border: Border.all(color: color.withValues(alpha: 0.35)),
       ),
       child: Row(
@@ -575,9 +575,9 @@ extension _HomeScreenStateServerList on _HomeScreenState {
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               color: cardColor,
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
               border: Border.all(color: _panelBorderColor(context)),
-              boxShadow: _panelShadow(context),
+              boxShadow: const [],
             ),
             child: Row(
               children: [
@@ -635,7 +635,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
             height: 32,
             decoration: BoxDecoration(
               color: color.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
             ),
             child: Icon(icon, size: 17, color: color),
           ),
@@ -711,10 +711,6 @@ extension _HomeScreenStateServerList on _HomeScreenState {
 
   Color _panelMutedTextColor(BuildContext context) {
     return Theme.of(context).colorScheme.onSurfaceVariant;
-  }
-
-  List<BoxShadow> _panelShadow(BuildContext context) {
-    return const [];
   }
 
   IconData _getStatusIcon(ConnectionConfig conn, SshConnectionState? state) {

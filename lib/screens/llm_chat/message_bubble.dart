@@ -67,14 +67,14 @@ class _MessageBubble extends StatelessWidget {
                         ? colorScheme.primary.withValues(alpha: 0.14)
                         : colorScheme.surface,
                 borderRadius: BorderRadius.only(
-                  topLeft: const Radius.circular(12),
+                  topLeft: const Radius.circular(AppTheme.radiusMedium),
                   topRight: isUser
-                      ? const Radius.circular(3)
-                      : const Radius.circular(12),
-                  bottomLeft: const Radius.circular(12),
+                      ? const Radius.circular(4)
+                      : const Radius.circular(AppTheme.radiusMedium),
+                  bottomLeft: const Radius.circular(AppTheme.radiusMedium),
                   bottomRight: isUser
-                      ? const Radius.circular(12)
-                      : const Radius.circular(3),
+                      ? const Radius.circular(AppTheme.radiusMedium)
+                      : const Radius.circular(4),
                 ),
                 border: Border.all(
                   color: isError
@@ -99,7 +99,7 @@ class _MessageBubble extends StatelessWidget {
                                   if (attachment.isImage &&
                                       attachment.dataBase64.isNotEmpty)
                                     ClipRRect(
-                                      borderRadius: BorderRadius.circular(6),
+                                      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                                       child: Image.memory(
                                         base64Decode(attachment.dataBase64),
                                         width: 120,
@@ -113,7 +113,7 @@ class _MessageBubble extends StatelessWidget {
                                             color: colorScheme
                                                 .surfaceContainerHighest,
                                             borderRadius:
-                                                BorderRadius.circular(6),
+                                                BorderRadius.circular(AppTheme.radiusSmall),
                                           ),
                                           child: Text(
                                             attachment.fileName,
@@ -135,7 +135,7 @@ class _MessageBubble extends StatelessWidget {
                                       decoration: BoxDecoration(
                                         color:
                                             colorScheme.surfaceContainerHighest,
-                                        borderRadius: BorderRadius.circular(6),
+                                        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                                       ),
                                       child: Row(
                                         mainAxisSize: MainAxisSize.min,
@@ -275,6 +275,10 @@ class _MessageBubble extends StatelessWidget {
             foregroundColor: Colors.white,
             visualDensity: VisualDensity.compact,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+            ),
           ),
         ),
       ),
@@ -450,7 +454,8 @@ class _AssistantMarkdownBody extends StatelessWidget {
           color: colorScheme.surfaceContainerHighest.withValues(
             alpha: 0.72,
           ),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+          border: Border.all(color: colorScheme.outlineVariant),
         ),
       ),
     );
@@ -537,7 +542,7 @@ class _MessageActions extends StatelessWidget {
             decoration: BoxDecoration(
               color:
                   colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
               border: Border.all(
                 color: colorScheme.outlineVariant.withValues(alpha: 0.72),
               ),
@@ -614,7 +619,7 @@ class _MessageActions extends StatelessWidget {
                       decoration: BoxDecoration(
                         color: colorScheme.surfaceContainerHighest
                             .withValues(alpha: 0.36),
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                         border: Border.all(
                           color: colorScheme.outlineVariant
                               .withValues(alpha: 0.72),
@@ -682,7 +687,7 @@ class _TracePanel extends StatelessWidget {
       margin: const EdgeInsets.only(left: 4, right: 4, bottom: 6),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.34),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
         border: Border.all(
           color: colorScheme.outlineVariant.withValues(alpha: 0.72),
         ),
@@ -742,7 +747,7 @@ class _TraceEntry extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 6),
       decoration: BoxDecoration(
         color: colorScheme.surface.withValues(alpha: 0.72),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
         border: Border.all(color: colorScheme.outlineVariant),
       ),
       child: Theme(
@@ -887,7 +892,7 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
     return Container(
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.24),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
         border: Border.all(color: colorScheme.outlineVariant),
       ),
       padding: const EdgeInsets.all(10),
@@ -950,7 +955,7 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
               }
             });
           },
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
             child: Row(
@@ -1003,7 +1008,7 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                       decoration: BoxDecoration(
                         color: colorScheme.surfaceContainerHighest
                             .withValues(alpha: 0.6),
-                        borderRadius: BorderRadius.circular(4),
+                        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -1040,7 +1045,7 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                   decoration: BoxDecoration(
                     color: colorScheme.surfaceContainerHighest
                         .withValues(alpha: 0.48),
-                    borderRadius: BorderRadius.circular(4),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                     border: Border.all(color: colorScheme.outlineVariant),
                   ),
                   child: Text(
@@ -1060,7 +1065,7 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                     padding: const EdgeInsets.all(6),
                     decoration: BoxDecoration(
                       color: Colors.black.withValues(alpha: 0.84),
-                      borderRadius: BorderRadius.circular(4),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                     ),
                     child: SingleChildScrollView(
                       child: SelectableText(

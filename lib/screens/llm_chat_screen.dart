@@ -26,6 +26,7 @@ import '../services/playbook_service.dart';
 import '../services/rag_service.dart';
 import '../widgets/overflow_scroll_text.dart';
 import '../widgets/destructive_confirm_dialog.dart';
+import '../theme/app_theme.dart';
 
 part 'llm_chat/assistant_run_indicator.dart';
 part 'llm_chat/llm_settings_screen.dart';

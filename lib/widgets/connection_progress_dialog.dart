@@ -46,8 +46,11 @@ class ConnectionProgressDialog extends StatelessWidget {
           },
           child: Material(
             color: colorScheme.surface,
-            elevation: 16,
-            borderRadius: BorderRadius.circular(8),
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+              side: BorderSide(color: colorScheme.outline, width: 1),
+            ),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 300),
               child: Padding(
@@ -55,12 +58,15 @@ class ConnectionProgressDialog extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const SizedBox(
+                    SizedBox(
                       width: 42,
                       height: 42,
                       child: CircularProgressIndicator(
                         strokeWidth: 3,
-                        color: AppTheme.terminalGreen,
+                        color: Theme.of(context)
+                                .extension<ExtendedColors>()
+                                ?.success ??
+                            AppTheme.terminalGreen,
                       ),
                     ),
                     const SizedBox(height: 18),

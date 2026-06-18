@@ -576,15 +576,6 @@ class _TerminalHistoryScrollbar extends StatelessWidget {
                           ? colorScheme.primary.withValues(alpha: 0.88)
                           : colorScheme.onSurface.withValues(alpha: 0.18),
                       borderRadius: BorderRadius.circular(999),
-                      boxShadow: enabled
-                          ? [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.22),
-                                blurRadius: 6,
-                                offset: const Offset(0, 2),
-                              ),
-                            ]
-                          : null,
                     ),
                   ),
                 ),
