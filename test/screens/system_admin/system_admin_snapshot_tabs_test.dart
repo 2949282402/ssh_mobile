@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:ssh_mobile/screens/system_admin_screen.dart';
 import 'package:ssh_mobile/features/system_admin/viewmodels/system_admin_viewmodel.dart';
+import 'package:ssh_mobile/widgets/system_power_confirm_flow.dart';
 import 'package:ssh_mobile/features/performance/viewmodels/performance_viewmodel.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
@@ -145,10 +146,10 @@ class StubSystemAdminViewModel extends ChangeNotifier implements SystemAdminView
   Future<void> manageSystemdService(String serviceName, String action) async {}
 
   @override
-  Future<void> rebootServer() async {}
+  Future<void> rebootServer(SystemPowerConfirmationToken token) async {}
 
   @override
-  Future<void> shutdownServer() async {}
+  Future<void> shutdownServer(SystemPowerConfirmationToken token) async {}
 }
 
 class StubPerformanceMonitorViewModel extends ChangeNotifier implements PerformanceMonitorViewModel {

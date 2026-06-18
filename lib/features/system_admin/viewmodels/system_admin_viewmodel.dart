@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../services/system_admin_service.dart';
 import '../../../services/storage_service.dart';
+import '../../../widgets/system_power_confirm_flow.dart';
 import '../../connection/models/connection.dart';
 import '../../../models/system_admin.dart';
 
@@ -252,15 +253,27 @@ class SystemAdminViewModel extends ChangeNotifier {
     await fetchServices(id);
   }
 
-  Future<void> rebootServer() async {
+  Future<void> rebootServer(SystemPowerConfirmationToken token) async {
+    if (token.action != SystemPowerAction.reboot) {
+      throw ArgumentError('Invalid token action for rebootServer');
+    }
+    if (!token.isFresh) {
+      throw StateError('System power confirmation token expired');
+    }
     final id = managementConnectionId;
     if (id == null) return;
-    await _adminService.rebootServer(id);
+    await _adminService.rebootServer(id, token);
   }
 
-  Future<void> shutdownServer() async {
+  Future<void> shutdownServer(SystemPowerConfirmationToken token) async {
+    if (token.action != SystemPowerAction.shutdown) {
+      throw ArgumentError('Invalid token action for shutdownServer');
+    }
+    if (!token.isFresh) {
+      throw StateError('System power confirmation token expired');
+    }
     final id = managementConnectionId;
     if (id == null) return;
-    await _adminService.shutdownServer(id);
+    await _adminService.shutdownServer(id, token);
   }
 }

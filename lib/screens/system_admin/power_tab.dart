@@ -78,31 +78,30 @@ class _PowerTabState extends State<_PowerTab>
 
   Future<void> _confirmPowerAction(SystemPowerAction action) async {
     final language = context.read<AppSettings>().language;
-    final confirm = await confirmSystemPowerAction(
+    final token = await confirmSystemPowerAction(
       context,
       action: action,
       isEnglish: language == AppLanguage.en,
     );
 
-    if (!mounted) return;
-    if (confirm) {
-      try {
-        if (action == SystemPowerAction.reboot) {
-          await widget.viewModel.rebootServer();
-        } else {
-          await widget.viewModel.shutdownServer();
-        }
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Command executed. Disconnecting...')),
-        );
-        widget.viewModel.disconnect();
-      } catch (e) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to execute power action: $e')),
-        );
+    if (!mounted || token == null) return;
+
+    try {
+      if (action == SystemPowerAction.reboot) {
+        await widget.viewModel.rebootServer(token);
+      } else {
+        await widget.viewModel.shutdownServer(token);
       }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Command executed. Disconnecting...')),
+      );
+      widget.viewModel.disconnect();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to execute power action: $e')),
+      );
     }
   }
 }

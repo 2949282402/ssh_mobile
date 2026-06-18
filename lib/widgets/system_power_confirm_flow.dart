@@ -4,9 +4,11 @@ import 'countdown_confirm_dialog.dart';
 import 'destructive_confirm_dialog.dart';
 import 'typed_confirm_dialog.dart';
 
+part 'system_power_confirmation_token.dart';
+
 enum SystemPowerAction { reboot, shutdown }
 
-Future<bool> confirmSystemPowerAction(
+Future<SystemPowerConfirmationToken?> confirmSystemPowerAction(
   BuildContext context, {
   required SystemPowerAction action,
   required bool isEnglish,
@@ -32,12 +34,12 @@ Future<bool> confirmSystemPowerAction(
           : '重启会中断当前服务器连接和运行中的任务。是否继续？',
       SystemPowerAction.shutdown => isEnglish
           ? 'Shutting down will interrupt current server connections and running tasks, and may not be remotely recoverable. Continue?'
-          : '关机会中断当前服务器连接和运行中的任务，且可能无法远程恢复。是否继续？',
+          : '关机会中断当前服务器连接 and 运行中的任务，且可能无法远程恢复。是否继续？',
     },
     cancelLabel: cancelLabel,
     confirmLabel: confirmLabel,
   );
-  if (!firstConfirmed || !context.mounted) return false;
+  if (!firstConfirmed || !context.mounted) return null;
 
   final typedConfirmed = await TypedConfirmDialog.show(
     context,
@@ -49,9 +51,9 @@ Future<bool> confirmSystemPowerAction(
     cancelLabel: cancelLabel,
     confirmLabel: confirmLabel,
   );
-  if (!typedConfirmed || !context.mounted) return false;
+  if (!typedConfirmed || !context.mounted) return null;
 
-  return CountdownConfirmDialog.show(
+  final countdownConfirmed = await CountdownConfirmDialog.show(
     context,
     title: switch (action) {
       SystemPowerAction.reboot =>
@@ -70,5 +72,14 @@ Future<bool> confirmSystemPowerAction(
     seconds: 10,
     cancelLabel: cancelLabel,
     confirmLabel: confirmLabel,
+  );
+
+  if (!countdownConfirmed) return null;
+
+  final nonce = DateTime.now().microsecondsSinceEpoch.toString();
+  return SystemPowerConfirmationToken._(
+    action: action,
+    issuedAt: DateTime.now(),
+    nonce: nonce,
   );
 }

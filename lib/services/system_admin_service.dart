@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:dartssh2/dartssh2.dart';
 import '../models/system_admin.dart';
+import '../widgets/system_power_confirm_flow.dart';
 import 'ssh_service.dart';
 import '../core/services/ssh_client_factory.dart';
 import 'storage_service.dart';
@@ -40,6 +41,12 @@ class SystemAdminService extends ChangeNotifier {
   Future<void> connect(String connectionId) async {
     if (connectOverride != null) {
       await connectOverride!(connectionId);
+      _activeConnectionId = connectionId;
+      _isConnecting = false;
+      _isConnected = true;
+      _isRoot = true;
+      _errorMessage = null;
+      notifyListeners();
       return;
     }
 
@@ -671,8 +678,24 @@ class SystemAdminService extends ChangeNotifier {
     }
   }
 
+  void _validatePowerToken(
+    SystemPowerConfirmationToken token,
+    SystemPowerAction expectedAction,
+  ) {
+    if (token.action != expectedAction) {
+      throw StateError('System power confirmation token action mismatch');
+    }
+    if (!token.isFresh) {
+      throw StateError('System power confirmation token expired');
+    }
+  }
+
   /// Reboot the server
-  Future<void> rebootServer(String connectionId) async {
+  Future<void> rebootServer(
+    String connectionId,
+    SystemPowerConfirmationToken token,
+  ) async {
+    _validatePowerToken(token, SystemPowerAction.reboot);
     try {
       // UI callers must complete confirmSystemPowerAction before reaching this
       // service-level execution path.
@@ -689,7 +712,11 @@ class SystemAdminService extends ChangeNotifier {
   }
 
   /// Shutdown the server
-  Future<void> shutdownServer(String connectionId) async {
+  Future<void> shutdownServer(
+    String connectionId,
+    SystemPowerConfirmationToken token,
+  ) async {
+    _validatePowerToken(token, SystemPowerAction.shutdown);
     try {
       // UI callers must complete confirmSystemPowerAction before reaching this
       // service-level execution path.

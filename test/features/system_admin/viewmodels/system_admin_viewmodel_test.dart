@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:ssh_mobile/features/system_admin/viewmodels/system_admin_viewmodel.dart';
+import 'package:ssh_mobile/widgets/system_power_confirm_flow.dart';
 import 'package:ssh_mobile/services/system_admin_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
@@ -232,6 +233,73 @@ tcp   LISTEN  0       128               0.0.0.0:22            0.0.0.0:*      use
       expect(viewModel.ports[0].localPort, equals(22));
       expect(viewModel.ports[0].processName, equals('sshd'));
       expect(viewModel.ports[0].pid, equals(1024));
+    });
+
+    test('rebootServer and shutdownServer require valid/fresh tokens', () async {
+      final viewModel = SystemAdminViewModel(
+        adminService: adminService,
+        storageService: storageService,
+      );
+
+      // Connect the viewmodel/service mock so managementConnectionId is not null
+      adminService.connectOverride = (id) async {};
+      await viewModel.connect('conn_123');
+
+      // 1. Successful reboot
+      final rebootToken = SystemPowerConfirmationToken.testing(
+        action: SystemPowerAction.reboot,
+      );
+      await viewModel.rebootServer(rebootToken);
+      expect(lastCommand, equals('reboot'));
+
+      // Reset command tracker
+      lastCommand = null;
+
+      // 2. Action mismatch reboot
+      final shutdownToken = SystemPowerConfirmationToken.testing(
+        action: SystemPowerAction.shutdown,
+      );
+      expect(
+        () => viewModel.rebootServer(shutdownToken),
+        throwsArgumentError,
+      );
+      expect(lastCommand, isNull);
+
+      // 3. Expired reboot token
+      final expiredRebootToken = SystemPowerConfirmationToken.testing(
+        action: SystemPowerAction.reboot,
+        issuedAt: DateTime.now().subtract(const Duration(minutes: 3)),
+      );
+      expect(
+        () => viewModel.rebootServer(expiredRebootToken),
+        throwsStateError,
+      );
+      expect(lastCommand, isNull);
+
+      // 4. Successful shutdown
+      await viewModel.shutdownServer(shutdownToken);
+      expect(lastCommand, equals('shutdown -h now'));
+
+      // Reset command tracker
+      lastCommand = null;
+
+      // 5. Action mismatch shutdown
+      expect(
+        () => viewModel.shutdownServer(rebootToken),
+        throwsArgumentError,
+      );
+      expect(lastCommand, isNull);
+
+      // 6. Expired shutdown token
+      final expiredShutdownToken = SystemPowerConfirmationToken.testing(
+        action: SystemPowerAction.shutdown,
+        issuedAt: DateTime.now().subtract(const Duration(minutes: 3)),
+      );
+      expect(
+        () => viewModel.shutdownServer(expiredShutdownToken),
+        throwsStateError,
+      );
+      expect(lastCommand, isNull);
     });
   });
 }
