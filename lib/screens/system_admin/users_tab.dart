@@ -54,7 +54,7 @@ class _UsersTabState extends State<_UsersTab>
         ),
         Expanded(
           child: RefreshIndicator(
-            onRefresh: () => viewModel.fetchAccounts(id),
+            onRefresh: () => viewModel.fetchAccounts(id, force: true),
             child: viewModel.accounts.isEmpty
                 ? const Center(child: Text('No accounts found.'))
                 : ListView.builder(

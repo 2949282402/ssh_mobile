@@ -53,6 +53,17 @@ void main() {
   });
 
   group('SystemAdminViewModel Tests', () {
+    Future<SystemAdminViewModel> rootConnectedViewModel() async {
+      final viewModel = SystemAdminViewModel(
+        adminService: adminService,
+        storageService: storageService,
+      );
+      viewModel.selectConnection('conn_123');
+      await viewModel.connectIfNeeded('conn_123');
+      expect(viewModel.activeManagementConnectionId, equals('conn_123'));
+      return viewModel;
+    }
+
     test('Initialization status checks', () {
       final viewModel = SystemAdminViewModel(
         adminService: adminService,
@@ -69,7 +80,9 @@ void main() {
       expect(viewModel.ports, isEmpty);
     });
 
-    test('selectConnection updates selectedConnectionId and triggers notifyListeners', () {
+    test(
+        'selectConnection updates selectedConnectionId and triggers notifyListeners',
+        () {
       final viewModel = SystemAdminViewModel(
         adminService: adminService,
         storageService: storageService,
@@ -86,7 +99,8 @@ void main() {
       expect(notified, isTrue);
     });
 
-    test('connect updates selectedConnectionId and calls adminService.connect', () async {
+    test('connect only opens management connection without changing selection',
+        () async {
       final viewModel = SystemAdminViewModel(
         adminService: adminService,
         storageService: storageService,
@@ -98,7 +112,8 @@ void main() {
       });
 
       await viewModel.connect('conn_123');
-      expect(viewModel.selectedConnectionId, equals('conn_123'));
+      expect(viewModel.selectedConnectionId, isNull);
+      expect(viewModel.managementConnectionId, equals('conn_123'));
       expect(notified, isTrue);
     });
 
@@ -114,11 +129,12 @@ void main() {
       expect(viewModel.isConnected, isFalse);
     });
 
-    test('failed connect retains selectedConnectionId', () async {
+    test('failed connectIfNeeded retains selectedConnectionId', () async {
       final viewModel = SystemAdminViewModel(
         adminService: adminService,
         storageService: storageService,
       );
+      viewModel.selectConnection('conn_123');
 
       // stub connect failure
       adminService.connectOverride = (id) async {
@@ -126,7 +142,7 @@ void main() {
       };
 
       try {
-        await viewModel.connect('conn_123');
+        await viewModel.connectIfNeeded('conn_123');
       } catch (_) {}
 
       expect(viewModel.selectedConnectionId, equals('conn_123'));
@@ -134,7 +150,8 @@ void main() {
       expect(viewModel.isConnected, isFalse);
     });
 
-    test('management actions use managementConnectionId and not selectedConnectionId', () async {
+    test('management actions require active selected management connection',
+        () async {
       final viewModel = SystemAdminViewModel(
         adminService: adminService,
         storageService: storageService,
@@ -151,10 +168,7 @@ void main() {
     });
 
     test('fetchAccounts loads and parses user accounts correctly', () async {
-      final viewModel = SystemAdminViewModel(
-        adminService: adminService,
-        storageService: storageService,
-      );
+      final viewModel = await rootConnectedViewModel();
 
       nextStdout = '''
 root:x:0:0:root:/root:/bin/bash
@@ -176,10 +190,7 @@ admin L
     });
 
     test('fetchSessions loads and parses sessions correctly', () async {
-      final viewModel = SystemAdminViewModel(
-        adminService: adminService,
-        storageService: storageService,
-      );
+      final viewModel = await rootConnectedViewModel();
 
       nextStdout = '''
 root     pts/0        2026-06-03 08:30 (192.168.1.10)
@@ -196,10 +207,7 @@ root     pts/0        2026-06-03 08:30 (192.168.1.10)
     });
 
     test('fetchServices parses systemctl services correctly', () async {
-      final viewModel = SystemAdminViewModel(
-        adminService: adminService,
-        storageService: storageService,
-      );
+      final viewModel = await rootConnectedViewModel();
 
       nextStdout = '''
 ssh.service loaded active running OpenBSD Secure Shell server
@@ -216,10 +224,7 @@ ssh.service loaded active running OpenBSD Secure Shell server
     });
 
     test('fetchPorts parses ss listening ports correctly', () async {
-      final viewModel = SystemAdminViewModel(
-        adminService: adminService,
-        storageService: storageService,
-      );
+      final viewModel = await rootConnectedViewModel();
 
       nextStdout = '''
 tcp   LISTEN  0       128               0.0.0.0:22            0.0.0.0:*      users:(("sshd",pid=1024,fd=3))
@@ -235,7 +240,40 @@ tcp   LISTEN  0       128               0.0.0.0:22            0.0.0.0:*      use
       expect(viewModel.ports[0].pid, equals(1024));
     });
 
-    test('rebootServer and shutdownServer require valid/fresh tokens', () async {
+    test('fetch caches empty results by connection id', () async {
+      final viewModel = await rootConnectedViewModel();
+
+      nextStdout = '';
+      nextExitCode = 0;
+
+      await viewModel.fetchSessions('conn_123');
+      expect(viewModel.sessions, isEmpty);
+      expect(lastCommand, equals('who'));
+
+      lastCommand = null;
+      await viewModel.fetchSessions('conn_123');
+      expect(lastCommand, isNull);
+    });
+
+    test('clearInvalidSelection disconnects stale selected management session',
+        () async {
+      final viewModel = await rootConnectedViewModel();
+
+      expect(viewModel.selectedConnectionId, equals('conn_123'));
+      expect(viewModel.managementConnectionId, equals('conn_123'));
+
+      viewModel.clearInvalidSelection();
+
+      expect(viewModel.selectedConnectionId, isNull);
+      expect(viewModel.managementConnectionId, isNull);
+      expect(viewModel.accounts, isEmpty);
+      expect(viewModel.sessions, isEmpty);
+      expect(viewModel.services, isEmpty);
+      expect(viewModel.ports, isEmpty);
+    });
+
+    test('rebootServer and shutdownServer require valid/fresh tokens',
+        () async {
       final viewModel = SystemAdminViewModel(
         adminService: adminService,
         storageService: storageService,
@@ -243,7 +281,8 @@ tcp   LISTEN  0       128               0.0.0.0:22            0.0.0.0:*      use
 
       // Connect the viewmodel/service mock so managementConnectionId is not null
       adminService.connectOverride = (id) async {};
-      await viewModel.connect('conn_123');
+      viewModel.selectConnection('conn_123');
+      await viewModel.connectIfNeeded('conn_123');
 
       // 1. Successful reboot
       final rebootToken = SystemPowerConfirmationToken.testing(

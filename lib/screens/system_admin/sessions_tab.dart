@@ -33,7 +33,7 @@ class _SessionsTabState extends State<_SessionsTab>
 
     if (viewModel.sessions.isEmpty) {
       return RefreshIndicator(
-        onRefresh: () => viewModel.fetchSessions(id),
+        onRefresh: () => viewModel.fetchSessions(id, force: true),
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
           children: const [
@@ -45,7 +45,7 @@ class _SessionsTabState extends State<_SessionsTab>
     }
 
     return RefreshIndicator(
-      onRefresh: () => viewModel.fetchSessions(id),
+      onRefresh: () => viewModel.fetchSessions(id, force: true),
       child: ListView.builder(
         padding: const EdgeInsets.all(12),
         itemCount: viewModel.sessions.length,

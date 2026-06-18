@@ -13,7 +13,8 @@ import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/models/system_admin.dart';
 import 'package:ssh_mobile/services/server_status_probe.dart';
 
-class StubSystemAdminViewModel extends ChangeNotifier implements SystemAdminViewModel {
+class StubSystemAdminViewModel extends ChangeNotifier
+    implements SystemAdminViewModel {
   @override
   String? selectedConnectionId;
 
@@ -65,22 +66,89 @@ class StubSystemAdminViewModel extends ChangeNotifier implements SystemAdminView
   @override
   List<ConnectionConfig> connections = [];
 
+  int connectIfNeededCalls = 0;
+  final List<String> fetchAccountsCalls = [];
+  final List<String> fetchSessionsCalls = [];
+  final List<String> fetchServicesCalls = [];
+  final List<String> fetchPortsCalls = [];
+
   @override
   String? get connectionId => selectedConnectionId;
 
   @override
+  String? get activeManagementConnectionId {
+    final id = managementConnectionId;
+    if (id == null || id != selectedConnectionId) return null;
+    return id;
+  }
+
+  @override
+  bool get canManageSelectedConnection {
+    return activeManagementConnectionId != null && isConnected && isRoot;
+  }
+
+  @override
+  bool get isConnectingSelectedConnection {
+    return managementConnectionId == selectedConnectionId && isConnecting;
+  }
+
+  @override
+  bool get isConnectedSelectedConnection {
+    return managementConnectionId == selectedConnectionId && isConnected;
+  }
+
+  @override
+  bool get hasManagementErrorForSelectedConnection {
+    return managementConnectionId == selectedConnectionId &&
+        errorMessage != null;
+  }
+
+  @override
+  ConnectionConfig? get selectedConnection =>
+      connectionById(selectedConnectionId);
+
+  @override
+  bool get hasValidSelection =>
+      selectedConnectionId != null && selectedConnection != null;
+
+  @override
+  ConnectionConfig? connectionById(String? id) {
+    if (id == null || id.isEmpty) return null;
+    for (final connection in connections) {
+      if (connection.id == id) return connection;
+    }
+    return null;
+  }
+
+  @override
+  bool isConnectingConnection(String id) {
+    return managementConnectionId == id && isConnecting;
+  }
+
+  @override
   void selectConnection(String id) {
     selectedConnectionId = id;
+    accounts = [];
+    sessions = [];
+    services = [];
+    ports = [];
     notifyListeners();
   }
 
   @override
   Future<void> connect(String id) async {
-    selectedConnectionId = id;
     managementConnectionId = id;
     isConnected = true;
     isRoot = true;
     notifyListeners();
+  }
+
+  @override
+  Future<void> connectIfNeeded(String id) async {
+    if (selectedConnectionId != id) return;
+    if (canManageSelectedConnection) return;
+    connectIfNeededCalls++;
+    await connect(id);
   }
 
   @override
@@ -101,22 +169,55 @@ class StubSystemAdminViewModel extends ChangeNotifier implements SystemAdminView
   }
 
   @override
+  void clearInvalidSelection() {
+    final id = selectedConnectionId;
+    if (id == null) return;
+    selectedConnectionId = null;
+    accounts = [];
+    sessions = [];
+    services = [];
+    ports = [];
+    if (managementConnectionId == id) {
+      disconnect();
+      return;
+    }
+    notifyListeners();
+  }
+
+  @override
+  void validateSelectedConnection() {
+    if (selectedConnectionId != null &&
+        connectionById(selectedConnectionId) == null) {
+      clearInvalidSelection();
+    }
+  }
+
+  @override
   Future<void> refreshAllData() async {}
 
   @override
-  Future<void> fetchAccounts(String connId) async {}
+  Future<void> fetchAccounts(String connId, {bool force = false}) async {
+    fetchAccountsCalls.add(connId);
+  }
 
   @override
-  Future<void> fetchSessions(String connId) async {}
+  Future<void> fetchSessions(String connId, {bool force = false}) async {
+    fetchSessionsCalls.add(connId);
+  }
 
   @override
-  Future<void> fetchServices(String connId) async {}
+  Future<void> fetchServices(String connId, {bool force = false}) async {
+    fetchServicesCalls.add(connId);
+  }
 
   @override
-  Future<void> fetchPorts(String connId) async {}
+  Future<void> fetchPorts(String connId, {bool force = false}) async {
+    fetchPortsCalls.add(connId);
+  }
 
   @override
-  Future<void> createUser(String username, String password, {String shell = '/bin/bash'}) async {}
+  Future<void> createUser(String username, String password,
+      {String shell = '/bin/bash'}) async {}
 
   @override
   Future<bool> checkUserSudo(String username) async => false;
@@ -137,7 +238,9 @@ class StubSystemAdminViewModel extends ChangeNotifier implements SystemAdminView
   Future<String> getUserHomeStorageUsage(String homeDir) async => 'N/A';
 
   @override
-  Future<List<LinuxUserProcess>> getUserProcessesAndMemory(String username) async => [];
+  Future<List<LinuxUserProcess>> getUserProcessesAndMemory(
+          String username) async =>
+      [];
 
   @override
   Future<void> killActiveSession(String tty) async {}
@@ -152,7 +255,8 @@ class StubSystemAdminViewModel extends ChangeNotifier implements SystemAdminView
   Future<void> shutdownServer(SystemPowerConfirmationToken token) async {}
 }
 
-class StubPerformanceMonitorViewModel extends ChangeNotifier implements PerformanceMonitorViewModel {
+class StubPerformanceMonitorViewModel extends ChangeNotifier
+    implements PerformanceMonitorViewModel {
   @override
   int activeTabIndex = 0;
 
@@ -188,6 +292,10 @@ class StubPerformanceMonitorViewModel extends ChangeNotifier implements Performa
 
   @override
   List<MonitorAlert> alerts = [];
+
+  final List<String> fetchPortsCalls = [];
+  final List<String> fetchApplicationsCalls = [];
+  final List<String> fetchServicesCalls = [];
 
   @override
   List<PerformanceSample> getSamples(String connectionId) => [];
@@ -265,22 +373,41 @@ class StubPerformanceMonitorViewModel extends ChangeNotifier implements Performa
 
   @override
   Future<List<PortProcessSnapshot>> fetchPorts(String connectionId) async {
+    fetchPortsCalls.add(connectionId);
     return [
-      PortProcessSnapshot(port: 80, protocol: 'tcp', localAddress: '0.0.0.0', process: 'nginx', state: 'LISTEN'),
+      PortProcessSnapshot(
+          port: 80,
+          protocol: 'tcp',
+          localAddress: '0.0.0.0',
+          process: 'nginx',
+          state: 'LISTEN'),
     ];
   }
 
   @override
-  Future<List<ApplicationMemorySnapshot>> fetchApplications(String connectionId) async {
+  Future<List<ApplicationMemorySnapshot>> fetchApplications(
+      String connectionId) async {
+    fetchApplicationsCalls.add(connectionId);
     return const [
-      ApplicationMemorySnapshot(pid: 101, command: 'nginx', cpuPercent: 0.5, rssBytes: 1024 * 1024 * 5, memoryPercent: 0.5),
+      ApplicationMemorySnapshot(
+          pid: 101,
+          command: 'nginx',
+          cpuPercent: 0.5,
+          rssBytes: 1024 * 1024 * 5,
+          memoryPercent: 0.5),
     ];
   }
 
   @override
   Future<List<ServiceStatusSnapshot>> fetchServices(String connectionId) async {
+    fetchServicesCalls.add(connectionId);
     return [
-      ServiceStatusSnapshot(name: 'nginx.service', displayName: 'Nginx Service', status: 'running', activeState: 'active', loadState: 'loaded'),
+      ServiceStatusSnapshot(
+          name: 'nginx.service',
+          displayName: 'Nginx Service',
+          status: 'running',
+          activeState: 'active',
+          loadState: 'loaded'),
     ];
   }
 
@@ -291,7 +418,8 @@ class StubPerformanceMonitorViewModel extends ChangeNotifier implements Performa
   List<DiskUsageSnapshot> diskUsageFor(String connectionId) => [];
 
   @override
-  ServerHealthSnapshot healthFor(String connectionId) => getHealth(connectionId);
+  ServerHealthSnapshot healthFor(String connectionId) =>
+      getHealth(connectionId);
 }
 
 void main() {
@@ -352,7 +480,8 @@ void main() {
     expect(find.text('选择要监控的服务器'), findsOneWidget);
   });
 
-  testWidgets('SystemAdminScreen displays Ports snapshot when server is selected',
+  testWidgets(
+      'SystemAdminScreen displays Ports snapshot when server is selected',
       (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
@@ -379,12 +508,16 @@ void main() {
     await tester.tap(find.text('监听端口'));
     await tester.pumpAndSettle();
 
-    // Verify snapshot mode is active because not root connected
-    expect(find.textContaining('当前无法使用管理模式（需要 root 权限）'), findsOneWidget);
-    expect(find.text('连接 Root'), findsOneWidget);
+    // Snapshot mode is the default and does not root-connect automatically.
+    expect(find.text('快照模式'), findsOneWidget);
+    expect(find.text('nginx'), findsWidgets);
+    expect(find.text('连接 Root'), findsNothing);
+    expect(adminVm.connectIfNeededCalls, 0);
+    expect(monitorVm.fetchPortsCalls, ['conn_123']);
   });
 
-  testWidgets('SystemAdminScreen displays Applications snapshot when server is selected',
+  testWidgets(
+      'SystemAdminScreen displays Applications snapshot when server is selected',
       (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
@@ -416,7 +549,8 @@ void main() {
     expect(find.text('连接 Root'), findsNothing);
   });
 
-  testWidgets('SystemAdminScreen displays Services snapshot when server is selected but not connected',
+  testWidgets(
+      'SystemAdminScreen displays Services snapshot when server is selected but not connected',
       (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
@@ -440,18 +574,19 @@ void main() {
     await tester.tap(find.text('系统服务'));
     await tester.pumpAndSettle();
 
-    // Verify snapshot mode active message
-    expect(find.textContaining('当前无法使用管理模式（需要 root 权限）'), findsOneWidget);
-    expect(find.text('连接 Root'), findsOneWidget);
-
     // Verify service card nginx.service exists
+    expect(find.text('快照模式'), findsOneWidget);
     expect(find.text('nginx.service'), findsWidgets);
+    expect(find.text('连接 Root'), findsNothing);
+    expect(adminVm.connectIfNeededCalls, 0);
+    expect(monitorVm.fetchServicesCalls, ['conn_123']);
 
     // Snapshot mode does not have the trailing actions PopMenuButton
     expect(find.byType(PopupMenuButton<String>), findsNothing);
   });
 
-  testWidgets('SystemAdminScreen displays Services manage mode when root connected',
+  testWidgets(
+      'SystemAdminScreen displays Services manage mode when root connected',
       (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
@@ -470,7 +605,12 @@ void main() {
 
     // Add some system services in viewModel
     adminVm.services = [
-      SystemdService(name: 'nginx.service', loadState: 'loaded', activeState: 'active', subState: 'running', description: 'Nginx Service'),
+      SystemdService(
+          name: 'nginx.service',
+          loadState: 'loaded',
+          activeState: 'active',
+          subState: 'running',
+          description: 'Nginx Service'),
     ];
 
     await tester.pumpWidget(buildTestableWidget(
@@ -488,10 +628,151 @@ void main() {
     expect(find.text('管理模式'), findsOneWidget);
     expect(find.text('快照模式'), findsOneWidget);
 
+    await tester.tap(find.text('管理模式'));
+    await tester.pumpAndSettle();
+
     // Verify nginx.service exists
     expect(find.text('nginx.service'), findsWidgets);
 
     // Manage mode has trailing actions PopMenuButton
     expect(find.byType(PopupMenuButton<String>), findsWidgets);
+  });
+
+  testWidgets('SystemAdminScreen clears stale selected server safely',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final adminVm = StubSystemAdminViewModel();
+    final monitorVm = StubPerformanceMonitorViewModel();
+    adminVm.connections = fakeConnections;
+    adminVm.selectConnection('conn_123');
+
+    await tester.pumpWidget(buildTestableWidget(
+      adminVm: adminVm,
+      monitorVm: monitorVm,
+    ));
+    await tester.pumpAndSettle();
+
+    adminVm.connections = [];
+    adminVm.notifyListeners();
+    await tester.pumpAndSettle();
+
+    expect(adminVm.selectedConnectionId, isNull);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Users tab connects and fetches only accounts on activation',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final adminVm = StubSystemAdminViewModel();
+    final monitorVm = StubPerformanceMonitorViewModel();
+    adminVm.connections = fakeConnections;
+    adminVm.selectConnection('conn_123');
+
+    await tester.pumpWidget(buildTestableWidget(
+      adminVm: adminVm,
+      monitorVm: monitorVm,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('用户账号'));
+    await tester.tap(find.text('用户账号'));
+    await tester.pumpAndSettle();
+
+    expect(adminVm.connectIfNeededCalls, 1);
+    expect(adminVm.fetchAccountsCalls, ['conn_123']);
+    expect(adminVm.fetchSessionsCalls, isEmpty);
+    expect(adminVm.fetchServicesCalls, isEmpty);
+    expect(adminVm.fetchPortsCalls, isEmpty);
+  });
+
+  testWidgets('Power tab connects without preloading management lists',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final adminVm = StubSystemAdminViewModel();
+    final monitorVm = StubPerformanceMonitorViewModel();
+    adminVm.connections = fakeConnections;
+    adminVm.selectConnection('conn_123');
+
+    await tester.pumpWidget(buildTestableWidget(
+      adminVm: adminVm,
+      monitorVm: monitorVm,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('系统电源'));
+    await tester.tap(find.text('系统电源'));
+    await tester.pumpAndSettle();
+
+    expect(adminVm.connectIfNeededCalls, 1);
+    expect(adminVm.fetchAccountsCalls, isEmpty);
+    expect(adminVm.fetchSessionsCalls, isEmpty);
+    expect(adminVm.fetchServicesCalls, isEmpty);
+    expect(adminVm.fetchPortsCalls, isEmpty);
+  });
+
+  testWidgets('Applications snapshot loads only after tab activation',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final adminVm = StubSystemAdminViewModel();
+    final monitorVm = StubPerformanceMonitorViewModel();
+    adminVm.connections = fakeConnections;
+    adminVm.selectConnection('conn_123');
+
+    await tester.pumpWidget(buildTestableWidget(
+      adminVm: adminVm,
+      monitorVm: monitorVm,
+    ));
+    await tester.pumpAndSettle();
+
+    expect(monitorVm.fetchApplicationsCalls, isEmpty);
+
+    await tester.tap(find.text('应用/进程'));
+    await tester.pumpAndSettle();
+
+    expect(monitorVm.fetchApplicationsCalls, ['conn_123']);
+  });
+
+  testWidgets('Server selection hint uses left on desktop and above on mobile',
+      (WidgetTester tester) async {
+    final adminVm = StubSystemAdminViewModel();
+    final monitorVm = StubPerformanceMonitorViewModel();
+    adminVm.connections = fakeConnections;
+
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(buildTestableWidget(
+      adminVm: adminVm,
+      monitorVm: monitorVm,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('监听端口'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('左侧'), findsOneWidget);
+
+    await appSettings.toggleLanguage();
+    tester.view.physicalSize = const Size(390, 844);
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('above'), findsOneWidget);
   });
 }

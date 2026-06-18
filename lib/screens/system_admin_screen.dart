@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:fl_chart/fl_chart.dart';
@@ -43,6 +44,10 @@ class SystemAdminScreen extends StatefulWidget {
 class _SystemAdminScreenState extends State<SystemAdminScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  int? _lastActivatedTabIndex;
+  String? _lastActivatedConnectionId;
+  String? _lastObservedSelectedConnectionId;
+  bool _activationScheduled = false;
 
   @override
   void initState() {
@@ -52,22 +57,9 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
   }
 
   void _handleTabSelection() {
-    if (_tabController.indexIsChanging) {
-      setState(() {});
-      if (_tabController.index >= 4) {
-        final viewModel = context.read<SystemAdminViewModel>();
-        final selectedId = viewModel.selectedConnectionId;
-        if (selectedId != null &&
-            viewModel.managementConnectionId != selectedId &&
-            !viewModel.isConnecting) {
-          final config =
-              viewModel.connections.firstWhere((c) => c.id == selectedId);
-          if (config.serverPlatform == ServerPlatform.linux) {
-            viewModel.connect(selectedId);
-          }
-        }
-      }
-    }
+    if (!mounted) return;
+    setState(() {});
+    _scheduleCurrentTabActivation();
   }
 
   @override
@@ -81,6 +73,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
   void didChangeDependencies() {
     super.didChangeDependencies();
     context.read<SystemAdminViewModel>().restoreServersCollapsed(context);
+    _scheduleCurrentTabActivation();
   }
 
   @override
@@ -103,10 +96,10 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
     final colorScheme = Theme.of(context).colorScheme;
 
     final isMonitorTab = _tabController.index == 0;
-    final isManagementTab = _tabController.index >= 4;
 
-    final selectedConnection =
-        _selectedConnection(connections, selectedConnectionId);
+    _maybeScheduleActivationForSelectionChange(viewModel);
+
+    final selectedConnection = viewModel.connectionById(selectedConnectionId);
     final selectedMonitorConnections = connections
         .where((c) => monitorVm.selectedConnectionIds.contains(c.id))
         .toList();
@@ -139,11 +132,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
       appBar: AppBar(
         title: Text(strings.systemAdmin),
         actions: [
-          if (!isMonitorTab &&
-              selectedConnectionId != null &&
-              isConnected &&
-              viewModel.managementConnectionId == selectedConnectionId &&
-              viewModel.isRoot)
+          if (!isMonitorTab && viewModel.canManageSelectedConnection)
             IconButton(
               icon: const Icon(Icons.refresh),
               onPressed: viewModel.refreshAllData,
@@ -185,7 +174,6 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                           connections: connections,
                           strings: strings,
                           isMonitorTab: isMonitorTab,
-                          isManagementTab: isManagementTab,
                           onCollapse: () =>
                               viewModel.setServersCollapsed(context, true),
                         ),
@@ -236,7 +224,6 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                           connections: connections,
                           strings: strings,
                           isMonitorTab: isMonitorTab,
-                          isManagementTab: isManagementTab,
                           onCollapse: () =>
                               viewModel.setServersCollapsed(context, true),
                         ),
@@ -254,15 +241,87 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
     );
   }
 
-  ConnectionConfig? _selectedConnection(
-    List<ConnectionConfig> connections,
-    String? activeConnectionId,
+  void _maybeScheduleActivationForSelectionChange(
+    SystemAdminViewModel viewModel,
   ) {
-    if (activeConnectionId == null) return null;
-    for (final connection in connections) {
-      if (connection.id == activeConnectionId) return connection;
+    final currentSelectedId = viewModel.selectedConnectionId;
+    if (_lastObservedSelectedConnectionId == currentSelectedId) return;
+
+    _lastObservedSelectedConnectionId = currentSelectedId;
+    _lastActivatedConnectionId = null;
+
+    _scheduleCurrentTabActivation();
+  }
+
+  void _scheduleCurrentTabActivation() {
+    if (_activationScheduled) return;
+    _activationScheduled = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _activationScheduled = false;
+      if (!mounted) return;
+
+      final viewModel = context.read<SystemAdminViewModel>();
+      viewModel.validateSelectedConnection();
+
+      final selectedId = viewModel.selectedConnectionId;
+      if (selectedId == null) return;
+
+      final index = _tabController.index;
+      final activationKeyChanged = _lastActivatedTabIndex != index ||
+          _lastActivatedConnectionId != selectedId;
+
+      if (!activationKeyChanged) return;
+
+      _lastActivatedTabIndex = index;
+      _lastActivatedConnectionId = selectedId;
+
+      unawaited(_activateTab(index, viewModel));
+    });
+  }
+
+  Future<void> _activateTab(
+    int index,
+    SystemAdminViewModel viewModel,
+  ) async {
+    final selectedId = viewModel.selectedConnectionId;
+    if (selectedId == null) return;
+
+    final config = viewModel.connectionById(selectedId);
+    if (config == null) {
+      viewModel.clearInvalidSelection();
+      return;
     }
-    return null;
+
+    final isLinux = config.serverPlatform == ServerPlatform.linux;
+
+    switch (index) {
+      case 0:
+      case 1:
+      case 2:
+      case 3:
+        return;
+      case 4:
+        if (!isLinux) return;
+        await viewModel.connectIfNeeded(selectedId);
+        if (!mounted) return;
+        if (viewModel.canManageSelectedConnection) {
+          await viewModel.fetchAccounts(selectedId);
+        }
+        return;
+      case 5:
+        if (!isLinux) return;
+        await viewModel.connectIfNeeded(selectedId);
+        if (!mounted) return;
+        if (viewModel.canManageSelectedConnection) {
+          await viewModel.fetchSessions(selectedId);
+        }
+        return;
+      case 6:
+        if (!isLinux) return;
+        await viewModel.connectIfNeeded(selectedId);
+        return;
+    }
   }
 
   Widget _buildMainContent(
@@ -325,6 +384,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                 strings: strings,
                 colorScheme: colorScheme,
                 viewModel: viewModel,
+                active: _tabController.index == 1,
               ),
               // Tab 2: Applications (Snapshot only)
               _ApplicationsTab(
@@ -332,12 +392,14 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                 colorScheme: colorScheme,
                 viewModel: viewModel,
                 monitorViewModel: monitorVm,
+                active: _tabController.index == 2,
               ),
               // Tab 3: Services (Manage/Snapshot)
               _ServicesTab(
                 strings: strings,
                 colorScheme: colorScheme,
                 viewModel: viewModel,
+                active: _tabController.index == 3,
               ),
               // Tab 4: Users (Requires root connection)
               _buildRootRequiredTab(
@@ -386,64 +448,21 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
     Widget child,
   ) {
     final selectedConnectionId = viewModel.selectedConnectionId;
-    final isConnecting = viewModel.isConnecting &&
-        viewModel.managementConnectionId == selectedConnectionId;
-    final isConnected = viewModel.isConnected &&
-        viewModel.managementConnectionId == selectedConnectionId;
-    final errorMessage =
-        viewModel.managementConnectionId == selectedConnectionId
-            ? viewModel.errorMessage
-            : null;
-    final isRoot = viewModel.isRoot &&
-        viewModel.managementConnectionId == selectedConnectionId;
 
     if (selectedConnectionId == null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.admin_panel_settings_outlined,
-                color: colorScheme.primary,
-                size: 48,
-              ),
-              const SizedBox(height: 16),
-              Text(
-                strings.selectServerToManage,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: colorScheme.onSurfaceVariant,
-                  fontSize: 14,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
+      return _AdminEmptyState(strings: strings);
     }
 
-    if (isConnecting) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(height: 16),
-            Text(
-              strings.verifyingPrivilege,
-              style: TextStyle(color: colorScheme.onSurfaceVariant),
-            ),
-          ],
-        ),
-      );
+    final selectedConnection = viewModel.connectionById(selectedConnectionId);
+    if (selectedConnection == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        context.read<SystemAdminViewModel>().clearInvalidSelection();
+      });
+      return _AdminEmptyState(strings: strings);
     }
 
-    // Is Linux check
-    final config =
-        viewModel.connections.firstWhere((c) => c.id == selectedConnectionId);
-    if (config.serverPlatform != ServerPlatform.linux) {
+    if (selectedConnection.serverPlatform != ServerPlatform.linux) {
       return Padding(
         padding: const EdgeInsets.all(24),
         child: Center(
@@ -464,11 +483,35 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
       );
     }
 
+    final isConnecting = viewModel.isConnectingSelectedConnection;
+    final isConnected = viewModel.isConnectedSelectedConnection;
+    final errorMessage = viewModel.hasManagementErrorForSelectedConnection
+        ? viewModel.errorMessage
+        : null;
+    final isRoot = isConnected && viewModel.isRoot;
+
+    if (isConnecting) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
+            Text(
+              strings.verifyingPrivilege,
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+      );
+    }
+
     if (!isConnected || !isRoot || errorMessage != null) {
       return _RootRequiredView(
         strings: strings,
         errorMessage: errorMessage,
-        onConnect: () => viewModel.connect(selectedConnectionId),
+        onConnect: () =>
+            unawaited(viewModel.connectIfNeeded(selectedConnectionId)),
       );
     }
 
@@ -699,6 +742,24 @@ String _serverSummary(AppStrings strings, List<ConnectionConfig> connections) {
 
 String _monitorText(AppStrings strings, String en, String zh) {
   return strings.language == AppLanguage.en ? en : zh;
+}
+
+String _selectServerHint(
+  BuildContext context,
+  AppLanguage language, {
+  required String targetEn,
+  required String targetZh,
+}) {
+  final desktop = isDesktopLayout(context);
+  final isEnglish = language == AppLanguage.en;
+
+  if (isEnglish) {
+    return desktop
+        ? 'Please select a server on the left to view $targetEn.'
+        : 'Please select a server above to view $targetEn.';
+  }
+
+  return desktop ? '请先在左侧选择要查看的$targetZh。' : '请先在上方选择要查看的$targetZh。';
 }
 
 String _durationLabel(Duration duration) {

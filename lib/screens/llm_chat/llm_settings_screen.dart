@@ -210,6 +210,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       ),
     );
     if (action == null) return;
+    if (!mounted) return;
     if (action.delete) {
       final confirmed = await DestructiveConfirmDialog.show(
         context,
@@ -252,6 +253,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       ),
     );
     if (action == null) return;
+    if (!mounted) return;
     if (action.delete) {
       final confirmed = await DestructiveConfirmDialog.show(
         context,

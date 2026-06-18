@@ -5,12 +5,14 @@ class _ApplicationsTab extends StatefulWidget {
   final ColorScheme colorScheme;
   final SystemAdminViewModel viewModel;
   final PerformanceMonitorViewModel monitorViewModel;
+  final bool active;
 
   const _ApplicationsTab({
     required this.strings,
     required this.colorScheme,
     required this.viewModel,
     required this.monitorViewModel,
+    required this.active,
   });
 
   @override
@@ -25,6 +27,7 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
   Future<Map<String, List<ApplicationMemorySnapshot>>>? _appsFuture;
   String? _appsSelectionKey;
   String? _lastSelectedConnectionId;
+  bool _appsLoadScheduled = false;
 
   void _refreshApplicationsFuture({bool force = false}) {
     final connectionId = widget.viewModel.selectedConnectionId;
@@ -41,23 +44,61 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
 
   Future<Map<String, List<ApplicationMemorySnapshot>>> _loadApplications(
       String connectionId) async {
-    final result = <String, List<ApplicationMemorySnapshot>>{};
-    result[connectionId] =
-        await widget.monitorViewModel.fetchApplications(connectionId);
-    return result;
+    final data = await widget.monitorViewModel.fetchApplications(connectionId);
+
+    if (!mounted || widget.viewModel.selectedConnectionId != connectionId) {
+      return {};
+    }
+
+    return {connectionId: data};
+  }
+
+  void _scheduleApplicationsLoad({bool force = false}) {
+    if (!widget.active || _appsLoadScheduled) return;
+    final connectionId = widget.viewModel.selectedConnectionId;
+    if (connectionId == null) return;
+    if (!force && _appsFuture != null && _appsSelectionKey == connectionId) {
+      return;
+    }
+
+    _appsLoadScheduled = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _appsLoadScheduled = false;
+      if (!mounted || !widget.active) return;
+      final currentConnectionId = widget.viewModel.selectedConnectionId;
+      if (currentConnectionId == null) return;
+      if (!force &&
+          _appsFuture != null &&
+          _appsSelectionKey == currentConnectionId) {
+        return;
+      }
+
+      setState(() {
+        _refreshApplicationsFuture(force: force);
+      });
+    });
   }
 
   @override
   void didUpdateWidget(covariant _ApplicationsTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Connection checking is handled dynamically in build() using _lastSelectedConnectionId.
+    final connectionId = widget.viewModel.selectedConnectionId;
+    if (connectionId != _lastSelectedConnectionId) {
+      _lastSelectedConnectionId = connectionId;
+      _appsSelectionKey = null;
+      _appsFuture = null;
+    }
+    if (widget.active && (!oldWidget.active || connectionId != null)) {
+      _scheduleApplicationsLoad();
+    }
   }
 
   @override
   void initState() {
     super.initState();
     _lastSelectedConnectionId = widget.viewModel.selectedConnectionId;
-    _refreshApplicationsFuture();
+    _scheduleApplicationsLoad();
   }
 
   @override
@@ -65,18 +106,21 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
     super.build(context);
     final connectionId = widget.viewModel.selectedConnectionId;
 
-    if (connectionId != _lastSelectedConnectionId) {
-      _lastSelectedConnectionId = connectionId;
-      _refreshApplicationsFuture();
-    }
-
     if (connectionId == null) {
       return Center(
-        child: Text(_monitorText(
-            widget.strings,
-            'Please select a server on the left to view applications.',
-            '请先在左侧选择要查看的服务器。')),
+        child: Text(
+          _selectServerHint(
+            context,
+            widget.strings.language,
+            targetEn: 'applications',
+            targetZh: '应用',
+          ),
+        ),
       );
+    }
+
+    if (widget.active) {
+      _scheduleApplicationsLoad();
     }
 
     final currentConfigList = widget.viewModel.connections
@@ -86,8 +130,8 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
     return _ServerSnapshotTab<ApplicationMemorySnapshot>(
       strings: widget.strings,
       connections: currentConfigList,
-      emptyText: _monitorText(
-          widget.strings, 'No application data found', '未发现应用数据'),
+      emptyText:
+          _monitorText(widget.strings, 'No application data found', '未发现应用数据'),
       future: _appsFuture,
       onRefresh: () => setState(() => _refreshApplicationsFuture(force: true)),
       itemBuilder: _buildApplicationItem,

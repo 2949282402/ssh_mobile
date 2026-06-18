@@ -4,11 +4,13 @@ class _ServicesTab extends StatefulWidget {
   final AppStrings strings;
   final ColorScheme colorScheme;
   final SystemAdminViewModel viewModel;
+  final bool active;
 
   const _ServicesTab({
     required this.strings,
     required this.colorScheme,
     required this.viewModel,
+    required this.active,
   });
 
   @override
@@ -25,26 +27,24 @@ class _ServicesTabState extends State<_ServicesTab>
   List<ServiceStatusSnapshot> _filteredSnapshotServices = [];
   Map<String, List<ServiceStatusSnapshot>> _rawSnapshotData = {};
 
-  bool _isManageMode = true;
+  bool _isManageMode = false;
   Future<Map<String, List<ServiceStatusSnapshot>>>? _servicesFuture;
   String? _servicesSelectionKey;
   String? _lastSelectedConnectionId;
+  String? _lastActivatedModeKey;
+  bool _modeActivationScheduled = false;
 
   @override
   bool get wantKeepAlive => true;
 
   bool get _isLinux {
     final connectionId = widget.viewModel.selectedConnectionId;
-    if (connectionId == null) return false;
-    final config = widget.viewModel.connections.firstWhere((c) => c.id == connectionId);
-    return config.serverPlatform == ServerPlatform.linux;
+    final config = widget.viewModel.connectionById(connectionId);
+    return config?.serverPlatform == ServerPlatform.linux;
   }
 
   bool get _isManageModeAvailable {
-    return widget.viewModel.isConnected &&
-        widget.viewModel.isRoot &&
-        widget.viewModel.managementConnectionId == widget.viewModel.selectedConnectionId &&
-        _isLinux;
+    return widget.viewModel.canManageSelectedConnection && _isLinux;
   }
 
   void _refreshServicesFuture({bool force = false}) {
@@ -55,7 +55,9 @@ class _ServicesTabState extends State<_ServicesTab>
       return;
     }
     final monitorViewModel = context.read<PerformanceMonitorViewModel>();
-    if (force || _servicesFuture == null || _servicesSelectionKey != connectionId) {
+    if (force ||
+        _servicesFuture == null ||
+        _servicesSelectionKey != connectionId) {
       _servicesSelectionKey = connectionId;
       _servicesFuture = _loadServices(monitorViewModel, connectionId);
     }
@@ -63,11 +65,17 @@ class _ServicesTabState extends State<_ServicesTab>
 
   Future<Map<String, List<ServiceStatusSnapshot>>> _loadServices(
       PerformanceMonitorViewModel monitorViewModel, String connectionId) async {
-    final result = <String, List<ServiceStatusSnapshot>>{};
     final list = await monitorViewModel.fetchServices(connectionId);
-    result[connectionId] = list;
-    _rawSnapshotData = result;
-    _filterSnapshotServices();
+
+    if (!mounted || widget.viewModel.selectedConnectionId != connectionId) {
+      return {};
+    }
+
+    final result = {connectionId: list};
+    setState(() {
+      _rawSnapshotData = result;
+      _applySnapshotFilterWithoutSetState();
+    });
     return result;
   }
 
@@ -75,18 +83,30 @@ class _ServicesTabState extends State<_ServicesTab>
   void initState() {
     super.initState();
     _lastSelectedConnectionId = widget.viewModel.selectedConnectionId;
-    _isManageMode = _isManageModeAvailable;
     _serviceSearchController.addListener(_filterServices);
     _snapshotSearchController.addListener(_filterSnapshotServices);
     _filteredServices = List.from(widget.viewModel.services);
-    _refreshServicesFuture();
+    _scheduleModeActivation();
   }
 
   @override
   void didUpdateWidget(covariant _ServicesTab oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final id = widget.viewModel.selectedConnectionId;
+    if (id != _lastSelectedConnectionId) {
+      _lastSelectedConnectionId = id;
+      _servicesSelectionKey = null;
+      _servicesFuture = null;
+      _rawSnapshotData = {};
+      _filteredSnapshotServices = [];
+      _lastActivatedModeKey = null;
+      _isManageMode = false;
+    }
     if (widget.viewModel.services != oldWidget.viewModel.services) {
       _filterServices();
+    }
+    if (widget.active) {
+      _scheduleModeActivation();
     }
   }
 
@@ -115,20 +135,72 @@ class _ServicesTabState extends State<_ServicesTab>
 
   void _filterSnapshotServices() {
     if (!mounted) return;
+    setState(_applySnapshotFilterWithoutSetState);
+  }
+
+  void _applySnapshotFilterWithoutSetState() {
     final query = _snapshotSearchController.text.trim().toLowerCase();
     final connectionId = widget.viewModel.selectedConnectionId;
     if (connectionId == null) return;
     final list = _rawSnapshotData[connectionId] ?? [];
-    setState(() {
-      if (query.isEmpty) {
-        _filteredSnapshotServices = List.from(list);
-      } else {
-        _filteredSnapshotServices = list
-            .where((s) =>
-                s.name.toLowerCase().contains(query) ||
-                s.displayName.toLowerCase().contains(query))
-            .toList();
+    if (query.isEmpty) {
+      _filteredSnapshotServices = List.from(list);
+    } else {
+      _filteredSnapshotServices = list
+          .where((s) =>
+              s.name.toLowerCase().contains(query) ||
+              s.displayName.toLowerCase().contains(query))
+          .toList();
+    }
+  }
+
+  void _scheduleModeActivation() {
+    if (!widget.active || _modeActivationScheduled) return;
+    final id = widget.viewModel.selectedConnectionId;
+    if (id == null) return;
+
+    final mode = _isManageMode && _isLinux ? 'manage' : 'snapshot';
+    final modeKey = '$id:$mode';
+    final snapshotReady = mode == 'snapshot' &&
+        _servicesFuture != null &&
+        _servicesSelectionKey == id;
+    if (_lastActivatedModeKey == modeKey && snapshotReady) return;
+    if (_lastActivatedModeKey == modeKey && mode == 'manage') return;
+
+    _modeActivationScheduled = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _modeActivationScheduled = false;
+      if (!mounted || !widget.active) return;
+      unawaited(_activateCurrentMode());
+    });
+  }
+
+  Future<void> _activateCurrentMode() async {
+    final id = widget.viewModel.selectedConnectionId;
+    if (id == null) return;
+
+    final mode = _isManageMode && _isLinux ? 'manage' : 'snapshot';
+    final modeKey = '$id:$mode';
+    final snapshotReady = mode == 'snapshot' &&
+        _servicesFuture != null &&
+        _servicesSelectionKey == id;
+    if (_lastActivatedModeKey == modeKey && snapshotReady) return;
+    if (_lastActivatedModeKey == modeKey && mode == 'manage') return;
+    _lastActivatedModeKey = modeKey;
+
+    if (mode == 'manage') {
+      await widget.viewModel.connectIfNeeded(id);
+      if (!mounted) return;
+
+      if (widget.viewModel.canManageSelectedConnection) {
+        await widget.viewModel.fetchServices(id);
       }
+      return;
+    }
+
+    setState(() {
+      _refreshServicesFuture();
     });
   }
 
@@ -138,28 +210,26 @@ class _ServicesTabState extends State<_ServicesTab>
     final viewModel = widget.viewModel;
     final id = viewModel.selectedConnectionId;
 
-    if (id != _lastSelectedConnectionId) {
-      _lastSelectedConnectionId = id;
-      _refreshServicesFuture();
-      _isManageMode = _isManageModeAvailable;
-    }
-
     if (id == null) {
       return Center(
-        child: Text(_monitorText(
-            widget.strings,
-            'Please select a server on the left to view services.',
-            '请先在左侧选择要查看的服务器。')),
+        child: Text(
+          _selectServerHint(
+            context,
+            widget.strings.language,
+            targetEn: 'services',
+            targetZh: '服务',
+          ),
+        ),
       );
     }
 
-    if (!_isManageModeAvailable && _isManageMode) {
-      _isManageMode = false;
+    if (widget.active) {
+      _scheduleModeActivation();
     }
 
     return Column(
       children: [
-        if (_isManageModeAvailable) ...[
+        if (_isLinux) ...[
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8.0),
             child: SegmentedButton<bool>(
@@ -167,67 +237,60 @@ class _ServicesTabState extends State<_ServicesTab>
                 ButtonSegment(
                   value: true,
                   icon: const Icon(Icons.admin_panel_settings_rounded),
-                  label: Text(_monitorText(widget.strings, 'Manage Mode', '管理模式')),
+                  label:
+                      Text(_monitorText(widget.strings, 'Manage Mode', '管理模式')),
                 ),
                 ButtonSegment(
                   value: false,
                   icon: const Icon(Icons.analytics_rounded),
-                  label: Text(_monitorText(widget.strings, 'Snapshot Mode', '快照模式')),
+                  label: Text(
+                      _monitorText(widget.strings, 'Snapshot Mode', '快照模式')),
                 ),
               ],
               selected: {_isManageMode},
               onSelectionChanged: (values) {
                 setState(() {
                   _isManageMode = values.first;
+                  _lastActivatedModeKey = null;
                 });
+                _scheduleModeActivation();
               },
-            ),
-          ),
-        ] else ...[
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: widget.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    _monitorText(
-                      widget.strings,
-                      'Manage mode unavailable (root required). Switched to snapshot mode.',
-                      '当前无法使用管理模式（需要 root 权限），已自动切换为快照模式。',
-                    ),
-                    style: TextStyle(
-                      color: widget.colorScheme.onSurfaceVariant,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-                if (_isLinux)
-                  TextButton.icon(
-                    icon: const Icon(Icons.admin_panel_settings_rounded, size: 16),
-                    label: Text(_monitorText(widget.strings, 'Connect Root', '连接 Root')),
-                    onPressed: () => viewModel.connect(id),
-                  ),
-              ],
             ),
           ),
         ],
         Expanded(
-          child: _isManageMode ? _buildManageView(id) : _buildSnapshotView(id),
-        ),
+            child: _isManageMode && _isLinux
+                ? _buildManageView(id)
+                : _buildSnapshotView(id)),
       ],
     );
   }
 
   Widget _buildManageView(String id) {
     final viewModel = widget.viewModel;
+    if (viewModel.isConnectingSelectedConnection) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (!_isManageModeAvailable) {
+      return _RootRequiredView(
+        strings: widget.strings,
+        errorMessage: viewModel.hasManagementErrorForSelectedConnection
+            ? viewModel.errorMessage
+            : null,
+        onConnect: () {
+          _lastActivatedModeKey = null;
+          _scheduleModeActivation();
+        },
+      );
+    }
+
     if (viewModel.loadingServices) {
       return const Center(child: CircularProgressIndicator());
     }
 
     return RefreshIndicator(
-      onRefresh: () => viewModel.fetchServices(id),
+      onRefresh: () => viewModel.fetchServices(id, force: true),
       child: Column(
         children: [
           Padding(
@@ -315,9 +378,8 @@ class _ServicesTabState extends State<_ServicesTab>
   }
 
   Widget _buildSnapshotView(String id) {
-    final currentConfigList = widget.viewModel.connections
-        .where((c) => c.id == id)
-        .toList();
+    final currentConfigList =
+        widget.viewModel.connections.where((c) => c.id == id).toList();
 
     return Column(
       children: [
@@ -334,7 +396,8 @@ class _ServicesTabState extends State<_ServicesTab>
           ),
         ),
         Expanded(
-          child: _filteredSnapshotServices.isEmpty && _snapshotSearchController.text.isNotEmpty
+          child: _filteredSnapshotServices.isEmpty &&
+                  _snapshotSearchController.text.isNotEmpty
               ? ListView(
                   physics: const AlwaysScrollableScrollPhysics(),
                   children: const [
@@ -348,10 +411,12 @@ class _ServicesTabState extends State<_ServicesTab>
                   emptyText: _monitorText(
                       widget.strings, 'No running services found', '未发现运行中的服务'),
                   future: _servicesFuture,
-                  onRefresh: () => setState(() => _refreshServicesFuture(force: true)),
+                  onRefresh: () =>
+                      setState(() => _refreshServicesFuture(force: true)),
                   itemBuilder: (context, service) {
                     // Filter if query is present, since itemBuilder runs on individual items
-                    final query = _snapshotSearchController.text.trim().toLowerCase();
+                    final query =
+                        _snapshotSearchController.text.trim().toLowerCase();
                     if (query.isNotEmpty &&
                         !service.name.toLowerCase().contains(query) &&
                         !service.displayName.toLowerCase().contains(query)) {

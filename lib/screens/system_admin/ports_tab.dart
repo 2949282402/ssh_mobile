@@ -4,11 +4,13 @@ class _PortsTab extends StatefulWidget {
   final AppStrings strings;
   final ColorScheme colorScheme;
   final SystemAdminViewModel viewModel;
+  final bool active;
 
   const _PortsTab({
     required this.strings,
     required this.colorScheme,
     required this.viewModel,
+    required this.active,
   });
 
   @override
@@ -20,23 +22,21 @@ class _PortsTabState extends State<_PortsTab>
   @override
   bool get wantKeepAlive => true;
 
-  bool _isManageMode = true;
+  bool _isManageMode = false;
   Future<Map<String, List<PortProcessSnapshot>>>? _portsFuture;
   String? _portsSelectionKey;
   String? _lastSelectedConnectionId;
+  String? _lastActivatedModeKey;
+  bool _modeActivationScheduled = false;
 
   bool get _isLinux {
     final connectionId = widget.viewModel.selectedConnectionId;
-    if (connectionId == null) return false;
-    final config = widget.viewModel.connections.firstWhere((c) => c.id == connectionId);
-    return config.serverPlatform == ServerPlatform.linux;
+    final config = widget.viewModel.connectionById(connectionId);
+    return config?.serverPlatform == ServerPlatform.linux;
   }
 
   bool get _isManageModeAvailable {
-    return widget.viewModel.isConnected &&
-        widget.viewModel.isRoot &&
-        widget.viewModel.managementConnectionId == widget.viewModel.selectedConnectionId &&
-        _isLinux;
+    return widget.viewModel.canManageSelectedConnection && _isLinux;
   }
 
   void _refreshPortsFuture({bool force = false}) {
@@ -55,23 +55,84 @@ class _PortsTabState extends State<_PortsTab>
 
   Future<Map<String, List<PortProcessSnapshot>>> _loadPorts(
       PerformanceMonitorViewModel monitorViewModel, String connectionId) async {
-    final result = <String, List<PortProcessSnapshot>>{};
-    result[connectionId] = await monitorViewModel.fetchPorts(connectionId);
-    return result;
+    final data = await monitorViewModel.fetchPorts(connectionId);
+
+    if (!mounted || widget.viewModel.selectedConnectionId != connectionId) {
+      return {};
+    }
+
+    return {connectionId: data};
   }
 
   @override
   void didUpdateWidget(covariant _PortsTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Since viewModel reference is the same, we check selectionId inside build() dynamically.
+    final id = widget.viewModel.selectedConnectionId;
+    if (id != _lastSelectedConnectionId) {
+      _lastSelectedConnectionId = id;
+      _portsSelectionKey = null;
+      _portsFuture = null;
+      _lastActivatedModeKey = null;
+      _isManageMode = false;
+    }
+    if (widget.active) {
+      _scheduleModeActivation();
+    }
   }
 
   @override
   void initState() {
     super.initState();
     _lastSelectedConnectionId = widget.viewModel.selectedConnectionId;
-    _isManageMode = _isManageModeAvailable;
-    _refreshPortsFuture();
+    _scheduleModeActivation();
+  }
+
+  void _scheduleModeActivation() {
+    if (!widget.active || _modeActivationScheduled) return;
+    final id = widget.viewModel.selectedConnectionId;
+    if (id == null) return;
+
+    final mode = _isManageMode && _isLinux ? 'manage' : 'snapshot';
+    final modeKey = '$id:$mode';
+    final snapshotReady =
+        mode == 'snapshot' && _portsFuture != null && _portsSelectionKey == id;
+    if (_lastActivatedModeKey == modeKey && snapshotReady) return;
+    if (_lastActivatedModeKey == modeKey && mode == 'manage') return;
+
+    _modeActivationScheduled = true;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _modeActivationScheduled = false;
+      if (!mounted || !widget.active) return;
+      unawaited(_activateCurrentMode());
+    });
+  }
+
+  Future<void> _activateCurrentMode() async {
+    final id = widget.viewModel.selectedConnectionId;
+    if (id == null) return;
+
+    final mode = _isManageMode && _isLinux ? 'manage' : 'snapshot';
+    final modeKey = '$id:$mode';
+    final snapshotReady =
+        mode == 'snapshot' && _portsFuture != null && _portsSelectionKey == id;
+    if (_lastActivatedModeKey == modeKey && snapshotReady) return;
+    if (_lastActivatedModeKey == modeKey && mode == 'manage') return;
+    _lastActivatedModeKey = modeKey;
+
+    if (mode == 'manage') {
+      await widget.viewModel.connectIfNeeded(id);
+      if (!mounted) return;
+
+      if (widget.viewModel.canManageSelectedConnection) {
+        await widget.viewModel.fetchPorts(id);
+      }
+      return;
+    }
+
+    setState(() {
+      _refreshPortsFuture();
+    });
   }
 
   @override
@@ -80,28 +141,26 @@ class _PortsTabState extends State<_PortsTab>
     final viewModel = widget.viewModel;
     final id = viewModel.selectedConnectionId;
 
-    if (id != _lastSelectedConnectionId) {
-      _lastSelectedConnectionId = id;
-      _refreshPortsFuture();
-      _isManageMode = _isManageModeAvailable;
-    }
-
     if (id == null) {
       return Center(
-        child: Text(_monitorText(
-            widget.strings,
-            'Please select a server on the left to view ports.',
-            '请先在左侧选择要查看的服务器。')),
+        child: Text(
+          _selectServerHint(
+            context,
+            widget.strings.language,
+            targetEn: 'ports',
+            targetZh: '端口',
+          ),
+        ),
       );
     }
 
-    if (!_isManageModeAvailable && _isManageMode) {
-      _isManageMode = false;
+    if (widget.active) {
+      _scheduleModeActivation();
     }
 
     return Column(
       children: [
-        if (_isManageModeAvailable) ...[
+        if (_isLinux) ...[
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8.0),
             child: SegmentedButton<bool>(
@@ -109,68 +168,61 @@ class _PortsTabState extends State<_PortsTab>
                 ButtonSegment(
                   value: true,
                   icon: const Icon(Icons.admin_panel_settings_rounded),
-                  label: Text(_monitorText(widget.strings, 'Manage Mode', '管理模式')),
+                  label:
+                      Text(_monitorText(widget.strings, 'Manage Mode', '管理模式')),
                 ),
                 ButtonSegment(
                   value: false,
                   icon: const Icon(Icons.analytics_rounded),
-                  label: Text(_monitorText(widget.strings, 'Snapshot Mode', '快照模式')),
+                  label: Text(
+                      _monitorText(widget.strings, 'Snapshot Mode', '快照模式')),
                 ),
               ],
               selected: {_isManageMode},
               onSelectionChanged: (values) {
                 setState(() {
                   _isManageMode = values.first;
+                  _lastActivatedModeKey = null;
                 });
+                _scheduleModeActivation();
               },
-            ),
-          ),
-        ] else ...[
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: widget.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    _monitorText(
-                      widget.strings,
-                      'Manage mode unavailable (root required). Switched to snapshot mode.',
-                      '当前无法使用管理模式（需要 root 权限），已自动切换为快照模式。',
-                    ),
-                    style: TextStyle(
-                      color: widget.colorScheme.onSurfaceVariant,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-                if (_isLinux)
-                  TextButton.icon(
-                    icon: const Icon(Icons.admin_panel_settings_rounded, size: 16),
-                    label: Text(_monitorText(widget.strings, 'Connect Root', '连接 Root')),
-                    onPressed: () => viewModel.connect(id),
-                  ),
-              ],
             ),
           ),
         ],
         Expanded(
-          child: _isManageMode ? _buildManageView(id) : _buildSnapshotView(id),
-        ),
+            child: _isManageMode && _isLinux
+                ? _buildManageView(id)
+                : _buildSnapshotView(id)),
       ],
     );
   }
 
   Widget _buildManageView(String id) {
     final viewModel = widget.viewModel;
+    if (viewModel.isConnectingSelectedConnection) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (!_isManageModeAvailable) {
+      return _RootRequiredView(
+        strings: widget.strings,
+        errorMessage: viewModel.hasManagementErrorForSelectedConnection
+            ? viewModel.errorMessage
+            : null,
+        onConnect: () {
+          _lastActivatedModeKey = null;
+          _scheduleModeActivation();
+        },
+      );
+    }
+
     if (viewModel.loadingPorts) {
       return const Center(child: CircularProgressIndicator());
     }
 
     if (viewModel.ports.isEmpty) {
       return RefreshIndicator(
-        onRefresh: () => viewModel.fetchPorts(id),
+        onRefresh: () => viewModel.fetchPorts(id, force: true),
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
           children: const [
@@ -182,7 +234,7 @@ class _PortsTabState extends State<_PortsTab>
     }
 
     return RefreshIndicator(
-      onRefresh: () => viewModel.fetchPorts(id),
+      onRefresh: () => viewModel.fetchPorts(id, force: true),
       child: ListView.builder(
         padding: const EdgeInsets.all(12),
         itemCount: viewModel.ports.length,
@@ -242,15 +294,14 @@ class _PortsTabState extends State<_PortsTab>
   }
 
   Widget _buildSnapshotView(String id) {
-    final currentConfigList = widget.viewModel.connections
-        .where((c) => c.id == id)
-        .toList();
+    final currentConfigList =
+        widget.viewModel.connections.where((c) => c.id == id).toList();
 
     return _ServerSnapshotTab<PortProcessSnapshot>(
       strings: widget.strings,
       connections: currentConfigList,
-      emptyText: _monitorText(
-          widget.strings, 'No listening ports found', '未发现监听端口'),
+      emptyText:
+          _monitorText(widget.strings, 'No listening ports found', '未发现监听端口'),
       future: _portsFuture,
       onRefresh: () => setState(() => _refreshPortsFuture(force: true)),
       itemBuilder: (context, port) {

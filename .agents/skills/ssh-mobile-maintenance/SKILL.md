@@ -158,11 +158,16 @@ Primary entry points are
   System Administration console.
 - Performance monitoring is user-started, supports multiple servers, and keeps
   at most ten minutes of in-memory samples.
+- The Monitor tab keeps its own multi-server selection; every other System
+  Administration tab shares `SystemAdminViewModel.selectedConnectionId`.
 - Ports, Applications, and Services each operate on one selected server and
   fetch on open or manual refresh.
 - Snapshot modes do not require root, enabling non-root Linux and Windows
   monitoring, while management tabs (Users, Sessions, Power) and management
   modes require root Linux connections.
+- Root management connections must follow the selected connection. Do not let
+  connect or async tab activation rewrite `selectedConnectionId`, and do not
+  auto-run `refreshAllData()` after connect.
 - Collect data with read-only one-shot SSH exec commands. Do not attach to tmux
   or interactive terminal sessions.
 - Linux probes use `/proc` and `df -P`; Windows probes use the PowerShell JSON

@@ -170,6 +170,8 @@ SFTP 页支持多服务器切换、路径记忆、上传、下载、文本编辑
 - `Applications`: 单服务器进程快照
 - `Services`: 单服务器服务状态快照
 
+系统管理页中，`Monitor` 保持独立的多服务器选择；其他系统管理功能共用当前单选服务器。快照模式不需要 root，`Users` / `Sessions` / `Power` 以及 `Ports` / `Services` 的管理模式才会按需连接 root。
+
 Linux 监控使用 `/proc` 和 `df -P`，Windows 监控使用 `ServerStatusProbe` 中的 PowerShell JSON 采样路径。监控服务会维护内存中的健康分和最近告警，服务器页可展示轻量健康状态。
 
 ### AI Chat
