@@ -252,21 +252,22 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
     _lastObservedSelectedConnectionId = currentSelectedId;
     _lastActivatedConnectionId = null;
 
-    _scheduleCurrentTabActivation();
+    _scheduleCurrentTabActivation(viewModel);
   }
 
-  void _scheduleCurrentTabActivation() {
+  void _scheduleCurrentTabActivation([SystemAdminViewModel? viewModel]) {
     if (_activationScheduled) return;
     _activationScheduled = true;
 
+    final activeViewModel = viewModel ?? (mounted ? context.read<SystemAdminViewModel>() : null);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _activationScheduled = false;
-      if (!mounted) return;
+      if (!mounted || activeViewModel == null) return;
 
-      final viewModel = context.read<SystemAdminViewModel>();
-      viewModel.validateSelectedConnection();
+      activeViewModel.validateSelectedConnection();
 
-      final selectedId = viewModel.selectedConnectionId;
+      final selectedId = activeViewModel.selectedConnectionId;
       if (selectedId == null) return;
 
       final index = _tabController.index;
@@ -278,7 +279,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
       _lastActivatedTabIndex = index;
       _lastActivatedConnectionId = selectedId;
 
-      unawaited(_activateTab(index, viewModel));
+      unawaited(_activateTab(index, activeViewModel));
     });
   }
 
