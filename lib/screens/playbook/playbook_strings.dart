@@ -25,6 +25,11 @@ class _PlaybookStrings {
   String get stepsCount => _en ? 'steps' : '个步骤';
   String get step => _en ? 'Step' : '步骤';
   String get addStep => _en ? 'Add Step' : '添加步骤';
+  String get deleteStep => _en ? 'Delete step?' : '删除步骤？';
+  String stepFallbackName(int number) => _en ? 'Step $number' : '步骤 $number';
+  String deleteStepContent(String name) => _en
+      ? 'Delete "$name"? This action cannot be undone.'
+      : '确定删除“$name”吗？此操作不可恢复。';
 
   String get stepName => _en ? 'Step Name' : '步骤名称';
   String get stepCommand => _en ? 'Execution Command' : '执行命令';

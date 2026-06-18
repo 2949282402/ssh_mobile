@@ -674,6 +674,8 @@ class SystemAdminService extends ChangeNotifier {
   /// Reboot the server
   Future<void> rebootServer(String connectionId) async {
     try {
+      // UI callers must complete confirmSystemPowerAction before reaching this
+      // service-level execution path.
       await _runCommand('reboot');
       AppLogService.instance.warning('Reboot command sent to server');
     } catch (e, stack) {
@@ -689,6 +691,8 @@ class SystemAdminService extends ChangeNotifier {
   /// Shutdown the server
   Future<void> shutdownServer(String connectionId) async {
     try {
+      // UI callers must complete confirmSystemPowerAction before reaching this
+      // service-level execution path.
       await _runCommand('shutdown -h now');
       AppLogService.instance.warning('Shutdown command sent to server');
     } catch (e, stack) {

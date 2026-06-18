@@ -17,6 +17,7 @@ import '../services/server_status_probe.dart';
 import '../utils/responsive.dart';
 import '../widgets/tactile_feedback.dart';
 import '../widgets/overflow_scroll_text.dart';
+import '../widgets/system_power_confirm_flow.dart';
 
 part 'system_admin/system_admin_server_pane.dart';
 part 'system_admin/users_tab.dart';
@@ -59,7 +60,8 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
         if (selectedId != null &&
             viewModel.managementConnectionId != selectedId &&
             !viewModel.isConnecting) {
-          final config = viewModel.connections.firstWhere((c) => c.id == selectedId);
+          final config =
+              viewModel.connections.firstWhere((c) => c.id == selectedId);
           if (config.serverPlatform == ServerPlatform.linux) {
             viewModel.connect(selectedId);
           }
@@ -158,15 +160,21 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                   width: serversCollapsed ? 64 : 320,
                   child: serversCollapsed
                       ? _AdminCollapsedDesktopServerRail(
-                          key: ValueKey(isMonitorTab ? 'admin-monitor-server-rail-collapsed' : 'admin-server-rail-collapsed'),
+                          key: ValueKey(isMonitorTab
+                              ? 'admin-monitor-server-rail-collapsed'
+                              : 'admin-server-rail-collapsed'),
                           selectedConnection: selectedConnection,
                           connections: selectedMonitorConnections,
                           busy: isMonitorTab
                               ? (monitorVm.isSampling && monitorVm.isRunning)
-                              : (isConnecting && viewModel.managementConnectionId == selectedConnectionId),
+                              : (isConnecting &&
+                                  viewModel.managementConnectionId ==
+                                      selectedConnectionId),
                           connected: isMonitorTab
                               ? monitorVm.isRunning
-                              : (isConnected && viewModel.managementConnectionId == selectedConnectionId),
+                              : (isConnected &&
+                                  viewModel.managementConnectionId ==
+                                      selectedConnectionId),
                           strings: strings,
                           isMonitorTab: isMonitorTab,
                           onExpand: () =>
@@ -200,22 +208,30 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                   switchOutCurve: Curves.easeInCubic,
                   child: serversCollapsed
                       ? _AdminCollapsedMobileServerBar(
-                          key: ValueKey(isMonitorTab ? 'admin-monitor-server-collapsed' : 'admin-server-collapsed'),
+                          key: ValueKey(isMonitorTab
+                              ? 'admin-monitor-server-collapsed'
+                              : 'admin-server-collapsed'),
                           selectedConnection: selectedConnection,
                           connections: selectedMonitorConnections,
                           busy: isMonitorTab
                               ? (monitorVm.isSampling && monitorVm.isRunning)
-                              : (isConnecting && viewModel.managementConnectionId == selectedConnectionId),
+                              : (isConnecting &&
+                                  viewModel.managementConnectionId ==
+                                      selectedConnectionId),
                           connected: isMonitorTab
                               ? monitorVm.isRunning
-                              : (isConnected && viewModel.managementConnectionId == selectedConnectionId),
+                              : (isConnected &&
+                                  viewModel.managementConnectionId ==
+                                      selectedConnectionId),
                           strings: strings,
                           isMonitorTab: isMonitorTab,
                           onExpand: () =>
                               viewModel.setServersCollapsed(context, false),
                         )
                       : _AdminMobileServerStrip(
-                          key: ValueKey(isMonitorTab ? 'admin-monitor-server-expanded' : 'admin-server-expanded'),
+                          key: ValueKey(isMonitorTab
+                              ? 'admin-monitor-server-expanded'
+                              : 'admin-server-expanded'),
                           viewModel: viewModel,
                           connections: connections,
                           strings: strings,
@@ -269,13 +285,23 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
           isScrollable: true,
           tabAlignment: TabAlignment.start,
           tabs: [
-            Tab(text: strings.monitor, icon: const Icon(Icons.monitor_heart_outlined)),
+            Tab(
+                text: strings.monitor,
+                icon: const Icon(Icons.monitor_heart_outlined)),
             Tab(text: strings.listeningPorts, icon: const Icon(Icons.lan)),
-            Tab(text: strings.applications, icon: const Icon(Icons.apps_rounded)),
-            Tab(text: strings.systemServices, icon: const Icon(Icons.settings_suggest)),
+            Tab(
+                text: strings.applications,
+                icon: const Icon(Icons.apps_rounded)),
+            Tab(
+                text: strings.systemServices,
+                icon: const Icon(Icons.settings_suggest)),
             Tab(text: strings.userAccounts, icon: const Icon(Icons.people)),
-            Tab(text: strings.activeSessions, icon: const Icon(Icons.co_present)),
-            Tab(text: strings.systemPower, icon: const Icon(Icons.power_settings_new)),
+            Tab(
+                text: strings.activeSessions,
+                icon: const Icon(Icons.co_present)),
+            Tab(
+                text: strings.systemPower,
+                icon: const Icon(Icons.power_settings_new)),
           ],
         ),
         Expanded(
@@ -360,10 +386,16 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
     Widget child,
   ) {
     final selectedConnectionId = viewModel.selectedConnectionId;
-    final isConnecting = viewModel.isConnecting && viewModel.managementConnectionId == selectedConnectionId;
-    final isConnected = viewModel.isConnected && viewModel.managementConnectionId == selectedConnectionId;
-    final errorMessage = viewModel.managementConnectionId == selectedConnectionId ? viewModel.errorMessage : null;
-    final isRoot = viewModel.isRoot && viewModel.managementConnectionId == selectedConnectionId;
+    final isConnecting = viewModel.isConnecting &&
+        viewModel.managementConnectionId == selectedConnectionId;
+    final isConnected = viewModel.isConnected &&
+        viewModel.managementConnectionId == selectedConnectionId;
+    final errorMessage =
+        viewModel.managementConnectionId == selectedConnectionId
+            ? viewModel.errorMessage
+            : null;
+    final isRoot = viewModel.isRoot &&
+        viewModel.managementConnectionId == selectedConnectionId;
 
     if (selectedConnectionId == null) {
       return Center(
@@ -409,7 +441,8 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
     }
 
     // Is Linux check
-    final config = viewModel.connections.firstWhere((c) => c.id == selectedConnectionId);
+    final config =
+        viewModel.connections.firstWhere((c) => c.id == selectedConnectionId);
     if (config.serverPlatform != ServerPlatform.linux) {
       return Padding(
         padding: const EdgeInsets.all(24),
@@ -422,7 +455,8 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
               Text(
                 strings.nonLinuxMsg,
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
             ],
           ),
@@ -500,7 +534,9 @@ class _RootRequiredView extends StatelessWidget {
               const SizedBox(height: 20),
               FilledButton.icon(
                 icon: const Icon(Icons.admin_panel_settings_rounded),
-                label: Text(strings.language == AppLanguage.en ? 'Connect as Root' : '以 Root 连接'),
+                label: Text(strings.language == AppLanguage.en
+                    ? 'Connect as Root'
+                    : '以 Root 连接'),
                 onPressed: onConnect,
               ),
             ],

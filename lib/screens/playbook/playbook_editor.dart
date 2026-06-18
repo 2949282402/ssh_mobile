@@ -111,8 +111,11 @@ extension _PlaybookScreenPlaybookEditor on _PlaybookScreenState {
                                     color: Colors.red, size: 20),
                                 padding: EdgeInsets.zero,
                                 constraints: const BoxConstraints(),
-                                onPressed: () =>
-                                    viewModel.removeStepFromEditing(index),
+                                onPressed: () => _confirmRemoveEditingStep(
+                                  viewModel,
+                                  strings,
+                                  index,
+                                ),
                               ),
                           ],
                         ),
@@ -184,5 +187,26 @@ extension _PlaybookScreenPlaybookEditor on _PlaybookScreenState {
             ],
           ),
         ));
+  }
+
+  Future<void> _confirmRemoveEditingStep(
+    PlaybookViewModel viewModel,
+    _PlaybookStrings strings,
+    int index,
+  ) async {
+    final controller = viewModel.stepControllers[index]['name'];
+    final fallbackName = strings.stepFallbackName(index + 1);
+    final stepName = controller?.text.trim().isNotEmpty == true
+        ? controller!.text.trim()
+        : fallbackName;
+    final confirmed = await DestructiveConfirmDialog.show(
+      context,
+      title: strings.deleteStep,
+      content: strings.deleteStepContent(stepName),
+      cancelLabel: strings.cancel,
+      confirmLabel: strings.delete,
+    );
+    if (!confirmed || !mounted) return;
+    viewModel.removeStepFromEditing(index);
   }
 }

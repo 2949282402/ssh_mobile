@@ -16,6 +16,10 @@ extension _SecurityPolicy on AiToolService {
   }
 
   AiCommandReview _reviewLinuxCommand(String normalized) {
+    final powerBlockReason = _systemPowerCommandBlockReason(normalized);
+    if (powerBlockReason != null) {
+      return AiCommandReview.blocked(powerBlockReason);
+    }
     if (_looksLikeWindowsShellCommand(normalized)) {
       return const AiCommandReview.blocked(
         'Windows command was requested for a Linux server. Use POSIX or Linux commands for this server.',
@@ -62,6 +66,10 @@ extension _SecurityPolicy on AiToolService {
   }
 
   AiCommandReview _reviewWindowsCommand(String normalized) {
+    final powerBlockReason = _systemPowerCommandBlockReason(normalized);
+    if (powerBlockReason != null) {
+      return AiCommandReview.blocked(powerBlockReason);
+    }
     if (_looksLikeLinuxShellCommand(normalized)) {
       return const AiCommandReview.blocked(
         'Linux or POSIX command was requested for a Windows server. Use explicit cmd /c or PowerShell commands for this server.',
@@ -125,6 +133,24 @@ extension _SecurityPolicy on AiToolService {
     ];
     if (deletePatterns.any((pattern) => pattern.hasMatch(text))) {
       return 'Delete or remove commands are blocked for AI tools.';
+    }
+    return null;
+  }
+
+  String? _systemPowerCommandBlockReason(String normalized) {
+    final text = normalized
+        .replaceAll(RegExp(r'''["'`]'''), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    final powerPatterns = [
+      RegExp(r'(^|[\s;&|()])systemctl\s+(reboot|poweroff|halt)([\s;&|()]|$)'),
+      RegExp(r'(^|[\s;&|()])(reboot|shutdown|poweroff|halt)([\s;&|()]|$)'),
+      RegExp(r'(^|[\s;&|()])shutdown\.exe([\s;&|()]|$)'),
+      RegExp(r'(^|[\s;&|()])restart-computer([\s;&|()]|$)'),
+      RegExp(r'(^|[\s;&|()])stop-computer([\s;&|()]|$)'),
+    ];
+    if (powerPatterns.any((pattern) => pattern.hasMatch(text))) {
+      return 'System reboot, shutdown, poweroff, and halt commands are blocked for AI tools. Use the System Admin power UI, which requires triple confirmation.';
     }
     return null;
   }

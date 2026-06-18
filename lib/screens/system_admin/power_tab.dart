@@ -52,7 +52,7 @@ class _PowerTabState extends State<_PowerTab>
                   backgroundColor: widget.colorScheme.tertiary,
                   padding: const EdgeInsets.all(16),
                 ),
-                onPressed: () => _confirmPowerAction('reboot'),
+                onPressed: () => _confirmPowerAction(SystemPowerAction.reboot),
               ),
             ),
             const SizedBox(height: 16),
@@ -66,7 +66,8 @@ class _PowerTabState extends State<_PowerTab>
                   side: BorderSide(color: widget.colorScheme.error),
                   padding: const EdgeInsets.all(16),
                 ),
-                onPressed: () => _confirmPowerAction('shutdown'),
+                onPressed: () =>
+                    _confirmPowerAction(SystemPowerAction.shutdown),
               ),
             ),
           ],
@@ -75,34 +76,18 @@ class _PowerTabState extends State<_PowerTab>
     );
   }
 
-  Future<void> _confirmPowerAction(String action) async {
-    final colorScheme = Theme.of(context).colorScheme;
+  Future<void> _confirmPowerAction(SystemPowerAction action) async {
     final language = context.read<AppSettings>().language;
-    final strings = AppStrings(language);
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-            action == 'reboot' ? strings.rebootServer : strings.shutdownServer),
-        content: Text(strings.powerConfirmContent),
-        actions: [
-          TextButton(
-            child: Text(strings.cancel),
-            onPressed: () => Navigator.pop(context, false),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: colorScheme.error),
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(strings.confirm),
-          ),
-        ],
-      ),
+    final confirm = await confirmSystemPowerAction(
+      context,
+      action: action,
+      isEnglish: language == AppLanguage.en,
     );
 
     if (!mounted) return;
-    if (confirm == true) {
+    if (confirm) {
       try {
-        if (action == 'reboot') {
+        if (action == SystemPowerAction.reboot) {
           await widget.viewModel.rebootServer();
         } else {
           await widget.viewModel.shutdownServer();

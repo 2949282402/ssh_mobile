@@ -9,7 +9,7 @@ class _HistoryPanel extends StatefulWidget {
   final VoidCallback onClose;
   final VoidCallback onNewChat;
   final ValueChanged<String> onSelectChat;
-  final Future<void> Function(String chatId) onDeleteChat;
+  final Future<void> Function(AiChatRecord chat) onDeleteChat;
 
   const _HistoryPanel({
     required this.chats,
@@ -169,7 +169,7 @@ class _HistoryPanelState extends State<_HistoryPanel> {
                           trailing: IconButton(
                             tooltip: widget.strings.delete,
                             icon: const Icon(Icons.delete_outline),
-                            onPressed: () => widget.onDeleteChat(chat.id),
+                            onPressed: () => widget.onDeleteChat(chat),
                           ),
                           onTap: () => widget.onSelectChat(chat.id),
                         );
@@ -277,8 +277,8 @@ extension _LlmChatScreenBodyStateHistory on _LlmChatScreenBodyState {
                         _closeHistoryPanel(context);
                         viewModel.createChatFromSettings();
                       },
-                      onDeleteChat: (chatId) async {
-                        await _deleteChat(chatId);
+                      onDeleteChat: (chat) async {
+                        await _deleteChat(chat);
                       },
                       onSelectChat: (chatId) {
                         viewModel.selectChat(chatId);

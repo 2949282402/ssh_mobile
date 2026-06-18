@@ -7,6 +7,7 @@ import '../features/playbook/viewmodels/playbook_viewmodel.dart';
 import '../services/app_settings.dart';
 import '../theme/app_theme.dart';
 import '../widgets/overflow_scroll_text.dart';
+import '../widgets/destructive_confirm_dialog.dart';
 import 'home_screen.dart';
 
 part 'playbook/playbook_strings.dart';

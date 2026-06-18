@@ -14,6 +14,20 @@ class _AiStrings {
   String get history => _en ? 'Chat history' : '聊天历史';
   String get newChat => _en ? 'New chat' : '新聊天';
   String get delete => _en ? 'Delete' : '删除';
+  String get deleteChatTitle => _en ? 'Delete chat?' : '删除对话？';
+  String deleteChatContent(String title) => _en
+      ? 'Delete "$title"? This action cannot be undone.'
+      : '确定删除“$title”吗？此操作不可恢复。';
+  String get deleteBaseUrlHistoryTitle =>
+      _en ? 'Delete history entry?' : '删除历史记录？';
+  String deleteBaseUrlHistoryContent(String baseUrl) => _en
+      ? 'Delete this Base URL history entry?\n$baseUrl'
+      : '确定删除这个 Base URL 历史记录吗？\n$baseUrl';
+  String get deleteApiKeyHistoryTitle =>
+      _en ? 'Delete API key history?' : '删除 API Key 历史？';
+  String deleteApiKeyHistoryContent(String maskedValue) => _en
+      ? 'Delete this API key history entry?\n$maskedValue'
+      : '确定删除这个 API Key 历史记录吗？\n$maskedValue';
   String get appSettings => _en ? 'App settings' : '应用设置';
   String get settings => _en ? 'LLM settings' : '大模型设置';
   String get send => _en ? 'Send' : '发送';

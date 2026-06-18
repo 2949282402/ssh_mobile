@@ -211,7 +211,16 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     );
     if (action == null) return;
     if (action.delete) {
-      await _deleteBaseUrlHistoryEntry(action.value);
+      final confirmed = await DestructiveConfirmDialog.show(
+        context,
+        title: strings.deleteBaseUrlHistoryTitle,
+        content: strings.deleteBaseUrlHistoryContent(action.value),
+        cancelLabel: strings.cancel,
+        confirmLabel: strings.delete,
+      );
+      if (confirmed) {
+        await _deleteBaseUrlHistoryEntry(action.value);
+      }
       return;
     }
     await _applyBaseUrlSelection(action.value);
@@ -244,7 +253,16 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     );
     if (action == null) return;
     if (action.delete) {
-      await _deleteApiKeyHistoryEntry(action.value.id);
+      final confirmed = await DestructiveConfirmDialog.show(
+        context,
+        title: strings.deleteApiKeyHistoryTitle,
+        content: strings.deleteApiKeyHistoryContent(action.value.maskedValue),
+        cancelLabel: strings.cancel,
+        confirmLabel: strings.delete,
+      );
+      if (confirmed) {
+        await _deleteApiKeyHistoryEntry(action.value.id);
+      }
       return;
     }
     _selectApiKeyHistoryEntry(action.value.id);

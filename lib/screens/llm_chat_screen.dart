@@ -25,6 +25,7 @@ import '../services/storage_service.dart';
 import '../services/playbook_service.dart';
 import '../services/rag_service.dart';
 import '../widgets/overflow_scroll_text.dart';
+import '../widgets/destructive_confirm_dialog.dart';
 
 part 'llm_chat/assistant_run_indicator.dart';
 part 'llm_chat/llm_settings_screen.dart';
@@ -972,9 +973,18 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     }
   }
 
-  Future<void> _deleteChat(String id) async {
+  Future<void> _deleteChat(AiChatRecord chat) async {
+    final strings = _AiStrings(context.read<AppSettings>().language);
+    final confirmed = await DestructiveConfirmDialog.show(
+      context,
+      title: strings.deleteChatTitle,
+      content: strings.deleteChatContent(chat.title),
+      cancelLabel: strings.cancel,
+      confirmLabel: strings.delete,
+    );
+    if (!confirmed || !mounted) return;
     final viewModel = context.read<AiChatViewModel>();
-    await viewModel.deleteChat(id);
+    await viewModel.deleteChat(chat.id);
     _scrollToBottom(jump: true);
   }
 
