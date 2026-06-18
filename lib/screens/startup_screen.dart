@@ -161,7 +161,7 @@ class _StatusTile extends StatelessWidget {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
         border: Border.all(color: colorScheme.outlineVariant),
       ),
       child: Row(
