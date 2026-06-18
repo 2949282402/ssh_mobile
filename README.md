@@ -18,12 +18,12 @@ SSH Mobile is a Flutter-based cross-platform SSH / SFTP client for long-running 
 - MVVM 架构：`lib/main.dart` 负责依赖装配，`lib/features/*` 负责 feature 状态和动作，`lib/services/*` 负责协议与存储基础设施。
 - SSH 连接管理：支持密码、私钥、私钥密码、跳板机、服务器平台选择，以及 SSH Host Key 首次信任校验。
 - 多终端窗口：同一服务器可创建多个窗口，窗口名固定，用于稳定绑定 tmux 会话。
-- SFTP：支持目录浏览、上传、下载、文本编辑、文件预览和输入名称确认删除。
+- SFTP：支持目录浏览、上传、下载、文本编辑、文件预览、加密预览缓存和输入名称确认删除。
 - 性能监控：包含 Performance、Ports、Applications、Services 四个分区。
 - AI 聊天：支持流式输出、Markdown、聊天历史、消息编辑、重新生成、分支和上下文压缩。
 - AI tools：支持服务器诊断、SFTP 路径操作、客户端信息、WebView 搜索与读取、日志与备份操作。
-- 日志：集中记录 SSH、SFTP、LLM、AI tools 和异常信息。
-- 设置与备份：支持语言、主题、字体、AI 设置、聊天和窗口历史导入导出，但不导出密码、私钥或 API Key。
+- 日志：集中记录 SSH、SFTP、LLM、AI tools 和异常信息，并统一脱敏常见凭据、令牌和私钥内容。
+- 设置与备份：支持语言、主题、字体、AI 设置、聊天和窗口历史导入导出，但不导出密码、私钥或 API Key，导入会做大小、数量和 schema 校验。
 - 附加页面：包含系统管理、Playbook、RAG 知识库、AI Skills、终端历史和客户端 WebView。
 
 ## Project Structure
@@ -159,7 +159,7 @@ iOS 和 macOS 只能在 macOS 上构建。
 
 ### SFTP
 
-SFTP 页支持多服务器切换、路径记忆、上传、下载、文本编辑和常见文档预览。删除文件或目录前必须输入完整目标名称。客户端可在设置中调整普通下载、文本预览、富预览和文本编辑的大小限制，以避免大文件在移动端占用过多内存。
+SFTP 页支持多服务器切换、路径记忆、上传、下载、文本编辑和常见文档预览。删除文件或目录前必须输入完整目标名称。预览缓存会加密落盘，`.ssh`、`.env`、私钥、token、云凭据和系统敏感路径不写缓存。客户端可在设置中调整普通下载、文本预览、富预览和文本编辑的大小限制，以避免大文件在移动端占用过多内存。
 
 ### Performance Monitor
 
@@ -221,15 +221,15 @@ AI tools 以能力分组维护在 `lib/services/ai_tool/` 中，而不是把逻�
 
 - 普通运维请求默认使用当前聊天内的 `todoSteps` 执行计划；只有用户明确要求保存/复用剧本时，才使用 `create_playbook`、`run_playbook` 等 Playbook 工具。
 - `client_*` tools 运行在 SSH Mobile 客户端，不连接服务器。
-- `run_command` 会强制遵守保存的 `serverPlatform`。
-- 远程写入、本地导入、日志删除/清空、监控状态变更等操作必须经过统一审批。
-- AI destructive shell delete/remove 命令会被拦截；SFTP 变更工具需显式审批。
+- `run_command` 会强制遵守保存的 `serverPlatform`，并阻断环境变量 dump、云 metadata endpoint 和敏感路径读取；日志读取默认需要审批。
+- 远程写入、远程文件读取/下载、本地导入、日志删除/清空、监控状态变更等操作必须经过统一审批。
+- AI destructive shell delete/remove 命令会被拦截；SFTP 敏感路径读取、下载和写入会直接阻断。
 - SSH 会话开关、tmux 会话恢复和终端历史删除也属于显式审批范围，不会绕过审批面板。
 - 所有 tool 参数、结果和 trace 都经过 `ToolSecretPolicy` 过滤或拦截，避免暴露凭据和敏感路径内容。
 
 ### Logs, Settings, Backup
 
-日志页记录开发日志、SSH/SFTP 状态、LLM 请求、AI tool 调用和异常。应用设置从 AI 页顶部按钮打开，与 LLM 设置分离。导出备份包含服务器、窗口恢复信息、终端历史、AI 设置、AI 聊天和自定义 Skills，但密码、私钥和 API Key 会保持为空，导入后需要重新配置。
+日志页记录开发日志、SSH/SFTP 状态、LLM 请求、AI tool 调用和异常。应用设置从 AI 页顶部按钮打开，与 LLM 设置分离，并提供后台通知是否显示服务器名的隐私开关，默认隐藏。导出备份包含服务器、窗口恢复信息、终端历史、AI 设置、AI 聊天和自定义 Skills，但密码、私钥和 API Key 会保持为空，导入后需要重新配置。
 
 ## Operational Notes
 

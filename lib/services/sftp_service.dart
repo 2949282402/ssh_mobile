@@ -13,7 +13,9 @@ import '../features/connection/models/connection.dart';
 import 'app_log_service.dart';
 import '../core/services/ssh_client_factory.dart';
 import '../core/services/ssh_host_key_policy.dart';
+import '../core/services/data_protection_service.dart';
 import 'storage_service.dart';
+import 'tool_secret_policy.dart';
 
 part 'sftp/sftp_models.dart';
 part 'sftp/sftp_cache.dart';
@@ -700,6 +702,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     }
     if (forgetPath) {
       _lastPaths.remove(connectionId);
+      await SftpFileCache.clearConnection(connectionId);
     }
     session?.close();
     if (_activeConnectionId == connectionId) {

@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'app_settings.dart';
+import 'tool_secret_policy.dart';
 
 /// 应用级日志服务（单例）。
 ///
@@ -33,6 +34,8 @@ class AppLogService extends ChangeNotifier {
   final List<String> _logWriteQueue = [];
   bool _isWriting = false;
   int logSizeLimit = 5 * 1024 * 1024;
+  bool writeDiskLogsInRelease = false;
+  final ToolSecretPolicy _secretPolicy = const ToolSecretPolicy();
 
   AppLogService._();
 
@@ -140,13 +143,15 @@ class AppLogService extends ChangeNotifier {
   }) {
     final safeMessage = _redact(message);
     final safeDetails = details == null ? null : _redact(details);
+    final safeStackTrace =
+        stackTrace == null ? null : _redact(stackTrace.toString());
     final entry = AppLogEntry(
       id: _nextEntryId++,
       time: DateTime.now(),
       level: level,
       message: safeMessage,
       sourceLocation: captureSource ? _sourceLocation(stackTrace) : null,
-      stackTrace: stackTrace?.toString(),
+      stackTrace: safeStackTrace,
       details: safeDetails,
     );
     _entries.addLast(entry);
@@ -193,6 +198,7 @@ class AppLogService extends ChangeNotifier {
   }
 
   Future<void> _writeToDisk(String logLine) async {
+    if (kReleaseMode && !writeDiskLogsInRelease) return;
     _logWriteQueue.add(logLine);
     if (_isWriting) return;
     _isWriting = true;
@@ -241,34 +247,7 @@ class AppLogService extends ChangeNotifier {
     }
   }
 
-  /// 日志脱敏：替换私钥 PEM、Bearer Token、密码字段等敏感信息为 [REDACTED]。
-  /// 匹配策略：私钥块完整匹配、key=value 格式保留键名只脱敏值、Bearer 替换整个 token。
-  String _redact(String value) {
-    var text = value;
-    final patterns = <RegExp>[
-      RegExp(
-        r'-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----',
-        caseSensitive: false,
-      ),
-      RegExp(
-        r'(password|passwd|pwd|privateKey|private_key|token|access_token|secret)\s*[:=]\s*[^,\s}\]]+',
-        caseSensitive: false,
-      ),
-      RegExp(r'Bearer\s+[A-Za-z0-9._~+/=-]+', caseSensitive: false),
-    ];
-
-    for (final pattern in patterns) {
-      text = text.replaceAllMapped(pattern, (match) {
-        final matched = match.group(0) ?? '';
-        final separatorIndex = matched.indexOf(RegExp(r'[:=]'));
-        if (separatorIndex > 0 && !matched.toLowerCase().startsWith('bearer')) {
-          return '${matched.substring(0, separatorIndex + 1)}[REDACTED]';
-        }
-        return '[REDACTED]';
-      });
-    }
-    return text;
-  }
+  String _redact(String value) => _secretPolicy.redactText(value);
 
   String? _sourceLocation(StackTrace? errorStackTrace) {
     return _sourceFromStack(errorStackTrace) ??

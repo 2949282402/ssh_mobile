@@ -86,23 +86,36 @@ class BackgroundServiceManager {
     _configured = true;
   }
 
-  static Future<void> start({String? connectionName}) async {
+  static Future<void> start({
+    String? connectionName,
+    bool showConnectionName = false,
+  }) async {
     if (!_supportsNativeBackgroundService) return;
     await initialize();
-    await _acquirePowerLocks();
-    unawaited(_requestBatteryOptimizationExemption());
+    var locksAcquired = false;
+    try {
+      await _acquirePowerLocks();
+      locksAcquired = true;
+      unawaited(_requestBatteryOptimizationExemption());
 
-    final service = FlutterBackgroundService();
-    if (!await service.isRunning()) {
-      await service.startService();
+      final service = FlutterBackgroundService();
+      if (!await service.isRunning()) {
+        await service.startService();
+      }
+
+      service.invoke('update', {
+        'title': 'SSH Mobile',
+        'content': _notificationContent(
+          connectionName,
+          showConnectionName: showConnectionName,
+        ),
+      });
+    } catch (_) {
+      if (locksAcquired) {
+        await _releasePowerLocks();
+      }
+      rethrow;
     }
-
-    service.invoke('update', {
-      'title': 'SSH Mobile',
-      'content': connectionName == null || connectionName.isEmpty
-          ? 'SSH service is running'
-          : 'Connected to $connectionName',
-    });
   }
 
   static Future<void> stop() async {
@@ -200,6 +213,18 @@ class BackgroundServiceManager {
         );
       }
     } catch (_) {}
+  }
+
+  static String _notificationContent(
+    String? connectionName, {
+    required bool showConnectionName,
+  }) {
+    if (!showConnectionName ||
+        connectionName == null ||
+        connectionName.isEmpty) {
+      return 'SSH service is running';
+    }
+    return 'Connected to $connectionName';
   }
 }
 
@@ -315,7 +340,11 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
     final count = sessions.length;
     if (count == 0) return 'SSH service is running';
     if (count == 1) {
-      return 'Connected to ${sessions.values.first.connectionName}';
+      final session = sessions.values.first;
+      if (session.showServerNameInNotification) {
+        return 'Connected to ${session.connectionName}';
+      }
+      return '1 SSH session running';
     }
     return '$count SSH sessions running';
   }
@@ -467,13 +496,17 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
     await closeSsh(sessionId, notify: false);
     final connectionId = data['id'] as String?;
     final name = data['name'] as String? ?? 'server';
+    final showServerNameInNotification =
+        data['showServerNameInNotification'] == true;
     emitState(
       'connecting',
       sessionId: sessionId,
       connectionId: connectionId,
       connectionName: name,
     );
-    setNotification('Connecting to $name...');
+    setNotification(
+      showServerNameInNotification ? 'Connecting to $name...' : 'Connecting...',
+    );
     emitLog(
       'service',
       'Connecting SSH socket',
@@ -497,7 +530,6 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
       final tmuxAutoDeleteSeconds =
           ((data['tmuxAutoDeleteSeconds'] as num?)?.toInt() ?? 600)
               .clamp(30, 86400);
-
       final socket = await SSHSocket.connect(
         host,
         port,
@@ -587,6 +619,7 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
         tmuxSessionName: launchMode == 'tmux' ? tmuxSessionName : null,
         tmuxAutoDeleteSeconds: tmuxAutoDeleteSeconds,
         launchMode: launchMode,
+        showServerNameInNotification: showServerNameInNotification,
         reconnectData: sanitizeBackgroundReconnectData(data),
         client: client,
         shell: shell,
@@ -781,6 +814,7 @@ class _BackgroundSshSession {
   final String? tmuxSessionName;
   final int tmuxAutoDeleteSeconds;
   final String launchMode;
+  final bool showServerNameInNotification;
   final Map<String, dynamic> reconnectData;
   final SSHClient client;
   final SSHSession shell;
@@ -797,6 +831,7 @@ class _BackgroundSshSession {
     required this.tmuxSessionName,
     required this.tmuxAutoDeleteSeconds,
     required this.launchMode,
+    required this.showServerNameInNotification,
     required this.reconnectData,
     required this.client,
     required this.shell,

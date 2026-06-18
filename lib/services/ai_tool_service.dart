@@ -317,6 +317,24 @@ class AiToolService implements AiToolExecutor {
           byteLength: bytes,
           contentPreview: secretPolicy.previewText(content, maxChars: 200),
         );
+      case 'sftp_read_text':
+        return _remoteApproval(
+          toolName: name,
+          arguments: arguments,
+          approvalType: 'remote_read',
+          summaryBuilder: (connectionId, path) => 'SFTP READ $path',
+          reason:
+              'Remote file reads require user approval because file contents may contain secrets.',
+        );
+      case 'sftp_download_file':
+        return _remoteApproval(
+          toolName: name,
+          arguments: arguments,
+          approvalType: 'remote_read',
+          summaryBuilder: (connectionId, path) => 'SFTP DOWNLOAD $path',
+          reason:
+              'Remote file downloads require user approval because file contents may contain secrets.',
+        );
       case 'sftp_upload_local_file':
         return _remoteApproval(
           toolName: name,

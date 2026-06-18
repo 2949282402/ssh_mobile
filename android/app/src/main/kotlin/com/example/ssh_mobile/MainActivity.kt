@@ -9,6 +9,8 @@ import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.AlarmClock
 import android.provider.Settings
@@ -21,8 +23,15 @@ class MainActivity : FlutterActivity() {
     private val systemChannelName = "ssh_mobile/client_system"
 
     companion object {
+        private const val LOCK_TIMEOUT_MS = 60 * 60 * 1000L
         private var wakeLock: PowerManager.WakeLock? = null
         private var wifiLock: WifiManager.WifiLock? = null
+        private var releaseLocksRunnable: Runnable? = null
+    }
+
+    override fun onDestroy() {
+        releaseLocks()
+        super.onDestroy()
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -90,7 +99,7 @@ class MainActivity : FlutterActivity() {
                 "ssh_mobile:SshKeepAliveWakeLock"
             ).apply {
                 setReferenceCounted(false)
-                acquire()
+                acquire(LOCK_TIMEOUT_MS)
             }
         }
 
@@ -104,9 +113,15 @@ class MainActivity : FlutterActivity() {
                 acquire()
             }
         }
+        scheduleLockTimeout()
     }
 
     private fun releaseLocks() {
+        releaseLocksRunnable?.let {
+            Handler(Looper.getMainLooper()).removeCallbacks(it)
+        }
+        releaseLocksRunnable = null
+
         if (wifiLock?.isHeld == true) {
             wifiLock?.release()
         }
@@ -116,6 +131,14 @@ class MainActivity : FlutterActivity() {
             wakeLock?.release()
         }
         wakeLock = null
+    }
+
+    private fun scheduleLockTimeout() {
+        val handler = Handler(Looper.getMainLooper())
+        releaseLocksRunnable?.let { handler.removeCallbacks(it) }
+        val runnable = Runnable { releaseLocks() }
+        releaseLocksRunnable = runnable
+        handler.postDelayed(runnable, LOCK_TIMEOUT_MS)
     }
 
     private fun isIgnoringBatteryOptimizations(): Boolean {

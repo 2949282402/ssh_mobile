@@ -37,13 +37,14 @@ class SftpToolsProvider implements AiToolProvider {
       AiTool(
         name: 'sftp_read_text',
         description:
-            'Read a small remote text file through detached SFTP. Binary and large files are rejected. Secret-bearing paths are blocked.',
+            'Read a small remote text file through detached SFTP after user approval. Binary and large files are rejected. Secret-bearing paths are blocked.',
         properties: {
           'connectionId': _string('Server connection id.'),
           'path': _string('Remote text file path.'),
         },
         required: const ['connectionId', 'path'],
-        handler: (args) => _readText(service, args),
+        handler: (arguments) =>
+            _readText(service, arguments, approvedRead: false),
       ),
       AiTool(
         name: 'sftp_download_file',
@@ -55,7 +56,8 @@ class SftpToolsProvider implements AiToolProvider {
         },
         required: const ['connectionId', 'path'],
         executionMode: AiToolExecutionMode.stateChanging,
-        handler: (args) => _sftpDownloadFile(service, args),
+        handler: (arguments) =>
+            _sftpDownloadFile(service, arguments, approvedRead: false),
       ),
       AiTool(
         name: 'sftp_write_text',
@@ -154,9 +156,10 @@ class SftpToolsProvider implements AiToolProvider {
       case 'sftp_get_entry_info':
         return _sftpGetEntryInfo(service, arguments);
       case 'sftp_read_text':
-        return _readText(service, arguments);
+        return _readText(service, arguments, approvedRead: approvedWrite);
       case 'sftp_download_file':
-        return _sftpDownloadFile(service, arguments);
+        return _sftpDownloadFile(service, arguments,
+            approvedRead: approvedWrite);
       case 'sftp_write_text':
         return _sftpWriteText(service, arguments, approvedWrite: approvedWrite);
       case 'sftp_upload_local_file':
@@ -218,11 +221,20 @@ class SftpToolsProvider implements AiToolProvider {
   }
 
   Future<String> _readText(
-      AiToolService service, Map<String, dynamic> arguments) async {
+    AiToolService service,
+    Map<String, dynamic> arguments, {
+    required bool approvedRead,
+  }) async {
     final connectionId = service._arg(arguments, 'connectionId');
     final path = service._arg(arguments, 'path');
     final blocked = service._secretPathBlocked(path);
     if (blocked != null) return blocked;
+    if (!approvedRead) {
+      return jsonEncode({
+        'error': 'Remote file read requires user approval before execution.',
+        'path': path,
+      });
+    }
     final text = await sftpService.readTextPathForConnection(
       connectionId: connectionId,
       path: path,
@@ -235,11 +247,21 @@ class SftpToolsProvider implements AiToolProvider {
   }
 
   Future<String> _sftpDownloadFile(
-      AiToolService service, Map<String, dynamic> arguments) async {
+    AiToolService service,
+    Map<String, dynamic> arguments, {
+    required bool approvedRead,
+  }) async {
     final connectionId = service._arg(arguments, 'connectionId');
     final path = service._arg(arguments, 'path');
     final blocked = service._secretPathBlocked(path);
     if (blocked != null) return blocked;
+    if (!approvedRead) {
+      return jsonEncode({
+        'error':
+            'Remote file download requires user approval before execution.',
+        'path': path,
+      });
+    }
     final bytes = await sftpService.downloadPathForConnection(
       connectionId: connectionId,
       path: path,

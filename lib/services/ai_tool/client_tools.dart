@@ -606,9 +606,49 @@ class ClientToolsProvider implements AiToolProvider {
               .length,
       'aiChats': (decoded['aiChats'] as List<dynamic>? ?? const []).length,
       'aiSkills': (decoded['aiSkills'] as List<dynamic>? ?? const []).length,
+      'playbooks': (decoded['playbooks'] as List<dynamic>? ?? const []).length,
       'hasAiSettings': aiSettings != null,
       'credentialFieldsIgnored': hasCredentialFields,
+      'highRiskContent': _backupHighRiskSections(decoded),
     };
+  }
+
+  List<String> _backupHighRiskSections(Map<String, dynamic> decoded) {
+    final sections = <String>[];
+    if ((decoded['playbooks'] as List<dynamic>? ?? const []).isNotEmpty) {
+      sections.add('playbooks');
+    }
+    if ((decoded['aiSkills'] as List<dynamic>? ?? const []).isNotEmpty) {
+      sections.add('aiSkills');
+    }
+    final shortcuts = decoded['shortcutCommands'];
+    if (shortcuts is Map<String, dynamic> &&
+        shortcuts.values.any((value) => value != null && '$value'.isNotEmpty)) {
+      sections.add('shortcuts');
+    }
+    final aiSettings = decoded['aiSettings'];
+    if (aiSettingsHasCustomPrompts(aiSettings)) {
+      sections.add('customPrompts');
+    }
+    return sections;
+  }
+
+  bool aiSettingsHasCustomPrompts(Map<String, dynamic>? aiSettings) {
+    if (aiSettings == null) return false;
+    const keys = [
+      'customSystemPrompt',
+      'customPlannerPrompt',
+      'customOperatorPrompt',
+      'customExplorePrompt',
+      'customReviewerPrompt',
+      'customSummarizerPrompt',
+      'customCoordinatorPrompt',
+    ];
+    return aiSettings['useCustomPrompts'] == true ||
+        keys.any((key) {
+          final value = aiSettings[key];
+          return value is String && value.trim().isNotEmpty;
+        });
   }
 
   Future<String> _appGetOperationalSettings(

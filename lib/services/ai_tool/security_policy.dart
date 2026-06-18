@@ -30,6 +30,13 @@ extension _SecurityPolicy on AiToolService {
         'Command chaining or piping requires user approval.',
       );
     }
+    if (normalized.startsWith('cmd /c type')) {
+      return const AiCommandReview.requiresApproval(
+        'Reading remote file contents requires user approval.',
+      );
+    }
+    final readReview = _sensitiveReadCommandReview(normalized);
+    if (readReview != null) return readReview;
     const allowedPrefixes = [
       'cat ',
       'command -v ',
@@ -96,6 +103,8 @@ extension _SecurityPolicy on AiToolService {
         'Command chaining or piping requires user approval.',
       );
     }
+    final readReview = _sensitiveReadCommandReview(normalized);
+    if (readReview != null) return readReview;
     if (safeCmdPrefixes.any(normalized.startsWith)) {
       return const AiCommandReview.readOnly();
     }
@@ -215,6 +224,62 @@ extension _SecurityPolicy on AiToolService {
         normalized.contains(' & ');
   }
 
+  AiCommandReview? _sensitiveReadCommandReview(String normalized) {
+    final text = normalized
+        .replaceAll(RegExp(r'''["'`]'''), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (text.startsWith('journalctl') || text.contains(' journalctl ')) {
+      return const AiCommandReview.requiresApproval(
+        'Reading server logs requires user approval because logs may contain secrets.',
+      );
+    }
+    if (text.contains('/var/log') || RegExp(r'\.log(\s|$)').hasMatch(text)) {
+      return const AiCommandReview.requiresApproval(
+        'Reading server log files requires user approval because logs may contain secrets.',
+      );
+    }
+
+    final readCommands = [
+      'cat',
+      'grep',
+      'head',
+      'tail',
+      'less',
+      'more',
+      'type',
+      'get-content',
+    ];
+    final command = readCommands.firstWhere(
+      (item) => text == item || text.startsWith('$item '),
+      orElse: () => '',
+    );
+    if (command.isEmpty) return null;
+    if (_isClearlySafeReadCommand(text)) return null;
+    return const AiCommandReview.requiresApproval(
+      'Reading remote file contents requires user approval unless the path is a known safe system status file.',
+    );
+  }
+
+  bool _isClearlySafeReadCommand(String text) {
+    const safeFragments = [
+      '/etc/os-release',
+      '/etc/issue',
+      '/proc/cpuinfo',
+      '/proc/meminfo',
+      '/proc/loadavg',
+      '/proc/uptime',
+      '/proc/stat',
+      '/proc/diskstats',
+      '/proc/net/dev',
+      '/proc/net/tcp',
+      '/proc/net/udp',
+      '/sys/class/net',
+      '/sys/class/thermal',
+    ];
+    return safeFragments.any(text.contains);
+  }
+
   bool _isSafePowerShellDiagnostic(String normalized) {
     final isPowerShell =
         normalized.startsWith('powershell ') || normalized.startsWith('pwsh ');
@@ -225,6 +290,7 @@ extension _SecurityPolicy on AiToolService {
       ' copy-',
       ' disable-',
       ' enable-',
+      'get-content',
       ' invoke-',
       ' move-',
       ' new-',

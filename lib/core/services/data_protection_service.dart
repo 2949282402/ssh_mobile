@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -18,6 +19,9 @@ class DataProtectionService {
   static const _keyStorageKey = 'data_protection_key_v1';
   // 加密数据的前缀标识，用于 isEncrypted 检测
   static const encryptedPrefix = 'ssh-mobile-v1:';
+  static const encryptedBytesPrefix = 'ssh-mobile-bin-v1:';
+  static final List<int> _encryptedBytesPrefixBytes =
+      utf8.encode(encryptedBytesPrefix);
 
   static final DataProtectionService instance = DataProtectionService._();
 
@@ -84,6 +88,66 @@ class DataProtectionService {
 
   /// 判断字符串是否已加密（以 'ssh-mobile-v1:' 开头）
   bool isEncrypted(String value) => value.startsWith(encryptedPrefix);
+
+  Future<Uint8List> encryptBytes(Uint8List bytes) async {
+    if (bytes.isEmpty) {
+      return Uint8List.fromList(utf8.encode('$encryptedBytesPrefix.'));
+    }
+    try {
+      final key = await _getOrCreateKey();
+      final secretBox = await _algorithm.encrypt(bytes, secretKey: key);
+      final payload = {
+        'n': base64Encode(secretBox.nonce),
+        'm': base64Encode(secretBox.mac.bytes),
+        'c': base64Encode(secretBox.cipherText),
+      };
+      final encoded =
+          '$encryptedBytesPrefix${base64Encode(utf8.encode(jsonEncode(payload)))}';
+      return Uint8List.fromList(utf8.encode(encoded));
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to encrypt bytes',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  Future<Uint8List> decryptBytes(Uint8List bytes) async {
+    if (!isEncryptedBytes(bytes)) return bytes;
+    final text = utf8.decode(bytes);
+    final body = text.substring(encryptedBytesPrefix.length);
+    if (body == '.') return Uint8List(0);
+
+    try {
+      final decoded = utf8.decode(base64Decode(body));
+      final payload = jsonDecode(decoded) as Map<String, dynamic>;
+      final key = await _getOrCreateKey();
+      final box = SecretBox(
+        base64Decode(payload['c'] as String),
+        nonce: base64Decode(payload['n'] as String),
+        mac: Mac(base64Decode(payload['m'] as String)),
+      );
+      final plaintext = await _algorithm.decrypt(box, secretKey: key);
+      return Uint8List.fromList(plaintext);
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to decrypt bytes',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  bool isEncryptedBytes(Uint8List bytes) {
+    if (bytes.length < _encryptedBytesPrefixBytes.length) return false;
+    for (var i = 0; i < _encryptedBytesPrefixBytes.length; i++) {
+      if (bytes[i] != _encryptedBytesPrefixBytes[i]) return false;
+    }
+    return true;
+  }
 
   /// 获取或创建 AES-256 密钥。
   /// 优先从内存缓存 _cachedKey 读，其次读 Keychain，

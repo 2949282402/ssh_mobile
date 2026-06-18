@@ -345,6 +345,98 @@ void main() {
     expect(settings.toolCallBudget, 30);
   });
 
+  test('rejects oversized backup before JSON parsing', () async {
+    storage = await initializedStorage();
+
+    final oversized = 'x' * (10 * 1024 * 1024 + 1);
+
+    await expectLater(
+      () => storage.importAppDataJson(oversized),
+      throwsStateError,
+    );
+  });
+
+  test('rejects backups that exceed item limits', () async {
+    storage = await initializedStorage();
+
+    final backup = jsonEncode({
+      'format': 'ssh_mobile_backup',
+      'version': 2,
+      'connections': List.generate(
+        201,
+        (index) => {
+          'id': 'server-$index',
+          'name': 'Server $index',
+          'host': 'example$index.com',
+          'username': 'root',
+        },
+      ),
+      'aiSettings': {
+        'baseUrl': 'https://api.example.com',
+        'model': 'demo-model',
+      },
+    });
+
+    await expectLater(
+      () => storage.importAppDataJson(backup),
+      throwsStateError,
+    );
+  });
+
+  test('rejects malformed backup schema', () async {
+    storage = await initializedStorage();
+
+    final backup = jsonEncode({
+      'format': 'ssh_mobile_backup',
+      'version': 2,
+      'connections': {'id': 'server-1'},
+      'aiSettings': {
+        'baseUrl': 'https://api.example.com',
+        'model': 'demo-model',
+      },
+    });
+
+    await expectLater(
+      () => storage.importAppDataJson(backup),
+      throwsStateError,
+    );
+  });
+
+  test('rejects backup chat messages over the field limit', () async {
+    storage = await initializedStorage();
+
+    final backup = jsonEncode({
+      'format': 'ssh_mobile_backup',
+      'version': 2,
+      'connections': const [],
+      'aiSettings': {
+        'baseUrl': 'https://api.example.com',
+        'model': 'demo-model',
+      },
+      'aiChats': [
+        {
+          'id': 'chat-1',
+          'title': 'Chat',
+          'model': 'demo-model',
+          'messages': [
+            {
+              'role': 'user',
+              'text': 'a' * 50001,
+              'createdAt': DateTime.utc(2026, 6, 18).toIso8601String(),
+            }
+          ],
+          'createdAt': DateTime.utc(2026, 6, 18).toIso8601String(),
+          'updatedAt': DateTime.utc(2026, 6, 18).toIso8601String(),
+        }
+      ],
+    });
+
+    await expectLater(
+      () => storage.importAppDataJson(backup),
+      throwsStateError,
+    );
+  });
+
   test('web search engine settings persist, export, and import', () async {
     storage = await initializedStorage();
 
@@ -481,6 +573,7 @@ void main() {
     await prefs.setInt('sftp_text_preview_limit_bytes', 2048);
     await prefs.setInt('sftp_rich_preview_limit_bytes', 4096);
     await prefs.setInt('sftp_text_edit_limit_bytes', 512);
+    await prefs.setBool('show_server_names_in_notifications', true);
 
     await prefs.setString('shortcut_command_usage', '{"cmd1": 5}');
     await prefs.setString('custom_shortcut_commands',
@@ -512,6 +605,7 @@ void main() {
     expect(appSettings['sftpTextPreviewLimitBytes'], 2048);
     expect(appSettings['sftpRichPreviewLimitBytes'], 4096);
     expect(appSettings['sftpTextEditLimitBytes'], 512);
+    expect(appSettings['showServerNamesInNotifications'], isTrue);
 
     final shortcutCommands =
         decoded['shortcutCommands'] as Map<String, dynamic>;
@@ -551,6 +645,7 @@ void main() {
     expect(newPrefs.getInt('sftp_text_preview_limit_bytes'), 2048);
     expect(newPrefs.getInt('sftp_rich_preview_limit_bytes'), 4096);
     expect(newPrefs.getInt('sftp_text_edit_limit_bytes'), 512);
+    expect(newPrefs.getBool('show_server_names_in_notifications'), isTrue);
 
     expect(newPrefs.getString('shortcut_command_usage'), '{"cmd1": 5}');
     expect(newPrefs.getString('custom_shortcut_commands'),

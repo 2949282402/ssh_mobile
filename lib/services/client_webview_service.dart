@@ -59,7 +59,23 @@ class ClientWebViewService extends ChangeNotifier
     if (session.isAiBrowsing) return;
     final controller = session.controller;
     if (controller == null) return;
+    final blockedReason = ClientWebViewSecurityPolicy.blockedInputReason(input);
+    if (blockedReason != null) {
+      session
+        .._lastError = blockedReason
+        .._updatedAt = DateTime.now();
+      notifyListeners();
+      return;
+    }
     final uri = _normalizeInput(input, engine: engine ?? session.searchEngine);
+    final blockedUriReason = ClientWebViewSecurityPolicy.blockedUriReason(uri);
+    if (blockedUriReason != null) {
+      session
+        .._lastError = blockedUriReason
+        .._updatedAt = DateTime.now();
+      notifyListeners();
+      return;
+    }
     session._lastError = null;
     session._url = uri.toString();
     session._updatedAt = DateTime.now();
@@ -187,6 +203,11 @@ class ClientWebViewService extends ChangeNotifier
           if (item is! Map) continue;
           final result = ClientWebViewSearchItem.fromJson(item);
           if (result.title.isEmpty || result.url.isEmpty) continue;
+          final resultUri = Uri.tryParse(result.url);
+          if (resultUri == null ||
+              ClientWebViewSecurityPolicy.blockedUriReason(resultUri) != null) {
+            continue;
+          }
           results.add(result);
           if (results.length >= effectiveMaxResults) break;
         }
@@ -383,6 +404,24 @@ class ClientWebViewService extends ChangeNotifier
               state: await getState(chatId),
             );
           }
+          final blockedReason =
+              ClientWebViewSecurityPolicy.blockedInputReason(trimmedInput);
+          if (blockedReason != null) {
+            session
+              .._lastError = blockedReason
+              .._updatedAt = DateTime.now();
+            notifyListeners();
+            return ClientWebViewNavigationResult(
+              chatId: chatId,
+              supported: true,
+              action: normalizedAction,
+              input: input,
+              navigated: false,
+              blocked: true,
+              error: blockedReason,
+              state: await getState(chatId),
+            );
+          }
           await load(chatId, trimmedInput);
           break;
         case 'back':
@@ -491,9 +530,11 @@ class ClientWebViewService extends ChangeNotifier
               return NavigationDecision.prevent;
             }
             final uri = Uri.tryParse(request.url);
-            final scheme = uri?.scheme.toLowerCase();
-            if (scheme != 'http' && scheme != 'https') {
-              session._lastError = 'Unsupported URL scheme: ${request.url}';
+            final blockedReason = uri == null
+                ? 'Invalid URL: ${request.url}'
+                : ClientWebViewSecurityPolicy.blockedUriReason(uri);
+            if (blockedReason != null) {
+              session._lastError = blockedReason;
               _notifyIfCurrent(session);
               return NavigationDecision.prevent;
             }

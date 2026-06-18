@@ -1,5 +1,18 @@
 part of '../storage_service.dart';
 
+const int _maxBackupJsonChars = 10 * 1024 * 1024;
+const int _maxBackupConnections = 200;
+const int _maxBackupAiChats = 500;
+const int _maxBackupAiSkills = 200;
+const int _maxBackupPlaybooks = 200;
+const int _maxBackupTerminalHistoryRecords = 500;
+const int _maxBackupAgentRunMetrics = 1000;
+const int _maxShortFieldChars = 128;
+const int _maxHostChars = 255;
+const int _maxPromptChars = 20000;
+const int _maxPlaybookContentChars = 100000;
+const int _maxChatMessageChars = 50000;
+
 extension BackupOps on StorageService {
   void addOnImportCallback(VoidCallback callback) {
     _onImportCallbacks.add(callback);
@@ -68,6 +81,8 @@ extension BackupOps on StorageService {
         'sftpRichPreviewLimitBytes':
             _prefs!.getInt('sftp_rich_preview_limit_bytes'),
         'sftpTextEditLimitBytes': _prefs!.getInt('sftp_text_edit_limit_bytes'),
+        'showServerNamesInNotifications':
+            _prefs!.getBool('show_server_names_in_notifications'),
       },
       'shortcutCommands': {
         'usage': _prefs!.getString('shortcut_command_usage'),
@@ -98,11 +113,7 @@ extension BackupOps on StorageService {
     if (!_initialized || _prefs == null) {
       throw StateError('Storage service is not initialized yet.');
     }
-    final decoded = jsonDecode(jsonText);
-    if (decoded is! Map<String, dynamic> ||
-        decoded['format'] != 'ssh_mobile_backup') {
-      throw StateError('Unsupported backup file.');
-    }
+    final decoded = _decodeAndValidateBackupJson(jsonText);
 
     final importedConnections = <ConnectionConfig>[];
     for (final item in (decoded['connections'] as List<dynamic>? ?? const [])) {
@@ -194,6 +205,12 @@ extension BackupOps on StorageService {
       if (appSettings['sftpTextEditLimitBytes'] != null) {
         await _prefs!.setInt('sftp_text_edit_limit_bytes',
             (appSettings['sftpTextEditLimitBytes'] as num).toInt());
+      }
+      if (appSettings['showServerNamesInNotifications'] != null) {
+        await _prefs!.setBool(
+          'show_server_names_in_notifications',
+          appSettings['showServerNamesInNotifications'] as bool,
+        );
       }
     }
 
@@ -288,7 +305,7 @@ extension BackupOps on StorageService {
     AppLogService.instance.info(
       'App data imported',
       details:
-          'connections=${_connections.length} chats=${((decoded['aiChats'] as List<dynamic>?) ?? const []).length} skills=${((decoded['aiSkills'] as List<dynamic>?) ?? const []).length} playbooks=${((decoded['playbooks'] as List<dynamic>?) ?? const []).length}',
+          'connections=${_connections.length} chats=${((decoded['aiChats'] as List<dynamic>?) ?? const []).length} skills=${((decoded['aiSkills'] as List<dynamic>?) ?? const []).length} playbooks=${((decoded['playbooks'] as List<dynamic>?) ?? const []).length} highRisk=${_backupHighRiskSections(decoded).join(',')}',
     );
     for (final callback in _onImportCallbacks) {
       try {
@@ -299,4 +316,269 @@ extension BackupOps on StorageService {
       }
     }
   }
+}
+
+Map<String, dynamic> _decodeAndValidateBackupJson(String jsonText) {
+  if (jsonText.length > _maxBackupJsonChars) {
+    throw StateError('Backup file is too large.');
+  }
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(jsonText);
+  } catch (_) {
+    throw StateError('Malformed backup JSON.');
+  }
+  if (decoded is! Map<String, dynamic>) {
+    throw StateError('Unsupported backup file.');
+  }
+  if (decoded['format'] != 'ssh_mobile_backup') {
+    throw StateError('Unsupported backup file.');
+  }
+  final version = decoded['version'];
+  if (version is! num || version < 1 || version > 2) {
+    throw StateError('Unsupported backup version.');
+  }
+  _validateBackupSchema(decoded);
+  return decoded;
+}
+
+void _validateBackupSchema(Map<String, dynamic> decoded) {
+  final connections = _requiredList(decoded, 'connections');
+  _checkCount('connections', connections, _maxBackupConnections);
+  for (final item in connections) {
+    if (item is! Map<String, dynamic>) {
+      throw StateError('Backup connections must contain objects.');
+    }
+    _requireString(item, 'id', _maxShortFieldChars);
+    _requireString(item, 'name', _maxShortFieldChars);
+    _requireString(item, 'host', _maxHostChars);
+    _requireString(item, 'username', _maxShortFieldChars);
+    _optionalStringLimit(item, 'jumpHost', _maxHostChars);
+    _optionalStringLimit(item, 'jumpUsername', _maxShortFieldChars);
+    _optionalStringLimit(item, 'group', _maxShortFieldChars);
+    item['password'] = '';
+    item['privateKey'] = '';
+  }
+
+  final aiSettings = decoded['aiSettings'];
+  if (aiSettings != null && aiSettings is! Map<String, dynamic>) {
+    throw StateError('Backup aiSettings must be an object.');
+  }
+  if (aiSettings is Map<String, dynamic>) {
+    _optionalStringLimit(aiSettings, 'baseUrl', 2048);
+    _optionalStringLimit(aiSettings, 'model', 256);
+    _optionalStringLimit(aiSettings, 'helperModel', 256);
+    _optionalStringLimit(aiSettings, 'auditModel', 256);
+    _optionalStringLimit(aiSettings, 'customSystemPrompt', _maxPromptChars);
+    _optionalStringLimit(aiSettings, 'customPlannerPrompt', _maxPromptChars);
+    _optionalStringLimit(aiSettings, 'customOperatorPrompt', _maxPromptChars);
+    _optionalStringLimit(aiSettings, 'customExplorePrompt', _maxPromptChars);
+    _optionalStringLimit(aiSettings, 'customReviewerPrompt', _maxPromptChars);
+    _optionalStringLimit(aiSettings, 'customSummarizerPrompt', _maxPromptChars);
+    _optionalStringLimit(
+      aiSettings,
+      'customCoordinatorPrompt',
+      _maxPromptChars,
+    );
+    aiSettings['apiKey'] = '';
+    aiSettings['quarkApiKey'] = '';
+  }
+
+  final appSettings = decoded['appSettings'];
+  if (appSettings != null && appSettings is! Map<String, dynamic>) {
+    throw StateError('Backup appSettings must be an object.');
+  }
+  if (appSettings is Map<String, dynamic>) {
+    _optionalStringLimit(appSettings, 'language', _maxShortFieldChars);
+    _optionalStringLimit(appSettings, 'themeMode', _maxShortFieldChars);
+    _optionalStringLimit(appSettings, 'fontFamily', _maxShortFieldChars);
+    _optionalBool(appSettings, 'darkMode');
+    _optionalBool(appSettings, 'showServerNamesInNotifications');
+  }
+
+  final shortcuts = decoded['shortcutCommands'];
+  if (shortcuts != null && shortcuts is! Map<String, dynamic>) {
+    throw StateError('Backup shortcutCommands must be an object.');
+  }
+  if (shortcuts is Map<String, dynamic>) {
+    _optionalStringLimit(shortcuts, 'usage', _maxPromptChars);
+    _optionalStringLimit(shortcuts, 'customCommands', _maxPlaybookContentChars);
+    _optionalStringLimit(shortcuts, 'order', _maxPromptChars);
+  }
+
+  _validateOptionalList(
+    decoded,
+    'restorableTmuxSessions',
+    _maxBackupTerminalHistoryRecords,
+  );
+  final terminalHistory = _validateOptionalList(
+    decoded,
+    'terminalHistoryRecords',
+    _maxBackupTerminalHistoryRecords,
+  );
+  for (final item in terminalHistory) {
+    if (item is Map<String, dynamic>) {
+      _optionalStringLimit(item, 'displayName', _maxShortFieldChars);
+      _optionalStringLimit(item, 'connectionName', _maxShortFieldChars);
+      _optionalStringLimit(item, 'errorMessage', _maxPromptChars);
+    }
+  }
+
+  final aiChats = _validateOptionalList(decoded, 'aiChats', _maxBackupAiChats);
+  for (final chat in aiChats) {
+    if (chat is! Map<String, dynamic>) {
+      throw StateError('Backup aiChats must contain objects.');
+    }
+    _requireString(chat, 'id', _maxShortFieldChars);
+    _optionalStringLimit(chat, 'title', _maxShortFieldChars);
+    final messages = chat['messages'];
+    if (messages != null && messages is! List) {
+      throw StateError('Backup chat messages must be a list.');
+    }
+    for (final message in (messages as List<dynamic>? ?? const [])) {
+      if (message is! Map<String, dynamic>) {
+        throw StateError('Backup chat messages must contain objects.');
+      }
+      _optionalStringLimit(message, 'text', _maxChatMessageChars);
+      _optionalStringLimit(message, 'contextText', _maxChatMessageChars);
+    }
+  }
+
+  final skills = _validateOptionalList(decoded, 'aiSkills', _maxBackupAiSkills);
+  for (final skill in skills) {
+    if (skill is! Map<String, dynamic>) {
+      throw StateError('Backup aiSkills must contain objects.');
+    }
+    _requireString(skill, 'id', _maxShortFieldChars);
+    _optionalStringLimit(skill, 'name', _maxShortFieldChars);
+    _optionalStringLimit(skill, 'description', _maxPromptChars);
+    _optionalStringLimit(skill, 'content', _maxPlaybookContentChars);
+  }
+
+  _validateOptionalList(
+    decoded,
+    'agentRunMetrics',
+    _maxBackupAgentRunMetrics,
+  );
+
+  final playbooks =
+      _validateOptionalList(decoded, 'playbooks', _maxBackupPlaybooks);
+  for (final playbook in playbooks) {
+    if (playbook is! Map<String, dynamic>) {
+      throw StateError('Backup playbooks must contain objects.');
+    }
+    _requireString(playbook, 'id', _maxShortFieldChars);
+    _optionalStringLimit(playbook, 'name', _maxShortFieldChars);
+    _optionalStringLimit(playbook, 'description', _maxPromptChars);
+    final steps = playbook['steps'];
+    if (steps != null && steps is! List) {
+      throw StateError('Backup playbook steps must be a list.');
+    }
+    for (final step in (steps as List<dynamic>? ?? const [])) {
+      if (step is! Map<String, dynamic>) {
+        throw StateError('Backup playbook steps must contain objects.');
+      }
+      _optionalStringLimit(step, 'name', _maxShortFieldChars);
+      _optionalStringLimit(step, 'command', _maxPlaybookContentChars);
+      _optionalStringLimit(step, 'description', _maxPromptChars);
+    }
+  }
+}
+
+List<dynamic> _requiredList(Map<String, dynamic> map, String key) {
+  final value = map[key];
+  if (value is! List) {
+    throw StateError('Backup $key must be a list.');
+  }
+  return value;
+}
+
+List<dynamic> _validateOptionalList(
+  Map<String, dynamic> map,
+  String key,
+  int maxCount,
+) {
+  final value = map[key];
+  if (value == null) return const [];
+  if (value is! List) {
+    throw StateError('Backup $key must be a list.');
+  }
+  _checkCount(key, value, maxCount);
+  return value;
+}
+
+void _checkCount(String key, List<dynamic> value, int maxCount) {
+  if (value.length > maxCount) {
+    throw StateError('Backup $key exceeds the supported item limit.');
+  }
+}
+
+void _requireString(Map<String, dynamic> map, String key, int maxChars) {
+  final value = map[key];
+  if (value is! String || value.trim().isEmpty) {
+    throw StateError('Backup $key must be a non-empty string.');
+  }
+  if (value.length > maxChars) {
+    throw StateError('Backup $key is too long.');
+  }
+}
+
+void _optionalStringLimit(
+  Map<String, dynamic> map,
+  String key,
+  int maxChars,
+) {
+  final value = map[key];
+  if (value == null) return;
+  if (value is! String) {
+    throw StateError('Backup $key must be a string.');
+  }
+  if (value.length > maxChars) {
+    throw StateError('Backup $key is too long.');
+  }
+}
+
+void _optionalBool(Map<String, dynamic> map, String key) {
+  final value = map[key];
+  if (value != null && value is! bool) {
+    throw StateError('Backup $key must be a boolean.');
+  }
+}
+
+List<String> _backupHighRiskSections(Map<String, dynamic> decoded) {
+  final sections = <String>[];
+  if ((decoded['playbooks'] as List<dynamic>? ?? const []).isNotEmpty) {
+    sections.add('playbooks');
+  }
+  if ((decoded['aiSkills'] as List<dynamic>? ?? const []).isNotEmpty) {
+    sections.add('aiSkills');
+  }
+  final shortcuts = decoded['shortcutCommands'];
+  if (shortcuts is Map<String, dynamic> &&
+      shortcuts.values.any((value) => value != null && '$value'.isNotEmpty)) {
+    sections.add('shortcuts');
+  }
+  final aiSettings = decoded['aiSettings'];
+  if (aiSettings is Map<String, dynamic> &&
+      (aiSettings['useCustomPrompts'] == true ||
+          _hasNonEmptyCustomPrompt(aiSettings))) {
+    sections.add('customPrompts');
+  }
+  return sections;
+}
+
+bool _hasNonEmptyCustomPrompt(Map<String, dynamic> aiSettings) {
+  const keys = [
+    'customSystemPrompt',
+    'customPlannerPrompt',
+    'customOperatorPrompt',
+    'customExplorePrompt',
+    'customReviewerPrompt',
+    'customSummarizerPrompt',
+    'customCoordinatorPrompt',
+  ];
+  return keys.any((key) {
+    final value = aiSettings[key];
+    return value is String && value.trim().isNotEmpty;
+  });
 }

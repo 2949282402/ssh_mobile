@@ -1,0 +1,29 @@
+name: Flutter
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Security regression grep
+        run: |
+          if grep -R "SshIdentityCache" lib; then exit 1; fi
+          if grep -R "reconnectCredentials" lib; then exit 1; fi
+          if grep -R "privateKeyDigest" lib; then exit 1; fi
+      - name: Analyze
+        run: flutter analyze
+      - name: Test
+        run: flutter test
