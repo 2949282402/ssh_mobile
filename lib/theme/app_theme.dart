@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:animations/animations.dart';
 
 class ExtendedColors extends ThemeExtension<ExtendedColors> {
   final Color terminalBg;
@@ -77,6 +78,15 @@ class AppTheme {
     useMaterial3: true,
     brightness: Brightness.light,
     scaffoldBackgroundColor: const Color(0xFFF8FAFC),
+    pageTransitionsTheme: const PageTransitionsTheme(
+      builders: {
+        TargetPlatform.android: FadeThroughPageTransitionsBuilder(),
+        TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.windows: FadeThroughPageTransitionsBuilder(),
+        TargetPlatform.macOS: FadeThroughPageTransitionsBuilder(),
+        TargetPlatform.linux: FadeThroughPageTransitionsBuilder(),
+      },
+    ),
     colorScheme: const ColorScheme.light(
       primary: Color(0xFF2563EB),
       secondary: Color(0xFF0F766E),
@@ -138,6 +148,15 @@ class AppTheme {
     useMaterial3: true,
     brightness: Brightness.dark,
     scaffoldBackgroundColor: const Color(0xFF030712),
+    pageTransitionsTheme: const PageTransitionsTheme(
+      builders: {
+        TargetPlatform.android: FadeThroughPageTransitionsBuilder(),
+        TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+        TargetPlatform.windows: FadeThroughPageTransitionsBuilder(),
+        TargetPlatform.macOS: FadeThroughPageTransitionsBuilder(),
+        TargetPlatform.linux: FadeThroughPageTransitionsBuilder(),
+      },
+    ),
     colorScheme: const ColorScheme.dark(
       primary: Color(0xFF3B82F6),
       secondary: Color(0xFF14B8A6),

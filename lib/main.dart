@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:animations/animations.dart';
 
 import 'features/connection/views/add_edit_screen.dart';
 import 'features/connection/viewmodels/connection_viewmodel.dart';
@@ -221,16 +220,6 @@ class _SshMobileAppState extends State<SshMobileApp>
             data: Theme.of(context).copyWith(
               visualDensity: visualDensity,
               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              // 精准追加：锁死现代化的全局标准 M3 渐隐页面转场动效
-              pageTransitionsTheme: const PageTransitionsTheme(
-                builders: {
-                  TargetPlatform.android: FadeThroughPageTransitionsBuilder(),
-                  TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
-                  TargetPlatform.windows: FadeThroughPageTransitionsBuilder(),
-                  TargetPlatform.macOS: FadeThroughPageTransitionsBuilder(),
-                  TargetPlatform.linux: FadeThroughPageTransitionsBuilder(),
-                },
-              ),
             ),
             child: effectiveChild,
           ),
