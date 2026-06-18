@@ -5,7 +5,6 @@ import '../../features/connection/models/connection.dart';
 import '../../services/app_log_service.dart';
 import '../../services/storage_service.dart';
 import 'ssh_host_key_policy.dart';
-import 'ssh_identity_cache.dart';
 
 class SshCredentials {
   final String? password;
@@ -152,29 +151,10 @@ class SshClientFactory {
     if (!shouldUseKey || credentials.privateKey?.isNotEmpty != true) {
       return null;
     }
-    final key = SshIdentityCacheKey(
-      connectionId: config.id,
-      privateKey: credentials.privateKey!,
-      passphrase: credentials.password,
-    );
-    final cached = SshIdentityCache.get(key);
-    if (cached != null) {
-      return cached;
-    }
-    final identities = await compute(_parsePemKey, {
+    return compute(_parsePemKey, {
       'pem': credentials.privateKey!,
       'passphrase': credentials.password,
     });
-    SshIdentityCache.put(key, identities);
-    return identities;
-  }
-
-  static void clearIdentityCache() {
-    SshIdentityCache.clearAll();
-  }
-
-  static void clearIdentityCacheForConnection(String connectionId) {
-    SshIdentityCache.clearForConnection(connectionId);
   }
 
   static List<String>? keyboardInteractiveResponsesForPassword(

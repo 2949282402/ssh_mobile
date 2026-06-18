@@ -203,6 +203,46 @@ class BackgroundServiceManager {
   }
 }
 
+Map<String, dynamic> sanitizeBackgroundReconnectData(
+  Map<String, dynamic> data,
+) {
+  return Map<String, dynamic>.from(data)
+    ..remove('password')
+    ..remove('privateKey');
+}
+
+class BackgroundReconnectDecision {
+  final bool reconnectInBackground;
+  final bool requiresAppReconnect;
+  final String message;
+
+  const BackgroundReconnectDecision({
+    required this.reconnectInBackground,
+    required this.requiresAppReconnect,
+    required this.message,
+  });
+}
+
+BackgroundReconnectDecision decideBackgroundUnexpectedDisconnect({
+  required String launchMode,
+  required String reason,
+}) {
+  if (launchMode == 'tmux') {
+    return BackgroundReconnectDecision(
+      reconnectInBackground: false,
+      requiresAppReconnect: true,
+      message:
+          'Connection lost: $reason. Reconnect from the app to restore this tmux session.',
+    );
+  }
+
+  return BackgroundReconnectDecision(
+    reconnectInBackground: false,
+    requiresAppReconnect: false,
+    message: 'Connection lost: $reason',
+  );
+}
+
 @pragma('vm:entry-point')
 void sshBackgroundServiceEntryPoint(ServiceInstance service) {
   final sessions = <String, _BackgroundSshSession>{};
@@ -330,26 +370,26 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
     _BackgroundSshSession runtime,
     String reason,
   ) async {
-    if (!sessions.containsKey(runtime.sessionId) || runtime.reconnecting) {
+    if (!sessions.containsKey(runtime.sessionId)) {
       return;
     }
 
-    if (runtime.launchMode == 'tmux') {
-      runtime.reconnecting = true;
+    final decision = decideBackgroundUnexpectedDisconnect(
+      launchMode: runtime.launchMode,
+      reason: reason,
+    );
+    if (decision.requiresAppReconnect) {
       emitLog(
         'warning',
-        'Reconnecting tmux session',
+        'Background tmux reconnect requires app credentials',
         details:
             'sessionId=${runtime.sessionId} tmux=${runtime.tmuxSessionName} reason=$reason',
       );
-      await closeSsh(runtime.sessionId, notify: false);
-      unawaited(connectSsh(runtime.reconnectPayload()));
-      return;
     }
 
     await closeSsh(
       runtime.sessionId,
-      message: 'Connection lost: $reason',
+      message: decision.message,
     );
   }
 
@@ -368,14 +408,6 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
 
   String shellQuote(String value) {
     return "'${value.replaceAll("'", "'\"'\"'")}'";
-  }
-
-  Map<String, dynamic> sanitizeBackgroundReconnectData(
-    Map<String, dynamic> data,
-  ) {
-    return Map<String, dynamic>.from(data)
-      ..remove('password')
-      ..remove('privateKey');
   }
 
   String buildTmuxAttachCommand(String sessionName, int autoDeleteSeconds) {
@@ -556,7 +588,6 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
         tmuxAutoDeleteSeconds: tmuxAutoDeleteSeconds,
         launchMode: launchMode,
         reconnectData: sanitizeBackgroundReconnectData(data),
-        reconnectCredentials: credentials,
         client: client,
         shell: shell,
       );
@@ -751,14 +782,12 @@ class _BackgroundSshSession {
   final int tmuxAutoDeleteSeconds;
   final String launchMode;
   final Map<String, dynamic> reconnectData;
-  final SshCredentials reconnectCredentials;
   final SSHClient client;
   final SSHSession shell;
   StreamSubscription<List<int>>? stdoutSub;
   StreamSubscription<List<int>>? stderrSub;
   Timer? keepAliveTimer;
   bool pingInFlight = false;
-  bool reconnecting = false;
   int keepAliveFailures = 0;
 
   _BackgroundSshSession({
@@ -769,7 +798,6 @@ class _BackgroundSshSession {
     required this.tmuxAutoDeleteSeconds,
     required this.launchMode,
     required this.reconnectData,
-    required this.reconnectCredentials,
     required this.client,
     required this.shell,
   });
@@ -781,14 +809,6 @@ class _BackgroundSshSession {
     shell.close();
     client.close();
     pingInFlight = false;
-  }
-
-  Map<String, dynamic> reconnectPayload() {
-    return {
-      ...reconnectData,
-      'password': reconnectCredentials.password,
-      'privateKey': reconnectCredentials.privateKey,
-    };
   }
 
   Future<void> killTmuxSession() async {

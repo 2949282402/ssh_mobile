@@ -48,7 +48,6 @@ extension SettingsOps on StorageService {
 
   /// 清除所有内存中缓存的秘密（密码/私钥/API Key）
   void clearSecretCache() {
-    SshIdentityCache.clearAll();
     _secretCache.remove(StorageService._memoryAiApiKeyCacheKey);
     for (final key in _secretCache.keys.toList()) {
       if (key.startsWith(StorageService._passwordSecretKeyPrefix) ||
