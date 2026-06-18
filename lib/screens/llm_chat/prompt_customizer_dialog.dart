@@ -319,7 +319,7 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                     decoration: BoxDecoration(
                       color: colorScheme.surfaceContainerHighest
                           .withValues(alpha: 0.5),
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                       border: Border.all(color: colorScheme.outlineVariant),
                     ),
                     child: Row(
@@ -355,7 +355,7 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                     decoration: BoxDecoration(
                       color:
                           colorScheme.primaryContainer.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                       border: Border.all(
                           color: colorScheme.primary.withValues(alpha: 0.3)),
                     ),
@@ -397,7 +397,7 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                           : colorScheme.surfaceContainerHighest
                               .withValues(alpha: 0.3),
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                       ),
                     ),
                     readOnly: !_useCustomPrompts,
