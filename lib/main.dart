@@ -78,7 +78,10 @@ Future<void> main() async {
               },
             ),
             ChangeNotifierProvider(
-              create: (context) => SshService(context.read<StorageService>()),
+              create: (context) => SshService(
+                context.read<StorageService>(),
+                appSettings: context.read<AppSettings>(),
+              ),
             ),
             ChangeNotifierProvider(
               create: (context) => SftpService(context.read<StorageService>()),
@@ -87,6 +90,7 @@ Future<void> main() async {
               create: (context) => PerformanceMonitorService(
                 context.read<SshService>(),
                 context.read<StorageService>(),
+                appSettings: context.read<AppSettings>(),
               ),
             ),
             ChangeNotifierProvider(

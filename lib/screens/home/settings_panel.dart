@@ -400,6 +400,21 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                     ),
                   ),
                 ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  secondary:
+                      const Icon(Icons.notifications_off_outlined, size: 20),
+                  title: Text(
+                    strings.notificationServerNames,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  subtitle: Text(
+                    strings.notificationServerNamesHint,
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  value: secretSnapshot.showServerNamesInNotifications,
+                  onChanged: settings.setShowServerNamesInNotifications,
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -513,11 +528,13 @@ class _SettingsSecretSnapshot {
   final bool cacheEnabled;
   final int cacheTimeoutMinutes;
   final List<int> cacheOptions;
+  final bool showServerNamesInNotifications;
 
   const _SettingsSecretSnapshot({
     required this.cacheEnabled,
     required this.cacheTimeoutMinutes,
     required this.cacheOptions,
+    required this.showServerNamesInNotifications,
   });
 
   factory _SettingsSecretSnapshot.from(SettingsViewModel settings) {
@@ -525,6 +542,7 @@ class _SettingsSecretSnapshot {
       cacheEnabled: settings.secretCacheEnabled,
       cacheTimeoutMinutes: settings.secretCacheTtlMinutes,
       cacheOptions: settings.secretCacheTtlOptionsMinutes,
+      showServerNamesInNotifications: settings.showServerNamesInNotifications,
     );
   }
 
@@ -533,7 +551,8 @@ class _SettingsSecretSnapshot {
     return other is _SettingsSecretSnapshot &&
         other.cacheEnabled == cacheEnabled &&
         other.cacheTimeoutMinutes == cacheTimeoutMinutes &&
-        listEquals(other.cacheOptions, cacheOptions);
+        listEquals(other.cacheOptions, cacheOptions) &&
+        other.showServerNamesInNotifications == showServerNamesInNotifications;
   }
 
   @override
@@ -541,6 +560,7 @@ class _SettingsSecretSnapshot {
         cacheEnabled,
         cacheTimeoutMinutes,
         Object.hashAll(cacheOptions),
+        showServerNamesInNotifications,
       );
 }
 

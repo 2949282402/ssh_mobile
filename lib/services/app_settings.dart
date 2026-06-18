@@ -24,6 +24,8 @@ class AppSettings extends ChangeNotifier {
   static const _ragEnabledKey = 'rag_enabled';
   static const _ragSearchModeKey = 'rag_search_mode';
   static const _ragTopNKey = 'rag_top_n';
+  static const _showServerNamesInNotificationsKey =
+      'show_server_names_in_notifications';
   static const _sftpDownloadLimitBytesKey = 'sftp_download_limit_bytes';
   static const _sftpTextPreviewLimitBytesKey = 'sftp_text_preview_limit_bytes';
   static const _sftpRichPreviewLimitBytesKey = 'sftp_rich_preview_limit_bytes';
@@ -45,6 +47,7 @@ class AppSettings extends ChangeNotifier {
   bool _ragEnabled = false;
   String _ragSearchMode = 'bm25'; // 'bm25', 'vector', 'hybrid'
   int _ragTopN = 3;
+  bool _showServerNamesInNotifications = false;
   bool _initialized = false;
   Future<void> _themeWrite = Future.value();
 
@@ -56,6 +59,7 @@ class AppSettings extends ChangeNotifier {
   bool get ragEnabled => _ragEnabled;
   String get ragSearchMode => _ragSearchMode;
   int get ragTopN => _ragTopN;
+  bool get showServerNamesInNotifications => _showServerNamesInNotifications;
   String get fontFamilyId => _fontFamilyId;
   String? get fontFamily => AppFontChoice.byId(_fontFamilyId).fontFamily;
   AppFontChoice get fontChoice => AppFontChoice.byId(_fontFamilyId);
@@ -93,6 +97,8 @@ class AppSettings extends ChangeNotifier {
       _ragEnabled = prefs.getBool(_ragEnabledKey) ?? false;
       _ragSearchMode = prefs.getString(_ragSearchModeKey) ?? 'bm25';
       _ragTopN = prefs.getInt(_ragTopNKey) ?? 3;
+      _showServerNamesInNotifications =
+          prefs.getBool(_showServerNamesInNotificationsKey) ?? false;
     } catch (e, stackTrace) {
       AppLogService.instance.error(
         'Failed to initialize AppSettings',
@@ -109,6 +115,7 @@ class AppSettings extends ChangeNotifier {
       _ragEnabled = false;
       _ragSearchMode = 'bm25';
       _ragTopN = 3;
+      _showServerNamesInNotifications = false;
     } finally {
       _initialized = true;
       notifyListeners();
@@ -160,6 +167,18 @@ class AppSettings extends ChangeNotifier {
     AppLogService.instance.info(
       'RAG setting updated: topN',
       details: 'topN=$value',
+    );
+  }
+
+  Future<void> setShowServerNamesInNotifications(bool value) async {
+    if (_showServerNamesInNotifications == value) return;
+    _showServerNamesInNotifications = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_showServerNamesInNotificationsKey, value);
+    AppLogService.instance.info(
+      'Notification privacy setting updated',
+      details: 'showServerNames=$value',
     );
   }
 

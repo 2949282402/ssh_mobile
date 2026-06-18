@@ -132,6 +132,9 @@ with its `lib/screens/llm_chat/` part files.
   `execution: client`.
 - Route tool arguments, approvals, results, and trace content through
   `ToolSecretPolicy`.
+- AI tools must block secret-bearing server paths, environment dumps, and cloud
+  metadata endpoints. Remote log reads and ordinary SFTP file reads/downloads
+  require user approval; sensitive SFTP paths are blocked.
 
 ### SFTP
 
@@ -145,6 +148,11 @@ Primary entry points are `lib/features/sftp/viewmodels/sftp_viewmodel.dart`,
 - Use dedicated editor/viewer pages for larger previews and text edits.
 - Read download, preview, and edit size limits from `AppSettings` instead of
   hardcoding screen-local constants.
+- Encrypt SFTP preview/download cache files with `DataProtectionService`.
+  Secret-bearing paths such as `.ssh`, `.env`, private keys, token files,
+  cloud credential folders, `/etc/shadow`, `/etc/sudoers`, and
+  `/proc/*/environ` must not be cached.
+- Delete SFTP cache when a saved connection is removed or explicitly forgotten.
 - Keep upload, download, preview, edit, and delete behavior aligned across
   mobile, Windows, and macOS.
 
@@ -199,10 +207,16 @@ Primary entry points are
 - Backup/import/export covers saved servers, restorable windows, terminal
   history, AI settings, AI chats, and custom skills, but never passwords,
   private keys, API keys, tokens, or other secrets.
+- Backup imports must enforce size, count, field-length, and schema limits
+  before replacing local state, and high-risk content such as playbooks,
+  custom prompts, shortcuts, and AI skills must remain user-approved import
+  surface.
 - Fresh installs and missing preference fallbacks default to Chinese and light
   theme.
 - On macOS, keep `flutter_secure_storage` configured to avoid Keychain
   entitlement error `-34018`.
+- Background notifications hide server names by default. Only show them when
+  the user enables the notification privacy setting.
 
 ### Android Device Launch
 

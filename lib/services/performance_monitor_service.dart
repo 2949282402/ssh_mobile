@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import '../features/connection/models/connection.dart';
 import 'app_log_service.dart';
+import 'app_settings.dart';
 import 'background_service.dart';
 import '../core/services/ssh_host_key_policy.dart';
 import 'server_status_probe.dart';
@@ -48,6 +49,7 @@ class PerformanceMonitorService extends ChangeNotifier {
 
   final SshService _sshService;
   final StorageService _storageService;
+  final AppSettings? _appSettings;
   Timer? _timer;
   bool _disposed = false;
   bool _running = false;
@@ -77,7 +79,11 @@ class PerformanceMonitorService extends ChangeNotifier {
   int? _visibleSamplesCutoffBucket;
   Duration? _visibleSamplesWindow;
 
-  PerformanceMonitorService(this._sshService, this._storageService);
+  PerformanceMonitorService(
+    this._sshService,
+    this._storageService, {
+    AppSettings? appSettings,
+  }) : _appSettings = appSettings;
 
   bool get isRunning => _running;
   bool get isSampling => _samplingConnectionIds.isNotEmpty;
@@ -303,7 +309,11 @@ class PerformanceMonitorService extends ChangeNotifier {
     // Keep the app's foreground service and power locks active while monitoring.
     // The monitor stays app-scoped, so leaving the page does not stop sampling.
     unawaited(
-      BackgroundServiceManager.start(connectionName: 'Performance monitor'),
+      BackgroundServiceManager.start(
+        connectionName: 'Performance monitor',
+        showConnectionName:
+            _appSettings?.showServerNamesInNotifications ?? false,
+      ),
     );
     _restartTimer();
     await sampleNow(onUnknownHostKey: onUnknownHostKey);

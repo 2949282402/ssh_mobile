@@ -152,3 +152,10 @@ across sessions.
 - 2026-06-17: AI chat 的默认规划目标是当前请求的聊天内 `todoSteps`。只有当用户明确要求保存、复用、管理或运行可复用剧本/脚本时，才暴露或调用 `Playbook` 相关工具；回复中的 ` ```playbook ` 代码块仍只是 todo 计划的持久化格式。
 - 2026-06-18: System Administration 的 Monitor tab 保持独立多服务器监控选择；除 Monitor 外的 Ports / Applications / Services / Users / Sessions / Power 共享 `SystemAdminViewModel.selectedConnectionId`。root 管理连接只表示当前底层连接，不能反向改写选择，连接成功后也不能自动 `refreshAllData()`；当前 tab activation 负责按需加载。
 - 2026-06-18: SSH Host Key TOFU 校验集中在 `SshHostKeyPolicy`。当前 `dartssh2` 只通过 `onVerifyHostKey` 暴露 MD5 fingerprint，因此持久化 fingerprint 需按 MD5 格式规范化；UI 首次使用可提示确认，AI 工具和后台 SSH 不得自动信任未知或变化的 host key。
+- 2026-06-18: 安全边界常态化：SFTP preview/download cache 必须用
+  `DataProtectionService` 加密且不得缓存 `.ssh`、`.env`、私钥、云凭据、
+  token/secret/api_key、`/etc/shadow`、`/etc/sudoers`、`/proc/*/environ`
+  等路径；AI 工具阻断环境变量 dump、cloud metadata 和敏感路径，普通远程
+  文件 read/download 与日志读取走审批；WebView AI 读取阻断本地/内网/metadata
+  URL 和敏感表单；日志统一经 `ToolSecretPolicy` 脱敏；backup import 先做
+  大小、数量、字段长度和 schema 校验并继续丢弃凭据；后台通知默认隐藏服务器名。

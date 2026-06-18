@@ -52,6 +52,37 @@ void main() {
     expect(entry.message, contains('[REDACTED]'));
   });
 
+  test('redacts stack traces, URL tokens, cookies, and private key blocks',
+      () async {
+    final logs = AppLogService.instance;
+    logs.clear();
+
+    logs.add(
+      'error',
+      'GET https://example.com?access_token=abc123',
+      details: 'Cookie: sid=secret-cookie',
+      stackTrace: StackTrace.fromString(
+        'Authorization: Basic dXNlcjpwYXNz\n'
+        '-----BEGIN OPENSSH PRIVATE KEY-----\nsecret\n'
+        '-----END OPENSSH PRIVATE KEY-----',
+      ),
+    );
+
+    final entry = logs.entries.first;
+    expect(entry.message, isNot(contains('abc123')));
+    expect(entry.details, isNot(contains('secret-cookie')));
+    expect(entry.stackTrace, isNot(contains('dXNlcjpwYXNz')));
+    expect(entry.stackTrace, isNot(contains('secret')));
+    expect(entry.text, contains('[REDACTED]'));
+
+    await Future.delayed(const Duration(milliseconds: 100));
+    final logFile = File('app.log');
+    final content = await logFile.readAsString();
+    expect(content, isNot(contains('abc123')));
+    expect(content, isNot(contains('secret-cookie')));
+    expect(content, isNot(contains('dXNlcjpwYXNz')));
+  });
+
   test('level counts update when entries are deleted', () {
     final logs = AppLogService.instance;
     logs.clear();

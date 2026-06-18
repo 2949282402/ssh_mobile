@@ -139,6 +139,36 @@ void main() {
     expect(review.reason, contains('Environment variable dumps'));
   });
 
+  test('blocks sensitive server file reads through run_command policy', () {
+    final privateKey = tools.reviewCommand(
+      'cat ~/.ssh/id_rsa',
+      platform: ServerPlatform.linux,
+    );
+    final shadow = tools.reviewCommand(
+      'cat /etc/shadow',
+      platform: ServerPlatform.linux,
+    );
+    final grepEnv = tools.reviewCommand(
+      'grep token .env',
+      platform: ServerPlatform.linux,
+    );
+
+    expect(privateKey.blocked, isTrue);
+    expect(shadow.blocked, isTrue);
+    expect(grepEnv.blocked, isTrue);
+  });
+
+  test('requires approval for server log reads', () {
+    final review = tools.reviewCommand(
+      'journalctl -u ssh',
+      platform: ServerPlatform.linux,
+    );
+
+    expect(review.blocked, isFalse);
+    expect(review.requiresApproval, isTrue);
+    expect(review.reason, contains('logs'));
+  });
+
   test('blocks cross-platform command mismatch', () {
     final review = tools.reviewCommand(
       'cmd /c dir',
@@ -514,6 +544,28 @@ void main() {
     expect(decoded['error'], contains('secret policy'));
   });
 
+  test('sftp read approval request includes remote read metadata', () async {
+    final request = await tools.approvalRequestFor('sftp_read_text', {
+      'connectionId': 'server-1',
+      'path': '/tmp/demo.txt',
+    });
+
+    expect(request, isNotNull);
+    expect(request!.approvalType, 'remote_read');
+    expect(request.command, 'SFTP READ /tmp/demo.txt');
+    expect(request.targetPath, '/tmp/demo.txt');
+  });
+
+  test('sftp read requires approval before execution', () async {
+    final raw = await tools.execute('sftp_read_text', {
+      'connectionId': 'server-1',
+      'path': '/tmp/demo.txt',
+    });
+    final decoded = jsonDecode(raw) as Map<String, dynamic>;
+
+    expect(decoded['error'], contains('requires user approval'));
+  });
+
   test('sftp write requires approval before execution', () async {
     final raw = await tools.execute('sftp_write_text', {
       'connectionId': 'server-1',
@@ -564,10 +616,14 @@ void main() {
   });
 
   test('sftp download saves file metadata on the client device', () async {
-    final raw = await tools.execute('sftp_download_file', {
-      'connectionId': 'server-1',
-      'path': '/var/log/app.log',
-    });
+    final raw = await tools.execute(
+      'sftp_download_file',
+      {
+        'connectionId': 'server-1',
+        'path': '/var/log/app.log',
+      },
+      approvedWrite: true,
+    );
     final decoded = jsonDecode(raw) as Map<String, dynamic>;
 
     expect(sftp.lastDownloadConnectionId, 'server-1');
@@ -581,10 +637,14 @@ void main() {
   test('tool result redacts secret-like output content', () async {
     sftp.readTextResult = 'password=supersecret';
 
-    final raw = await tools.execute('sftp_read_text', {
-      'connectionId': 'server-1',
-      'path': '/tmp/demo.txt',
-    });
+    final raw = await tools.execute(
+      'sftp_read_text',
+      {
+        'connectionId': 'server-1',
+        'path': '/tmp/demo.txt',
+      },
+      approvedWrite: true,
+    );
     final decoded = jsonDecode(raw) as Map<String, dynamic>;
 
     expect(decoded['content'], contains('[REDACTED]'));
@@ -594,10 +654,14 @@ void main() {
   test('sftp download treats user cancel as a normal result', () async {
     clientSystem.cancelNextSave = true;
 
-    final raw = await tools.execute('sftp_download_file', {
-      'connectionId': 'server-1',
-      'path': '/var/log/app.log',
-    });
+    final raw = await tools.execute(
+      'sftp_download_file',
+      {
+        'connectionId': 'server-1',
+        'path': '/var/log/app.log',
+      },
+      approvedWrite: true,
+    );
     final decoded = jsonDecode(raw) as Map<String, dynamic>;
 
     expect(decoded['saved'], isFalse);
@@ -611,10 +675,14 @@ void main() {
     );
 
     await expectLater(
-      () => tools.execute('sftp_download_file', {
-        'connectionId': 'server-1',
-        'path': '/var/log/app.log',
-      }),
+      () => tools.execute(
+        'sftp_download_file',
+        {
+          'connectionId': 'server-1',
+          'path': '/var/log/app.log',
+        },
+        approvedWrite: true,
+      ),
       throwsA(isA<StateError>()),
     );
   });

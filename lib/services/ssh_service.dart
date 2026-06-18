@@ -9,6 +9,7 @@ import 'package:flutter_background_service/flutter_background_service.dart';
 
 import '../features/connection/models/connection.dart';
 import 'app_log_service.dart';
+import 'app_settings.dart';
 import 'background_service.dart';
 import '../core/services/ssh_client_factory.dart';
 import '../core/services/ssh_host_key_policy.dart';
@@ -28,6 +29,7 @@ part 'ssh/local_ssh_runtime.dart';
 /// App 重启后通过 RestorableTmuxSession 列表自动恢复会话。
 class SshService extends ChangeNotifier implements SshClientAdapter {
   final StorageService _storageService;
+  final AppSettings? _appSettings;
   late final SshClientFactory _clientFactory =
       SshClientFactory(_storageService);
   final FlutterBackgroundService _backgroundService =
@@ -50,7 +52,8 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
   String? _lastErrorMessage;
   bool _restoredTmuxSessions = false;
 
-  SshService(this._storageService) {
+  SshService(this._storageService, {AppSettings? appSettings})
+      : _appSettings = appSettings {
     if (_usesBackgroundService) {
       _listenToBackgroundService();
     } else {
@@ -375,6 +378,8 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
         }
         await BackgroundServiceManager.start(
           connectionName: _notificationSummary(),
+          showConnectionName:
+              _appSettings?.showServerNamesInNotifications ?? false,
         );
         // Let the UI render while foreground service is starting up
         await Future<void>.delayed(const Duration(milliseconds: 16));
@@ -391,6 +396,8 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
           'hostKeyFingerprint': config.hostKeyFingerprint,
           'hostKeyAlgorithm': config.hostKeyAlgorithm,
           'hostKeyTrustedAt': config.hostKeyTrustedAt?.toIso8601String(),
+          'showServerNameInNotification':
+              _appSettings?.showServerNamesInNotifications ?? false,
           'terminalWidth': config.terminalWidth,
           'terminalHeight': config.terminalHeight,
           'keepAliveInterval': 3,
@@ -1056,7 +1063,11 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
   String _notificationSummary() {
     final active = _sessions.values.where((s) => s.isConnected).toList();
     if (active.isEmpty) return 'No active SSH connections';
-    if (active.length == 1) return 'Connected to ${active.first.displayName}';
+    if (active.length == 1) {
+      return _appSettings?.showServerNamesInNotifications == true
+          ? active.first.displayName
+          : '1 SSH session';
+    }
     return '${active.length} active SSH connections';
   }
 

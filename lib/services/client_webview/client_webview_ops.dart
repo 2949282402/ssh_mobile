@@ -45,6 +45,29 @@ extension ClientWebViewServiceOps on ClientWebViewService {
         error: 'Client WebView is only available on supported mobile targets.',
       );
     }
+    final currentUri = session.url == null ? null : Uri.tryParse(session.url!);
+    final blockedReason = currentUri == null
+        ? null
+        : ClientWebViewSecurityPolicy.blockedUriReason(currentUri);
+    if (blockedReason != null) {
+      session
+        .._lastError = blockedReason
+        .._updatedAt = DateTime.now();
+      if (notify) _notifyIfCurrent(session);
+      return ClientWebViewSnapshot(
+        chatId: session.chatId,
+        supported: true,
+        hasPage: session.url != null,
+        url: session.url,
+        title: session.title,
+        text: '',
+        textLength: 0,
+        maxChars: effectiveMaxChars,
+        truncated: false,
+        blocked: true,
+        error: blockedReason,
+      );
+    }
 
     try {
       final raw = await controller.runJavaScriptReturningResult(
@@ -56,6 +79,36 @@ extension ClientWebViewServiceOps on ClientWebViewService {
       final payload = _decodeJavaScriptPayload(raw);
       final title = (payload['title'] as String?)?.trim();
       final url = (payload['url'] as String?)?.trim();
+      final sensitiveFormDetected = payload['sensitiveFormDetected'] == true;
+      if (sensitiveFormDetected) {
+        final now = DateTime.now();
+        session
+          .._title = title?.isNotEmpty == true ? title : session.title
+          .._url = url?.isNotEmpty == true ? url : session.url
+          .._lastText = ''
+          .._lastTextLength = 0
+          .._lastTextTruncated = false
+          .._lastTextCapturedAt = now
+          .._lastError = 'Sensitive form detected on the current page.'
+          .._updatedAt = now;
+        if (notify) _notifyIfCurrent(session);
+        return ClientWebViewSnapshot(
+          chatId: session.chatId,
+          supported: true,
+          hasPage: true,
+          url: session.url,
+          title: session.title,
+          text: '',
+          textLength: 0,
+          maxChars: effectiveMaxChars,
+          truncated: false,
+          blocked: true,
+          sensitiveFormDetected: true,
+          capturedAt: now,
+          error:
+              'Sensitive form detected. AI page-text reading is blocked for this page.',
+        );
+      }
       final text = payload['text'] as String? ?? '';
       final truncatedText = _truncate(text, effectiveMaxChars);
       final now = DateTime.now();
@@ -349,8 +402,18 @@ const String _pageTextScript = r'''
   const title = document.title || '';
   const url = window.location ? window.location.href : '';
   const body = document.body;
+  const sensitiveSelector = [
+    'input[type="password"]',
+    'input[name*="token" i]',
+    'input[name*="secret" i]',
+    'input[name*="api" i]',
+    'input[name*="key" i]',
+    'textarea[name*="secret" i]',
+    'textarea[name*="token" i]'
+  ].join(',');
+  const sensitiveFormDetected = !!document.querySelector(sensitiveSelector);
   const text = body ? (body.innerText || '') : '';
-  return JSON.stringify({ title, url, text });
+  return JSON.stringify({ title, url, text, sensitiveFormDetected });
 })()
 ''';
 

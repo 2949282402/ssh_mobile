@@ -37,6 +37,8 @@ class SettingsViewModel extends ChangeNotifier {
   int get sftpTextEditLimitBytes => _appSettings.sftpTextEditLimitBytes;
   bool get isEnglish => _appSettings.isEnglish;
   bool get isDarkMode => _appSettings.isDarkMode;
+  bool get showServerNamesInNotifications =>
+      _appSettings.showServerNamesInNotifications;
   AppFontChoice get fontChoice => _appSettings.fontChoice;
 
   // 秘钥缓存设置暴露
@@ -87,6 +89,10 @@ class SettingsViewModel extends ChangeNotifier {
 
   Future<void> clearSecretCache() async {
     _storageService.clearSecretCache();
+  }
+
+  Future<void> setShowServerNamesInNotifications(bool value) async {
+    await _appSettings.setShowServerNamesInNotifications(value);
   }
 
   Future<String> exportBackup() async {

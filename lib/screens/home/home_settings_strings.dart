@@ -22,6 +22,12 @@ extension _HomeSettingsStrings on AppStrings {
   String credentialCacheTimeoutLabel(int minutes) => language == AppLanguage.en
       ? 'Cache timeout (${minutes}m)'
       : '缓存时长 (${minutes}m)';
+  String get notificationServerNames => language == AppLanguage.en
+      ? 'Show server names in background notifications'
+      : '后台通知显示服务器名';
+  String get notificationServerNamesHint => language == AppLanguage.en
+      ? 'Off by default. Keep it off to avoid exposing server names on the lock screen.'
+      : '默认关闭。保持关闭可避免在锁屏通知中暴露服务器名称。';
   String get dataBackup => language == AppLanguage.en ? 'Data backup' : '数据备份';
   String get sftpLimits =>
       language == AppLanguage.en ? 'SFTP file limits' : 'SFTP 文件限制';
