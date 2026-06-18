@@ -25,9 +25,9 @@ across sessions.
   `MediaQuery.devicePixelRatioOf` (`mobileUiScaleOf`) so keyboard
   `viewInsets` changes do not rebuild whole card lists.
 - 2026-06-16: SSH password auth must also wire a keyboard-interactive fallback
-  for servers that do not offer plain `password`, and parsed private-key
-  identities are worth caching in memory to avoid repeat UI-isolate stalls
-  during connection setup.
+  for servers that do not offer plain `password`. Do not cache parsed
+  private-key identities in memory; parse them per connection attempt so
+  private key material is not retained beyond the active auth flow.
 - 2026-05-18: Codex and Claude Code share SSH Mobile maintenance guidance
   through `.agents/skills/ssh-mobile-maintenance/SKILL.md` and
   `.claude/skills/ssh-mobile-maintenance/SKILL.md`. Use

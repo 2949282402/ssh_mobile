@@ -2,7 +2,6 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/core/services/ssh_host_key_policy.dart';
-import 'package:ssh_mobile/core/services/ssh_identity_cache.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/core/services/ssh_client_factory.dart';
 
@@ -158,22 +157,6 @@ void main() {
         ),
         throwsA(isA<SshHostKeyMismatchException>()),
       );
-    });
-
-    test('identity cache can be cleared by connection without plaintext keys',
-        () {
-      SshIdentityCache.clearAll();
-      final key = SshIdentityCacheKey(
-        connectionId: 'server-1',
-        privateKey: 'private-key-body',
-        passphrase: 'key-passphrase',
-      );
-
-      SshIdentityCache.put(key, const []);
-      expect(SshIdentityCache.debugEntryCount, 1);
-
-      SshIdentityCache.clearForConnection('server-1');
-      expect(SshIdentityCache.debugEntryCount, 0);
     });
   });
 }

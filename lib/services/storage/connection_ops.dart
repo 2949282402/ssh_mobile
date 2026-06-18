@@ -40,7 +40,6 @@ extension ConnectionOps on StorageService {
 
     _connections.add(config);
     _refreshConnectionsView();
-    SshIdentityCache.clearForConnection(config.id);
     await _saveSecrets(config);
     await _saveConnections();
     notifyStorageListeners();
@@ -56,7 +55,6 @@ extension ConnectionOps on StorageService {
 
     _connections[index] = config;
     _refreshConnectionsView();
-    SshIdentityCache.clearForConnection(config.id);
     await _saveSecrets(config);
     await _saveConnections();
     if (config.launchMode != TerminalLaunchMode.tmux) {
@@ -71,7 +69,6 @@ extension ConnectionOps on StorageService {
     _connections.removeWhere((item) => item.id == id);
     _refreshConnectionsView();
     _clearSecretCacheForConnection(id);
-    SshIdentityCache.clearForConnection(id);
     await _deleteSecure('pwd_$id');
     await _deleteSecure('key_$id');
     await removeRestorableTmuxSessionsForConnection(id);
@@ -84,7 +81,6 @@ extension ConnectionOps on StorageService {
     for (final id in ids) {
       _connections.removeWhere((item) => item.id == id);
       _clearSecretCacheForConnection(id);
-      SshIdentityCache.clearForConnection(id);
       await _deleteSecure('pwd_$id');
       await _deleteSecure('key_$id');
       await removeRestorableTmuxSessionsForConnection(id);
@@ -166,7 +162,6 @@ extension ConnectionOps on StorageService {
   void _clearSecretCacheForConnection(String connectionId) {
     _secretCache.remove(_cacheKeyPassword(connectionId));
     _secretCache.remove(_cacheKeyPrivateKey(connectionId));
-    SshIdentityCache.clearForConnection(connectionId);
   }
 
   Future<String?> _readSecretWithCache(String key) async {
@@ -181,7 +176,6 @@ extension ConnectionOps on StorageService {
   }
 
   Future<void> _saveSecrets(ConnectionConfig config) async {
-    SshIdentityCache.clearForConnection(config.id);
     _cacheConnectionSecretsFromConfig(config);
     final passwordKey = _cacheKeyPassword(config.id);
     final privateKeyKey = _cacheKeyPrivateKey(config.id);
