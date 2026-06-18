@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:ssh_mobile/screens/system_admin_screen.dart';
+import 'package:ssh_mobile/core/services/ssh_host_key_policy.dart';
 import 'package:ssh_mobile/features/system_admin/viewmodels/system_admin_viewmodel.dart';
 import 'package:ssh_mobile/widgets/system_power_confirm_flow.dart';
 import 'package:ssh_mobile/features/performance/viewmodels/performance_viewmodel.dart';
@@ -137,7 +138,10 @@ class StubSystemAdminViewModel extends ChangeNotifier
   }
 
   @override
-  Future<void> connect(String id) async {
+  Future<void> connect(
+    String id, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
     managementConnectionId = id;
     isConnected = true;
     isRoot = true;
@@ -145,11 +149,14 @@ class StubSystemAdminViewModel extends ChangeNotifier
   }
 
   @override
-  Future<void> connectIfNeeded(String id) async {
+  Future<void> connectIfNeeded(
+    String id, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
     if (selectedConnectionId != id) return;
     if (canManageSelectedConnection) return;
     connectIfNeededCalls++;
-    await connect(id);
+    await connect(id, onUnknownHostKey: onUnknownHostKey);
   }
 
   @override
@@ -352,7 +359,9 @@ class StubPerformanceMonitorViewModel extends ChangeNotifier
   }
 
   @override
-  Future<void> startMonitoring() async {
+  Future<void> startMonitoring({
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
     isRunning = true;
     notifyListeners();
   }
@@ -364,10 +373,10 @@ class StubPerformanceMonitorViewModel extends ChangeNotifier
   }
 
   @override
-  void forceRefresh() {}
+  void forceRefresh({SshHostKeyConfirmation? onUnknownHostKey}) {}
 
   @override
-  Future<void> sampleNow() async {}
+  Future<void> sampleNow({SshHostKeyConfirmation? onUnknownHostKey}) async {}
 
   @override
   void setInterval(Duration val) {
@@ -392,7 +401,10 @@ class StubPerformanceMonitorViewModel extends ChangeNotifier
   }
 
   @override
-  Future<List<PortProcessSnapshot>> fetchPorts(String connectionId) async {
+  Future<List<PortProcessSnapshot>> fetchPorts(
+    String connectionId, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
     fetchPortsCalls.add(connectionId);
     return [
       PortProcessSnapshot(
@@ -406,7 +418,9 @@ class StubPerformanceMonitorViewModel extends ChangeNotifier
 
   @override
   Future<List<ApplicationMemorySnapshot>> fetchApplications(
-      String connectionId) async {
+    String connectionId, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
     fetchApplicationsCalls.add(connectionId);
     return const [
       ApplicationMemorySnapshot(
@@ -419,7 +433,10 @@ class StubPerformanceMonitorViewModel extends ChangeNotifier
   }
 
   @override
-  Future<List<ServiceStatusSnapshot>> fetchServices(String connectionId) async {
+  Future<List<ServiceStatusSnapshot>> fetchServices(
+    String connectionId, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
     fetchServicesCalls.add(connectionId);
     return [
       ServiceStatusSnapshot(

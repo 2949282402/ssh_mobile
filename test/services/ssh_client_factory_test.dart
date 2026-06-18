@@ -1,4 +1,8 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ssh_mobile/core/services/ssh_host_key_policy.dart';
+import 'package:ssh_mobile/core/services/ssh_identity_cache.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/core/services/ssh_client_factory.dart';
 
@@ -70,6 +74,106 @@ void main() {
 
       expect(options.onPasswordRequest, isNull);
       expect(options.onUserInfoRequest, isNull);
+    });
+
+    test('host key policy trusts an unknown key only after confirmation',
+        () async {
+      final config = ConnectionConfig(
+        id: 'id',
+        name: 'server',
+        host: 'example.com',
+        username: 'user',
+      );
+      var persisted = false;
+      final policy = SshHostKeyPolicy(
+        onUnknownHostKey: (request) {
+          expect(request.fingerprint,
+              'MD5:00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f');
+          return true;
+        },
+        persistTrust: (config) async {
+          persisted = true;
+        },
+        now: () => DateTime.utc(2026, 6, 18, 10, 0),
+      );
+
+      final accepted = await policy.verifyHostKey(
+        config: config,
+        algorithm: 'ssh-ed25519',
+        md5Fingerprint: Uint8List.fromList(
+          List<int>.generate(16, (index) => index),
+        ),
+      );
+
+      expect(accepted, isTrue);
+      expect(persisted, isTrue);
+      expect(config.hostKeyAlgorithm, 'ssh-ed25519');
+      expect(config.hostKeyFingerprint,
+          'MD5:00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f');
+      expect(config.hostKeyTrustedAt, DateTime.utc(2026, 6, 18, 10, 0));
+    });
+
+    test(
+        'host key policy rejects unknown hosts without a confirmation callback',
+        () async {
+      final policy = SshHostKeyPolicy();
+      final config = ConnectionConfig(
+        id: 'id',
+        name: 'server',
+        host: 'example.com',
+        username: 'user',
+      );
+
+      expect(
+        policy.verifyHostKey(
+          config: config,
+          algorithm: 'ssh-ed25519',
+          md5Fingerprint: Uint8List(16),
+        ),
+        throwsA(isA<SshHostKeyUntrustedException>()),
+      );
+    });
+
+    test('host key policy blocks changed fingerprints', () async {
+      final policy = SshHostKeyPolicy(
+        onUnknownHostKey: (_) => true,
+      );
+      final config = ConnectionConfig(
+        id: 'id',
+        name: 'server',
+        host: 'example.com',
+        username: 'user',
+        hostKeyAlgorithm: 'ssh-ed25519',
+        hostKeyFingerprint:
+            'MD5:00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f',
+      );
+
+      expect(
+        policy.verifyHostKey(
+          config: config,
+          algorithm: 'ssh-ed25519',
+          md5Fingerprint: Uint8List.fromList(
+            List<int>.generate(16, (index) => 15 - index),
+          ),
+        ),
+        throwsA(isA<SshHostKeyMismatchException>()),
+      );
+    });
+
+    test('identity cache can be cleared by connection without plaintext keys',
+        () {
+      SshIdentityCache.clearAll();
+      final key = SshIdentityCacheKey(
+        connectionId: 'server-1',
+        privateKey: 'private-key-body',
+        passphrase: 'key-passphrase',
+      );
+
+      SshIdentityCache.put(key, const []);
+      expect(SshIdentityCache.debugEntryCount, 1);
+
+      SshIdentityCache.clearForConnection('server-1');
+      expect(SshIdentityCache.debugEntryCount, 0);
     });
   });
 }

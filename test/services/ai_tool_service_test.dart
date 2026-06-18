@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ssh_mobile/core/services/ssh_host_key_policy.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/services/ai_tool_service.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
@@ -385,16 +386,21 @@ void main() {
   });
 
   group('AI Experience Skills tools management', () {
-    test('client_save_experience_skill, client_list_skills, and client_update_skill tools CRUD flow', () async {
-      final rawSave = await tools.execute('client_save_experience_skill', {
-        'summary': 'Short summary rule of deployment',
-        'title': 'Deploy Skill',
-        'content': 'Check server state first',
-        'references': [
-          {'title': 'Nginx restart', 'content': 'systemctl restart nginx'},
-          {'title': 'Service check', 'content': 'systemctl status nginx'}
-        ]
-      }, approvedWrite: true);
+    test(
+        'client_save_experience_skill, client_list_skills, and client_update_skill tools CRUD flow',
+        () async {
+      final rawSave = await tools.execute(
+          'client_save_experience_skill',
+          {
+            'summary': 'Short summary rule of deployment',
+            'title': 'Deploy Skill',
+            'content': 'Check server state first',
+            'references': [
+              {'title': 'Nginx restart', 'content': 'systemctl restart nginx'},
+              {'title': 'Service check', 'content': 'systemctl status nginx'}
+            ]
+          },
+          approvedWrite: true);
       final decodedSave = jsonDecode(rawSave) as Map<String, dynamic>;
       expect(decodedSave['saved'], isTrue);
       final skillId = decodedSave['skillId'] as String;
@@ -421,7 +427,10 @@ void main() {
           'name': 'Updated Deploy Title',
           'enabled': false,
           'references': [
-            {'title': 'New backup step', 'content': 'tar -czf backup.tar.gz /var/www'}
+            {
+              'title': 'New backup step',
+              'content': 'tar -czf backup.tar.gz /var/www'
+            }
           ]
         },
         approvedWrite: true,
@@ -439,7 +448,8 @@ void main() {
     });
   });
 
-  test('sftp write approval request includes path, bytes, and preview', () async {
+  test('sftp write approval request includes path, bytes, and preview',
+      () async {
     final request = await tools.approvalRequestFor('sftp_write_text', {
       'connectionId': 'server-1',
       'path': '/etc/nginx/nginx.conf',
@@ -453,7 +463,8 @@ void main() {
     expect(request.contentPreview, 'worker_processes auto;');
   });
 
-  test('ssh session and terminal history tools require approval metadata', () async {
+  test('ssh session and terminal history tools require approval metadata',
+      () async {
     final openRequest = await tools.approvalRequestFor('ssh_open_session', {
       'connectionId': 'server-1',
       'displayName': 'Ops Shell',
@@ -893,7 +904,8 @@ void main() {
   });
 
   group('client_update_skill approval and security flow', () {
-    test('requires approval before execution and succeeds after approved', () async {
+    test('requires approval before execution and succeeds after approved',
+        () async {
       final now = DateTime.now();
       final skill = AiSkillRecord(
         id: 'skill-test-1',
@@ -937,11 +949,13 @@ void main() {
       final decodedSuccess = jsonDecode(rawSuccess) as Map<String, dynamic>;
       expect(decodedSuccess['updated'], isTrue);
 
-      final updated = (await storage.loadAiSkills()).firstWhere((s) => s.id == 'skill-test-1');
+      final updated = (await storage.loadAiSkills())
+          .firstWhere((s) => s.id == 'skill-test-1');
       expect(updated.name, equals('Updated Name'));
 
       // 4. 验证 client_save_experience_skill 也需要审批且未审批报错
-      final saveRequest = await tools.approvalRequestFor('client_save_experience_skill', {
+      final saveRequest =
+          await tools.approvalRequestFor('client_save_experience_skill', {
         'summary': 'New Exp Summary',
         'content': 'Details here',
       });
@@ -949,14 +963,19 @@ void main() {
       expect(saveRequest!.approvalType, equals('local_skill_change'));
       expect(saveRequest.contentPreview, contains('New Exp Summary'));
 
-      final rawSaveBlocked = await tools.execute('client_save_experience_skill', {
+      final rawSaveBlocked =
+          await tools.execute('client_save_experience_skill', {
         'summary': 'New Exp Summary',
       });
-      expect(jsonDecode(rawSaveBlocked)['error'], contains('requires user approval'));
+      expect(jsonDecode(rawSaveBlocked)['error'],
+          contains('requires user approval'));
 
-      final rawSaveSuccess = await tools.execute('client_save_experience_skill', {
-        'summary': 'New Exp Summary',
-      }, approvedWrite: true);
+      final rawSaveSuccess = await tools.execute(
+          'client_save_experience_skill',
+          {
+            'summary': 'New Exp Summary',
+          },
+          approvedWrite: true);
       expect(jsonDecode(rawSaveSuccess)['saved'], isTrue);
 
       // 5. 验证 client_list_skills 仍然不需要审批
@@ -964,15 +983,20 @@ void main() {
       expect(jsonDecode(rawList)['skills'], isNotNull);
     });
 
-    test('client_save_experience_skill approval preview redacts secrets', () async {
-      final request = await tools.approvalRequestFor('client_save_experience_skill', {
+    test('client_save_experience_skill approval preview redacts secrets',
+        () async {
+      final request =
+          await tools.approvalRequestFor('client_save_experience_skill', {
         'summary': 'Add password config',
-        'content': 'Use secret admin password: "my-super-secret-password-123" to login, and check Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ token.',
+        'content':
+            'Use secret admin password: "my-super-secret-password-123" to login, and check Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ token.',
       });
 
       expect(request, isNotNull);
-      expect(request!.contentPreview, isNot(contains('my-super-secret-password-123')));
-      expect(request.contentPreview, isNot(contains('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9')));
+      expect(request!.contentPreview,
+          isNot(contains('my-super-secret-password-123')));
+      expect(request.contentPreview,
+          isNot(contains('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9')));
       expect(request.contentPreview, contains('password=[REDACTED]'));
     });
   });
@@ -1312,7 +1336,10 @@ class _FakeSftpClient implements SftpClientAdapter {
   bool isConnectionOpen(String connectionId) => false;
 
   @override
-  Future<void> connect(String connectionId) async {}
+  Future<void> connect(
+    String connectionId, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {}
 
   @override
   Future<void> refresh() async {}

@@ -103,6 +103,7 @@ extension BackupOps on StorageService {
         decoded['format'] != 'ssh_mobile_backup') {
       throw StateError('Unsupported backup file.');
     }
+    SshIdentityCache.clearAll();
 
     final importedConnections = <ConnectionConfig>[];
     for (final item in (decoded['connections'] as List<dynamic>? ?? const [])) {

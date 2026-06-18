@@ -15,7 +15,8 @@ void main() {
         const SkillReferenceItem(title: 'Ref 1', content: 'Content 1'),
         const SkillReferenceItem(title: '  ', content: 'Content 2'),
         const SkillReferenceItem(title: 'Ref 2', content: ''),
-        const SkillReferenceItem(title: 'Ref 1', content: 'Duplicate Title Content'),
+        const SkillReferenceItem(
+            title: 'Ref 1', content: 'Duplicate Title Content'),
         const SkillReferenceItem(title: 'Ref 3', content: 'Content 3'),
       ];
 
@@ -28,7 +29,9 @@ void main() {
       expect(cleaned[1].content, 'Content 3');
     });
 
-    test('syncFrontmatterContent does not inject if no frontmatter in rawContent', () {
+    test(
+        'syncFrontmatterContent does not inject if no frontmatter in rawContent',
+        () {
       const rawContent = 'Some content without frontmatter';
       final result = domainService.syncFrontmatterContent(
         rawContent: rawContent,
@@ -57,7 +60,8 @@ Body here.''';
       expect(result.contains('# Main Content'), isTrue);
     });
 
-    test('syncFrontmatterContent keeps content intact if header values match', () {
+    test('syncFrontmatterContent keeps content intact if header values match',
+        () {
       const rawContent = '''---
 name: "Same Name"
 description: "Same Desc"
@@ -193,7 +197,8 @@ Body text.''',
         description: 'Updated Description',
         content: 'Updated Content',
         references: [
-          const SkillReferenceItem(title: 'Ref 1', content: 'Content 1 Changed'),
+          const SkillReferenceItem(
+              title: 'Ref 1', content: 'Content 1 Changed'),
           const SkillReferenceItem(title: 'Ref 3', content: 'Content 3'),
         ],
         createdAt: DateTime.now(),
@@ -210,7 +215,9 @@ Body text.''',
       expect(preview.modifiedReferencesCount, 1); // Ref 1 content changed
     });
 
-    test('buildUpdateSkill with empty or whitespace values fallbacks to existing or frontmatter', () {
+    test(
+        'buildUpdateSkill with empty or whitespace values fallbacks to existing or frontmatter',
+        () {
       final current = AiSkillRecord(
         id: 'skill-1',
         name: 'Name A',

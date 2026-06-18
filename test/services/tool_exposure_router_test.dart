@@ -150,7 +150,9 @@ void main() {
       expect(explicitSave.selectedToolSet, contains('create_playbook'));
     });
 
-    test('contains explainable decisions showing why tools were selected or blocked', () {
+    test(
+        'contains explainable decisions showing why tools were selected or blocked',
+        () {
       const router = ToolExposureRouter();
       final tools = [
         AiTool(
@@ -180,13 +182,16 @@ void main() {
 
       expect(selection.decisions, hasLength(2));
 
-      final webviewDecision = selection.decisions.firstWhere((d) => d.toolName == 'client_webview_get_state');
+      final webviewDecision = selection.decisions
+          .firstWhere((d) => d.toolName == 'client_webview_get_state');
       expect(webviewDecision.selected, isFalse);
       expect(webviewDecision.blockedBy, contains('webview_session_missing'));
 
-      final taskUpdateDecision = selection.decisions.firstWhere((d) => d.toolName == 'client_task_update');
+      final taskUpdateDecision = selection.decisions
+          .firstWhere((d) => d.toolName == 'client_task_update');
       expect(taskUpdateDecision.selected, isFalse);
-      expect(taskUpdateDecision.blockedBy, contains('execution_only_without_approved_plan'));
+      expect(taskUpdateDecision.blockedBy,
+          contains('execution_only_without_approved_plan'));
     });
   });
 }

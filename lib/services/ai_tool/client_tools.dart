@@ -294,7 +294,8 @@ class ClientToolsProvider implements AiToolProvider {
   }) async {
     if (!approvedWrite) {
       return jsonEncode({
-        'error': 'Saving a local skill requires user approval before execution.',
+        'error':
+            'Saving a local skill requires user approval before execution.',
       });
     }
 
@@ -369,7 +370,8 @@ class ClientToolsProvider implements AiToolProvider {
   }) async {
     if (!approvedWrite) {
       return jsonEncode({
-        'error': 'Updating a local skill requires user approval before execution.',
+        'error':
+            'Updating a local skill requires user approval before execution.',
       });
     }
     final skillId = service._arg(arguments, 'skillId');
@@ -881,7 +883,8 @@ class ClientToolsProvider implements AiToolProvider {
 
         if (!validation.allowed) {
           return jsonEncode({
-            'error': 'Plan execution validation failed: ${validation.errorMessage}',
+            'error':
+                'Plan execution validation failed: ${validation.errorMessage}',
           });
         }
 
@@ -1039,12 +1042,14 @@ class ClientToolsProvider implements AiToolProvider {
           ),
           'references': {
             'type': 'array',
-            'description': 'Optional structured list of references containing description/title and concrete rule content.',
+            'description':
+                'Optional structured list of references containing description/title and concrete rule content.',
             'items': {
               'type': 'object',
               'properties': {
                 'title': _string('The title or purpose of this reference.'),
-                'content': _string('The detailed instructions or commands of this reference.'),
+                'content': _string(
+                    'The detailed instructions or commands of this reference.'),
               },
               'required': const ['title', 'content'],
             },
@@ -1052,7 +1057,8 @@ class ClientToolsProvider implements AiToolProvider {
         },
         required: const ['summary'],
         executionMode: AiToolExecutionMode.stateChanging,
-        handler: (args) => _clientSaveExperienceSkill(service, args, approvedWrite: false),
+        handler: (args) =>
+            _clientSaveExperienceSkill(service, args, approvedWrite: false),
       ),
       AiTool(
         name: 'client_list_skills',
@@ -1071,17 +1077,21 @@ class ClientToolsProvider implements AiToolProvider {
             'The unique skillId of the experience skill/note to update.',
           ),
           'name': _string('Optional new short title for the skill.'),
-          'description': _string('Optional new concise summary of the experience.'),
-          'content': _string('Optional new detailed content, commands, or lessons.'),
+          'description':
+              _string('Optional new concise summary of the experience.'),
+          'content':
+              _string('Optional new detailed content, commands, or lessons.'),
           'enabled': _bool('Optional flag to enable/disable the skill.'),
           'references': {
             'type': 'array',
-            'description': 'Optional new structured list of references containing description/title and concrete rule content.',
+            'description':
+                'Optional new structured list of references containing description/title and concrete rule content.',
             'items': {
               'type': 'object',
               'properties': {
                 'title': _string('The title or purpose of this reference.'),
-                'content': _string('The detailed instructions or commands of this reference.'),
+                'content': _string(
+                    'The detailed instructions or commands of this reference.'),
               },
               'required': const ['title', 'content'],
             },

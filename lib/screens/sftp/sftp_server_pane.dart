@@ -450,7 +450,11 @@ class _SftpServerTileBinding extends StatelessWidget {
         busy: status.busy,
         connected: status.connected,
         compact: compact,
-        onTap: () => context.read<SftpViewModel>().connect(connection.id),
+        onTap: () => context.read<SftpViewModel>().connect(
+              connection.id,
+              onUnknownHostKey: (request) =>
+                  showSshHostKeyTrustDialog(context, request),
+            ),
       ),
     );
   }

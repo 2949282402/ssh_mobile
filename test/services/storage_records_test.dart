@@ -308,8 +308,10 @@ void main() {
         planMode: true,
       );
 
-      expect(canExitPlanMode(blockedChat, actor: PlanModeExitActor.llmTool), isFalse);
-      expect(canExitPlanMode(blockedChat, actor: PlanModeExitActor.userUi), isTrue);
+      expect(canExitPlanMode(blockedChat, actor: PlanModeExitActor.llmTool),
+          isFalse);
+      expect(canExitPlanMode(blockedChat, actor: PlanModeExitActor.userUi),
+          isTrue);
     });
   });
 

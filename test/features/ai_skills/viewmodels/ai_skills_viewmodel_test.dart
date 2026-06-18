@@ -56,7 +56,8 @@ description: >
 body''';
       final fm = SkillFrontmatter.parse(text);
       expect(fm, isNotNull);
-      expect(fm!.description, equals('Line 1 of description\nLine 2 of description'));
+      expect(fm!.description,
+          equals('Line 1 of description\nLine 2 of description'));
     });
 
     test('formats name and description with correct YAML syntax', () {
@@ -67,7 +68,8 @@ body''';
       );
       expect(formatted, contains('name: "My Skill"'));
       expect(formatted, contains('description: >\n  Line 1\n  Line 2'));
-      expect(formatted, endsWith('\nBody content\n')); // Body format must preserve space
+      expect(formatted,
+          endsWith('\nBody content\n')); // Body format must preserve space
     });
   });
 
@@ -201,7 +203,8 @@ Some body text.''',
       viewModel.selectSkill(skill);
 
       expect(viewModel.nameController.text, equals('YAML Skill Name'));
-      expect(viewModel.descriptionController.text, equals('YAML Skill Description'));
+      expect(viewModel.descriptionController.text,
+          equals('YAML Skill Description'));
     });
 
     test('Marking dirty updates states', () {
@@ -226,14 +229,26 @@ Some body text.''',
 
       expect(viewModel.hasReferences, isTrue);
       expect(viewModel.references, hasLength(1));
-      expect(viewModel.references.first.title, equals('Example reference document'));
+      expect(viewModel.references.first.title,
+          equals('Example reference document'));
 
-      viewModel.addReference('My config rule', 'Configurations detailed command info');
-      expect(viewModel.references, contains(const SkillReferenceItem(title: 'My config rule', content: 'Configurations detailed command info')));
+      viewModel.addReference(
+          'My config rule', 'Configurations detailed command info');
+      expect(
+          viewModel.references,
+          contains(const SkillReferenceItem(
+              title: 'My config rule',
+              content: 'Configurations detailed command info')));
       expect(viewModel.dirty, isTrue);
 
       viewModel.removeReference(0); // Removes example document
-      expect(viewModel.references, equals([const SkillReferenceItem(title: 'My config rule', content: 'Configurations detailed command info')]));
+      expect(
+          viewModel.references,
+          equals([
+            const SkillReferenceItem(
+                title: 'My config rule',
+                content: 'Configurations detailed command info')
+          ]));
 
       viewModel.toggleReferences(false);
       expect(viewModel.hasReferences, isFalse);

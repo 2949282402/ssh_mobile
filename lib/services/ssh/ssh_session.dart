@@ -111,6 +111,7 @@ abstract interface class SshClientAdapter {
   Future<String?> openSession(
     String connectionId, {
     String? displayName,
+    SshHostKeyConfirmation? onUnknownHostKey,
   });
 
   Future<bool> ensureSessionConnected(
@@ -124,6 +125,7 @@ abstract interface class SshClientAdapter {
     String connectionId, {
     String? sessionId,
     String? displayName,
+    SshHostKeyConfirmation? onUnknownHostKey,
   });
 
   Future<void> disconnectSession(String sessionId);
@@ -140,6 +142,7 @@ abstract interface class SshClientAdapter {
     required String connectionId,
     required String command,
     Duration timeout = const Duration(seconds: 15),
+    SshHostKeyConfirmation? onUnknownHostKey,
   });
 }
 

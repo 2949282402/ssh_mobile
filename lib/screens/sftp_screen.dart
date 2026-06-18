@@ -12,6 +12,7 @@ import '../services/sftp_service.dart';
 import '../utils/responsive.dart';
 import '../widgets/tactile_feedback.dart';
 import '../widgets/overflow_scroll_text.dart';
+import '../widgets/ssh_host_key_trust_dialog.dart';
 import 'sftp_editor_screen.dart';
 import 'sftp_file_viewer_screen.dart';
 

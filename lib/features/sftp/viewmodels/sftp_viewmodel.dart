@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 
+import '../../../../core/services/ssh_host_key_policy.dart';
 import '../../../../services/sftp_service.dart';
 
 class SftpViewModel extends ChangeNotifier {
@@ -31,8 +32,14 @@ class SftpViewModel extends ChangeNotifier {
   bool isConnectionBusy(String id) => _sftpService.isConnectionBusy(id);
   bool isConnectionOpen(String id) => _sftpService.isConnectionOpen(id);
 
-  Future<void> connect(String connectionId) async {
-    await _sftpService.connect(connectionId);
+  Future<void> connect(
+    String connectionId, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
+    await _sftpService.connect(
+      connectionId,
+      onUnknownHostKey: onUnknownHostKey,
+    );
   }
 
   void disconnect() {

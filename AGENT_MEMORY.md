@@ -151,3 +151,4 @@ across sessions.
 - 2026-06-16: 完成 Phase 9A & 9B AI Chat Generation Runner / Run Coordinator 抽离与审计清理。将生成迭代生命周期、流式节流渲染触发、中英文状态/Trace 本地化以及指标保存持久化逻辑从 ViewModel 解耦至 GenerationRunner、StatusTranslator、MetricsRecorder 三大独立服务。优化了 ViewModel 构造函数依赖引用避免重复分配，补齐了核心服务单元测试且通过率 100%，架构更加高内聚低耦合。
 - 2026-06-17: AI chat 的默认规划目标是当前请求的聊天内 `todoSteps`。只有当用户明确要求保存、复用、管理或运行可复用剧本/脚本时，才暴露或调用 `Playbook` 相关工具；回复中的 ` ```playbook ` 代码块仍只是 todo 计划的持久化格式。
 - 2026-06-18: System Administration 的 Monitor tab 保持独立多服务器监控选择；除 Monitor 外的 Ports / Applications / Services / Users / Sessions / Power 共享 `SystemAdminViewModel.selectedConnectionId`。root 管理连接只表示当前底层连接，不能反向改写选择，连接成功后也不能自动 `refreshAllData()`；当前 tab activation 负责按需加载。
+- 2026-06-18: SSH Host Key TOFU 校验集中在 `SshHostKeyPolicy`。当前 `dartssh2` 只通过 `onVerifyHostKey` 暴露 MD5 fingerprint，因此持久化 fingerprint 需按 MD5 格式规范化；UI 首次使用可提示确认，AI 工具和后台 SSH 不得自动信任未知或变化的 host key。

@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../features/connection/models/connection.dart';
 import 'app_log_service.dart';
 import 'background_service.dart';
+import '../core/services/ssh_host_key_policy.dart';
 import 'server_status_probe.dart';
 import 'ssh_service.dart';
 import 'storage_service.dart';
@@ -276,7 +277,9 @@ class PerformanceMonitorService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> startMonitoring() async {
+  Future<void> startMonitoring({
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
     if (_selectedConnectionIds.isEmpty) return;
     _running = true;
     _startedAt = DateTime.now();
@@ -303,7 +306,7 @@ class PerformanceMonitorService extends ChangeNotifier {
       BackgroundServiceManager.start(connectionName: 'Performance monitor'),
     );
     _restartTimer();
-    await sampleNow();
+    await sampleNow(onUnknownHostKey: onUnknownHostKey);
   }
 
   void stopMonitoring() {
@@ -359,7 +362,9 @@ class PerformanceMonitorService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> sampleNow() async {
+  Future<void> sampleNow({
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
     if (!_running || _monitoringConnectionIds.isEmpty) return;
     final targets = _monitoringConnectionIds
         .where((id) => !_samplingConnectionIds.contains(id))
@@ -371,7 +376,14 @@ class PerformanceMonitorService extends ChangeNotifier {
     try {
       for (var index = 0; index < targets.length; index += 2) {
         final batch = targets.skip(index).take(2);
-        await Future.wait(batch.map(_sampleConnection));
+        await Future.wait(
+          batch.map(
+            (connectionId) => _sampleConnection(
+              connectionId,
+              onUnknownHostKey: onUnknownHostKey,
+            ),
+          ),
+        );
       }
     } finally {
       _samplingConnectionIds.removeAll(targets);
@@ -380,16 +392,23 @@ class PerformanceMonitorService extends ChangeNotifier {
     }
   }
 
-  Future<void> _sampleConnection(String connectionId) async {
+  Future<void> _sampleConnection(
+    String connectionId, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
     try {
       if (_platformFor(connectionId) == ServerPlatform.windows) {
-        await _sampleWindowsConnection(connectionId);
+        await _sampleWindowsConnection(
+          connectionId,
+          onUnknownHostKey: onUnknownHostKey,
+        );
         return;
       }
       final result = await _runOneShotWithRetry(
         connectionId: connectionId,
         command: ServerStatusProbe.performanceCommand,
         timeout: _commandTimeout,
+        onUnknownHostKey: onUnknownHostKey,
       );
       if (result.exitCode != 0 && result.stdout.trim().isEmpty) {
         throw StateError(
@@ -442,8 +461,15 @@ class PerformanceMonitorService extends ChangeNotifier {
     }
   }
 
-  Future<void> _sampleWindowsConnection(String connectionId) async {
-    final status = await _fetchWindowsStatus(connectionId, _commandTimeout);
+  Future<void> _sampleWindowsConnection(
+    String connectionId, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
+    final status = await _fetchWindowsStatus(
+      connectionId,
+      _commandTimeout,
+      onUnknownHostKey: onUnknownHostKey,
+    );
     final sample = PerformanceSample(
       connectionId: connectionId,
       time: DateTime.now(),
@@ -491,11 +517,15 @@ class PerformanceMonitorService extends ChangeNotifier {
     return Duration(seconds: seconds);
   }
 
-  Future<List<PortProcessSnapshot>> fetchPorts(String connectionId) async {
+  Future<List<PortProcessSnapshot>> fetchPorts(
+    String connectionId, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
     if (_platformFor(connectionId) == ServerPlatform.windows) {
       return (await _fetchWindowsStatus(
         connectionId,
         const Duration(seconds: 20),
+        onUnknownHostKey: onUnknownHostKey,
       ))
           .ports;
     }
@@ -503,6 +533,7 @@ class PerformanceMonitorService extends ChangeNotifier {
       connectionId: connectionId,
       command: ServerStatusProbe.portsCommand,
       timeout: const Duration(seconds: 12),
+      onUnknownHostKey: onUnknownHostKey,
     );
     if (result.exitCode != 0 && result.stdout.trim().isEmpty) {
       throw StateError(result.stderr.trim());
@@ -511,12 +542,14 @@ class PerformanceMonitorService extends ChangeNotifier {
   }
 
   Future<List<ApplicationMemorySnapshot>> fetchApplications(
-    String connectionId,
-  ) async {
+    String connectionId, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
     if (_platformFor(connectionId) == ServerPlatform.windows) {
       return (await _fetchWindowsStatus(
         connectionId,
         const Duration(seconds: 20),
+        onUnknownHostKey: onUnknownHostKey,
       ))
           .applications;
     }
@@ -524,6 +557,7 @@ class PerformanceMonitorService extends ChangeNotifier {
       connectionId: connectionId,
       command: ServerStatusProbe.applicationsCommand,
       timeout: const Duration(seconds: 12),
+      onUnknownHostKey: onUnknownHostKey,
     );
     if (result.exitCode != 0 && result.stdout.trim().isEmpty) {
       throw StateError(result.stderr.trim());
@@ -532,12 +566,14 @@ class PerformanceMonitorService extends ChangeNotifier {
   }
 
   Future<List<ServiceStatusSnapshot>> fetchServices(
-    String connectionId,
-  ) async {
+    String connectionId, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
     if (_platformFor(connectionId) == ServerPlatform.windows) {
       return (await _fetchWindowsStatus(
         connectionId,
         const Duration(seconds: 20),
+        onUnknownHostKey: onUnknownHostKey,
       ))
           .services;
     }
@@ -545,6 +581,7 @@ class PerformanceMonitorService extends ChangeNotifier {
       connectionId: connectionId,
       command: ServerStatusProbe.servicesCommand,
       timeout: const Duration(seconds: 12),
+      onUnknownHostKey: onUnknownHostKey,
     );
     if (result.exitCode != 0 && result.stdout.trim().isEmpty) {
       throw StateError(result.stderr.trim());
@@ -554,12 +591,14 @@ class PerformanceMonitorService extends ChangeNotifier {
 
   Future<WindowsStatusSnapshot> _fetchWindowsStatus(
     String connectionId,
-    Duration timeout,
-  ) async {
+    Duration timeout, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
     final result = await _runOneShotWithRetry(
       connectionId: connectionId,
       command: ServerStatusProbe.windowsStatusCommand,
       timeout: timeout,
+      onUnknownHostKey: onUnknownHostKey,
     );
     if (result.exitCode != 0 && result.stdout.trim().isEmpty) {
       throw StateError(
@@ -580,12 +619,14 @@ class PerformanceMonitorService extends ChangeNotifier {
     required String connectionId,
     required String command,
     required Duration timeout,
+    SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
     try {
       return await _sshService.runOneShotCommand(
         connectionId: connectionId,
         command: command,
         timeout: timeout,
+        onUnknownHostKey: onUnknownHostKey,
       );
     } catch (firstError, firstStackTrace) {
       if (_disposed) {
@@ -604,6 +645,7 @@ class PerformanceMonitorService extends ChangeNotifier {
           connectionId: connectionId,
           command: command,
           timeout: timeout,
+          onUnknownHostKey: onUnknownHostKey,
         );
       } catch (retryError) {
         throw StateError(

@@ -61,6 +61,9 @@ or maintenance lesson should be shared across Codex and Claude Code sessions.
   SSH unless the user is really targeting WSL or another Linux-like shell.
 - Keep secrets out of exports, logs, AI tool results, and docs. Stored API keys
   and credentials belong in secure storage, not plain preferences.
+- Keep SSH Host Key checks centralized in `SshHostKeyPolicy`. UI-initiated
+  first use may prompt for TOFU confirmation, but AI tools and background SSH
+  service code must never auto-trust unknown or changed host keys.
 - When features, navigation, settings, tools, or platform behavior change,
   update this skill and `README.md` in the same task.
 - Keep `.agents/.../SKILL.md` and `.claude/.../SKILL.md` synchronized with

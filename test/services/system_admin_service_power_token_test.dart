@@ -40,7 +40,9 @@ void main() {
       expect(lastCommand, 'reboot');
     });
 
-    test('rebootServer throws StateError and blocks execution with a shutdown token', () async {
+    test(
+        'rebootServer throws StateError and blocks execution with a shutdown token',
+        () async {
       final token = SystemPowerConfirmationToken.testing(
         action: SystemPowerAction.shutdown,
       );
@@ -56,7 +58,9 @@ void main() {
       expect(lastCommand, isNull);
     });
 
-    test('rebootServer throws StateError and blocks execution with an expired token', () async {
+    test(
+        'rebootServer throws StateError and blocks execution with an expired token',
+        () async {
       final token = SystemPowerConfirmationToken.testing(
         action: SystemPowerAction.reboot,
         issuedAt: DateTime.now().subtract(const Duration(minutes: 3)),
@@ -82,7 +86,9 @@ void main() {
       expect(lastCommand, 'shutdown -h now');
     });
 
-    test('shutdownServer throws StateError and blocks execution with a reboot token', () async {
+    test(
+        'shutdownServer throws StateError and blocks execution with a reboot token',
+        () async {
       final token = SystemPowerConfirmationToken.testing(
         action: SystemPowerAction.reboot,
       );
@@ -98,7 +104,9 @@ void main() {
       expect(lastCommand, isNull);
     });
 
-    test('shutdownServer throws StateError and blocks execution with an expired token', () async {
+    test(
+        'shutdownServer throws StateError and blocks execution with an expired token',
+        () async {
       final token = SystemPowerConfirmationToken.testing(
         action: SystemPowerAction.shutdown,
         issuedAt: DateTime.now().subtract(const Duration(minutes: 3)),

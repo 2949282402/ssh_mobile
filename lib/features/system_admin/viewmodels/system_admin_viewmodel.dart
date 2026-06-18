@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../core/services/ssh_host_key_policy.dart';
 import '../../../services/system_admin_service.dart';
 import '../../../services/storage_service.dart';
 import '../../../widgets/system_power_confirm_flow.dart';
@@ -223,11 +224,17 @@ class SystemAdminViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> connect(String id) async {
-    await _adminService.connect(id);
+  Future<void> connect(
+    String id, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
+    await _adminService.connect(id, onUnknownHostKey: onUnknownHostKey);
   }
 
-  Future<void> connectIfNeeded(String id) async {
+  Future<void> connectIfNeeded(
+    String id, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
     if (_selectedConnectionId != id) return;
 
     if (_connectingConnectionId == id && _adminService.isConnecting) return;
@@ -242,7 +249,7 @@ class SystemAdminViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _adminService.connect(id);
+      await _adminService.connect(id, onUnknownHostKey: onUnknownHostKey);
     } finally {
       if (_connectingConnectionId == id) {
         _connectingConnectionId = null;

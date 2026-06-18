@@ -119,7 +119,9 @@ void main() {
     storage.dispose();
   });
 
-  test('prepareTurn retrieves relevant skills, clips references and formats contextText', () async {
+  test(
+      'prepareTurn retrieves relevant skills, clips references and formats contextText',
+      () async {
     final storage = StorageService();
     await storage.init();
 
@@ -193,18 +195,24 @@ void main() {
 
     expect(prepMatched.userMessage.contextText, isNotNull);
     // 应当包含 【运维经验记忆】 或 [Operational memory references]
-    expect(prepMatched.userMessage.contextText, contains('[Operational memory references]'));
+    expect(prepMatched.userMessage.contextText,
+        contains('[Operational memory references]'));
     // 应当包含命中的 reference 标题和具体内容
     expect(prepMatched.userMessage.contextText, contains('Docker Cleanup'));
-    expect(prepMatched.userMessage.contextText, contains('docker system prune'));
+    expect(
+        prepMatched.userMessage.contextText, contains('docker system prune'));
     // 应当不包含未命中的 reference（因为 clips matches 逻辑只带回匹配的 references）
-    expect(prepMatched.userMessage.contextText, isNot(contains('Docker Build')));
-    expect(prepMatched.userMessage.contextText, isNot(contains('docker build -t')));
+    expect(
+        prepMatched.userMessage.contextText, isNot(contains('Docker Build')));
+    expect(prepMatched.userMessage.contextText,
+        isNot(contains('docker build -t')));
 
     // 验证 traces 里也包含了 memory_context 记录
     expect(prepMatched.assistantMessage.traces, hasLength(1));
-    expect(prepMatched.assistantMessage.traces.first.kind, equals('memory_context'));
-    expect(prepMatched.assistantMessage.traces.first.content, contains('Docker Cleanup'));
+    expect(prepMatched.assistantMessage.traces.first.kind,
+        equals('memory_context'));
+    expect(prepMatched.assistantMessage.traces.first.content,
+        contains('Docker Cleanup'));
 
     // 2. 发起匹配已禁用 Skill 的查询
     final prepDisabled = await orchestrator.prepareTurn(
@@ -216,8 +224,10 @@ void main() {
     );
 
     // 禁用的 Skill 应该完全不参与召回
-    expect(prepDisabled.userMessage.contextText, isNot(contains('Nginx Restart')));
-    expect(prepDisabled.userMessage.contextText, isNot(contains('systemctl restart nginx')));
+    expect(
+        prepDisabled.userMessage.contextText, isNot(contains('Nginx Restart')));
+    expect(prepDisabled.userMessage.contextText,
+        isNot(contains('systemctl restart nginx')));
     expect(prepDisabled.assistantMessage.traces, isEmpty);
 
     storage.dispose();

@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import '../models/connection.dart';
 import '../../../../services/app_log_service.dart';
 import '../../../../services/app_settings.dart';
+import '../../../../widgets/ssh_host_key_trust_dialog.dart';
 import '../viewmodels/connection_viewmodel.dart';
 
 class AddEditScreen extends StatefulWidget {
@@ -559,11 +560,17 @@ class _AddEditScreenState extends State<AddEditScreen> {
       final effectiveLaunchMode = _serverPlatform == ServerPlatform.windows
           ? TerminalLaunchMode.ssh
           : _launchMode;
+      final existing =
+          isEditing ? connectionViewModel.getConnection(widget.editId!) : null;
+      final host = _hostController.text.trim();
+      final port = int.parse(_portController.text.trim());
+      final keepHostKeyTrust =
+          existing != null && existing.host == host && existing.port == port;
       config = ConnectionConfig(
         id: isEditing ? widget.editId! : const Uuid().v4(),
         name: _nameController.text.trim(),
-        host: _hostController.text.trim(),
-        port: int.parse(_portController.text.trim()),
+        host: host,
+        port: port,
         username: _usernameController.text.trim(),
         password: _passwordController.text,
         privateKey: _privateKeyController.text,
@@ -572,6 +579,10 @@ class _AddEditScreenState extends State<AddEditScreen> {
         serverPlatform: _serverPlatform,
         tmuxAutoDeleteSeconds: _tmuxAutoDeleteSecondsFromInput(),
         keepAlive: _keepAlive,
+        hostKeyFingerprint:
+            keepHostKeyTrust ? existing.hostKeyFingerprint : null,
+        hostKeyAlgorithm: keepHostKeyTrust ? existing.hostKeyAlgorithm : null,
+        hostKeyTrustedAt: keepHostKeyTrust ? existing.hostKeyTrustedAt : null,
         jumpHost: _jumpHostController.text.isNotEmpty
             ? _jumpHostController.text.trim()
             : null,
@@ -589,6 +600,8 @@ class _AddEditScreenState extends State<AddEditScreen> {
         rawPassword: _passwordController.text,
         rawPrivateKey: _privateKeyController.text,
         confirmDisconnectCallback: _confirmDisconnectActiveWindows,
+        onUnknownHostKey: (request) =>
+            showSshHostKeyTrustDialog(context, request),
       );
 
       if (success && mounted) {

@@ -108,7 +108,8 @@ class AiToolService implements AiToolExecutor {
                     sshService: sshService,
                   ),
               secretPolicy: secretPolicy ?? const ToolSecretPolicy(),
-              skillDomainService: skillDomainService ?? const SkillDomainService(),
+              skillDomainService:
+                  skillDomainService ?? const SkillDomainService(),
               appSettings: appSettings,
               playbookService: playbookService,
               clientWebViewSessionId: clientWebViewSessionId,
@@ -421,7 +422,8 @@ class AiToolService implements AiToolExecutor {
         final buildResult = skillDomainService.buildCreateSkill(
           title: title.isEmpty ? null : title,
           summary: summary,
-          content: details.trim().isEmpty ? null : '$summary\n\n${details.trim()}',
+          content:
+              details.trim().isEmpty ? null : '$summary\n\n${details.trim()}',
           references: inputReferences,
         );
         final dummyRecord = AiSkillRecord(
@@ -441,8 +443,10 @@ class AiToolService implements AiToolExecutor {
           connectionId: _clientScopeId,
           connectionName: _clientScopeName,
           command: 'CREATE LOCAL SKILL: "${preview.afterName}"',
-          reason: 'Saving a new local AI experience skill/note requires user approval.',
-          contentPreview: 'Name: ${preview.afterName}\nDescription: ${preview.afterDescription}\nContent: ${preview.afterContentSnippet}\nReferences: ${preview.addedReferencesCount} added',
+          reason:
+              'Saving a new local AI experience skill/note requires user approval.',
+          contentPreview:
+              'Name: ${preview.afterName}\nDescription: ${preview.afterDescription}\nContent: ${preview.afterContentSnippet}\nReferences: ${preview.addedReferencesCount} added',
         );
       case 'client_update_skill':
         final skillId = _arg(arguments, 'skillId');
@@ -487,13 +491,16 @@ class AiToolService implements AiToolExecutor {
         final preview = skillDomainService.generatePreview(current, updated);
         final buffer = StringBuffer();
         if (preview.beforeName != preview.afterName) {
-          buffer.writeln('Name: "${preview.beforeName}" -> "${preview.afterName}"');
+          buffer.writeln(
+              'Name: "${preview.beforeName}" -> "${preview.afterName}"');
         }
         if (preview.beforeDescription != preview.afterDescription) {
-          buffer.writeln('Description: "${preview.beforeDescription}" -> "${preview.afterDescription}"');
+          buffer.writeln(
+              'Description: "${preview.beforeDescription}" -> "${preview.afterDescription}"');
         }
         if (preview.beforeEnabled != preview.afterEnabled) {
-          buffer.writeln('Enabled: ${preview.beforeEnabled} -> ${preview.afterEnabled}');
+          buffer.writeln(
+              'Enabled: ${preview.beforeEnabled} -> ${preview.afterEnabled}');
         }
         if (preview.beforeContentSnippet != preview.afterContentSnippet) {
           buffer.writeln('Content modified');
@@ -521,7 +528,8 @@ class AiToolService implements AiToolExecutor {
           connectionId: _clientScopeId,
           connectionName: _clientScopeName,
           command: 'UPDATE LOCAL SKILL: $skillId',
-          reason: 'Updating a saved AI experience skill/note requires user approval.',
+          reason:
+              'Updating a saved AI experience skill/note requires user approval.',
           contentPreview: buffer.toString(),
         );
       case 'client_clear_logs':

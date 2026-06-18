@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import '../../features/connection/models/connection.dart';
 import '../../services/app_log_service.dart';
 import '../../services/storage_service.dart';
+import 'ssh_host_key_policy.dart';
+import 'ssh_identity_cache.dart';
 
 class SshCredentials {
   final String? password;
@@ -29,7 +31,6 @@ class SshClientAuthOptions {
 
 class SshClientFactory {
   final StorageService _storageService;
-  static final Map<_IdentityCacheKey, List<SSHKeyPair>> _identityCache = {};
   static final RegExp _passwordPromptPattern = RegExp(
     r'password|passphrase|pass phrase',
     caseSensitive: false,
@@ -52,6 +53,7 @@ class SshClientFactory {
     ConnectionConfig config, {
     Duration timeout = const Duration(seconds: 15),
     SshCredentials? credentials,
+    SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
     final resolvedCredentials = credentials ?? await loadCredentials(config);
     validateAuthSecrets(
@@ -64,6 +66,10 @@ class SshClientFactory {
       config: config,
       credentials: resolvedCredentials,
       identities: identities,
+    );
+    final hostKeyPolicy = SshHostKeyPolicy(
+      onUnknownHostKey: onUnknownHostKey,
+      persistTrust: _persistTrustedHostKey,
     );
     AppLogService.instance.info(
       'SshClientFactory: connecting socket',
@@ -80,6 +86,12 @@ class SshClientFactory {
       return SSHClient(
         socket,
         username: config.username,
+        onVerifyHostKey: (algorithm, fingerprint) =>
+            hostKeyPolicy.verifyHostKey(
+          config: config,
+          algorithm: algorithm,
+          md5Fingerprint: fingerprint,
+        ),
         identities: authOptions.identities,
         onPasswordRequest: authOptions.onPasswordRequest,
         onUserInfoRequest: authOptions.onUserInfoRequest,
@@ -94,6 +106,15 @@ class SshClientFactory {
       socket.close();
       rethrow;
     }
+  }
+
+  Future<void> _persistTrustedHostKey(ConnectionConfig config) {
+    return _storageService.trustHostKey(
+      config.id,
+      algorithm: config.hostKeyAlgorithm,
+      fingerprint: config.hostKeyFingerprint,
+      trustedAt: config.hostKeyTrustedAt,
+    );
   }
 
   static SshClientAuthOptions buildAuthOptions({
@@ -131,11 +152,12 @@ class SshClientFactory {
     if (!shouldUseKey || credentials.privateKey?.isNotEmpty != true) {
       return null;
     }
-    final key = _IdentityCacheKey(
+    final key = SshIdentityCacheKey(
+      connectionId: config.id,
       privateKey: credentials.privateKey!,
-      password: credentials.password,
+      passphrase: credentials.password,
     );
-    final cached = _identityCache[key];
+    final cached = SshIdentityCache.get(key);
     if (cached != null) {
       return cached;
     }
@@ -143,8 +165,16 @@ class SshClientFactory {
       'pem': credentials.privateKey!,
       'passphrase': credentials.password,
     });
-    _identityCache[key] = identities;
+    SshIdentityCache.put(key, identities);
     return identities;
+  }
+
+  static void clearIdentityCache() {
+    SshIdentityCache.clearAll();
+  }
+
+  static void clearIdentityCacheForConnection(String connectionId) {
+    SshIdentityCache.clearForConnection(connectionId);
   }
 
   static List<String>? keyboardInteractiveResponsesForPassword(
@@ -237,26 +267,6 @@ class SshClientFactory {
         break;
     }
   }
-}
-
-class _IdentityCacheKey {
-  final String privateKey;
-  final String? password;
-
-  const _IdentityCacheKey({
-    required this.privateKey,
-    required this.password,
-  });
-
-  @override
-  bool operator ==(Object other) {
-    return other is _IdentityCacheKey &&
-        other.privateKey == privateKey &&
-        other.password == password;
-  }
-
-  @override
-  int get hashCode => Object.hash(privateKey, password);
 }
 
 class _KeyboardInteractivePrompt {

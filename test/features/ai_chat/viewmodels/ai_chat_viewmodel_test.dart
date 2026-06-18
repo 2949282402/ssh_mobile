@@ -234,7 +234,9 @@ void main() {
       expect(() => viewModel.logLlmSettingsOpened(settings), returnsNormally);
     });
 
-    test('/plan alone enables Plan Mode and returns slash-command handled feedback', () async {
+    test(
+        '/plan alone enables Plan Mode and returns slash-command handled feedback',
+        () async {
       final viewModel = AiChatViewModel(
         storageService: storageService,
         sshService: sshService,
@@ -253,7 +255,9 @@ void main() {
       expect(viewModel.activeChat!.planMode, isTrue);
     });
 
-    test('/plan <args> enables Plan Mode and proceeds into the normal send flow', () async {
+    test(
+        '/plan <args> enables Plan Mode and proceeds into the normal send flow',
+        () async {
       final viewModel = AiChatViewModel(
         storageService: storageService,
         sshService: sshService,

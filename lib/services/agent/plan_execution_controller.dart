@@ -62,12 +62,14 @@ class PlanExecutionController {
     int? currentStepIndex;
     AiTodoStep? currentStep;
 
-    final runningIndex = steps.indexWhere((s) => s.status == StepStatus.running);
+    final runningIndex =
+        steps.indexWhere((s) => s.status == StepStatus.running);
     if (runningIndex != -1) {
       currentStepIndex = runningIndex;
       currentStep = steps[runningIndex];
     } else {
-      final pendingIndex = steps.indexWhere((s) => s.status == StepStatus.pending);
+      final pendingIndex =
+          steps.indexWhere((s) => s.status == StepStatus.pending);
       if (pendingIndex != -1) {
         currentStepIndex = pendingIndex;
         currentStep = steps[pendingIndex];
@@ -75,8 +77,8 @@ class PlanExecutionController {
     }
 
     final hasFailedStep = steps.any((s) => s.status == StepStatus.failed);
-    final hasActiveSteps = steps.any(
-        (s) => s.status == StepStatus.pending || s.status == StepStatus.running);
+    final hasActiveSteps = steps.any((s) =>
+        s.status == StepStatus.pending || s.status == StepStatus.running);
     final isCompleted = !hasActiveSteps;
 
     final PlanExecutionPhase phase;
@@ -125,17 +127,18 @@ class PlanExecutionController {
         currentStatus == StepStatus.skipped) {
       return PlanExecutionValidationResult.denied(
         'Invalid transition: completed task "${currentStep.name}" in state '
-        '${currentStatus.name} cannot be modified.',
+            '${currentStatus.name} cannot be modified.',
         'completed_task_locked',
       );
     }
 
     // Rule 2: Cannot jump states out of order (e.g. pending directly to success)
     if (currentStatus == StepStatus.pending) {
-      if (nextStatus != StepStatus.running && nextStatus != StepStatus.skipped) {
+      if (nextStatus != StepStatus.running &&
+          nextStatus != StepStatus.skipped) {
         return PlanExecutionValidationResult.denied(
           'Invalid transition: task "${currentStep.name}" must go from pending to running or skipped. '
-          'Cannot jump directly from pending to ${nextStatus.name}.',
+              'Cannot jump directly from pending to ${nextStatus.name}.',
           'invalid_transition',
         );
       }
@@ -154,11 +157,12 @@ class PlanExecutionController {
     if (nextStatus == StepStatus.running || nextStatus == StepStatus.skipped) {
       // Check if any other task is currently running (only for nextStatus == running)
       if (nextStatus == StepStatus.running) {
-        final runningIndex = steps.indexWhere((s) => s.status == StepStatus.running);
+        final runningIndex =
+            steps.indexWhere((s) => s.status == StepStatus.running);
         if (runningIndex != -1 && runningIndex != targetIndex) {
           return PlanExecutionValidationResult.denied(
             'Order violation: cannot start task "${currentStep.name}" because task '
-            '"${steps[runningIndex].name}" is currently running. Only one task can run at a time.',
+                '"${steps[runningIndex].name}" is currently running. Only one task can run at a time.',
             'multiple_running',
           );
         }
@@ -169,10 +173,11 @@ class PlanExecutionController {
         final priorStep = steps[i];
         if (priorStep.status == StepStatus.pending ||
             priorStep.status == StepStatus.running) {
-          final actionName = nextStatus == StepStatus.running ? 'start' : 'skip';
+          final actionName =
+              nextStatus == StepStatus.running ? 'start' : 'skip';
           return PlanExecutionValidationResult.denied(
             'Order violation: cannot $actionName task "${currentStep.name}" because a preceding task '
-            '"${priorStep.name}" is in state ${priorStep.status.name}. Execute tasks in order.',
+                '"${priorStep.name}" is in state ${priorStep.status.name}. Execute tasks in order.',
             'order_violation',
           );
         }
@@ -186,7 +191,7 @@ class PlanExecutionController {
         if (priorStep.status == StepStatus.failed) {
           return PlanExecutionValidationResult.denied(
             'Plan blocked: cannot execute "${currentStep.name}" because a prior step '
-            '"${priorStep.name}" failed. Resolve the failure first.',
+                '"${priorStep.name}" failed. Resolve the failure first.',
             'failed_dependency',
           );
         }

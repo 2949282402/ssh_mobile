@@ -587,7 +587,9 @@ void main() {
       expect(roles, isNot(contains('reviewer')));
     });
 
-    test('postToolFailure trigger runs only reviewer and summarizer with postToolContext', () async {
+    test(
+        'postToolFailure trigger runs only reviewer and summarizer with postToolContext',
+        () async {
       const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
       final roles = <String>[];
       var summarizerReceivedContext = '';
@@ -624,10 +626,13 @@ void main() {
       expect(roles, isNot(contains('operator')));
 
       // 确认 postToolContext 传给了 summarizer
-      expect(summarizerReceivedContext, contains('Failed tool: run_command with exit code 127'));
+      expect(summarizerReceivedContext,
+          contains('Failed tool: run_command with exit code 127'));
     });
 
-    test('postBudgetAudit trigger runs only reviewer and summarizer with postToolContext', () async {
+    test(
+        'postBudgetAudit trigger runs only reviewer and summarizer with postToolContext',
+        () async {
       const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
       final roles = <String>[];
       var summarizerReceivedContext = '';
@@ -661,7 +666,8 @@ void main() {
       expect(roles, isNot(contains('explore')));
       expect(roles, isNot(contains('planner')));
       expect(roles, isNot(contains('operator')));
-      expect(summarizerReceivedContext, contains('Budget audit rejected context info'));
+      expect(summarizerReceivedContext,
+          contains('Budget audit rejected context info'));
     });
   });
 

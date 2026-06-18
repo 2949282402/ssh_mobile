@@ -57,7 +57,8 @@ This is the main body that mentions proxying.''',
     expect(resultName.hits.first.title, equals('Nginx Deploy Guide'));
   });
 
-  test('Skill hits recall with references title or content and clips matches', () async {
+  test('Skill hits recall with references title or content and clips matches',
+      () async {
     final skill = AiSkillRecord(
       id: 'skill-ref-test',
       name: 'Docker Management',
@@ -83,14 +84,18 @@ This is the main body that mentions proxying.''',
     // 1. 通过 reference title 检索
     final resultTitle = await retriever.retrieve(query: 'Prune Command');
     expect(resultTitle.hits, isNotEmpty);
-    expect(resultTitle.hits.first.content, contains('### Reference: Docker Prune Command'));
-    expect(resultTitle.hits.first.content, isNot(contains('Kubernetes Apply Guide')));
+    expect(resultTitle.hits.first.content,
+        contains('### Reference: Docker Prune Command'));
+    expect(resultTitle.hits.first.content,
+        isNot(contains('Kubernetes Apply Guide')));
 
     // 2. 通过 reference content 检索
     final resultCont = await retriever.retrieve(query: 'kubectl apply');
     expect(resultCont.hits, isNotEmpty);
-    expect(resultCont.hits.first.content, contains('### Reference: Kubernetes Apply Guide'));
-    expect(resultCont.hits.first.content, isNot(contains('Docker Prune Command')));
+    expect(resultCont.hits.first.content,
+        contains('### Reference: Kubernetes Apply Guide'));
+    expect(
+        resultCont.hits.first.content, isNot(contains('Docker Prune Command')));
   });
 
   test('Chinese text tokenization and recall for skills', () async {
@@ -113,7 +118,9 @@ This is the main body that mentions proxying.''',
     expect(resultZh.hits.first.title, equals('部署Nginx服务器'));
   });
 
-  test('Legacy Skill JSON import handles missing name/description and fallbacks properly', () async {
+  test(
+      'Legacy Skill JSON import handles missing name/description and fallbacks properly',
+      () async {
     final legacyJson = <String, dynamic>{
       'id': 'legacy-skill-1',
       'content': '''---
@@ -141,7 +148,8 @@ body instructions here''',
     expect(result.hits.first.content, contains('body instructions here'));
   });
 
-  test('fallbacks to legacy search when SkillIndexService throws Exception', () async {
+  test('fallbacks to legacy search when SkillIndexService throws Exception',
+      () async {
     final brokenRetriever = OperationalMemoryRetriever(
       storageService: storage,
       skillIndexService: _MockBrokenSkillIndexService(),

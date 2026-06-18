@@ -75,7 +75,8 @@ class ToolResultClassifier {
     }
   }
 
-  static String? getSystemHint(String toolName, ToolResultQuality quality, AppLanguage language) {
+  static String? getSystemHint(
+      String toolName, ToolResultQuality quality, AppLanguage language) {
     final isEn = language == AppLanguage.en;
     switch (quality) {
       case ToolResultQuality.empty:

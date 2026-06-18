@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/features/playbook/models/playbook.dart';
+import 'package:ssh_mobile/core/services/ssh_host_key_policy.dart';
 import 'package:ssh_mobile/services/playbook_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
@@ -18,6 +19,7 @@ class FakeSshService extends SshService {
     required String connectionId,
     required String command,
     Duration timeout = const Duration(seconds: 15),
+    SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
     lastExecutedCommand = command;
     callCount++;

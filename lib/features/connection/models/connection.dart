@@ -16,6 +16,9 @@ class ConnectionConfig {
   int tmuxAutoDeleteSeconds;
   DateTime createdAt;
   DateTime updatedAt;
+  String? hostKeyFingerprint;
+  String? hostKeyAlgorithm;
+  DateTime? hostKeyTrustedAt;
   String? jumpHost;
   int? jumpPort;
   String? jumpUsername;
@@ -39,6 +42,9 @@ class ConnectionConfig {
     this.tmuxAutoDeleteSeconds = 600,
     DateTime? createdAt,
     DateTime? updatedAt,
+    this.hostKeyFingerprint,
+    this.hostKeyAlgorithm,
+    this.hostKeyTrustedAt,
     this.jumpHost,
     this.jumpPort,
     this.jumpUsername,
@@ -61,6 +67,9 @@ class ConnectionConfig {
       'launchMode': launchMode.name,
       'serverPlatform': serverPlatform.name,
       'tmuxAutoDeleteSeconds': tmuxAutoDeleteSeconds,
+      'hostKeyFingerprint': hostKeyFingerprint,
+      'hostKeyAlgorithm': hostKeyAlgorithm,
+      'hostKeyTrustedAt': hostKeyTrustedAt?.toIso8601String(),
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt.toIso8601String(),
       'jumpHost': jumpHost,
@@ -95,6 +104,10 @@ class ConnectionConfig {
       serverPlatform: serverPlatform,
       tmuxAutoDeleteSeconds:
           (json['tmuxAutoDeleteSeconds'] as num?)?.toInt() ?? 600,
+      hostKeyFingerprint: json['hostKeyFingerprint'] as String?,
+      hostKeyAlgorithm: json['hostKeyAlgorithm'] as String?,
+      hostKeyTrustedAt:
+          DateTime.tryParse(json['hostKeyTrustedAt'] as String? ?? ''),
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
       updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
@@ -122,6 +135,9 @@ class ConnectionConfig {
     TerminalLaunchMode? launchMode,
     ServerPlatform? serverPlatform,
     int? tmuxAutoDeleteSeconds,
+    String? hostKeyFingerprint,
+    String? hostKeyAlgorithm,
+    DateTime? hostKeyTrustedAt,
     String? jumpHost,
     int? jumpPort,
     String? jumpUsername,
@@ -129,11 +145,14 @@ class ConnectionConfig {
   }) {
     final nextPlatform = serverPlatform ?? this.serverPlatform;
     final nextLaunchMode = launchMode ?? this.launchMode;
+    final nextHost = host ?? this.host;
+    final nextPort = port ?? this.port;
+    final endpointUnchanged = nextHost == this.host && nextPort == this.port;
     return ConnectionConfig(
       id: id ?? this.id,
       name: name ?? this.name,
-      host: host ?? this.host,
-      port: port ?? this.port,
+      host: nextHost,
+      port: nextPort,
       username: username ?? this.username,
       password: password ?? this.password,
       privateKey: privateKey ?? this.privateKey,
@@ -149,6 +168,12 @@ class ConnectionConfig {
       serverPlatform: nextPlatform,
       tmuxAutoDeleteSeconds:
           tmuxAutoDeleteSeconds ?? this.tmuxAutoDeleteSeconds,
+      hostKeyFingerprint: hostKeyFingerprint ??
+          (endpointUnchanged ? this.hostKeyFingerprint : null),
+      hostKeyAlgorithm: hostKeyAlgorithm ??
+          (endpointUnchanged ? this.hostKeyAlgorithm : null),
+      hostKeyTrustedAt: hostKeyTrustedAt ??
+          (endpointUnchanged ? this.hostKeyTrustedAt : null),
       createdAt: createdAt,
       updatedAt: DateTime.now(),
       jumpHost: jumpHost ?? this.jumpHost,

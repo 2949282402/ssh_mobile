@@ -11,8 +11,18 @@ void main() {
 
     test('all pending steps -> findCurrentStep returns the first one', () {
       final steps = [
-        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'cmd 1', description: 'desc', status: StepStatus.pending),
-        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'cmd 2', description: 'desc', status: StepStatus.pending),
+        const AiTodoStep(
+            id: 't-1',
+            name: 'Step 1',
+            command: 'cmd 1',
+            description: 'desc',
+            status: StepStatus.pending),
+        const AiTodoStep(
+            id: 't-2',
+            name: 'Step 2',
+            command: 'cmd 2',
+            description: 'desc',
+            status: StepStatus.pending),
       ];
 
       final current = PlanExecutionController.findCurrentStep(steps);
@@ -22,8 +32,18 @@ void main() {
 
     test('step 1 running -> findCurrentStep returns the first one', () {
       final steps = [
-        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'cmd 1', description: 'desc', status: StepStatus.running),
-        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'cmd 2', description: 'desc', status: StepStatus.pending),
+        const AiTodoStep(
+            id: 't-1',
+            name: 'Step 1',
+            command: 'cmd 1',
+            description: 'desc',
+            status: StepStatus.running),
+        const AiTodoStep(
+            id: 't-2',
+            name: 'Step 2',
+            command: 'cmd 2',
+            description: 'desc',
+            status: StepStatus.pending),
       ];
 
       final current = PlanExecutionController.findCurrentStep(steps);
@@ -33,8 +53,18 @@ void main() {
 
     test('all steps success or skipped -> findCurrentStep returns null', () {
       final steps = [
-        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'cmd 1', description: 'desc', status: StepStatus.success),
-        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'cmd 2', description: 'desc', status: StepStatus.skipped),
+        const AiTodoStep(
+            id: 't-1',
+            name: 'Step 1',
+            command: 'cmd 1',
+            description: 'desc',
+            status: StepStatus.success),
+        const AiTodoStep(
+            id: 't-2',
+            name: 'Step 2',
+            command: 'cmd 2',
+            description: 'desc',
+            status: StepStatus.skipped),
       ];
 
       final current = PlanExecutionController.findCurrentStep(steps);
@@ -43,7 +73,12 @@ void main() {
 
     test('pending -> running transition is allowed', () {
       final steps = [
-        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'cmd 1', description: 'desc', status: StepStatus.pending),
+        const AiTodoStep(
+            id: 't-1',
+            name: 'Step 1',
+            command: 'cmd 1',
+            description: 'desc',
+            status: StepStatus.pending),
       ];
 
       final res = controller.validateTransition(
@@ -56,7 +91,12 @@ void main() {
 
     test('running -> success/failed transition is allowed', () {
       final steps = [
-        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'cmd 1', description: 'desc', status: StepStatus.running),
+        const AiTodoStep(
+            id: 't-1',
+            name: 'Step 1',
+            command: 'cmd 1',
+            description: 'desc',
+            status: StepStatus.running),
       ];
 
       final successRes = controller.validateTransition(
@@ -75,7 +115,12 @@ void main() {
 
     test('jump transition (pending -> success) directly is blocked', () {
       final steps = [
-        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'cmd 1', description: 'desc', status: StepStatus.pending),
+        const AiTodoStep(
+            id: 't-1',
+            name: 'Step 1',
+            command: 'cmd 1',
+            description: 'desc',
+            status: StepStatus.pending),
       ];
 
       final res = controller.validateTransition(
@@ -84,12 +129,18 @@ void main() {
         nextStatus: StepStatus.success,
       );
       expect(res.allowed, isFalse);
-      expect(res.errorMessage, contains('Cannot jump directly from pending to success'));
+      expect(res.errorMessage,
+          contains('Cannot jump directly from pending to success'));
     });
 
     test('completed step cannot transition again', () {
       final steps = [
-        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'cmd 1', description: 'desc', status: StepStatus.success),
+        const AiTodoStep(
+            id: 't-1',
+            name: 'Step 1',
+            command: 'cmd 1',
+            description: 'desc',
+            status: StepStatus.success),
       ];
 
       final res = controller.validateTransition(
@@ -98,13 +149,26 @@ void main() {
         nextStatus: StepStatus.running,
       );
       expect(res.allowed, isFalse);
-      expect(res.errorMessage, contains('completed task "Step 1" in state success cannot be modified'));
+      expect(
+          res.errorMessage,
+          contains(
+              'completed task "Step 1" in state success cannot be modified'));
     });
 
     test('step 2 running while step 1 pending is blocked (out-of-order)', () {
       final steps = [
-        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'cmd 1', description: 'desc', status: StepStatus.pending),
-        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'cmd 2', description: 'desc', status: StepStatus.pending),
+        const AiTodoStep(
+            id: 't-1',
+            name: 'Step 1',
+            command: 'cmd 1',
+            description: 'desc',
+            status: StepStatus.pending),
+        const AiTodoStep(
+            id: 't-2',
+            name: 'Step 2',
+            command: 'cmd 2',
+            description: 'desc',
+            status: StepStatus.pending),
       ];
 
       final res = controller.validateTransition(
@@ -113,13 +177,26 @@ void main() {
         nextStatus: StepStatus.running,
       );
       expect(res.allowed, isFalse);
-      expect(res.errorMessage, contains('Order violation: cannot start task "Step 2" because a preceding task "Step 1" is in state pending'));
+      expect(
+          res.errorMessage,
+          contains(
+              'Order violation: cannot start task "Step 2" because a preceding task "Step 1" is in state pending'));
     });
 
     test('multiple running steps is blocked', () {
       final steps = [
-        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'cmd 1', description: 'desc', status: StepStatus.running),
-        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'cmd 2', description: 'desc', status: StepStatus.pending),
+        const AiTodoStep(
+            id: 't-1',
+            name: 'Step 1',
+            command: 'cmd 1',
+            description: 'desc',
+            status: StepStatus.running),
+        const AiTodoStep(
+            id: 't-2',
+            name: 'Step 2',
+            command: 'cmd 2',
+            description: 'desc',
+            status: StepStatus.pending),
       ];
 
       final res = controller.validateTransition(
@@ -128,13 +205,26 @@ void main() {
         nextStatus: StepStatus.running,
       );
       expect(res.allowed, isFalse);
-      expect(res.errorMessage, contains('Order violation: cannot start task "Step 2" because task "Step 1" is currently running'));
+      expect(
+          res.errorMessage,
+          contains(
+              'Order violation: cannot start task "Step 2" because task "Step 1" is currently running'));
     });
 
     test('after failed step, next pending step running is blocked', () {
       final steps = [
-        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'cmd 1', description: 'desc', status: StepStatus.failed),
-        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'cmd 2', description: 'desc', status: StepStatus.pending),
+        const AiTodoStep(
+            id: 't-1',
+            name: 'Step 1',
+            command: 'cmd 1',
+            description: 'desc',
+            status: StepStatus.failed),
+        const AiTodoStep(
+            id: 't-2',
+            name: 'Step 2',
+            command: 'cmd 2',
+            description: 'desc',
+            status: StepStatus.pending),
       ];
 
       final res = controller.validateTransition(
@@ -143,7 +233,10 @@ void main() {
         nextStatus: StepStatus.running,
       );
       expect(res.allowed, isFalse);
-      expect(res.errorMessage, contains('Plan blocked: cannot execute "Step 2" because a prior step "Step 1" failed'));
+      expect(
+          res.errorMessage,
+          contains(
+              'Plan blocked: cannot execute "Step 2" because a prior step "Step 1" failed'));
       expect(res.code, 'failed_dependency');
     });
 
@@ -156,8 +249,18 @@ void main() {
 
     test('all pending steps -> phase pending, first is current', () {
       final steps = [
-        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'c1', description: 'd', status: StepStatus.pending),
-        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'c2', description: 'd', status: StepStatus.pending),
+        const AiTodoStep(
+            id: 't-1',
+            name: 'Step 1',
+            command: 'c1',
+            description: 'd',
+            status: StepStatus.pending),
+        const AiTodoStep(
+            id: 't-2',
+            name: 'Step 2',
+            command: 'c2',
+            description: 'd',
+            status: StepStatus.pending),
       ];
       final snap = controller.snapshot(steps);
       expect(snap.phase, PlanExecutionPhase.pending);
@@ -167,8 +270,18 @@ void main() {
 
     test('first running -> phase running, running is current', () {
       final steps = [
-        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'c1', description: 'd', status: StepStatus.running),
-        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'c2', description: 'd', status: StepStatus.pending),
+        const AiTodoStep(
+            id: 't-1',
+            name: 'Step 1',
+            command: 'c1',
+            description: 'd',
+            status: StepStatus.running),
+        const AiTodoStep(
+            id: 't-2',
+            name: 'Step 2',
+            command: 'c2',
+            description: 'd',
+            status: StepStatus.pending),
       ];
       final snap = controller.snapshot(steps);
       expect(snap.phase, PlanExecutionPhase.running);
@@ -178,8 +291,18 @@ void main() {
 
     test('prior failed + later pending -> phase blockedByFailure', () {
       final steps = [
-        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'c1', description: 'd', status: StepStatus.failed),
-        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'c2', description: 'd', status: StepStatus.pending),
+        const AiTodoStep(
+            id: 't-1',
+            name: 'Step 1',
+            command: 'c1',
+            description: 'd',
+            status: StepStatus.failed),
+        const AiTodoStep(
+            id: 't-2',
+            name: 'Step 2',
+            command: 'c2',
+            description: 'd',
+            status: StepStatus.pending),
       ];
       final snap = controller.snapshot(steps);
       expect(snap.phase, PlanExecutionPhase.blockedByFailure);
@@ -189,8 +312,18 @@ void main() {
 
     test('all success or skipped -> phase completed', () {
       final steps = [
-        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'c1', description: 'd', status: StepStatus.success),
-        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'c2', description: 'd', status: StepStatus.skipped),
+        const AiTodoStep(
+            id: 't-1',
+            name: 'Step 1',
+            command: 'c1',
+            description: 'd',
+            status: StepStatus.success),
+        const AiTodoStep(
+            id: 't-2',
+            name: 'Step 2',
+            command: 'c2',
+            description: 'd',
+            status: StepStatus.skipped),
       ];
       final snap = controller.snapshot(steps);
       expect(snap.phase, PlanExecutionPhase.completed);
@@ -200,8 +333,18 @@ void main() {
 
     test('pending step 2 cannot be skipped while step 1 pending', () {
       final steps = [
-        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'c1', description: 'd', status: StepStatus.pending),
-        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'c2', description: 'd', status: StepStatus.pending),
+        const AiTodoStep(
+            id: 't-1',
+            name: 'Step 1',
+            command: 'c1',
+            description: 'd',
+            status: StepStatus.pending),
+        const AiTodoStep(
+            id: 't-2',
+            name: 'Step 2',
+            command: 'c2',
+            description: 'd',
+            status: StepStatus.pending),
       ];
       final res = controller.validateTransition(
         steps: steps,
@@ -210,12 +353,20 @@ void main() {
       );
       expect(res.allowed, isFalse);
       expect(res.code, 'order_violation');
-      expect(res.errorMessage, contains('cannot skip task "Step 2" because a preceding task "Step 1" is in state pending'));
+      expect(
+          res.errorMessage,
+          contains(
+              'cannot skip task "Step 2" because a preceding task "Step 1" is in state pending'));
     });
 
     test('running step can be skipped', () {
       final steps = [
-        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'c1', description: 'd', status: StepStatus.running),
+        const AiTodoStep(
+            id: 't-1',
+            name: 'Step 1',
+            command: 'c1',
+            description: 'd',
+            status: StepStatus.running),
       ];
       final res = controller.validateTransition(
         steps: steps,
@@ -227,8 +378,18 @@ void main() {
 
     test('findCurrentStep delegates to snapshot currentStep', () {
       final steps = [
-        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'c1', description: 'd', status: StepStatus.failed),
-        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'c2', description: 'd', status: StepStatus.pending),
+        const AiTodoStep(
+            id: 't-1',
+            name: 'Step 1',
+            command: 'c1',
+            description: 'd',
+            status: StepStatus.failed),
+        const AiTodoStep(
+            id: 't-2',
+            name: 'Step 2',
+            command: 'c2',
+            description: 'd',
+            status: StepStatus.pending),
       ];
 
       final current = PlanExecutionController.findCurrentStep(steps);
@@ -240,8 +401,18 @@ void main() {
   group('ApprovedPlanContext context rendering tests', () {
     test('execution context contains current step and rules', () {
       final steps = [
-        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'cmd 1', description: 'desc', status: StepStatus.pending),
-        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'cmd 2', description: 'desc', status: StepStatus.pending),
+        const AiTodoStep(
+            id: 't-1',
+            name: 'Step 1',
+            command: 'cmd 1',
+            description: 'desc',
+            status: StepStatus.pending),
+        const AiTodoStep(
+            id: 't-2',
+            name: 'Step 2',
+            command: 'cmd 2',
+            description: 'desc',
+            status: StepStatus.pending),
       ];
 
       final message = AiChatMessageRecord(
@@ -266,8 +437,18 @@ void main() {
 
     test('blockedByFailure phase includes warning', () {
       final steps = [
-        const AiTodoStep(id: 't-1', name: 'Step 1', command: 'cmd 1', description: 'desc', status: StepStatus.failed),
-        const AiTodoStep(id: 't-2', name: 'Step 2', command: 'cmd 2', description: 'desc', status: StepStatus.pending),
+        const AiTodoStep(
+            id: 't-1',
+            name: 'Step 1',
+            command: 'cmd 1',
+            description: 'desc',
+            status: StepStatus.failed),
+        const AiTodoStep(
+            id: 't-2',
+            name: 'Step 2',
+            command: 'cmd 2',
+            description: 'desc',
+            status: StepStatus.pending),
       ];
 
       final message = AiChatMessageRecord(

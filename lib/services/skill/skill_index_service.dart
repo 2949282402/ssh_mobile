@@ -36,7 +36,8 @@ class SkillIndexService {
   void updateIndex(List<AiSkillRecord> skills) {
     final buffer = StringBuffer();
     for (final s in skills) {
-      buffer.write('${s.id}:${s.updatedAt.millisecondsSinceEpoch}:${s.enabled}:${s.content.length}:${s.references.length};');
+      buffer.write(
+          '${s.id}:${s.updatedAt.millisecondsSinceEpoch}:${s.enabled}:${s.content.length}:${s.references.length};');
     }
     final revisionKey = buffer.toString();
     if (_currentRevisionKey == revisionKey && _entries.isNotEmpty) {
@@ -59,7 +60,9 @@ class SkillIndexService {
         refBuffer.writeln(ref.content);
       }
 
-      final searchableText = '${skill.name}\n${skill.description}\n$fmName\n$fmDesc\n$fmBody\n${refBuffer.toString()}'.toLowerCase();
+      final searchableText =
+          '${skill.name}\n${skill.description}\n$fmName\n$fmDesc\n$fmBody\n${refBuffer.toString()}'
+              .toLowerCase();
       final tokens = _extractTokens(searchableText);
 
       newEntries.add(
@@ -81,7 +84,8 @@ class SkillIndexService {
     final hits = <SkillSearchHit>[];
     for (final entry in _entries) {
       // Pre-filter check to see if there is potential overlap with keywords
-      final hasOverlap = keywords.any((k) => entry.tokens.contains(k) || entry.searchableText.contains(k));
+      final hasOverlap = keywords.any(
+          (k) => entry.tokens.contains(k) || entry.searchableText.contains(k));
       if (!hasOverlap) continue;
 
       double score = 0.0;

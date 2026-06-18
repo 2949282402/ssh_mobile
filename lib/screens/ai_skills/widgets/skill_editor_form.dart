@@ -10,7 +10,8 @@ class SkillEditorForm extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final viewModel = context.read<AiSkillsViewModel>();
-    final language = context.select<AiSkillsViewModel, AppLanguage>((vm) => vm.language);
+    final language =
+        context.select<AiSkillsViewModel, AppLanguage>((vm) => vm.language);
     final strings = _FormStrings(language);
 
     return Column(
@@ -63,6 +64,8 @@ class _FormStrings {
 
   String get name => _en ? 'Name' : '名称';
   String get description => _en ? 'Description / Summary' : '说明 / 概要';
-  String get content => _en ? 'Detailed Skill Instructions' : '具体规程说明 (Markdown)';
-  String get contentHelp => _en ? 'Supports standard markdown syntax.' : '支持 markdown 语法规范。';
+  String get content =>
+      _en ? 'Detailed Skill Instructions' : '具体规程说明 (Markdown)';
+  String get contentHelp =>
+      _en ? 'Supports standard markdown syntax.' : '支持 markdown 语法规范。';
 }

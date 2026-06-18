@@ -156,9 +156,16 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
         summarizerPrompt: summarizerPrompt,
       );
       if (trigger == MultiAgentTrigger.planReview) {
-        roles = allRoles.where((r) => r.name == 'planner' || r.name == 'reviewer' || r.name == 'summarizer').toList();
+        roles = allRoles
+            .where((r) =>
+                r.name == 'planner' ||
+                r.name == 'reviewer' ||
+                r.name == 'summarizer')
+            .toList();
       } else {
-        roles = allRoles.where((r) => r.name == 'reviewer' || r.name == 'summarizer').toList();
+        roles = allRoles
+            .where((r) => r.name == 'reviewer' || r.name == 'summarizer')
+            .toList();
       }
       thinkingEnabled = false;
       reasoningEffort = 'low';
@@ -299,17 +306,17 @@ class MultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
             planMode: planMode,
             agentCount: preflightAgentCount,
           )
-              ? (roleMap['reviewer'] ??
-                  _rolesFor(
-                    5,
-                    language: language,
-                    plannerPrompt: plannerPrompt,
-                    operatorPrompt: operatorPrompt,
-                    explorePrompt: explorePrompt,
-                    reviewerPrompt: reviewerPrompt,
-                    summarizerPrompt: summarizerPrompt,
-                  ).firstWhere((role) => role.name == 'reviewer'))
-              : null);
+            ? (roleMap['reviewer'] ??
+                _rolesFor(
+                  5,
+                  language: language,
+                  plannerPrompt: plannerPrompt,
+                  operatorPrompt: operatorPrompt,
+                  explorePrompt: explorePrompt,
+                  reviewerPrompt: reviewerPrompt,
+                  summarizerPrompt: summarizerPrompt,
+                ).firstWhere((role) => role.name == 'reviewer'))
+            : null);
     if (reviewerRole != null) {
       checkCancelled?.call();
       final String? finalIntermediateContext;

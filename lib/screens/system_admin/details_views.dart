@@ -39,8 +39,8 @@ class _ServerSnapshotTab<T> extends StatelessWidget {
   Widget build(BuildContext context) {
     if (connections.isEmpty) {
       return Center(
-        child: Text(_monitorText(
-            strings, 'Select a server first.', '请先选择一台服务器。')),
+        child:
+            Text(_monitorText(strings, 'Select a server first.', '请先选择一台服务器。')),
       );
     }
     return FutureBuilder<Map<String, List<T>>>(

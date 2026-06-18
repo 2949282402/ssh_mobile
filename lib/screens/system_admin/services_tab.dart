@@ -64,7 +64,11 @@ class _ServicesTabState extends State<_ServicesTab>
 
   Future<Map<String, List<ServiceStatusSnapshot>>> _loadServices(
       PerformanceMonitorViewModel monitorViewModel, String connectionId) async {
-    final list = await monitorViewModel.fetchServices(connectionId);
+    final list = await monitorViewModel.fetchServices(
+      connectionId,
+      onUnknownHostKey: (request) =>
+          showSshHostKeyTrustDialog(context, request),
+    );
 
     if (!mounted || widget.viewModel.selectedConnectionId != connectionId) {
       return {};
@@ -188,7 +192,11 @@ class _ServicesTabState extends State<_ServicesTab>
     _lastActivatedModeKey = modeKey;
 
     if (mode == 'manage') {
-      await widget.viewModel.connectIfNeeded(id);
+      await widget.viewModel.connectIfNeeded(
+        id,
+        onUnknownHostKey: (request) =>
+            showSshHostKeyTrustDialog(context, request),
+      );
       if (!mounted) return;
 
       if (widget.viewModel.canManageSelectedConnection) {

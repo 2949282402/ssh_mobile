@@ -19,6 +19,7 @@ import '../utils/responsive.dart';
 import '../widgets/tactile_feedback.dart';
 import '../widgets/overflow_scroll_text.dart';
 import '../widgets/system_power_confirm_flow.dart';
+import '../widgets/ssh_host_key_trust_dialog.dart';
 
 part 'system_admin/system_admin_server_pane.dart';
 part 'system_admin/users_tab.dart';
@@ -303,7 +304,11 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
         return;
       case 4:
         if (!isLinux) return;
-        await viewModel.connectIfNeeded(selectedId);
+        await viewModel.connectIfNeeded(
+          selectedId,
+          onUnknownHostKey: (request) =>
+              showSshHostKeyTrustDialog(context, request),
+        );
         if (!mounted) return;
         if (viewModel.canManageSelectedConnection) {
           await viewModel.fetchAccounts(selectedId);
@@ -311,7 +316,11 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
         return;
       case 5:
         if (!isLinux) return;
-        await viewModel.connectIfNeeded(selectedId);
+        await viewModel.connectIfNeeded(
+          selectedId,
+          onUnknownHostKey: (request) =>
+              showSshHostKeyTrustDialog(context, request),
+        );
         if (!mounted) return;
         if (viewModel.canManageSelectedConnection) {
           await viewModel.fetchSessions(selectedId);
@@ -319,7 +328,11 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
         return;
       case 6:
         if (!isLinux) return;
-        await viewModel.connectIfNeeded(selectedId);
+        await viewModel.connectIfNeeded(
+          selectedId,
+          onUnknownHostKey: (request) =>
+              showSshHostKeyTrustDialog(context, request),
+        );
         return;
     }
   }
@@ -373,7 +386,10 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                 monitor: monitorVm,
                 connections: connections,
                 onStartMonitoring: () async {
-                  await monitorVm.startMonitoring();
+                  await monitorVm.startMonitoring(
+                    onUnknownHostKey: (request) =>
+                        showSshHostKeyTrustDialog(context, request),
+                  );
                   if (mounted) {
                     viewModel.setServersCollapsed(context, true);
                   }
@@ -510,8 +526,13 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
       return _RootRequiredView(
         strings: strings,
         errorMessage: errorMessage,
-        onConnect: () =>
-            unawaited(viewModel.connectIfNeeded(selectedConnectionId)),
+        onConnect: () => unawaited(
+          viewModel.connectIfNeeded(
+            selectedConnectionId,
+            onUnknownHostKey: (request) =>
+                showSshHostKeyTrustDialog(context, request),
+          ),
+        ),
       );
     }
 

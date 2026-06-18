@@ -16,7 +16,7 @@ SSH Mobile is a Flutter-based cross-platform SSH / SFTP client for long-running 
 ## Highlights
 
 - MVVM 架构：`lib/main.dart` 负责依赖装配，`lib/features/*` 负责 feature 状态和动作，`lib/services/*` 负责协议与存储基础设施。
-- SSH 连接管理：支持密码、私钥、私钥密码、跳板机和服务器平台选择。
+- SSH 连接管理：支持密码、私钥、私钥密码、跳板机、服务器平台选择，以及 SSH Host Key 首次信任校验。
 - 多终端窗口：同一服务器可创建多个窗口，窗口名固定，用于稳定绑定 tmux 会话。
 - SFTP：支持目录浏览、上传、下载、文本编辑、文件预览和输入名称确认删除。
 - 性能监控：包含 Performance、Ports、Applications、Services 四个分区。
@@ -153,7 +153,7 @@ iOS 和 macOS 只能在 macOS 上构建。
 
 ### Servers and Terminal
 
-服务器页负责保存连接、选择启动模式和管理终端窗口。保存或编辑服务器时，应用会先尝试用当前 host、port、username 和认证信息验证 SSH 登录。Linux 服务器默认适合 `SSH + tmux`，Windows 服务器使用 plain SSH，除非用户明确连接到 WSL 或其他 Linux-like shell。
+服务器页负责保存连接、选择启动模式和管理终端窗口。保存或编辑服务器时，应用会先尝试用当前 host、port、username 和认证信息验证 SSH 登录，并在首次看到 SSH Host Key 时要求用户确认；之后指纹变化会阻断连接。Linux 服务器默认适合 `SSH + tmux`，Windows 服务器使用 plain SSH，除非用户明确连接到 WSL 或其他 Linux-like shell。
 
 终端窗口管理已经嵌入服务器页。每台服务器卡片下方都有默认折叠的窗口区域，窗口名创建后保持固定，用于绑定 tmux 会话。连接历史入口位于服务器窗口总览区域。
 

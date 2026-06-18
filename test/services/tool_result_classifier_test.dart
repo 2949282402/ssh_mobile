@@ -37,8 +37,10 @@ void main() {
       expect(qEmptyMap, ToolResultQuality.empty);
       expect(qEmptyList, ToolResultQuality.empty);
 
-      final hintEn = ToolResultClassifier.getSystemHint('cmd', ToolResultQuality.empty, AppLanguage.en);
-      final hintZh = ToolResultClassifier.getSystemHint('cmd', ToolResultQuality.empty, AppLanguage.zh);
+      final hintEn = ToolResultClassifier.getSystemHint(
+          'cmd', ToolResultQuality.empty, AppLanguage.en);
+      final hintZh = ToolResultClassifier.getSystemHint(
+          'cmd', ToolResultQuality.empty, AppLanguage.zh);
 
       expect(hintEn, contains('returned an empty result'));
       expect(hintZh, contains('返回了空结果'));
@@ -67,8 +69,10 @@ void main() {
       expect(qErrorOutcome, ToolResultQuality.error);
       expect(qErrorJson, ToolResultQuality.error);
 
-      final hintEn = ToolResultClassifier.getSystemHint('cmd', ToolResultQuality.error, AppLanguage.en);
-      final hintZh = ToolResultClassifier.getSystemHint('cmd', ToolResultQuality.error, AppLanguage.zh);
+      final hintEn = ToolResultClassifier.getSystemHint(
+          'cmd', ToolResultQuality.error, AppLanguage.en);
+      final hintZh = ToolResultClassifier.getSystemHint(
+          'cmd', ToolResultQuality.error, AppLanguage.zh);
 
       expect(hintEn, contains('failed with an error'));
       expect(hintZh, contains('执行发生错误'));
@@ -87,8 +91,10 @@ void main() {
 
       expect(qPermissionDenied, ToolResultQuality.permissionDenied);
 
-      final hintEn = ToolResultClassifier.getSystemHint('cmd', ToolResultQuality.permissionDenied, AppLanguage.en);
-      final hintZh = ToolResultClassifier.getSystemHint('cmd', ToolResultQuality.permissionDenied, AppLanguage.zh);
+      final hintEn = ToolResultClassifier.getSystemHint(
+          'cmd', ToolResultQuality.permissionDenied, AppLanguage.en);
+      final hintZh = ToolResultClassifier.getSystemHint(
+          'cmd', ToolResultQuality.permissionDenied, AppLanguage.zh);
 
       expect(hintEn, contains('Permission denied'));
       expect(hintZh, contains('权限不足'));
@@ -107,8 +113,10 @@ void main() {
 
       expect(qLoopBlocked, ToolResultQuality.loopBlocked);
 
-      final hintEn = ToolResultClassifier.getSystemHint('cmd', ToolResultQuality.loopBlocked, AppLanguage.en);
-      final hintZh = ToolResultClassifier.getSystemHint('cmd', ToolResultQuality.loopBlocked, AppLanguage.zh);
+      final hintEn = ToolResultClassifier.getSystemHint(
+          'cmd', ToolResultQuality.loopBlocked, AppLanguage.en);
+      final hintZh = ToolResultClassifier.getSystemHint(
+          'cmd', ToolResultQuality.loopBlocked, AppLanguage.zh);
 
       expect(hintEn, contains('blocked this repeating tool call'));
       expect(hintZh, contains('阻断了此重复工具调用'));
@@ -137,7 +145,8 @@ void main() {
       expect(qUsefulString, ToolResultQuality.useful);
       expect(qUsefulJson, ToolResultQuality.useful);
 
-      final hint = ToolResultClassifier.getSystemHint('cmd', ToolResultQuality.useful, AppLanguage.zh);
+      final hint = ToolResultClassifier.getSystemHint(
+          'cmd', ToolResultQuality.useful, AppLanguage.zh);
       expect(hint, isNull);
     });
   });

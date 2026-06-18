@@ -74,7 +74,8 @@ class _ReferenceConfigPanelState extends State<ReferenceConfigPanel> {
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       child: Text(
                         strings.noReferences,
-                        style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 13),
+                        style: TextStyle(
+                            color: colorScheme.onSurfaceVariant, fontSize: 13),
                       ),
                     )
                   else
@@ -87,18 +88,24 @@ class _ReferenceConfigPanelState extends State<ReferenceConfigPanel> {
                         return ListTile(
                           contentPadding: EdgeInsets.zero,
                           dense: true,
-                          leading: const Icon(Icons.insert_drive_file_outlined, size: 20),
-                          title: Text(ref.title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          leading: const Icon(Icons.insert_drive_file_outlined,
+                              size: 20),
+                          title: Text(ref.title,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 13)),
                           subtitle: ref.content.isNotEmpty
                               ? Text(
                                   ref.content,
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
+                                  style: TextStyle(
+                                      color: colorScheme.onSurfaceVariant,
+                                      fontSize: 12),
                                 )
                               : null,
                           trailing: IconButton(
-                            icon: const Icon(Icons.remove_circle_outline, color: Colors.redAccent, size: 20),
+                            icon: const Icon(Icons.remove_circle_outline,
+                                color: Colors.redAccent, size: 20),
                             onPressed: () => viewModel.removeReference(index),
                           ),
                           onTap: () {
@@ -107,7 +114,8 @@ class _ReferenceConfigPanelState extends State<ReferenceConfigPanel> {
                               builder: (ctx) => AlertDialog(
                                 title: Text(ref.title),
                                 content: SingleChildScrollView(
-                                  child: Text(ref.content, style: const TextStyle(fontSize: 14)),
+                                  child: Text(ref.content,
+                                      style: const TextStyle(fontSize: 14)),
                                 ),
                                 actions: [
                                   TextButton(
@@ -197,16 +205,23 @@ class _PanelStrings {
   bool get _en => language == AppLanguage.en;
 
   String get close => _en ? 'Close' : '关闭';
-  String get enableReferences => _en ? 'Enable References' : '启用参考资料 (References)';
+  String get enableReferences =>
+      _en ? 'Enable References' : '启用参考资料 (References)';
   String get enableReferencesHint => _en
       ? 'Enable structured reference notes for conditional loading by AI agent.'
       : '开启可视化参考说明及规程，便于 AI Agent 针对不同场景动态检索和使用。';
   String get referencesListTitle => _en ? 'Reference Items' : '已配置的参考说明';
-  String get noReferences => _en ? 'No reference items added yet.' : '尚未配置任何参考资料。';
-  String get addReferenceLabel => _en ? 'Reference Title / Purpose' : '参考说明 / 标题';
-  String get addReferenceHint => _en ? 'e.g. Nginx restart rules' : '如：Nginx 重启与故障恢复步骤';
-  String get addReferenceDescLabel => _en ? 'Reference Content / Instructions' : '具体参考内容 / 命令 (支持多行)';
-  String get addReferenceDescHint => _en ? 'Write commands, details, or checklists...' : '书写具体的命令行参数、规程内容或排障注意事项...';
+  String get noReferences =>
+      _en ? 'No reference items added yet.' : '尚未配置任何参考资料。';
+  String get addReferenceLabel =>
+      _en ? 'Reference Title / Purpose' : '参考说明 / 标题';
+  String get addReferenceHint =>
+      _en ? 'e.g. Nginx restart rules' : '如：Nginx 重启与故障恢复步骤';
+  String get addReferenceDescLabel =>
+      _en ? 'Reference Content / Instructions' : '具体参考内容 / 命令 (支持多行)';
+  String get addReferenceDescHint => _en
+      ? 'Write commands, details, or checklists...'
+      : '书写具体的命令行参数、规程内容或排障注意事项...';
 
   String get referenceHint => _en
       ? 'Reference items are configured independently and loaded on demand by AI agent, avoiding overloading system prompts.'

@@ -59,7 +59,8 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     final settings = await storageService.loadAiConnectionSettings();
     final planExecutionSnapshot = approvedPlanMessage == null
         ? null
-        : const PlanExecutionController().snapshot(approvedPlanMessage.todoSteps);
+        : const PlanExecutionController()
+            .snapshot(approvedPlanMessage.todoSteps);
     final runStartedAt = DateTime.now();
     final runId = const Uuid().v4();
     var finalOutcome = AgentFinalOutcome.success;
@@ -131,7 +132,8 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     );
     final visibleTools = toolSelection.tools;
 
-    final hiddenTools = toolSelection.decisions.where((d) => !d.selected).toList();
+    final hiddenTools =
+        toolSelection.decisions.where((d) => !d.selected).toList();
     final hiddenReasons = hiddenTools.expand((d) => d.blockedBy).toList();
     final topHiddenReasons = <String, int>{};
     for (final reason in hiddenReasons) {
@@ -143,7 +145,8 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         kind: 'tool_exposure',
         title: 'Tool exposure selection',
         content: _prettyJson({
-          'requestedCapabilities': toolSelection.requestedCapabilities.map((c) => c.name).toList(),
+          'requestedCapabilities':
+              toolSelection.requestedCapabilities.map((c) => c.name).toList(),
           'selectedTools': visibleTools.map((t) => t.name).toList(),
           'hiddenToolsCount': hiddenTools.length,
           'topHiddenReasons': topHiddenReasons,
@@ -275,186 +278,187 @@ extension LlmChatServiceStreamHandler on LlmChatService {
 
     final visibleOutput = StringBuffer();
     try {
-    for (var round = 0;; round++) {
-      cancellationToken?.throwIfCancelled();
-      final content = StringBuffer();
-      final chunkController = StreamController<String>();
-      _StreamChatResult? streamedResponse;
-      Object? streamedError;
-      StackTrace? streamedStackTrace;
+      for (var round = 0;; round++) {
+        cancellationToken?.throwIfCancelled();
+        final content = StringBuffer();
+        final chunkController = StreamController<String>();
+        _StreamChatResult? streamedResponse;
+        Object? streamedError;
+        StackTrace? streamedStackTrace;
 
-      Future<void> pumpStream() async {
-        try {
-          streamedResponse = await _streamChatCompletion(
-            baseUrl: settings.baseUrl,
-            apiKey: apiKey,
-            model: model,
-            messages: workingMessages,
-            tools: currentToolDefinitions,
-            deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
-            deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
-            openAiReasoningEffort: settings.openAiReasoningEffort,
-            cancellationToken: cancellationToken,
-            includeTools: currentToolDefinitions.isNotEmpty,
-            onContent: (chunk) {
-              cancellationToken?.throwIfCancelled();
-              content.write(chunk);
-              chunkController.add(chunk);
-            },
-          );
-        } catch (e, stackTrace) {
-          streamedError = e;
-          streamedStackTrace = stackTrace;
-        } finally {
-          await chunkController.close();
-        }
-      }
-
-      unawaited(pumpStream());
-
-      await for (final chunk in chunkController.stream) {
-        visibleOutput.write(chunk);
-        yield chunk;
-      }
-      if (streamedError != null) {
-        Error.throwWithStackTrace(streamedError!, streamedStackTrace!);
-      }
-      cancellationToken?.throwIfCancelled();
-      final response = streamedResponse;
-      if (response == null) {
-        throw StateError('LLM stream ended without a response.');
-      }
-      _emitReasoningTrace(onTrace, response.reasoningContent);
-
-      if (response.toolCalls.isEmpty) {
-        final answer =
-            content.toString().trim().isNotEmpty ? content.toString() : 'Done.';
-        if (content.isEmpty) yield answer;
-        AppLogService.instance.info(
-          'LLM chat completed',
-          details: 'rounds=${round + 1} answerChars=${answer.length}',
-        );
-        final elapsedMs =
-            DateTime.now().difference(runStartedAt).inMilliseconds;
-        final promptTokens = response.usage?.promptTokens ??
-            LlmChatService.estimateMessagesTokens(workingMessages);
-        final completionTokens = response.usage?.completionTokens ??
-            LlmChatService.estimateTextTokens(answer);
-        onStats?.call(
-          LlmRunStats(
-            promptTokens: promptTokens,
-            completionTokens: completionTokens,
-            totalTokens:
-                response.usage?.totalTokens ?? promptTokens + completionTokens,
-            elapsedMs: elapsedMs,
-            usageFromProvider: response.usage != null,
-            promptCacheHitTokens: response.usage?.promptCacheHitTokens,
-            promptCacheMissTokens: response.usage?.promptCacheMissTokens,
-            reasoningTokens: response.usage?.reasoningTokens,
-            contextTokensBeforeCompression: estimatedBeforeCompression,
-            contextWindowTokens: settings.contextWindowTokens,
-            compressed: compressed,
-            toolCalls: toolLedger.length,
-            cacheHits: toolLoopController.cacheHitCount,
-            dedupBlockedCalls: toolLoopController.dedupBlockedCount,
-            helperFanout: multiAgentResult?.agentCount ?? 0,
-            auditEscalationLevel: toolBudget.auditCount,
-            selectedToolSet: selectedToolSet,
-            memorySources: memorySources,
-            approvalCount: toolLoopController.approvalCount,
-            approvedCount: toolLoopController.approvedCount,
-          ),
-        );
-        return;
-      }
-
-      AppLogService.instance.info(
-        'LLM requested tools',
-        details:
-            'round=${round + 1} tools=${response.toolCalls.map((call) => call.name).join(',')}',
-      );
-      final assistantToolMessage = <String, dynamic>{
-        'role': 'assistant',
-        'content': content.toString(),
-        'tool_calls': [
-          for (final call in response.toolCalls)
-            {
-              'id': call.id,
-              'type': 'function',
-              'function': {
-                'name': call.name,
-                'arguments': call.arguments,
+        Future<void> pumpStream() async {
+          try {
+            streamedResponse = await _streamChatCompletion(
+              baseUrl: settings.baseUrl,
+              apiKey: apiKey,
+              model: model,
+              messages: workingMessages,
+              tools: currentToolDefinitions,
+              deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
+              deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
+              openAiReasoningEffort: settings.openAiReasoningEffort,
+              cancellationToken: cancellationToken,
+              includeTools: currentToolDefinitions.isNotEmpty,
+              onContent: (chunk) {
+                cancellationToken?.throwIfCancelled();
+                content.write(chunk);
+                chunkController.add(chunk);
               },
-            },
-        ],
-      };
-
-      if (response.reasoningContent.trim().isNotEmpty) {
-        assistantToolMessage['reasoning_content'] = response.reasoningContent;
-      }
-      workingMessages.add(assistantToolMessage);
-      final loopResult = await toolLoopController.handleToolCalls(
-        toolCalls: response.toolCalls,
-        visibleToolsByName: visibleToolsByName,
-        planMode: planMode,
-        language: language,
-        apiKey: apiKey,
-        auditModel: auditModel,
-        originalUserGoal: originalUserGoal,
-        workingMessages: workingMessages,
-        requestToolApproval: requestToolApproval,
-        onTrace: onTrace,
-        cancellationToken: cancellationToken,
-        settings: settings,
-        planExecutionSnapshot: planExecutionSnapshot,
-        complete: (role, roleMessages, {required thinkingSettings}) async {
-          final response = await _chatCompletion(
-            baseUrl: settings.baseUrl,
-            apiKey: apiKey,
-            model: helperModel,
-            messages: roleMessages,
-            deepSeekThinkingEnabled: thinkingSettings.thinkingEnabled,
-            deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
-            openAiReasoningEffort: thinkingSettings.reasoningEffort,
-            cancellationToken: cancellationToken,
-            operationLabel: 'LLM multi-agent helper (${role.name})',
-          );
-          return _contentFromChatResponse(response);
-        },
-        classify: (classificationMessages) async {
-          final response = await _chatCompletion(
-            baseUrl: settings.baseUrl,
-            apiKey: apiKey,
-            model: helperModel,
-            messages: classificationMessages,
-            deepSeekThinkingEnabled: false,
-            deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
-            openAiReasoningEffort: 'low',
-            cancellationToken: cancellationToken,
-            operationLabel: 'LLM multi-agent classification',
-          );
-          return _contentFromChatResponse(response);
-        },
-      );
-
-      finalOutcome = loopResult.finalOutcome ?? AgentFinalOutcome.success;
-
-      if (loopResult.toolsShouldBeDisabled) {
-        currentToolDefinitions = const [];
-      }
-
-      if (loopResult.shouldStop) {
-        if (loopResult.stopMessage != null) {
-          yield loopResult.stopMessage!;
+            );
+          } catch (e, stackTrace) {
+            streamedError = e;
+            streamedStackTrace = stackTrace;
+          } finally {
+            await chunkController.close();
+          }
         }
-        return;
+
+        unawaited(pumpStream());
+
+        await for (final chunk in chunkController.stream) {
+          visibleOutput.write(chunk);
+          yield chunk;
+        }
+        if (streamedError != null) {
+          Error.throwWithStackTrace(streamedError!, streamedStackTrace!);
+        }
+        cancellationToken?.throwIfCancelled();
+        final response = streamedResponse;
+        if (response == null) {
+          throw StateError('LLM stream ended without a response.');
+        }
+        _emitReasoningTrace(onTrace, response.reasoningContent);
+
+        if (response.toolCalls.isEmpty) {
+          final answer = content.toString().trim().isNotEmpty
+              ? content.toString()
+              : 'Done.';
+          if (content.isEmpty) yield answer;
+          AppLogService.instance.info(
+            'LLM chat completed',
+            details: 'rounds=${round + 1} answerChars=${answer.length}',
+          );
+          final elapsedMs =
+              DateTime.now().difference(runStartedAt).inMilliseconds;
+          final promptTokens = response.usage?.promptTokens ??
+              LlmChatService.estimateMessagesTokens(workingMessages);
+          final completionTokens = response.usage?.completionTokens ??
+              LlmChatService.estimateTextTokens(answer);
+          onStats?.call(
+            LlmRunStats(
+              promptTokens: promptTokens,
+              completionTokens: completionTokens,
+              totalTokens: response.usage?.totalTokens ??
+                  promptTokens + completionTokens,
+              elapsedMs: elapsedMs,
+              usageFromProvider: response.usage != null,
+              promptCacheHitTokens: response.usage?.promptCacheHitTokens,
+              promptCacheMissTokens: response.usage?.promptCacheMissTokens,
+              reasoningTokens: response.usage?.reasoningTokens,
+              contextTokensBeforeCompression: estimatedBeforeCompression,
+              contextWindowTokens: settings.contextWindowTokens,
+              compressed: compressed,
+              toolCalls: toolLedger.length,
+              cacheHits: toolLoopController.cacheHitCount,
+              dedupBlockedCalls: toolLoopController.dedupBlockedCount,
+              helperFanout: multiAgentResult?.agentCount ?? 0,
+              auditEscalationLevel: toolBudget.auditCount,
+              selectedToolSet: selectedToolSet,
+              memorySources: memorySources,
+              approvalCount: toolLoopController.approvalCount,
+              approvedCount: toolLoopController.approvedCount,
+            ),
+          );
+          return;
+        }
+
+        AppLogService.instance.info(
+          'LLM requested tools',
+          details:
+              'round=${round + 1} tools=${response.toolCalls.map((call) => call.name).join(',')}',
+        );
+        final assistantToolMessage = <String, dynamic>{
+          'role': 'assistant',
+          'content': content.toString(),
+          'tool_calls': [
+            for (final call in response.toolCalls)
+              {
+                'id': call.id,
+                'type': 'function',
+                'function': {
+                  'name': call.name,
+                  'arguments': call.arguments,
+                },
+              },
+          ],
+        };
+
+        if (response.reasoningContent.trim().isNotEmpty) {
+          assistantToolMessage['reasoning_content'] = response.reasoningContent;
+        }
+        workingMessages.add(assistantToolMessage);
+        final loopResult = await toolLoopController.handleToolCalls(
+          toolCalls: response.toolCalls,
+          visibleToolsByName: visibleToolsByName,
+          planMode: planMode,
+          language: language,
+          apiKey: apiKey,
+          auditModel: auditModel,
+          originalUserGoal: originalUserGoal,
+          workingMessages: workingMessages,
+          requestToolApproval: requestToolApproval,
+          onTrace: onTrace,
+          cancellationToken: cancellationToken,
+          settings: settings,
+          planExecutionSnapshot: planExecutionSnapshot,
+          complete: (role, roleMessages, {required thinkingSettings}) async {
+            final response = await _chatCompletion(
+              baseUrl: settings.baseUrl,
+              apiKey: apiKey,
+              model: helperModel,
+              messages: roleMessages,
+              deepSeekThinkingEnabled: thinkingSettings.thinkingEnabled,
+              deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
+              openAiReasoningEffort: thinkingSettings.reasoningEffort,
+              cancellationToken: cancellationToken,
+              operationLabel: 'LLM multi-agent helper (${role.name})',
+            );
+            return _contentFromChatResponse(response);
+          },
+          classify: (classificationMessages) async {
+            final response = await _chatCompletion(
+              baseUrl: settings.baseUrl,
+              apiKey: apiKey,
+              model: helperModel,
+              messages: classificationMessages,
+              deepSeekThinkingEnabled: false,
+              deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
+              openAiReasoningEffort: 'low',
+              cancellationToken: cancellationToken,
+              operationLabel: 'LLM multi-agent classification',
+            );
+            return _contentFromChatResponse(response);
+          },
+        );
+
+        finalOutcome = loopResult.finalOutcome ?? AgentFinalOutcome.success;
+
+        if (loopResult.toolsShouldBeDisabled) {
+          currentToolDefinitions = const [];
+        }
+
+        if (loopResult.shouldStop) {
+          if (loopResult.stopMessage != null) {
+            yield loopResult.stopMessage!;
+          }
+          return;
+        }
+        final separator = _toolContinuationSeparator(visibleOutput.toString());
+        if (separator.isNotEmpty) {
+          visibleOutput.write(separator);
+          yield separator;
+        }
       }
-      final separator = _toolContinuationSeparator(visibleOutput.toString());
-      if (separator.isNotEmpty) {
-        visibleOutput.write(separator);
-        yield separator;
-      }
-    }
     } on LlmCancelledException {
       finalOutcome = AgentFinalOutcome.cancelled;
       rethrow;
@@ -472,7 +476,8 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         auditModel: auditModel,
         planMode: planMode,
         promptTokens: LlmChatService.estimateMessagesTokens(workingMessages),
-        completionTokens: LlmChatService.estimateTextTokens(visibleOutput.toString()),
+        completionTokens:
+            LlmChatService.estimateTextTokens(visibleOutput.toString()),
         toolCalls: toolLedger.length,
         cacheHits: toolLoopController.cacheHitCount,
         dedupBlockedCalls: toolLoopController.dedupBlockedCount,

@@ -12,6 +12,7 @@ import '../utils/skill_frontmatter.dart';
 import 'agent_model_profile.dart';
 import 'app_log_service.dart';
 import '../core/services/data_protection_service.dart';
+import '../core/services/ssh_identity_cache.dart';
 import 'multi_agent_coordinator.dart';
 
 part 'storage/storage_models.dart';
@@ -164,6 +165,19 @@ class StorageService extends ChangeNotifier
   @override
   Future<void> updateConnection(ConnectionConfig config) =>
       ConnectionOps(this).updateConnection(config);
+
+  Future<void> trustHostKey(
+    String connectionId, {
+    required String? algorithm,
+    required String? fingerprint,
+    required DateTime? trustedAt,
+  }) =>
+      ConnectionOps(this).trustHostKey(
+        connectionId,
+        algorithm: algorithm,
+        fingerprint: fingerprint,
+        trustedAt: trustedAt,
+      );
 
   @override
   Future<void> deleteConnection(String id) =>

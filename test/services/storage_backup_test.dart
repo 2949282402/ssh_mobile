@@ -266,6 +266,38 @@ void main() {
     expect(aiSettings['toolCallBudget'], 40);
   });
 
+  test('trustHostKey persists known host metadata without clearing secrets',
+      () async {
+    storage = await initializedStorage();
+
+    await storage.addConnection(
+      ConnectionConfig(
+        id: 'server-1',
+        name: 'Prod',
+        host: 'prod.example.com',
+        username: 'root',
+        password: 'server-password',
+        privateKey: 'private-key-body',
+        authMethod: AuthMethod.both,
+      ),
+    );
+
+    await storage.trustHostKey(
+      'server-1',
+      algorithm: 'ssh-ed25519',
+      fingerprint: 'MD5:00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f',
+      trustedAt: DateTime.utc(2026, 6, 18),
+    );
+
+    final config = storage.getConnection('server-1')!;
+    expect(config.hostKeyAlgorithm, 'ssh-ed25519');
+    expect(config.hostKeyFingerprint,
+        'MD5:00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f');
+    expect(config.hostKeyTrustedAt, DateTime.utc(2026, 6, 18));
+    expect(await storage.getPassword('server-1'), 'server-password');
+    expect(await storage.getPrivateKey('server-1'), 'private-key-body');
+  });
+
   test('import ignores credential fields and clears existing AI key', () async {
     storage = await initializedStorage();
     await storage.saveAiConnectionSettings(

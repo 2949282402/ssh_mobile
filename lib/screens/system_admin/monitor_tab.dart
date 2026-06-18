@@ -17,7 +17,8 @@ class _MonitorTab extends StatefulWidget {
   State<_MonitorTab> createState() => _MonitorTabState();
 }
 
-class _MonitorTabState extends State<_MonitorTab> with AutomaticKeepAliveClientMixin {
+class _MonitorTabState extends State<_MonitorTab>
+    with AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
 
@@ -84,7 +85,8 @@ class _MonitorTabState extends State<_MonitorTab> with AutomaticKeepAliveClientM
           },
         ),
         Expanded(
-          child: Selector<PerformanceMonitorViewModel, _MonitorPerformanceSnapshot>(
+          child: Selector<PerformanceMonitorViewModel,
+              _MonitorPerformanceSnapshot>(
             selector: (_, monitor) => _MonitorPerformanceSnapshot.from(
               monitor,
               [
@@ -104,8 +106,7 @@ class _MonitorTabState extends State<_MonitorTab> with AutomaticKeepAliveClientM
     final chartConnections = activeConnections;
     final monitoringConnections = [
       for (final connection in widget.connections)
-        if (monitor.monitoringConnectionIds.contains(connection.id))
-          connection,
+        if (monitor.monitoringConnectionIds.contains(connection.id)) connection,
     ];
     final samplesByConnection = {
       for (final connection in monitoringConnections)

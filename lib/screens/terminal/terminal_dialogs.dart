@@ -91,6 +91,8 @@ extension _TerminalDialogs on _TerminalScreenState {
     final sessionId = await ssh.openSession(
       connectionId,
       displayName: windowName,
+      onUnknownHostKey: (request) =>
+          showSshHostKeyTrustDialog(context, request),
     );
     if (!context.mounted) return;
     Navigator.of(context).pop();

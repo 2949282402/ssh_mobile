@@ -21,24 +21,25 @@ String buildApprovedPlanExecutionContext({
           })
       .toList(growable: false);
 
-  final snapshot = const PlanExecutionController().snapshot(planMessage.todoSteps);
+  final snapshot =
+      const PlanExecutionController().snapshot(planMessage.todoSteps);
   final currentTodoStep = snapshot.currentStep;
   final phaseName = snapshot.phase.name;
   final currentStepText = currentTodoStep == null
       ? (isEn ? 'All tasks in the plan are completed.' : '计划中的所有任务已完成。')
       : (isEn
           ? 'Current task to execute:\n${jsonEncode({
-              'taskId': currentTodoStep.id,
-              'name': currentTodoStep.name,
-              'command': currentTodoStep.command,
-              'status': currentTodoStep.status.name,
-            })}'
+                  'taskId': currentTodoStep.id,
+                  'name': currentTodoStep.name,
+                  'command': currentTodoStep.command,
+                  'status': currentTodoStep.status.name,
+                })}'
           : '当前应执行任务：\n${jsonEncode({
-              'taskId': currentTodoStep.id,
-              'name': currentTodoStep.name,
-              'command': currentTodoStep.command,
-              'status': currentTodoStep.status.name,
-            })}');
+                  'taskId': currentTodoStep.id,
+                  'name': currentTodoStep.name,
+                  'command': currentTodoStep.command,
+                  'status': currentTodoStep.status.name,
+                })}');
 
   final rulesText = isEn
       ? 'Execution Rules:\n'

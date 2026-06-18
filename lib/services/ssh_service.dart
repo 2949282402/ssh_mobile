@@ -11,6 +11,7 @@ import '../features/connection/models/connection.dart';
 import 'app_log_service.dart';
 import 'background_service.dart';
 import '../core/services/ssh_client_factory.dart';
+import '../core/services/ssh_host_key_policy.dart';
 import 'storage_service.dart';
 import 'terminal_history_service.dart';
 
@@ -216,6 +217,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
   Future<String?> openSession(
     String connectionId, {
     String? displayName,
+    SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
     final sessionId = _createSessionId(connectionId);
     AppLogService.instance.info(
@@ -226,6 +228,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
       connectionId,
       sessionId: sessionId,
       displayName: displayName,
+      onUnknownHostKey: onUnknownHostKey,
     );
     final session = _sessions[sessionId];
     if (session?.isConnected == true) return sessionId;
@@ -272,6 +275,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     String connectionId, {
     String? sessionId,
     String? displayName,
+    SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
     final config = _storageService.getConnection(connectionId);
     if (config == null) {
@@ -362,6 +366,13 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
         );
       }
       if (_usesBackgroundService) {
+        if (config.hostKeyFingerprint?.isNotEmpty != true) {
+          await _verifyHostKeyBeforeBackground(
+            config: config,
+            credentials: credentials,
+            onUnknownHostKey: onUnknownHostKey,
+          );
+        }
         await BackgroundServiceManager.start(
           connectionName: _notificationSummary(),
         );
@@ -377,6 +388,9 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
           'password': credentials.password,
           'privateKey': credentials.privateKey,
           'authMethod': config.authMethod.name,
+          'hostKeyFingerprint': config.hostKeyFingerprint,
+          'hostKeyAlgorithm': config.hostKeyAlgorithm,
+          'hostKeyTrustedAt': config.hostKeyTrustedAt?.toIso8601String(),
           'terminalWidth': config.terminalWidth,
           'terminalHeight': config.terminalHeight,
           'keepAliveInterval': 3,
@@ -392,6 +406,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
           config: config,
           credentials: credentials,
           launchMode: launchMode,
+          onUnknownHostKey: onUnknownHostKey,
         );
       }
 
@@ -537,6 +552,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     required String connectionId,
     required String command,
     Duration timeout = const Duration(seconds: 15),
+    SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
     final config = _storageService.getConnection(connectionId);
     if (config == null) {
@@ -544,7 +560,10 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     }
     // AI tools and diagnostics must use plain SSH exec. Do not attach tmux or
     // reuse terminal sessions here; tmux is only for interactive terminal UI.
-    final client = await _clientFactory.connectClient(config);
+    final client = await _clientFactory.connectClient(
+      config,
+      onUnknownHostKey: onUnknownHostKey,
+    );
     try {
       final result = await client.runWithResult(command).timeout(timeout);
       return RemoteCommandResult(
@@ -552,6 +571,26 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
         stdout: utf8.decode(result.stdout, allowMalformed: true),
         stderr: utf8.decode(result.stderr, allowMalformed: true),
       );
+    } finally {
+      client.close();
+    }
+  }
+
+  /// Mobile background isolates cannot ask the user to trust an unknown host
+  /// key, so the UI isolate performs the first TOFU check before handoff.
+  Future<void> _verifyHostKeyBeforeBackground({
+    required ConnectionConfig config,
+    required SshCredentials credentials,
+    required SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
+    final client = await _clientFactory.connectClient(
+      config,
+      credentials: credentials,
+      timeout: const Duration(seconds: 12),
+      onUnknownHostKey: onUnknownHostKey,
+    );
+    try {
+      await client.ping().timeout(const Duration(seconds: 8));
     } finally {
       client.close();
     }
@@ -566,6 +605,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     required ConnectionConfig config,
     required SshCredentials credentials,
     required TerminalLaunchMode launchMode,
+    SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
     await _closeLocalSession(session.id, destroyTmux: false);
     AppLogService.instance.info(
@@ -573,8 +613,11 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
       details: 'sessionId=${session.id} host=${config.host}',
     );
 
-    final client =
-        await _clientFactory.connectClient(config, credentials: credentials);
+    final client = await _clientFactory.connectClient(
+      config,
+      credentials: credentials,
+      onUnknownHostKey: onUnknownHostKey,
+    );
     final isTmux = launchMode == TerminalLaunchMode.tmux;
     final termType = config.serverPlatform == ServerPlatform.windows
         ? 'ms-terminal'

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../../core/services/ssh_client_factory.dart';
+import '../../../core/services/ssh_host_key_policy.dart';
 import '../../../services/ssh_service.dart';
 import '../../../services/sftp_service.dart';
 import '../../../services/performance_monitor_service.dart';
@@ -93,6 +94,7 @@ class ConnectionViewModel extends ChangeNotifier {
     required String? rawPassword,
     required String? rawPrivateKey,
     required Future<bool> Function(int activeWindows) confirmDisconnectCallback,
+    SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
     _isSaving = true;
     _isVerifying = true;
@@ -113,6 +115,9 @@ class ConnectionViewModel extends ChangeNotifier {
         serverPlatform: config.serverPlatform,
         tmuxAutoDeleteSeconds: config.tmuxAutoDeleteSeconds,
         keepAlive: config.keepAlive,
+        hostKeyFingerprint: config.hostKeyFingerprint,
+        hostKeyAlgorithm: config.hostKeyAlgorithm,
+        hostKeyTrustedAt: config.hostKeyTrustedAt,
         jumpHost: config.jumpHost,
         jumpPort: config.jumpPort,
         jumpUsername: config.jumpUsername,
@@ -126,12 +131,16 @@ class ConnectionViewModel extends ChangeNotifier {
           password: rawPassword,
           privateKey: rawPrivateKey,
         ),
+        onUnknownHostKey: onUnknownHostKey,
       );
       try {
         await client.ping().timeout(const Duration(seconds: 8));
       } finally {
         client.close();
       }
+      config.hostKeyFingerprint = clientConfig.hostKeyFingerprint;
+      config.hostKeyAlgorithm = clientConfig.hostKeyAlgorithm;
+      config.hostKeyTrustedAt = clientConfig.hostKeyTrustedAt;
 
       _isVerifying = false;
       notifyListeners();
@@ -183,12 +192,18 @@ class ConnectionViewModel extends ChangeNotifier {
   }
 
   Future<String?> openTerminalSession(
-      String connectionId, String windowName) async {
+    String connectionId,
+    String windowName, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
     _errorMessage = null;
     notifyListeners();
     try {
-      final sessionId =
-          await _sshService.openSession(connectionId, displayName: windowName);
+      final sessionId = await _sshService.openSession(
+        connectionId,
+        displayName: windowName,
+        onUnknownHostKey: onUnknownHostKey,
+      );
       if (sessionId == null) {
         _errorMessage = _sshService.errorMessage;
       }

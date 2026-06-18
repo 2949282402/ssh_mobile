@@ -55,7 +55,11 @@ class _PortsTabState extends State<_PortsTab>
 
   Future<Map<String, List<PortProcessSnapshot>>> _loadPorts(
       PerformanceMonitorViewModel monitorViewModel, String connectionId) async {
-    final data = await monitorViewModel.fetchPorts(connectionId);
+    final data = await monitorViewModel.fetchPorts(
+      connectionId,
+      onUnknownHostKey: (request) =>
+          showSshHostKeyTrustDialog(context, request),
+    );
 
     if (!mounted || widget.viewModel.selectedConnectionId != connectionId) {
       return {};
@@ -121,7 +125,11 @@ class _PortsTabState extends State<_PortsTab>
     _lastActivatedModeKey = modeKey;
 
     if (mode == 'manage') {
-      await widget.viewModel.connectIfNeeded(id);
+      await widget.viewModel.connectIfNeeded(
+        id,
+        onUnknownHostKey: (request) =>
+            showSshHostKeyTrustDialog(context, request),
+      );
       if (!mounted) return;
 
       if (widget.viewModel.canManageSelectedConnection) {

@@ -121,13 +121,16 @@ class OperationalMemoryRetriever {
           final limitRefs = matchedRefs.take(3).join('\n\n');
           finalContent = _clip(limitRefs);
         } else {
-          finalContent = _clip(skill.content.isNotEmpty ? skill.content : skill.description);
+          finalContent = _clip(
+              skill.content.isNotEmpty ? skill.content : skill.description);
         }
 
         hits.add(
           OperationalMemoryHit(
             sourceType: 'skill',
-            title: skill.name.isNotEmpty ? skill.name : (fmName.isNotEmpty ? fmName : 'Skill'),
+            title: skill.name.isNotEmpty
+                ? skill.name
+                : (fmName.isNotEmpty ? fmName : 'Skill'),
             content: finalContent,
             score: hit.score + 1.5,
           ),
@@ -144,7 +147,8 @@ class OperationalMemoryRetriever {
     }
   }
 
-  Future<List<OperationalMemoryHit>> _skillHitsLegacyFallback(Set<String> keywords) async {
+  Future<List<OperationalMemoryHit>> _skillHitsLegacyFallback(
+      Set<String> keywords) async {
     final hits = <OperationalMemoryHit>[];
     for (final skill in await storageService.loadAiSkills()) {
       if (!skill.enabled) continue;
@@ -160,7 +164,9 @@ class OperationalMemoryRetriever {
         refBuffer.writeln(ref.content);
       }
 
-      final haystack = '${skill.name}\n${skill.description}\n$fmName\n$fmDesc\n$fmBody\n${refBuffer.toString()}'.toLowerCase();
+      final haystack =
+          '${skill.name}\n${skill.description}\n$fmName\n$fmDesc\n$fmBody\n${refBuffer.toString()}'
+              .toLowerCase();
       final score = _keywordScore(haystack, keywords);
       if (score <= 0) continue;
 
@@ -178,13 +184,16 @@ class OperationalMemoryRetriever {
         final limitRefs = matchedRefs.take(3).join('\n\n');
         finalContent = _clip(limitRefs);
       } else {
-        finalContent = _clip(skill.content.isNotEmpty ? skill.content : skill.description);
+        finalContent =
+            _clip(skill.content.isNotEmpty ? skill.content : skill.description);
       }
 
       hits.add(
         OperationalMemoryHit(
           sourceType: 'skill',
-          title: skill.name.isNotEmpty ? skill.name : (fmName.isNotEmpty ? fmName : 'Skill'),
+          title: skill.name.isNotEmpty
+              ? skill.name
+              : (fmName.isNotEmpty ? fmName : 'Skill'),
           content: finalContent,
           score: score + 1.5,
         ),

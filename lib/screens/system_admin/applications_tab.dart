@@ -44,7 +44,11 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
 
   Future<Map<String, List<ApplicationMemorySnapshot>>> _loadApplications(
       String connectionId) async {
-    final data = await widget.monitorViewModel.fetchApplications(connectionId);
+    final data = await widget.monitorViewModel.fetchApplications(
+      connectionId,
+      onUnknownHostKey: (request) =>
+          showSshHostKeyTrustDialog(context, request),
+    );
 
     if (!mounted || widget.viewModel.selectedConnectionId != connectionId) {
       return {};

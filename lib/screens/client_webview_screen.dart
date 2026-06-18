@@ -215,7 +215,8 @@ class _WebAddressBar extends StatelessWidget {
                     Icon(
                       Icons.arrow_drop_down_rounded,
                       size: 14,
-                      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                      color:
+                          colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
                     ),
                   ],
                 ),

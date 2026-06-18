@@ -25,7 +25,9 @@ class AiSkillEditScreen extends StatelessWidget {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: Text(viewModel.selectedId == null ? strings.newSkill : strings.editSkill),
+          title: Text(viewModel.selectedId == null
+              ? strings.newSkill
+              : strings.editSkill),
           actions: [
             if (viewModel.selectedId != null)
               IconButton(
@@ -111,8 +113,8 @@ class AiSkillEditScreen extends StatelessWidget {
     );
   }
 
-  Future<void> _deleteSkill(
-      BuildContext context, AiSkillsViewModel viewModel, _EditStrings strings) async {
+  Future<void> _deleteSkill(BuildContext context, AiSkillsViewModel viewModel,
+      _EditStrings strings) async {
     final skill = viewModel.selectedSkill;
     if (skill == null) return;
     final confirmed = await showDialog<bool>(

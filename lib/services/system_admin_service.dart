@@ -6,6 +6,7 @@ import '../models/system_admin.dart';
 import '../widgets/system_power_confirm_flow.dart';
 import 'ssh_service.dart';
 import '../core/services/ssh_client_factory.dart';
+import '../core/services/ssh_host_key_policy.dart';
 import 'storage_service.dart';
 import 'app_log_service.dart';
 
@@ -38,7 +39,10 @@ class SystemAdminService extends ChangeNotifier {
   bool get isRoot => _isRoot;
 
   /// Connect to the selected server and check for root privileges
-  Future<void> connect(String connectionId) async {
+  Future<void> connect(
+    String connectionId, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
     if (connectOverride != null) {
       await connectOverride!(connectionId);
       _activeConnectionId = connectionId;
@@ -73,7 +77,10 @@ class SystemAdminService extends ChangeNotifier {
 
       AppLogService.instance
           .info('System Admin connecting to ${config.name}...');
-      final client = await _clientFactory.connectClient(config);
+      final client = await _clientFactory.connectClient(
+        config,
+        onUnknownHostKey: onUnknownHostKey,
+      );
 
       // Verify privilege level
       final result = await client

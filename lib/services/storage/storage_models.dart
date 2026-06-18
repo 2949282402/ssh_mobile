@@ -547,7 +547,8 @@ class AiSkillRecord {
       content: json['content'] as String? ?? '',
       enabled: json['enabled'] as bool? ?? true,
       references: ((json['references'] as List<dynamic>?) ?? const [])
-          .map((item) => SkillReferenceItem.fromJson(item as Map<String, dynamic>))
+          .map((item) =>
+              SkillReferenceItem.fromJson(item as Map<String, dynamic>))
           .toList(),
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),

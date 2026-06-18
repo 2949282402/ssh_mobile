@@ -44,7 +44,9 @@ class ToolLoopController {
     required String auditModel,
     required String originalUserGoal,
     required List<Map<String, dynamic>> workingMessages,
-    required Future<AiToolApprovalDecision> Function(AiToolApprovalRequest request)? requestToolApproval,
+    required Future<AiToolApprovalDecision> Function(
+            AiToolApprovalRequest request)?
+        requestToolApproval,
     required void Function(LlmTraceEvent event)? onTrace,
     required LlmCancellationToken? cancellationToken,
     required AiConnectionSettings settings,
@@ -69,7 +71,8 @@ class ToolLoopController {
       );
 
       final tool = visibleToolsByName[call.name];
-      final redactedArguments = chatService._toolSecretPolicy.redactValue(arguments);
+      final redactedArguments =
+          chatService._toolSecretPolicy.redactValue(arguments);
       final signatureArguments = chatService._mapFromValue(redactedArguments);
       final signature = LlmToolLedgerEntry.buildSignature(
         call.name,
@@ -85,7 +88,8 @@ class ToolLoopController {
               onTrace,
               title: 'Requesting human approval for safety audit extension',
               content: chatService._prettyJson({
-                'message': 'AI tool usage requires additional human confirmation after 3 automated safety audits.',
+                'message':
+                    'AI tool usage requires additional human confirmation after 3 automated safety audits.',
                 'budget': toolBudget.toJson(),
                 'auditCount': toolBudget.auditCount,
                 'nextTool': call.name,
@@ -99,7 +103,8 @@ class ToolLoopController {
                 connectionId: 'local',
                 connectionName: 'System',
                 command: 'Request permission to extend tool usage budget',
-                reason: 'The assistant has performed 3 automated safety audits. Continue using tools?',
+                reason:
+                    'The assistant has performed 3 automated safety audits. Continue using tools?',
               ),
             );
             humanApproved = humanDecision.approved;
@@ -115,26 +120,31 @@ class ToolLoopController {
             issues: ['Human safety approval was denied.'],
             suspectedLoop: false,
             goalDrift: false,
-            recommendedNextAction: 'Finish the conversation without more tools.',
+            recommendedNextAction:
+                'Finish the conversation without more tools.',
           );
           chatService._emitBudgetTrace(
             onTrace,
             title: 'Tool budget safety audit rejected by user',
             content: chatService._prettyJson({
-              'message': 'The user rejected the request to continue tool usage.',
+              'message':
+                  'The user rejected the request to continue tool usage.',
               'budget': toolBudget.toJson(),
               'auditCount': toolBudget.auditCount,
             }),
           );
 
-          for (var blockedIndex = toolIndex; blockedIndex < toolCalls.length; blockedIndex++) {
+          for (var blockedIndex = toolIndex;
+              blockedIndex < toolCalls.length;
+              blockedIndex++) {
             final blockedCall = toolCalls[blockedIndex];
             final blockedResult = chatService._toolBudgetBlockedToolResult(
               toolName: blockedCall.name,
               toolBudget: toolBudget,
               auditResult: auditResult,
             );
-            chatService._emitToolResultTrace(onTrace, blockedCall.name, blockedResult);
+            chatService._emitToolResultTrace(
+                onTrace, blockedCall.name, blockedResult);
             workingMessages.add({
               'role': 'tool',
               'tool_call_id': blockedCall.id,
@@ -171,7 +181,8 @@ class ToolLoopController {
           onTrace,
           title: 'Tool budget safety audit running',
           content: chatService._prettyJson({
-            'message': 'Tool usage reached the current ceiling. Running an internal safety audit before granting more tool calls.',
+            'message':
+                'Tool usage reached the current ceiling. Running an internal safety audit before granting more tool calls.',
             'budget': toolBudget.toJson(),
             'nextTool': call.name,
           }),
@@ -198,7 +209,8 @@ class ToolLoopController {
             onTrace,
             title: 'Tool budget safety audit approved',
             content: chatService._prettyJson({
-              'message': 'The safety audit approved continued tool use. The tool budget was extended again.',
+              'message':
+                  'The safety audit approved continued tool use. The tool budget was extended again.',
               'budget': toolBudget.toJson(),
               'extension': budgetEvent.toJson(),
               'summary': auditResult.summary,
@@ -214,7 +226,8 @@ class ToolLoopController {
             onTrace,
             title: 'Tool budget safety audit rejected',
             content: chatService._prettyJson({
-              'message': 'The safety audit rejected further tool use for this run. Tools are now disabled and the assistant must finish without more tool calls.',
+              'message':
+                  'The safety audit rejected further tool use for this run. Tools are now disabled and the assistant must finish without more tool calls.',
               'budget': toolBudget.toJson(),
               'summary': auditResult.summary,
               'issues': auditResult.issues,
@@ -224,14 +237,17 @@ class ToolLoopController {
             }),
           );
 
-          for (var blockedIndex = toolIndex; blockedIndex < toolCalls.length; blockedIndex++) {
+          for (var blockedIndex = toolIndex;
+              blockedIndex < toolCalls.length;
+              blockedIndex++) {
             final blockedCall = toolCalls[blockedIndex];
             final blockedResult = chatService._toolBudgetBlockedToolResult(
               toolName: blockedCall.name,
               toolBudget: toolBudget,
               auditResult: auditResult,
             );
-            chatService._emitToolResultTrace(onTrace, blockedCall.name, blockedResult);
+            chatService._emitToolResultTrace(
+                onTrace, blockedCall.name, blockedResult);
             workingMessages.add({
               'role': 'tool',
               'tool_call_id': blockedCall.id,
@@ -270,7 +286,8 @@ class ToolLoopController {
           onTrace,
           title: 'Tool budget reached and auto-extended',
           content: chatService._prettyJson({
-            'message': 'The default tool budget was reached. The app automatically granted more tool calls. Please review whether the assistant is still using tools reasonably.',
+            'message':
+                'The default tool budget was reached. The app automatically granted more tool calls. Please review whether the assistant is still using tools reasonably.',
             'budget': toolBudget.toJson(),
             'extension': budgetEvent.toJson(),
           }),
@@ -297,19 +314,22 @@ class ToolLoopController {
         if (tool != null &&
             tool.executionMode == AiToolExecutionMode.readOnly &&
             (repeatedStreak >= 3 ||
-                chatService._wouldTriggerAlternatingLoop(toolLedger, signature))) {
+                chatService._wouldTriggerAlternatingLoop(
+                    toolLedger, signature))) {
           dedupBlocked = true;
           dedupBlockedCount += 1;
           outcome = 'loop_guard_blocked';
           result = jsonEncode({
-            'error': 'Deterministic loop guard blocked a repeated read-only tool cycle. Summarize the current findings or choose a different next step.',
+            'error':
+                'Deterministic loop guard blocked a repeated read-only tool cycle. Summarize the current findings or choose a different next step.',
             'tool': call.name,
           });
           _toolsDisabled = true;
           _currentOutcome = AgentFinalOutcome.loopGuardBlocked;
           workingMessages.add({
             'role': 'system',
-            'content': 'The deterministic loop guard blocked repeated tool usage. Stop calling the same read-only tools and finish with the best available answer unless the user gives new instructions.',
+            'content':
+                'The deterministic loop guard blocked repeated tool usage. Stop calling the same read-only tools and finish with the best available answer unless the user gives new instructions.',
           });
         }
 
@@ -326,7 +346,8 @@ class ToolLoopController {
           result = cacheEntry.result;
         }
 
-        final approvalRequest = await chatService.toolService.approvalRequestFor(
+        final approvalRequest =
+            await chatService.toolService.approvalRequestFor(
           call.name,
           arguments,
         );
@@ -338,7 +359,8 @@ class ToolLoopController {
             outcome = 'blocked_in_plan_mode';
             _currentOutcome = AgentFinalOutcome.planModeBlocked;
             result = jsonEncode({
-              'error': 'This write operation or state-changing action is blocked because PLAN MODE is active. You must only outline your plan without execution.',
+              'error':
+                  'This write operation or state-changing action is blocked because PLAN MODE is active. You must only outline your plan without execution.',
               'command': approvalRequest.command,
             });
             onTrace?.call(
@@ -355,13 +377,15 @@ class ToolLoopController {
           } else if (requestToolApproval == null) {
             outcome = 'approval_unavailable';
             result = jsonEncode({
-              'error': 'This tool action requires user approval, but no approval UI is available.',
+              'error':
+                  'This tool action requires user approval, but no approval UI is available.',
               'command': approvalRequest.command,
             });
           } else {
             AppLogService.instance.info(
               'AI tool approval requested',
-              details: 'tool=${call.name} connection=${approvalRequest.connectionName} command=${approvalRequest.command}',
+              details:
+                  'tool=${call.name} connection=${approvalRequest.connectionName} command=${approvalRequest.command}',
             );
             final decision = await requestToolApproval(approvalRequest);
             cancellationToken?.throwIfCancelled();
@@ -370,7 +394,8 @@ class ToolLoopController {
               outcome = 'approval_rejected';
               AppLogService.instance.warning(
                 'AI tool approval rejected',
-                details: 'tool=${call.name} connection=${approvalRequest.connectionName} abort=${decision.abort}',
+                details:
+                    'tool=${call.name} connection=${approvalRequest.connectionName} abort=${decision.abort}',
               );
               result = jsonEncode({
                 'error': 'User rejected the requested tool action.',
@@ -395,7 +420,8 @@ class ToolLoopController {
               );
               stopAfterToolResult = decision.abort;
               if (decision.abort) {
-                stopMessage = '\n\nTool action rejected. Operation stopped. You can tell me what to do next.';
+                stopMessage =
+                    '\n\nTool action rejected. Operation stopped. You can tell me what to do next.';
                 _currentOutcome = AgentFinalOutcome.approvalRejected;
               }
             } else {
@@ -415,7 +441,8 @@ class ToolLoopController {
               );
               AppLogService.instance.info(
                 'AI tool approval accepted',
-                details: 'tool=${call.name} connection=${approvalRequest.connectionName} command=${approvalRequest.command}',
+                details:
+                    'tool=${call.name} connection=${approvalRequest.connectionName} command=${approvalRequest.command}',
               );
             }
           }
@@ -468,7 +495,8 @@ class ToolLoopController {
         dedupBlocked: dedupBlocked,
       );
 
-      final hint = ToolResultClassifier.getSystemHint(call.name, quality, language);
+      final hint =
+          ToolResultClassifier.getSystemHint(call.name, quality, language);
       if (hint != null) {
         workingMessages.add({
           'role': 'system',
@@ -597,8 +625,10 @@ class ToolLoopController {
 
     final trigger = switch (finalOutcome) {
       AgentFinalOutcome.loopGuardBlocked => MultiAgentTrigger.postLoopGuard,
-      AgentFinalOutcome.approvalRejected => MultiAgentTrigger.postApprovalRejection,
-      AgentFinalOutcome.budgetAuditRejected => MultiAgentTrigger.postBudgetAudit,
+      AgentFinalOutcome.approvalRejected =>
+        MultiAgentTrigger.postApprovalRejection,
+      AgentFinalOutcome.budgetAuditRejected =>
+        MultiAgentTrigger.postBudgetAudit,
       _ => MultiAgentTrigger.postToolFailure,
     };
 

@@ -15,6 +15,7 @@ import '../theme/app_theme.dart';
 import '../utils/responsive.dart';
 import '../widgets/connection_progress_dialog.dart';
 import '../widgets/overflow_scroll_text.dart';
+import '../widgets/ssh_host_key_trust_dialog.dart';
 import '../widgets/window_name_dialog.dart';
 import 'terminal/terminal_app_bar.dart';
 import 'terminal/terminal_copy_screen.dart';

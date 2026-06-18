@@ -58,7 +58,8 @@ void main() {
       expect(entry.tokens.contains('/etc/nginx/nginx.conf'), isTrue);
     });
 
-    test('token extraction handles Chinese characters with bigram slide window', () {
+    test('token extraction handles Chinese characters with bigram slide window',
+        () {
       final skills = [
         AiSkillRecord(
           id: 'skill-1',
@@ -125,11 +126,14 @@ void main() {
         return AiSkillRecord(
           id: 'skill-$i',
           name: 'Skill Title $i containing docker and nginx',
-          description: 'Description for skill $i with path /var/log/nginx/error.log',
-          content: 'This is the detailed body content for mock skill $i, deploying containers.',
+          description:
+              'Description for skill $i with path /var/log/nginx/error.log',
+          content:
+              'This is the detailed body content for mock skill $i, deploying containers.',
           enabled: true,
           references: [
-            SkillReferenceItem(title: 'Ref title $i', content: 'Instruction code config $i'),
+            SkillReferenceItem(
+                title: 'Ref title $i', content: 'Instruction code config $i'),
           ],
           createdAt: DateTime.now(),
           updatedAt: DateTime.now(),
@@ -138,18 +142,21 @@ void main() {
 
       // Benchmark 100 skills
       indexService.updateIndex(mockSkills.take(100).toList());
-      final hits100 = indexService.search({'docker', 'nginx', '/var/log/nginx/error.log'});
+      final hits100 =
+          indexService.search({'docker', 'nginx', '/var/log/nginx/error.log'});
       expect(hits100.length, 100);
 
       // Benchmark 500 skills
       indexService.updateIndex(mockSkills.take(500).toList());
-      final hits500 = indexService.search({'docker', 'nginx', '/var/log/nginx/error.log'});
+      final hits500 =
+          indexService.search({'docker', 'nginx', '/var/log/nginx/error.log'});
       expect(hits500.length, 500);
 
       // Benchmark 1000 skills
       indexService.updateIndex(mockSkills);
       final watchSearch3 = Stopwatch()..start();
-      final hits1000 = indexService.search({'docker', 'nginx', '/var/log/nginx/error.log'});
+      final hits1000 =
+          indexService.search({'docker', 'nginx', '/var/log/nginx/error.log'});
       watchSearch3.stop();
       final search1000Time = watchSearch3.elapsedMilliseconds;
 

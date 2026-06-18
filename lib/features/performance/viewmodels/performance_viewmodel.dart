@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 
+import '../../../../core/services/ssh_host_key_policy.dart';
 import '../../../../services/performance_monitor_service.dart';
 import '../../../../services/server_status_probe.dart';
 
@@ -69,20 +70,24 @@ class PerformanceMonitorViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> startMonitoring() async {
-    await _monitorService.startMonitoring();
+  Future<void> startMonitoring({
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
+    await _monitorService.startMonitoring(
+      onUnknownHostKey: onUnknownHostKey,
+    );
   }
 
   void stopMonitoring() {
     _monitorService.stopMonitoring();
   }
 
-  void forceRefresh() {
-    unawaited(_monitorService.sampleNow());
+  void forceRefresh({SshHostKeyConfirmation? onUnknownHostKey}) {
+    unawaited(_monitorService.sampleNow(onUnknownHostKey: onUnknownHostKey));
   }
 
-  Future<void> sampleNow() async {
-    await _monitorService.sampleNow();
+  Future<void> sampleNow({SshHostKeyConfirmation? onUnknownHostKey}) async {
+    await _monitorService.sampleNow(onUnknownHostKey: onUnknownHostKey);
   }
 
   Duration get interval => _monitorService.interval;
@@ -103,17 +108,34 @@ class PerformanceMonitorViewModel extends ChangeNotifier {
     _monitorService.toggleSelection(connectionId);
   }
 
-  Future<List<PortProcessSnapshot>> fetchPorts(String connectionId) {
-    return _monitorService.fetchPorts(connectionId);
+  Future<List<PortProcessSnapshot>> fetchPorts(
+    String connectionId, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) {
+    return _monitorService.fetchPorts(
+      connectionId,
+      onUnknownHostKey: onUnknownHostKey,
+    );
   }
 
   Future<List<ApplicationMemorySnapshot>> fetchApplications(
-      String connectionId) {
-    return _monitorService.fetchApplications(connectionId);
+    String connectionId, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) {
+    return _monitorService.fetchApplications(
+      connectionId,
+      onUnknownHostKey: onUnknownHostKey,
+    );
   }
 
-  Future<List<ServiceStatusSnapshot>> fetchServices(String connectionId) {
-    return _monitorService.fetchServices(connectionId);
+  Future<List<ServiceStatusSnapshot>> fetchServices(
+    String connectionId, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) {
+    return _monitorService.fetchServices(
+      connectionId,
+      onUnknownHostKey: onUnknownHostKey,
+    );
   }
 
   List<PerformanceSample> visibleSamplesFor(String connectionId) {

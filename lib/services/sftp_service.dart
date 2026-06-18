@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 import '../features/connection/models/connection.dart';
 import 'app_log_service.dart';
 import '../core/services/ssh_client_factory.dart';
+import '../core/services/ssh_host_key_policy.dart';
 import 'storage_service.dart';
 
 part 'sftp/sftp_models.dart';
@@ -33,7 +34,10 @@ abstract interface class SftpClientAdapter {
 
   bool isConnectionOpen(String connectionId);
 
-  Future<void> connect(String connectionId);
+  Future<void> connect(
+    String connectionId, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  });
 
   Future<void> refresh();
 
@@ -185,7 +189,10 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   }
 
   @override
-  Future<void> connect(String connectionId) async {
+  Future<void> connect(
+    String connectionId, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
     final config = _storageService.getConnection(connectionId);
     if (config == null) {
       _activeConnectionId = connectionId;
@@ -227,7 +234,11 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     session.state = SftpConnectionState.connecting;
     session.errorMessage = null;
     notifyListeners();
-    final task = _connect(session, config);
+    final task = _connect(
+      session,
+      config,
+      onUnknownHostKey: onUnknownHostKey,
+    );
     _connectTasks[connectionId] = task;
     try {
       await task;
@@ -238,9 +249,16 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     }
   }
 
-  Future<void> _connect(_SftpSession session, ConnectionConfig config) async {
+  Future<void> _connect(
+    _SftpSession session,
+    ConnectionConfig config, {
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
     try {
-      final client = await _clientFactory.connectClient(config);
+      final client = await _clientFactory.connectClient(
+        config,
+        onUnknownHostKey: onUnknownHostKey,
+      );
       if (!session.isCurrent(_sessions)) {
         client.close();
         return;

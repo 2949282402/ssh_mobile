@@ -91,7 +91,8 @@ class SkillDomainService {
       if (title.isEmpty || content.isEmpty) {
         continue;
       }
-      seen.putIfAbsent(title, () => SkillReferenceItem(title: title, content: content));
+      seen.putIfAbsent(
+          title, () => SkillReferenceItem(title: title, content: content));
     }
     return List.unmodifiable(seen.values);
   }
@@ -122,7 +123,8 @@ class SkillDomainService {
             buffer.writeln('  $line');
           }
         } else {
-          buffer.writeln('description: "${SkillFrontmatter.escapeString(finalDesc)}"');
+          buffer.writeln(
+              'description: "${SkillFrontmatter.escapeString(finalDesc)}"');
         }
         buffer.write('---');
         final generatedHeader = buffer.toString();
@@ -196,14 +198,21 @@ class SkillDomainService {
     String? content,
     List<SkillReferenceItem>? references,
   }) {
-    final nameValue = (name != null && name.trim().isNotEmpty) ? name.trim() : null;
-    final descValue = (description != null && description.trim().isNotEmpty) ? description.trim() : null;
+    final nameValue =
+        (name != null && name.trim().isNotEmpty) ? name.trim() : null;
+    final descValue = (description != null && description.trim().isNotEmpty)
+        ? description.trim()
+        : null;
 
     final finalContent = content ?? current.content;
     final fm = SkillFrontmatter.parse(finalContent);
 
-    final finalName = nameValue ?? (fm?.name.isNotEmpty == true ? fm!.name : current.name);
-    final finalDesc = descValue ?? (fm?.description.isNotEmpty == true ? fm!.description : current.description);
+    final finalName =
+        nameValue ?? (fm?.name.isNotEmpty == true ? fm!.name : current.name);
+    final finalDesc = descValue ??
+        (fm?.description.isNotEmpty == true
+            ? fm!.description
+            : current.description);
 
     final targetContent = syncFrontmatterContent(
       rawContent: finalContent,
@@ -211,9 +220,8 @@ class SkillDomainService {
       finalDesc: finalDesc,
     );
 
-    final cleanedRefs = references != null
-        ? cleanReferences(references)
-        : current.references;
+    final cleanedRefs =
+        references != null ? cleanReferences(references) : current.references;
 
     return SkillBuildResult(
       name: finalName,
@@ -224,7 +232,8 @@ class SkillDomainService {
   }
 
   /// Generate a diff preview comparing before and after records.
-  SkillChangePreview generatePreview(AiSkillRecord? before, AiSkillRecord after) {
+  SkillChangePreview generatePreview(
+      AiSkillRecord? before, AiSkillRecord after) {
     final action = before == null ? 'CREATE' : 'UPDATE';
     final beforeName = before?.name ?? '';
     final afterName = after.name;
@@ -233,7 +242,8 @@ class SkillDomainService {
     final beforeEnabled = before?.enabled ?? true;
     final afterEnabled = after.enabled;
 
-    final beforeSnippet = before == null ? '' : _makeContentSnippet(before.content);
+    final beforeSnippet =
+        before == null ? '' : _makeContentSnippet(before.content);
     final afterSnippet = _makeContentSnippet(after.content);
 
     int added = 0;
@@ -243,8 +253,12 @@ class SkillDomainService {
     if (before == null) {
       added = after.references.length;
     } else {
-      final beforeRefsMap = {for (final r in before.references) r.title: r.content};
-      final afterRefsMap = {for (final r in after.references) r.title: r.content};
+      final beforeRefsMap = {
+        for (final r in before.references) r.title: r.content
+      };
+      final afterRefsMap = {
+        for (final r in after.references) r.title: r.content
+      };
 
       for (final title in afterRefsMap.keys) {
         if (!beforeRefsMap.containsKey(title)) {
