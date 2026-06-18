@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../../core/services/ssh_host_key_policy.dart';
-import '../../../../services/sftp_service.dart';
+import '../../../services/sftp_service.dart';
 
 class SftpViewModel extends ChangeNotifier {
   final SftpService _sftpService;

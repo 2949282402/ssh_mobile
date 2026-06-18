@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 
-import '../../../../core/services/ssh_host_key_policy.dart';
-import '../../../../services/performance_monitor_service.dart';
-import '../../../../services/server_status_probe.dart';
+import '../../../core/services/ssh_host_key_policy.dart';
+import '../../../services/performance_monitor_service.dart';
+import '../../../services/server_status_probe.dart';
 
 class PerformanceMonitorViewModel extends ChangeNotifier {
   static const List<Duration> intervalOptions =
