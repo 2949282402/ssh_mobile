@@ -39,8 +39,23 @@ class _ServerSnapshotTab<T> extends StatelessWidget {
   Widget build(BuildContext context) {
     if (connections.isEmpty) {
       return Center(
-        child:
-            Text(_monitorText(strings, 'Select a server first.', '请先选择一台服务器。')),
+        child: Builder(
+          builder: (context) {
+            final desktop = isDesktopLayout(context);
+            final emptyServerText = desktop
+                ? _monitorText(
+                    strings,
+                    'Select a server from the left.',
+                    '请从左侧选择一台服务器。',
+                  )
+                : _monitorText(
+                    strings,
+                    'Select a server from above.',
+                    '请从上方选择一台服务器。',
+                  );
+            return Text(emptyServerText);
+          },
+        ),
       );
     }
     return FutureBuilder<Map<String, List<T>>>(
@@ -155,13 +170,13 @@ class _ServerSnapshotTab<T> extends StatelessWidget {
                         color: colorScheme.surface,
                         borderRadius: BorderRadius.only(
                           topLeft:
-                              isFirst ? const Radius.circular(8) : Radius.zero,
+                              isFirst ? const Radius.circular(AppTheme.radiusSmall) : Radius.zero,
                           topRight:
-                              isFirst ? const Radius.circular(8) : Radius.zero,
+                              isFirst ? const Radius.circular(AppTheme.radiusSmall) : Radius.zero,
                           bottomLeft:
-                              isLast ? const Radius.circular(8) : Radius.zero,
+                              isLast ? const Radius.circular(AppTheme.radiusSmall) : Radius.zero,
                           bottomRight:
-                              isLast ? const Radius.circular(8) : Radius.zero,
+                              isLast ? const Radius.circular(AppTheme.radiusSmall) : Radius.zero,
                         ),
                         border: Border(
                           left: borderSide,
@@ -263,7 +278,7 @@ class _PortProcessTileState extends State<_PortProcessTile> {
                   padding: const EdgeInsets.symmetric(horizontal: 6),
                   decoration: BoxDecoration(
                     color: colorScheme.primary.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                     border: Border.all(
                       color: colorScheme.primary.withValues(alpha: 0.22),
                     ),
