@@ -154,8 +154,10 @@ class _StatusTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final statusColor =
-        isExempt ? colorScheme.secondary : AppTheme.terminalAmber;
+    final ext = Theme.of(context).extension<ExtendedColors>();
+    final statusColor = isExempt
+        ? (ext?.success ?? colorScheme.secondary)
+        : (ext?.warning ?? AppTheme.terminalAmber);
 
     return Container(
       padding: const EdgeInsets.all(14),

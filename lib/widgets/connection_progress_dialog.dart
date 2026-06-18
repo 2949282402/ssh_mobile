@@ -58,12 +58,15 @@ class ConnectionProgressDialog extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const SizedBox(
+                    SizedBox(
                       width: 42,
                       height: 42,
                       child: CircularProgressIndicator(
                         strokeWidth: 3,
-                        color: AppTheme.terminalGreen,
+                        color: Theme.of(context)
+                                .extension<ExtendedColors>()
+                                ?.success ??
+                            AppTheme.terminalGreen,
                       ),
                     ),
                     const SizedBox(height: 18),
