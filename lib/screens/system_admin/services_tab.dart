@@ -23,7 +23,6 @@ class _ServicesTabState extends State<_ServicesTab>
       TextEditingController();
   final TextEditingController _snapshotSearchController =
       TextEditingController();
-  List<SystemdService> _filteredServices = [];
   List<ServiceStatusSnapshot> _filteredSnapshotServices = [];
   Map<String, List<ServiceStatusSnapshot>> _rawSnapshotData = {};
 
@@ -85,7 +84,6 @@ class _ServicesTabState extends State<_ServicesTab>
     _lastSelectedConnectionId = widget.viewModel.selectedConnectionId;
     _serviceSearchController.addListener(_filterServices);
     _snapshotSearchController.addListener(_filterSnapshotServices);
-    _filteredServices = List.from(widget.viewModel.services);
     _scheduleModeActivation();
   }
 
@@ -102,9 +100,6 @@ class _ServicesTabState extends State<_ServicesTab>
       _lastActivatedModeKey = null;
       _isManageMode = false;
     }
-    if (widget.viewModel.services != oldWidget.viewModel.services) {
-      _filterServices();
-    }
     if (widget.active) {
       _scheduleModeActivation();
     }
@@ -119,18 +114,21 @@ class _ServicesTabState extends State<_ServicesTab>
 
   void _filterServices() {
     if (!mounted) return;
+    setState(() {});
+  }
+
+  List<SystemdService> _visibleManageServices() {
     final query = _serviceSearchController.text.trim().toLowerCase();
-    setState(() {
-      if (query.isEmpty) {
-        _filteredServices = List.from(widget.viewModel.services);
-      } else {
-        _filteredServices = widget.viewModel.services
-            .where((s) =>
-                s.name.toLowerCase().contains(query) ||
-                s.description.toLowerCase().contains(query))
-            .toList();
-      }
-    });
+    final services = widget.viewModel.services;
+
+    if (query.isEmpty) {
+      return services;
+    }
+
+    return services.where((service) {
+      return service.name.toLowerCase().contains(query) ||
+          service.description.toLowerCase().contains(query);
+    }).toList();
   }
 
   void _filterSnapshotServices() {
@@ -289,6 +287,8 @@ class _ServicesTabState extends State<_ServicesTab>
       return const Center(child: CircularProgressIndicator());
     }
 
+    final visibleServices = _visibleManageServices();
+
     return RefreshIndicator(
       onRefresh: () => viewModel.fetchServices(id, force: true),
       child: Column(
@@ -306,7 +306,7 @@ class _ServicesTabState extends State<_ServicesTab>
             ),
           ),
           Expanded(
-            child: _filteredServices.isEmpty
+            child: visibleServices.isEmpty
                 ? ListView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     children: const [
@@ -316,9 +316,9 @@ class _ServicesTabState extends State<_ServicesTab>
                   )
                 : ListView.builder(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
-                    itemCount: _filteredServices.length,
+                    itemCount: visibleServices.length,
                     itemBuilder: (context, index) {
-                      final service = _filteredServices[index];
+                      final service = visibleServices[index];
                       return Card(
                         child: ListTile(
                           leading: Icon(

@@ -71,6 +71,7 @@ class StubSystemAdminViewModel extends ChangeNotifier
   final List<String> fetchSessionsCalls = [];
   final List<String> fetchServicesCalls = [];
   final List<String> fetchPortsCalls = [];
+  bool populateServicesOnFetch = false;
 
   @override
   String? get connectionId => selectedConnectionId;
@@ -208,6 +209,25 @@ class StubSystemAdminViewModel extends ChangeNotifier
   @override
   Future<void> fetchServices(String connId, {bool force = false}) async {
     fetchServicesCalls.add(connId);
+    if (populateServicesOnFetch) {
+      services = [
+        SystemdService(
+          name: 'nginx.service',
+          loadState: 'loaded',
+          activeState: 'active',
+          subState: 'running',
+          description: 'Nginx Service',
+        ),
+        SystemdService(
+          name: 'ssh.service',
+          loadState: 'loaded',
+          activeState: 'inactive',
+          subState: 'dead',
+          description: 'OpenSSH Server',
+        ),
+      ];
+      notifyListeners();
+    }
   }
 
   @override
@@ -636,6 +656,50 @@ void main() {
 
     // Manage mode has trailing actions PopMenuButton
     expect(find.byType(PopupMenuButton<String>), findsWidgets);
+  });
+
+  testWidgets('Services manage mode shows services after lazy fetch',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final adminVm = StubSystemAdminViewModel()
+      ..connections = fakeConnections
+      ..populateServicesOnFetch = true;
+    final monitorVm = StubPerformanceMonitorViewModel();
+    adminVm.selectConnection('conn_123');
+
+    await tester.pumpWidget(buildTestableWidget(
+      adminVm: adminVm,
+      monitorVm: monitorVm,
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('系统服务'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('管理模式'));
+    await tester.pumpAndSettle();
+
+    expect(adminVm.connectIfNeededCalls, 1);
+    expect(adminVm.fetchServicesCalls, ['conn_123']);
+    expect(find.text('nginx.service'), findsOneWidget);
+    expect(find.text('ssh.service'), findsOneWidget);
+    expect(find.text('No services found.'), findsNothing);
+
+    await tester.enterText(find.byType(TextField), 'nginx');
+    await tester.pumpAndSettle();
+
+    expect(find.text('nginx.service'), findsOneWidget);
+    expect(find.text('ssh.service'), findsNothing);
+
+    await tester.enterText(find.byType(TextField), 'missing-service');
+    await tester.pumpAndSettle();
+
+    expect(find.text('nginx.service'), findsNothing);
+    expect(find.text('No services found.'), findsOneWidget);
   });
 
   testWidgets('SystemAdminScreen clears stale selected server safely',
