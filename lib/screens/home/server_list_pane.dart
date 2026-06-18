@@ -350,7 +350,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                         horizontal: 7 * scale, vertical: 3 * scale),
                     decoration: BoxDecoration(
                       color: success.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(999),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusPill),
                       border:
                           Border.all(color: success.withValues(alpha: 0.35)),
                     ),
@@ -478,7 +478,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+        borderRadius: BorderRadius.circular(AppTheme.radiusPill),
         border: Border.all(color: color.withValues(alpha: 0.35)),
       ),
       child: Row(
