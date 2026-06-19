@@ -850,7 +850,7 @@ class _SystemAdminShellSnapshot {
       storageReady: vm.storageInitialized,
       serversCollapsed: vm.serversCollapsed,
       selectedConnectionId: vm.selectedConnectionId,
-      connections: vm.connections,
+      connections: List.unmodifiable(vm.connections),
     );
   }
 
