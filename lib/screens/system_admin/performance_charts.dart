@@ -32,50 +32,140 @@ class _MetricChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final start = _oldestVisibleSampleTime();
-    final series = <LineChartBarData>[];
-    final latestLabels = <Widget>[];
-    var dynamicMax = 1.0;
-    var maxX = 10.0;
 
-    for (var i = 0; i < connections.length; i++) {
-      final connection = connections[i];
-      final rawSamples =
-          samplesByConnection[connection.id] ?? const <PerformanceSample>[];
-      final cachedSeries = _MetricChartSeriesCache.getOrCreate(
-        connectionId: connection.id,
-        metricKey: metricKey,
-        visibleSamples: rawSamples,
-        valueFor: valueFor,
-        latestTextFor: latestTextFor,
-        startTime: start,
-      );
-      if (cachedSeries.spots.isEmpty) continue;
-      final color = _serverColor(i);
-      if (cachedSeries.dynamicMax > dynamicMax) dynamicMax = cachedSeries.dynamicMax;
-      if (cachedSeries.maxX > maxX) maxX = cachedSeries.maxX;
+    Widget? expandedContent;
+    if (expanded) {
+      final start = _oldestVisibleSampleTime();
+      final series = <LineChartBarData>[];
+      final latestLabels = <Widget>[];
+      var dynamicMax = 1.0;
+      var maxX = 10.0;
 
-      series.add(
-        LineChartBarData(
-          spots: cachedSeries.spots,
-          isCurved: false,
-          barWidth: 2,
-          color: color,
-          dotData: const FlDotData(show: false),
-          belowBarData: BarAreaData(show: false),
-        ),
-      );
-      latestLabels.add(
-        _LegendLabel(
-          color: color,
-          text: '${connection.name} ${cachedSeries.latestText}',
-        ),
+      for (var i = 0; i < connections.length; i++) {
+        final connection = connections[i];
+        final rawSamples =
+            samplesByConnection[connection.id] ?? const <PerformanceSample>[];
+        final cachedSeries = _MetricChartSeriesCache.getOrCreate(
+          connectionId: connection.id,
+          metricKey: metricKey,
+          visibleSamples: rawSamples,
+          valueFor: valueFor,
+          latestTextFor: latestTextFor,
+          startTime: start,
+        );
+        if (cachedSeries.spots.isEmpty) continue;
+        final color = _serverColor(i);
+        if (cachedSeries.dynamicMax > dynamicMax) dynamicMax = cachedSeries.dynamicMax;
+        if (cachedSeries.maxX > maxX) maxX = cachedSeries.maxX;
+
+        series.add(
+          LineChartBarData(
+            spots: cachedSeries.spots,
+            isCurved: false,
+            barWidth: 2,
+            color: color,
+            dotData: const FlDotData(show: false),
+            belowBarData: BarAreaData(show: false),
+          ),
+        );
+        latestLabels.add(
+          _LegendLabel(
+            color: color,
+            text: '${connection.name} ${cachedSeries.latestText}',
+          ),
+        );
+      }
+
+      final chartMaxY = maxY ?? max(1, dynamicMax * 1.2);
+      final leftInterval = max(1.0, chartMaxY / 4);
+      final bottomInterval = max(10.0, maxX / 4);
+
+      expandedContent = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 26,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: latestLabels.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (context, index) => latestLabels[index],
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: chartHeight,
+            child: RepaintBoundary(
+              child: LineChart(
+                LineChartData(
+                  minX: 0,
+                  maxX: maxX,
+                  minY: 0,
+                  maxY: chartMaxY,
+                  clipData: const FlClipData.all(),
+                  lineTouchData: const LineTouchData(enabled: false),
+                  gridData: FlGridData(
+                    show: true,
+                    drawVerticalLine: false,
+                    getDrawingHorizontalLine: (_) => FlLine(
+                      color:
+                          colorScheme.outlineVariant.withValues(alpha: 0.5),
+                      strokeWidth: 1,
+                    ),
+                  ),
+                  titlesData: FlTitlesData(
+                    topTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
+                    rightTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false),
+                    ),
+                    leftTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        reservedSize: 36,
+                        interval: leftInterval,
+                        getTitlesWidget: (value, meta) => Text(
+                          value >= 100
+                              ? value.toStringAsFixed(0)
+                              : value.toStringAsFixed(1),
+                          style: TextStyle(
+                            color: colorScheme.onSurfaceVariant,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ),
+                    ),
+                    bottomTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        reservedSize: 20,
+                        interval: bottomInterval,
+                        getTitlesWidget: (value, meta) => Text(
+                          '${value.round()}s',
+                          style: TextStyle(
+                            color: colorScheme.onSurfaceVariant,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  borderData: FlBorderData(
+                    show: true,
+                    border: Border.all(color: colorScheme.outlineVariant),
+                  ),
+                  lineBarsData: series,
+                ),
+                duration: Duration.zero,
+              ),
+            ),
+          ),
+        ],
       );
     }
 
-    final chartMaxY = maxY ?? max(1, dynamicMax * 1.2);
-    final leftInterval = max(1.0, chartMaxY / 4);
-    final bottomInterval = max(10.0, maxX / 4);
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
       decoration: BoxDecoration(
@@ -115,87 +205,7 @@ class _MetricChart extends StatelessWidget {
               ],
             ),
           ),
-          if (expanded) ...[
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 26,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: latestLabels.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemBuilder: (context, index) => latestLabels[index],
-              ),
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: chartHeight,
-              child: RepaintBoundary(
-                child: LineChart(
-                  LineChartData(
-                    minX: 0,
-                    maxX: maxX,
-                    minY: 0,
-                    maxY: chartMaxY,
-                    clipData: const FlClipData.all(),
-                    lineTouchData: const LineTouchData(enabled: false),
-                    gridData: FlGridData(
-                      show: true,
-                      drawVerticalLine: false,
-                      getDrawingHorizontalLine: (_) => FlLine(
-                        color:
-                            colorScheme.outlineVariant.withValues(alpha: 0.5),
-                        strokeWidth: 1,
-                      ),
-                    ),
-                    titlesData: FlTitlesData(
-                      topTitles: const AxisTitles(
-                        sideTitles: SideTitles(showTitles: false),
-                      ),
-                      rightTitles: const AxisTitles(
-                        sideTitles: SideTitles(showTitles: false),
-                      ),
-                      leftTitles: AxisTitles(
-                        sideTitles: SideTitles(
-                          showTitles: true,
-                          reservedSize: 36,
-                          interval: leftInterval,
-                          getTitlesWidget: (value, meta) => Text(
-                            value >= 100
-                                ? value.toStringAsFixed(0)
-                                : value.toStringAsFixed(1),
-                            style: TextStyle(
-                              color: colorScheme.onSurfaceVariant,
-                              fontSize: 10,
-                            ),
-                          ),
-                        ),
-                      ),
-                      bottomTitles: AxisTitles(
-                        sideTitles: SideTitles(
-                          showTitles: true,
-                          reservedSize: 20,
-                          interval: bottomInterval,
-                          getTitlesWidget: (value, meta) => Text(
-                            '${value.round()}s',
-                            style: TextStyle(
-                              color: colorScheme.onSurfaceVariant,
-                              fontSize: 10,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    borderData: FlBorderData(
-                      show: true,
-                      border: Border.all(color: colorScheme.outlineVariant),
-                    ),
-                    lineBarsData: series,
-                  ),
-                  duration: Duration.zero,
-                ),
-              ),
-            ),
-          ],
+          if (expandedContent != null) expandedContent,
         ],
       ),
     );
