@@ -4,13 +4,13 @@ class _ServicesTab extends StatefulWidget {
   final AppStrings strings;
   final ColorScheme colorScheme;
   final SystemAdminViewModel viewModel;
-  final TabController tabController;
+  final ValueNotifier<int> activeTabIndex;
 
   const _ServicesTab({
     required this.strings,
     required this.colorScheme,
     required this.viewModel,
-    required this.tabController,
+    required this.activeTabIndex,
   });
 
   @override
@@ -33,11 +33,11 @@ class _ServicesTabState extends State<_ServicesTab>
   String? _lastActivatedModeKey;
   bool _modeActivationScheduled = false;
 
-  String _lastQuery = '';
-  List<SystemdService> _lastServices = [];
-  List<SystemdService> _cachedVisibleServices = [];
+  Timer? _serviceSearchDebounce;
+  List<SystemdService> _visibleManageServicesCache = [];
+  String? _lastManageFilterKey;
 
-  bool get _isActive => widget.tabController.index == 3;
+  bool get _isActive => widget.activeTabIndex.value == 3;
 
   @override
   bool get wantKeepAlive => true;
@@ -94,7 +94,7 @@ class _ServicesTabState extends State<_ServicesTab>
     _lastSelectedConnectionId = widget.viewModel.selectedConnectionId;
     _serviceSearchController.addListener(_filterServices);
     _snapshotSearchController.addListener(_filterSnapshotServices);
-    widget.tabController.addListener(_onTabChanged);
+    widget.activeTabIndex.addListener(_onTabChanged);
     _scheduleModeActivation();
   }
 
@@ -120,7 +120,8 @@ class _ServicesTabState extends State<_ServicesTab>
   void dispose() {
     _serviceSearchController.dispose();
     _snapshotSearchController.dispose();
-    widget.tabController.removeListener(_onTabChanged);
+    _serviceSearchDebounce?.cancel();
+    widget.activeTabIndex.removeListener(_onTabChanged);
     super.dispose();
   }
 
@@ -132,31 +133,37 @@ class _ServicesTabState extends State<_ServicesTab>
   }
 
   void _filterServices() {
-    if (!mounted) return;
-    setState(() {});
+    _serviceSearchDebounce?.cancel();
+    _serviceSearchDebounce = Timer(const Duration(milliseconds: 180), () {
+      if (!mounted) return;
+      setState(() {
+        _rebuildVisibleManageServicesCache();
+      });
+    });
   }
 
-  List<SystemdService> _visibleManageServices() {
+  void _rebuildVisibleManageServicesCache() {
     final query = _serviceSearchController.text.trim().toLowerCase();
     final services = widget.viewModel.services;
+    final connectionId = widget.viewModel.selectedConnectionId;
+    final key = '$connectionId|$query|${services.length}';
 
-    if (query == _lastQuery && identical(services, _lastServices)) {
-      return _cachedVisibleServices;
-    }
-
-    _lastQuery = query;
-    _lastServices = services;
+    if (_lastManageFilterKey == key) return;
+    _lastManageFilterKey = key;
 
     if (query.isEmpty) {
-      _cachedVisibleServices = services;
+      _visibleManageServicesCache = services;
     } else {
-      _cachedVisibleServices = services.where((service) {
+      _visibleManageServicesCache = services.where((service) {
         return service.name.toLowerCase().contains(query) ||
             service.description.toLowerCase().contains(query);
       }).toList();
     }
+  }
 
-    return _cachedVisibleServices;
+  List<SystemdService> _visibleManageServices() {
+    _rebuildVisibleManageServicesCache();
+    return _visibleManageServicesCache;
   }
 
   void _filterSnapshotServices() {

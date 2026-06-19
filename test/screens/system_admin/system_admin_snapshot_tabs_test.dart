@@ -711,12 +711,14 @@ void main() {
     expect(find.text('No services found.'), findsNothing);
 
     await tester.enterText(find.byType(TextField), 'nginx');
+    await tester.pump(const Duration(milliseconds: 200));
     await tester.pumpAndSettle();
 
     expect(find.text('nginx.service'), findsOneWidget);
     expect(find.text('ssh.service'), findsNothing);
 
     await tester.enterText(find.byType(TextField), 'missing-service');
+    await tester.pump(const Duration(milliseconds: 200));
     await tester.pumpAndSettle();
 
     expect(find.text('nginx.service'), findsNothing);

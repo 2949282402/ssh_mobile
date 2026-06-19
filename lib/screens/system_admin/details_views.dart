@@ -18,7 +18,7 @@ class _FlatSnapshotItem<T> {
   });
 }
 
-class _ServerSnapshotTab<T> extends StatelessWidget {
+class _ServerSnapshotTab<T> extends StatefulWidget {
   final AppStrings strings;
   final List<ConnectionConfig> connections;
   final String emptyText;
@@ -27,6 +27,7 @@ class _ServerSnapshotTab<T> extends StatelessWidget {
   final Widget Function(BuildContext context, T item) itemBuilder;
 
   const _ServerSnapshotTab({
+    super.key,
     required this.strings,
     required this.connections,
     required this.emptyText,
@@ -36,7 +37,85 @@ class _ServerSnapshotTab<T> extends StatelessWidget {
   });
 
   @override
+  State<_ServerSnapshotTab<T>> createState() => _ServerSnapshotTabState<T>();
+}
+
+class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
+  List<ConnectionConfig>? _lastConnections;
+  Map<String, List<T>>? _lastData;
+  List<_FlatSnapshotItem<T>>? _flatItemsCache;
+
+  List<_FlatSnapshotItem<T>> _getFlatItems(Map<String, List<T>> data) {
+    final connections = widget.connections;
+    if (_lastConnections != null &&
+        _lastData != null &&
+        listEquals(connections, _lastConnections) &&
+        _areMapsEqual(data, _lastData!) &&
+        _flatItemsCache != null) {
+      return _flatItemsCache!;
+    }
+
+    _lastConnections = List.from(connections);
+    _lastData = Map.from(data);
+
+    final flatItems = <_FlatSnapshotItem<T>>[];
+    for (final connection in connections) {
+      final items = data[connection.id] ?? const [];
+      if (items.isEmpty) {
+        flatItems.add(_FlatSnapshotItem<T>(
+          connection: connection,
+          isHeader: true,
+          isFirst: true,
+          isLast: false,
+        ));
+        flatItems.add(_FlatSnapshotItem<T>(
+          connection: connection,
+          emptyText: widget.emptyText,
+          isHeader: false,
+          isFirst: false,
+          isLast: true,
+        ));
+      } else {
+        flatItems.add(_FlatSnapshotItem<T>(
+          connection: connection,
+          isHeader: true,
+          isFirst: true,
+          isLast: false,
+        ));
+        for (int i = 0; i < items.length; i++) {
+          flatItems.add(_FlatSnapshotItem<T>(
+            connection: connection,
+            item: items[i],
+            isHeader: false,
+            isFirst: false,
+            isLast: i == items.length - 1,
+          ));
+        }
+      }
+    }
+    _flatItemsCache = flatItems;
+    return flatItems;
+  }
+
+  bool _areMapsEqual(Map<String, List<T>> a, Map<String, List<T>> b) {
+    if (a.length != b.length) return false;
+    for (final key in a.keys) {
+      if (!b.containsKey(key)) return false;
+      final listA = a[key]!;
+      final listB = b[key]!;
+      if (!identical(listA, listB)) return false;
+    }
+    return true;
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final connections = widget.connections;
+    final strings = widget.strings;
+    final future = widget.future;
+    final onRefresh = widget.onRefresh;
+    final itemBuilder = widget.itemBuilder;
+
     if (connections.isEmpty) {
       return Center(
         child: Builder(
@@ -115,12 +194,74 @@ class _ServerSnapshotTab<T> extends StatelessWidget {
                   }
                   final data = snapshot.data ?? const {};
 
-                  return _ServerSnapshotList<T>(
-                    strings: strings,
-                    connections: connections,
-                    emptyText: emptyText,
-                    data: data,
-                    itemBuilder: itemBuilder,
+                  final flatItems = _getFlatItems(data);
+                  final colorScheme = Theme.of(context).colorScheme;
+                  final borderSide = BorderSide(color: colorScheme.outlineVariant);
+
+                  return ListView.builder(
+                    cacheExtent: 900,
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+                    itemCount: flatItems.length,
+                    itemBuilder: (context, index) {
+                      final flatItem = flatItems[index];
+                      final isFirst = flatItem.isFirst;
+                      final isLast = flatItem.isLast;
+
+                      final decoration = BoxDecoration(
+                        color: colorScheme.surface,
+                        borderRadius: BorderRadius.only(
+                          topLeft: isFirst ? const Radius.circular(AppTheme.radiusSmall) : Radius.zero,
+                          topRight: isFirst ? const Radius.circular(AppTheme.radiusSmall) : Radius.zero,
+                          bottomLeft: isLast ? const Radius.circular(AppTheme.radiusSmall) : Radius.zero,
+                          bottomRight: isLast ? const Radius.circular(AppTheme.radiusSmall) : Radius.zero,
+                        ),
+                        border: Border(
+                          left: borderSide,
+                          right: borderSide,
+                          top: isFirst ? borderSide : BorderSide.none,
+                          bottom: isLast ? borderSide : BorderSide.none,
+                        ),
+                      );
+
+                      final margin = EdgeInsets.only(
+                        left: 0,
+                        right: 0,
+                        top: isFirst ? 12.0 : 0.0,
+                        bottom: isLast ? 12.0 : 0.0,
+                      );
+
+                      if (flatItem.isHeader) {
+                        return Container(
+                          key: ValueKey('header-${flatItem.connection.id}'),
+                          margin: margin,
+                          decoration: decoration,
+                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
+                          child: Text(
+                            flatItem.connection.name,
+                            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+                          ),
+                        );
+                      }
+
+                      if (flatItem.emptyText != null) {
+                        return Container(
+                          key: ValueKey('empty-${flatItem.connection.id}'),
+                          margin: margin,
+                          decoration: decoration,
+                          padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                          child: Text(
+                            flatItem.emptyText!,
+                            style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
+                          ),
+                        );
+                      }
+
+                      return Container(
+                        margin: margin,
+                        decoration: decoration,
+                        child: itemBuilder(context, flatItem.item as T),
+                      );
+                    },
                   );
                 },
               ),
@@ -492,159 +633,6 @@ class _ServiceDetailLine extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _ServerSnapshotList<T> extends StatefulWidget {
-  final AppStrings strings;
-  final List<ConnectionConfig> connections;
-  final String emptyText;
-  final Map<String, List<T>> data;
-  final Widget Function(BuildContext context, T item) itemBuilder;
-
-  const _ServerSnapshotList({
-    super.key,
-    required this.strings,
-    required this.connections,
-    required this.emptyText,
-    required this.data,
-    required this.itemBuilder,
-  });
-
-  @override
-  State<_ServerSnapshotList<T>> createState() => _ServerSnapshotListState<T>();
-}
-
-class _ServerSnapshotListState<T> extends State<_ServerSnapshotList<T>> {
-  List<ConnectionConfig>? _lastConnections;
-  Map<String, List<T>>? _lastData;
-  List<_FlatSnapshotItem<T>>? _cachedFlatItems;
-
-  List<_FlatSnapshotItem<T>> _getFlatItems() {
-    final connections = widget.connections;
-    final data = widget.data;
-
-    if (_lastConnections != null &&
-        _lastData != null &&
-        identical(connections, _lastConnections) &&
-        identical(data, _lastData) &&
-        _cachedFlatItems != null) {
-      return _cachedFlatItems!;
-    }
-
-    _lastConnections = connections;
-    _lastData = data;
-
-    final flatItems = <_FlatSnapshotItem<T>>[];
-    for (final connection in connections) {
-      final items = data[connection.id] ?? const [];
-      if (items.isEmpty) {
-        flatItems.add(_FlatSnapshotItem<T>(
-          connection: connection,
-          isHeader: true,
-          isFirst: true,
-          isLast: false,
-        ));
-        flatItems.add(_FlatSnapshotItem<T>(
-          connection: connection,
-          emptyText: widget.emptyText,
-          isHeader: false,
-          isFirst: false,
-          isLast: true,
-        ));
-      } else {
-        flatItems.add(_FlatSnapshotItem<T>(
-          connection: connection,
-          isHeader: true,
-          isFirst: true,
-          isLast: false,
-        ));
-        for (int i = 0; i < items.length; i++) {
-          flatItems.add(_FlatSnapshotItem<T>(
-            connection: connection,
-            item: items[i],
-            isHeader: false,
-            isFirst: false,
-            isLast: i == items.length - 1,
-          ));
-        }
-      }
-    }
-    _cachedFlatItems = flatItems;
-    return flatItems;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final flatItems = _getFlatItems();
-    final colorScheme = Theme.of(context).colorScheme;
-    final borderSide = BorderSide(color: colorScheme.outlineVariant);
-
-    return ListView.builder(
-      cacheExtent: 900,
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
-      itemCount: flatItems.length,
-      itemBuilder: (context, index) {
-        final flatItem = flatItems[index];
-        final isFirst = flatItem.isFirst;
-        final isLast = flatItem.isLast;
-
-        final decoration = BoxDecoration(
-          color: colorScheme.surface,
-          borderRadius: BorderRadius.only(
-            topLeft: isFirst ? const Radius.circular(AppTheme.radiusSmall) : Radius.zero,
-            topRight: isFirst ? const Radius.circular(AppTheme.radiusSmall) : Radius.zero,
-            bottomLeft: isLast ? const Radius.circular(AppTheme.radiusSmall) : Radius.zero,
-            bottomRight: isLast ? const Radius.circular(AppTheme.radiusSmall) : Radius.zero,
-          ),
-          border: Border(
-            left: borderSide,
-            right: borderSide,
-            top: isFirst ? borderSide : BorderSide.none,
-            bottom: isLast ? borderSide : BorderSide.none,
-          ),
-        );
-
-        final margin = EdgeInsets.only(
-          left: 0,
-          right: 0,
-          top: isFirst ? 12.0 : 0.0,
-          bottom: isLast ? 12.0 : 0.0,
-        );
-
-        if (flatItem.isHeader) {
-          return Container(
-            key: ValueKey('header-${flatItem.connection.id}'),
-            margin: margin,
-            decoration: decoration,
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
-            child: Text(
-              flatItem.connection.name,
-              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
-            ),
-          );
-        }
-
-        if (flatItem.emptyText != null) {
-          return Container(
-            key: ValueKey('empty-${flatItem.connection.id}'),
-            margin: margin,
-            decoration: decoration,
-            padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-            child: Text(
-              flatItem.emptyText!,
-              style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
-            ),
-          );
-        }
-
-        return Container(
-          margin: margin,
-          decoration: decoration,
-          child: widget.itemBuilder(context, flatItem.item as T),
-        );
-      },
     );
   }
 }
