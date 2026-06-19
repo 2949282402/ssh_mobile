@@ -4,13 +4,13 @@ class _PortsTab extends StatefulWidget {
   final AppStrings strings;
   final ColorScheme colorScheme;
   final SystemAdminViewModel viewModel;
-  final TabController tabController;
+  final ValueNotifier<int> activeTabIndex;
 
   const _PortsTab({
     required this.strings,
     required this.colorScheme,
     required this.viewModel,
-    required this.tabController,
+    required this.activeTabIndex,
   });
 
   @override
@@ -29,7 +29,7 @@ class _PortsTabState extends State<_PortsTab>
   String? _lastActivatedModeKey;
   bool _modeActivationScheduled = false;
 
-  bool get _isActive => widget.tabController.index == 1;
+  bool get _isActive => widget.activeTabIndex.value == 1;
 
   bool get _isLinux {
     final connectionId = widget.viewModel.selectedConnectionId;
@@ -90,13 +90,13 @@ class _PortsTabState extends State<_PortsTab>
   void initState() {
     super.initState();
     _lastSelectedConnectionId = widget.viewModel.selectedConnectionId;
-    widget.tabController.addListener(_onTabChanged);
+    widget.activeTabIndex.addListener(_onTabChanged);
     _scheduleModeActivation();
   }
 
   @override
   void dispose() {
-    widget.tabController.removeListener(_onTabChanged);
+    widget.activeTabIndex.removeListener(_onTabChanged);
     super.dispose();
   }
 

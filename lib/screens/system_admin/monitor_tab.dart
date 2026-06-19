@@ -187,6 +187,7 @@ class _MonitorTabState extends State<_MonitorTab>
               child: Padding(
                 padding: const EdgeInsets.only(bottom: 12),
                 child: _MetricChart(
+                  metricKey: item.spec.key,
                   title: item.title,
                   unit: item.spec.unit,
                   connections: item.connections,

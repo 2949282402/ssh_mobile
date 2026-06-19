@@ -46,6 +46,7 @@ class SystemAdminScreen extends StatefulWidget {
 class _SystemAdminScreenState extends State<SystemAdminScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  final ValueNotifier<int> _activeTabIndex = ValueNotifier<int>(0);
   int? _lastActivatedTabIndex;
   String? _lastActivatedConnectionId;
   String? _lastObservedSelectedConnectionId;
@@ -61,6 +62,10 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
 
   void _handleTabSelection() {
     if (!mounted) return;
+    final index = _tabController.index;
+    if (_activeTabIndex.value != index) {
+      _activeTabIndex.value = index;
+    }
     _scheduleCurrentTabActivation();
   }
 
@@ -68,6 +73,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
   void dispose() {
     _tabController.removeListener(_handleTabSelection);
     _tabController.dispose();
+    _activeTabIndex.dispose();
     super.dispose();
   }
 
@@ -85,134 +91,131 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
     );
     final strings = AppStrings(language);
 
-    final storageReady = context.select<SystemAdminViewModel, bool>(
-      (vm) => vm.storageInitialized,
-    );
+    return Selector<SystemAdminViewModel, _SystemAdminShellSnapshot>(
+      selector: (_, vm) => _SystemAdminShellSnapshot.from(vm),
+      builder: (context, snapshot, _) {
+        final viewModelRead = context.read<SystemAdminViewModel>();
+        _maybeScheduleActivationForSelectionChange(viewModelRead);
 
-    final desktop = isDesktopLayout(context);
-    final colorScheme = Theme.of(context).colorScheme;
+        if (!snapshot.storageReady) {
+          return const Center(
+            child: SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          );
+        }
 
-    context.select<SystemAdminViewModel, List<ConnectionConfig>>(
-      (vm) => vm.connections,
-    );
-    context.select<SystemAdminViewModel, String?>(
-      (vm) => vm.selectedConnectionId,
-    );
+        final desktop = isDesktopLayout(context);
+        final colorScheme = Theme.of(context).colorScheme;
 
-    final viewModelRead = context.read<SystemAdminViewModel>();
-    _maybeScheduleActivationForSelectionChange(viewModelRead);
+        final bodyContent = _buildMainContent(
+          strings,
+          colorScheme,
+          _activeTabIndex,
+        );
 
-    final serversCollapsed = context.select<SystemAdminViewModel, bool>(
-      (vm) => vm.serversCollapsed,
-    );
-
-    if (!storageReady) {
-      return const Center(
-        child: SizedBox(
-          width: 28,
-          height: 28,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-      );
-    }
-
-    final bodyContent = _buildMainContent(
-      strings,
-      colorScheme,
-    );
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(strings.systemAdmin),
-        actions: [
-          ListenableBuilder(
-            listenable: _tabController,
-            builder: (context, _) {
-              final isMonitorTab = _tabController.index == 0;
-              final canManage = context.select<SystemAdminViewModel, bool>(
-                (vm) => vm.canManageSelectedConnection,
-              );
-              if (!isMonitorTab && canManage) {
-                return IconButton(
-                  icon: const Icon(Icons.refresh),
-                  onPressed: () => context.read<SystemAdminViewModel>().refreshAllData(),
-                  tooltip: strings.refreshAll,
-                );
-              }
-              return const SizedBox.shrink();
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(strings.systemAdmin),
+            actions: [
+              ValueListenableBuilder<int>(
+                valueListenable: _activeTabIndex,
+                builder: (context, activeIndex, _) {
+                  final isMonitorTab = activeIndex == 0;
+                  final canManage = context.select<SystemAdminViewModel, bool>(
+                    (vm) => vm.canManageSelectedConnection,
+                  );
+                  if (!isMonitorTab && canManage) {
+                    return IconButton(
+                      icon: const Icon(Icons.refresh),
+                      onPressed: () => context.read<SystemAdminViewModel>().refreshAllData(),
+                      tooltip: strings.refreshAll,
+                    );
+                  }
+                  return const SizedBox.shrink();
+                },
+              ),
+            ],
+          ),
+          body: ValueListenableBuilder<int>(
+            valueListenable: _activeTabIndex,
+            builder: (context, activeIndex, _) {
+              final isMonitorTab = activeIndex == 0;
+              return desktop
+                  ? Row(
+                      children: [
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          curve: Curves.easeOutCubic,
+                          width: snapshot.serversCollapsed ? 64 : 320,
+                          child: snapshot.serversCollapsed
+                              ? _AdminCollapsedDesktopServerRail(
+                                  key: const ValueKey('admin-server-rail-collapsed'),
+                                  strings: strings,
+                                  isMonitorTab: isMonitorTab,
+                                  onExpand: () =>
+                                      context.read<SystemAdminViewModel>().setServersCollapsed(context, false),
+                                )
+                              : _AdminServerPane(
+                                  strings: strings,
+                                  isMonitorTab: isMonitorTab,
+                                  onCollapse: () =>
+                                      context.read<SystemAdminViewModel>().setServersCollapsed(context, true),
+                                ),
+                        ),
+                        VerticalDivider(
+                          width: 1,
+                          thickness: 1,
+                          color: Theme.of(context).colorScheme.outlineVariant,
+                        ),
+                        Expanded(
+                          child: bodyContent,
+                        ),
+                      ],
+                    )
+                  : Column(
+                      children: [
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          curve: Curves.easeOutCubic,
+                          height: snapshot.serversCollapsed ? 48.0 : 72.0,
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 180),
+                            switchInCurve: Curves.easeOutCubic,
+                            switchOutCurve: Curves.easeInCubic,
+                            child: snapshot.serversCollapsed
+                                ? _AdminCollapsedMobileServerBar(
+                                    key: const ValueKey('admin-server-collapsed'),
+                                    strings: strings,
+                                    isMonitorTab: isMonitorTab,
+                                    onExpand: () =>
+                                        context.read<SystemAdminViewModel>().setServersCollapsed(context, false),
+                                  )
+                                : _AdminMobileServerStrip(
+                                    key: const ValueKey('admin-server-expanded'),
+                                    strings: strings,
+                                    isMonitorTab: isMonitorTab,
+                                    onCollapse: () =>
+                                        context.read<SystemAdminViewModel>().setServersCollapsed(context, true),
+                                  ),
+                          ),
+                        ),
+                        Divider(
+                          height: 1,
+                          thickness: 1,
+                          color: Theme.of(context).colorScheme.outlineVariant,
+                        ),
+                        Expanded(
+                          child: bodyContent,
+                        ),
+                      ],
+                    );
             },
           ),
-        ],
-      ),
-      body: desktop
-          ? Row(
-              children: [
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  curve: Curves.easeOutCubic,
-                  width: serversCollapsed ? 64 : 320,
-                  child: serversCollapsed
-                      ? _AdminCollapsedDesktopServerRail(
-                          key: const ValueKey('admin-server-rail-collapsed'),
-                          strings: strings,
-                          tabController: _tabController,
-                          onExpand: () =>
-                              context.read<SystemAdminViewModel>().setServersCollapsed(context, false),
-                        )
-                      : _AdminServerPane(
-                          strings: strings,
-                          tabController: _tabController,
-                          onCollapse: () =>
-                              context.read<SystemAdminViewModel>().setServersCollapsed(context, true),
-                        ),
-                ),
-                VerticalDivider(
-                  width: 1,
-                  thickness: 1,
-                  color: Theme.of(context).colorScheme.outlineVariant,
-                ),
-                Expanded(
-                  child: bodyContent,
-                ),
-              ],
-            )
-          : Column(
-              children: [
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  curve: Curves.easeOutCubic,
-                  height: serversCollapsed ? 48.0 : 72.0,
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    switchInCurve: Curves.easeOutCubic,
-                    switchOutCurve: Curves.easeInCubic,
-                    child: serversCollapsed
-                        ? _AdminCollapsedMobileServerBar(
-                            key: const ValueKey('admin-server-collapsed'),
-                            strings: strings,
-                            tabController: _tabController,
-                            onExpand: () =>
-                                context.read<SystemAdminViewModel>().setServersCollapsed(context, false),
-                          )
-                        : _AdminMobileServerStrip(
-                            key: const ValueKey('admin-server-expanded'),
-                            strings: strings,
-                            tabController: _tabController,
-                            onCollapse: () =>
-                                context.read<SystemAdminViewModel>().setServersCollapsed(context, true),
-                          ),
-                  ),
-                ),
-                Divider(
-                  height: 1,
-                  thickness: 1,
-                  color: Theme.of(context).colorScheme.outlineVariant,
-                ),
-                Expanded(
-                  child: bodyContent,
-                ),
-              ],
-            ),
+        );
+      },
     );
   }
 
@@ -322,6 +325,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
   Widget _buildMainContent(
     AppStrings strings,
     ColorScheme colorScheme,
+    ValueNotifier<int> activeTabIndex,
   ) {
     // TabController organizes all Admin tabs
     return Column(
@@ -374,7 +378,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                 strings: strings,
                 colorScheme: colorScheme,
                 viewModel: context.read<SystemAdminViewModel>(),
-                tabController: _tabController,
+                activeTabIndex: activeTabIndex,
               ),
               // Tab 2: Applications (Snapshot only)
               _ApplicationsTab(
@@ -382,14 +386,14 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                 colorScheme: colorScheme,
                 viewModel: context.read<SystemAdminViewModel>(),
                 monitorViewModel: context.read<PerformanceMonitorViewModel>(),
-                tabController: _tabController,
+                activeTabIndex: activeTabIndex,
               ),
               // Tab 3: Services (Manage/Snapshot)
               _ServicesTab(
                 strings: strings,
                 colorScheme: colorScheme,
                 viewModel: context.read<SystemAdminViewModel>(),
-                tabController: _tabController,
+                activeTabIndex: activeTabIndex,
               ),
               // Tab 4: Users (Requires root connection)
               _RootRequiredTabWrapper(
@@ -826,4 +830,44 @@ Color _monitorSeriesColor(int index) {
     Colors.brown,
   ];
   return palette[index % palette.length];
+}
+
+class _SystemAdminShellSnapshot {
+  final bool storageReady;
+  final bool serversCollapsed;
+  final String? selectedConnectionId;
+  final List<ConnectionConfig> connections;
+
+  const _SystemAdminShellSnapshot({
+    required this.storageReady,
+    required this.serversCollapsed,
+    required this.selectedConnectionId,
+    required this.connections,
+  });
+
+  factory _SystemAdminShellSnapshot.from(SystemAdminViewModel vm) {
+    return _SystemAdminShellSnapshot(
+      storageReady: vm.storageInitialized,
+      serversCollapsed: vm.serversCollapsed,
+      selectedConnectionId: vm.selectedConnectionId,
+      connections: vm.connections,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is _SystemAdminShellSnapshot &&
+        other.storageReady == storageReady &&
+        other.serversCollapsed == serversCollapsed &&
+        other.selectedConnectionId == selectedConnectionId &&
+        listEquals(other.connections, connections);
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        storageReady,
+        serversCollapsed,
+        selectedConnectionId,
+        Object.hashAll(connections),
+      );
 }

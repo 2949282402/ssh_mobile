@@ -5,14 +5,14 @@ class _ApplicationsTab extends StatefulWidget {
   final ColorScheme colorScheme;
   final SystemAdminViewModel viewModel;
   final PerformanceMonitorViewModel monitorViewModel;
-  final TabController tabController;
+  final ValueNotifier<int> activeTabIndex;
 
   const _ApplicationsTab({
     required this.strings,
     required this.colorScheme,
     required this.viewModel,
     required this.monitorViewModel,
-    required this.tabController,
+    required this.activeTabIndex,
   });
 
   @override
@@ -29,7 +29,7 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
   String? _lastSelectedConnectionId;
   bool _appsLoadScheduled = false;
 
-  bool get _isActive => widget.tabController.index == 2;
+  bool get _isActive => widget.activeTabIndex.value == 2;
 
   void _refreshApplicationsFuture({bool force = false}) {
     final connectionId = widget.viewModel.selectedConnectionId;
@@ -104,13 +104,13 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
   void initState() {
     super.initState();
     _lastSelectedConnectionId = widget.viewModel.selectedConnectionId;
-    widget.tabController.addListener(_onTabChanged);
+    widget.activeTabIndex.addListener(_onTabChanged);
     _scheduleApplicationsLoad();
   }
 
   @override
   void dispose() {
-    widget.tabController.removeListener(_onTabChanged);
+    widget.activeTabIndex.removeListener(_onTabChanged);
     super.dispose();
   }
 
