@@ -73,7 +73,7 @@ class SftpFileCache {
           return entity;
         }
       }
-    } catch (e) {
+    } catch (_) {
       // ignore
     }
     return null;
@@ -170,7 +170,7 @@ class SftpFileCache {
         AppLogService.instance
             .info('SFTP preview Cache invalidated', details: 'path=$path');
       }
-    } catch (e) {
+    } catch (_) {
       // ignore
     }
   }
