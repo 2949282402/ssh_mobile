@@ -5,13 +5,11 @@ class _ChatShellSnapshot {
   final bool loading;
   final bool hasActiveChat;
   final String? activeChatId;
-  final bool sending;
 
   const _ChatShellSnapshot({
     required this.loading,
     required this.hasActiveChat,
     required this.activeChatId,
-    required this.sending,
   });
 
   @override
@@ -21,15 +19,13 @@ class _ChatShellSnapshot {
           runtimeType == other.runtimeType &&
           loading == other.loading &&
           hasActiveChat == other.hasActiveChat &&
-          activeChatId == other.activeChatId &&
-          sending == other.sending;
+          activeChatId == other.activeChatId;
 
   @override
   int get hashCode => Object.hash(
         loading,
         hasActiveChat,
         activeChatId,
-        sending,
       );
 }
 

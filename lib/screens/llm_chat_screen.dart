@@ -369,7 +369,6 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
         loading: vm.loading,
         hasActiveChat: vm.activeChat != null,
         activeChatId: vm.activeChatId,
-        sending: vm.sending,
       ),
       builder: (context, snapshot, child) {
         if (snapshot.loading || !snapshot.hasActiveChat) {

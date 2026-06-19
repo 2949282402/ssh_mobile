@@ -62,7 +62,7 @@ class _ChatComposerState extends State<_ChatComposer> {
           sending: vm.sending,
           hasPendingAttachments: vm.pendingAttachments.isNotEmpty,
           pendingAttachmentsCount: vm.pendingAttachments.length,
-          selectedConnectionIds: vm.selectedConnectionIds,
+          selectedConnectionIds: Set<String>.unmodifiable(vm.selectedConnectionIds),
           connectionsCount: vm.connections.length,
         );
       },

@@ -7,8 +7,9 @@ class _ChatAttachmentPreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Selector<AiChatViewModel, List<AiChatAttachment>>(
-      selector: (_, vm) => vm.pendingAttachments,
-      shouldRebuild: (prev, next) => listEquals(prev, next),
+      selector: (_, vm) =>
+          List<AiChatAttachment>.unmodifiable(vm.pendingAttachments),
+      shouldRebuild: (prev, next) => !listEquals(prev, next),
       builder: (context, pendingAttachments, _) {
         if (pendingAttachments.isEmpty) return const SizedBox.shrink();
         final viewModel = context.read<AiChatViewModel>();
