@@ -177,16 +177,18 @@ class _ServicesTabState extends State<_ServicesTab>
     _serviceSearchDebounce = Timer(const Duration(milliseconds: 180), () {
       if (!mounted) return;
       setState(() {
-        _rebuildVisibleManageServicesCache();
+        _lastManageFilterKey = null;
       });
     });
   }
 
-  void _rebuildVisibleManageServicesCache() {
+  void _rebuildVisibleManageServicesCache(List<SystemdService> services) {
     final query = _serviceSearchController.text.trim().toLowerCase();
-    final services = widget.viewModel.services;
     final connectionId = widget.viewModel.selectedConnectionId;
-    final key = '$connectionId|$query|${services.length}';
+    final servicesHash = Object.hashAll(
+      services.map((s) => Object.hash(s.name, s.loadState, s.activeState, s.subState, s.description))
+    );
+    final key = '$connectionId|$query|$servicesHash';
 
     if (_lastManageFilterKey == key) return;
     _lastManageFilterKey = key;
@@ -201,8 +203,8 @@ class _ServicesTabState extends State<_ServicesTab>
     }
   }
 
-  List<SystemdService> _visibleManageServices() {
-    _rebuildVisibleManageServicesCache();
+  List<SystemdService> _visibleManageServices(List<SystemdService> services) {
+    _rebuildVisibleManageServicesCache(services);
     return _visibleManageServicesCache;
   }
 
@@ -365,7 +367,7 @@ class _ServicesTabState extends State<_ServicesTab>
           return const Center(child: CircularProgressIndicator());
         }
 
-        final visibleServices = _visibleManageServices();
+        final visibleServices = _visibleManageServices(snapshot.services);
 
         return RefreshIndicator(
           onRefresh: () => widget.viewModel.fetchServices(id, force: true),
@@ -491,7 +493,8 @@ class _ServicesTabState extends State<_ServicesTab>
                   connections: currentConfigList,
                   emptyText: _monitorText(
                       widget.strings, 'No running services found', '未发现运行中的服务'),
-                  future: _servicesFuture == null ? null : Future.value(snapshotData),
+                  future: _servicesFuture,
+                  dataOverride: _rawSnapshotData.isEmpty ? null : snapshotData,
                   onRefresh: () =>
                       setState(() => _refreshServicesFuture(force: true)),
                   itemBuilder: (context, service) {
