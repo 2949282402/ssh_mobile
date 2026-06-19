@@ -3,6 +3,7 @@ part of '../system_admin_screen.dart';
 class _MetricChart extends StatelessWidget {
   static const int _maxChartPointsPerSeries = 140;
 
+  final String metricKey;
   final String title;
   final String unit;
   final List<ConnectionConfig> connections;
@@ -15,6 +16,7 @@ class _MetricChart extends StatelessWidget {
   final VoidCallback onToggle;
 
   const _MetricChart({
+    required this.metricKey,
     required this.title,
     required this.unit,
     required this.connections,
@@ -40,22 +42,22 @@ class _MetricChart extends StatelessWidget {
       final connection = connections[i];
       final rawSamples =
           samplesByConnection[connection.id] ?? const <PerformanceSample>[];
-      final spots = _MetricChartSpotsCache.getOrCreate(
+      final cachedSeries = _MetricChartSeriesCache.getOrCreate(
         connectionId: connection.id,
-        metricKey: '$title:$unit',
+        metricKey: metricKey,
         visibleSamples: rawSamples,
         valueFor: valueFor,
+        latestTextFor: latestTextFor,
         startTime: start,
       );
-      if (spots.isEmpty) continue;
+      if (cachedSeries.spots.isEmpty) continue;
       final color = _serverColor(i);
-      for (final spot in spots) {
-        dynamicMax = max(dynamicMax, spot.y);
-        maxX = max(maxX, spot.x);
-      }
+      if (cachedSeries.dynamicMax > dynamicMax) dynamicMax = cachedSeries.dynamicMax;
+      if (cachedSeries.maxX > maxX) maxX = cachedSeries.maxX;
+
       series.add(
         LineChartBarData(
-          spots: spots,
+          spots: cachedSeries.spots,
           isCurved: false,
           barWidth: 2,
           color: color,
@@ -63,11 +65,10 @@ class _MetricChart extends StatelessWidget {
           belowBarData: BarAreaData(show: false),
         ),
       );
-      final latest = rawSamples.last;
       latestLabels.add(
         _LegendLabel(
           color: color,
-          text: '${connection.name} ${latestTextFor(latest)}',
+          text: '${connection.name} ${cachedSeries.latestText}',
         ),
       );
     }
@@ -215,24 +216,92 @@ class _MetricChart extends StatelessWidget {
   Color _serverColor(int index) => _monitorSeriesColor(index);
 }
 
-class _MetricChartSpotsCache {
-  static final Map<String, List<FlSpot>> _cache = {};
+class _ChartSeriesCacheKey {
+  final String connectionId;
+  final int sampleLength;
+  final DateTime? firstTime;
+  final DateTime? lastTime;
+  final String metricKey;
+  final DateTime startTime;
 
-  static List<FlSpot> getOrCreate({
+  _ChartSeriesCacheKey({
+    required this.connectionId,
+    required this.sampleLength,
+    required this.firstTime,
+    required this.lastTime,
+    required this.metricKey,
+    required this.startTime,
+  });
+
+  @override
+  bool operator ==(Object other) {
+    return other is _ChartSeriesCacheKey &&
+        other.connectionId == connectionId &&
+        other.sampleLength == sampleLength &&
+        other.firstTime == firstTime &&
+        other.lastTime == lastTime &&
+        other.metricKey == metricKey &&
+        other.startTime == startTime;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        connectionId,
+        sampleLength,
+        firstTime,
+        lastTime,
+        metricKey,
+        startTime,
+      );
+}
+
+class _CachedChartSeries {
+  final List<FlSpot> spots;
+  final double maxX;
+  final double dynamicMax;
+  final String latestText;
+
+  const _CachedChartSeries({
+    required this.spots,
+    required this.maxX,
+    required this.dynamicMax,
+    required this.latestText,
+  });
+}
+
+class _MetricChartSeriesCache {
+  static final Map<_ChartSeriesCacheKey, _CachedChartSeries> _cache = {};
+
+  static _CachedChartSeries getOrCreate({
     required String connectionId,
     required String metricKey,
     required List<PerformanceSample> visibleSamples,
     required double Function(PerformanceSample) valueFor,
+    required String Function(PerformanceSample) latestTextFor,
     required DateTime startTime,
   }) {
-    if (visibleSamples.isEmpty) return const [];
-
-    final firstTime = visibleSamples.first.time.millisecondsSinceEpoch;
-    final lastTime = visibleSamples.last.time.millisecondsSinceEpoch;
-    final key = '$connectionId:$metricKey:${visibleSamples.length}:$firstTime:$lastTime:${startTime.millisecondsSinceEpoch}';
+    final key = _ChartSeriesCacheKey(
+      connectionId: connectionId,
+      sampleLength: visibleSamples.length,
+      firstTime: visibleSamples.isEmpty ? null : visibleSamples.first.time,
+      lastTime: visibleSamples.isEmpty ? null : visibleSamples.last.time,
+      metricKey: metricKey,
+      startTime: startTime,
+    );
 
     if (_cache.containsKey(key)) {
       return _cache[key]!;
+    }
+
+    if (visibleSamples.isEmpty) {
+      const emptySeries = _CachedChartSeries(
+        spots: [],
+        maxX: 10.0,
+        dynamicMax: 1.0,
+        latestText: '',
+      );
+      _cache[key] = emptySeries;
+      return emptySeries;
     }
 
     final thinned = _thinSamples(visibleSamples);
@@ -244,11 +313,28 @@ class _MetricChartSpotsCache {
         ),
     ]);
 
-    _cache[key] = spots;
+    var dynamicMax = 1.0;
+    var maxX = 10.0;
+    for (final spot in spots) {
+      if (spot.y > dynamicMax) dynamicMax = spot.y;
+      if (spot.x > maxX) maxX = spot.x;
+    }
+
+    final latest = visibleSamples.last;
+    final latestText = latestTextFor(latest);
+
+    final cached = _CachedChartSeries(
+      spots: spots,
+      maxX: maxX,
+      dynamicMax: dynamicMax,
+      latestText: latestText,
+    );
+
+    _cache[key] = cached;
     if (_cache.length > 256) {
       _cache.remove(_cache.keys.first);
     }
-    return spots;
+    return cached;
   }
 
   static List<PerformanceSample> _thinSamples(List<PerformanceSample> samples) {
