@@ -32,7 +32,9 @@ class _MonitorTabState extends State<_MonitorTab>
   late PerformanceMonitorViewModel monitor;
   late List<ConnectionConfig> connections;
 
-  List<ConnectionConfig> get activeConnections {
+  List<ConnectionConfig> _getActiveConnections(
+      PerformanceMonitorViewModel monitor,
+      List<ConnectionConfig> connections) {
     return monitor.isRunning
         ? [
             for (final connection in connections)
@@ -49,7 +51,7 @@ class _MonitorTabState extends State<_MonitorTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    monitor = context.watch<PerformanceMonitorViewModel>();
+    monitor = context.read<PerformanceMonitorViewModel>();
     connections = context.select<SystemAdminViewModel, List<ConnectionConfig>>(
       (vm) => vm.connections,
     );
@@ -107,7 +109,8 @@ class _MonitorTabState extends State<_MonitorTab>
   }
 
   Widget _buildPerformanceTab(BuildContext context) {
-    final chartConnections = activeConnections;
+    final monitor = context.read<PerformanceMonitorViewModel>();
+    final chartConnections = _getActiveConnections(monitor, connections);
     final monitoringConnections = [
       for (final connection in connections)
         if (monitor.monitoringConnectionIds.contains(connection.id)) connection,

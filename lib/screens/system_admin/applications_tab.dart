@@ -124,8 +124,9 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final viewModel = context.watch<SystemAdminViewModel>();
-    final connectionId = viewModel.selectedConnectionId;
+    final connectionId = context.select<SystemAdminViewModel, String?>(
+      (vm) => vm.selectedConnectionId,
+    );
 
     if (connectionId == null) {
       return Center(
@@ -144,7 +145,10 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
       _scheduleApplicationsLoad();
     }
 
-    final currentConfigList = viewModel.connections
+    final connections = context.select<SystemAdminViewModel, List<ConnectionConfig>>(
+      (vm) => vm.connections,
+    );
+    final currentConfigList = connections
         .where((c) => c.id == connectionId)
         .toList();
 

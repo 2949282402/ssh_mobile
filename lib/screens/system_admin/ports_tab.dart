@@ -1,5 +1,52 @@
 part of '../system_admin_screen.dart';
 
+class _PortsManageSnapshot {
+  final bool isConnecting;
+  final bool isManageModeAvailable;
+  final String? errorMessage;
+  final bool loadingPorts;
+  final List<ListeningPort> ports;
+
+  const _PortsManageSnapshot({
+    required this.isConnecting,
+    required this.isManageModeAvailable,
+    required this.errorMessage,
+    required this.loadingPorts,
+    required this.ports,
+  });
+
+  factory _PortsManageSnapshot.from(SystemAdminViewModel vm) {
+    return _PortsManageSnapshot(
+      isConnecting: vm.isConnectingSelectedConnection,
+      isManageModeAvailable: vm.canManageSelectedConnection,
+      errorMessage: vm.hasManagementErrorForSelectedConnection
+          ? vm.errorMessage
+          : null,
+      loadingPorts: vm.loadingPorts,
+      ports: vm.ports,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is _PortsManageSnapshot &&
+        other.isConnecting == isConnecting &&
+        other.isManageModeAvailable == isManageModeAvailable &&
+        other.errorMessage == errorMessage &&
+        other.loadingPorts == loadingPorts &&
+        listEquals(other.ports, ports);
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        isConnecting,
+        isManageModeAvailable,
+        errorMessage,
+        loadingPorts,
+        Object.hashAll(ports),
+      );
+}
+
 class _PortsTab extends StatefulWidget {
   final AppStrings strings;
   final ColorScheme colorScheme;
@@ -35,10 +82,6 @@ class _PortsTabState extends State<_PortsTab>
     final connectionId = widget.viewModel.selectedConnectionId;
     final config = widget.viewModel.connectionById(connectionId);
     return config?.serverPlatform == ServerPlatform.linux;
-  }
-
-  bool get _isManageModeAvailable {
-    return widget.viewModel.canManageSelectedConnection && _isLinux;
   }
 
   void _refreshPortsFuture({bool force = false}) {
@@ -162,8 +205,9 @@ class _PortsTabState extends State<_PortsTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final viewModel = context.watch<SystemAdminViewModel>();
-    final id = viewModel.selectedConnectionId;
+    final id = context.select<SystemAdminViewModel, String?>(
+      (vm) => vm.selectedConnectionId,
+    );
 
     if (id == null) {
       return Center(
@@ -222,98 +266,100 @@ class _PortsTabState extends State<_PortsTab>
   }
 
   Widget _buildManageView(String id) {
-    final viewModel = widget.viewModel;
-    if (viewModel.isConnectingSelectedConnection) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    return Selector<SystemAdminViewModel, _PortsManageSnapshot>(
+      selector: (_, vm) => _PortsManageSnapshot.from(vm),
+      builder: (context, snapshot, _) {
+        if (snapshot.isConnecting) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-    if (!_isManageModeAvailable) {
-      return _RootRequiredView(
-        strings: widget.strings,
-        errorMessage: viewModel.hasManagementErrorForSelectedConnection
-            ? viewModel.errorMessage
-            : null,
-        onConnect: () {
-          _lastActivatedModeKey = null;
-          _scheduleModeActivation();
-        },
-      );
-    }
+        if (!snapshot.isManageModeAvailable) {
+          return _RootRequiredView(
+            strings: widget.strings,
+            errorMessage: snapshot.errorMessage,
+            onConnect: () {
+              _lastActivatedModeKey = null;
+              _scheduleModeActivation();
+            },
+          );
+        }
 
-    if (viewModel.loadingPorts) {
-      return const Center(child: CircularProgressIndicator());
-    }
+        if (snapshot.loadingPorts) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-    if (viewModel.ports.isEmpty) {
-      return RefreshIndicator(
-        onRefresh: () => viewModel.fetchPorts(id, force: true),
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          children: const [
-            SizedBox(height: 100),
-            Center(child: Text('No listening ports found.')),
-          ],
-        ),
-      );
-    }
-
-    return RefreshIndicator(
-      onRefresh: () => viewModel.fetchPorts(id, force: true),
-      child: ListView.builder(
-        padding: const EdgeInsets.all(12),
-        itemCount: viewModel.ports.length,
-        itemBuilder: (context, index) {
-          final p = viewModel.ports[index];
-          return Card(
-            child: ListTile(
-              leading: Icon(
-                p.protocol.contains('udp')
-                    ? Icons.radio_button_checked
-                    : Icons.swap_horizontal_circle,
-                color: widget.colorScheme.secondary,
-              ),
-              title: Row(
-                children: [
-                  Text('${p.protocol.toUpperCase()}  :${p.localPort}',
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: widget.colorScheme.surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: OverflowScrollText(
-                          p.processName,
-                          selectable: false,
-                          maxLines: 1,
-                          style: const TextStyle(
-                              fontFamily: 'monospace',
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              subtitle: OverflowScrollText(
-                'Address: ${p.localAddress} ${p.pid != null ? '• PID: ${p.pid}' : ''}',
-                selectable: false,
-                maxLines: 1,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: widget.colorScheme.onSurface.withValues(alpha: 0.58),
-                ),
-              ),
+        if (snapshot.ports.isEmpty) {
+          return RefreshIndicator(
+            onRefresh: () => widget.viewModel.fetchPorts(id, force: true),
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: const [
+                SizedBox(height: 100),
+                Center(child: Text('No listening ports found.')),
+              ],
             ),
           );
-        },
-      ),
+        }
+
+        return RefreshIndicator(
+          onRefresh: () => widget.viewModel.fetchPorts(id, force: true),
+          child: ListView.builder(
+            padding: const EdgeInsets.all(12),
+            itemCount: snapshot.ports.length,
+            itemBuilder: (context, index) {
+              final p = snapshot.ports[index];
+              return Card(
+                child: ListTile(
+                  leading: Icon(
+                    p.protocol.contains('udp')
+                        ? Icons.radio_button_checked
+                        : Icons.swap_horizontal_circle,
+                    color: widget.colorScheme.secondary,
+                  ),
+                  title: Row(
+                    children: [
+                      Text('${p.protocol.toUpperCase()}  :${p.localPort}',
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: widget.colorScheme.surfaceContainerHighest,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: OverflowScrollText(
+                              p.processName,
+                              selectable: false,
+                              maxLines: 1,
+                              style: const TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  subtitle: OverflowScrollText(
+                    'Address: ${p.localAddress} ${p.pid != null ? '• PID: ${p.pid}' : ''}',
+                    selectable: false,
+                    maxLines: 1,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: widget.colorScheme.onSurface.withValues(alpha: 0.58),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 
