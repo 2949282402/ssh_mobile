@@ -195,7 +195,7 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
       _pendingScrollJump = false;
       if (!_scrollController.hasClients) return;
       final viewModel = context.read<AiChatViewModel>();
-      if (!shouldJump && viewModel.sending && !_isUserAtBottom) return;
+      if (!shouldJump && viewModel.sending && !_isUserAtBottom.value) return;
       if (shouldJump || viewModel.sending) {
         _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
         _setUserAtBottom(true);
@@ -210,15 +210,6 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
     });
   }
 
-  void _setUserAtBottom(bool atBottom) {
-    if (_isUserAtBottom == atBottom) return;
-    if (!mounted) {
-      _isUserAtBottom = atBottom;
-      return;
-    }
-    setState(() => _isUserAtBottom = atBottom);
-  }
-
   bool _isNearBottom(ScrollMetrics metrics) {
     return (metrics.maxScrollExtent - metrics.pixels) <=
         _LlmChatScreenBodyState._scrollBottomDistance;
@@ -226,17 +217,5 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
 
   void _updateUserScrollPosition(ScrollMetrics metrics) {
     _setUserAtBottom(_isNearBottom(metrics));
-  }
-
-  bool _shouldShowJumpToBottomButton() {
-    final viewModel = context.read<AiChatViewModel>();
-    if (!viewModel.sending) return false;
-    if (!_scrollController.hasClients) return false;
-    if (_isUserAtBottom) return false;
-    if (_scrollController.position.maxScrollExtent <=
-        _LlmChatScreenBodyState._scrollBottomDistance) {
-      return false;
-    }
-    return true;
   }
 }
