@@ -4,13 +4,13 @@ class _PortsTab extends StatefulWidget {
   final AppStrings strings;
   final ColorScheme colorScheme;
   final SystemAdminViewModel viewModel;
-  final bool active;
+  final TabController tabController;
 
   const _PortsTab({
     required this.strings,
     required this.colorScheme,
     required this.viewModel,
-    required this.active,
+    required this.tabController,
   });
 
   @override
@@ -28,6 +28,8 @@ class _PortsTabState extends State<_PortsTab>
   String? _lastSelectedConnectionId;
   String? _lastActivatedModeKey;
   bool _modeActivationScheduled = false;
+
+  bool get _isActive => widget.tabController.index == 1;
 
   bool get _isLinux {
     final connectionId = widget.viewModel.selectedConnectionId;
@@ -79,7 +81,7 @@ class _PortsTabState extends State<_PortsTab>
       _lastActivatedModeKey = null;
       _isManageMode = false;
     }
-    if (widget.active) {
+    if (_isActive) {
       _scheduleModeActivation();
     }
   }
@@ -88,11 +90,25 @@ class _PortsTabState extends State<_PortsTab>
   void initState() {
     super.initState();
     _lastSelectedConnectionId = widget.viewModel.selectedConnectionId;
+    widget.tabController.addListener(_onTabChanged);
     _scheduleModeActivation();
   }
 
+  @override
+  void dispose() {
+    widget.tabController.removeListener(_onTabChanged);
+    super.dispose();
+  }
+
+  void _onTabChanged() {
+    if (!mounted) return;
+    if (_isActive) {
+      _scheduleModeActivation();
+    }
+  }
+
   void _scheduleModeActivation() {
-    if (!widget.active || _modeActivationScheduled) return;
+    if (!_isActive || _modeActivationScheduled) return;
     final id = widget.viewModel.selectedConnectionId;
     if (id == null) return;
 
@@ -107,7 +123,7 @@ class _PortsTabState extends State<_PortsTab>
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _modeActivationScheduled = false;
-      if (!mounted || !widget.active) return;
+      if (!mounted || !_isActive) return;
       unawaited(_activateCurrentMode());
     });
   }
@@ -146,7 +162,7 @@ class _PortsTabState extends State<_PortsTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final viewModel = widget.viewModel;
+    final viewModel = context.watch<SystemAdminViewModel>();
     final id = viewModel.selectedConnectionId;
 
     if (id == null) {
@@ -162,7 +178,7 @@ class _PortsTabState extends State<_PortsTab>
       );
     }
 
-    if (widget.active) {
+    if (_isActive) {
       _scheduleModeActivation();
     }
 

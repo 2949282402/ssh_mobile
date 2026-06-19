@@ -4,13 +4,13 @@ class _ServicesTab extends StatefulWidget {
   final AppStrings strings;
   final ColorScheme colorScheme;
   final SystemAdminViewModel viewModel;
-  final bool active;
+  final TabController tabController;
 
   const _ServicesTab({
     required this.strings,
     required this.colorScheme,
     required this.viewModel,
-    required this.active,
+    required this.tabController,
   });
 
   @override
@@ -32,6 +32,12 @@ class _ServicesTabState extends State<_ServicesTab>
   String? _lastSelectedConnectionId;
   String? _lastActivatedModeKey;
   bool _modeActivationScheduled = false;
+
+  String _lastQuery = '';
+  List<SystemdService> _lastServices = [];
+  List<SystemdService> _cachedVisibleServices = [];
+
+  bool get _isActive => widget.tabController.index == 3;
 
   @override
   bool get wantKeepAlive => true;
@@ -88,6 +94,7 @@ class _ServicesTabState extends State<_ServicesTab>
     _lastSelectedConnectionId = widget.viewModel.selectedConnectionId;
     _serviceSearchController.addListener(_filterServices);
     _snapshotSearchController.addListener(_filterSnapshotServices);
+    widget.tabController.addListener(_onTabChanged);
     _scheduleModeActivation();
   }
 
@@ -104,7 +111,7 @@ class _ServicesTabState extends State<_ServicesTab>
       _lastActivatedModeKey = null;
       _isManageMode = false;
     }
-    if (widget.active) {
+    if (_isActive) {
       _scheduleModeActivation();
     }
   }
@@ -113,7 +120,15 @@ class _ServicesTabState extends State<_ServicesTab>
   void dispose() {
     _serviceSearchController.dispose();
     _snapshotSearchController.dispose();
+    widget.tabController.removeListener(_onTabChanged);
     super.dispose();
+  }
+
+  void _onTabChanged() {
+    if (!mounted) return;
+    if (_isActive) {
+      _scheduleModeActivation();
+    }
   }
 
   void _filterServices() {
@@ -125,14 +140,23 @@ class _ServicesTabState extends State<_ServicesTab>
     final query = _serviceSearchController.text.trim().toLowerCase();
     final services = widget.viewModel.services;
 
-    if (query.isEmpty) {
-      return services;
+    if (query == _lastQuery && identical(services, _lastServices)) {
+      return _cachedVisibleServices;
     }
 
-    return services.where((service) {
-      return service.name.toLowerCase().contains(query) ||
-          service.description.toLowerCase().contains(query);
-    }).toList();
+    _lastQuery = query;
+    _lastServices = services;
+
+    if (query.isEmpty) {
+      _cachedVisibleServices = services;
+    } else {
+      _cachedVisibleServices = services.where((service) {
+        return service.name.toLowerCase().contains(query) ||
+            service.description.toLowerCase().contains(query);
+      }).toList();
+    }
+
+    return _cachedVisibleServices;
   }
 
   void _filterSnapshotServices() {
@@ -157,7 +181,7 @@ class _ServicesTabState extends State<_ServicesTab>
   }
 
   void _scheduleModeActivation() {
-    if (!widget.active || _modeActivationScheduled) return;
+    if (!_isActive || _modeActivationScheduled) return;
     final id = widget.viewModel.selectedConnectionId;
     if (id == null) return;
 
@@ -173,7 +197,7 @@ class _ServicesTabState extends State<_ServicesTab>
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _modeActivationScheduled = false;
-      if (!mounted || !widget.active) return;
+      if (!mounted || !_isActive) return;
       unawaited(_activateCurrentMode());
     });
   }
@@ -213,7 +237,7 @@ class _ServicesTabState extends State<_ServicesTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final viewModel = widget.viewModel;
+    final viewModel = context.watch<SystemAdminViewModel>();
     final id = viewModel.selectedConnectionId;
 
     if (id == null) {
@@ -229,7 +253,7 @@ class _ServicesTabState extends State<_ServicesTab>
       );
     }
 
-    if (widget.active) {
+    if (_isActive) {
       _scheduleModeActivation();
     }
 
@@ -266,14 +290,13 @@ class _ServicesTabState extends State<_ServicesTab>
         ],
         Expanded(
             child: _isManageMode && _isLinux
-                ? _buildManageView(id)
-                : _buildSnapshotView(id)),
+                ? _buildManageView(id, viewModel)
+                : _buildSnapshotView(id, viewModel)),
       ],
     );
   }
 
-  Widget _buildManageView(String id) {
-    final viewModel = widget.viewModel;
+  Widget _buildManageView(String id, SystemAdminViewModel viewModel) {
     if (viewModel.isConnectingSelectedConnection) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -385,9 +408,9 @@ class _ServicesTabState extends State<_ServicesTab>
     );
   }
 
-  Widget _buildSnapshotView(String id) {
+  Widget _buildSnapshotView(String id, SystemAdminViewModel viewModel) {
     final currentConfigList =
-        widget.viewModel.connections.where((c) => c.id == id).toList();
+        viewModel.connections.where((c) => c.id == id).toList();
 
     return Column(
       children: [

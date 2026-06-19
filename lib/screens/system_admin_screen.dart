@@ -49,6 +49,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
   int? _lastActivatedTabIndex;
   String? _lastActivatedConnectionId;
   String? _lastObservedSelectedConnectionId;
+  List<ConnectionConfig>? _lastObservedConnections;
   bool _activationScheduled = false;
 
   @override
@@ -60,7 +61,6 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
 
   void _handleTabSelection() {
     if (!mounted) return;
-    setState(() {});
     _scheduleCurrentTabActivation();
   }
 
@@ -84,28 +84,27 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
       (settings) => settings.language,
     );
     final strings = AppStrings(language);
-    final viewModel = context.watch<SystemAdminViewModel>();
-    final monitorVm = context.watch<PerformanceMonitorViewModel>();
-    final storageReady = viewModel.storageInitialized;
-    final connections = viewModel.connections;
 
-    final selectedConnectionId = viewModel.selectedConnectionId;
-    final isConnecting = viewModel.isConnecting;
-    final isConnected = viewModel.isConnected;
-    final errorMessage = viewModel.errorMessage;
+    final storageReady = context.select<SystemAdminViewModel, bool>(
+      (vm) => vm.storageInitialized,
+    );
 
     final desktop = isDesktopLayout(context);
     final colorScheme = Theme.of(context).colorScheme;
 
-    final isMonitorTab = _tabController.index == 0;
+    context.select<SystemAdminViewModel, List<ConnectionConfig>>(
+      (vm) => vm.connections,
+    );
+    context.select<SystemAdminViewModel, String?>(
+      (vm) => vm.selectedConnectionId,
+    );
 
-    _maybeScheduleActivationForSelectionChange(viewModel);
+    final viewModelRead = context.read<SystemAdminViewModel>();
+    _maybeScheduleActivationForSelectionChange(viewModelRead);
 
-    final selectedConnection = viewModel.connectionById(selectedConnectionId);
-    final selectedMonitorConnections = connections
-        .where((c) => monitorVm.selectedConnectionIds.contains(c.id))
-        .toList();
-    final serversCollapsed = viewModel.serversCollapsed;
+    final serversCollapsed = context.select<SystemAdminViewModel, bool>(
+      (vm) => vm.serversCollapsed,
+    );
 
     if (!storageReady) {
       return const Center(
@@ -118,28 +117,31 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
     }
 
     final bodyContent = _buildMainContent(
-      viewModel,
-      monitorVm,
       strings,
       colorScheme,
-      desktop,
-      selectedConnectionId,
-      isConnecting,
-      isConnected,
-      errorMessage,
-      connections,
     );
 
     return Scaffold(
       appBar: AppBar(
         title: Text(strings.systemAdmin),
         actions: [
-          if (!isMonitorTab && viewModel.canManageSelectedConnection)
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: viewModel.refreshAllData,
-              tooltip: strings.refreshAll,
-            ),
+          ListenableBuilder(
+            listenable: _tabController,
+            builder: (context, _) {
+              final isMonitorTab = _tabController.index == 0;
+              final canManage = context.select<SystemAdminViewModel, bool>(
+                (vm) => vm.canManageSelectedConnection,
+              );
+              if (!isMonitorTab && canManage) {
+                return IconButton(
+                  icon: const Icon(Icons.refresh),
+                  onPressed: () => context.read<SystemAdminViewModel>().refreshAllData(),
+                  tooltip: strings.refreshAll,
+                );
+              }
+              return const SizedBox.shrink();
+            },
+          ),
         ],
       ),
       body: desktop
@@ -151,33 +153,17 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                   width: serversCollapsed ? 64 : 320,
                   child: serversCollapsed
                       ? _AdminCollapsedDesktopServerRail(
-                          key: ValueKey(isMonitorTab
-                              ? 'admin-monitor-server-rail-collapsed'
-                              : 'admin-server-rail-collapsed'),
-                          selectedConnection: selectedConnection,
-                          connections: selectedMonitorConnections,
-                          busy: isMonitorTab
-                              ? (monitorVm.isSampling && monitorVm.isRunning)
-                              : (isConnecting &&
-                                  viewModel.managementConnectionId ==
-                                      selectedConnectionId),
-                          connected: isMonitorTab
-                              ? monitorVm.isRunning
-                              : (isConnected &&
-                                  viewModel.managementConnectionId ==
-                                      selectedConnectionId),
+                          key: const ValueKey('admin-server-rail-collapsed'),
                           strings: strings,
-                          isMonitorTab: isMonitorTab,
+                          tabController: _tabController,
                           onExpand: () =>
-                              viewModel.setServersCollapsed(context, false),
+                              context.read<SystemAdminViewModel>().setServersCollapsed(context, false),
                         )
                       : _AdminServerPane(
-                          viewModel: viewModel,
-                          connections: connections,
                           strings: strings,
-                          isMonitorTab: isMonitorTab,
+                          tabController: _tabController,
                           onCollapse: () =>
-                              viewModel.setServersCollapsed(context, true),
+                              context.read<SystemAdminViewModel>().setServersCollapsed(context, true),
                         ),
                 ),
                 VerticalDivider(
@@ -192,43 +178,30 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
             )
           : Column(
               children: [
-                AnimatedSwitcher(
+                AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeInCubic,
-                  child: serversCollapsed
-                      ? _AdminCollapsedMobileServerBar(
-                          key: ValueKey(isMonitorTab
-                              ? 'admin-monitor-server-collapsed'
-                              : 'admin-server-collapsed'),
-                          selectedConnection: selectedConnection,
-                          connections: selectedMonitorConnections,
-                          busy: isMonitorTab
-                              ? (monitorVm.isSampling && monitorVm.isRunning)
-                              : (isConnecting &&
-                                  viewModel.managementConnectionId ==
-                                      selectedConnectionId),
-                          connected: isMonitorTab
-                              ? monitorVm.isRunning
-                              : (isConnected &&
-                                  viewModel.managementConnectionId ==
-                                      selectedConnectionId),
-                          strings: strings,
-                          isMonitorTab: isMonitorTab,
-                          onExpand: () =>
-                              viewModel.setServersCollapsed(context, false),
-                        )
-                      : _AdminMobileServerStrip(
-                          key: ValueKey(isMonitorTab
-                              ? 'admin-monitor-server-expanded'
-                              : 'admin-server-expanded'),
-                          viewModel: viewModel,
-                          connections: connections,
-                          strings: strings,
-                          isMonitorTab: isMonitorTab,
-                          onCollapse: () =>
-                              viewModel.setServersCollapsed(context, true),
-                        ),
+                  curve: Curves.easeOutCubic,
+                  height: serversCollapsed ? 48.0 : 72.0,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    child: serversCollapsed
+                        ? _AdminCollapsedMobileServerBar(
+                            key: const ValueKey('admin-server-collapsed'),
+                            strings: strings,
+                            tabController: _tabController,
+                            onExpand: () =>
+                                context.read<SystemAdminViewModel>().setServersCollapsed(context, false),
+                          )
+                        : _AdminMobileServerStrip(
+                            key: const ValueKey('admin-server-expanded'),
+                            strings: strings,
+                            tabController: _tabController,
+                            onCollapse: () =>
+                                context.read<SystemAdminViewModel>().setServersCollapsed(context, true),
+                          ),
+                  ),
                 ),
                 Divider(
                   height: 1,
@@ -247,9 +220,17 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
     SystemAdminViewModel viewModel,
   ) {
     final currentSelectedId = viewModel.selectedConnectionId;
-    if (_lastObservedSelectedConnectionId == currentSelectedId) return;
+    final currentConnections = viewModel.connections;
+
+    final selectedIdChanged =
+        _lastObservedSelectedConnectionId != currentSelectedId;
+    final connectionsChanged =
+        !identical(_lastObservedConnections, currentConnections);
+
+    if (!selectedIdChanged && !connectionsChanged) return;
 
     _lastObservedSelectedConnectionId = currentSelectedId;
+    _lastObservedConnections = currentConnections;
     _lastActivatedConnectionId = null;
 
     _scheduleCurrentTabActivation();
@@ -339,16 +320,8 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
   }
 
   Widget _buildMainContent(
-    SystemAdminViewModel viewModel,
-    PerformanceMonitorViewModel monitorVm,
     AppStrings strings,
     ColorScheme colorScheme,
-    bool desktop,
-    String? selectedConnectionId,
-    bool isConnecting,
-    bool isConnected,
-    String? errorMessage,
-    List<ConnectionConfig> connections,
   ) {
     // TabController organizes all Admin tabs
     return Column(
@@ -384,15 +357,15 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
               // Tab 0: Monitor
               _MonitorTab(
                 strings: strings,
-                monitor: monitorVm,
-                connections: connections,
+                tabController: _tabController,
                 onStartMonitoring: () async {
+                  final monitorVm = context.read<PerformanceMonitorViewModel>();
                   await monitorVm.startMonitoring(
                     onUnknownHostKey: (request) =>
                         showSshHostKeyTrustDialog(context, request),
                   );
                   if (mounted) {
-                    viewModel.setServersCollapsed(context, true);
+                    context.read<SystemAdminViewModel>().setServersCollapsed(context, true);
                   }
                 },
               ),
@@ -400,55 +373,46 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
               _PortsTab(
                 strings: strings,
                 colorScheme: colorScheme,
-                viewModel: viewModel,
-                active: _tabController.index == 1,
+                viewModel: context.read<SystemAdminViewModel>(),
+                tabController: _tabController,
               ),
               // Tab 2: Applications (Snapshot only)
               _ApplicationsTab(
                 strings: strings,
                 colorScheme: colorScheme,
-                viewModel: viewModel,
-                monitorViewModel: monitorVm,
-                active: _tabController.index == 2,
+                viewModel: context.read<SystemAdminViewModel>(),
+                monitorViewModel: context.read<PerformanceMonitorViewModel>(),
+                tabController: _tabController,
               ),
               // Tab 3: Services (Manage/Snapshot)
               _ServicesTab(
                 strings: strings,
                 colorScheme: colorScheme,
-                viewModel: viewModel,
-                active: _tabController.index == 3,
+                viewModel: context.read<SystemAdminViewModel>(),
+                tabController: _tabController,
               ),
               // Tab 4: Users (Requires root connection)
-              _buildRootRequiredTab(
-                viewModel,
-                strings,
-                colorScheme,
-                _UsersTab(
+              _RootRequiredTabWrapper(
+                child: _UsersTab(
                   strings: strings,
                   colorScheme: colorScheme,
-                  viewModel: viewModel,
+                  viewModel: context.read<SystemAdminViewModel>(),
                 ),
               ),
               // Tab 5: Sessions (Requires root connection)
-              _buildRootRequiredTab(
-                viewModel,
-                strings,
-                colorScheme,
-                _SessionsTab(
+              _RootRequiredTabWrapper(
+                child: _SessionsTab(
                   strings: strings,
                   colorScheme: colorScheme,
-                  viewModel: viewModel,
+                  viewModel: context.read<SystemAdminViewModel>(),
                 ),
               ),
               // Tab 6: Power (Requires root connection)
-              _buildRootRequiredTab(
-                viewModel,
-                strings,
-                colorScheme,
-                _PowerTab(
+              _RootRequiredTabWrapper(
+                child: _PowerTab(
                   strings: strings,
                   colorScheme: colorScheme,
-                  viewModel: viewModel,
+                  viewModel: context.read<SystemAdminViewModel>(),
                 ),
               ),
             ],
@@ -457,23 +421,36 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
       ],
     );
   }
+}
 
-  Widget _buildRootRequiredTab(
-    SystemAdminViewModel viewModel,
-    AppStrings strings,
-    ColorScheme colorScheme,
-    Widget child,
-  ) {
-    final selectedConnectionId = viewModel.selectedConnectionId;
+class _RootRequiredTabWrapper extends StatelessWidget {
+  final Widget child;
+
+  const _RootRequiredTabWrapper({
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
+    final strings = AppStrings(language);
+    final colorScheme = Theme.of(context).colorScheme;
+
+    final selectedConnectionId = context.select<SystemAdminViewModel, String?>(
+      (vm) => vm.selectedConnectionId,
+    );
 
     if (selectedConnectionId == null) {
       return _AdminEmptyState(strings: strings);
     }
 
-    final selectedConnection = viewModel.connectionById(selectedConnectionId);
+    final selectedConnection = context.select<SystemAdminViewModel, ConnectionConfig?>(
+      (vm) => vm.connectionById(selectedConnectionId),
+    );
     if (selectedConnection == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
         context.read<SystemAdminViewModel>().clearInvalidSelection();
       });
       return _AdminEmptyState(strings: strings);
@@ -491,8 +468,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
               Text(
                 strings.nonLinuxMsg,
                 textAlign: TextAlign.center,
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
             ],
           ),
@@ -500,12 +476,19 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
       );
     }
 
-    final isConnecting = viewModel.isConnectingSelectedConnection;
-    final isConnected = viewModel.isConnectedSelectedConnection;
-    final errorMessage = viewModel.hasManagementErrorForSelectedConnection
-        ? viewModel.errorMessage
+    final isConnecting = context.select<SystemAdminViewModel, bool>(
+      (vm) => vm.isConnectingSelectedConnection,
+    );
+    final isConnected = context.select<SystemAdminViewModel, bool>(
+      (vm) => vm.isConnectedSelectedConnection,
+    );
+    final hasError = context.select<SystemAdminViewModel, bool>(
+      (vm) => vm.hasManagementErrorForSelectedConnection,
+    );
+    final errorMessage = hasError
+        ? context.select<SystemAdminViewModel, String?>((vm) => vm.errorMessage)
         : null;
-    final isRoot = isConnected && viewModel.isRoot;
+    final isRoot = isConnected && context.select<SystemAdminViewModel, bool>((vm) => vm.isRoot);
 
     if (isConnecting) {
       return Center(
@@ -528,7 +511,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
         strings: strings,
         errorMessage: errorMessage,
         onConnect: () => unawaited(
-          viewModel.connectIfNeeded(
+          context.read<SystemAdminViewModel>().connectIfNeeded(
             selectedConnectionId,
             onUnknownHostKey: (request) =>
                 showSshHostKeyTrustDialog(context, request),

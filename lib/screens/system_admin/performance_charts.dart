@@ -40,16 +40,15 @@ class _MetricChart extends StatelessWidget {
       final connection = connections[i];
       final rawSamples =
           samplesByConnection[connection.id] ?? const <PerformanceSample>[];
-      final samples = _thinSamples(rawSamples);
-      if (samples.isEmpty) continue;
+      final spots = _MetricChartSpotsCache.getOrCreate(
+        connectionId: connection.id,
+        metricKey: '$title:$unit',
+        visibleSamples: rawSamples,
+        valueFor: valueFor,
+        startTime: start,
+      );
+      if (spots.isEmpty) continue;
       final color = _serverColor(i);
-      final spots = [
-        for (final sample in samples)
-          FlSpot(
-            sample.time.difference(start).inMilliseconds / 1000,
-            valueFor(sample),
-          ),
-      ];
       for (final spot in spots) {
         dynamicMax = max(dynamicMax, spot.y);
         maxX = max(maxX, spot.x);
@@ -213,19 +212,56 @@ class _MetricChart extends StatelessWidget {
     return oldest ?? DateTime.now();
   }
 
-  List<PerformanceSample> _thinSamples(List<PerformanceSample> samples) {
-    if (samples.length <= _maxChartPointsPerSeries) return samples;
-    final step = (samples.length / (_maxChartPointsPerSeries - 1)).ceil();
+  Color _serverColor(int index) => _monitorSeriesColor(index);
+}
+
+class _MetricChartSpotsCache {
+  static final Map<String, List<FlSpot>> _cache = {};
+
+  static List<FlSpot> getOrCreate({
+    required String connectionId,
+    required String metricKey,
+    required List<PerformanceSample> visibleSamples,
+    required double Function(PerformanceSample) valueFor,
+    required DateTime startTime,
+  }) {
+    if (visibleSamples.isEmpty) return const [];
+
+    final firstTime = visibleSamples.first.time.millisecondsSinceEpoch;
+    final lastTime = visibleSamples.last.time.millisecondsSinceEpoch;
+    final key = '$connectionId:$metricKey:${visibleSamples.length}:$firstTime:$lastTime:${startTime.millisecondsSinceEpoch}';
+
+    if (_cache.containsKey(key)) {
+      return _cache[key]!;
+    }
+
+    final thinned = _thinSamples(visibleSamples);
+    final spots = List<FlSpot>.unmodifiable([
+      for (final sample in thinned)
+        FlSpot(
+          sample.time.difference(startTime).inMilliseconds / 1000,
+          valueFor(sample),
+        ),
+    ]);
+
+    _cache[key] = spots;
+    if (_cache.length > 256) {
+      _cache.remove(_cache.keys.first);
+    }
+    return spots;
+  }
+
+  static List<PerformanceSample> _thinSamples(List<PerformanceSample> samples) {
+    if (samples.length <= _MetricChart._maxChartPointsPerSeries) return samples;
+    final step = (samples.length / (_MetricChart._maxChartPointsPerSeries - 1)).ceil();
     final thinned = <PerformanceSample>[];
     for (var index = 0; index < samples.length; index += step) {
       thinned.add(samples[index]);
     }
     final last = samples.last;
-    if (!identical(thinned.last, last)) thinned.add(last);
+    if (thinned.isEmpty || !identical(thinned.last, last)) thinned.add(last);
     return thinned;
   }
-
-  Color _serverColor(int index) => _monitorSeriesColor(index);
 }
 
 class _MetricChartItem {

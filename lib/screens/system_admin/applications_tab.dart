@@ -5,14 +5,14 @@ class _ApplicationsTab extends StatefulWidget {
   final ColorScheme colorScheme;
   final SystemAdminViewModel viewModel;
   final PerformanceMonitorViewModel monitorViewModel;
-  final bool active;
+  final TabController tabController;
 
   const _ApplicationsTab({
     required this.strings,
     required this.colorScheme,
     required this.viewModel,
     required this.monitorViewModel,
-    required this.active,
+    required this.tabController,
   });
 
   @override
@@ -28,6 +28,8 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
   String? _appsSelectionKey;
   String? _lastSelectedConnectionId;
   bool _appsLoadScheduled = false;
+
+  bool get _isActive => widget.tabController.index == 2;
 
   void _refreshApplicationsFuture({bool force = false}) {
     final connectionId = widget.viewModel.selectedConnectionId;
@@ -58,7 +60,7 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
   }
 
   void _scheduleApplicationsLoad({bool force = false}) {
-    if (!widget.active || _appsLoadScheduled) return;
+    if (!_isActive || _appsLoadScheduled) return;
     final connectionId = widget.viewModel.selectedConnectionId;
     if (connectionId == null) return;
     if (!force && _appsFuture != null && _appsSelectionKey == connectionId) {
@@ -69,7 +71,7 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _appsLoadScheduled = false;
-      if (!mounted || !widget.active) return;
+      if (!mounted || !_isActive) return;
       final currentConnectionId = widget.viewModel.selectedConnectionId;
       if (currentConnectionId == null) return;
       if (!force &&
@@ -93,7 +95,7 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
       _appsSelectionKey = null;
       _appsFuture = null;
     }
-    if (widget.active && (!oldWidget.active || connectionId != null)) {
+    if (_isActive && (connectionId != null)) {
       _scheduleApplicationsLoad();
     }
   }
@@ -102,13 +104,28 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
   void initState() {
     super.initState();
     _lastSelectedConnectionId = widget.viewModel.selectedConnectionId;
+    widget.tabController.addListener(_onTabChanged);
     _scheduleApplicationsLoad();
+  }
+
+  @override
+  void dispose() {
+    widget.tabController.removeListener(_onTabChanged);
+    super.dispose();
+  }
+
+  void _onTabChanged() {
+    if (!mounted) return;
+    if (_isActive) {
+      _scheduleApplicationsLoad();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final connectionId = widget.viewModel.selectedConnectionId;
+    final viewModel = context.watch<SystemAdminViewModel>();
+    final connectionId = viewModel.selectedConnectionId;
 
     if (connectionId == null) {
       return Center(
@@ -123,11 +140,11 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
       );
     }
 
-    if (widget.active) {
+    if (_isActive) {
       _scheduleApplicationsLoad();
     }
 
-    final currentConfigList = widget.viewModel.connections
+    final currentConfigList = viewModel.connections
         .where((c) => c.id == connectionId)
         .toList();
 

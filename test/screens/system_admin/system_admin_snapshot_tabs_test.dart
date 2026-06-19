@@ -492,8 +492,12 @@ void main() {
         ChangeNotifierProvider.value(value: adminVm),
         ChangeNotifierProvider.value(value: monitorVm),
       ],
-      child: const MaterialApp(
-        home: SystemAdminScreen(),
+      child: MaterialApp(
+        theme: ThemeData(
+          useMaterial3: true,
+          splashFactory: InkRipple.splashFactory,
+        ),
+        home: const SystemAdminScreen(),
       ),
     );
   }

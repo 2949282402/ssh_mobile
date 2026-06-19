@@ -2,14 +2,12 @@ part of '../system_admin_screen.dart';
 
 class _MonitorTab extends StatefulWidget {
   final AppStrings strings;
-  final PerformanceMonitorViewModel monitor;
-  final List<ConnectionConfig> connections;
+  final TabController tabController;
   final Future<void> Function() onStartMonitoring;
 
   const _MonitorTab({
     required this.strings,
-    required this.monitor,
-    required this.connections,
+    required this.tabController,
     required this.onStartMonitoring,
   });
 
@@ -31,17 +29,18 @@ class _MonitorTabState extends State<_MonitorTab>
   List<_MetricChartItem> _chartItemsCache = const [];
 
   AppStrings get strings => widget.strings;
-  PerformanceMonitorViewModel get monitor => widget.monitor;
+  late PerformanceMonitorViewModel monitor;
+  late List<ConnectionConfig> connections;
 
   List<ConnectionConfig> get activeConnections {
     return monitor.isRunning
         ? [
-            for (final connection in widget.connections)
+            for (final connection in connections)
               if (monitor.monitoringConnectionIds.contains(connection.id))
                 connection,
           ]
         : [
-            for (final connection in widget.connections)
+            for (final connection in connections)
               if (monitor.selectedConnectionIds.contains(connection.id))
                 connection,
           ];
@@ -50,6 +49,11 @@ class _MonitorTabState extends State<_MonitorTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    monitor = context.watch<PerformanceMonitorViewModel>();
+    connections = context.select<SystemAdminViewModel, List<ConnectionConfig>>(
+      (vm) => vm.connections,
+    );
+
     return Column(
       children: [
         Selector<PerformanceMonitorViewModel, _MonitorConfigSnapshot>(
@@ -90,7 +94,7 @@ class _MonitorTabState extends State<_MonitorTab>
             selector: (_, monitor) => _MonitorPerformanceSnapshot.from(
               monitor,
               [
-                for (final connection in widget.connections)
+                for (final connection in connections)
                   if (monitor.monitoringConnectionIds.contains(connection.id))
                     connection,
               ],
@@ -105,7 +109,7 @@ class _MonitorTabState extends State<_MonitorTab>
   Widget _buildPerformanceTab(BuildContext context) {
     final chartConnections = activeConnections;
     final monitoringConnections = [
-      for (final connection in widget.connections)
+      for (final connection in connections)
         if (monitor.monitoringConnectionIds.contains(connection.id)) connection,
     ];
     final samplesByConnection = {
@@ -120,7 +124,7 @@ class _MonitorTabState extends State<_MonitorTab>
       return _MonitorResponsiveEmptyState(
         strings: strings,
         message: [
-          for (final connection in widget.connections)
+          for (final connection in connections)
             if (monitor.selectedConnectionIds.contains(connection.id))
               connection,
         ].isEmpty
