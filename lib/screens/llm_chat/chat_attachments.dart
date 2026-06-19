@@ -1,27 +1,39 @@
 // ignore_for_file: invalid_use_of_protected_member
 part of '../llm_chat_screen.dart';
 
-extension _ChatAttachments on _LlmChatScreenBodyState {
-  Widget _buildAttachmentPreview() {
-    final viewModel = context.watch<AiChatViewModel>();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 6,
-        children: [
-          for (var i = 0; i < viewModel.pendingAttachments.length; i++)
-            _AttachmentChip(
-              attachment: viewModel.pendingAttachments[i],
-              onRemove: () {
-                viewModel.removeAttachmentAt(i);
-              },
-            ),
-        ],
-      ),
+class _ChatAttachmentPreview extends StatelessWidget {
+  const _ChatAttachmentPreview();
+
+  @override
+  Widget build(BuildContext context) {
+    return Selector<AiChatViewModel, List<AiChatAttachment>>(
+      selector: (_, vm) => vm.pendingAttachments,
+      shouldRebuild: (prev, next) => listEquals(prev, next),
+      builder: (context, pendingAttachments, _) {
+        if (pendingAttachments.isEmpty) return const SizedBox.shrink();
+        final viewModel = context.read<AiChatViewModel>();
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              for (var i = 0; i < pendingAttachments.length; i++)
+                _AttachmentChip(
+                  attachment: pendingAttachments[i],
+                  onRemove: () {
+                    viewModel.removeAttachmentAt(i);
+                  },
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
+}
 
+extension _ChatAttachments on _LlmChatScreenBodyState {
   Future<void> _pickImage(_AiStrings strings) async {
     try {
       final result = await FilePicker.pickFiles(
