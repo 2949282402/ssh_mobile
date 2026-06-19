@@ -40,6 +40,13 @@ part 'llm_chat/chat_attachments.dart';
 part 'llm_chat/chat_rag_sheet.dart';
 part 'llm_chat/chat_generation.dart';
 part 'llm_chat/prompt_customizer_dialog.dart';
+part 'llm_chat/chat_state_snapshots.dart';
+part 'llm_chat/chat_header.dart';
+part 'llm_chat/chat_message_list.dart';
+part 'llm_chat/tool_approval_area.dart';
+part 'llm_chat/jump_to_bottom_button.dart';
+part 'llm_chat/chat_history_overlay.dart';
+part 'llm_chat/chat_composer.dart';
 
 const List<String> _defaultModels = [
   'deepseek-v4-flash',
@@ -260,7 +267,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
   Animation<double>? _historySlideAnimation;
   final ValueNotifier<double> _historyPanelExtent = ValueNotifier(0);
   bool _toolsExpanded = false;
-  bool _isUserAtBottom = true;
+  final ValueNotifier<bool> _isUserAtBottom = ValueNotifier(true);
   bool _scrollToBottomScheduled = false;
   bool _pendingScrollJump = false;
   StreamSubscription? _scrollSubscription;
@@ -310,6 +317,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     _scrollSubscription?.cancel();
     _historySlideController.dispose();
     _historyPanelExtent.dispose();
+    _isUserAtBottom.dispose();
     _inputFocusNode.removeListener(_onInputFocusChanged);
     _inputFocusNode.dispose();
     _inputController.dispose();
@@ -325,12 +333,8 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
   }
 
   void _setUserAtBottom(bool atBottom) {
-    if (_isUserAtBottom == atBottom) return;
-    if (!mounted) {
-      _isUserAtBottom = atBottom;
-      return;
-    }
-    setState(() => _isUserAtBottom = atBottom);
+    if (_isUserAtBottom.value == atBottom) return;
+    _isUserAtBottom.value = atBottom;
   }
 
   void _checkPendingDiagnosticPrompt() {
@@ -359,393 +363,74 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
       (settings) => settings.language,
     );
     final strings = _AiStrings(language);
-    final colorScheme = Theme.of(context).colorScheme;
-    final viewModel = context.watch<AiChatViewModel>();
-    final activeChat = viewModel.activeChat;
 
-    if (viewModel.loading || activeChat == null) {
-      return const Center(
-        child: SizedBox(
-          width: 28,
-          height: 28,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-      );
-    }
-
-    final visibleMessages = activeChat.messages.isEmpty
-        ? [
-            AiChatMessageRecord(
-              role: 'assistant',
-              text: strings.welcome,
-              createdAt: DateTime.now(),
+    return Selector<AiChatViewModel, _ChatShellSnapshot>(
+      selector: (context, vm) => _ChatShellSnapshot(
+        loading: vm.loading,
+        hasActiveChat: vm.activeChat != null,
+        activeChatId: vm.activeChatId,
+        sending: vm.sending,
+      ),
+      builder: (context, snapshot, child) {
+        if (snapshot.loading || !snapshot.hasActiveChat) {
+          return const Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
             ),
-          ]
-        : activeChat.messages;
-    final contextTokens = viewModel.contextTokensFor(activeChat);
-    final contextPercent = viewModel.contextWindowTokens <= 0
-        ? 0.0
-        : contextTokens / viewModel.contextWindowTokens;
+          );
+        }
 
-    return Scaffold(
-      body: Stack(
-        children: [
-          Column(
+        return Scaffold(
+          body: Stack(
             children: [
-              Container(
-                padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-                decoration: BoxDecoration(
-                  color: colorScheme.surfaceContainer,
-                  border: Border(
-                    bottom: BorderSide(color: colorScheme.outlineVariant),
+              Column(
+                children: [
+                  _ChatHeader(
+                    onShowHistory: () => _showHistory(context, strings),
+                    onShowSettings: () => _showSettings(context, strings),
                   ),
-                ),
-                child: Row(
-                  children: [
-                    IconButton(
-                      tooltip: strings.history,
-                      icon: const Icon(Icons.menu_rounded),
-                      onPressed: () => _showHistory(context, strings),
+                  Expanded(
+                    child: _ChatMessageList(
+                      scrollController: _scrollController,
+                      onUserScroll: _updateUserScrollPosition,
+                      onEditUser: (index) => _editUserMessage(index, strings),
+                      onRegenerate: (index) =>
+                          _confirmRegenerateAssistant(index, strings),
+                      onBranch: (index) =>
+                          _confirmBranchFromAssistant(index, strings),
+                      onContinueTimeout: () => _continueAfterTimeout(strings),
                     ),
-                    Expanded(
-                      child: TweenAnimationBuilder<double>(
-                        key: ValueKey('chat-title-${activeChat.id}'),
-                        tween: Tween(begin: 0, end: 1),
-                        duration: const Duration(milliseconds: 220),
-                        curve: Curves.easeOutCubic,
-                        builder: (context, value, child) {
-                          return Opacity(
-                            opacity: value,
-                            child: Transform.translate(
-                              offset: Offset(12 * (1 - value), 0),
-                              child: child,
-                            ),
-                          );
-                        },
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            OverflowScrollText(
-                              activeChat.title,
-                              selectable: false,
-                              maxLines: 1,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            OverflowScrollText(
-                              _contextUsage(
-                                contextTokens,
-                                viewModel.contextWindowTokens,
-                                contextPercent,
-                              ),
-                              selectable: false,
-                              maxLines: 1,
-                              style: TextStyle(
-                                color: colorScheme.onSurface
-                                    .withValues(alpha: 0.62),
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: strings.newChat,
-                      icon: const Icon(Icons.add_comment_outlined),
-                      onPressed: viewModel.sending
-                          ? null
-                          : () => viewModel.createChatFromSettings(),
-                    ),
-                    IconButton(
-                      tooltip: strings.settings,
-                      icon: const Icon(Icons.tune_rounded),
-                      onPressed: () => _showSettings(context, strings),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: TweenAnimationBuilder<double>(
-                  key: ValueKey('chat-body-${activeChat.id}'),
-                  tween: Tween(begin: 0, end: 1),
-                  duration: const Duration(milliseconds: 260),
-                  curve: Curves.easeOutCubic,
-                  builder: (context, value, child) {
-                    return Opacity(
-                      opacity: value,
-                      child: Transform.translate(
-                        offset: Offset(0, 18 * (1 - value)),
-                        child: child,
-                      ),
-                    );
-                  },
-                  child: NotificationListener<ScrollNotification>(
-                    onNotification: (notification) {
-                      if (notification.metrics.axis == Axis.vertical &&
-                          (notification is UserScrollNotification ||
-                              notification is ScrollEndNotification)) {
-                        _updateUserScrollPosition(notification.metrics);
-                      }
-                      return false;
-                    },
-                    child: ListView.builder(
-                      controller: _scrollController,
-                      cacheExtent: 900,
-                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
-                      itemCount: visibleMessages.length,
-                      itemBuilder: (context, index) {
-                        final message = visibleMessages[index];
-                        final streamingTextListenable =
-                            viewModel.streamingTextFor(activeChat.id, message);
-                        final streamingStatusListenable = viewModel
-                            .streamingStatusFor(activeChat.id, message);
-                        return RepaintBoundary(
-                          key: ValueKey(
-                            '${message.role}-${message.createdAt.microsecondsSinceEpoch}',
-                          ),
-                          child: _MessageBubble(
-                            chatId: activeChat.id,
-                            index: index,
-                            message: message,
-                            streamingTextListenable: streamingTextListenable,
-                            streamingStatusListenable:
-                                streamingStatusListenable,
-                            canAct: !viewModel.sending &&
-                                activeChat.messages == visibleMessages,
-                            onEditUser: message.role == 'user'
-                                ? () => _editUserMessage(index, strings)
-                                : null,
-                            onRegenerate: message.role == 'assistant'
-                                ? () =>
-                                    _confirmRegenerateAssistant(index, strings)
-                                : null,
-                            onBranch: message.role == 'assistant'
-                                ? () =>
-                                    _confirmBranchFromAssistant(index, strings)
-                                : null,
-                            onContinueTimeout: message.role == 'error' &&
-                                    index == visibleMessages.length - 1 &&
-                                    _isTimeoutError(message.text)
-                                ? () => _continueAfterTimeout(strings)
-                                : null,
-                          ),
-                        );
+                  ),
+                  const _ChatToolApprovalArea(),
+                  SafeArea(
+                    top: false,
+                    child: _ChatComposer(
+                      inputController: _inputController,
+                      inputFocusNode: _inputFocusNode,
+                      toolsExpanded: _toolsExpanded,
+                      onToolsExpandedChanged: (expanded) {
+                        setState(() => _toolsExpanded = expanded);
                       },
+                      onSubmit: () => _send(context, strings),
+                      onStop: _stopGeneration,
                     ),
                   ),
-                ),
+                ],
               ),
-              if (viewModel.pendingApproval?.chatId == activeChat.id)
-                ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxHeight: MediaQuery.sizeOf(context).height < 700
-                        ? MediaQuery.sizeOf(context).height * 0.52
-                        : 420,
-                  ),
-                  child: _ToolApprovalPanel(
-                    pending: viewModel.pendingApproval!,
-                    strings: strings,
-                    onApprove: () =>
-                        viewModel.resolvePendingApproval(approved: true),
-                    onReject: () =>
-                        viewModel.resolvePendingApproval(approved: false),
-                  ),
-                ),
-              SafeArea(
-                top: false,
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-                  decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainer,
-                    border: Border(
-                      top: BorderSide(color: colorScheme.outlineVariant),
-                    ),
-                  ),
-                  child: SingleChildScrollView(
-                    reverse: true,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        (() {
-                          final isPlanInput =
-                              _inputController.text.trim().startsWith('/plan');
-                          final showPlanMode =
-                              activeChat.planMode || isPlanInput;
-                          if (!showPlanMode) return const SizedBox.shrink();
-                          return Container(
-                            margin: const EdgeInsets.only(bottom: 8),
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: colorScheme.primaryContainer,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color:
-                                    colorScheme.primary.withValues(alpha: 0.24),
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.edit_note_rounded,
-                                  size: 18,
-                                  color: colorScheme.onPrimaryContainer,
-                                ),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: Text(
-                                    strings.language == AppLanguage.en
-                                        ? 'Plan Mode Active (Read-only diagnostics & planning)'
-                                        : '规划模式已启用 (仅进行只读诊断与方案规划)',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w700,
-                                      color: colorScheme.onPrimaryContainer,
-                                    ),
-                                  ),
-                                ),
-                                InkWell(
-                                  onTap: () async {
-                                    if (isPlanInput) {
-                                      setState(() {
-                                        _inputController.clear();
-                                      });
-                                    }
-                                    if (activeChat.planMode) {
-                                      await _setPlanModeFromUi(
-                                        chat: activeChat,
-                                        enabled: false,
-                                        strings: strings,
-                                      );
-                                    }
-                                  },
-                                  child: Icon(
-                                    Icons.close_rounded,
-                                    size: 16,
-                                    color: colorScheme.onPrimaryContainer,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        })(),
-                        if (_shouldShowSlashCommandPanel)
-                          _buildSlashCommandPanel(context, strings),
-                        if (viewModel.pendingAttachments.isNotEmpty)
-                          _buildAttachmentPreview(),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: _inputController,
-                                focusNode: _inputFocusNode,
-                                minLines: 1,
-                                maxLines: 3,
-                                textInputAction: TextInputAction.newline,
-                                decoration:
-                                    const InputDecoration(isDense: true),
-                                onSubmitted: _isDesktopPlatform
-                                    ? null
-                                    : (_) => _send(context, strings),
-                                onChanged: (_) => setState(() {}),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            IconButton(
-                              tooltip: strings.tools,
-                              icon: AnimatedRotation(
-                                turns: _toolsExpanded ? 0.125 : 0,
-                                duration: const Duration(milliseconds: 180),
-                                child: const Icon(Icons.add_rounded),
-                              ),
-                              onPressed: () {
-                                setState(
-                                    () => _toolsExpanded = !_toolsExpanded);
-                              },
-                            ),
-                            const SizedBox(width: 4),
-                            IconButton.filled(
-                              tooltip: viewModel.sending
-                                  ? strings.stop
-                                  : strings.send,
-                              icon: Icon(
-                                viewModel.sending
-                                    ? Icons.stop_rounded
-                                    : Icons.send_rounded,
-                              ),
-                              onPressed: viewModel.sending
-                                  ? _stopGeneration
-                                  : () => _send(context, strings),
-                            ),
-                          ],
-                        ),
-                        AnimatedSize(
-                          duration: const Duration(milliseconds: 220),
-                          curve: Curves.easeOutCubic,
-                          alignment: Alignment.topCenter,
-                          child: _toolsExpanded
-                              ? Padding(
-                                  padding: const EdgeInsets.only(top: 8),
-                                  child: _ChatToolsBar(
-                                    skillsLabel: strings.skills,
-                                    serverLabel: _selectedServerLabel(strings),
-                                    webViewLabel: strings.webView,
-                                    imageLabel: strings.attachImage,
-                                    fileLabel: strings.attachFile,
-                                    ragLabel: strings.ragTitle,
-                                    promptLabel: strings.promptLabel,
-                                    planModeLabel: strings.planMode,
-                                    playbooksLabel: strings.playbooks,
-                                    isPlanModeActive: activeChat.planMode,
-                                    onServerTap: () =>
-                                        _selectTargetServer(strings),
-                                    onSkillsTap: () {
-                                      Navigator.pushNamed(
-                                          context, '/ai-skills');
-                                    },
-                                    onWebViewTap: () =>
-                                        _openClientWebView(activeChat.id),
-                                    onImageTap: () => _pickImage(strings),
-                                    onFileTap: () => _pickFile(strings),
-                                    onRagTap: () =>
-                                        _showRagBottomSheet(context, strings),
-                                    onPromptTap: () =>
-                                        _showPromptCustomizer(strings),
-                                    onPlanModeTap: () => _setPlanModeFromUi(
-                                      chat: activeChat,
-                                      enabled: !activeChat.planMode,
-                                      strings: strings,
-                                    ),
-                                    onPlaybooksTap: () {
-                                      Navigator.pushNamed(
-                                          context, '/playbooks');
-                                    },
-                                  ),
-                                )
-                              : const SizedBox(width: double.infinity),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+              _ChatHistoryOverlay(strings: strings),
+              _ChatJumpToBottomButton(
+                scrollController: _scrollController,
+                isUserAtBottom: _isUserAtBottom,
+                onPressed: () => _scrollToBottom(jump: true),
               ),
             ],
           ),
-          _buildHistoryOverlay(context, strings),
-          if (_shouldShowJumpToBottomButton())
-            Positioned(
-              right: 14,
-              bottom: 106,
-              child: FloatingActionButton.small(
-                onPressed: () => _scrollToBottom(jump: true),
-                child: const Icon(Icons.keyboard_arrow_down_rounded),
-              ),
-            ),
-        ],
-      ),
+        );
+      },
     );
   }
 
