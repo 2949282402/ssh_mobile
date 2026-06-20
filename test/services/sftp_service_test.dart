@@ -44,4 +44,32 @@ void main() {
     expect(sftp.state, SftpConnectionState.error);
     expect(sftp.errorMessage, 'Connection config not found');
   });
+
+  test('SftpTransferState models progress and copyWith and equality', () {
+    const state = SftpTransferState(
+      id: 'tx_123',
+      name: 'test.bin',
+      totalBytes: 1000,
+      isUpload: true,
+      bytesTransferred: 200,
+    );
+
+    expect(state.progress, 0.2);
+    expect(state.isUpload, isTrue);
+
+    final updated = state.copyWith(bytesTransferred: 500);
+    expect(updated.bytesTransferred, 500);
+    expect(updated.progress, 0.5);
+    expect(updated.id, 'tx_123');
+
+    final identicalState = SftpTransferState(
+      id: 'tx_123',
+      name: 'test.bin',
+      totalBytes: 1000,
+      isUpload: true,
+      bytesTransferred: 200,
+    );
+    expect(state, identicalState);
+    expect(state.hashCode, identicalState.hashCode);
+  });
 }

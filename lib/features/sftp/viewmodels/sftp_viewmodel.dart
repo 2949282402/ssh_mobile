@@ -79,6 +79,7 @@ class SftpViewModel extends ChangeNotifier {
     await _sftpService.downloadFile(
       entry,
       localPath: localPath,
+      maxBytes: maxBytes,
     );
   }
 

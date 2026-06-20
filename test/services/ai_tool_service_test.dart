@@ -1567,6 +1567,7 @@ class _FakeSftpClient implements SftpClientAdapter {
   Future<void> downloadFile(
     SftpEntry entry, {
     required String localPath,
+    int maxBytes = SftpService.maxDownloadBytes,
   }) async {}
 }
 

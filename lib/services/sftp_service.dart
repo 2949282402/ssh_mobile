@@ -80,6 +80,7 @@ abstract interface class SftpClientAdapter {
   Future<void> downloadFile(
     SftpEntry entry, {
     required String localPath,
+    int maxBytes = SftpService.maxDownloadBytes,
   });
 
   Future<SftpPathInfo> statPathForConnection({
@@ -418,10 +419,11 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       notifyListeners();
       rethrow;
     } finally {
-      _activeTransfer = null;
-      _cancelTransferId = null;
       await raf?.close();
       await _closeFileQuietly(remoteFile);
+      _activeTransfer = null;
+      _cancelTransferId = null;
+      notifyListeners();
     }
   }
 
@@ -429,6 +431,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   Future<void> downloadFile(
     SftpEntry entry, {
     required String localPath,
+    int maxBytes = SftpService.maxDownloadBytes,
   }) async {
     final session = _sessionForEntry(entry);
     final sftp = session.sftp;
@@ -436,6 +439,10 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     if (entry.isDirectory) throw StateError('Directories cannot be downloaded');
 
     final totalSize = entry.size ?? 0;
+    if (totalSize > 0) {
+      _assertWithinMemoryLimit(totalSize, 'download', maxBytes: maxBytes);
+    }
+
     final transferId = DateTime.now().millisecondsSinceEpoch.toString();
     final transfer = SftpTransferState(
       id: transferId,
@@ -472,6 +479,12 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
         final chunk = await remoteFile.readBytes(length: len, offset: offset);
         if (chunk.isEmpty) break;
 
+        if (offset + chunk.length > maxBytes) {
+          throw StateError(
+            'Download exceeds max size of ${_formatBytes(maxBytes)}',
+          );
+        }
+
         await raf.writeFrom(chunk);
         offset += chunk.length;
 
@@ -487,11 +500,15 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       session.state = SftpConnectionState.connected;
       notifyListeners();
     } catch (e, stackTrace) {
+      try {
+        final file = File(localPath);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (_) {}
+
       if (e is SftpTransferCancelledException) {
         AppLogService.instance.info('SFTP download cancelled: ${entry.path}');
-        try {
-          await File(localPath).delete();
-        } catch (_) {}
         session.state = SftpConnectionState.connected;
       } else {
         AppLogService.instance.error(
@@ -506,10 +523,11 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       notifyListeners();
       rethrow;
     } finally {
-      _activeTransfer = null;
-      _cancelTransferId = null;
       await raf?.close();
       await _closeFileQuietly(remoteFile);
+      _activeTransfer = null;
+      _cancelTransferId = null;
+      notifyListeners();
     }
   }
 
