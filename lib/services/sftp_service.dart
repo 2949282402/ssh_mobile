@@ -31,6 +31,8 @@ abstract interface class SftpClientAdapter {
   List<SftpEntry> get entries;
   bool get isConnected;
   bool get isBusy;
+  SftpTransferState? get activeTransfer;
+  bool get hasActiveTransfer;
 
   bool isConnectionBusy(String connectionId);
 
@@ -46,6 +48,11 @@ abstract interface class SftpClientAdapter {
   Future<void> uploadBytes({
     required String filename,
     required Uint8List bytes,
+  });
+
+  Future<void> uploadFile({
+    required String localPath,
+    required String filename,
   });
 
   Future<void> deleteEntry(
@@ -68,6 +75,11 @@ abstract interface class SftpClientAdapter {
     required String connectionId,
     required String path,
     int maxBytes = SftpService.maxDownloadBytes,
+  });
+
+  Future<void> downloadFile(
+    SftpEntry entry, {
+    required String localPath,
   });
 
   Future<SftpPathInfo> statPathForConnection({
@@ -118,6 +130,8 @@ abstract interface class SftpClientAdapter {
   });
 
   Future<void> disconnectAll({bool notify = true});
+
+  void cancelActiveTransfer();
 }
 
 /// SFTP 文件操作服务。
@@ -146,6 +160,13 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   Timer? _notifyTimer;
   String? _activeConnectionId;
   bool _disposed = false;
+  SftpTransferState? _activeTransfer;
+  String? _cancelTransferId;
+
+  @override
+  SftpTransferState? get activeTransfer => _activeTransfer;
+  @override
+  bool get hasActiveTransfer => _activeTransfer != null;
 
   SftpService(this._storageService);
 
@@ -298,6 +319,199 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
 
   @override
   Future<void> refresh() => openPath(currentPath);
+
+  @override
+  void cancelActiveTransfer() {
+    final transfer = _activeTransfer;
+    if (transfer != null) {
+      _cancelTransferId = transfer.id;
+      _activeTransfer = transfer.copyWith(isCancelled: true);
+      notifyListeners();
+    }
+  }
+
+  @override
+  Future<void> uploadFile({
+    required String localPath,
+    required String filename,
+  }) async {
+    final session = _activeSession;
+    final sftp = session?.sftp;
+    if (sftp == null) throw StateError('SFTP is not connected');
+    final activeSession = session!;
+
+    final localFile = File(localPath);
+    if (!await localFile.exists()) {
+      throw FileSystemException('Local file not found', localPath);
+    }
+    final totalSize = await localFile.length();
+    _assertWithinMemoryLimit(totalSize, 'upload', maxBytes: maxUploadBytes);
+
+    final remotePath = _joinRemotePath(activeSession.currentPath, filename);
+
+    final transferId = DateTime.now().millisecondsSinceEpoch.toString();
+    final transfer = SftpTransferState(
+      id: transferId,
+      name: filename,
+      totalBytes: totalSize,
+      isUpload: true,
+    );
+    _activeTransfer = transfer;
+    _cancelTransferId = null;
+    activeSession.state = SftpConnectionState.loading;
+    notifyListeners();
+
+    RandomAccessFile? raf;
+    SftpFile? remoteFile;
+    try {
+      raf = await localFile.open(mode: FileMode.read);
+      remoteFile = await sftp.open(
+        remotePath,
+        mode: SftpFileOpenMode.create |
+            SftpFileOpenMode.truncate |
+            SftpFileOpenMode.write,
+      );
+
+      const chunkSize = 256 * 1024; // 256KB chunks
+      int offset = 0;
+
+      while (offset < totalSize) {
+        if (_cancelTransferId == transferId) {
+          throw const SftpTransferCancelledException();
+        }
+
+        final len = (totalSize - offset) < chunkSize ? (totalSize - offset) : chunkSize;
+        final chunk = await raf.read(len);
+        if (chunk.isEmpty) break;
+
+        await remoteFile.writeBytes(chunk, offset: offset);
+        offset += chunk.length;
+
+        _activeTransfer = transfer.copyWith(bytesTransferred: offset);
+        notifyListeners();
+      }
+
+      _directoryCache.invalidate(activeSession.connectionId);
+      await SftpFileCache.invalidate(activeSession.connectionId, remotePath);
+      AppLogService.instance.info(
+        'SFTP file uploaded via stream',
+        details: 'path=$remotePath bytes=$totalSize',
+      );
+      await _openPath(activeSession, activeSession.currentPath);
+    } catch (e, stackTrace) {
+      if (e is SftpTransferCancelledException) {
+        AppLogService.instance.info('SFTP upload cancelled: $remotePath');
+        try {
+          await sftp.remove(remotePath);
+        } catch (_) {}
+        activeSession.state = SftpConnectionState.connected;
+      } else {
+        AppLogService.instance.error(
+          'SFTP upload failed',
+          error: e,
+          stackTrace: stackTrace,
+          details: 'path=$remotePath',
+        );
+        activeSession.state = SftpConnectionState.error;
+        activeSession.errorMessage = 'Upload failed: $e';
+      }
+      notifyListeners();
+      rethrow;
+    } finally {
+      _activeTransfer = null;
+      _cancelTransferId = null;
+      await raf?.close();
+      await _closeFileQuietly(remoteFile);
+    }
+  }
+
+  @override
+  Future<void> downloadFile(
+    SftpEntry entry, {
+    required String localPath,
+  }) async {
+    final session = _sessionForEntry(entry);
+    final sftp = session.sftp;
+    if (sftp == null) throw StateError('SFTP is not connected');
+    if (entry.isDirectory) throw StateError('Directories cannot be downloaded');
+
+    final totalSize = entry.size ?? 0;
+    final transferId = DateTime.now().millisecondsSinceEpoch.toString();
+    final transfer = SftpTransferState(
+      id: transferId,
+      name: entry.name,
+      totalBytes: totalSize,
+      isUpload: false,
+    );
+    _activeTransfer = transfer;
+    _cancelTransferId = null;
+    session.state = SftpConnectionState.loading;
+    notifyListeners();
+
+    RandomAccessFile? raf;
+    SftpFile? remoteFile;
+    try {
+      final localFile = File(localPath);
+      final parentDir = localFile.parent;
+      if (!await parentDir.exists()) {
+        await parentDir.create(recursive: true);
+      }
+
+      raf = await localFile.open(mode: FileMode.write);
+      remoteFile = await sftp.open(entry.path, mode: SftpFileOpenMode.read);
+
+      const chunkSize = 256 * 1024; // 256KB chunks
+      int offset = 0;
+
+      while (totalSize == 0 || offset < totalSize) {
+        if (_cancelTransferId == transferId) {
+          throw const SftpTransferCancelledException();
+        }
+
+        final len = (totalSize > 0 && (totalSize - offset) < chunkSize) ? (totalSize - offset) : chunkSize;
+        final chunk = await remoteFile.readBytes(length: len, offset: offset);
+        if (chunk.isEmpty) break;
+
+        await raf.writeFrom(chunk);
+        offset += chunk.length;
+
+        _activeTransfer = transfer.copyWith(bytesTransferred: offset);
+        notifyListeners();
+      }
+
+      AppLogService.instance.info(
+        'SFTP file downloaded via stream',
+        details: 'path=${entry.path} bytes=$offset',
+      );
+
+      session.state = SftpConnectionState.connected;
+      notifyListeners();
+    } catch (e, stackTrace) {
+      if (e is SftpTransferCancelledException) {
+        AppLogService.instance.info('SFTP download cancelled: ${entry.path}');
+        try {
+          await File(localPath).delete();
+        } catch (_) {}
+        session.state = SftpConnectionState.connected;
+      } else {
+        AppLogService.instance.error(
+          'SFTP download failed',
+          error: e,
+          stackTrace: stackTrace,
+          details: 'path=${entry.path}',
+        );
+        session.state = SftpConnectionState.error;
+        session.errorMessage = 'Download failed: $e';
+      }
+      notifyListeners();
+      rethrow;
+    } finally {
+      _activeTransfer = null;
+      _cancelTransferId = null;
+      await raf?.close();
+      await _closeFileQuietly(remoteFile);
+    }
+  }
 
   @override
   Future<void> uploadBytes({

@@ -22,6 +22,12 @@ void main() {
     expect(sftp.entries, isEmpty);
     expect(sftp.isConnected, isFalse);
     expect(sftp.isBusy, isFalse);
+    expect(sftp.activeTransfer, isNull);
+    expect(sftp.hasActiveTransfer, isFalse);
+  });
+
+  test('cancelActiveTransfer returns normally when no active transfer', () {
+    expect(() => sftp.cancelActiveTransfer(), returnsNormally);
   });
 
   test('disconnectAll is safe before any connection is opened', () async {

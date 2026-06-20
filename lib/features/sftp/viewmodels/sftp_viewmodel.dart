@@ -28,6 +28,8 @@ class SftpViewModel extends ChangeNotifier {
   List<SftpEntry> get entries => _sftpService.entries;
   bool get isConnected => _sftpService.isConnected;
   bool get isBusy => _sftpService.isBusy;
+  SftpTransferState? get activeTransfer => _sftpService.activeTransfer;
+  bool get hasActiveTransfer => _sftpService.hasActiveTransfer;
 
   bool isConnectionBusy(String id) => _sftpService.isConnectionBusy(id);
   bool isConnectionOpen(String id) => _sftpService.isConnectionOpen(id);
@@ -56,6 +58,32 @@ class SftpViewModel extends ChangeNotifier {
 
   Future<void> refresh() async {
     await _sftpService.refresh();
+  }
+
+  Future<void> uploadLocalFile({
+    required String localPath,
+    required String filename,
+    required int sizeBytes,
+  }) async {
+    await _sftpService.uploadFile(
+      localPath: localPath,
+      filename: filename,
+    );
+  }
+
+  Future<void> downloadToLocalFile({
+    required SftpEntry entry,
+    required String localPath,
+    required int maxBytes,
+  }) async {
+    await _sftpService.downloadFile(
+      entry,
+      localPath: localPath,
+    );
+  }
+
+  void cancelActiveTransfer() {
+    _sftpService.cancelActiveTransfer();
   }
 
   Future<void> uploadBytes({

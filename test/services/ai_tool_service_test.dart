@@ -1547,6 +1547,27 @@ class _FakeSftpClient implements SftpClientAdapter {
 
   @override
   Future<void> disconnectAll({bool notify = true}) async {}
+
+  @override
+  SftpTransferState? get activeTransfer => null;
+
+  @override
+  bool get hasActiveTransfer => false;
+
+  @override
+  void cancelActiveTransfer() {}
+
+  @override
+  Future<void> uploadFile({
+    required String localPath,
+    required String filename,
+  }) async {}
+
+  @override
+  Future<void> downloadFile(
+    SftpEntry entry, {
+    required String localPath,
+  }) async {}
 }
 
 class _FakeServerDiagnosticsService implements ServerDiagnosticsAdapter {

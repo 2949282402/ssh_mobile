@@ -76,7 +76,14 @@ class _FilePane extends StatelessWidget {
             ],
           ),
         ),
-        if (snapshot.isBusy) const LinearProgressIndicator(minHeight: 2),
+        if (snapshot.isBusy && snapshot.activeTransfer == null)
+          const LinearProgressIndicator(minHeight: 2),
+        if (snapshot.activeTransfer != null)
+          _SftpTransferBanner(
+            strings: strings,
+            sftp: sftp,
+            activeTransfer: snapshot.activeTransfer!,
+          ),
         if (snapshot.state == SftpConnectionState.error &&
             snapshot.errorMessage != null)
           MaterialBanner(
@@ -104,39 +111,69 @@ class _FilePane extends StatelessWidget {
 
   Future<void> _uploadFile(BuildContext context) async {
     final sftp = context.read<SftpViewModel>();
-    final strings = AppStrings(context.read<AppSettings>().language);
+    final settings = context.read<AppSettings>();
+    final strings = AppStrings(settings.language);
     final messenger = ScaffoldMessenger.of(context);
-    final result = await FilePicker.pickFiles(withData: true);
+
+    final result = await FilePicker.pickFiles(withData: false);
     if (result == null || result.files.isEmpty) return;
     final file = result.files.single;
+
     if (file.size > SftpService.maxUploadBytes) {
       messenger.showSnackBar(
         SnackBar(
           content: Text(
             strings.uploadFailed(
-              'File is larger than ${_formatBytes(SftpService.maxUploadBytes)}',
+              settings.isEnglish
+                  ? 'File is larger than ${_formatBytes(SftpService.maxUploadBytes)}'
+                  : '文件大小超过了 ${_formatBytes(SftpService.maxUploadBytes)}',
             ),
           ),
         ),
       );
       return;
     }
-    final bytes = file.bytes;
-    if (bytes == null) {
+
+    final localPath = file.path;
+    if (localPath == null) {
       messenger.showSnackBar(
-        SnackBar(content: Text(strings.uploadFailed('Unable to read file'))),
+        SnackBar(
+          content: Text(
+            strings.uploadFailed(
+              settings.isEnglish
+                  ? 'Unable to access file path on this platform.'
+                  : '此平台无法访问文件路径。',
+            ),
+          ),
+        ),
       );
       return;
     }
+
     final filename = file.name.isNotEmpty
         ? file.name
-        : p.basename(file.path ?? 'upload.bin');
+        : p.basename(localPath);
+
     try {
-      await sftp.uploadBytes(filename: filename, bytes: bytes);
+      await sftp.uploadLocalFile(
+        localPath: localPath,
+        filename: filename,
+        sizeBytes: file.size,
+      );
       if (!context.mounted) return;
       messenger.showSnackBar(SnackBar(content: Text(strings.uploadComplete)));
     } catch (e) {
       if (!context.mounted) return;
+      if (e is SftpTransferCancelledException) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              settings.isEnglish ? 'Upload cancelled' : '上传已取消',
+            ),
+          ),
+        );
+        return;
+      }
       messenger.showSnackBar(
         SnackBar(content: Text(strings.uploadFailed(e))),
       );
@@ -187,24 +224,49 @@ class _FilePane extends StatelessWidget {
     final sftp = context.read<SftpViewModel>();
     final messenger = ScaffoldMessenger.of(context);
 
-    try {
-      final bytes = await sftp.downloadBytes(
-        entry,
-        maxBytes: settings.sftpDownloadLimitBytes,
-        updateState: true,
+    if (entry.size != null && entry.size! > settings.sftpDownloadLimitBytes) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            strings.downloadFailed(
+              settings.isEnglish
+                  ? 'File is larger than ${_formatBytes(settings.sftpDownloadLimitBytes)}'
+                  : '文件大小超过了 ${_formatBytes(settings.sftpDownloadLimitBytes)}',
+            ),
+          ),
+        ),
       );
-      if (!context.mounted) return;
+      return;
+    }
+
+    try {
       final savedPath = await FilePicker.saveFile(
         dialogTitle: strings.downloadFile,
         fileName: entry.name,
-        bytes: bytes,
       );
-      if (!context.mounted || savedPath == null) return;
+      if (savedPath == null) return;
+
+      await sftp.downloadToLocalFile(
+        entry: entry,
+        localPath: savedPath,
+        maxBytes: settings.sftpDownloadLimitBytes,
+      );
+      if (!context.mounted) return;
       messenger.showSnackBar(
         SnackBar(content: Text(strings.downloadComplete)),
       );
     } catch (e) {
       if (!context.mounted) return;
+      if (e is SftpTransferCancelledException) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              settings.isEnglish ? 'Download cancelled' : '下载已取消',
+            ),
+          ),
+        );
+        return;
+      }
       messenger.showSnackBar(
         SnackBar(content: Text(strings.downloadFailed(e))),
       );
@@ -563,5 +625,120 @@ class _SftpEmptyState extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _SftpTransferBanner extends StatelessWidget {
+  final AppStrings strings;
+  final SftpViewModel sftp;
+  final SftpTransferState activeTransfer;
+
+  const _SftpTransferBanner({
+    required this.strings,
+    required this.sftp,
+    required this.activeTransfer,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final settings = context.read<AppSettings>();
+    final colorScheme = Theme.of(context).colorScheme;
+    final isUpload = activeTransfer.isUpload;
+    final progress = activeTransfer.progress;
+    final totalBytes = activeTransfer.totalBytes;
+    final transferredBytes = activeTransfer.bytesTransferred;
+
+    final title = isUpload
+        ? (settings.isEnglish
+            ? 'Uploading ${activeTransfer.name}'
+            : '正在上传 ${activeTransfer.name}')
+        : (settings.isEnglish
+            ? 'Downloading ${activeTransfer.name}'
+            : '正在下载 ${activeTransfer.name}');
+
+    final percentText = totalBytes > 0
+        ? ' ${(progress * 100).toStringAsFixed(0)}%'
+        : '';
+
+    final sizeText = '${_formatBytes(transferredBytes)}${totalBytes > 0 ? ' / ${_formatBytes(totalBytes)}' : ''}';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainer,
+        border: Border(
+          bottom: BorderSide(color: colorScheme.outlineVariant),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            isUpload ? Icons.upload_file_rounded : Icons.downloading_rounded,
+            color: colorScheme.primary,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      percentText,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                LinearProgressIndicator(
+                  value: totalBytes > 0 ? progress : null,
+                  minHeight: 4,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  sizeText,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          IconButton(
+            icon: Icon(Icons.close_rounded, color: colorScheme.error),
+            tooltip: settings.isEnglish ? 'Cancel' : '取消',
+            onPressed: activeTransfer.isCancelled ? null : sftp.cancelActiveTransfer,
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatBytes(int? bytes) {
+    if (bytes == null) return '-';
+    if (bytes < 1024) return '$bytes B';
+    final kb = bytes / 1024;
+    if (kb < 1024) return '${kb.toStringAsFixed(kb < 10 ? 1 : 0)} KB';
+    final mb = kb / 1024;
+    if (mb < 1024) return '${mb.toStringAsFixed(mb < 10 ? 1 : 0)} MB';
+    final gb = mb / 1024;
+    return '${gb.toStringAsFixed(gb < 10 ? 1 : 0)} GB';
   }
 }
