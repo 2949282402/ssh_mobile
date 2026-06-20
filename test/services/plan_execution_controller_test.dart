@@ -397,32 +397,50 @@ void main() {
       expect(current!.id, 't-2');
     });
 
-    test('isMutatingRemoteTool checks remote mutating criteria', () {
+    test('isStepScopedTool checks step scoped criteria', () {
+      expect(controller.isStepScopedTool('run_command'), isTrue);
+      expect(controller.isStepScopedTool('detect_os'), isTrue);
+      expect(controller.isStepScopedTool('sftp_read_text'), isTrue);
+      expect(controller.isStepScopedTool('monitor_get_samples'), isTrue);
+      expect(controller.isStepScopedTool('get_server_details'), isTrue);
+      expect(controller.isStepScopedTool('client_task_update'), isFalse);
+      expect(controller.isStepScopedTool('web_search'), isFalse);
+      expect(controller.isStepScopedTool('client_time'), isFalse);
       expect(
-          controller.isMutatingRemoteTool('run_command', 'readOnly'), isTrue);
-      expect(
-          controller.isMutatingRemoteTool('sftp_write_text', 'stateChanging'),
-          isTrue);
-      expect(
-          controller.isMutatingRemoteTool(
-              'client_task_update', 'executionOnly'),
-          isFalse);
-      expect(
-          controller.isMutatingRemoteTool('web_search', 'readOnly'), isFalse);
-      expect(controller.isMutatingRemoteTool('detect_os', 'readOnly'), isFalse);
+          controller.isStepScopedTool('app_get_operational_settings'), isFalse);
+      expect(controller.isStepScopedTool('list_servers'), isFalse);
     });
 
     test('canRunToolForCurrentStep: empty steps is allowed', () {
       final res = controller.canRunToolForCurrentStep(
         steps: [],
         toolName: 'run_command',
-        executionMode: 'readOnly',
         arguments: {},
       );
       expect(res.allowed, isTrue);
     });
 
-    test('canRunToolForCurrentStep: non-mutating remote tool is allowed', () {
+    test('canRunToolForCurrentStep: client/app/local tool is allowed', () {
+      final steps = [
+        const AiTodoStep(
+          id: 't-1',
+          name: 'Step 1',
+          command: 'c1',
+          description: 'd',
+          status: StepStatus.pending,
+        ),
+      ];
+      final res = controller.canRunToolForCurrentStep(
+        steps: steps,
+        toolName: 'client_time',
+        arguments: {},
+      );
+      expect(res.allowed, isTrue);
+    });
+
+    test(
+        'canRunToolForCurrentStep: read-only remote tool detect_os is blocked when pending',
+        () {
       final steps = [
         const AiTodoStep(
           id: 't-1',
@@ -435,10 +453,10 @@ void main() {
       final res = controller.canRunToolForCurrentStep(
         steps: steps,
         toolName: 'detect_os',
-        executionMode: 'readOnly',
         arguments: {},
       );
-      expect(res.allowed, isTrue);
+      expect(res.allowed, isFalse);
+      expect(res.reason, 'task_update_required');
     });
 
     test('canRunToolForCurrentStep: completed plan blocks mutating tools', () {
@@ -454,7 +472,6 @@ void main() {
       final res = controller.canRunToolForCurrentStep(
         steps: steps,
         toolName: 'run_command',
-        executionMode: 'readOnly',
         arguments: {},
       );
       expect(res.allowed, isFalse);
@@ -481,7 +498,6 @@ void main() {
       final res = controller.canRunToolForCurrentStep(
         steps: steps,
         toolName: 'run_command',
-        executionMode: 'readOnly',
         arguments: {},
       );
       expect(res.allowed, isFalse);
@@ -501,7 +517,6 @@ void main() {
       final res = controller.canRunToolForCurrentStep(
         steps: steps,
         toolName: 'run_command',
-        executionMode: 'readOnly',
         arguments: {},
       );
       expect(res.allowed, isFalse);
@@ -526,7 +541,6 @@ void main() {
       final matchRes = controller.canRunToolForCurrentStep(
         steps: steps,
         toolName: 'run_command',
-        executionMode: 'readOnly',
         arguments: {'taskId': 't-1', 'connectionId': 'conn-1'},
       );
       expect(matchRes.allowed, isTrue);
@@ -535,7 +549,6 @@ void main() {
       final idMismatchRes = controller.canRunToolForCurrentStep(
         steps: steps,
         toolName: 'run_command',
-        executionMode: 'readOnly',
         arguments: {'taskId': 't-2', 'connectionId': 'conn-1'},
       );
       expect(idMismatchRes.allowed, isFalse);
@@ -545,7 +558,6 @@ void main() {
       final connMismatchRes = controller.canRunToolForCurrentStep(
         steps: steps,
         toolName: 'run_command',
-        executionMode: 'readOnly',
         arguments: {'taskId': 't-1', 'connectionId': 'conn-2'},
       );
       expect(connMismatchRes.allowed, isFalse);

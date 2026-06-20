@@ -59,25 +59,38 @@ class PlanExecutionSnapshot {
 class PlanExecutionController {
   const PlanExecutionController();
 
-  bool isMutatingRemoteTool(String toolName, String executionMode) {
-    final isClientOrApp = toolName.startsWith('client_') ||
+  bool isStepScopedTool(String toolName) {
+    final isClientOrAppOrSearch = toolName.startsWith('client_') ||
         toolName.startsWith('app_') ||
-        toolName == 'web_search';
-    if (isClientOrApp) return false;
-    return executionMode == 'stateChanging' || toolName == 'run_command';
+        toolName == 'web_search' ||
+        toolName.startsWith('client_webview_');
+    if (isClientOrAppOrSearch) return false;
+
+    if (toolName == 'run_command' ||
+        toolName == 'detect_os' ||
+        toolName == 'get_server_details' ||
+        toolName == 'get_server_status' ||
+        toolName == 'generate_ops_report') {
+      return true;
+    }
+
+    return toolName.startsWith('sftp_') ||
+        toolName.startsWith('ssh_') ||
+        toolName.startsWith('monitor_') ||
+        toolName.startsWith('inspect_') ||
+        toolName.startsWith('collect_incident_');
   }
 
   PlanExecutionGateResult canRunToolForCurrentStep({
     required List<AiTodoStep> steps,
     required String toolName,
-    required String executionMode,
     required Map<String, dynamic> arguments,
   }) {
     if (steps.isEmpty) {
       return const PlanExecutionGateResult(allowed: true);
     }
 
-    if (!isMutatingRemoteTool(toolName, executionMode)) {
+    if (!isStepScopedTool(toolName)) {
       return const PlanExecutionGateResult(allowed: true);
     }
 

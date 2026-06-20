@@ -687,6 +687,18 @@ class AiToolService implements AiToolExecutor {
           reason:
               'Executing sequential commands on a server requires user approval.',
         );
+      case 'client_task_skip':
+        final taskId = _arg(arguments, 'taskId');
+        final reason = _arg(arguments, 'reason');
+        return AiToolApprovalRequest(
+          toolName: name,
+          approvalType: 'plan_task_change',
+          connectionId: _clientScopeId,
+          connectionName: _clientScopeName,
+          command: 'SKIP PLAN TASK $taskId',
+          reason: 'Skipping an execution plan step requires user approval.',
+          contentPreview: 'Reason: $reason',
+        );
       default:
         return null;
     }

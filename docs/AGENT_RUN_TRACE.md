@@ -105,3 +105,12 @@ If validation fails, the model gets one format-only repair attempt. If the repai
 During Plan Mode, single-LLM text is fully buffered until output validation/repair completes. The user should see the validated final plan, not an invalid draft followed by a repair. 
 `LlmChatService` owns validation, one-shot repair, and tracing. `ChatOrchestrator` owns the final conversion from a valid playbook JSON block to chat-bound `todoSteps`. The service layer must not directly write to the database (mutate `AiChatRecord`) during validation/repair, avoiding race conditions and ensuring a clean MVVM data flow.
 
+---
+
+## 6. Step-scoped remote tools
+
+In Execution Mode, step gating applies to remote/server-scoped tools, including read-only diagnostics.
+The assistant must mark the current todoStep as running before calling server/ssh/sftp/monitor tools, not only before mutating tools.
+Pure client/app tools such as `client_time`, `app_get_operational_settings`, `web_search`, and `list_servers` may run outside the step gate.
+
+

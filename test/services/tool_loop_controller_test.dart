@@ -827,7 +827,7 @@ void main() {
       expect(content['code'], 'task_update_required');
       expect(content['taskId'], 'task-1');
       expect(ledger.last.outcome, 'plan_execution_blocked');
-      expect(ledger.last.quality, ToolResultQuality.needsInput.name);
+      expect(ledger.last.quality, ToolResultQuality.planStepNeedsUpdate.name);
     });
 
     test(
@@ -1036,6 +1036,205 @@ void main() {
       expect(content['reason'], 'A preceding step has failed.');
       expect(ledger.last.outcome, 'plan_execution_blocked');
       expect(ledger.last.quality, ToolResultQuality.unsafeBlocked.name);
+    });
+
+    test('read-only remote tool is blocked when current step is pending',
+        () async {
+      final budget = LlmToolBudgetController(baseBudget: 10);
+      final cache = <String, CachedToolResult>{};
+      final ledger = <LlmToolLedgerEntry>[];
+      bool executed = false;
+      final mockTools = MockToolService(
+        onExecute: (name, args) async {
+          executed = true;
+          return '{}';
+        },
+      );
+      final localLlm = LlmChatService(
+        storageService: storage,
+        toolService: mockTools,
+      );
+
+      final controller = ToolLoopController(
+        chatService: localLlm,
+        toolBudget: budget,
+        readOnlyToolCache: cache,
+        toolLedger: ledger,
+      );
+
+      final workingMessages = <Map<String, dynamic>>[];
+      final settings = await storage.loadAiConnectionSettings();
+
+      final loopResult = await controller.handleToolCalls(
+        toolCalls: [
+          StreamingToolCall(
+            id: 'call_blocked_read_only',
+            name: 'detect_os',
+            arguments: '{"connectionId":"local"}',
+          ),
+        ],
+        visibleToolsByName: {
+          'detect_os': AiTool(
+            name: 'detect_os',
+            description: 'Detect server OS',
+            properties: const {},
+            required: const [],
+            executionMode: AiToolExecutionMode.readOnly,
+            handler: (args) async {
+              executed = true;
+              return '{}';
+            },
+          ),
+        },
+        planMode: false,
+        language: AppLanguage.zh,
+        apiKey: 'key',
+        auditModel: 'audit-model',
+        originalUserGoal: 'Goal',
+        workingMessages: workingMessages,
+        requestToolApproval: null,
+        onTrace: null,
+        cancellationToken: null,
+        settings: settings,
+        complete: (role, messages, {required thinkingSettings}) async =>
+            'advice',
+        classify: (messages) async => '{}',
+        planExecutionSnapshot: const PlanExecutionSnapshot(
+          phase: PlanExecutionPhase.pending,
+          steps: [
+            AiTodoStep(
+              id: 'task-1',
+              name: 'Step 1',
+              command: 'cmd',
+              description: 'desc',
+              status: StepStatus.pending,
+            ),
+          ],
+          currentStepIndex: 0,
+          currentStep: AiTodoStep(
+            id: 'task-1',
+            name: 'Step 1',
+            command: 'cmd',
+            description: 'desc',
+            status: StepStatus.pending,
+          ),
+          hasFailedStep: false,
+          isCompleted: false,
+        ),
+      );
+
+      expect(loopResult.shouldStop, isFalse);
+      expect(executed, isFalse);
+      final toolMessage =
+          workingMessages.firstWhere((m) => m['role'] == 'tool');
+      final content = jsonDecode(toolMessage['content']);
+      expect(content['code'], 'task_update_required');
+      expect(ledger.last.outcome, 'plan_execution_blocked');
+      expect(ledger.last.quality, ToolResultQuality.planStepNeedsUpdate.name);
+    });
+
+    test('client read-only tool bypasses execution gate', () async {
+      final budget = LlmToolBudgetController(baseBudget: 10);
+      final cache = <String, CachedToolResult>{};
+      final ledger = <LlmToolLedgerEntry>[];
+      bool executed = false;
+      final mockTools = MockToolService(
+        onExecute: (name, args) async {
+          executed = true;
+          return '{"time":"2026"}';
+        },
+      );
+      final localLlm = LlmChatService(
+        storageService: storage,
+        toolService: mockTools,
+      );
+
+      final controller = ToolLoopController(
+        chatService: localLlm,
+        toolBudget: budget,
+        readOnlyToolCache: cache,
+        toolLedger: ledger,
+      );
+
+      final workingMessages = <Map<String, dynamic>>[];
+      final settings = await storage.loadAiConnectionSettings();
+
+      final loopResult = await controller.handleToolCalls(
+        toolCalls: [
+          StreamingToolCall(
+            id: 'call_client_bypass',
+            name: 'client_time',
+            arguments: '{}',
+          ),
+        ],
+        visibleToolsByName: {
+          'client_time': AiTool(
+            name: 'client_time',
+            description: 'Get client time',
+            properties: const {},
+            required: const [],
+            executionMode: AiToolExecutionMode.readOnly,
+            handler: (args) async {
+              executed = true;
+              return '{"time":"2026"}';
+            },
+          ),
+        },
+        planMode: false,
+        language: AppLanguage.zh,
+        apiKey: 'key',
+        auditModel: 'audit-model',
+        originalUserGoal: 'Goal',
+        workingMessages: workingMessages,
+        requestToolApproval: null,
+        onTrace: null,
+        cancellationToken: null,
+        settings: settings,
+        complete: (role, messages, {required thinkingSettings}) async =>
+            'advice',
+        classify: (messages) async => '{}',
+        planExecutionSnapshot: const PlanExecutionSnapshot(
+          phase: PlanExecutionPhase.pending,
+          steps: [
+            AiTodoStep(
+              id: 'task-1',
+              name: 'Step 1',
+              command: 'cmd',
+              description: 'desc',
+              status: StepStatus.pending,
+            ),
+          ],
+          currentStepIndex: 0,
+          currentStep: AiTodoStep(
+            id: 'task-1',
+            name: 'Step 1',
+            command: 'cmd',
+            description: 'desc',
+            status: StepStatus.pending,
+          ),
+          hasFailedStep: false,
+          isCompleted: false,
+        ),
+      );
+
+      expect(loopResult.shouldStop, isFalse);
+      expect(executed, isTrue);
+      final toolMessage =
+          workingMessages.firstWhere((m) => m['role'] == 'tool');
+      expect(toolMessage['content'], contains('2026'));
+      expect(ledger.last.outcome, 'success');
+      expect(ledger.last.quality, ToolResultQuality.useful.name);
+    });
+
+    test('connection_required hint is not confused with task_update_required',
+        () async {
+      final hint1 = ToolResultClassifier.getSystemHint('sftp_write_text',
+          ToolResultQuality.planStepNeedsUpdate, AppLanguage.zh);
+      final hint2 = ToolResultClassifier.getSystemHint('sftp_write_text',
+          ToolResultQuality.connectionRequired, AppLanguage.zh);
+
+      expect(hint1, contains('client_task_update'));
+      expect(hint2, contains('选择服务器连接'));
     });
   });
 }

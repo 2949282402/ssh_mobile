@@ -1132,10 +1132,12 @@ void main() {
       // 1. Retry failed step -> should reset to pending
       final rawRetry = await tools.execute('client_task_retry', {
         'taskId': 'task-1',
+        'reason': 'retrying for correction',
       });
       final decodedRetry = jsonDecode(rawRetry) as Map<String, dynamic>;
       expect(decodedRetry['status'], 'success');
       expect(decodedRetry['newStatus'], 'pending');
+      expect(decodedRetry['reason'], 'retrying for correction');
 
       final chatAfterRetry =
           (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
@@ -1151,11 +1153,22 @@ void main() {
       expect(decodedRetryPending['error'],
           contains('Only failed tasks can be retried'));
 
-      // 3. Skip pending step -> should mark skipped with reason in stdout
-      final rawSkip = await tools.execute('client_task_skip', {
+      // 3. Skip pending step without approval -> should fail
+      final rawSkipNoApproval = await tools.execute('client_task_skip', {
         'taskId': 'task-1',
         'reason': 'manual override',
       });
+      expect(jsonDecode(rawSkipNoApproval)['error'],
+          contains('requires user approval'));
+
+      // 4. Skip pending step with approval -> should mark skipped with reason in stdout
+      final rawSkip = await tools.execute(
+          'client_task_skip',
+          {
+            'taskId': 'task-1',
+            'reason': 'manual override',
+          },
+          approvedWrite: true);
       final decodedSkip = jsonDecode(rawSkip) as Map<String, dynamic>;
       expect(decodedSkip['status'], 'success');
       expect(decodedSkip['newStatus'], 'skipped');
@@ -1165,6 +1178,50 @@ void main() {
       final skippedStep = chatAfterSkip.messages.last.todoSteps.first;
       expect(skippedStep.status, StepStatus.skipped);
       expect(skippedStep.stdout, contains('Skipped: manual override'));
+
+      // 5. Try to skip a running task -> should fail
+      final chatRunning = chat.copyWith(
+        messages: [
+          AiChatMessageRecord(
+            role: 'assistant',
+            text: 'plan',
+            createdAt: now,
+            todoSteps: [
+              AiTodoStep(
+                id: 'task-1',
+                name: 'Step 1',
+                command: 'echo ok',
+                description: 'Persisted plan step',
+                status: StepStatus.running,
+              ),
+            ],
+          ),
+        ],
+      );
+      await storage.saveAiChat(chatRunning);
+
+      final rawSkipRunning = await tools.execute(
+          'client_task_skip',
+          {
+            'taskId': 'task-1',
+            'reason': 'manual override',
+          },
+          approvedWrite: true);
+      final decodedSkipRunning =
+          jsonDecode(rawSkipRunning) as Map<String, dynamic>;
+      expect(decodedSkipRunning['error'],
+          contains('Only pending or failed tasks can be skipped'));
+      expect(decodedSkipRunning['code'], 'invalid_skip_state');
+
+      // 6. Verify approvalRequestFor generates correct request for client_task_skip
+      final skipRequest = await tools.approvalRequestFor('client_task_skip', {
+        'taskId': 'task-1',
+        'reason': 'manual override',
+      });
+      expect(skipRequest, isNotNull);
+      expect(skipRequest!.approvalType, 'plan_task_change');
+      expect(skipRequest.command, contains('SKIP PLAN TASK task-1'));
+      expect(skipRequest.contentPreview, contains('Reason: manual override'));
     });
   });
 

@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -154,7 +153,7 @@ void main() {
           .snapshot(latestChat.messages.last.todoSteps);
 
       // --- PHASE 3.1: Execute step 1 without marking it running first -> should be BLOCKED ---
-      var loopResult = await controller.handleToolCalls(
+      await controller.handleToolCalls(
         toolCalls: [
           StreamingToolCall(
             id: 'call-1',
@@ -181,7 +180,46 @@ void main() {
 
       expect(executedFirst, isFalse);
       expect(ledger.last.outcome, 'plan_execution_blocked');
-      expect(ledger.last.quality, ToolResultQuality.needsInput.name);
+      expect(ledger.last.quality, ToolResultQuality.planStepNeedsUpdate.name);
+
+      // --- PHASE 3.1b: Execute read-only remote tool (detect_os) without marking it running first -> should be BLOCKED ---
+      await controller.handleToolCalls(
+        toolCalls: [
+          StreamingToolCall(
+            id: 'call-1b',
+            name: 'detect_os',
+            arguments: '{"connectionId":"server-1"}',
+          ),
+        ],
+        visibleToolsByName: {
+          ...visibleTools,
+          'detect_os': AiTool(
+            name: 'detect_os',
+            description: 'Detect OS',
+            properties: const {},
+            required: const [],
+            executionMode: AiToolExecutionMode.readOnly,
+            handler: (args) async => '{}',
+          ),
+        },
+        planMode: false,
+        language: AppLanguage.zh,
+        apiKey: 'key',
+        auditModel: 'audit-model',
+        originalUserGoal: 'Goal',
+        workingMessages: workingMessages,
+        requestToolApproval: null,
+        onTrace: null,
+        cancellationToken: null,
+        settings: settings,
+        complete: (role, messages, {required thinkingSettings}) async =>
+            'advice',
+        classify: (messages) async => '{}',
+        planExecutionSnapshot: snap,
+      );
+
+      expect(ledger.last.outcome, 'plan_execution_blocked');
+      expect(ledger.last.quality, ToolResultQuality.planStepNeedsUpdate.name);
 
       // --- PHASE 3.2: Update step 1 to running manually in database, then execute -> should SUCCEED ---
       final steps = [...latestChat.messages.last.todoSteps];
@@ -195,7 +233,7 @@ void main() {
       snap = const PlanExecutionController()
           .snapshot(latestChat.messages.last.todoSteps);
 
-      loopResult = await controller.handleToolCalls(
+      await controller.handleToolCalls(
         toolCalls: [
           StreamingToolCall(
             id: 'call-2',
@@ -235,7 +273,7 @@ void main() {
       snap = const PlanExecutionController()
           .snapshot(latestChat.messages.last.todoSteps);
 
-      loopResult = await controller.handleToolCalls(
+      await controller.handleToolCalls(
         toolCalls: [
           StreamingToolCall(
             id: 'call-3',
@@ -277,7 +315,7 @@ void main() {
       snap = const PlanExecutionController()
           .snapshot(latestChat.messages.last.todoSteps);
 
-      loopResult = await controller.handleToolCalls(
+      await controller.handleToolCalls(
         toolCalls: [
           StreamingToolCall(
             id: 'call-4',

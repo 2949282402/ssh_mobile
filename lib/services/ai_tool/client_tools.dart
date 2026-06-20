@@ -96,7 +96,8 @@ class ClientToolsProvider implements AiToolProvider {
       case 'client_task_retry':
         return _clientTaskRetry(service, arguments);
       case 'client_task_skip':
-        return _clientTaskSkip(service, arguments);
+        return _clientTaskSkip(service, arguments,
+            approvedWrite: approvedWrite);
       default:
         return null;
     }
@@ -1057,6 +1058,7 @@ class ClientToolsProvider implements AiToolProvider {
     }
 
     final taskId = service._arg(arguments, 'taskId');
+    final reason = service._optionalString(arguments, 'reason');
     bool foundAndUpdated = false;
     final messages = [...currentChat.messages];
 
@@ -1106,13 +1108,20 @@ class ClientToolsProvider implements AiToolProvider {
       'taskId': taskId,
       'newStatus': StepStatus.pending.name,
       'message': 'Task step successfully reset to pending for retry.',
+      if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
     });
   }
 
   Future<String> _clientTaskSkip(
     AiToolService service,
-    Map<String, dynamic> arguments,
-  ) async {
+    Map<String, dynamic> arguments, {
+    required bool approvedWrite,
+  }) async {
+    if (!approvedWrite) {
+      return jsonEncode({
+        'error': 'Skipping a task requires user approval.',
+      });
+    }
     final chatId = clientWebViewSessionId;
     if (chatId == null || chatId.trim().isEmpty) {
       return jsonEncode({'error': 'No active chat session found.'});
@@ -1153,11 +1162,11 @@ class ClientToolsProvider implements AiToolProvider {
         final currentStep = steps[sIdx];
 
         if (currentStep.status != StepStatus.pending &&
-            currentStep.status != StepStatus.failed &&
-            currentStep.status != StepStatus.running) {
+            currentStep.status != StepStatus.failed) {
           return jsonEncode({
             'error':
-                'Only pending, running, or failed tasks can be skipped. Current status is: ${currentStep.status.name}',
+                'Only pending or failed tasks can be skipped. Current status is: ${currentStep.status.name}',
+            'code': 'invalid_skip_state',
           });
         }
 
@@ -1667,6 +1676,7 @@ class ClientToolsProvider implements AiToolProvider {
             'CLIENT tool. Reset a failed step in the execution plan back to pending so that it can be retried. This tool is ONLY allowed during Execution Mode.',
         properties: {
           'taskId': _string('The unique taskId of the failed step to retry.'),
+          'reason': _string('Optional explanation or reason for the retry.'),
         },
         required: const ['taskId'],
         executionMode: AiToolExecutionMode.executionOnly,
@@ -1691,7 +1701,7 @@ class ClientToolsProvider implements AiToolProvider {
           AiToolCapability.planning,
           AiToolCapability.client,
         },
-        handler: (args) => _clientTaskSkip(service, args),
+        handler: (args) => _clientTaskSkip(service, args, approvedWrite: false),
       ),
     ];
   }

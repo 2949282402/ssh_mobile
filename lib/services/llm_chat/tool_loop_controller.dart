@@ -174,7 +174,6 @@ class ToolLoopController {
             const PlanExecutionController().canRunToolForCurrentStep(
           steps: activeSnapshot.steps,
           toolName: tool.name,
-          executionMode: tool.executionMode.name,
           arguments: arguments,
         );
 
