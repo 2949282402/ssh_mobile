@@ -381,7 +381,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
           throw const SftpTransferCancelledException();
         }
 
-        final len = (totalSize - offset) < chunkSize ? (totalSize - offset) : chunkSize;
+        final len =
+            (totalSize - offset) < chunkSize ? (totalSize - offset) : chunkSize;
         final chunk = await raf.read(len);
         if (chunk.isEmpty) break;
 
@@ -457,6 +458,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
 
     RandomAccessFile? raf;
     SftpFile? remoteFile;
+    var shouldDeletePartialLocalFile = false;
     try {
       final localFile = File(localPath);
       final parentDir = localFile.parent;
@@ -475,7 +477,9 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
           throw const SftpTransferCancelledException();
         }
 
-        final len = (totalSize > 0 && (totalSize - offset) < chunkSize) ? (totalSize - offset) : chunkSize;
+        final len = (totalSize > 0 && (totalSize - offset) < chunkSize)
+            ? (totalSize - offset)
+            : chunkSize;
         final chunk = await remoteFile.readBytes(length: len, offset: offset);
         if (chunk.isEmpty) break;
 
@@ -500,12 +504,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       session.state = SftpConnectionState.connected;
       notifyListeners();
     } catch (e, stackTrace) {
-      try {
-        final file = File(localPath);
-        if (await file.exists()) {
-          await file.delete();
-        }
-      } catch (_) {}
+      shouldDeletePartialLocalFile = true;
 
       if (e is SftpTransferCancelledException) {
         AppLogService.instance.info('SFTP download cancelled: ${entry.path}');
@@ -525,6 +524,17 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     } finally {
       await raf?.close();
       await _closeFileQuietly(remoteFile);
+
+      // 先关闭本地文件句柄再删除半成品，避免 Windows 上文件占用导致删除失败。
+      if (shouldDeletePartialLocalFile) {
+        try {
+          final file = File(localPath);
+          if (await file.exists()) {
+            await file.delete();
+          }
+        } catch (_) {}
+      }
+
       _activeTransfer = null;
       _cancelTransferId = null;
       notifyListeners();
