@@ -753,7 +753,24 @@ void main() {
     expect(decoded.containsKey('hasApiKeyConfigured'), isTrue);
     expect(decoded['multiAgentEnabled'], isTrue);
     expect(decoded['multiAgentMaxAgents'], 3);
+    expect(decoded['postToolReviewEnabled'], isTrue);
     expect(decoded['toolCallBudget'], 20);
+  });
+
+  test('app settings tool updates postToolReviewEnabled setting with approval',
+      () async {
+    final raw = await tools.execute(
+      'app_update_operational_settings',
+      {
+        'postToolReviewEnabled': false,
+      },
+      approvedWrite: true,
+    );
+    final decoded = jsonDecode(raw) as Map<String, dynamic>;
+    final settings = await storage.loadAiConnectionSettings();
+
+    expect(decoded['postToolReviewEnabled'], isFalse);
+    expect(settings.postToolReviewEnabled, isFalse);
   });
 
   test('app settings tool updates multi-agent settings with approval',
@@ -1116,6 +1133,46 @@ void main() {
           decoded['error'], contains('requires a selected server connection'));
       expect(decoded['code'], 'connection_required');
       expect(decoded['tool'], 'run_command');
+    });
+
+    test('monitor汇总工具不需要选中服务器连接就可以执行', () async {
+      // monitor_get_state
+      final rawState = await tools.execute('monitor_get_state', {});
+      final decodedState = jsonDecode(rawState) as Map<String, dynamic>;
+      expect(decodedState['error'], isNull);
+
+      // monitor_get_health
+      final rawHealth = await tools.execute('monitor_get_health', {});
+      final decodedHealth = jsonDecode(rawHealth) as Map<String, dynamic>;
+      expect(decodedHealth['error'], isNull);
+
+      // monitor_get_alerts
+      final rawAlerts = await tools.execute('monitor_get_alerts', {});
+      final decodedAlerts = jsonDecode(rawAlerts) as Map<String, dynamic>;
+      expect(decodedAlerts['error'], isNull);
+    });
+
+    test('其他monitor工具和停止监视工具依然必须有服务器连接', () async {
+      final toolsToTest = [
+        'monitor_get_samples',
+        'monitor_get_ports',
+        'monitor_get_applications',
+        'monitor_stop_for_connection'
+      ];
+      for (final toolName in toolsToTest) {
+        final raw = await tools.execute(toolName, {});
+        final decoded = jsonDecode(raw) as Map<String, dynamic>;
+        expect(
+          decoded['error'],
+          contains('requires a selected server connection'),
+          reason: 'Tool $toolName should require a server connection.',
+        );
+        expect(
+          decoded['code'],
+          'connection_required',
+          reason: 'Tool $toolName should fail with connection_required.',
+        );
+      }
     });
   });
 }

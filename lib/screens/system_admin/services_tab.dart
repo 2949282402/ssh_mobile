@@ -19,9 +19,8 @@ class _ServicesManageSnapshot {
     return _ServicesManageSnapshot(
       isConnecting: vm.isConnectingSelectedConnection,
       isManageModeAvailable: vm.canManageSelectedConnection,
-      errorMessage: vm.hasManagementErrorForSelectedConnection
-          ? vm.errorMessage
-          : null,
+      errorMessage:
+          vm.hasManagementErrorForSelectedConnection ? vm.errorMessage : null,
       loadingServices: vm.loadingServices,
       services: vm.services,
     );
@@ -185,9 +184,8 @@ class _ServicesTabState extends State<_ServicesTab>
   void _rebuildVisibleManageServicesCache(List<SystemdService> services) {
     final query = _serviceSearchController.text.trim().toLowerCase();
     final connectionId = widget.viewModel.selectedConnectionId;
-    final servicesHash = Object.hashAll(
-      services.map((s) => Object.hash(s.name, s.loadState, s.activeState, s.subState, s.description))
-    );
+    final servicesHash = Object.hashAll(services.map((s) => Object.hash(
+        s.name, s.loadState, s.activeState, s.subState, s.description)));
     final key = '$connectionId|$query|$servicesHash';
 
     if (_lastManageFilterKey == key) return;
@@ -275,9 +273,11 @@ class _ServicesTabState extends State<_ServicesTab>
     if (query.isEmpty) {
       return {connectionId: list};
     }
-    final filtered = list.where((s) =>
-        s.name.toLowerCase().contains(query) ||
-        s.displayName.toLowerCase().contains(query)).toList();
+    final filtered = list
+        .where((s) =>
+            s.name.toLowerCase().contains(query) ||
+            s.displayName.toLowerCase().contains(query))
+        .toList();
     return {connectionId: filtered};
   }
 
@@ -414,7 +414,8 @@ class _ServicesTabState extends State<_ServicesTab>
                                 service.name,
                                 selectable: false,
                                 maxLines: 1,
-                                style: const TextStyle(fontWeight: FontWeight.bold),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold),
                               ),
                               subtitle: OverflowScrollText(
                                 '${service.activeState} (${service.subState}) • ${service.description}',
@@ -438,13 +439,16 @@ class _ServicesTabState extends State<_ServicesTab>
                                       child: Text(widget.strings.serviceStop)),
                                   PopupMenuItem(
                                       value: 'restart',
-                                      child: Text(widget.strings.serviceRestart)),
+                                      child:
+                                          Text(widget.strings.serviceRestart)),
                                   PopupMenuItem(
                                       value: 'enable',
-                                      child: Text(widget.strings.serviceEnable)),
+                                      child:
+                                          Text(widget.strings.serviceEnable)),
                                   PopupMenuItem(
                                       value: 'disable',
-                                      child: Text(widget.strings.serviceDisable)),
+                                      child:
+                                          Text(widget.strings.serviceDisable)),
                                 ],
                               ),
                             ),

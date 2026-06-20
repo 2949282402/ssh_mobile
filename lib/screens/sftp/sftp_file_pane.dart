@@ -150,9 +150,7 @@ class _FilePane extends StatelessWidget {
       return;
     }
 
-    final filename = file.name.isNotEmpty
-        ? file.name
-        : p.basename(localPath);
+    final filename = file.name.isNotEmpty ? file.name : p.basename(localPath);
 
     try {
       await sftp.uploadLocalFile(
@@ -656,11 +654,11 @@ class _SftpTransferBanner extends StatelessWidget {
             ? 'Downloading ${activeTransfer.name}'
             : '正在下载 ${activeTransfer.name}');
 
-    final percentText = totalBytes > 0
-        ? ' ${(progress * 100).toStringAsFixed(0)}%'
-        : '';
+    final percentText =
+        totalBytes > 0 ? ' ${(progress * 100).toStringAsFixed(0)}%' : '';
 
-    final sizeText = '${_formatBytes(transferredBytes)}${totalBytes > 0 ? ' / ${_formatBytes(totalBytes)}' : ''}';
+    final sizeText =
+        '${_formatBytes(transferredBytes)}${totalBytes > 0 ? ' / ${_formatBytes(totalBytes)}' : ''}';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -689,7 +687,8 @@ class _SftpTransferBanner extends StatelessWidget {
                         title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 13),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -724,7 +723,8 @@ class _SftpTransferBanner extends StatelessWidget {
           IconButton(
             icon: Icon(Icons.close_rounded, color: colorScheme.error),
             tooltip: settings.isEnglish ? 'Cancel' : '取消',
-            onPressed: activeTransfer.isCancelled ? null : sftp.cancelActiveTransfer,
+            onPressed:
+                activeTransfer.isCancelled ? null : sftp.cancelActiveTransfer,
           ),
         ],
       ),

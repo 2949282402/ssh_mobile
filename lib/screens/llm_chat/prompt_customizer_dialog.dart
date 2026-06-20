@@ -397,7 +397,8 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                           : colorScheme.surfaceContainerHighest
                               .withValues(alpha: 0.3),
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                        borderRadius:
+                            BorderRadius.circular(AppTheme.radiusSmall),
                       ),
                     ),
                     readOnly: !_useCustomPrompts,

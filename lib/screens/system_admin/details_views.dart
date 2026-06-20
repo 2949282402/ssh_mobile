@@ -162,10 +162,18 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
         final decoration = BoxDecoration(
           color: colorScheme.surface,
           borderRadius: BorderRadius.only(
-            topLeft: isFirst ? const Radius.circular(AppTheme.radiusSmall) : Radius.zero,
-            topRight: isFirst ? const Radius.circular(AppTheme.radiusSmall) : Radius.zero,
-            bottomLeft: isLast ? const Radius.circular(AppTheme.radiusSmall) : Radius.zero,
-            bottomRight: isLast ? const Radius.circular(AppTheme.radiusSmall) : Radius.zero,
+            topLeft: isFirst
+                ? const Radius.circular(AppTheme.radiusSmall)
+                : Radius.zero,
+            topRight: isFirst
+                ? const Radius.circular(AppTheme.radiusSmall)
+                : Radius.zero,
+            bottomLeft: isLast
+                ? const Radius.circular(AppTheme.radiusSmall)
+                : Radius.zero,
+            bottomRight: isLast
+                ? const Radius.circular(AppTheme.radiusSmall)
+                : Radius.zero,
           ),
           border: Border(
             left: borderSide,
@@ -203,7 +211,8 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
             child: Text(
               flatItem.emptyText!,
-              style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
+              style:
+                  TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
             ),
           );
         }

@@ -99,7 +99,8 @@ class _MessageBubble extends StatelessWidget {
                                   if (attachment.isImage &&
                                       attachment.dataBase64.isNotEmpty)
                                     ClipRRect(
-                                      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                                      borderRadius: BorderRadius.circular(
+                                          AppTheme.radiusSmall),
                                       child: Image.memory(
                                         base64Decode(attachment.dataBase64),
                                         width: 120,
@@ -112,8 +113,8 @@ class _MessageBubble extends StatelessWidget {
                                           decoration: BoxDecoration(
                                             color: colorScheme
                                                 .surfaceContainerHighest,
-                                            borderRadius:
-                                                BorderRadius.circular(AppTheme.radiusSmall),
+                                            borderRadius: BorderRadius.circular(
+                                                AppTheme.radiusSmall),
                                           ),
                                           child: Text(
                                             attachment.fileName,
@@ -135,7 +136,8 @@ class _MessageBubble extends StatelessWidget {
                                       decoration: BoxDecoration(
                                         color:
                                             colorScheme.surfaceContainerHighest,
-                                        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                                        borderRadius: BorderRadius.circular(
+                                            AppTheme.radiusSmall),
                                       ),
                                       child: Row(
                                         mainAxisSize: MainAxisSize.min,
@@ -619,7 +621,8 @@ class _MessageActions extends StatelessWidget {
                       decoration: BoxDecoration(
                         color: colorScheme.surfaceContainerHighest
                             .withValues(alpha: 0.36),
-                        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                        borderRadius:
+                            BorderRadius.circular(AppTheme.radiusSmall),
                         border: Border.all(
                           color: colorScheme.outlineVariant
                               .withValues(alpha: 0.72),
@@ -1008,7 +1011,8 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                       decoration: BoxDecoration(
                         color: colorScheme.surfaceContainerHighest
                             .withValues(alpha: 0.6),
-                        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                        borderRadius:
+                            BorderRadius.circular(AppTheme.radiusSmall),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,

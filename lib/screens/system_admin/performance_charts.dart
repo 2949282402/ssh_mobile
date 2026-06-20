@@ -55,7 +55,8 @@ class _MetricChart extends StatelessWidget {
         );
         if (cachedSeries.spots.isEmpty) continue;
         final color = _serverColor(i);
-        if (cachedSeries.dynamicMax > dynamicMax) dynamicMax = cachedSeries.dynamicMax;
+        if (cachedSeries.dynamicMax > dynamicMax)
+          dynamicMax = cachedSeries.dynamicMax;
         if (cachedSeries.maxX > maxX) maxX = cachedSeries.maxX;
 
         series.add(
@@ -109,8 +110,7 @@ class _MetricChart extends StatelessWidget {
                     show: true,
                     drawVerticalLine: false,
                     getDrawingHorizontalLine: (_) => FlLine(
-                      color:
-                          colorScheme.outlineVariant.withValues(alpha: 0.5),
+                      color: colorScheme.outlineVariant.withValues(alpha: 0.5),
                       strokeWidth: 1,
                     ),
                   ),
@@ -349,7 +349,8 @@ class _MetricChartSeriesCache {
 
   static List<PerformanceSample> _thinSamples(List<PerformanceSample> samples) {
     if (samples.length <= _MetricChart._maxChartPointsPerSeries) return samples;
-    final step = (samples.length / (_MetricChart._maxChartPointsPerSeries - 1)).ceil();
+    final step =
+        (samples.length / (_MetricChart._maxChartPointsPerSeries - 1)).ceil();
     final thinned = <PerformanceSample>[];
     for (var index = 0; index < samples.length; index += step) {
       thinned.add(samples[index]);

@@ -97,7 +97,8 @@ class _AdminServerPane extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final connections = context.select<SystemAdminViewModel, List<ConnectionConfig>>(
+    final connections =
+        context.select<SystemAdminViewModel, List<ConnectionConfig>>(
       (vm) => vm.connections,
     );
 
@@ -166,7 +167,8 @@ class _AdminServerPane extends StatelessWidget {
     );
   }
 
-  Widget _header(BuildContext context, ColorScheme colorScheme, bool isMonitorTab) {
+  Widget _header(
+      BuildContext context, ColorScheme colorScheme, bool isMonitorTab) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
       child: Row(
@@ -212,7 +214,8 @@ class _AdminMobileServerStrip extends StatelessWidget {
         MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.8).toDouble();
     final stripHeight = 72.0 + (textScale - 1.0) * 18.0;
 
-    final connections = context.select<SystemAdminViewModel, List<ConnectionConfig>>(
+    final connections =
+        context.select<SystemAdminViewModel, List<ConnectionConfig>>(
       (vm) => vm.connections,
     );
 
@@ -308,17 +311,18 @@ class _AdminCollapsedMobileServerBar extends StatelessWidget {
           )
         : null;
 
-    final connections = context.select<SystemAdminViewModel, List<ConnectionConfig>>(
+    final connections =
+        context.select<SystemAdminViewModel, List<ConnectionConfig>>(
       (vm) => vm.connections,
     );
 
-    final selectedMonitorIds = context.select<PerformanceMonitorViewModel, Set<String>>(
+    final selectedMonitorIds =
+        context.select<PerformanceMonitorViewModel, Set<String>>(
       (vm) => vm.selectedConnectionIds,
     );
 
-    final selectedMonitorConnections = connections
-        .where((c) => selectedMonitorIds.contains(c.id))
-        .toList();
+    final selectedMonitorConnections =
+        connections.where((c) => selectedMonitorIds.contains(c.id)).toList();
 
     final monitorIsRunning = context.select<PerformanceMonitorViewModel, bool>(
       (vm) => vm.isRunning,
@@ -420,17 +424,18 @@ class _AdminCollapsedDesktopServerRail extends StatelessWidget {
           )
         : null;
 
-    final connections = context.select<SystemAdminViewModel, List<ConnectionConfig>>(
+    final connections =
+        context.select<SystemAdminViewModel, List<ConnectionConfig>>(
       (vm) => vm.connections,
     );
 
-    final selectedMonitorIds = context.select<PerformanceMonitorViewModel, Set<String>>(
+    final selectedMonitorIds =
+        context.select<PerformanceMonitorViewModel, Set<String>>(
       (vm) => vm.selectedConnectionIds,
     );
 
-    final selectedMonitorConnections = connections
-        .where((c) => selectedMonitorIds.contains(c.id))
-        .toList();
+    final selectedMonitorConnections =
+        connections.where((c) => selectedMonitorIds.contains(c.id)).toList();
 
     final monitorIsRunning = context.select<PerformanceMonitorViewModel, bool>(
       (vm) => vm.isRunning,
@@ -658,7 +663,8 @@ class _AdminServerTileBinding extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (isMonitorTab) {
-      return Selector<PerformanceMonitorViewModel, _MonitorConnectionStatusSnapshot>(
+      return Selector<PerformanceMonitorViewModel,
+          _MonitorConnectionStatusSnapshot>(
         selector: (_, monitor) =>
             _MonitorConnectionStatusSnapshot.from(monitor, connection.id),
         builder: (context, status, _) {
@@ -672,7 +678,8 @@ class _AdminServerTileBinding extends StatelessWidget {
             isMonitorTab: true,
             onTap: () {
               if (status.running) {
-                final strings = AppStrings(context.read<AppSettings>().language);
+                final strings =
+                    AppStrings(context.read<AppSettings>().language);
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(

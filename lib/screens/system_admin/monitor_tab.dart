@@ -33,8 +33,7 @@ class _MonitorTabState extends State<_MonitorTab>
   late List<ConnectionConfig> connections;
 
   List<ConnectionConfig> _getActiveConnections(
-      PerformanceMonitorViewModel monitor,
-      List<ConnectionConfig> connections) {
+      PerformanceMonitorViewModel monitor, List<ConnectionConfig> connections) {
     return monitor.isRunning
         ? [
             for (final connection in connections)

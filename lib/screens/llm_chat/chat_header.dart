@@ -113,7 +113,9 @@ class _ChatHeader extends StatelessWidget {
                 onPressed: snapshot.sending
                     ? null
                     : () {
-                        context.read<AiChatViewModel>().createChatFromSettings();
+                        context
+                            .read<AiChatViewModel>()
+                            .createChatFromSettings();
                       },
               ),
               IconButton(

@@ -71,7 +71,8 @@ enum SftpTransferDirection {
 
 class SftpTransferCancelledException implements Exception {
   final String message;
-  const SftpTransferCancelledException([this.message = 'Transfer cancelled by user']);
+  const SftpTransferCancelledException(
+      [this.message = 'Transfer cancelled by user']);
 
   @override
   String toString() => 'SftpTransferCancelledException: $message';

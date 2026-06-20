@@ -131,7 +131,8 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                   if (!isMonitorTab && canManage) {
                     return IconButton(
                       icon: const Icon(Icons.refresh),
-                      onPressed: () => context.read<SystemAdminViewModel>().refreshAllData(),
+                      onPressed: () =>
+                          context.read<SystemAdminViewModel>().refreshAllData(),
                       tooltip: strings.refreshAll,
                     );
                   }
@@ -153,17 +154,20 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                           width: snapshot.serversCollapsed ? 64 : 320,
                           child: snapshot.serversCollapsed
                               ? _AdminCollapsedDesktopServerRail(
-                                  key: const ValueKey('admin-server-rail-collapsed'),
+                                  key: const ValueKey(
+                                      'admin-server-rail-collapsed'),
                                   strings: strings,
                                   isMonitorTab: isMonitorTab,
-                                  onExpand: () =>
-                                      context.read<SystemAdminViewModel>().setServersCollapsed(context, false),
+                                  onExpand: () => context
+                                      .read<SystemAdminViewModel>()
+                                      .setServersCollapsed(context, false),
                                 )
                               : _AdminServerPane(
                                   strings: strings,
                                   isMonitorTab: isMonitorTab,
-                                  onCollapse: () =>
-                                      context.read<SystemAdminViewModel>().setServersCollapsed(context, true),
+                                  onCollapse: () => context
+                                      .read<SystemAdminViewModel>()
+                                      .setServersCollapsed(context, true),
                                 ),
                         ),
                         VerticalDivider(
@@ -188,18 +192,22 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                             switchOutCurve: Curves.easeInCubic,
                             child: snapshot.serversCollapsed
                                 ? _AdminCollapsedMobileServerBar(
-                                    key: const ValueKey('admin-server-collapsed'),
+                                    key: const ValueKey(
+                                        'admin-server-collapsed'),
                                     strings: strings,
                                     isMonitorTab: isMonitorTab,
-                                    onExpand: () =>
-                                        context.read<SystemAdminViewModel>().setServersCollapsed(context, false),
+                                    onExpand: () => context
+                                        .read<SystemAdminViewModel>()
+                                        .setServersCollapsed(context, false),
                                   )
                                 : _AdminMobileServerStrip(
-                                    key: const ValueKey('admin-server-expanded'),
+                                    key:
+                                        const ValueKey('admin-server-expanded'),
                                     strings: strings,
                                     isMonitorTab: isMonitorTab,
-                                    onCollapse: () =>
-                                        context.read<SystemAdminViewModel>().setServersCollapsed(context, true),
+                                    onCollapse: () => context
+                                        .read<SystemAdminViewModel>()
+                                        .setServersCollapsed(context, true),
                                   ),
                           ),
                         ),
@@ -370,7 +378,9 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                         showSshHostKeyTrustDialog(context, request),
                   );
                   if (mounted) {
-                    context.read<SystemAdminViewModel>().setServersCollapsed(context, true);
+                    context
+                        .read<SystemAdminViewModel>()
+                        .setServersCollapsed(context, true);
                   }
                 },
               ),
@@ -451,7 +461,8 @@ class _RootRequiredTabWrapper extends StatelessWidget {
       return _AdminEmptyState(strings: strings);
     }
 
-    final selectedConnection = context.select<SystemAdminViewModel, ConnectionConfig?>(
+    final selectedConnection =
+        context.select<SystemAdminViewModel, ConnectionConfig?>(
       (vm) => vm.connectionById(selectedConnectionId),
     );
     if (selectedConnection == null) {
@@ -473,7 +484,8 @@ class _RootRequiredTabWrapper extends StatelessWidget {
               Text(
                 strings.nonLinuxMsg,
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
             ],
           ),
@@ -493,7 +505,8 @@ class _RootRequiredTabWrapper extends StatelessWidget {
     final errorMessage = hasError
         ? context.select<SystemAdminViewModel, String?>((vm) => vm.errorMessage)
         : null;
-    final isRoot = isConnected && context.select<SystemAdminViewModel, bool>((vm) => vm.isRoot);
+    final isRoot = isConnected &&
+        context.select<SystemAdminViewModel, bool>((vm) => vm.isRoot);
 
     if (isConnecting) {
       return Center(
@@ -517,10 +530,10 @@ class _RootRequiredTabWrapper extends StatelessWidget {
         errorMessage: errorMessage,
         onConnect: () => unawaited(
           context.read<SystemAdminViewModel>().connectIfNeeded(
-            selectedConnectionId,
-            onUnknownHostKey: (request) =>
-                showSshHostKeyTrustDialog(context, request),
-          ),
+                selectedConnectionId,
+                onUnknownHostKey: (request) =>
+                    showSshHostKeyTrustDialog(context, request),
+              ),
         ),
       );
     }

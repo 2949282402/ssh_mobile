@@ -145,12 +145,12 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
       _scheduleApplicationsLoad();
     }
 
-    final connections = context.select<SystemAdminViewModel, List<ConnectionConfig>>(
+    final connections =
+        context.select<SystemAdminViewModel, List<ConnectionConfig>>(
       (vm) => vm.connections,
     );
-    final currentConfigList = connections
-        .where((c) => c.id == connectionId)
-        .toList();
+    final currentConfigList =
+        connections.where((c) => c.id == connectionId).toList();
 
     return _ServerSnapshotTab<ApplicationMemorySnapshot>(
       strings: widget.strings,

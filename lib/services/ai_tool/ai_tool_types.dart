@@ -174,7 +174,11 @@ class AiTool {
 
   bool get needsServerSelection {
     if (requiresServerSelection) return true;
-    if (name == 'monitor_get_state') return false;
+    if (name == 'monitor_get_state' ||
+        name == 'monitor_get_health' ||
+        name == 'monitor_get_alerts') {
+      return false;
+    }
     return name == 'run_command' ||
         name == 'detect_os' ||
         name == 'get_server_status' ||

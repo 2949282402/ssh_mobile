@@ -19,9 +19,8 @@ class _PortsManageSnapshot {
     return _PortsManageSnapshot(
       isConnecting: vm.isConnectingSelectedConnection,
       isManageModeAvailable: vm.canManageSelectedConnection,
-      errorMessage: vm.hasManagementErrorForSelectedConnection
-          ? vm.errorMessage
-          : null,
+      errorMessage:
+          vm.hasManagementErrorForSelectedConnection ? vm.errorMessage : null,
       loadingPorts: vm.loadingPorts,
       ports: vm.ports,
     );
@@ -351,7 +350,8 @@ class _PortsTabState extends State<_PortsTab>
                     maxLines: 1,
                     style: TextStyle(
                       fontSize: 12,
-                      color: widget.colorScheme.onSurface.withValues(alpha: 0.58),
+                      color:
+                          widget.colorScheme.onSurface.withValues(alpha: 0.58),
                     ),
                   ),
                 ),

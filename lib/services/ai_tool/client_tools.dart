@@ -670,6 +670,7 @@ class ClientToolsProvider implements AiToolProvider {
       'quarkSearchEndpoint': settings.quarkSearchEndpoint,
       'multiAgentEnabled': settings.multiAgentEnabled,
       'multiAgentMaxAgents': settings.multiAgentMaxAgents,
+      'postToolReviewEnabled': settings.postToolReviewEnabled,
       'toolCallBudget': settings.toolCallBudget,
       'hasApiKeyConfigured': settings.hasApiKey,
     });
@@ -723,6 +724,8 @@ class ClientToolsProvider implements AiToolProvider {
         service._optionalBool(arguments, 'multiAgentEnabled');
     final multiAgentMaxAgents =
         service._optionalInt(arguments, 'multiAgentMaxAgents');
+    final postToolReviewEnabled =
+        service._optionalBool(arguments, 'postToolReviewEnabled');
     final toolCallBudget = service._optionalInt(arguments, 'toolCallBudget');
 
     await storageService.saveAiConnectionSettings(
@@ -737,6 +740,8 @@ class ClientToolsProvider implements AiToolProvider {
       webSearchMaxResults: webSearchMaxResults ?? current.webSearchMaxResults,
       multiAgentEnabled: multiAgentEnabled ?? current.multiAgentEnabled,
       multiAgentMaxAgents: multiAgentMaxAgents ?? current.multiAgentMaxAgents,
+      postToolReviewEnabled:
+          postToolReviewEnabled ?? current.postToolReviewEnabled,
       toolCallBudget: toolCallBudget ?? current.toolCallBudget,
     );
 
@@ -1341,6 +1346,8 @@ class ClientToolsProvider implements AiToolProvider {
           ),
           'multiAgentEnabled':
               _bool('Optional automatic multi-agent collaboration flag.'),
+          'postToolReviewEnabled':
+              _bool('Optional post-tool recovery review agent flag.'),
           'multiAgentMaxAgents': _int(
             'Optional maximum helper agents for automatic multi-agent collaboration.',
             minimum: AiMultiAgentMaxAgents.values.first,

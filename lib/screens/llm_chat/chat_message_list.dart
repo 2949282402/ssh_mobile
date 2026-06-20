@@ -98,9 +98,8 @@ class _ChatMessageList extends StatelessWidget {
                     streamingStatusListenable: streamingStatusListenable,
                     canAct: !snapshot.sending &&
                         snapshot.messages == visibleMessages,
-                    onEditUser: message.role == 'user'
-                        ? () => onEditUser(index)
-                        : null,
+                    onEditUser:
+                        message.role == 'user' ? () => onEditUser(index) : null,
                     onRegenerate: message.role == 'assistant'
                         ? () => onRegenerate(index)
                         : null,
