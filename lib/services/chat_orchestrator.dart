@@ -162,37 +162,40 @@ class ChatOrchestrator {
     String text, {
     required DateTime assistantCreatedAt,
   }) {
-    try {
-      final reg = RegExp(r'```playbook\s*(\{[\s\S]*?\})\s*```');
-      final match = reg.firstMatch(text);
-      if (match == null) return const [];
-      final rawJson = match.group(1);
-      if (rawJson == null) return const [];
-      final decoded = jsonDecode(rawJson) as Map<String, dynamic>;
-      final stepsList = decoded['steps'] as List? ?? [];
-      return stepsList.asMap().entries.map((entry) {
-        final idx = entry.key;
-        final item = entry.value;
-        if (item is! Map) {
+    final reg = RegExp(r'```playbook\s*(\{[\s\S]*?\})\s*```');
+    final matches = reg.allMatches(text);
+    for (final match in matches) {
+      try {
+        final rawJson = match.group(1);
+        if (rawJson == null || rawJson.trim().isEmpty) continue;
+        final decoded = jsonDecode(rawJson) as Map<String, dynamic>;
+        final stepsList = decoded['steps'] as List? ?? [];
+        if (stepsList.isEmpty) continue;
+        return stepsList.asMap().entries.map((entry) {
+          final idx = entry.key;
+          final item = entry.value;
+          if (item is! Map) {
+            return AiTodoStep(
+              id: buildStableTodoStepId(assistantCreatedAt, idx),
+              name: 'Step ${idx + 1}',
+              command: '',
+              description: '',
+              status: StepStatus.pending,
+            );
+          }
           return AiTodoStep(
             id: buildStableTodoStepId(assistantCreatedAt, idx),
-            name: 'Step ${idx + 1}',
-            command: '',
-            description: '',
+            name: item['name']?.toString() ?? 'Step ${idx + 1}',
+            command: item['command']?.toString() ?? '',
+            description: item['description']?.toString() ?? '',
             status: StepStatus.pending,
+            connectionId: item['connectionId']?.toString(),
           );
-        }
-        return AiTodoStep(
-          id: buildStableTodoStepId(assistantCreatedAt, idx),
-          name: item['name']?.toString() ?? 'Step ${idx + 1}',
-          command: item['command']?.toString() ?? '',
-          description: item['description']?.toString() ?? '',
-          status: StepStatus.pending,
-          connectionId: item['connectionId']?.toString(),
-        );
-      }).toList(growable: false);
-    } catch (_) {
-      return const [];
+        }).toList(growable: false);
+      } catch (_) {
+        // Continue to the next match if JSON parsing fails or steps missing
+      }
     }
+    return const [];
   }
 }

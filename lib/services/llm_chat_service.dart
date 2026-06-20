@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import 'ai_tool_service.dart';
+import '../features/playbook/models/playbook.dart';
 import 'agent_model_profile.dart';
 import 'app_log_service.dart';
 import 'app_settings.dart';
@@ -23,6 +24,7 @@ part 'llm_chat/llm_safety_auditor.dart';
 part 'llm_chat/llm_stream_handler.dart';
 part 'llm_chat/tool_loop_controller.dart';
 part 'llm_chat/tool_result_classifier.dart';
+part 'llm_chat/plan_output_validator.dart';
 
 abstract interface class LlmClientAdapter {
   Future<List<String>> fetchModels({

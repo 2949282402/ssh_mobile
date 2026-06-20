@@ -831,7 +831,12 @@ void main() {
       final rawFalse =
           await tools.execute('client_set_plan_mode', {'enabled': false});
       final decodedFalse = jsonDecode(rawFalse) as Map<String, dynamic>;
-      expect(decodedFalse['error'], contains('Cannot exit Plan Mode'));
+      expect(
+          decodedFalse['error'],
+          anyOf(
+            contains('Cannot exit Plan Mode'),
+            contains('无法退出规划模式'),
+          ));
 
       final chatStillTrue =
           (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');

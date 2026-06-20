@@ -161,3 +161,5 @@ across sessions.
   大小、数量、字段长度和 schema 校验并继续丢弃凭据；后台通知默认隐藏服务器名。
 - 2026-06-20: Tool visibility is a hard execution boundary. Tool calls must be blocked when the requested tool is absent from `visibleToolsByName`. Hidden/unexposed tools must not enter approval, execution, cache, loop guard, or budget-audit paths. This preserves ToolExposureRouter as an actual security boundary rather than only a model hint.
 - 2026-06-20: Post-tool review and connection-required boundaries. Post-tool review is controlled by `postToolReviewEnabled`, separate from normal `multiAgentEnabled`. Tool execution must enforce connection requirements independently from ToolExposureRouter. Server/SSH/SFTP/monitor tools without `connectionId` should return `connection_required` and must not perform remote operations.
+- 2026-06-20: Plan Mode output validation before execution handoff. A valid plan must have persisted chat-bound `todoSteps` or a valid ` ```playbook ` JSON block with non-empty steps. If validation fails, the service requests one format-only repair attempt without execution tools. Valid playbook JSON is automatically persisted as `todoSteps` on the assistant message.
+

@@ -783,9 +783,12 @@ class ClientToolsProvider implements AiToolProvider {
 
     if (!enabled &&
         !canExitPlanMode(currentChat, actor: PlanModeExitActor.llmTool)) {
+      final isZh = service.appSettings?.language == AppLanguage.zh;
+      final errorMsg = isZh
+          ? '无法退出规划模式。当前聊天没有可执行的 TODO 步骤。请先在最新的回复中输出包含 steps 的 ```playbook JSON 代码块，或使用 client_task_create 创建计划步骤。'
+          : 'Cannot exit Plan Mode. This plan has no executable steps. Generate a valid ```playbook JSON block with steps in your latest reply, or create steps with client_task_create first.';
       return jsonEncode({
-        'error':
-            'Cannot exit Plan Mode. You must persist executable TODO steps on the latest assistant planning message before switching to execution mode.',
+        'error': errorMsg,
       });
     }
 

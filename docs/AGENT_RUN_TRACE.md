@@ -89,3 +89,14 @@ They are intentionally separate so users can disable normal helper agents while 
 ### Connection Required Boundary
 Plan Mode may expose server-related tools for planning or diagnostics, but execution still requires an explicit `connectionId`.
 If a server/SSH/SFTP/monitor tool is called without a selected connection, the tool layer returns `connection_required` and does not perform remote operations.
+
+---
+
+## 5. Plan Output Validation
+
+Plan Mode final output is validated before execution handoff. A valid Plan Mode result must either:
+1. Persist chat-bound `todoSteps` (e.g. from `client_task_create` calls), or
+2. Include a valid ` ```playbook ` JSON block with non-empty steps.
+
+If validation fails, the model gets one format-only repair attempt. If the repair succeeds, the validated playbook JSON is automatically persisted as `todoSteps` on the assistant message, and the chat can transition to execution mode. If the repair still fails, the chat stays in Plan Mode and the user receives an explicit explanation.
+

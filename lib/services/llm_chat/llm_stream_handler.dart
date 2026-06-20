@@ -250,13 +250,135 @@ extension LlmChatServiceStreamHandler on LlmChatService {
       );
 
       if (planMode) {
-        yield multiAgentResult.memoryContent;
+        final chatId = _resolveChatId();
+        final hasSteps = await _hasPersistedTodoSteps(chatId);
+        var validation = PlanOutputValidator.validate(
+          assistantText: multiAgentResult.memoryContent,
+          hasPersistedTodoSteps: hasSteps,
+        );
+
+        var finalPlanContent = multiAgentResult.memoryContent;
+
+        if (!validation.isValid) {
+          onTrace?.call(
+            LlmTraceEvent(
+              kind: 'plan_output_validation',
+              title: 'Plan output validation failed',
+              content: _prettyJson({
+                'status': validation.status.name,
+                'reason': validation.reason,
+                'hasPersistedTodoSteps': hasSteps,
+              }),
+            ),
+          );
+
+          final repairPrompt = buildPlanOutputRepairPrompt(
+            language: language,
+            invalidReason: validation.reason ?? 'Unknown validation error',
+            previousOutput: multiAgentResult.memoryContent,
+          );
+
+          final repairNotice = language == AppLanguage.en
+              ? '\n\n[Format validation failed. Repairing...]\n'
+              : '\n\n[格式校验未通过，正在自动修复...]\n';
+          yield repairNotice;
+
+          final repairMessages = [
+            ...workingMessages,
+            {
+              'role': 'user',
+              'content': repairPrompt,
+            }
+          ];
+
+          final repairBuffer = StringBuffer();
+          await for (final chunk in _streamRepairCompletion(
+            settings: settings,
+            apiKey: apiKey,
+            model: model,
+            workingMessages: repairMessages,
+            cancellationToken: cancellationToken,
+          )) {
+            repairBuffer.write(chunk);
+            yield chunk;
+          }
+
+          final repairText = repairBuffer.toString();
+          final repairHasSteps = await _hasPersistedTodoSteps(chatId);
+          final repairValidation = PlanOutputValidator.validate(
+            assistantText: repairText,
+            hasPersistedTodoSteps: repairHasSteps,
+          );
+
+          if (repairValidation.isValid) {
+            onTrace?.call(
+              LlmTraceEvent(
+                kind: 'plan_output_validation',
+                title: 'Plan output repaired successfully',
+                content: _prettyJson({
+                  'status': repairValidation.status.name,
+                  'hasPersistedTodoSteps': repairHasSteps,
+                }),
+              ),
+            );
+            validation = repairValidation;
+            finalPlanContent = repairText;
+            workingMessages.last['content'] = repairText;
+          } else {
+            onTrace?.call(
+              LlmTraceEvent(
+                kind: 'plan_output_validation',
+                title: 'Plan output repair failed',
+                content: _prettyJson({
+                  'status': repairValidation.status.name,
+                  'reason': repairValidation.reason,
+                  'hasPersistedTodoSteps': repairHasSteps,
+                }),
+              ),
+            );
+            finalPlanContent = '${multiAgentResult.memoryContent}\n\n$repairNotice\n\n$repairText';
+            workingMessages.last['content'] = finalPlanContent;
+          }
+        } else {
+          onTrace?.call(
+            LlmTraceEvent(
+              kind: 'plan_output_validation',
+              title: 'Plan output validated successfully',
+              content: _prettyJson({
+                'status': validation.status.name,
+                'hasPersistedTodoSteps': hasSteps,
+              }),
+            ),
+          );
+          yield multiAgentResult.memoryContent;
+        }
+
+        if (validation.isValid &&
+            validation.status == PlanOutputValidationStatus.validPlaybook &&
+            validation.playbookJson != null) {
+          final now = DateTime.now();
+          var assistantCreatedAt = now;
+          try {
+            final chats = await storageService.loadAiChats();
+            final chatIndex = chats.indexWhere((c) => c.id == chatId);
+            if (chatIndex != -1 && chats[chatIndex].messages.isNotEmpty) {
+              final assistantMsg = chats[chatIndex].messages.lastWhere((m) => m.role == 'assistant');
+              assistantCreatedAt = assistantMsg.createdAt;
+            }
+          } catch (_) {}
+          await _persistPlaybookToTodoSteps(
+            chatId: chatId,
+            playbookJson: validation.playbookJson!,
+            assistantCreatedAt: assistantCreatedAt,
+          );
+        }
+
         final elapsedMs =
             DateTime.now().difference(runStartedAt).inMilliseconds;
         final promptTokens =
             LlmChatService.estimateMessagesTokens(workingMessages);
         final completionTokens =
-            LlmChatService.estimateTextTokens(multiAgentResult.memoryContent);
+            LlmChatService.estimateTextTokens(finalPlanContent);
         onStats?.call(
           LlmRunStats(
             promptTokens: promptTokens,
@@ -330,10 +452,138 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         _emitReasoningTrace(onTrace, response.reasoningContent);
 
         if (response.toolCalls.isEmpty) {
-          final answer = content.toString().trim().isNotEmpty
+          var answer = content.toString().trim().isNotEmpty
               ? content.toString()
               : 'Done.';
-          if (content.isEmpty) yield answer;
+
+          if (planMode) {
+            final chatId = _resolveChatId();
+            final hasSteps = await _hasPersistedTodoSteps(chatId);
+            var validation = PlanOutputValidator.validate(
+              assistantText: answer,
+              hasPersistedTodoSteps: hasSteps,
+            );
+
+            if (!validation.isValid) {
+              onTrace?.call(
+                LlmTraceEvent(
+                  kind: 'plan_output_validation',
+                  title: 'Plan output validation failed',
+                  content: _prettyJson({
+                    'status': validation.status.name,
+                    'reason': validation.reason,
+                    'hasPersistedTodoSteps': hasSteps,
+                  }),
+                ),
+              );
+
+              final repairPrompt = buildPlanOutputRepairPrompt(
+                language: language,
+                invalidReason: validation.reason ?? 'Unknown validation error',
+                previousOutput: answer,
+              );
+
+              final repairNotice = language == AppLanguage.en
+                  ? '\n\n[Format validation failed. Repairing...]\n'
+                  : '\n\n[格式校验未通过，正在自动修复...]\n';
+              yield repairNotice;
+              visibleOutput.write(repairNotice);
+
+              final repairMessages = [
+                ...workingMessages,
+                {
+                  'role': 'assistant',
+                  'content': answer,
+                },
+                {
+                  'role': 'user',
+                  'content': repairPrompt,
+                }
+              ];
+
+              final repairBuffer = StringBuffer();
+              await for (final chunk in _streamRepairCompletion(
+                settings: settings,
+                apiKey: apiKey,
+                model: model,
+                workingMessages: repairMessages,
+                cancellationToken: cancellationToken,
+              )) {
+                repairBuffer.write(chunk);
+                yield chunk;
+                visibleOutput.write(chunk);
+              }
+
+              final repairText = repairBuffer.toString();
+              final repairHasSteps = await _hasPersistedTodoSteps(chatId);
+              final repairValidation = PlanOutputValidator.validate(
+                assistantText: repairText,
+                hasPersistedTodoSteps: repairHasSteps,
+              );
+
+              if (repairValidation.isValid) {
+                onTrace?.call(
+                  LlmTraceEvent(
+                    kind: 'plan_output_validation',
+                    title: 'Plan output repaired successfully',
+                    content: _prettyJson({
+                      'status': repairValidation.status.name,
+                      'hasPersistedTodoSteps': repairHasSteps,
+                    }),
+                  ),
+                );
+                validation = repairValidation;
+                answer = repairText;
+              } else {
+                onTrace?.call(
+                  LlmTraceEvent(
+                    kind: 'plan_output_validation',
+                    title: 'Plan output repair failed',
+                    content: _prettyJson({
+                      'status': repairValidation.status.name,
+                      'reason': repairValidation.reason,
+                      'hasPersistedTodoSteps': repairHasSteps,
+                    }),
+                  ),
+                );
+                answer = '$answer\n\n$repairNotice\n\n$repairText';
+              }
+            } else {
+              onTrace?.call(
+                LlmTraceEvent(
+                  kind: 'plan_output_validation',
+                  title: 'Plan output validated successfully',
+                  content: _prettyJson({
+                    'status': validation.status.name,
+                    'hasPersistedTodoSteps': hasSteps,
+                  }),
+                ),
+              );
+              if (content.isEmpty) yield answer;
+            }
+
+            if (validation.isValid &&
+                validation.status == PlanOutputValidationStatus.validPlaybook &&
+                validation.playbookJson != null) {
+              final now = DateTime.now();
+              var assistantCreatedAt = now;
+              try {
+                final chats = await storageService.loadAiChats();
+                final chatIndex = chats.indexWhere((c) => c.id == chatId);
+                if (chatIndex != -1 && chats[chatIndex].messages.isNotEmpty) {
+                  final assistantMsg = chats[chatIndex].messages.lastWhere((m) => m.role == 'assistant');
+                  assistantCreatedAt = assistantMsg.createdAt;
+                }
+              } catch (_) {}
+              await _persistPlaybookToTodoSteps(
+                chatId: chatId,
+                playbookJson: validation.playbookJson!,
+                assistantCreatedAt: assistantCreatedAt,
+              );
+            }
+          } else {
+            if (content.isEmpty) yield answer;
+          }
           AppLogService.instance.info(
             'LLM chat completed',
             details: 'rounds=${round + 1} answerChars=${answer.length}',
@@ -757,5 +1007,129 @@ extension LlmChatServiceStreamHandler on LlmChatService {
       }
     }
     throw StateError('LLM stream failed after network retries.');
+  }
+
+  String? _resolveChatId() {
+    final executor = toolService;
+    if (executor is AiToolService) {
+      return executor.clientWebViewSessionId;
+    }
+    return null;
+  }
+
+  Future<bool> _hasPersistedTodoSteps(String? chatId) async {
+    if (chatId == null) return false;
+    try {
+      final chats = await storageService.loadAiChats();
+      final chatIndex = chats.indexWhere((c) => c.id == chatId);
+      if (chatIndex == -1) return false;
+      final chat = chats[chatIndex];
+      if (chat.messages.isEmpty) return false;
+      final assistantMsg = chat.messages.lastWhere((m) => m.role == 'assistant');
+      return assistantMsg.todoSteps.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _persistPlaybookToTodoSteps({
+    required String? chatId,
+    required Map<String, dynamic> playbookJson,
+    required DateTime assistantCreatedAt,
+  }) async {
+    if (chatId == null) return;
+    try {
+      final chats = await storageService.loadAiChats();
+      final chatIndex = chats.indexWhere((c) => c.id == chatId);
+      if (chatIndex == -1) return;
+      final currentChat = chats[chatIndex];
+      final messages = [...currentChat.messages];
+      if (messages.isEmpty) return;
+
+      final assistantIndex =
+          messages.lastIndexWhere((m) => m.role == 'assistant');
+      if (assistantIndex == -1) return;
+
+      final targetMsg = messages[assistantIndex];
+      if (targetMsg.todoSteps.isNotEmpty) return;
+
+      final stepsList = playbookJson['steps'] as List? ?? [];
+      final newSteps = stepsList.asMap().entries.map((entry) {
+        final idx = entry.key;
+        final item = entry.value;
+        if (item is! Map) {
+          return AiTodoStep(
+            id: buildStableTodoStepId(assistantCreatedAt, idx),
+            name: 'Step ${idx + 1}',
+            command: '',
+            description: '',
+            status: StepStatus.pending,
+          );
+        }
+        return AiTodoStep(
+          id: buildStableTodoStepId(assistantCreatedAt, idx),
+          name: item['name']?.toString() ?? 'Step ${idx + 1}',
+          command: item['command']?.toString() ?? '',
+          description: item['description']?.toString() ?? '',
+          status: StepStatus.pending,
+          connectionId: item['connectionId']?.toString(),
+        );
+      }).toList(growable: false);
+
+      messages[assistantIndex] = targetMsg.copyWith(todoSteps: newSteps);
+      final updatedChat = currentChat.copyWith(
+        messages: messages,
+        updatedAt: DateTime.now(),
+      );
+      await storageService.saveAiChat(updatedChat);
+      AppLogService.instance.info(
+        'Playbook block successfully persisted as todoSteps',
+        details: 'chatId=$chatId steps=${newSteps.length}',
+      );
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to persist playbook to todoSteps',
+        error: e,
+        stackTrace: stackTrace,
+        details: 'chatId=$chatId',
+      );
+    }
+  }
+
+  Stream<String> _streamRepairCompletion({
+    required AiConnectionSettings settings,
+    required String apiKey,
+    required String model,
+    required List<Map<String, dynamic>> workingMessages,
+    required LlmCancellationToken? cancellationToken,
+  }) async* {
+    final chunkController = StreamController<String>();
+    Future<void> pumpStream() async {
+      try {
+        await _streamChatCompletion(
+          baseUrl: settings.baseUrl,
+          apiKey: apiKey,
+          model: model,
+          messages: workingMessages,
+          tools: const [],
+          includeTools: false,
+          deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
+          deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
+          openAiReasoningEffort: settings.openAiReasoningEffort,
+          cancellationToken: cancellationToken,
+          onContent: (chunk) {
+            cancellationToken?.throwIfCancelled();
+            chunkController.add(chunk);
+          },
+        );
+      } catch (e) {
+        chunkController.addError(e);
+      } finally {
+        await chunkController.close();
+      }
+    }
+
+    unawaited(pumpStream());
+    yield* chunkController.stream;
   }
 }
