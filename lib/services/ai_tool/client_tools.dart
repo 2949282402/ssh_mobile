@@ -1701,6 +1701,10 @@ class ClientToolsProvider implements AiToolProvider {
           AiToolCapability.planning,
           AiToolCapability.client,
         },
+        // Approval-aware tools must be executed through AiToolService.execute,
+        // which routes to provider.execute with the approvedWrite flag.
+        // This handler fallback intentionally passes approvedWrite=false so
+        // direct handler invocation cannot bypass approval.
         handler: (args) => _clientTaskSkip(service, args, approvedWrite: false),
       ),
     ];

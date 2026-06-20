@@ -213,8 +213,11 @@ class ToolLoopController {
               title: 'Tool blocked by plan execution gate: ${call.name}',
               content: chatService._prettyJson({
                 'tool': call.name,
+                'executionMode': tool.executionMode.name,
+                'stepScoped': true,
                 'reason': gateResult.reason,
                 'currentStepId': gateResult.currentStep?.id,
+                'currentStepStatus': gateResult.currentStep?.status.name,
               }),
             ),
           );

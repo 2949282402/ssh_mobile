@@ -1236,6 +1236,82 @@ void main() {
       expect(hint1, contains('client_task_update'));
       expect(hint2, contains('选择服务器连接'));
     });
+
+    test('gate block trace includes step scoped metadata', () async {
+      final budget = LlmToolBudgetController(baseBudget: 10);
+      final cache = <String, CachedToolResult>{};
+      final ledger = <LlmToolLedgerEntry>[];
+      final controller = ToolLoopController(
+        chatService: llm,
+        toolBudget: budget,
+        readOnlyToolCache: cache,
+        toolLedger: ledger,
+      );
+
+      final workingMessages = <Map<String, dynamic>>[];
+      final settings = await storage.loadAiConnectionSettings();
+      final traces = <LlmTraceEvent>[];
+
+      await controller.handleToolCalls(
+        toolCalls: [
+          StreamingToolCall(
+            id: 'call_blocked_trace',
+            name: 'detect_os',
+            arguments: '{"connectionId":"local"}',
+          ),
+        ],
+        visibleToolsByName: {
+          'detect_os': AiTool(
+            name: 'detect_os',
+            description: 'Detect OS',
+            properties: const {},
+            required: const [],
+            executionMode: AiToolExecutionMode.readOnly,
+            handler: (args) async => '{}',
+          ),
+        },
+        planMode: false,
+        language: AppLanguage.zh,
+        apiKey: 'key',
+        auditModel: 'audit-model',
+        originalUserGoal: 'Goal',
+        workingMessages: workingMessages,
+        requestToolApproval: null,
+        onTrace: (ev) => traces.add(ev),
+        cancellationToken: null,
+        settings: settings,
+        complete: (role, messages, {required thinkingSettings}) async => 'advice',
+        classify: (messages) async => '{}',
+        planExecutionSnapshot: const PlanExecutionSnapshot(
+          phase: PlanExecutionPhase.pending,
+          steps: [
+            AiTodoStep(
+              id: 'task-1',
+              name: 'Step 1',
+              command: 'cmd',
+              description: 'desc',
+              status: StepStatus.pending,
+            ),
+          ],
+          currentStepIndex: 0,
+          currentStep: AiTodoStep(
+            id: 'task-1',
+            name: 'Step 1',
+            command: 'cmd',
+            description: 'desc',
+            status: StepStatus.pending,
+          ),
+          hasFailedStep: false,
+          isCompleted: false,
+        ),
+      );
+
+      final blockTrace = traces.firstWhere((ev) => ev.kind == 'tool_blocked');
+      expect(blockTrace.content, contains('"stepScoped": true'));
+      expect(blockTrace.content, contains('"executionMode": "readOnly"'));
+      expect(blockTrace.content, contains('"reason": "task_update_required"'));
+      expect(blockTrace.content, contains('"currentStepStatus": "pending"'));
+    });
   });
 }
 

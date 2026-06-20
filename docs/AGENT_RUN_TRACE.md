@@ -112,5 +112,7 @@ During Plan Mode, single-LLM text is fully buffered until output validation/repa
 In Execution Mode, step gating applies to remote/server-scoped tools, including read-only diagnostics.
 The assistant must mark the current todoStep as running before calling server/ssh/sftp/monitor tools, not only before mutating tools.
 Pure client/app tools such as `client_time`, `app_get_operational_settings`, `web_search`, and `list_servers` may run outside the step gate.
+Step-gate block traces include `stepScoped`, `executionMode`, `reason`, and the current step status.
+Approval-aware tools such as `client_task_skip` must be executed through `AiToolService.execute` so that the `approvedWrite` flag is correctly propagated; the direct handler fallback intentionally enforces `approvedWrite=false` to prevent bypassing approval.
 
 
