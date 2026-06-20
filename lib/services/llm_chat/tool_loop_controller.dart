@@ -58,6 +58,17 @@ class ToolLoopController {
       final call = toolCalls[toolIndex];
       cancellationToken?.throwIfCancelled();
 
+      var result = jsonEncode({
+        'error': 'Tool execution did not complete.',
+      });
+      var outcome = 'success';
+      var approvalRequired = false;
+      var approvedWrite = false;
+      var stopAfterToolResult = false;
+      var cacheHit = false;
+      var dedupBlocked = false;
+      String? stopMessage;
+
       final arguments = chatService._decodeArguments(call.arguments);
       onTrace?.call(
         LlmTraceEvent(
@@ -78,6 +89,70 @@ class ToolLoopController {
         call.name,
         signatureArguments,
       );
+
+      if (tool == null) {
+        outcome = 'tool_not_visible';
+        final isEn = language == AppLanguage.en;
+        result = jsonEncode({
+          'error': isEn
+              ? 'Tool "${call.name}" is not visible or exposed in the current context. It cannot be executed.'
+              : '工具 "${call.name}" 在当前上下文中不可见或未暴露。无法执行此操作。',
+        });
+        onTrace?.call(
+          LlmTraceEvent(
+            kind: 'tool_blocked',
+            title: 'Tool blocked: ${call.name} (not visible)',
+            content: 'Tool "${call.name}" is not exposed in the current context.',
+          ),
+        );
+        workingMessages.add({
+          'role': 'tool',
+          'tool_call_id': call.id,
+          'content': result,
+        });
+
+        final quality = ToolResultClassifier.classify(
+          toolName: call.name,
+          resultJson: result,
+          outcome: outcome,
+          approvalRequired: false,
+          approved: false,
+          cacheHit: false,
+          dedupBlocked: false,
+        );
+
+        final hint = ToolResultClassifier.getSystemHint(call.name, quality, language);
+        if (hint != null) {
+          workingMessages.add({
+            'role': 'system',
+            'content': hint,
+          });
+        }
+
+        toolLedger.add(
+          LlmToolLedgerEntry(
+            index: toolBudget.usedCalls,
+            toolName: call.name,
+            signature: signature,
+            argumentsPreview: chatService._toolSecretPolicy.previewText(
+              chatService._prettyJson(redactedArguments),
+              maxChars: 400,
+            ),
+            outcome: outcome,
+            approvalRequired: false,
+            approved: false,
+            failed: true,
+            emptyResult: false,
+            cacheHit: false,
+            dedupBlocked: false,
+            auditEscalationLevel: toolBudget.auditCount,
+            quality: quality.name,
+            resultPreview: result,
+          ),
+        );
+
+        continue;
+      }
 
       final budgetCheck = toolBudget.checkBeforeToolCall();
       if (budgetCheck.requiresAudit) {
@@ -168,6 +243,7 @@ class ToolLoopController {
             classify: classify,
             onTrace: onTrace,
             cancellationToken: cancellationToken,
+            settings: settings,
             planExecutionSnapshot: planExecutionSnapshot,
           );
           return const ToolLoopResult(
@@ -271,6 +347,7 @@ class ToolLoopController {
             classify: classify,
             onTrace: onTrace,
             cancellationToken: cancellationToken,
+            settings: settings,
             planExecutionSnapshot: planExecutionSnapshot,
           );
           return const ToolLoopResult(
@@ -294,16 +371,16 @@ class ToolLoopController {
         );
       }
 
-      var result = jsonEncode({
+      result = jsonEncode({
         'error': 'Tool execution did not complete.',
       });
-      var outcome = 'success';
-      var approvalRequired = false;
-      var approvedWrite = false;
-      var stopAfterToolResult = false;
-      var cacheHit = false;
-      var dedupBlocked = false;
-      String? stopMessage;
+      outcome = 'success';
+      approvalRequired = false;
+      approvedWrite = false;
+      stopAfterToolResult = false;
+      cacheHit = false;
+      dedupBlocked = false;
+      stopMessage = null;
 
       try {
         final repeatedStreak = chatService._nextRepeatedSignatureStreak(
@@ -311,8 +388,7 @@ class ToolLoopController {
           signature,
         );
 
-        if (tool != null &&
-            tool.executionMode == AiToolExecutionMode.readOnly &&
+        if (tool.executionMode == AiToolExecutionMode.readOnly &&
             (repeatedStreak >= 3 ||
                 chatService._wouldTriggerAlternatingLoop(
                     toolLedger, signature))) {
@@ -333,9 +409,8 @@ class ToolLoopController {
           });
         }
 
-        final cacheEntry = tool == null ? null : readOnlyToolCache[signature];
+        final cacheEntry = readOnlyToolCache[signature];
         if (!dedupBlocked &&
-            tool != null &&
             tool.executionMode == AiToolExecutionMode.readOnly &&
             tool.effectiveCacheTtl > Duration.zero &&
             cacheEntry != null &&
@@ -376,11 +451,15 @@ class ToolLoopController {
             );
           } else if (requestToolApproval == null) {
             outcome = 'approval_unavailable';
+            _currentOutcome = AgentFinalOutcome.approvalUnavailable;
             result = jsonEncode({
               'error':
                   'This tool action requires user approval, but no approval UI is available.',
               'command': approvalRequest.command,
             });
+            stopAfterToolResult = true;
+            stopMessage =
+                '\n\nTool action requires approval, but approval is unavailable. Operation stopped.';
           } else {
             AppLogService.instance.info(
               'AI tool approval requested',
@@ -459,8 +538,7 @@ class ToolLoopController {
           cancellationToken?.throwIfCancelled();
           outcome = chatService._classifyToolResultOutcome(result);
 
-          if (tool != null &&
-              tool.executionMode == AiToolExecutionMode.readOnly &&
+          if (tool.executionMode == AiToolExecutionMode.readOnly &&
               tool.effectiveCacheTtl > Duration.zero) {
             readOnlyToolCache[signature] = CachedToolResult(
               result: result,
@@ -540,6 +618,7 @@ class ToolLoopController {
           classify: classify,
           onTrace: onTrace,
           cancellationToken: cancellationToken,
+          settings: settings,
           planExecutionSnapshot: planExecutionSnapshot,
         );
         return ToolLoopResult(
@@ -561,6 +640,7 @@ class ToolLoopController {
       classify: classify,
       onTrace: onTrace,
       cancellationToken: cancellationToken,
+      settings: settings,
       planExecutionSnapshot: planExecutionSnapshot,
     );
 
@@ -580,12 +660,14 @@ class ToolLoopController {
     required MultiAgentClassificationCompletion classify,
     required void Function(LlmTraceEvent event)? onTrace,
     required LlmCancellationToken? cancellationToken,
+    required AiConnectionSettings settings,
     PlanExecutionSnapshot? planExecutionSnapshot,
   }) async {
     final needsPostReview = (finalOutcome == AgentFinalOutcome.toolError ||
         finalOutcome == AgentFinalOutcome.loopGuardBlocked ||
         finalOutcome == AgentFinalOutcome.approvalRejected ||
-        finalOutcome == AgentFinalOutcome.budgetAuditRejected);
+        finalOutcome == AgentFinalOutcome.budgetAuditRejected ||
+        finalOutcome == AgentFinalOutcome.approvalUnavailable);
 
     if (!needsPostReview) return;
 
@@ -629,6 +711,8 @@ class ToolLoopController {
         MultiAgentTrigger.postApprovalRejection,
       AgentFinalOutcome.budgetAuditRejected =>
         MultiAgentTrigger.postBudgetAudit,
+      AgentFinalOutcome.approvalUnavailable =>
+        MultiAgentTrigger.postToolFailure,
       _ => MultiAgentTrigger.postToolFailure,
     };
 
@@ -636,8 +720,8 @@ class ToolLoopController {
 
     final reviewResult = await chatService.multiAgentCoordinator.run(
       messages: workingMessages,
-      enabled: true,
-      maxAgents: 5,
+      enabled: settings.multiAgentEnabled,
+      maxAgents: settings.multiAgentMaxAgents,
       trigger: trigger,
       postToolContext: postToolContext,
       checkCancelled: cancellationToken?.throwIfCancelled,

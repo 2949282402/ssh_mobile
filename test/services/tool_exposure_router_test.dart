@@ -193,5 +193,56 @@ void main() {
       expect(taskUpdateDecision.blockedBy,
           contains('execution_only_without_approved_plan'));
     });
+
+    test('allows server tools without selected server when planMode is active',
+        () {
+      const router = ToolExposureRouter();
+      final tools = [
+        AiTool(
+          name: 'run_command',
+          description: 'Run server command',
+          properties: const {},
+          requiresServerSelection: true,
+          capabilities: const {AiToolCapability.server, AiToolCapability.ssh},
+          handler: _noop,
+        ),
+      ];
+
+      final selection = router.selectTools(
+        tools,
+        context: const ToolExposureContext(
+          userRequest: 'check disk usage on server',
+          planMode: true,
+          selectedConnectionIds: {},
+        ),
+      );
+
+      expect(selection.selectedToolSet, contains('run_command'));
+    });
+
+    test('properly detects web capability with expanded keywords', () {
+      const router = ToolExposureRouter();
+      final tools = [
+        AiTool(
+          name: 'web_search',
+          description: 'Search the web',
+          properties: const {},
+          capabilities: const {AiToolCapability.web},
+          handler: _noop,
+        ),
+      ];
+
+      for (final keyword in ['current', 'client/sch', '最新', '新闻', '现在']) {
+        final selection = router.selectTools(
+          tools,
+          context: ToolExposureContext(
+            userRequest: 'Please check $keyword info',
+            hasWebViewSession: true,
+          ),
+        );
+        expect(selection.selectedToolSet, contains('web_search'),
+            reason: 'Should detect web capability for keyword: $keyword');
+      }
+    });
   });
 }

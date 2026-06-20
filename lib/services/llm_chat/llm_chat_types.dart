@@ -534,6 +534,7 @@ enum AgentFinalOutcome {
   planModeBlocked,
   budgetAuditRejected,
   loopGuardBlocked,
+  approvalUnavailable,
 }
 
 class AgentRunSummary {

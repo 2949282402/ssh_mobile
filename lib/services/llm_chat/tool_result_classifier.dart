@@ -40,6 +40,9 @@ class ToolResultClassifier {
     if (outcome == 'execution_error' || outcome == 'tool_error') {
       return ToolResultQuality.error;
     }
+    if (outcome == 'tool_not_visible' || outcome == 'approval_unavailable') {
+      return ToolResultQuality.unsafeBlocked;
+    }
 
     final trimmed = resultJson.trim();
     if (trimmed.isEmpty) {

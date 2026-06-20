@@ -468,6 +468,124 @@ void main() {
       expect(mockCoordinator.lastPostToolContext,
           contains('No active plan snapshot.'));
     });
+
+    test(
+        'unexposed/invisible tool request is blocked early as tool_not_visible',
+        () async {
+      final budget = LlmToolBudgetController(baseBudget: 10);
+      final cache = <String, CachedToolResult>{};
+      final ledger = <LlmToolLedgerEntry>[];
+      final controller = ToolLoopController(
+        chatService: llm,
+        toolBudget: budget,
+        readOnlyToolCache: cache,
+        toolLedger: ledger,
+      );
+
+      final workingMessages = <Map<String, dynamic>>[];
+      final settings = await storage.loadAiConnectionSettings();
+
+      final loopResult = await controller.handleToolCalls(
+        toolCalls: [
+          StreamingToolCall(
+            id: 'call_hid',
+            name: 'sftp_write_text',
+            arguments:
+                '{"connectionId":"local", "path":"/tmp/test.txt", "content":"hello"}',
+          ),
+        ],
+        visibleToolsByName: {
+          'client_time': AiTool(
+            name: 'client_time',
+            description: 'Get client time',
+            properties: const {},
+            required: const [],
+            executionMode: AiToolExecutionMode.readOnly,
+            handler: (args, {approvedWrite = false}) async => '{}',
+          ),
+        },
+        planMode: false,
+        language: AppLanguage.zh,
+        apiKey: 'key',
+        auditModel: 'audit-model',
+        originalUserGoal: 'Goal',
+        workingMessages: workingMessages,
+        requestToolApproval: (req) async =>
+            const AiToolApprovalDecision.approved(),
+        onTrace: null,
+        cancellationToken: null,
+        settings: settings,
+        complete: (role, messages, {required thinkingSettings}) async =>
+            'advice',
+        classify: (messages) async => '{}',
+      );
+
+      expect(loopResult.shouldStop, isFalse);
+      final toolMessage =
+          workingMessages.firstWhere((m) => m['role'] == 'tool');
+      expect(toolMessage['content'], contains('不可见或未暴露'));
+      expect(ledger.last.outcome, 'tool_not_visible');
+      expect(ledger.last.failed, isTrue);
+    });
+
+    test(
+        'tool approval unavailable gracefully blocks with approvalUnavailable outcome',
+        () async {
+      final budget = LlmToolBudgetController(baseBudget: 10);
+      final cache = <String, CachedToolResult>{};
+      final ledger = <LlmToolLedgerEntry>[];
+      final controller = ToolLoopController(
+        chatService: llm,
+        toolBudget: budget,
+        readOnlyToolCache: cache,
+        toolLedger: ledger,
+      );
+
+      final workingMessages = <Map<String, dynamic>>[];
+      final settings = await storage.loadAiConnectionSettings();
+
+      final loopResult = await controller.handleToolCalls(
+        toolCalls: [
+          StreamingToolCall(
+            id: 'call_no_appr',
+            name: 'sftp_write_text',
+            arguments:
+                '{"connectionId":"local", "path":"/tmp/test.txt", "content":"hello"}',
+          ),
+        ],
+        visibleToolsByName: {
+          'sftp_write_text': AiTool(
+            name: 'sftp_write_text',
+            description: 'Write text file',
+            properties: const {},
+            required: const [],
+            executionMode: AiToolExecutionMode.stateChanging,
+            handler: (args, {approvedWrite = false}) async => '{}',
+          ),
+        },
+        planMode: false,
+        language: AppLanguage.zh,
+        apiKey: 'key',
+        auditModel: 'audit-model',
+        originalUserGoal: 'Goal',
+        workingMessages: workingMessages,
+        requestToolApproval: null,
+        onTrace: null,
+        cancellationToken: null,
+        settings: settings,
+        complete: (role, messages, {required thinkingSettings}) async =>
+            'advice',
+        classify: (messages) async => '{}',
+      );
+
+      expect(loopResult.shouldStop, isTrue);
+      expect(loopResult.finalOutcome, AgentFinalOutcome.approvalUnavailable);
+      expect(loopResult.stopMessage, contains('approval is unavailable'));
+      final toolMessage =
+          workingMessages.firstWhere((m) => m['role'] == 'tool');
+      expect(toolMessage['content'], contains('no approval UI is available'));
+      expect(ledger.last.outcome, 'approval_unavailable');
+    });
   });
 }
 
