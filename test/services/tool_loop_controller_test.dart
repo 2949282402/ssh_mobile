@@ -15,6 +15,7 @@ import 'package:ssh_mobile/services/storage_service.dart';
 import 'package:ssh_mobile/services/multi_agent_coordinator.dart';
 import 'package:ssh_mobile/services/agent/plan_execution_controller.dart';
 import 'package:ssh_mobile/features/playbook/models/playbook.dart';
+import 'package:ssh_mobile/features/connection/models/connection.dart';
 
 void main() {
   group('ToolLoopController integration tests', () {
@@ -730,6 +731,312 @@ void main() {
           ev.content.contains('postToolReviewEnabled=false'));
       expect(hasSkipTrace, isTrue);
     });
+
+    test(
+        'remote mutating tool call is blocked by gate when current step is pending',
+        () async {
+      final budget = LlmToolBudgetController(baseBudget: 10);
+      final cache = <String, CachedToolResult>{};
+      final ledger = <LlmToolLedgerEntry>[];
+      bool executed = false;
+      final mockTools = MockToolService(
+        onExecute: (name, args) async {
+          executed = true;
+          return '{}';
+        },
+      );
+      final localLlm = LlmChatService(
+        storageService: storage,
+        toolService: mockTools,
+      );
+
+      final controller = ToolLoopController(
+        chatService: localLlm,
+        toolBudget: budget,
+        readOnlyToolCache: cache,
+        toolLedger: ledger,
+      );
+
+      final workingMessages = <Map<String, dynamic>>[];
+      final settings = await storage.loadAiConnectionSettings();
+
+      final loopResult = await controller.handleToolCalls(
+        toolCalls: [
+          StreamingToolCall(
+            id: 'call_blocked_pending',
+            name: 'sftp_write_text',
+            arguments:
+                '{"connectionId":"local", "path":"/tmp/test.txt", "content":"hello"}',
+          ),
+        ],
+        visibleToolsByName: {
+          'sftp_write_text': AiTool(
+            name: 'sftp_write_text',
+            description: 'Write text file',
+            properties: const {},
+            required: const [],
+            executionMode: AiToolExecutionMode.stateChanging,
+            handler: (args) async {
+              executed = true;
+              return '{}';
+            },
+          ),
+        },
+        planMode: false,
+        language: AppLanguage.zh,
+        apiKey: 'key',
+        auditModel: 'audit-model',
+        originalUserGoal: 'Goal',
+        workingMessages: workingMessages,
+        requestToolApproval: null,
+        onTrace: null,
+        cancellationToken: null,
+        settings: settings,
+        complete: (role, messages, {required thinkingSettings}) async =>
+            'advice',
+        classify: (messages) async => '{}',
+        planExecutionSnapshot: const PlanExecutionSnapshot(
+          phase: PlanExecutionPhase.pending,
+          steps: [
+            AiTodoStep(
+              id: 'task-1',
+              name: 'Step 1',
+              command: 'cmd',
+              description: 'desc',
+              status: StepStatus.pending,
+            ),
+          ],
+          currentStepIndex: 0,
+          currentStep: AiTodoStep(
+            id: 'task-1',
+            name: 'Step 1',
+            command: 'cmd',
+            description: 'desc',
+            status: StepStatus.pending,
+          ),
+          hasFailedStep: false,
+          isCompleted: false,
+        ),
+      );
+
+      expect(loopResult.shouldStop, isFalse);
+      expect(executed, isFalse);
+      final toolMessage =
+          workingMessages.firstWhere((m) => m['role'] == 'tool');
+      final content = jsonDecode(toolMessage['content']);
+      expect(content['code'], 'task_update_required');
+      expect(content['taskId'], 'task-1');
+      expect(ledger.last.outcome, 'plan_execution_blocked');
+      expect(ledger.last.quality, ToolResultQuality.needsInput.name);
+    });
+
+    test(
+        'remote mutating tool call is allowed by gate when current step is running',
+        () async {
+      final budget = LlmToolBudgetController(baseBudget: 10);
+      final cache = <String, CachedToolResult>{};
+      final ledger = <LlmToolLedgerEntry>[];
+      bool executed = false;
+      final mockTools = MockToolService(
+        mockApprovalRequest: const AiToolApprovalRequest(
+          toolName: 'sftp_write_text',
+          approvalType: 'sftp_write',
+          connectionId: 'local',
+          connectionName: 'Local',
+          command: 'write text',
+          reason: 'write',
+        ),
+        onExecute: (name, args) async {
+          executed = true;
+          return '{"success":true}';
+        },
+      );
+      final localLlm = LlmChatService(
+        storageService: storage,
+        toolService: mockTools,
+      );
+
+      final controller = ToolLoopController(
+        chatService: localLlm,
+        toolBudget: budget,
+        readOnlyToolCache: cache,
+        toolLedger: ledger,
+      );
+
+      final workingMessages = <Map<String, dynamic>>[];
+      final settings = await storage.loadAiConnectionSettings();
+
+      final loopResult = await controller.handleToolCalls(
+        toolCalls: [
+          StreamingToolCall(
+            id: 'call_allowed_running',
+            name: 'sftp_write_text',
+            arguments: '{"connectionId":"local", "taskId":"task-1"}',
+          ),
+        ],
+        visibleToolsByName: {
+          'sftp_write_text': AiTool(
+            name: 'sftp_write_text',
+            description: 'Write text file',
+            properties: const {},
+            required: const [],
+            executionMode: AiToolExecutionMode.stateChanging,
+            handler: (args) async {
+              executed = true;
+              return '{"success":true}';
+            },
+          ),
+        },
+        planMode: false,
+        language: AppLanguage.zh,
+        apiKey: 'key',
+        auditModel: 'audit-model',
+        originalUserGoal: 'Goal',
+        workingMessages: workingMessages,
+        requestToolApproval: (req) async =>
+            const AiToolApprovalDecision.approved(),
+        onTrace: null,
+        cancellationToken: null,
+        settings: settings,
+        complete: (role, messages, {required thinkingSettings}) async =>
+            'advice',
+        classify: (messages) async => '{}',
+        planExecutionSnapshot: const PlanExecutionSnapshot(
+          phase: PlanExecutionPhase.running,
+          steps: [
+            AiTodoStep(
+              id: 'task-1',
+              name: 'Step 1',
+              command: 'cmd',
+              description: 'desc',
+              status: StepStatus.running,
+            ),
+          ],
+          currentStepIndex: 0,
+          currentStep: AiTodoStep(
+            id: 'task-1',
+            name: 'Step 1',
+            command: 'cmd',
+            description: 'desc',
+            status: StepStatus.running,
+          ),
+          hasFailedStep: false,
+          isCompleted: false,
+        ),
+      );
+
+      expect(loopResult.shouldStop, isFalse);
+      expect(executed, isTrue);
+      final toolMessage =
+          workingMessages.firstWhere((m) => m['role'] == 'tool');
+      expect(toolMessage['content'], contains('success'));
+      expect(ledger.last.outcome, 'success');
+      expect(ledger.last.quality, ToolResultQuality.useful.name);
+    });
+
+    test(
+        'remote mutating tool call is blocked by gate when a preceding step is failed',
+        () async {
+      final budget = LlmToolBudgetController(baseBudget: 10);
+      final cache = <String, CachedToolResult>{};
+      final ledger = <LlmToolLedgerEntry>[];
+      bool executed = false;
+      final mockTools = MockToolService(
+        onExecute: (name, args) async {
+          executed = true;
+          return '{}';
+        },
+      );
+      final localLlm = LlmChatService(
+        storageService: storage,
+        toolService: mockTools,
+      );
+
+      final controller = ToolLoopController(
+        chatService: localLlm,
+        toolBudget: budget,
+        readOnlyToolCache: cache,
+        toolLedger: ledger,
+      );
+
+      final workingMessages = <Map<String, dynamic>>[];
+      final settings = await storage.loadAiConnectionSettings();
+
+      final loopResult = await controller.handleToolCalls(
+        toolCalls: [
+          StreamingToolCall(
+            id: 'call_blocked_failed',
+            name: 'sftp_write_text',
+            arguments: '{"connectionId":"local"}',
+          ),
+        ],
+        visibleToolsByName: {
+          'sftp_write_text': AiTool(
+            name: 'sftp_write_text',
+            description: 'Write text file',
+            properties: const {},
+            required: const [],
+            executionMode: AiToolExecutionMode.stateChanging,
+            handler: (args) async {
+              executed = true;
+              return '{}';
+            },
+          ),
+        },
+        planMode: false,
+        language: AppLanguage.zh,
+        apiKey: 'key',
+        auditModel: 'audit-model',
+        originalUserGoal: 'Goal',
+        workingMessages: workingMessages,
+        requestToolApproval: null,
+        onTrace: null,
+        cancellationToken: null,
+        settings: settings,
+        complete: (role, messages, {required thinkingSettings}) async =>
+            'advice',
+        classify: (messages) async => '{}',
+        planExecutionSnapshot: const PlanExecutionSnapshot(
+          phase: PlanExecutionPhase.blockedByFailure,
+          steps: [
+            AiTodoStep(
+              id: 'task-1',
+              name: 'Step 1',
+              command: 'cmd',
+              description: 'desc',
+              status: StepStatus.failed,
+            ),
+            AiTodoStep(
+              id: 'task-2',
+              name: 'Step 2',
+              command: 'cmd2',
+              description: 'desc',
+              status: StepStatus.pending,
+            ),
+          ],
+          currentStepIndex: 1,
+          currentStep: AiTodoStep(
+            id: 'task-2',
+            name: 'Step 2',
+            command: 'cmd2',
+            description: 'desc',
+            status: StepStatus.pending,
+          ),
+          hasFailedStep: true,
+          isCompleted: false,
+        ),
+      );
+
+      expect(loopResult.shouldStop, isFalse);
+      expect(executed, isFalse);
+      final toolMessage =
+          workingMessages.firstWhere((m) => m['role'] == 'tool');
+      final content = jsonDecode(toolMessage['content']);
+      expect(content['code'], 'plan_execution_blocked');
+      expect(content['reason'], 'A preceding step has failed.');
+      expect(ledger.last.outcome, 'plan_execution_blocked');
+      expect(ledger.last.quality, ToolResultQuality.unsafeBlocked.name);
+    });
   });
 }
 
@@ -763,5 +1070,44 @@ class MockMultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
       traceContent: 'mock trace',
       agentCount: 2,
     );
+  }
+}
+
+class MockToolService implements AiToolExecutor {
+  final Future<String> Function(String name, Map<String, dynamic> arguments)
+      onExecute;
+  final AiToolApprovalRequest? mockApprovalRequest;
+
+  MockToolService({
+    required this.onExecute,
+    this.mockApprovalRequest,
+  });
+
+  @override
+  Future<List<AiTool>> tools() async => [];
+
+  @override
+  Future<List<Map<String, dynamic>>> toolDefinitions() async => [];
+
+  @override
+  Future<AiToolApprovalRequest?> approvalRequestFor(
+    String name,
+    Map<String, dynamic> arguments,
+  ) async {
+    return mockApprovalRequest;
+  }
+
+  @override
+  Future<String> execute(
+    String name,
+    Map<String, dynamic> arguments, {
+    bool approvedWrite = false,
+  }) async {
+    return onExecute(name, arguments);
+  }
+
+  @override
+  AiCommandReview reviewCommand(String command, {ServerPlatform? platform}) {
+    return const AiCommandReview.readOnly();
   }
 }

@@ -14,6 +14,22 @@ class PlanExecutionValidationResult {
       : allowed = false;
 }
 
+class PlanExecutionGateResult {
+  final bool allowed;
+  final String? reason;
+  final AiTodoStep? currentStep;
+  final bool requiresTaskUpdateBeforeTool;
+  final bool requiresTaskUpdateAfterTool;
+
+  const PlanExecutionGateResult({
+    required this.allowed,
+    this.reason,
+    this.currentStep,
+    this.requiresTaskUpdateBeforeTool = false,
+    this.requiresTaskUpdateAfterTool = false,
+  });
+}
+
 enum PlanExecutionPhase {
   none,
   pending,
@@ -42,6 +58,96 @@ class PlanExecutionSnapshot {
 
 class PlanExecutionController {
   const PlanExecutionController();
+
+  bool isMutatingRemoteTool(String toolName, String executionMode) {
+    final isClientOrApp = toolName.startsWith('client_') ||
+        toolName.startsWith('app_') ||
+        toolName == 'web_search';
+    if (isClientOrApp) return false;
+    return executionMode == 'stateChanging' || toolName == 'run_command';
+  }
+
+  PlanExecutionGateResult canRunToolForCurrentStep({
+    required List<AiTodoStep> steps,
+    required String toolName,
+    required String executionMode,
+    required Map<String, dynamic> arguments,
+  }) {
+    if (steps.isEmpty) {
+      return const PlanExecutionGateResult(allowed: true);
+    }
+
+    if (!isMutatingRemoteTool(toolName, executionMode)) {
+      return const PlanExecutionGateResult(allowed: true);
+    }
+
+    final snap = snapshot(steps);
+    if (snap.isCompleted) {
+      return const PlanExecutionGateResult(
+        allowed: false,
+        reason: 'plan_completed',
+      );
+    }
+
+    if (snap.phase == PlanExecutionPhase.blockedByFailure) {
+      return PlanExecutionGateResult(
+        allowed: false,
+        reason: 'previous_step_failed',
+        currentStep: snap.currentStep,
+      );
+    }
+
+    final currentStep = snap.currentStep;
+    if (currentStep == null) {
+      return const PlanExecutionGateResult(
+        allowed: false,
+        reason: 'no_active_step',
+      );
+    }
+
+    if (currentStep.status == StepStatus.pending) {
+      return PlanExecutionGateResult(
+        allowed: false,
+        reason: 'task_update_required',
+        currentStep: currentStep,
+        requiresTaskUpdateBeforeTool: true,
+      );
+    }
+
+    if (currentStep.status == StepStatus.running) {
+      final argTaskId = arguments['taskId'];
+      if (argTaskId != null && argTaskId != currentStep.id) {
+        return PlanExecutionGateResult(
+          allowed: false,
+          reason: 'task_id_mismatch',
+          currentStep: currentStep,
+        );
+      }
+
+      final argConnectionId = arguments['connectionId'];
+      if (argConnectionId != null &&
+          currentStep.connectionId != null &&
+          currentStep.connectionId!.trim().isNotEmpty &&
+          argConnectionId != currentStep.connectionId) {
+        return PlanExecutionGateResult(
+          allowed: false,
+          reason: 'connection_mismatch',
+          currentStep: currentStep,
+        );
+      }
+
+      return PlanExecutionGateResult(
+        allowed: true,
+        currentStep: currentStep,
+      );
+    }
+
+    return PlanExecutionGateResult(
+      allowed: false,
+      reason: 'invalid_step_state',
+      currentStep: currentStep,
+    );
+  }
 
   static AiTodoStep? findCurrentStep(List<AiTodoStep> steps) {
     return const PlanExecutionController().snapshot(steps).currentStep;

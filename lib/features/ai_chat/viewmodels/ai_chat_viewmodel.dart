@@ -7,6 +7,7 @@ import '../services/ai_chat_generation_runner.dart';
 
 export '../services/ai_chat_status_translator.dart' show AgentStatusString;
 import '../../../services/ai_tool_service.dart';
+import '../../playbook/models/playbook.dart';
 import '../../../services/agent_model_profile.dart';
 import '../../../services/app_log_service.dart';
 import '../../../services/app_settings.dart';
@@ -728,6 +729,79 @@ class AiChatViewModel extends ChangeNotifier {
       text: isEn ? 'Execute the approved plan.' : '执行已批准的计划。',
       approvedPlanRef: approvedPlan,
     );
+  }
+
+  Future<void> retryTodoStep(String taskId) async {
+    final activeChat = this.activeChat;
+    if (activeChat == null) return;
+
+    final messages = [...activeChat.messages];
+    bool found = false;
+
+    for (var mIdx = 0; mIdx < messages.length; mIdx++) {
+      final msg = messages[mIdx];
+      if (msg.todoSteps.isEmpty) continue;
+
+      final sIdx = msg.todoSteps.indexWhere((s) => s.id == taskId);
+      if (sIdx != -1) {
+        final steps = [...msg.todoSteps];
+        steps[sIdx] = steps[sIdx].copyWith(
+          status: StepStatus.pending,
+          stdout: '',
+          stderr: '',
+          exitCode: null,
+        );
+        messages[mIdx] = msg.copyWith(todoSteps: steps);
+        found = true;
+        break;
+      }
+    }
+
+    if (found) {
+      final updated = activeChat.copyWith(
+        messages: messages,
+        updatedAt: DateTime.now(),
+      );
+      _replaceChat(updated, sort: false);
+      notifyListeners();
+      await _storageService.saveAiChat(updated);
+    }
+  }
+
+  Future<void> skipTodoStep(String taskId, String reason) async {
+    final activeChat = this.activeChat;
+    if (activeChat == null) return;
+
+    final messages = [...activeChat.messages];
+    bool found = false;
+
+    for (var mIdx = 0; mIdx < messages.length; mIdx++) {
+      final msg = messages[mIdx];
+      if (msg.todoSteps.isEmpty) continue;
+
+      final sIdx = msg.todoSteps.indexWhere((s) => s.id == taskId);
+      if (sIdx != -1) {
+        final steps = [...msg.todoSteps];
+        steps[sIdx] = steps[sIdx].copyWith(
+          status: StepStatus.skipped,
+          stdout: 'Skipped: $reason',
+          exitCode: null,
+        );
+        messages[mIdx] = msg.copyWith(todoSteps: steps);
+        found = true;
+        break;
+      }
+    }
+
+    if (found) {
+      final updated = activeChat.copyWith(
+        messages: messages,
+        updatedAt: DateTime.now(),
+      );
+      _replaceChat(updated, sort: false);
+      notifyListeners();
+      await _storageService.saveAiChat(updated);
+    }
   }
 
   void stopGeneration() {

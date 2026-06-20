@@ -26,8 +26,25 @@ class ToolResultClassifier {
     required bool cacheHit,
     required bool dedupBlocked,
   }) {
-    if (outcome == 'connection_required' ||
-        resultJson.contains('"code": "connection_required"')) {
+    final trimmed = resultJson.trim();
+    if (trimmed.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(trimmed);
+        if (decoded is Map) {
+          final code = decoded['code'];
+          if (code == 'task_update_required' ||
+              code == 'skip_reason_required' ||
+              code == 'connection_required') {
+            return ToolResultQuality.needsInput;
+          }
+          if (code == 'plan_execution_blocked') {
+            return ToolResultQuality.unsafeBlocked;
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (outcome == 'connection_required') {
       return ToolResultQuality.needsInput;
     }
     if (dedupBlocked || outcome == 'loop_guard_blocked') {
@@ -49,7 +66,6 @@ class ToolResultClassifier {
       return ToolResultQuality.unsafeBlocked;
     }
 
-    final trimmed = resultJson.trim();
     if (trimmed.isEmpty) {
       return ToolResultQuality.empty;
     }
@@ -115,9 +131,19 @@ class ToolResultClassifier {
             ? 'System Hint: Loop guard has blocked this repeating tool call. Please summarize the current findings and complete the conversation.'
             : '系统提示：循环保护机制已阻断了此重复工具调用。请整理并总结当前已获取的诊断发现，完成本次对话。';
       case ToolResultQuality.needsInput:
+        if (toolName.startsWith('client_task_') ||
+            toolName == 'client_task_update') {
+          return isEn
+              ? 'The tool call was blocked by the plan execution gate. Follow the current TODO step state machine: mark the current step running before remote tools, then mark it success or failed after the result.'
+              : '工具调用被计划执行状态机阻止。请按当前 TODO 步骤执行：远程工具前先将当前步骤标记为 running，工具返回后再标记为 success 或 failed。';
+        }
         return isEn
             ? 'System Hint: This tool requires a selected server connection. Do not repeat the same call. Ask the user to select a server, or provide a read-only plan.'
             : '系统提示：该工具需要先选择服务器连接。不要继续重复调用同一个工具，请先让用户选择服务器，或给出只读计划。';
+      case ToolResultQuality.unsafeBlocked:
+        return isEn
+            ? 'The tool call was blocked by the plan execution gate. A preceding step has failed, or you are trying to execute out of order. Ask the user how to proceed (retry/skip).'
+            : '工具调用被计划执行状态机阻止。前置步骤已失败，或者你正在尝试无序执行。请询问用户接下来如何处理（重试或跳过）。';
       default:
         return null;
     }

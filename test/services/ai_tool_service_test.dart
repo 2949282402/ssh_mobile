@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/core/services/ssh_host_key_policy.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
+import 'package:ssh_mobile/features/playbook/models/playbook.dart';
 import 'package:ssh_mobile/services/ai_tool_service.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
@@ -990,6 +991,180 @@ void main() {
       final decodedUpdateInvalid =
           jsonDecode(rawUpdateInvalid) as Map<String, dynamic>;
       expect(decodedUpdateInvalid['error'], contains('Task step not found'));
+    });
+
+    test(
+        'enforces strict status validations and expected commands for task updates',
+        () async {
+      final now = DateTime.now();
+      var chat = AiChatRecord(
+        id: 'chat-1',
+        title: 'Draft',
+        model: 'deepseek-v4-flash',
+        messages: [
+          AiChatMessageRecord(
+            role: 'assistant',
+            text: 'plan',
+            createdAt: now,
+            todoSteps: [
+              AiTodoStep(
+                id: 'task-1',
+                name: 'Step 1',
+                command: 'echo ok',
+                description: 'Persisted plan step',
+                status: StepStatus.pending,
+                connectionId: 'server-1',
+              ),
+            ],
+          ),
+        ],
+        createdAt: now,
+        updatedAt: now,
+        planMode: false,
+      );
+      await storage.saveAiChat(chat);
+
+      // 1. Invalid status
+      final rawInvalid = await tools.execute('client_task_update', {
+        'taskId': 'task-1',
+        'status': 'unknown_status',
+      });
+      final decodedInvalid = jsonDecode(rawInvalid) as Map<String, dynamic>;
+      expect(decodedInvalid['code'], 'invalid_task_status');
+      expect(decodedInvalid['allowed'], contains('running'));
+
+      // 2. Skipped status requires reason
+      final rawSkippedNoReason = await tools.execute('client_task_update', {
+        'taskId': 'task-1',
+        'status': 'skipped',
+      });
+      final decodedSkippedNoReason =
+          jsonDecode(rawSkippedNoReason) as Map<String, dynamic>;
+      expect(decodedSkippedNoReason['code'], 'skip_reason_required');
+
+      // 3. Skipped with reason succeeds
+      final rawSkippedWithReason = await tools.execute('client_task_update', {
+        'taskId': 'task-1',
+        'status': 'skipped',
+        'reason': 'not needed',
+      });
+      final decodedSkippedWithReason =
+          jsonDecode(rawSkippedWithReason) as Map<String, dynamic>;
+      expect(decodedSkippedWithReason['status'], 'success');
+
+      // Reset step to pending and running to test running output payload
+      final resetChat = chat.copyWith(
+        messages: [
+          AiChatMessageRecord(
+            role: 'assistant',
+            text: 'plan',
+            createdAt: now,
+            todoSteps: [
+              AiTodoStep(
+                id: 'task-1',
+                name: 'Step 1',
+                command: 'echo ok',
+                description: 'Persisted plan step',
+                status: StepStatus.pending,
+                connectionId: 'server-1',
+              ),
+            ],
+          ),
+        ],
+      );
+      await storage.saveAiChat(resetChat);
+
+      final rawRunning = await tools.execute('client_task_update', {
+        'taskId': 'task-1',
+        'status': 'running',
+      });
+      final decodedRunning = jsonDecode(rawRunning) as Map<String, dynamic>;
+      expect(decodedRunning['status'], 'success');
+      expect(decodedRunning['expectedCommand'], 'echo ok');
+      expect(decodedRunning['expectedConnectionId'], 'server-1');
+
+      // Update to failed
+      final rawFailed = await tools.execute('client_task_update', {
+        'taskId': 'task-1',
+        'status': 'failed',
+        'errorSummary': 'failed execution',
+      });
+      final decodedFailed = jsonDecode(rawFailed) as Map<String, dynamic>;
+      expect(decodedFailed['status'], 'success');
+      expect(decodedFailed['newStatus'], 'failed');
+      expect(decodedFailed['nextAction'], contains('Stop execution'));
+
+      final chatFailed =
+          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      expect(chatFailed.messages.last.todoSteps.first.stderr,
+          contains('Error Summary: failed execution'));
+    });
+
+    test('client_task_retry and client_task_skip control execution step flows',
+        () async {
+      final now = DateTime.now();
+      var chat = AiChatRecord(
+        id: 'chat-1',
+        title: 'Draft',
+        model: 'deepseek-v4-flash',
+        messages: [
+          AiChatMessageRecord(
+            role: 'assistant',
+            text: 'plan',
+            createdAt: now,
+            todoSteps: [
+              AiTodoStep(
+                id: 'task-1',
+                name: 'Step 1',
+                command: 'echo ok',
+                description: 'Persisted plan step',
+                status: StepStatus.failed,
+              ),
+            ],
+          ),
+        ],
+        createdAt: now,
+        updatedAt: now,
+        planMode: false,
+      );
+      await storage.saveAiChat(chat);
+
+      // 1. Retry failed step -> should reset to pending
+      final rawRetry = await tools.execute('client_task_retry', {
+        'taskId': 'task-1',
+      });
+      final decodedRetry = jsonDecode(rawRetry) as Map<String, dynamic>;
+      expect(decodedRetry['status'], 'success');
+      expect(decodedRetry['newStatus'], 'pending');
+
+      final chatAfterRetry =
+          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      expect(chatAfterRetry.messages.last.todoSteps.first.status,
+          StepStatus.pending);
+
+      // 2. Retry non-failed step -> should fail
+      final rawRetryPending = await tools.execute('client_task_retry', {
+        'taskId': 'task-1',
+      });
+      final decodedRetryPending =
+          jsonDecode(rawRetryPending) as Map<String, dynamic>;
+      expect(decodedRetryPending['error'],
+          contains('Only failed tasks can be retried'));
+
+      // 3. Skip pending step -> should mark skipped with reason in stdout
+      final rawSkip = await tools.execute('client_task_skip', {
+        'taskId': 'task-1',
+        'reason': 'manual override',
+      });
+      final decodedSkip = jsonDecode(rawSkip) as Map<String, dynamic>;
+      expect(decodedSkip['status'], 'success');
+      expect(decodedSkip['newStatus'], 'skipped');
+
+      final chatAfterSkip =
+          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      final skippedStep = chatAfterSkip.messages.last.todoSteps.first;
+      expect(skippedStep.status, StepStatus.skipped);
+      expect(skippedStep.stdout, contains('Skipped: manual override'));
     });
   });
 

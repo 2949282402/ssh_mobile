@@ -93,6 +93,10 @@ class ClientToolsProvider implements AiToolProvider {
         return _clientTaskCreate(service, arguments);
       case 'client_task_update':
         return _clientTaskUpdate(service, arguments);
+      case 'client_task_retry':
+        return _clientTaskRetry(service, arguments);
+      case 'client_task_skip':
+        return _clientTaskSkip(service, arguments);
       default:
         return null;
     }
@@ -905,13 +909,41 @@ class ClientToolsProvider implements AiToolProvider {
     }
 
     final taskId = service._arg(arguments, 'taskId');
-    final rawStatus = service._arg(arguments, 'status');
+    final String rawStatus = service._arg(arguments, 'status').trim();
+    final allowedStatuses = [
+      'pending',
+      'running',
+      'in_progress',
+      'success',
+      'failed',
+      'skipped'
+    ];
+    if (!allowedStatuses.contains(rawStatus.toLowerCase())) {
+      return jsonEncode({
+        'error': 'Unknown task status.',
+        'code': 'invalid_task_status',
+        'allowed': ['pending', 'running', 'success', 'failed', 'skipped']
+      });
+    }
+
+    final nextStatus = _taskStatusFromRaw(rawStatus);
+    if (nextStatus == StepStatus.skipped) {
+      final reason = service._optionalString(arguments, 'reason');
+      if (reason == null || reason.trim().isEmpty) {
+        return jsonEncode({
+          'error': 'Skipping a task requires a reason.',
+          'code': 'skip_reason_required'
+        });
+      }
+    }
+
     final stdout = service._optionalString(arguments, 'stdout');
     final stderr = service._optionalString(arguments, 'stderr');
-    final nextStatus = _taskStatusFromRaw(rawStatus);
+    final errorSummary = service._optionalString(arguments, 'errorSummary');
 
     bool foundAndUpdated = false;
     final messages = [...currentChat.messages];
+    AiTodoStep? updatedStep;
 
     for (var mIdx = 0; mIdx < messages.length; mIdx++) {
       final msg = messages[mIdx];
@@ -936,22 +968,30 @@ class ClientToolsProvider implements AiToolProvider {
           });
         }
 
+        final combinedStderr = [
+          if (stderr?.trim().isNotEmpty == true) stderr!.trim(),
+          if (errorSummary?.trim().isNotEmpty == true)
+            'Error Summary: ${errorSummary!.trim()}',
+        ].join('\n');
+
         steps[sIdx] = currentStep.copyWith(
           status: nextStatus,
           stdout: stdout ?? currentStep.stdout,
-          stderr: stderr ?? currentStep.stderr,
+          stderr:
+              combinedStderr.isNotEmpty ? combinedStderr : currentStep.stderr,
           exitCode: nextStatus == StepStatus.success
               ? 0
               : (nextStatus == StepStatus.failed ? 1 : currentStep.exitCode),
         );
 
+        updatedStep = steps[sIdx];
         messages[mIdx] = msg.copyWith(todoSteps: steps);
         foundAndUpdated = true;
         break;
       }
     }
 
-    if (!foundAndUpdated) {
+    if (!foundAndUpdated || updatedStep == null) {
       return jsonEncode({
         'error':
             'Task step not found. No task with id: $taskId exists in this chat session.',
@@ -969,6 +1009,17 @@ class ClientToolsProvider implements AiToolProvider {
       'taskId': taskId,
       'newStatus': nextStatus.name,
       'message': 'Task step successfully updated in the execution logs.',
+      if (nextStatus == StepStatus.running) ...{
+        if (updatedStep.command.trim().isNotEmpty)
+          'expectedCommand': updatedStep.command,
+        if (updatedStep.connectionId?.trim().isNotEmpty == true)
+          'expectedConnectionId': updatedStep.connectionId,
+      },
+      if (nextStatus == StepStatus.failed) ...{
+        'nextAction':
+            'Stop execution and ask the user whether to retry, skip, or revise the plan.',
+        'options': ['retry_current_step', 'skip_current_step', 'ask_user']
+      }
     });
   }
 
@@ -981,6 +1032,165 @@ class ClientToolsProvider implements AiToolProvider {
       (e) => e.name == normalized,
       orElse: () => StepStatus.pending,
     );
+  }
+
+  Future<String> _clientTaskRetry(
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
+    final chatId = clientWebViewSessionId;
+    if (chatId == null || chatId.trim().isEmpty) {
+      return jsonEncode({'error': 'No active chat session found.'});
+    }
+
+    final chats = await storageService.loadAiChats();
+    final chatIndex = chats.indexWhere((c) => c.id == chatId);
+    if (chatIndex == -1) {
+      return jsonEncode({'error': 'Active chat record not found.'});
+    }
+    final currentChat = chats[chatIndex];
+
+    if (currentChat.planMode) {
+      return jsonEncode({
+        'error': 'client_task_retry can ONLY be called during Execution Mode.',
+      });
+    }
+
+    final taskId = service._arg(arguments, 'taskId');
+    bool foundAndUpdated = false;
+    final messages = [...currentChat.messages];
+
+    for (var mIdx = 0; mIdx < messages.length; mIdx++) {
+      final msg = messages[mIdx];
+      if (msg.todoSteps.isEmpty) continue;
+
+      final sIdx = msg.todoSteps.indexWhere((s) => s.id == taskId);
+      if (sIdx != -1) {
+        final steps = [...msg.todoSteps];
+        final currentStep = steps[sIdx];
+
+        if (currentStep.status != StepStatus.failed) {
+          return jsonEncode({
+            'error':
+                'Only failed tasks can be retried. Current status is: ${currentStep.status.name}',
+          });
+        }
+
+        steps[sIdx] = currentStep.copyWith(
+          status: StepStatus.pending,
+          stdout: '',
+          stderr: '',
+          exitCode: null,
+        );
+
+        messages[mIdx] = msg.copyWith(todoSteps: steps);
+        foundAndUpdated = true;
+        break;
+      }
+    }
+
+    if (!foundAndUpdated) {
+      return jsonEncode({
+        'error': 'Task step not found: $taskId',
+      });
+    }
+
+    final updatedChat = currentChat.copyWith(
+      messages: messages,
+      updatedAt: DateTime.now(),
+    );
+    await storageService.saveAiChat(updatedChat);
+
+    return jsonEncode({
+      'status': 'success',
+      'taskId': taskId,
+      'newStatus': StepStatus.pending.name,
+      'message': 'Task step successfully reset to pending for retry.',
+    });
+  }
+
+  Future<String> _clientTaskSkip(
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
+    final chatId = clientWebViewSessionId;
+    if (chatId == null || chatId.trim().isEmpty) {
+      return jsonEncode({'error': 'No active chat session found.'});
+    }
+
+    final chats = await storageService.loadAiChats();
+    final chatIndex = chats.indexWhere((c) => c.id == chatId);
+    if (chatIndex == -1) {
+      return jsonEncode({'error': 'Active chat record not found.'});
+    }
+    final currentChat = chats[chatIndex];
+
+    if (currentChat.planMode) {
+      return jsonEncode({
+        'error': 'client_task_skip can ONLY be called during Execution Mode.',
+      });
+    }
+
+    final taskId = service._arg(arguments, 'taskId');
+    final reason = service._arg(arguments, 'reason');
+    if (reason.trim().isEmpty) {
+      return jsonEncode({
+        'error': 'Skipping a task requires a reason.',
+        'code': 'skip_reason_required',
+      });
+    }
+
+    bool foundAndUpdated = false;
+    final messages = [...currentChat.messages];
+
+    for (var mIdx = 0; mIdx < messages.length; mIdx++) {
+      final msg = messages[mIdx];
+      if (msg.todoSteps.isEmpty) continue;
+
+      final sIdx = msg.todoSteps.indexWhere((s) => s.id == taskId);
+      if (sIdx != -1) {
+        final steps = [...msg.todoSteps];
+        final currentStep = steps[sIdx];
+
+        if (currentStep.status != StepStatus.pending &&
+            currentStep.status != StepStatus.failed &&
+            currentStep.status != StepStatus.running) {
+          return jsonEncode({
+            'error':
+                'Only pending, running, or failed tasks can be skipped. Current status is: ${currentStep.status.name}',
+          });
+        }
+
+        steps[sIdx] = currentStep.copyWith(
+          status: StepStatus.skipped,
+          stdout: 'Skipped: $reason',
+          exitCode: null,
+        );
+
+        messages[mIdx] = msg.copyWith(todoSteps: steps);
+        foundAndUpdated = true;
+        break;
+      }
+    }
+
+    if (!foundAndUpdated) {
+      return jsonEncode({
+        'error': 'Task step not found: $taskId',
+      });
+    }
+
+    final updatedChat = currentChat.copyWith(
+      messages: messages,
+      updatedAt: DateTime.now(),
+    );
+    await storageService.saveAiChat(updatedChat);
+
+    return jsonEncode({
+      'status': 'success',
+      'taskId': taskId,
+      'newStatus': StepStatus.skipped.name,
+      'message': 'Task step successfully marked as skipped.',
+    });
   }
 
   List<AiTool> _getClientTools(
@@ -1438,6 +1648,10 @@ class ClientToolsProvider implements AiToolProvider {
               'Optional stdout log response from executing the command.'),
           'stderr':
               _string('Optional stderr log response if execution failed.'),
+          'reason': _string(
+              'Required when status is skipped. Explain why skipping this step is safe.'),
+          'errorSummary':
+              _string('Optional summary of the error when status is failed.'),
         },
         required: const ['taskId', 'status'],
         executionMode: AiToolExecutionMode.executionOnly,
@@ -1446,6 +1660,38 @@ class ClientToolsProvider implements AiToolProvider {
           AiToolCapability.client,
         },
         handler: (args) => _clientTaskUpdate(service, args),
+      ),
+      AiTool(
+        name: 'client_task_retry',
+        description:
+            'CLIENT tool. Reset a failed step in the execution plan back to pending so that it can be retried. This tool is ONLY allowed during Execution Mode.',
+        properties: {
+          'taskId': _string('The unique taskId of the failed step to retry.'),
+        },
+        required: const ['taskId'],
+        executionMode: AiToolExecutionMode.executionOnly,
+        capabilities: const {
+          AiToolCapability.planning,
+          AiToolCapability.client,
+        },
+        handler: (args) => _clientTaskRetry(service, args),
+      ),
+      AiTool(
+        name: 'client_task_skip',
+        description:
+            'CLIENT tool. Skip a pending or failed step in the execution plan. Skipping is only allowed if a reason is provided. This tool is ONLY allowed during Execution Mode.',
+        properties: {
+          'taskId': _string('The unique taskId of the step to skip.'),
+          'reason': _string(
+              'Clear justification of why it is safe to skip this step.'),
+        },
+        required: const ['taskId', 'reason'],
+        executionMode: AiToolExecutionMode.executionOnly,
+        capabilities: const {
+          AiToolCapability.planning,
+          AiToolCapability.client,
+        },
+        handler: (args) => _clientTaskSkip(service, args),
       ),
     ];
   }

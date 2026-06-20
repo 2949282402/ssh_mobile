@@ -945,6 +945,12 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
     final hasLogs =
         (step.stdout?.isNotEmpty == true || step.stderr?.isNotEmpty == true);
 
+    final snapshot =
+        const PlanExecutionController().snapshot(widget.message.todoSteps);
+    final isCurrent = snapshot.currentStep?.id == step.id;
+    final isFailed = step.status == StepStatus.failed;
+    final isRunning = step.status == StepStatus.running;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -959,8 +965,28 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
             });
           },
           borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+          child: Container(
+            decoration: BoxDecoration(
+              color: isRunning
+                  ? colorScheme.primary.withValues(alpha: 0.08)
+                  : isFailed
+                      ? colorScheme.error.withValues(alpha: 0.08)
+                      : isCurrent && step.status == StepStatus.pending
+                          ? colorScheme.secondaryContainer
+                              .withValues(alpha: 0.3)
+                          : null,
+              borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+              border: Border.all(
+                color: isRunning
+                    ? colorScheme.primary.withValues(alpha: 0.24)
+                    : isFailed
+                        ? colorScheme.error.withValues(alpha: 0.3)
+                        : isCurrent && step.status == StepStatus.pending
+                            ? colorScheme.secondary.withValues(alpha: 0.15)
+                            : Colors.transparent,
+              ),
+            ),
+            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1043,24 +1069,110 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainerHighest
-                        .withValues(alpha: 0.48),
-                    borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                    border: Border.all(color: colorScheme.outlineVariant),
-                  ),
-                  child: Text(
-                    step.command,
-                    style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 10.5,
-                      color: colorScheme.primary,
+                if (step.command.isNotEmpty) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerHighest
+                          .withValues(alpha: 0.48),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                      border: Border.all(color: colorScheme.outlineVariant),
+                    ),
+                    child: Text(
+                      step.command,
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 10.5,
+                        color: colorScheme.primary,
+                      ),
                     ),
                   ),
-                ),
+                ],
+                if (isFailed) ...[
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          context
+                              .read<AiChatViewModel>()
+                              .retryTodoStep(step.id);
+                        },
+                        icon: const Icon(Icons.refresh, size: 13),
+                        label: Text(isEn ? 'Retry Step' : '重试此步骤'),
+                        style: ElevatedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 6),
+                          textStyle: const TextStyle(
+                              fontSize: 11, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          final reasonController = TextEditingController();
+                          final confirmed = await showDialog<bool>(
+                            context: context,
+                            builder: (dialogCtx) => AlertDialog(
+                              title: Text(isEn ? 'Skip Step' : '跳过步骤'),
+                              content: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(isEn
+                                      ? 'Provide a reason for skipping this task:'
+                                      : '请输入跳过此任务的原因：'),
+                                  const SizedBox(height: 8),
+                                  TextField(
+                                    controller: reasonController,
+                                    decoration: InputDecoration(
+                                      hintText: isEn
+                                          ? 'e.g. Completed manually'
+                                          : '例如：已手动完成',
+                                      border: const OutlineInputBorder(),
+                                    ),
+                                    autofocus: true,
+                                  ),
+                                ],
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () =>
+                                      Navigator.pop(dialogCtx, false),
+                                  child: Text(isEn ? 'Cancel' : '取消'),
+                                ),
+                                ElevatedButton(
+                                  onPressed: () =>
+                                      Navigator.pop(dialogCtx, true),
+                                  child: Text(isEn ? 'Skip' : '跳过'),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (confirmed == true &&
+                              reasonController.text.trim().isNotEmpty) {
+                            if (context.mounted) {
+                              context.read<AiChatViewModel>().skipTodoStep(
+                                    step.id,
+                                    reasonController.text.trim(),
+                                  );
+                            }
+                          }
+                        },
+                        icon: const Icon(Icons.skip_next, size: 13),
+                        label: Text(isEn ? 'Skip Step' : '跳过此步骤'),
+                        style: OutlinedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 6),
+                          textStyle: const TextStyle(fontSize: 11),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
                 if (hasLogs) ...[
                   const SizedBox(height: 4),
                   Container(

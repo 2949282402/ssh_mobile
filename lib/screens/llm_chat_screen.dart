@@ -23,6 +23,7 @@ import '../services/performance_monitor_service.dart';
 import '../services/sftp_service.dart';
 import '../services/ssh_service.dart';
 import '../services/storage_service.dart';
+import '../services/agent/plan_execution_controller.dart';
 import '../services/playbook_service.dart';
 import '../services/rag_service.dart';
 import '../widgets/overflow_scroll_text.dart';
