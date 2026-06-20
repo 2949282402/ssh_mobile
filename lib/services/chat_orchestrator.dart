@@ -162,36 +162,44 @@ class ChatOrchestrator {
     String text, {
     required DateTime assistantCreatedAt,
   }) {
-    final reg = RegExp(r'```playbook\s*(\{[\s\S]*?\})\s*```');
+    final reg = RegExp(r'```playbook\s*([\s\S]*?)\s*```');
     final matches = reg.allMatches(text);
     for (final match in matches) {
       try {
         final rawJson = match.group(1);
         if (rawJson == null || rawJson.trim().isEmpty) continue;
-        final decoded = jsonDecode(rawJson) as Map<String, dynamic>;
-        final stepsList = decoded['steps'] as List? ?? [];
-        if (stepsList.isEmpty) continue;
-        return stepsList.asMap().entries.map((entry) {
-          final idx = entry.key;
-          final item = entry.value;
+        final decoded = jsonDecode(rawJson);
+        if (decoded is! Map<String, dynamic>) continue;
+        final stepsList = decoded['steps'];
+        if (stepsList is! List || stepsList.isEmpty) continue;
+
+        final parsedSteps = <AiTodoStep>[];
+        var isPlaybookValid = true;
+
+        for (var idx = 0; idx < stepsList.length; idx++) {
+          final item = stepsList[idx];
           if (item is! Map) {
-            return AiTodoStep(
-              id: buildStableTodoStepId(assistantCreatedAt, idx),
-              name: 'Step ${idx + 1}',
-              command: '',
-              description: '',
-              status: StepStatus.pending,
-            );
+            isPlaybookValid = false;
+            break;
           }
-          return AiTodoStep(
+          final name = item['name']?.toString().trim();
+          if (name == null || name.isEmpty) {
+            isPlaybookValid = false;
+            break;
+          }
+          parsedSteps.add(AiTodoStep(
             id: buildStableTodoStepId(assistantCreatedAt, idx),
-            name: item['name']?.toString() ?? 'Step ${idx + 1}',
+            name: name,
             command: item['command']?.toString() ?? '',
             description: item['description']?.toString() ?? '',
             status: StepStatus.pending,
             connectionId: item['connectionId']?.toString(),
-          );
-        }).toList(growable: false);
+          ));
+        }
+
+        if (isPlaybookValid && parsedSteps.isNotEmpty) {
+          return parsedSteps;
+        }
       } catch (_) {
         // Continue to the next match if JSON parsing fails or steps missing
       }

@@ -5,7 +5,6 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import 'ai_tool_service.dart';
-import '../features/playbook/models/playbook.dart';
 import 'agent_model_profile.dart';
 import 'app_log_service.dart';
 import 'app_settings.dart';

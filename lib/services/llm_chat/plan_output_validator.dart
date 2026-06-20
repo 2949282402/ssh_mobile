@@ -37,8 +37,8 @@ class PlanOutputValidator {
     }
 
     final reg = RegExp(r'```playbook\s*([\s\S]*?)\s*```');
-    final match = reg.firstMatch(assistantText);
-    if (match == null) {
+    final matches = reg.allMatches(assistantText);
+    if (matches.isEmpty) {
       return const PlanOutputValidationResult(
         status: PlanOutputValidationStatus.missingStructuredPlan,
         isValid: false,
@@ -46,83 +46,107 @@ class PlanOutputValidator {
       );
     }
 
-    final rawJson = match.group(1);
-    if (rawJson == null || rawJson.trim().isEmpty) {
-      return const PlanOutputValidationResult(
-        status: PlanOutputValidationStatus.invalidJson,
-        isValid: false,
-        reason: 'Empty playbook block content',
-      );
-    }
+    PlanOutputValidationResult? firstErrorResult;
 
-    Map<String, dynamic> decoded;
-    try {
-      final parsed = jsonDecode(rawJson);
-      if (parsed is! Map<String, dynamic>) {
-        return const PlanOutputValidationResult(
+    for (final match in matches) {
+      final rawJson = match.group(1);
+      if (rawJson == null || rawJson.trim().isEmpty) {
+        firstErrorResult ??= const PlanOutputValidationResult(
           status: PlanOutputValidationStatus.invalidJson,
           isValid: false,
-          reason: 'Playbook JSON must be a map structure',
+          reason: 'Empty playbook block content',
         );
+        continue;
       }
-      decoded = parsed;
-    } catch (e) {
-      return PlanOutputValidationResult(
-        status: PlanOutputValidationStatus.invalidJson,
-        isValid: false,
-        reason: 'Invalid JSON format in playbook block: $e',
-      );
-    }
 
-    if (!decoded.containsKey('steps')) {
-      return const PlanOutputValidationResult(
-        status: PlanOutputValidationStatus.missingSteps,
-        isValid: false,
-        reason: 'Playbook is missing the required "steps" field',
-      );
-    }
-
-    final steps = decoded['steps'];
-    if (steps is! List) {
-      return const PlanOutputValidationResult(
-        status: PlanOutputValidationStatus.missingSteps,
-        isValid: false,
-        reason: 'The "steps" field in playbook JSON must be a list',
-      );
-    }
-
-    if (steps.isEmpty) {
-      return const PlanOutputValidationResult(
-        status: PlanOutputValidationStatus.emptySteps,
-        isValid: false,
-        reason: 'The "steps" list in playbook JSON cannot be empty',
-      );
-    }
-
-    for (var idx = 0; idx < steps.length; idx++) {
-      final step = steps[idx];
-      if (step is! Map) {
-        return PlanOutputValidationResult(
-          status: PlanOutputValidationStatus.missingStepName,
+      Map<String, dynamic> decoded;
+      try {
+        final parsed = jsonDecode(rawJson);
+        if (parsed is! Map<String, dynamic>) {
+          firstErrorResult ??= const PlanOutputValidationResult(
+            status: PlanOutputValidationStatus.invalidJson,
+            isValid: false,
+            reason: 'Playbook JSON must be a map structure',
+          );
+          continue;
+        }
+        decoded = parsed;
+      } catch (e) {
+        firstErrorResult ??= PlanOutputValidationResult(
+          status: PlanOutputValidationStatus.invalidJson,
           isValid: false,
-          reason: 'Step at index $idx is not a valid JSON object/map',
+          reason: 'Invalid JSON format in playbook block: $e',
         );
+        continue;
       }
-      final name = step['name'];
-      if (name == null || name.toString().trim().isEmpty) {
-        return PlanOutputValidationResult(
-          status: PlanOutputValidationStatus.missingStepName,
+
+      if (!decoded.containsKey('steps')) {
+        firstErrorResult ??= const PlanOutputValidationResult(
+          status: PlanOutputValidationStatus.missingSteps,
           isValid: false,
-          reason: 'Step at index $idx is missing a non-empty "name" field',
+          reason: 'Playbook is missing the required "steps" field',
+        );
+        continue;
+      }
+
+      final steps = decoded['steps'];
+      if (steps is! List) {
+        firstErrorResult ??= const PlanOutputValidationResult(
+          status: PlanOutputValidationStatus.missingSteps,
+          isValid: false,
+          reason: 'The "steps" field in playbook JSON must be a list',
+        );
+        continue;
+      }
+
+      if (steps.isEmpty) {
+        firstErrorResult ??= const PlanOutputValidationResult(
+          status: PlanOutputValidationStatus.emptySteps,
+          isValid: false,
+          reason: 'The "steps" list in playbook JSON cannot be empty',
+        );
+        continue;
+      }
+
+      var stepsValid = true;
+      for (var idx = 0; idx < steps.length; idx++) {
+        final step = steps[idx];
+        if (step is! Map) {
+          firstErrorResult ??= PlanOutputValidationResult(
+            status: PlanOutputValidationStatus.missingStepName,
+            isValid: false,
+            reason: 'Step at index $idx is not a valid JSON object/map',
+          );
+          stepsValid = false;
+          break;
+        }
+        final name = step['name'];
+        if (name == null || name.toString().trim().isEmpty) {
+          firstErrorResult ??= PlanOutputValidationResult(
+            status: PlanOutputValidationStatus.missingStepName,
+            isValid: false,
+            reason: 'Step at index $idx is missing a non-empty "name" field',
+          );
+          stepsValid = false;
+          break;
+        }
+      }
+
+      if (stepsValid) {
+        return PlanOutputValidationResult(
+          status: PlanOutputValidationStatus.validPlaybook,
+          isValid: true,
+          playbookJson: decoded,
         );
       }
     }
 
-    return PlanOutputValidationResult(
-      status: PlanOutputValidationStatus.validPlaybook,
-      isValid: true,
-      playbookJson: decoded,
-    );
+    return firstErrorResult ??
+        const PlanOutputValidationResult(
+          status: PlanOutputValidationStatus.missingStructuredPlan,
+          isValid: false,
+          reason: 'No valid playbook block found',
+        );
   }
 }
 
@@ -182,4 +206,3 @@ String buildPlanOutputRepairPrompt({
         '4. 绝对不要发起任何会改变服务器状态的工具调用。';
   }
 }
-

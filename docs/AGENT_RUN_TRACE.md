@@ -98,5 +98,10 @@ Plan Mode final output is validated before execution handoff. A valid Plan Mode 
 1. Persist chat-bound `todoSteps` (e.g. from `client_task_create` calls), or
 2. Include a valid ` ```playbook ` JSON block with non-empty steps.
 
-If validation fails, the model gets one format-only repair attempt. If the repair succeeds, the validated playbook JSON is automatically persisted as `todoSteps` on the assistant message, and the chat can transition to execution mode. If the repair still fails, the chat stays in Plan Mode and the user receives an explicit explanation.
+If validation fails, the model gets one format-only repair attempt. If the repair still fails, the chat stays in Plan Mode and the user receives an explicit explanation.
+
+### Plan Mode Streaming and Persistence Boundary
+
+During Plan Mode, single-LLM text is fully buffered until output validation/repair completes. The user should see the validated final plan, not an invalid draft followed by a repair. 
+`LlmChatService` owns validation, one-shot repair, and tracing. `ChatOrchestrator` owns the final conversion from a valid playbook JSON block to chat-bound `todoSteps`. The service layer must not directly write to the database (mutate `AiChatRecord`) during validation/repair, avoiding race conditions and ensuring a clean MVVM data flow.
 

@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/services/ai_tool_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/llm_chat_service.dart';
@@ -16,6 +15,10 @@ import 'package:ssh_mobile/services/server_diagnostics_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 import 'package:ssh_mobile/services/multi_agent_coordinator.dart';
+import 'package:ssh_mobile/services/chat_orchestrator.dart';
+import 'package:ssh_mobile/services/chat_context_assembler.dart';
+import 'package:ssh_mobile/services/operational_memory_retriever.dart';
+import 'package:ssh_mobile/services/rag_service.dart';
 
 // --- Mocks for HttpClient for SSE ---
 class MockHttpOverrides extends HttpOverrides {
@@ -26,7 +29,8 @@ class MockHttpOverrides extends HttpOverrides {
 
   @override
   HttpClient createHttpClient(SecurityContext? context) {
-    final resp = requestCount < responses.length ? responses[requestCount] : <String>[];
+    final resp =
+        requestCount < responses.length ? responses[requestCount] : <String>[];
     requestCount++;
     return MockHttpClient(resp);
   }
@@ -93,7 +97,8 @@ class MockHttpHeaders implements HttpHeaders {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-class MockHttpClientResponse extends Stream<List<int>> implements HttpClientResponse {
+class MockHttpClientResponse extends Stream<List<int>>
+    implements HttpClientResponse {
   final List<String> responseChunks;
 
   MockHttpClientResponse(this.responseChunks);
@@ -171,7 +176,10 @@ void main() {
   late ServerDiagnosticsService serverDiagnosticsService;
   late PerformanceMonitorService performanceMonitorService;
   late AiToolService aiToolService;
+  late ChatOrchestrator orchestrator;
   final String testChatId = 'chat-test-123';
+  late AiChatRecord activeChat;
+  final DateTime now = DateTime.now();
 
   setUp(() async {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
@@ -190,7 +198,8 @@ void main() {
       storageService: storageService,
       sshService: sshService,
     );
-    performanceMonitorService = PerformanceMonitorService(sshService, storageService);
+    performanceMonitorService =
+        PerformanceMonitorService(sshService, storageService);
 
     await storageService.saveAiConnectionSettings(
       baseUrl: 'https://api.example.com',
@@ -203,13 +212,22 @@ void main() {
       sshService: sshService,
       sftpService: sftpService,
       serverDiagnosticsService: serverDiagnosticsService,
-      performanceMonitorToolService: PerformanceMonitorToolService(performanceMonitorService),
+      performanceMonitorToolService:
+          PerformanceMonitorToolService(performanceMonitorService),
       appSettings: appSettings,
       clientWebViewSessionId: testChatId,
     );
 
-    final now = DateTime.now();
-    final activeChat = AiChatRecord(
+    orchestrator = ChatOrchestrator(
+      storageService: storageService,
+      contextAssembler: ChatContextAssembler(storageService: storageService),
+      memoryRetriever: OperationalMemoryRetriever(
+        storageService: storageService,
+        ragService: RagService(storageService: storageService),
+      ),
+    );
+
+    activeChat = AiChatRecord(
       id: testChatId,
       title: 'Active Chat',
       model: 'demo-model',
@@ -238,8 +256,11 @@ void main() {
     storageService.dispose();
   });
 
-  group('LlmChatService Plan Mode Output Validation Integration Tests (Single LLM Path)', () {
-    test('valid playbook JSON skips repair and persists todoSteps', () async {
+  group(
+      'LlmChatService Plan Mode Output Validation Integration Tests (Single LLM Path)',
+      () {
+    test('plan mode valid playbook passes without repair, yielding only once',
+        () async {
       const validPlaybook = '''
 Context: We need to restart nginx.
 Proposal:
@@ -275,20 +296,35 @@ Verification: check port 80.
         chunks.add(chunk);
       }
 
-      final fullOutput = chunks.join();
+      // In Plan Mode, chunks are buffered, so we should get exactly 1 unified chunk containing the final validated output.
+      expect(chunks, hasLength(1));
+      final fullOutput = chunks.first;
       expect(fullOutput, contains('Nginx restart'));
       expect(fullOutput, isNot(contains('Format validation failed')));
 
-      // Verify todoSteps were persisted
+      // LlmChatService does not write directly to DB todoSteps anymore
       final chats = await storageService.loadAiChats();
       final chat = chats.firstWhere((c) => c.id == testChatId);
-      final assistantMsg = chat.messages.lastWhere((m) => m.role == 'assistant');
-      expect(assistantMsg.todoSteps, hasLength(1));
-      expect(assistantMsg.todoSteps[0].name, 'Check status');
-      expect(assistantMsg.todoSteps[0].command, 'systemctl status nginx');
+      final assistantMsg =
+          chat.messages.lastWhere((m) => m.role == 'assistant');
+      expect(assistantMsg.todoSteps, isEmpty);
+
+      // ChatOrchestrator parses it correctly
+      final completion = orchestrator.finalizeAssistantTurn(
+        initialChat: activeChat,
+        assistantMessage: assistantMsg,
+        answerText: fullOutput,
+        traces: const [],
+      );
+      final steps = completion.assistantMessage.todoSteps;
+      expect(steps, hasLength(1));
+      expect(steps[0].name, 'Check status');
+      expect(steps[0].command, 'systemctl status nginx');
     });
 
-    test('invalid playbook JSON triggers repair once, succeeds and persists todoSteps', () async {
+    test(
+        'plan mode invalid output triggers one repair and returns repaired text only, buffering original',
+        () async {
       const invalidPlaybook = '''
 Context: We need to restart nginx.
 Proposal:
@@ -334,20 +370,34 @@ Proposal:
         chunks.add(chunk);
       }
 
+      // Expected chunks:
+      // In planMode, the invalid output is buffered and NOT yielded.
+      // Then validation fails, so it yields nothing of the first attempt.
+      // Then it yields only the repaired text!
+      // So the yielded chunks should only contain the repaired playbook.
       final fullOutput = chunks.join();
-      expect(fullOutput, contains('[Format validation failed. Repairing...]'));
+      expect(fullOutput, isNot(contains('Invalid Playbook JSON')));
       expect(fullOutput, contains('Repaired Nginx restart'));
+      expect(fullOutput,
+          isNot(contains('[Format validation failed. Repairing...]')));
 
-      // Verify todoSteps were persisted
-      final chats = await storageService.loadAiChats();
-      final chat = chats.firstWhere((c) => c.id == testChatId);
-      final assistantMsg = chat.messages.lastWhere((m) => m.role == 'assistant');
-      expect(assistantMsg.todoSteps, hasLength(1));
-      expect(assistantMsg.todoSteps[0].name, 'Check status');
-      expect(assistantMsg.todoSteps[0].command, 'systemctl status nginx');
+      // Verify ChatOrchestrator parses the repaired text correctly
+      final assistantMsg =
+          activeChat.messages.lastWhere((m) => m.role == 'assistant');
+      final completion = orchestrator.finalizeAssistantTurn(
+        initialChat: activeChat,
+        assistantMessage: assistantMsg,
+        answerText: fullOutput,
+        traces: const [],
+      );
+      final steps = completion.assistantMessage.todoSteps;
+      expect(steps, hasLength(1));
+      expect(steps[0].name, 'Check status');
     });
 
-    test('invalid playbook JSON repair still fails, returns combined text without crashing', () async {
+    test(
+        'plan mode repair failure returns explicit failure note and original text without looping',
+        () async {
       const invalidPlaybook = 'Plain text plan with no playbook block at all.';
       const repairedPlaybook = 'Still no playbook block here.';
 
@@ -374,20 +424,45 @@ Proposal:
       }
 
       final fullOutput = chunks.join();
-      expect(fullOutput, contains('[Format validation failed. Repairing...]'));
+      // It returns the combined output to let the user see it
+      expect(fullOutput, contains('Plan output validation still failed.'));
       expect(fullOutput, contains('Plain text plan'));
       expect(fullOutput, contains('Still no playbook block here'));
+    });
 
-      // Verify todoSteps are empty
-      final chats = await storageService.loadAiChats();
-      final chat = chats.firstWhere((c) => c.id == testChatId);
-      final assistantMsg = chat.messages.lastWhere((m) => m.role == 'assistant');
-      expect(assistantMsg.todoSteps, isEmpty);
+    test('non plan mode streams chunks immediately and does not validate',
+        () async {
+      HttpOverrides.global = MockHttpOverrides([
+        ['Hello', ' world!']
+      ]);
+
+      final llm = LlmChatService(
+        storageService: storageService,
+        toolService: aiToolService,
+        language: AppLanguage.en,
+        multiAgentCoordinator: FakeMultiAgentCoordinator(null),
+      );
+
+      final chunks = <String>[];
+      await for (final chunk in llm.stream(
+        messages: const [
+          {'role': 'user', 'content': 'Hi'}
+        ],
+        planMode: false,
+      )) {
+        chunks.add(chunk);
+      }
+
+      expect(chunks, hasLength(2));
+      expect(chunks, ['Hello', ' world!']);
     });
   });
 
-  group('LlmChatService Plan Mode Output Validation Integration Tests (Multi-Agent Path)', () {
-    test('valid agent playbook JSON skips repair and persists todoSteps', () async {
+  group(
+      'LlmChatService Plan Mode Output Validation Integration Tests (Multi-Agent Path)',
+      () {
+    test('valid agent playbook JSON skips repair and returns plan content',
+        () async {
       const validPlaybook = '''
 ```playbook
 {
@@ -426,15 +501,22 @@ Proposal:
       expect(fullOutput, contains('Agent Nginx restart'));
       expect(fullOutput, isNot(contains('Format validation failed')));
 
-      // Verify todoSteps were persisted
-      final chats = await storageService.loadAiChats();
-      final chat = chats.firstWhere((c) => c.id == testChatId);
-      final assistantMsg = chat.messages.lastWhere((m) => m.role == 'assistant');
-      expect(assistantMsg.todoSteps, hasLength(1));
-      expect(assistantMsg.todoSteps[0].name, 'Check status');
+      final assistantMsg =
+          activeChat.messages.lastWhere((m) => m.role == 'assistant');
+      final completion = orchestrator.finalizeAssistantTurn(
+        initialChat: activeChat,
+        assistantMessage: assistantMsg,
+        answerText: fullOutput,
+        traces: const [],
+      );
+      final steps = completion.assistantMessage.todoSteps;
+      expect(steps, hasLength(1));
+      expect(steps[0].name, 'Check status');
     });
 
-    test('invalid agent playbook triggers repair, succeeds and persists todoSteps', () async {
+    test(
+        'invalid agent playbook triggers repair, succeeds and returns repaired text',
+        () async {
       const invalidPlaybook = 'Plaintext output from agents';
       const repairedPlaybook = '''
 ```playbook
@@ -475,15 +557,20 @@ Proposal:
       }
 
       final fullOutput = chunks.join();
-      expect(fullOutput, contains('[Format validation failed. Repairing...]'));
+      expect(fullOutput, isNot(contains('Plaintext output')));
       expect(fullOutput, contains('Repaired Agent Playbook'));
 
-      // Verify todoSteps were persisted
-      final chats = await storageService.loadAiChats();
-      final chat = chats.firstWhere((c) => c.id == testChatId);
-      final assistantMsg = chat.messages.lastWhere((m) => m.role == 'assistant');
-      expect(assistantMsg.todoSteps, hasLength(1));
-      expect(assistantMsg.todoSteps[0].name, 'Check status');
+      final assistantMsg =
+          activeChat.messages.lastWhere((m) => m.role == 'assistant');
+      final completion = orchestrator.finalizeAssistantTurn(
+        initialChat: activeChat,
+        assistantMessage: assistantMsg,
+        answerText: fullOutput,
+        traces: const [],
+      );
+      final steps = completion.assistantMessage.todoSteps;
+      expect(steps, hasLength(1));
+      expect(steps[0].name, 'Check status');
     });
   });
 }

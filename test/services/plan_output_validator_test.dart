@@ -65,7 +65,8 @@ void main() {
 
     test('returns missingSteps when steps field is not a list', () {
       final result = PlanOutputValidator.validate(
-        assistantText: '```playbook\n{"name": "My Playbook", "steps": "not-a-list"}\n```',
+        assistantText:
+            '```playbook\n{"name": "My Playbook", "steps": "not-a-list"}\n```',
         hasPersistedTodoSteps: false,
       );
       expect(result.isValid, isFalse);
@@ -85,7 +86,8 @@ void main() {
 
     test('returns missingStepName when step lacks a name', () {
       final result = PlanOutputValidator.validate(
-        assistantText: '```playbook\n{"name": "My Playbook", "steps": [{"command": "ls"}]}\n```',
+        assistantText:
+            '```playbook\n{"name": "My Playbook", "steps": [{"command": "ls"}]}\n```',
         hasPersistedTodoSteps: false,
       );
       expect(result.isValid, isFalse);
@@ -95,7 +97,8 @@ void main() {
 
     test('returns missingStepName when step is not a map', () {
       final result = PlanOutputValidator.validate(
-        assistantText: '```playbook\n{"name": "My Playbook", "steps": ["step-name-but-not-map"]}\n```',
+        assistantText:
+            '```playbook\n{"name": "My Playbook", "steps": ["step-name-but-not-map"]}\n```',
         hasPersistedTodoSteps: false,
       );
       expect(result.isValid, isFalse);
@@ -157,6 +160,59 @@ void main() {
       );
       expect(result.isValid, isTrue);
       expect(result.playbookJson!['steps'][0]['command'], contains('\n'));
+    });
+
+    test('skips invalid first block and matches second valid block', () {
+      const mixedPlaybooks = '''
+Some description.
+```playbook
+{
+  "name": "First Invalid Block",
+  "steps": []
+}
+```
+Middle description.
+```playbook
+{
+  "name": "Second Valid Block",
+  "steps": [
+    {"name": "Valid Step", "command": "echo 1"}
+  ]
+}
+```
+''';
+      final result = PlanOutputValidator.validate(
+        assistantText: mixedPlaybooks,
+        hasPersistedTodoSteps: false,
+      );
+      expect(result.isValid, isTrue);
+      expect(result.status, PlanOutputValidationStatus.validPlaybook);
+      expect(result.playbookJson!['name'], 'Second Valid Block');
+    });
+
+    test('returns first error if all blocks are invalid', () {
+      const allInvalid = '''
+```playbook
+{
+  "name": "First Invalid Block",
+  "steps": []
+}
+```
+```playbook
+{
+  "name": "Second Invalid Block",
+  "steps": [
+    {"command": "missing-name"}
+  ]
+}
+```
+''';
+      final result = PlanOutputValidator.validate(
+        assistantText: allInvalid,
+        hasPersistedTodoSteps: false,
+      );
+      expect(result.isValid, isFalse);
+      expect(result.status, PlanOutputValidationStatus.emptySteps);
     });
   });
 }
