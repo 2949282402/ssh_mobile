@@ -88,6 +88,7 @@ class AiConnectionSettings {
   final bool hasQuarkApiKey;
   final bool multiAgentEnabled;
   final int multiAgentMaxAgents;
+  final bool postToolReviewEnabled;
   final int toolCallBudget;
   final int maxImageSizeBytes;
   final int maxFileSizeBytes;
@@ -121,6 +122,7 @@ class AiConnectionSettings {
     required this.hasQuarkApiKey,
     required this.multiAgentEnabled,
     required this.multiAgentMaxAgents,
+    required this.postToolReviewEnabled,
     required this.toolCallBudget,
     required this.maxImageSizeBytes,
     required this.maxFileSizeBytes,
@@ -143,6 +145,82 @@ class AiConnectionSettings {
         auditModel: auditModel,
         fallbackPolicy: modelFallbackPolicy,
       );
+
+  AiConnectionSettings copyWith({
+    String? baseUrl,
+    String? model,
+    String? helperModel,
+    String? auditModel,
+    String? modelFallbackPolicy,
+    int? contextWindowTokens,
+    int? timeoutSeconds,
+    bool? deepSeekThinkingEnabled,
+    String? deepSeekReasoningEffort,
+    String? openAiReasoningEffort,
+    bool? webSearchEnabled,
+    int? webSearchMaxResults,
+    String? webSearchEngine,
+    String? quarkSearchEndpoint,
+    bool? hasQuarkApiKey,
+    bool? multiAgentEnabled,
+    int? multiAgentMaxAgents,
+    bool? postToolReviewEnabled,
+    int? toolCallBudget,
+    int? maxImageSizeBytes,
+    int? maxFileSizeBytes,
+    bool? hasApiKey,
+    String? activeApiKeyId,
+    String? activeApiKeyMasked,
+    bool? useCustomPrompts,
+    String? customSystemPrompt,
+    String? customPlannerPrompt,
+    String? customOperatorPrompt,
+    String? customExplorePrompt,
+    String? customReviewerPrompt,
+    String? customSummarizerPrompt,
+    String? customCoordinatorPrompt,
+  }) {
+    return AiConnectionSettings(
+      baseUrl: baseUrl ?? this.baseUrl,
+      model: model ?? this.model,
+      helperModel: helperModel ?? this.helperModel,
+      auditModel: auditModel ?? this.auditModel,
+      modelFallbackPolicy: modelFallbackPolicy ?? this.modelFallbackPolicy,
+      contextWindowTokens: contextWindowTokens ?? this.contextWindowTokens,
+      timeoutSeconds: timeoutSeconds ?? this.timeoutSeconds,
+      deepSeekThinkingEnabled:
+          deepSeekThinkingEnabled ?? this.deepSeekThinkingEnabled,
+      deepSeekReasoningEffort:
+          deepSeekReasoningEffort ?? this.deepSeekReasoningEffort,
+      openAiReasoningEffort:
+          openAiReasoningEffort ?? this.openAiReasoningEffort,
+      webSearchEnabled: webSearchEnabled ?? this.webSearchEnabled,
+      webSearchMaxResults: webSearchMaxResults ?? this.webSearchMaxResults,
+      webSearchEngine: webSearchEngine ?? this.webSearchEngine,
+      quarkSearchEndpoint: quarkSearchEndpoint ?? this.quarkSearchEndpoint,
+      hasQuarkApiKey: hasQuarkApiKey ?? this.hasQuarkApiKey,
+      multiAgentEnabled: multiAgentEnabled ?? this.multiAgentEnabled,
+      multiAgentMaxAgents: multiAgentMaxAgents ?? this.multiAgentMaxAgents,
+      postToolReviewEnabled:
+          postToolReviewEnabled ?? this.postToolReviewEnabled,
+      toolCallBudget: toolCallBudget ?? this.toolCallBudget,
+      maxImageSizeBytes: maxImageSizeBytes ?? this.maxImageSizeBytes,
+      maxFileSizeBytes: maxFileSizeBytes ?? this.maxFileSizeBytes,
+      hasApiKey: hasApiKey ?? this.hasApiKey,
+      activeApiKeyId: activeApiKeyId ?? this.activeApiKeyId,
+      activeApiKeyMasked: activeApiKeyMasked ?? this.activeApiKeyMasked,
+      useCustomPrompts: useCustomPrompts ?? this.useCustomPrompts,
+      customSystemPrompt: customSystemPrompt ?? this.customSystemPrompt,
+      customPlannerPrompt: customPlannerPrompt ?? this.customPlannerPrompt,
+      customOperatorPrompt: customOperatorPrompt ?? this.customOperatorPrompt,
+      customExplorePrompt: customExplorePrompt ?? this.customExplorePrompt,
+      customReviewerPrompt: customReviewerPrompt ?? this.customReviewerPrompt,
+      customSummarizerPrompt:
+          customSummarizerPrompt ?? this.customSummarizerPrompt,
+      customCoordinatorPrompt:
+          customCoordinatorPrompt ?? this.customCoordinatorPrompt,
+    );
+  }
 }
 
 class AiApiKeyHistoryEntry {

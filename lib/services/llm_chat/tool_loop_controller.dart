@@ -660,6 +660,17 @@ class ToolLoopController {
 
     if (!needsPostReview) return;
 
+    if (!settings.postToolReviewEnabled) {
+      onTrace?.call(
+        LlmTraceEvent(
+          kind: 'multi_agent_post_tool_review_skipped',
+          title: 'Post-tool review skipped',
+          content: 'skipped_by_setting: postToolReviewEnabled=false',
+        ),
+      );
+      return;
+    }
+
     final currentTodoStep = planExecutionSnapshot?.currentStep;
     final recentLedger = toolLedger.isNotEmpty ? toolLedger.last : null;
 
@@ -709,7 +720,7 @@ class ToolLoopController {
 
     final reviewResult = await chatService.multiAgentCoordinator.run(
       messages: workingMessages,
-      enabled: settings.multiAgentEnabled,
+      enabled: settings.postToolReviewEnabled,
       maxAgents: settings.multiAgentMaxAgents,
       trigger: trigger,
       postToolContext: postToolContext,

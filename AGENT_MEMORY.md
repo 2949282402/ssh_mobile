@@ -160,3 +160,4 @@ across sessions.
   URL 和敏感表单；日志统一经 `ToolSecretPolicy` 脱敏；backup import 先做
   大小、数量、字段长度和 schema 校验并继续丢弃凭据；后台通知默认隐藏服务器名。
 - 2026-06-20: Tool visibility is a hard execution boundary. Tool calls must be blocked when the requested tool is absent from `visibleToolsByName`. Hidden/unexposed tools must not enter approval, execution, cache, loop guard, or budget-audit paths. This preserves ToolExposureRouter as an actual security boundary rather than only a model hint.
+- 2026-06-20: Post-tool review and connection-required boundaries. Post-tool review is controlled by `postToolReviewEnabled`, separate from normal `multiAgentEnabled`. Tool execution must enforce connection requirements independently from ToolExposureRouter. Server/SSH/SFTP/monitor tools without `connectionId` should return `connection_required` and must not perform remote operations.

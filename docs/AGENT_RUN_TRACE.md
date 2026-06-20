@@ -76,3 +76,16 @@ Every run computes statistics published via `onStats` and logged to `AppLogServi
 Trace contents and ledger summaries undergo strict privacy stripping:
 * **Secret Masking**: Passwords, private keys, and API tokens are redacted as `[REDACTED]` or masked (e.g., `api_key=sk-...12`) before recording in the trace or passing to sub-agents.
 * **Argument Preview Truncation**: Arguments are capped at 400 characters, and tool stdout results are capped at 600 characters to prevent prompt bloat and data leakage.
+
+---
+
+## 4. Operational & Execution Boundaries
+
+### Post-tool Review Toggle
+`multiAgentEnabled` controls normal preflight collaboration.
+`postToolReviewEnabled` controls recovery review after tool failures, approval rejection, unavailable approval, budget audit rejection, and loop guard blocking.
+They are intentionally separate so users can disable normal helper agents while still keeping safety recovery enabled.
+
+### Connection Required Boundary
+Plan Mode may expose server-related tools for planning or diagnostics, but execution still requires an explicit `connectionId`.
+If a server/SSH/SFTP/monitor tool is called without a selected connection, the tool layer returns `connection_required` and does not perform remote operations.

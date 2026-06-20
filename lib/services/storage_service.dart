@@ -67,6 +67,7 @@ abstract interface class AiSettingsRepository {
     String? webSearchEngine,
     bool? multiAgentEnabled,
     int? multiAgentMaxAgents,
+    bool? postToolReviewEnabled,
     int? toolCallBudget,
     int? maxImageSizeBytes,
     int? maxFileSizeBytes,
@@ -222,6 +223,7 @@ class StorageService extends ChangeNotifier
     String? webSearchEngine,
     bool? multiAgentEnabled,
     int? multiAgentMaxAgents,
+    bool? postToolReviewEnabled,
     int? toolCallBudget,
     int? maxImageSizeBytes,
     int? maxFileSizeBytes,
@@ -256,6 +258,7 @@ class StorageService extends ChangeNotifier
         webSearchEngine: webSearchEngine,
         multiAgentEnabled: multiAgentEnabled,
         multiAgentMaxAgents: multiAgentMaxAgents,
+        postToolReviewEnabled: postToolReviewEnabled,
         toolCallBudget: toolCallBudget,
         maxImageSizeBytes: maxImageSizeBytes,
         maxFileSizeBytes: maxFileSizeBytes,
@@ -375,6 +378,7 @@ class StorageService extends ChangeNotifier
   static const _quarkApiKeySecureKey = 'ai_quark_api_key';
   static const _aliyunApiKeySecureKey = 'ai_aliyun_api_key';
   static const _aiMultiAgentEnabledKey = 'ai_multi_agent_enabled';
+  static const _aiPostToolReviewEnabledKey = 'ai_post_tool_review_enabled';
   static const _aiMultiAgentMaxAgentsKey = 'ai_multi_agent_max_agents';
   static const _aiToolCallBudgetKey = 'ai_tool_call_budget';
   static const _aiMaxImageSizeBytesKey = 'ai_max_image_size_bytes';

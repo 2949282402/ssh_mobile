@@ -131,6 +131,8 @@ extension SettingsOps on StorageService {
       multiAgentMaxAgents: AiMultiAgentMaxAgents.normalize(
         _prefs?.getInt(StorageService._aiMultiAgentMaxAgentsKey),
       ),
+      postToolReviewEnabled:
+          _prefs?.getBool(StorageService._aiPostToolReviewEnabledKey) ?? true,
       toolCallBudget: AiToolCallBudget.normalize(
         _prefs?.getInt(StorageService._aiToolCallBudgetKey),
       ),
@@ -405,6 +407,7 @@ extension SettingsOps on StorageService {
     String? webSearchEngine,
     bool? multiAgentEnabled,
     int? multiAgentMaxAgents,
+    bool? postToolReviewEnabled,
     int? toolCallBudget,
     int? maxImageSizeBytes,
     int? maxFileSizeBytes,
@@ -541,6 +544,11 @@ extension SettingsOps on StorageService {
       StorageService._aiMultiAgentEnabledKey,
       multiAgentEnabled ??
           (_prefs!.getBool(StorageService._aiMultiAgentEnabledKey) ?? true),
+    );
+    await _prefs!.setBool(
+      StorageService._aiPostToolReviewEnabledKey,
+      postToolReviewEnabled ??
+          (_prefs!.getBool(StorageService._aiPostToolReviewEnabledKey) ?? true),
     );
     await _prefs!.setInt(
       StorageService._aiMultiAgentMaxAgentsKey,

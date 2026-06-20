@@ -11,6 +11,7 @@ enum ToolResultQuality {
   loopBlocked,
   planModeBlocked,
   cacheHit,
+  needsInput,
 }
 
 class ToolResultClassifier {
@@ -25,6 +26,10 @@ class ToolResultClassifier {
     required bool cacheHit,
     required bool dedupBlocked,
   }) {
+    if (outcome == 'connection_required' ||
+        resultJson.contains('"code": "connection_required"')) {
+      return ToolResultQuality.needsInput;
+    }
     if (dedupBlocked || outcome == 'loop_guard_blocked') {
       return ToolResultQuality.loopBlocked;
     }
@@ -109,6 +114,10 @@ class ToolResultClassifier {
         return isEn
             ? 'System Hint: Loop guard has blocked this repeating tool call. Please summarize the current findings and complete the conversation.'
             : '系统提示：循环保护机制已阻断了此重复工具调用。请整理并总结当前已获取的诊断发现，完成本次对话。';
+      case ToolResultQuality.needsInput:
+        return isEn
+            ? 'System Hint: This tool requires a selected server connection. Do not repeat the same call. Ask the user to select a server, or provide a read-only plan.'
+            : '系统提示：该工具需要先选择服务器连接。不要继续重复调用同一个工具，请先让用户选择服务器，或给出只读计划。';
       default:
         return null;
     }

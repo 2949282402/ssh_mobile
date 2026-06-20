@@ -594,6 +594,142 @@ void main() {
       expect(toolMessage['content'], contains('no approval UI is available'));
       expect(ledger.last.outcome, 'approval_unavailable');
     });
+
+    test(
+        'post-tool review still runs when multiAgent is disabled but postToolReview is enabled',
+        () async {
+      final budget = LlmToolBudgetController(baseBudget: 10);
+      final cache = <String, CachedToolResult>{};
+      final ledger = <LlmToolLedgerEntry>[];
+      final mockCoordinator = MockMultiAgentCoordinator();
+      final localLlm = LlmChatService(
+        storageService: storage,
+        toolService: tools,
+        multiAgentCoordinator: mockCoordinator,
+      );
+
+      final controller = ToolLoopController(
+        chatService: localLlm,
+        toolBudget: budget,
+        readOnlyToolCache: cache,
+        toolLedger: ledger,
+      );
+
+      final workingMessages = <Map<String, dynamic>>[];
+      final settings = (await storage.loadAiConnectionSettings()).copyWith(
+        multiAgentEnabled: false,
+        postToolReviewEnabled: true,
+      );
+
+      final loopResult = await controller.handleToolCalls(
+        toolCalls: [
+          StreamingToolCall(
+            id: 'call_no_appr',
+            name: 'sftp_write_text',
+            arguments:
+                '{"connectionId":"local", "path":"/tmp/test.txt", "content":"hello"}',
+          ),
+        ],
+        visibleToolsByName: {
+          'sftp_write_text': AiTool(
+            name: 'sftp_write_text',
+            description: 'Write text file',
+            properties: const {},
+            required: const [],
+            executionMode: AiToolExecutionMode.stateChanging,
+            handler: (args, {approvedWrite = false}) async => '{}',
+          ),
+        },
+        planMode: false,
+        language: AppLanguage.zh,
+        apiKey: 'key',
+        auditModel: 'audit-model',
+        originalUserGoal: 'Goal',
+        workingMessages: workingMessages,
+        requestToolApproval: null,
+        onTrace: null,
+        cancellationToken: null,
+        settings: settings,
+        complete: (role, messages, {required thinkingSettings}) async =>
+            'advice',
+        classify: (messages) async => '{}',
+      );
+
+      expect(loopResult.shouldStop, isTrue);
+      expect(loopResult.finalOutcome, AgentFinalOutcome.approvalUnavailable);
+      expect(mockCoordinator.lastTrigger, MultiAgentTrigger.postToolFailure);
+      expect(workingMessages.last['content'], contains('mock memory'));
+    });
+
+    test('post-tool review is skipped when postToolReviewEnabled is false',
+        () async {
+      final budget = LlmToolBudgetController(baseBudget: 10);
+      final cache = <String, CachedToolResult>{};
+      final ledger = <LlmToolLedgerEntry>[];
+      final mockCoordinator = MockMultiAgentCoordinator();
+      final localLlm = LlmChatService(
+        storageService: storage,
+        toolService: tools,
+        multiAgentCoordinator: mockCoordinator,
+      );
+
+      final controller = ToolLoopController(
+        chatService: localLlm,
+        toolBudget: budget,
+        readOnlyToolCache: cache,
+        toolLedger: ledger,
+      );
+
+      final workingMessages = <Map<String, dynamic>>[];
+      final settings = (await storage.loadAiConnectionSettings()).copyWith(
+        multiAgentEnabled: true,
+        postToolReviewEnabled: false,
+      );
+
+      final events = <LlmTraceEvent>[];
+
+      final loopResult = await controller.handleToolCalls(
+        toolCalls: [
+          StreamingToolCall(
+            id: 'call_no_appr',
+            name: 'sftp_write_text',
+            arguments:
+                '{"connectionId":"local", "path":"/tmp/test.txt", "content":"hello"}',
+          ),
+        ],
+        visibleToolsByName: {
+          'sftp_write_text': AiTool(
+            name: 'sftp_write_text',
+            description: 'Write text file',
+            properties: const {},
+            required: const [],
+            executionMode: AiToolExecutionMode.stateChanging,
+            handler: (args, {approvedWrite = false}) async => '{}',
+          ),
+        },
+        planMode: false,
+        language: AppLanguage.zh,
+        apiKey: 'key',
+        auditModel: 'audit-model',
+        originalUserGoal: 'Goal',
+        workingMessages: workingMessages,
+        requestToolApproval: null,
+        onTrace: (ev) => events.add(ev),
+        cancellationToken: null,
+        settings: settings,
+        complete: (role, messages, {required thinkingSettings}) async =>
+            'advice',
+        classify: (messages) async => '{}',
+      );
+
+      expect(loopResult.shouldStop, isTrue);
+      expect(loopResult.finalOutcome, AgentFinalOutcome.approvalUnavailable);
+      expect(mockCoordinator.lastTrigger, isNull);
+      final hasSkipTrace = events.any((ev) =>
+          ev.kind == 'multi_agent_post_tool_review_skipped' &&
+          ev.content.contains('postToolReviewEnabled=false'));
+      expect(hasSkipTrace, isTrue);
+    });
   });
 }
 

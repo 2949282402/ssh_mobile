@@ -40,6 +40,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   late String _ragSearchMode;
   late bool _multiAgentEnabled;
   late int _multiAgentMaxAgents;
+  late bool _postToolReviewEnabled;
   late String _modelFallbackPolicy;
   late int _toolCallBudget;
   late int _maxImageSizeBytes;
@@ -80,6 +81,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _ragSearchMode = context.read<AppSettings>().ragSearchMode;
     _multiAgentEnabled = widget.initialSettings.multiAgentEnabled;
     _multiAgentMaxAgents = widget.initialSettings.multiAgentMaxAgents;
+    _postToolReviewEnabled = widget.initialSettings.postToolReviewEnabled;
     _modelFallbackPolicy = widget.initialSettings.modelFallbackPolicy;
     _toolCallBudget = widget.initialSettings.toolCallBudget;
     _maxImageSizeBytes = widget.initialSettings.maxImageSizeBytes;
@@ -323,6 +325,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       quarkApiKey: _quarkApiKeyController.text,
       multiAgentEnabled: _multiAgentEnabled,
       multiAgentMaxAgents: _multiAgentMaxAgents,
+      postToolReviewEnabled: _postToolReviewEnabled,
       toolCallBudget: _toolCallBudget,
       maxImageSizeBytes: _maxImageSizeBytes,
       maxFileSizeBytes: _maxFileSizeBytes,
@@ -352,6 +355,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         quarkApiKey: pending.quarkApiKey,
         multiAgentEnabled: pending.multiAgentEnabled,
         multiAgentMaxAgents: pending.multiAgentMaxAgents,
+        postToolReviewEnabled: pending.postToolReviewEnabled,
         toolCallBudget: pending.toolCallBudget,
         maxImageSizeBytes: pending.maxImageSizeBytes,
         maxFileSizeBytes: pending.maxFileSizeBytes,
@@ -649,6 +653,22 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                       if (value != null) {
                         setState(() => _multiAgentMaxAgents = value);
                       }
+                    },
+            ),
+            const SizedBox(height: 14),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: Text(strings.language == AppLanguage.en
+                  ? 'Post-tool review agent'
+                  : '异常恢复审查 Agent'),
+              subtitle: Text(strings.language == AppLanguage.en
+                  ? 'Runs a review agent after tool errors, approval rejection, unavailable approval, budget audit rejection, or loop guard blocking.'
+                  : '工具失败、审批拒绝、审批不可用、预算审计拒绝或循环阻断时，自动调用审查 Agent 分析原因并给出下一步建议。'),
+              value: _postToolReviewEnabled,
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      setState(() => _postToolReviewEnabled = value);
                     },
             ),
             const SizedBox(height: 14),
@@ -1072,6 +1092,7 @@ class _PendingAiSettings {
   final String quarkApiKey;
   final bool multiAgentEnabled;
   final int multiAgentMaxAgents;
+  final bool postToolReviewEnabled;
   final int toolCallBudget;
   final int maxImageSizeBytes;
   final int maxFileSizeBytes;
@@ -1096,6 +1117,7 @@ class _PendingAiSettings {
     required this.quarkApiKey,
     required this.multiAgentEnabled,
     required this.multiAgentMaxAgents,
+    required this.postToolReviewEnabled,
     required this.toolCallBudget,
     required this.maxImageSizeBytes,
     required this.maxFileSizeBytes,

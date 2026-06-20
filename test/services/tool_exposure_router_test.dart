@@ -220,6 +220,33 @@ void main() {
       expect(selection.selectedToolSet, contains('run_command'));
     });
 
+    test(
+        'normal mode still blocks server tool without selected server when request is not server-relevant',
+        () {
+      const router = ToolExposureRouter();
+      final tools = [
+        AiTool(
+          name: 'run_command',
+          description: 'Run server command',
+          properties: const {},
+          requiresServerSelection: true,
+          capabilities: const {AiToolCapability.server, AiToolCapability.ssh},
+          handler: _noop,
+        ),
+      ];
+
+      final selection = router.selectTools(
+        tools,
+        context: const ToolExposureContext(
+          userRequest: 'Please show local clipboard text',
+          planMode: false,
+          selectedConnectionIds: {},
+        ),
+      );
+
+      expect(selection.selectedToolSet, isNot(contains('run_command')));
+    });
+
     test('properly detects web capability with expanded keywords', () {
       const router = ToolExposureRouter();
       final tools = [

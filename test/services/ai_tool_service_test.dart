@@ -1068,6 +1068,56 @@ void main() {
       expect(request.contentPreview, contains('password=[REDACTED]'));
     });
   });
+
+  group('needsServerSelection tools connectionId boundary check tests', () {
+    test('server tool without connectionId returns connection_required',
+        () async {
+      final raw = await tools.execute('get_server_details', {});
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      expect(
+          decoded['error'], contains('requires a selected server connection'));
+      expect(decoded['code'], 'connection_required');
+      expect(decoded['tool'], 'get_server_details');
+    });
+
+    test('sftp write without connectionId returns connection_required',
+        () async {
+      final raw = await tools.execute('sftp_write_text', {
+        'path': '/tmp/test.txt',
+        'content': 'hello',
+      });
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      expect(
+          decoded['error'], contains('requires a selected server connection'));
+      expect(decoded['code'], 'connection_required');
+      expect(decoded['tool'], 'sftp_write_text');
+    });
+
+    test('ssh run_command without connectionId returns connection_required',
+        () async {
+      final raw = await tools.execute('run_command', {
+        'command': 'ls -la',
+      });
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      expect(
+          decoded['error'], contains('requires a selected server connection'));
+      expect(decoded['code'], 'connection_required');
+      expect(decoded['tool'], 'run_command');
+    });
+
+    test('ssh run_command with local connectionId returns connection_required',
+        () async {
+      final raw = await tools.execute('run_command', {
+        'connectionId': 'local',
+        'command': 'ls -la',
+      });
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      expect(
+          decoded['error'], contains('requires a selected server connection'));
+      expect(decoded['code'], 'connection_required');
+      expect(decoded['tool'], 'run_command');
+    });
+  });
 }
 
 AiToolService _buildTools({

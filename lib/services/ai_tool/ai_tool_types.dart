@@ -174,9 +174,11 @@ class AiTool {
 
   bool get needsServerSelection {
     if (requiresServerSelection) return true;
+    if (name == 'monitor_get_state') return false;
     return name == 'run_command' ||
         name == 'detect_os' ||
         name == 'get_server_status' ||
+        name == 'get_server_details' ||
         name == 'generate_ops_report' ||
         name.startsWith('sftp_') ||
         name.startsWith('monitor_get_') ||

@@ -729,6 +729,23 @@ class AiToolService implements AiToolExecutor {
       return jsonEncode({'error': 'Unknown tool: $name'});
     }
 
+    final tool = availableTools.firstWhere((t) => t.name == name);
+    if (tool.needsServerSelection) {
+      final connId = arguments['connectionId'];
+      if (connId == null ||
+          connId is! String ||
+          connId.trim().isEmpty ||
+          connId.trim() == 'local') {
+        return jsonEncode({
+          'error': 'This tool requires a selected server connection.',
+          'code': 'connection_required',
+          'tool': name,
+          'nextAction':
+              'Ask the user to select a server connection before running this tool.'
+        });
+      }
+    }
+
     final startedAt = DateTime.now();
     AppLogService.instance.info(
       'AI tool started',
