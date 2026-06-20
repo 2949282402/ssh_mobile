@@ -41,6 +41,7 @@ An Agent Run represents a single session starting from a user message, progressi
 * **Loop Guard Protection**: A deterministic guard monitors repeating identical signature patterns. Read-only tool execution is terminated if a single tool is repeated $\ge 3$ times or alternating loop sequences are detected.
 * **Safety Audit Escalation**: Once tool calls reach the safety budget ceiling, the system performs an internal safety audit, asking the LLM to inspect the ledger log for loops or drift.
 * **Sequential Transitions**: Step execution progresses in strict order (`pending -> running -> success/failed/skipped`). Sequential constraints are strictly checked before starting (`running`) or skipping (`skipped`) any task step. If any preceding step is not completed, transition is blocked with code `order_violation`. Completed step mutations are locked (`completed_task_locked`). If a preceding step failed, subsequent execution is blocked with code `failed_dependency` (though skipping subsequent steps is permitted).
+* **Tool Visibility Boundary**: Tool exposure is an execution boundary, not only a prompt hint. If the model requests a tool that is not present in `visibleToolsByName`, `ToolLoopController` returns a `tool_not_visible` tool result and does not call approval or execution paths. Hidden tools must not consume tool budget, trigger approval, or reach `AiToolService.execute`.
 
 ---
 

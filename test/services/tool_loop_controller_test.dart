@@ -510,8 +510,10 @@ void main() {
         auditModel: 'audit-model',
         originalUserGoal: 'Goal',
         workingMessages: workingMessages,
-        requestToolApproval: (req) async =>
-            const AiToolApprovalDecision.approved(),
+        requestToolApproval: (req) async {
+          throw StateError(
+              'Approval callback should not be called for unexposed tools.');
+        },
         onTrace: null,
         cancellationToken: null,
         settings: settings,
@@ -523,9 +525,15 @@ void main() {
       expect(loopResult.shouldStop, isFalse);
       final toolMessage =
           workingMessages.firstWhere((m) => m['role'] == 'tool');
-      expect(toolMessage['content'], contains('不可见或未暴露'));
+      expect(toolMessage['content'],
+          contains('Tool is not available in the current context.'));
+      final systemMessage =
+          workingMessages.firstWhere((m) => m['role'] == 'system');
+      expect(systemMessage['content'],
+          contains('Do not call hidden or unavailable tools.'));
       expect(ledger.last.outcome, 'tool_not_visible');
       expect(ledger.last.failed, isTrue);
+      expect(ledger.last.quality, ToolResultQuality.unsafeBlocked.name);
     });
 
     test(

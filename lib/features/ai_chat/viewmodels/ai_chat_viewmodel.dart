@@ -219,7 +219,8 @@ class AiChatViewModel extends ChangeNotifier {
   bool get historyLoading => _historyLoading;
   bool get sending => _sending;
   bool get toolsExpanded => _toolsExpanded;
-  Set<String> get selectedConnectionIds => _selectedConnectionIds;
+  Set<String> get selectedConnectionIds =>
+      Set.unmodifiable(_selectedConnectionIds);
   List<AiChatAttachment> get pendingAttachments => _pendingAttachments;
   PendingToolApproval? get pendingApproval => _pendingApproval;
   int get contextWindowTokens => _contextWindowTokens;

@@ -92,17 +92,16 @@ class ToolLoopController {
 
       if (tool == null) {
         outcome = 'tool_not_visible';
-        final isEn = language == AppLanguage.en;
         result = jsonEncode({
-          'error': isEn
-              ? 'Tool "${call.name}" is not visible or exposed in the current context. It cannot be executed.'
-              : '工具 "${call.name}" 在当前上下文中不可见或未暴露。无法执行此操作。',
+          'error': 'Tool is not available in the current context.',
+          'tool': call.name,
         });
         onTrace?.call(
           LlmTraceEvent(
             kind: 'tool_blocked',
             title: 'Tool blocked: ${call.name} (not visible)',
-            content: 'Tool "${call.name}" is not exposed in the current context.',
+            content:
+                'Tool "${call.name}" is not exposed in the current context.',
           ),
         );
         workingMessages.add({
@@ -110,24 +109,11 @@ class ToolLoopController {
           'tool_call_id': call.id,
           'content': result,
         });
-
-        final quality = ToolResultClassifier.classify(
-          toolName: call.name,
-          resultJson: result,
-          outcome: outcome,
-          approvalRequired: false,
-          approved: false,
-          cacheHit: false,
-          dedupBlocked: false,
-        );
-
-        final hint = ToolResultClassifier.getSystemHint(call.name, quality, language);
-        if (hint != null) {
-          workingMessages.add({
-            'role': 'system',
-            'content': hint,
-          });
-        }
+        workingMessages.add({
+          'role': 'system',
+          'content':
+              'The requested tool is not available in the current context. Do not call hidden or unavailable tools. Use only the tools currently exposed to you, or ask the user to select the required server/session/mode first.',
+        });
 
         toolLedger.add(
           LlmToolLedgerEntry(
@@ -146,8 +132,11 @@ class ToolLoopController {
             cacheHit: false,
             dedupBlocked: false,
             auditEscalationLevel: toolBudget.auditCount,
-            quality: quality.name,
-            resultPreview: result,
+            quality: ToolResultQuality.unsafeBlocked.name,
+            resultPreview: chatService._toolSecretPolicy.previewText(
+              chatService._prettyJsonString(result),
+              maxChars: 600,
+            ),
           ),
         );
 

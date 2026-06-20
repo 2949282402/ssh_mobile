@@ -197,7 +197,7 @@ extension _AiSkillToolbarStrings on _AiStrings {
 
 extension _AiToolbarActionStrings on _AiStrings {
   String get serverTarget => language == AppLanguage.en ? 'Server' : '服务器';
-  String get templates => language == AppLanguage.en ? 'Templates' : '妯℃澘';
+  String get templates => language == AppLanguage.en ? 'Templates' : '模板';
   String get noDefaultServer =>
       language == AppLanguage.en ? 'No default server' : '不指定默认服务器';
   String get quickSkill =>
