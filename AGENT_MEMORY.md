@@ -166,5 +166,11 @@ across sessions.
 - 2026-06-20: Execution Mode step-by-step reliability. Mutating remote tools are gated by the current step status during execution mode: pending tasks must be marked running first, failed tasks block subsequent execution, and skipped tasks require reasons. Added dedicated `client_task_retry` and `client_task_skip` tools and UI buttons in message bubble.
 - 2026-06-21: Execution Mode step-scoped remote tools gate. Gating now covers all server/ssh/sftp/monitor tools, including read-only diagnostics such as detect_os and sftp_read_text, to enforce proper step update workflows. Skipping running steps directly is disallowed; skipping a step from AI triggers a plan_task_change approval request.
 - 2026-06-21: Execution Mode step gate trace and approval-aware handler boundary. Plan execution gate traces include step-scoped metadata for easier debugging. Approval-aware tools such as client_task_skip must execute through AiToolService.execute/provider.execute so approvedWrite is propagated; direct handlers must not bypass approval.
+- 2026-06-21: Drift is now the persistence backend for growth-oriented
+  structured data: AI chats/messages, AgentRunMetrics, terminal history
+  metadata, Playbooks, and SFTP recent/favorite paths. Keep `StorageService` as
+  the compatibility facade, keep small settings in SharedPreferences, keep
+  credentials/API keys in secure storage, and leave legacy protected-pref data
+  in place for rollback during the migration window.
 
 

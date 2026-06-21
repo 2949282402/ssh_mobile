@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:drift/drift.dart' as drift;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import '../data/database/app_database.dart' as db;
+import '../data/database/migrations.dart';
 import '../features/connection/models/connection.dart';
 import '../features/playbook/models/playbook.dart';
 import '../utils/skill_frontmatter.dart';
@@ -23,6 +26,12 @@ part 'storage/terminal_ops.dart';
 part 'storage/playbook_ops.dart';
 part 'storage/backup_ops.dart';
 part 'storage/buffered_write_ops.dart';
+part 'storage/drift_ops.dart';
+part '../data/repositories/drift_ai_chat_repository.dart';
+part '../data/repositories/drift_agent_metrics_repository.dart';
+part '../data/repositories/drift_terminal_history_repository.dart';
+part '../data/repositories/drift_playbook_repository.dart';
+part '../data/repositories/drift_sftp_history_repository.dart';
 
 const Uuid _traceUuid = Uuid();
 
@@ -143,6 +152,26 @@ abstract interface class PlaybookRepository {
   Future<void> deletePlaybook(String id);
 }
 
+abstract interface class SftpPathHistoryRepository {
+  Future<void> recordVisitedPath(String connectionId, String path);
+  Future<List<SftpRecentPathRecord>> loadRecentPaths(
+    String connectionId, {
+    int limit,
+  });
+  Future<SftpFavoritePathRecord> addFavoritePath(
+    String connectionId,
+    String path,
+    String name,
+  );
+  Future<void> removeFavoritePath(String id);
+  Future<void> renameFavoritePath(String id, String name);
+  Future<List<SftpFavoritePathRecord>> loadFavoritePaths(String connectionId);
+  Future<SftpFavoritePathRecord?> findFavoritePath(
+    String connectionId,
+    String path,
+  );
+}
+
 abstract interface class AppBackupRepository {
   Future<String> exportAppDataJson();
   Future<void> importAppDataJson(String jsonText);
@@ -157,7 +186,12 @@ class StorageService extends ChangeNotifier
         AgentRunMetricsRepository,
         TerminalHistoryRepository,
         PlaybookRepository,
+        SftpPathHistoryRepository,
         AppBackupRepository {
+  final db.AppDatabase? _providedDatabase;
+
+  StorageService({db.AppDatabase? database}) : _providedDatabase = database;
+
   @override
   Future<void> addConnection(ConnectionConfig config) =>
       ConnectionOps(this).addConnection(config);
@@ -400,6 +434,12 @@ class StorageService extends ChangeNotifier
   static const _aiSkillsKey = 'ai_skills';
   static const _agentRunMetricsKey = 'agent_run_metrics';
   static const _playbooksKey = 'custom_playbooks';
+  static const _driftAiChatsMigratedKey = 'drift_ai_chats_migrated_v1';
+  static const _driftAgentMetricsMigratedKey =
+      'drift_agent_metrics_migrated_v1';
+  static const _driftTerminalHistoryMigratedKey =
+      'drift_terminal_history_migrated_v1';
+  static const _driftPlaybooksMigratedKey = 'drift_playbooks_migrated_v1';
   static const _secretCacheEnabledKey = 'secret_cache_enabled';
   static const _secretCacheTtlSecondsKey = 'secret_cache_ttl_seconds';
   static const _defaultSecretCacheTtl = Duration(minutes: 15);
@@ -414,6 +454,14 @@ class StorageService extends ChangeNotifier
     mOptions: MacOsOptions(usesDataProtectionKeychain: false),
   );
   final DataProtectionService _dataProtection = DataProtectionService.instance;
+  db.AppDatabase? _database;
+  bool _ownsDatabase = false;
+  bool _driftReady = false;
+  bool _driftAiChatsActive = false;
+  bool _driftAgentMetricsActive = false;
+  bool _driftTerminalHistoryActive = false;
+  bool _driftPlaybooksActive = false;
+  bool _driftSftpHistoryActive = false;
 
   Future<String?> _readSecure(String key) async {
     try {
@@ -510,6 +558,7 @@ class StorageService extends ChangeNotifier
       _powerGuideSeen = _prefs?.getBool(_powerGuideSeenKey) ?? false;
       await _loadSecretCacheSettings();
       await _loadConnections();
+      await _initializeDriftStorage();
     } catch (e) {
       AppLogService.instance
           .error('Failed to initialize storage service', error: e);
@@ -560,6 +609,43 @@ class StorageService extends ChangeNotifier
   Future<void> deletePlaybook(String id) => _deletePlaybook(id);
 
   @override
+  Future<void> recordVisitedPath(String connectionId, String path) =>
+      _recordSftpVisitedPath(connectionId, path);
+
+  @override
+  Future<List<SftpRecentPathRecord>> loadRecentPaths(
+    String connectionId, {
+    int limit = 30,
+  }) =>
+      _loadSftpRecentPaths(connectionId, limit: limit);
+
+  @override
+  Future<SftpFavoritePathRecord> addFavoritePath(
+    String connectionId,
+    String path,
+    String name,
+  ) =>
+      _addSftpFavoritePath(connectionId, path, name);
+
+  @override
+  Future<void> removeFavoritePath(String id) => _removeSftpFavoritePath(id);
+
+  @override
+  Future<void> renameFavoritePath(String id, String name) =>
+      _renameSftpFavoritePath(id, name);
+
+  @override
+  Future<List<SftpFavoritePathRecord>> loadFavoritePaths(String connectionId) =>
+      _loadSftpFavoritePaths(connectionId);
+
+  @override
+  Future<SftpFavoritePathRecord?> findFavoritePath(
+    String connectionId,
+    String path,
+  ) =>
+      _findSftpFavoritePath(connectionId, path);
+
+  @override
   Future<String> exportAppDataJson() => _exportAppDataJson();
 
   @override
@@ -599,6 +685,9 @@ class StorageService extends ChangeNotifier
       pending.timer?.cancel();
     }
     unawaited(flushPendingWrites());
+    if (_ownsDatabase) {
+      unawaited(_database?.close());
+    }
     super.dispose();
   }
 }

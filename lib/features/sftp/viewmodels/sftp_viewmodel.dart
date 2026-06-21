@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../../core/services/ssh_host_key_policy.dart';
 import '../../../services/sftp_service.dart';
+import '../../../services/storage_service.dart';
 
 class SftpViewModel extends ChangeNotifier {
   final SftpService _sftpService;
@@ -33,6 +34,41 @@ class SftpViewModel extends ChangeNotifier {
 
   bool isConnectionBusy(String id) => _sftpService.isConnectionBusy(id);
   bool isConnectionOpen(String id) => _sftpService.isConnectionOpen(id);
+
+  Future<List<SftpRecentPathRecord>> loadRecentPaths({
+    int limit = 30,
+  }) async {
+    final id = connectionId;
+    if (id == null) return const [];
+    return _sftpService.loadRecentPaths(id, limit: limit);
+  }
+
+  Future<List<SftpFavoritePathRecord>> loadFavoritePaths() async {
+    final id = connectionId;
+    if (id == null) return const [];
+    return _sftpService.loadFavoritePaths(id);
+  }
+
+  Future<SftpFavoritePathRecord?> findFavoritePath(String path) async {
+    final id = connectionId;
+    if (id == null) return null;
+    return _sftpService.findFavoritePath(id, path);
+  }
+
+  Future<SftpFavoritePathRecord> addFavoritePath(
+    String path,
+    String name,
+  ) async {
+    final id = connectionId;
+    if (id == null) {
+      throw StateError('SFTP is not connected');
+    }
+    return _sftpService.addFavoritePath(id, path, name);
+  }
+
+  Future<void> removeFavoritePath(String id) {
+    return _sftpService.removeFavoritePath(id);
+  }
 
   Future<void> connect(
     String connectionId, {

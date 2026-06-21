@@ -55,8 +55,9 @@ class _MetricChart extends StatelessWidget {
         );
         if (cachedSeries.spots.isEmpty) continue;
         final color = _serverColor(i);
-        if (cachedSeries.dynamicMax > dynamicMax)
+        if (cachedSeries.dynamicMax > dynamicMax) {
           dynamicMax = cachedSeries.dynamicMax;
+        }
         if (cachedSeries.maxX > maxX) maxX = cachedSeries.maxX;
 
         series.add(

@@ -3,6 +3,11 @@ part of '../storage_service.dart';
 extension PlaybookOps on StorageService {
   Future<List<Playbook>> _loadPlaybooks() async {
     if (!_initialized || _prefs == null) return [];
+    if (_driftPlaybooksActive) {
+      final cached = _playbooksCache;
+      if (cached != null) return cached;
+      return _loadDriftPlaybooks();
+    }
     final cached = _playbooksCache;
     if (cached != null) return cached;
     final jsonStr = await _readProtectedPref(StorageService._playbooksKey);
@@ -25,6 +30,11 @@ extension PlaybookOps on StorageService {
 
   Future<void> _savePlaybook(Playbook playbook) async {
     if (!_initialized || _prefs == null) return;
+    if (_driftPlaybooksActive) {
+      await _saveDriftPlaybook(playbook);
+      notifyStorageListeners();
+      return;
+    }
     final playbooks = upsertPlaybooksByUpdatedAt(
       await loadPlaybooks(),
       playbook,
@@ -35,6 +45,11 @@ extension PlaybookOps on StorageService {
 
   Future<void> _deletePlaybook(String id) async {
     if (!_initialized || _prefs == null) return;
+    if (_driftPlaybooksActive) {
+      await _deleteDriftPlaybook(id);
+      notifyStorageListeners();
+      return;
+    }
     final playbooks = (await loadPlaybooks())
         .where((item) => item.id != id)
         .toList(growable: false);
@@ -51,6 +66,10 @@ extension PlaybookOps on StorageService {
         ? List<Playbook>.from(playbooks, growable: false)
         : ([...playbooks]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt)));
     _playbooksCache = List.unmodifiable(ordered);
+    if (_driftPlaybooksActive) {
+      await _replaceDriftPlaybooks(ordered);
+      return;
+    }
     final jsonStr = jsonEncode(ordered.map((item) => item.toJson()).toList());
     await _writeProtectedPrefBuffered(
       StorageService._playbooksKey,

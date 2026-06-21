@@ -7,9 +7,11 @@ const int _maxBackupAiSkills = 200;
 const int _maxBackupPlaybooks = 200;
 const int _maxBackupTerminalHistoryRecords = 500;
 const int _maxBackupAgentRunMetrics = 1000;
+const int _maxBackupSftpPaths = 1000;
 const int _maxShortFieldChars = 128;
 const int _maxHostChars = 255;
 const int _maxPromptChars = 20000;
+const int _maxRemotePathChars = 2048;
 const int _maxPlaybookContentChars = 100000;
 const int _maxChatMessageChars = 50000;
 
@@ -37,6 +39,20 @@ extension BackupOps on StorageService {
       });
     }
     final settings = await loadAiConnectionSettings();
+    final sftpRecentPaths = <Map<String, dynamic>>[];
+    final sftpFavoritePaths = <Map<String, dynamic>>[];
+    for (final connection in _connections) {
+      sftpRecentPaths.addAll(
+        (await loadRecentPaths(connection.id))
+            .map((item) => item.toJson())
+            .toList(),
+      );
+      sftpFavoritePaths.addAll(
+        (await loadFavoritePaths(connection.id))
+            .map((item) => item.toJson())
+            .toList(),
+      );
+    }
     final payload = {
       'format': 'ssh_mobile_backup',
       'version': 2,
@@ -99,6 +115,8 @@ extension BackupOps on StorageService {
           (await loadAgentRunMetrics()).map((item) => item.toJson()).toList(),
       'playbooks':
           (await loadPlaybooks()).map((item) => item.toJson()).toList(),
+      'sftpRecentPaths': sftpRecentPaths,
+      'sftpFavoritePaths': sftpFavoritePaths,
       'powerGuideSeen': _powerGuideSeen,
     };
     AppLogService.instance.info(
@@ -300,6 +318,17 @@ extension BackupOps on StorageService {
           .toList(),
       immediate: true,
     );
+    await _replaceDriftSftpPathHistory(
+      recentPaths: ((decoded['sftpRecentPaths'] as List<dynamic>?) ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(SftpRecentPathRecord.fromJson)
+          .toList(),
+      favoritePaths:
+          ((decoded['sftpFavoritePaths'] as List<dynamic>?) ?? const [])
+              .whereType<Map<String, dynamic>>()
+              .map(SftpFavoritePathRecord.fromJson)
+              .toList(),
+    );
     _powerGuideSeen = decoded['powerGuideSeen'] as bool? ?? _powerGuideSeen;
     await _prefs?.setBool(StorageService._powerGuideSeenKey, _powerGuideSeen);
     AppLogService.instance.info(
@@ -482,6 +511,27 @@ void _validateBackupSchema(Map<String, dynamic> decoded) {
       _optionalStringLimit(step, 'command', _maxPlaybookContentChars);
       _optionalStringLimit(step, 'description', _maxPromptChars);
     }
+  }
+
+  final sftpRecentPaths =
+      _validateOptionalList(decoded, 'sftpRecentPaths', _maxBackupSftpPaths);
+  for (final path in sftpRecentPaths) {
+    if (path is! Map<String, dynamic>) {
+      throw StateError('Backup sftpRecentPaths must contain objects.');
+    }
+    _requireString(path, 'connectionId', _maxShortFieldChars);
+    _requireString(path, 'path', _maxRemotePathChars);
+  }
+
+  final sftpFavoritePaths =
+      _validateOptionalList(decoded, 'sftpFavoritePaths', _maxBackupSftpPaths);
+  for (final path in sftpFavoritePaths) {
+    if (path is! Map<String, dynamic>) {
+      throw StateError('Backup sftpFavoritePaths must contain objects.');
+    }
+    _requireString(path, 'connectionId', _maxShortFieldChars);
+    _requireString(path, 'path', _maxRemotePathChars);
+    _optionalStringLimit(path, 'name', _maxShortFieldChars);
   }
 }
 

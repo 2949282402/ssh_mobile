@@ -30,11 +30,16 @@ dependencies:
   printing: ^5.14.3
   fl_chart: ^1.2.0
   animations: ^2.2.0
+  drift: ^2.34.0
+  drift_flutter: ^0.3.0
+  sqlite3_flutter_libs: ^0.6.0+eol
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  build_runner: ^2.10.4
+  drift_dev: ^2.34.0
 
 flutter:
   uses-material-design: true

@@ -58,6 +58,13 @@ class _FilePane extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 4),
+              _SftpPathMenuButton(
+                strings: strings,
+                sftp: sftp,
+                currentPath: snapshot.currentPath,
+                disabled: snapshot.isBusy,
+              ),
+              const SizedBox(width: 4),
               IconButton(
                 tooltip: strings.refresh,
                 icon: const Icon(Icons.refresh_rounded),
@@ -394,6 +401,290 @@ class _FilePane extends StatelessWidget {
     if (mb < 1024) return '${mb.toStringAsFixed(mb < 10 ? 1 : 0)} MB';
     final gb = mb / 1024;
     return '${gb.toStringAsFixed(gb < 10 ? 1 : 0)} GB';
+  }
+}
+
+class _SftpPathMenuButton extends StatelessWidget {
+  final AppStrings strings;
+  final SftpViewModel sftp;
+  final String currentPath;
+  final bool disabled;
+
+  const _SftpPathMenuButton({
+    required this.strings,
+    required this.sftp,
+    required this.currentPath,
+    required this.disabled,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: strings.pathHistory,
+      icon: const Icon(Icons.star_outline_rounded),
+      onPressed: disabled
+          ? null
+          : () => showModalBottomSheet<void>(
+                context: context,
+                showDragHandle: true,
+                isScrollControlled: true,
+                builder: (_) => _SftpPathHistorySheet(
+                  strings: strings,
+                  sftp: sftp,
+                  currentPath: currentPath,
+                ),
+              ),
+    );
+  }
+}
+
+class _SftpPathHistorySheet extends StatefulWidget {
+  final AppStrings strings;
+  final SftpViewModel sftp;
+  final String currentPath;
+
+  const _SftpPathHistorySheet({
+    required this.strings,
+    required this.sftp,
+    required this.currentPath,
+  });
+
+  @override
+  State<_SftpPathHistorySheet> createState() => _SftpPathHistorySheetState();
+}
+
+class _SftpPathHistorySheetState extends State<_SftpPathHistorySheet> {
+  late Future<_SftpPathHistoryData> _future = _load();
+
+  Future<_SftpPathHistoryData> _load() async {
+    final favorites = await widget.sftp.loadFavoritePaths();
+    final recent = await widget.sftp.loadRecentPaths();
+    final currentFavorite =
+        await widget.sftp.findFavoritePath(widget.currentPath);
+    return _SftpPathHistoryData(
+      recent: recent,
+      favorites: favorites,
+      currentFavorite: currentFavorite,
+    );
+  }
+
+  void _reload() {
+    setState(() {
+      _future = _load();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 560),
+        child: FutureBuilder<_SftpPathHistoryData>(
+          future: _future,
+          builder: (context, snapshot) {
+            final data = snapshot.data;
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 8, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          widget.strings.pathHistory,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: data?.currentFavorite == null
+                            ? widget.strings.addFavoritePath
+                            : widget.strings.removeFavoritePath,
+                        icon: Icon(
+                          data?.currentFavorite == null
+                              ? Icons.star_outline_rounded
+                              : Icons.star_rounded,
+                          color: data?.currentFavorite == null
+                              ? colorScheme.onSurfaceVariant
+                              : colorScheme.primary,
+                        ),
+                        onPressed:
+                            snapshot.connectionState == ConnectionState.waiting
+                                ? null
+                                : () => _toggleFavorite(data?.currentFavorite),
+                      ),
+                    ],
+                  ),
+                ),
+                if (snapshot.connectionState == ConnectionState.waiting)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 32),
+                    child: SizedBox(
+                      width: 28,
+                      height: 28,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                else
+                  Flexible(
+                    child: ListView(
+                      shrinkWrap: true,
+                      padding: const EdgeInsets.fromLTRB(8, 0, 8, 18),
+                      children: [
+                        _SftpPathSectionHeader(
+                          label: widget.strings.favoritePaths,
+                        ),
+                        if (data == null || data.favorites.isEmpty)
+                          _EmptyPathRow(label: widget.strings.noFavoritePaths)
+                        else
+                          for (final favorite in data.favorites)
+                            _PathListTile(
+                              icon: Icons.star_rounded,
+                              label: favorite.name,
+                              path: favorite.path,
+                              trailing: IconButton(
+                                tooltip: widget.strings.removeFavoritePath,
+                                icon: const Icon(Icons.close_rounded),
+                                onPressed: () => _removeFavorite(favorite.id),
+                              ),
+                              onTap: () => _openPath(favorite.path),
+                            ),
+                        const SizedBox(height: 8),
+                        _SftpPathSectionHeader(
+                          label: widget.strings.recentPaths,
+                        ),
+                        if (data == null || data.recent.isEmpty)
+                          _EmptyPathRow(label: widget.strings.noRecentPaths)
+                        else
+                          for (final recent in data.recent)
+                            _PathListTile(
+                              icon: Icons.history_rounded,
+                              label: recent.path,
+                              path: _formatTimestamp(recent.visitedAt),
+                              onTap: () => _openPath(recent.path),
+                            ),
+                      ],
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _toggleFavorite(SftpFavoritePathRecord? favorite) async {
+    if (favorite == null) {
+      await widget.sftp.addFavoritePath(widget.currentPath, widget.currentPath);
+    } else {
+      await widget.sftp.removeFavoritePath(favorite.id);
+    }
+    if (mounted) _reload();
+  }
+
+  Future<void> _removeFavorite(String id) async {
+    await widget.sftp.removeFavoritePath(id);
+    if (mounted) _reload();
+  }
+
+  Future<void> _openPath(String path) async {
+    Navigator.pop(context);
+    await widget.sftp.openPath(path);
+  }
+
+  String _formatTimestamp(DateTime time) {
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${time.year.toString().padLeft(4, '0')}-'
+        '${two(time.month)}-${two(time.day)} '
+        '${two(time.hour)}:${two(time.minute)}';
+  }
+}
+
+class _SftpPathHistoryData {
+  final List<SftpRecentPathRecord> recent;
+  final List<SftpFavoritePathRecord> favorites;
+  final SftpFavoritePathRecord? currentFavorite;
+
+  const _SftpPathHistoryData({
+    required this.recent,
+    required this.favorites,
+    required this.currentFavorite,
+  });
+}
+
+class _SftpPathSectionHeader extends StatelessWidget {
+  final String label;
+
+  const _SftpPathSectionHeader({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyPathRow extends StatelessWidget {
+  final String label;
+
+  const _EmptyPathRow({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      dense: true,
+      enabled: false,
+      title: Text(label),
+    );
+  }
+}
+
+class _PathListTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String path;
+  final Widget? trailing;
+  final VoidCallback onTap;
+
+  const _PathListTile({
+    required this.icon,
+    required this.label,
+    required this.path,
+    required this.onTap,
+    this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Icon(icon),
+      title: OverflowScrollText(
+        label,
+        selectable: false,
+        maxLines: 1,
+      ),
+      subtitle: OverflowScrollText(
+        path,
+        selectable: false,
+        maxLines: 1,
+      ),
+      trailing: trailing,
+      onTap: onTap,
+    );
   }
 }
 

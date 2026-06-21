@@ -3,6 +3,11 @@ part of '../storage_service.dart';
 extension AiChatOps on StorageService {
   Future<List<AiChatRecord>> _loadAiChats() async {
     if (!_initialized || _prefs == null) return [];
+    if (_driftAiChatsActive) {
+      final cached = _aiChatsCache;
+      if (cached != null) return cached;
+      return _loadDriftAiChats();
+    }
     final cached = _aiChatsCache;
     if (cached != null) return cached;
     final jsonStr = await _readProtectedPref(StorageService._aiChatsKey);
@@ -25,6 +30,11 @@ extension AiChatOps on StorageService {
 
   Future<void> _saveAiChat(AiChatRecord chat) async {
     if (!_initialized || _prefs == null) return;
+    if (_driftAiChatsActive) {
+      await _saveDriftAiChat(chat);
+      notifyStorageListeners();
+      return;
+    }
     final chats = upsertAiChatRecordsByUpdatedAt(
       await loadAiChats(),
       chat,
@@ -36,6 +46,11 @@ extension AiChatOps on StorageService {
 
   Future<void> _deleteAiChat(String id) async {
     if (!_initialized || _prefs == null) return;
+    if (_driftAiChatsActive) {
+      await _deleteDriftAiChat(id);
+      notifyStorageListeners();
+      return;
+    }
     final chats = (await loadAiChats())
         .where((item) => item.id != id)
         .toList(growable: false);
@@ -52,6 +67,10 @@ extension AiChatOps on StorageService {
         ? List<AiChatRecord>.from(chats, growable: false)
         : ([...chats]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt)));
     _aiChatsCache = List.unmodifiable(ordered);
+    if (_driftAiChatsActive) {
+      await _replaceDriftAiChats(ordered);
+      return;
+    }
     final jsonStr = jsonEncode(ordered.map((item) => item.toJson()).toList());
     await _writeProtectedPrefBuffered(
       StorageService._aiChatsKey,
@@ -62,6 +81,11 @@ extension AiChatOps on StorageService {
 
   Future<List<AgentRunMetrics>> _loadAgentRunMetrics() async {
     if (!_initialized || _prefs == null) return const [];
+    if (_driftAgentMetricsActive) {
+      final cached = _agentRunMetricsCache;
+      if (cached != null) return cached;
+      return _loadDriftAgentRunMetrics();
+    }
     final cached = _agentRunMetricsCache;
     if (cached != null) return cached;
     final jsonStr =
@@ -86,6 +110,10 @@ extension AiChatOps on StorageService {
 
   Future<void> _saveAgentRunMetrics(AgentRunMetrics metrics) async {
     if (!_initialized || _prefs == null) return;
+    if (_driftAgentMetricsActive) {
+      await _saveDriftAgentRunMetrics(metrics);
+      return;
+    }
     final current = await loadAgentRunMetrics();
     final next = <AgentRunMetrics>[
       metrics,

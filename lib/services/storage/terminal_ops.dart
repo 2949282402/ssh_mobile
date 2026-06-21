@@ -61,6 +61,11 @@ extension TerminalOps on StorageService {
 
   Future<List<TerminalHistoryRecord>> _loadTerminalHistoryRecords() async {
     if (!_initialized || _prefs == null) return [];
+    if (_driftTerminalHistoryActive) {
+      final cached = _terminalHistoryRecordsCache;
+      if (cached != null) return cached;
+      return _loadDriftTerminalHistoryRecords();
+    }
     final cached = _terminalHistoryRecordsCache;
     if (cached != null) return cached;
     final jsonStr =
@@ -88,6 +93,11 @@ extension TerminalOps on StorageService {
 
   Future<void> _saveTerminalHistoryRecord(TerminalHistoryRecord record) async {
     if (!_initialized || _prefs == null) return;
+    if (_driftTerminalHistoryActive) {
+      await _saveDriftTerminalHistoryRecord(record);
+      notifyStorageListeners();
+      return;
+    }
     final records = [...await loadTerminalHistoryRecords()];
     records.removeWhere((item) => item.sessionId == record.sessionId);
     records.insert(0, record);
@@ -97,6 +107,11 @@ extension TerminalOps on StorageService {
 
   Future<void> _removeTerminalHistoryRecord(String sessionId) async {
     if (!_initialized || _prefs == null) return;
+    if (_driftTerminalHistoryActive) {
+      await _removeDriftTerminalHistoryRecord(sessionId);
+      notifyStorageListeners();
+      return;
+    }
     final records = [...await loadTerminalHistoryRecords()];
     records.removeWhere((item) => item.sessionId == sessionId);
     await _saveTerminalHistoryRecords(records);
@@ -123,6 +138,10 @@ extension TerminalOps on StorageService {
     final sorted = [...records]
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     _terminalHistoryRecordsCache = List.unmodifiable(sorted);
+    if (_driftTerminalHistoryActive) {
+      await _replaceDriftTerminalHistoryRecords(sorted);
+      return;
+    }
     final jsonStr = jsonEncode(sorted.map((item) => item.toJson()).toList());
     await _writeProtectedPrefBuffered(
       StorageService._terminalHistoryRecordsKey,

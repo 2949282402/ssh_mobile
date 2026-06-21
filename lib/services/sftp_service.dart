@@ -212,6 +212,38 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     return _sessions[connectionId]?.sftp != null;
   }
 
+  Future<List<SftpRecentPathRecord>> loadRecentPaths(
+    String connectionId, {
+    int limit = 30,
+  }) {
+    return _storageService.loadRecentPaths(connectionId, limit: limit);
+  }
+
+  Future<List<SftpFavoritePathRecord>> loadFavoritePaths(
+    String connectionId,
+  ) {
+    return _storageService.loadFavoritePaths(connectionId);
+  }
+
+  Future<SftpFavoritePathRecord?> findFavoritePath(
+    String connectionId,
+    String path,
+  ) {
+    return _storageService.findFavoritePath(connectionId, path);
+  }
+
+  Future<SftpFavoritePathRecord> addFavoritePath(
+    String connectionId,
+    String path,
+    String name,
+  ) {
+    return _storageService.addFavoritePath(connectionId, path, name);
+  }
+
+  Future<void> removeFavoritePath(String id) {
+    return _storageService.removeFavoritePath(id);
+  }
+
   @override
   Future<void> connect(
     String connectionId, {
@@ -870,6 +902,9 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       if (cached != null) {
         session.currentPath = absolutePath;
         _lastPaths[session.connectionId] = absolutePath;
+        unawaited(
+          _storageService.recordVisitedPath(session.connectionId, absolutePath),
+        );
         session.entries = cached;
         session.entriesRevision++;
         session.state = SftpConnectionState.connected;
@@ -888,6 +923,9 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
 
       session.currentPath = absolutePath;
       _lastPaths[session.connectionId] = absolutePath;
+      unawaited(
+        _storageService.recordVisitedPath(session.connectionId, absolutePath),
+      );
       session.entries = entries;
       session.entriesRevision++;
       session.state = SftpConnectionState.connected;

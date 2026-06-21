@@ -18,7 +18,7 @@ SSH Mobile is a Flutter-based cross-platform SSH / SFTP client for long-running 
 - MVVM 架构：`lib/main.dart` 负责依赖装配，`lib/features/*` 负责 feature 状态和动作，`lib/services/*` 负责协议与存储基础设施。
 - SSH 连接管理：支持密码、私钥、私钥密码、跳板机、服务器平台选择，以及 SSH Host Key 首次信任校验。
 - 多终端窗口：同一服务器可创建多个窗口，窗口名固定，用于稳定绑定 tmux 会话。
-- SFTP：支持目录浏览、上传、下载、文本编辑、文件预览、加密预览缓存和输入名称确认删除。
+- SFTP：支持目录浏览、最近/收藏路径、上传、下载、文本编辑、文件预览、加密预览缓存和输入名称确认删除。
 - 性能监控：包含 Performance、Ports、Applications、Services 四个分区。
 - AI 聊天：支持流式输出、Markdown、聊天历史、消息编辑、重新生成、分支和上下文压缩。
 - AI tools：支持服务器诊断、SFTP 路径操作、客户端信息、WebView 搜索与读取、日志与备份操作。
@@ -34,6 +34,7 @@ SSH Mobile is a Flutter-based cross-platform SSH / SFTP client for long-running 
 - `lib/features/`: feature 自有目录。当前重点包括 `connection/models|viewmodels|views`、`ai_chat/viewmodels|services`、`settings/viewmodels`、`performance/viewmodels`、`sftp/viewmodels`、`terminal/viewmodels`。
 - `lib/screens/`: 导航壳、页面入口和基于 Dart `part` 的复合 UI 目录，例如 `home/`、`llm_chat/`、`performance_monitor/`、`sftp/`、`terminal/`。这些 screen 主要负责布局、路由和少量瞬时 UI 状态。
 - `lib/services/`: SSH、SFTP、LLM、AI tools、监控、存储等基础设施与 repository-style service，子目录包括 `ai_tool/`、`client_webview/`、`llm_chat/`、`ssh/`、`sftp/`、`storage/`。
+- `lib/data/`: Drift 数据库、DAO 和 Drift-backed repository 实现。`StorageService` 仍作为兼容 facade 暴露现有接口。
 - `lib/core/services/`: 更底层的跨 feature 服务与工厂，例如 `ssh_client_factory.dart`、`data_protection_service.dart`。
 - `lib/models/`: 仍未迁入 feature 的共享模型。
 - `lib/theme/`, `lib/utils/`, `lib/widgets/`: 主题、工具和复用组件
@@ -159,7 +160,7 @@ iOS 和 macOS 只能在 macOS 上构建。
 
 ### SFTP
 
-SFTP 页支持多服务器切换、路径记忆、上传、下载、文本编辑和常见文档预览。删除文件或目录前必须输入完整目标名称。预览缓存会加密落盘，`.ssh`、`.env`、私钥、token、云凭据和系统敏感路径不写缓存。客户端可在设置中调整普通下载、文本预览、富预览和文本编辑的大小限制，以避免大文件在移动端占用过多内存。
+SFTP 页支持多服务器切换、路径记忆、最近路径、收藏路径、上传、下载、文本编辑和常见文档预览。删除文件或目录前必须输入完整目标名称。预览缓存会加密落盘，`.ssh`、`.env`、私钥、token、云凭据和系统敏感路径不写缓存。客户端可在设置中调整普通下载、文本预览、富预览和文本编辑的大小限制，以避免大文件在移动端占用过多内存。
 
 ### Performance Monitor
 
@@ -229,7 +230,7 @@ AI tools 以能力分组维护在 `lib/services/ai_tool/` 中，而不是把逻�
 
 ### Logs, Settings, Backup
 
-日志页记录开发日志、SSH/SFTP 状态、LLM 请求、AI tool 调用和异常。应用设置从 AI 页顶部按钮打开，与 LLM 设置分离，并提供后台通知是否显示服务器名的隐私开关，默认隐藏。导出备份包含服务器、窗口恢复信息、终端历史、AI 设置、AI 聊天和自定义 Skills，但密码、私钥和 API Key 会保持为空，导入后需要重新配置。
+日志页记录开发日志、SSH/SFTP 状态、LLM 请求、AI tool 调用和异常。应用设置从 AI 页顶部按钮打开，与 LLM 设置分离，并提供后台通知是否显示服务器名的隐私开关，默认隐藏。增长型结构化数据（AI 聊天、AgentRunMetrics、终端历史元数据、Playbook、SFTP 最近/收藏路径）由 Drift 持久化；小设置仍保留在 SharedPreferences，密码、私钥和 API Key 仍只放 secure storage。导出备份包含服务器、窗口恢复信息、终端历史、AI 设置、AI 聊天、Playbook、AgentRunMetrics、SFTP 路径记录和自定义 Skills，但密码、私钥和 API Key 会保持为空，导入后需要重新配置。
 
 ## Operational Notes
 
