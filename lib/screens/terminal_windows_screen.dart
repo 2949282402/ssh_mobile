@@ -18,14 +18,7 @@ class TerminalWindowsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final strings = AppStrings(context.watch<AppSettings>().language);
-
     return Scaffold(
-      appBar: Navigator.canPop(context)
-          ? AppBar(
-              title: Text(strings.terminalWindows),
-            )
-          : null,
       body: SafeArea(
         child: TerminalWindowsPage(connectionId: connectionId),
       ),
@@ -211,6 +204,12 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
               icon: const Icon(Icons.close),
               tooltip: strings.exitSelection,
               onPressed: viewModel.clearSelection,
+            )
+          else if (!widget.embedded && Navigator.canPop(context))
+            IconButton(
+              icon: const Icon(Icons.arrow_back_rounded),
+              tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+              onPressed: () => Navigator.pop(context),
             ),
           Expanded(
             child: Text(
