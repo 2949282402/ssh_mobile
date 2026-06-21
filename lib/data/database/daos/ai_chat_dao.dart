@@ -83,6 +83,29 @@ class AiChatDao extends DatabaseAccessor<AppDatabase> with _$AiChatDaoMixin {
     await (delete(aiChats)..where((row) => row.id.equals(id))).go();
   }
 
+  Future<List<AiChatMessage>> loadAllMessagesForReencryption() {
+    return select(aiChatMessages).get();
+  }
+
+  Future<void> updateMessageSensitiveFields({
+    required String id,
+    required String textContent,
+    String? contextText,
+    required String attachmentsJson,
+    required String tracesJson,
+    required String todoStepsJson,
+  }) {
+    return (update(aiChatMessages)..where((row) => row.id.equals(id))).write(
+      AiChatMessagesCompanion(
+        textContent: Value(textContent),
+        contextText: Value(contextText),
+        attachmentsJson: Value(attachmentsJson),
+        tracesJson: Value(tracesJson),
+        todoStepsJson: Value(todoStepsJson),
+      ),
+    );
+  }
+
   Future<void> _deleteChatsBeyondRetention(int limit) async {
     final orderedIds = await (selectOnly(aiChats)
           ..addColumns([aiChats.id])

@@ -367,6 +367,255 @@ void main() {
         contains(playbookSecret));
   });
 
+  test('re-encrypts legacy plaintext Drift sensitive fields on startup',
+      () async {
+    const secret = 'LEGACY_PLAINTEXT_MARKER_20260621';
+    final now = DateTime.utc(2026, 6, 21, 8);
+    final millis = now.millisecondsSinceEpoch;
+    final database = db.AppDatabase.forTesting();
+    addTearDown(database.close);
+    await database.migrationMetaDao.markComplete(
+      'drift_ai_chats_migrated_v1',
+    );
+    await database.migrationMetaDao.markComplete(
+      'drift_playbooks_migrated_v1',
+    );
+
+    await database.aiChatDao.saveChat(
+      db.AiChatsCompanion(
+        id: const drift.Value('legacy-plaintext-chat'),
+        title: const drift.Value('Legacy plaintext'),
+        model: const drift.Value('model-a'),
+        createdAt: drift.Value(millis),
+        updatedAt: drift.Value(millis),
+      ),
+      [
+        db.AiChatMessagesCompanion(
+          id: const drift.Value('legacy-plaintext-message'),
+          chatId: const drift.Value('legacy-plaintext-chat'),
+          role: const drift.Value('assistant'),
+          textContent: const drift.Value('text $secret'),
+          contextText: const drift.Value<String?>('context $secret'),
+          createdAt: drift.Value(millis),
+          attachmentsJson: drift.Value(jsonEncode([
+            {
+              'fileName': 'secret.txt',
+              'mimeType': 'text/plain',
+              'sizeBytes': secret.length,
+              'dataBase64': base64Encode(utf8.encode(secret)),
+            }
+          ])),
+          tracesJson: drift.Value(jsonEncode([
+            {
+              'id': 'trace-secret',
+              'kind': 'tool',
+              'title': 'Trace',
+              'content': 'trace $secret',
+              'createdAt': now.toIso8601String(),
+            }
+          ])),
+          todoStepsJson: drift.Value(jsonEncode([
+            {
+              'id': 'step-secret',
+              'name': 'Step',
+              'command': 'echo $secret',
+              'description': 'desc',
+              'status': 'pending',
+              'stdout': 'stdout $secret',
+              'stderr': 'stderr $secret',
+            }
+          ])),
+        ),
+      ],
+    );
+    await database.playbookDao.savePlaybook(
+      db.PlaybooksCompanion(
+        id: const drift.Value('legacy-plaintext-playbook'),
+        name: const drift.Value('Legacy Playbook'),
+        description: const drift.Value('Plaintext'),
+        contentJson: drift.Value(jsonEncode(
+          Playbook(
+            id: 'legacy-plaintext-playbook',
+            name: 'Legacy Playbook',
+            description: 'Plaintext',
+            steps: [
+              PlaybookStep(
+                id: 'step-1',
+                name: 'Run',
+                command: 'echo $secret',
+                description: 'desc',
+              ),
+            ],
+            createdAt: now,
+            updatedAt: now,
+          ).toJson(),
+        )),
+        createdAt: drift.Value(millis),
+        updatedAt: drift.Value(millis),
+      ),
+    );
+
+    final storage = StorageService(database: database);
+    addTearDown(storage.dispose);
+    await storage.init();
+
+    final rawMessage = await database
+        .customSelect(
+          'SELECT text, context_text, attachments_json, traces_json, '
+          'todo_steps_json FROM ai_chat_messages '
+          "WHERE id = 'legacy-plaintext-message'",
+        )
+        .getSingle();
+    expect(rawMessage.read<String>('text'), isNot(contains(secret)));
+    expect(rawMessage.read<String>('context_text'), isNot(contains(secret)));
+    expect(
+        rawMessage.read<String>('attachments_json'), isNot(contains(secret)));
+    expect(rawMessage.read<String>('traces_json'), isNot(contains(secret)));
+    expect(rawMessage.read<String>('todo_steps_json'), isNot(contains(secret)));
+
+    final rawPlaybook = await database
+        .customSelect(
+          "SELECT content_json FROM playbooks "
+          "WHERE id = 'legacy-plaintext-playbook'",
+        )
+        .getSingle();
+    expect(rawPlaybook.read<String>('content_json'), isNot(contains(secret)));
+
+    final loadedChat = (await storage.loadAiChats()).single.messages.single;
+    expect(loadedChat.text, contains(secret));
+    expect(loadedChat.contextText, contains(secret));
+    expect(loadedChat.attachments.single.dataBase64,
+        base64Encode(utf8.encode(secret)));
+    expect(loadedChat.traces.single.content, contains(secret));
+    expect(loadedChat.todoSteps.single.stdout, contains(secret));
+    expect(loadedChat.todoSteps.single.stderr, contains(secret));
+
+    final loadedPlaybook = (await storage.loadPlaybooks()).single;
+    expect(loadedPlaybook.steps.single.command, contains(secret));
+    expect(
+      await database.migrationMetaDao.isComplete(
+        'drift_sensitive_fields_encrypted_v1',
+      ),
+      isTrue,
+    );
+  });
+
+  test('re-encryption migration is idempotent for encrypted rows', () async {
+    const secret = 'IDEMPOTENT_MARKER_20260621';
+    final now = DateTime.utc(2026, 6, 21, 9);
+    final database = db.AppDatabase.forTesting();
+    addTearDown(database.close);
+    final storage = StorageService(database: database);
+    await storage.init();
+    await storage.saveAiChat(
+      AiChatRecord(
+        id: 'idempotent-chat',
+        title: 'Idempotent',
+        model: 'model-a',
+        messages: [
+          AiChatMessageRecord(
+            role: 'assistant',
+            text: 'text $secret',
+            contextText: 'context $secret',
+            traces: [
+              AiMessageTrace(
+                id: 'trace-idempotent',
+                kind: 'tool',
+                title: 'Trace',
+                content: 'trace $secret',
+                createdAt: now,
+              ),
+            ],
+            todoSteps: const [
+              AiTodoStep(
+                id: 'task-idempotent',
+                name: 'Task',
+                command: 'echo IDEMPOTENT_MARKER_20260621',
+                description: 'Task description',
+              ),
+            ],
+            createdAt: now,
+          ),
+        ],
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    await storage.savePlaybook(
+      Playbook(
+        id: 'idempotent-playbook',
+        name: 'Idempotent playbook',
+        description: 'Already encrypted',
+        steps: [
+          PlaybookStep(
+            id: 'step-idempotent',
+            name: 'Echo',
+            command: 'echo $secret',
+            description: 'Print marker',
+          ),
+        ],
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    final beforeMessage = await database
+        .customSelect(
+          'SELECT text, context_text, attachments_json, traces_json, '
+          'todo_steps_json FROM ai_chat_messages '
+          "WHERE id LIKE 'idempotent-chat:%'",
+        )
+        .getSingle();
+    final beforePlaybook = await database
+        .customSelect(
+          "SELECT content_json FROM playbooks "
+          "WHERE id = 'idempotent-playbook'",
+        )
+        .getSingle();
+    storage.dispose();
+    await database.customStatement(
+      "DELETE FROM migration_meta "
+      "WHERE key = 'drift_sensitive_fields_encrypted_v1'",
+    );
+
+    final restarted = StorageService(database: database);
+    addTearDown(restarted.dispose);
+    await restarted.init();
+
+    final afterMessage = await database
+        .customSelect(
+          'SELECT text, context_text, attachments_json, traces_json, '
+          'todo_steps_json FROM ai_chat_messages '
+          "WHERE id LIKE 'idempotent-chat:%'",
+        )
+        .getSingle();
+    final afterPlaybook = await database
+        .customSelect(
+          "SELECT content_json FROM playbooks "
+          "WHERE id = 'idempotent-playbook'",
+        )
+        .getSingle();
+
+    for (final column in [
+      'text',
+      'context_text',
+      'attachments_json',
+      'traces_json',
+      'todo_steps_json',
+    ]) {
+      expect(afterMessage.read<String>(column),
+          beforeMessage.read<String>(column));
+    }
+    expect(
+      afterPlaybook.read<String>('content_json'),
+      beforePlaybook.read<String>('content_json'),
+    );
+    expect((await restarted.loadAiChats()).single.messages.single.text,
+        contains(secret));
+    expect((await restarted.loadPlaybooks()).single.steps.single.command,
+        contains(secret));
+  });
+
   test('backup import persists AgentRunMetrics into Drift across restart',
       () async {
     final now = DateTime.utc(2026, 6, 21, 6);

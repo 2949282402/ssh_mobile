@@ -232,7 +232,7 @@ AI tools 以能力分组维护在 `lib/services/ai_tool/` 中，而不是把逻�
 
 日志页记录开发日志、SSH/SFTP 状态、LLM 请求、AI tool 调用和异常。应用设置从 AI 页顶部按钮打开，与 LLM 设置分离，并提供后台通知是否显示服务器名的隐私开关，默认隐藏。增长型结构化数据（AI 聊天、AgentRunMetrics、终端历史元数据、Playbook、SFTP 最近/收藏路径）由 Drift 持久化；小设置仍保留在 SharedPreferences，密码、私钥和 API Key 仍只放 secure storage。导出备份包含服务器、窗口恢复信息、终端历史、AI 设置、AI 聊天、Playbook、AgentRunMetrics、SFTP 路径记录和自定义 Skills，但密码、私钥和 API Key 会保持为空，导入后需要重新配置。
 
-Drift 仅用于增长型结构化数据。需要查询或排序的 metadata 可以保持明文，但 AI message 正文、context、attachments、tool traces、todoSteps 和 Playbook content 会在写入 SQLite 前做字段级加密；旧 SharedPreferences protected-pref 数据仍保留为迁移失败或回滚兼容路径。生产数据库打开失败时不会静默切换到内存 SQLite，避免新写入数据在重启后丢失。
+Drift 仅用于增长型结构化数据。需要查询或排序的 metadata 可以保持明文，但 AI message 正文、context、attachments、tool traces、todoSteps 和 Playbook content 会在写入 SQLite 前做字段级加密；旧 SharedPreferences protected-pref 数据仍保留为迁移失败或回滚兼容路径。历史 Drift 明文敏感字段会通过 `drift_sensitive_fields_encrypted_v1` 启动迁移重加密，迁移完成后才视为存储安全边界完整。生产数据库打开失败时不会静默切换到内存 SQLite，避免新写入数据在重启后丢失。
 
 ## Operational Notes
 

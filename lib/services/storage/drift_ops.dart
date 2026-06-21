@@ -13,6 +13,7 @@ extension DriftOps on StorageService {
       _driftAgentMetricsActive = await _migrateAgentMetricsToDrift();
       _driftTerminalHistoryActive = await _migrateTerminalHistoryToDrift();
       _driftPlaybooksActive = await _migratePlaybooksToDrift();
+      await _reencryptDriftSensitiveFieldsIfNeeded();
       _driftSftpHistoryActive = true;
     } catch (e, stackTrace) {
       _driftReady = false;
@@ -133,6 +134,75 @@ extension DriftOps on StorageService {
     }
   }
 
+  Future<void> _reencryptDriftSensitiveFieldsIfNeeded() async {
+    final database = _database;
+    if (!_driftReady || database == null) return;
+    if (await database.migrationMetaDao.isComplete(
+      StorageService._driftSensitiveFieldsEncryptedKey,
+    )) {
+      return;
+    }
+
+    try {
+      await database.transaction(() async {
+        await _reencryptAiChatMessageRows(database);
+        await _reencryptPlaybookRows(database);
+        await database.migrationMetaDao.markComplete(
+          StorageService._driftSensitiveFieldsEncryptedKey,
+        );
+      });
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to re-encrypt Drift sensitive fields',
+        error: e,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  Future<void> _reencryptAiChatMessageRows(db.AppDatabase database) async {
+    final rows = await database.aiChatDao.loadAllMessagesForReencryption();
+    for (final row in rows) {
+      final encryptedText = await _encryptIfPlaintext(row.textContent);
+      final encryptedContext = row.contextText == null
+          ? null
+          : await _encryptIfPlaintext(row.contextText!);
+      final encryptedAttachments =
+          await _encryptIfPlaintext(row.attachmentsJson);
+      final encryptedTraces = await _encryptIfPlaintext(row.tracesJson);
+      final encryptedTodoSteps = await _encryptIfPlaintext(row.todoStepsJson);
+
+      final changed = encryptedText != row.textContent ||
+          encryptedContext != row.contextText ||
+          encryptedAttachments != row.attachmentsJson ||
+          encryptedTraces != row.tracesJson ||
+          encryptedTodoSteps != row.todoStepsJson;
+      if (!changed) continue;
+
+      await database.aiChatDao.updateMessageSensitiveFields(
+        id: row.id,
+        textContent: encryptedText,
+        contextText: encryptedContext,
+        attachmentsJson: encryptedAttachments,
+        tracesJson: encryptedTraces,
+        todoStepsJson: encryptedTodoSteps,
+      );
+    }
+  }
+
+  Future<void> _reencryptPlaybookRows(db.AppDatabase database) async {
+    final rows = await database.playbookDao.loadAllPlaybooksForReencryption();
+    for (final row in rows) {
+      final encryptedContent = await _encryptIfPlaintext(row.contentJson);
+      if (encryptedContent == row.contentJson) continue;
+
+      await database.playbookDao.updatePlaybookContentJson(
+        id: row.id,
+        contentJson: encryptedContent,
+      );
+    }
+  }
+
   List<T> _decodeLegacyRecordList<T>(
     String? jsonStr,
     T Function(Map<String, dynamic>) decode,
@@ -170,6 +240,13 @@ extension DriftOps on StorageService {
 
   Future<String> _encryptDriftText(String value) async {
     if (value.isEmpty) return value;
+    if (_dataProtection.isEncrypted(value)) return value;
+    return _dataProtection.encryptString(value);
+  }
+
+  Future<String> _encryptIfPlaintext(String value) async {
+    if (value.isEmpty) return value;
+    if (_dataProtection.isEncrypted(value)) return value;
     return _dataProtection.encryptString(value);
   }
 

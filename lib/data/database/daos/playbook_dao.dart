@@ -32,4 +32,17 @@ class PlaybookDao extends DatabaseAccessor<AppDatabase>
   Future<void> deletePlaybook(String id) async {
     await (delete(playbooks)..where((row) => row.id.equals(id))).go();
   }
+
+  Future<List<Playbook>> loadAllPlaybooksForReencryption() {
+    return select(playbooks).get();
+  }
+
+  Future<void> updatePlaybookContentJson({
+    required String id,
+    required String contentJson,
+  }) {
+    return (update(playbooks)..where((row) => row.id.equals(id))).write(
+      PlaybooksCompanion(contentJson: Value(contentJson)),
+    );
+  }
 }

@@ -48,8 +48,9 @@ const Uuid _traceUuid = Uuid();
 /// content 等敏感正文不得以明文 Drift column 保存。生产环境数据库打开失败时
 /// 不得 fallback 到内存数据库，调用方应退回旧 protected-pref 兼容路径。
 ///
-/// 高频写操作（AI 聊天、tmux 会话、终端历史）使用 700ms 防抖批量写入，
-/// App 进入后台时调用 flushPendingWrites() 确保数据落盘。
+/// 旧 protected-pref 写入仍使用 700ms 防抖；Drift-backed 数据通过 DAO
+/// transaction 持久化。历史 Drift 明文敏感字段由
+/// drift_sensitive_fields_encrypted_v1 启动迁移重加密。
 abstract interface class ConnectionRepository {
   List<ConnectionConfig> get connections;
   Future<void> addConnection(ConnectionConfig config);
@@ -445,6 +446,8 @@ class StorageService extends ChangeNotifier
   static const _driftTerminalHistoryMigratedKey =
       'drift_terminal_history_migrated_v1';
   static const _driftPlaybooksMigratedKey = 'drift_playbooks_migrated_v1';
+  static const _driftSensitiveFieldsEncryptedKey =
+      'drift_sensitive_fields_encrypted_v1';
   static const _secretCacheEnabledKey = 'secret_cache_enabled';
   static const _secretCacheTtlSecondsKey = 'secret_cache_ttl_seconds';
   static const _defaultSecretCacheTtl = Duration(minutes: 15);

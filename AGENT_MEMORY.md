@@ -177,5 +177,10 @@ across sessions.
   `NativeDatabase.memory()`. AI chat message text/context/attachments/traces/
   todoSteps and Playbook `content_json` are field-encrypted in Drift; plaintext
   legacy rows remain readable for compatibility.
+- 2026-06-21: Legacy plaintext Drift sensitive fields are re-encrypted during
+  storage startup under migration marker
+  `drift_sensitive_fields_encrypted_v1`. Keep the migration idempotent,
+  all-or-nothing, and retryable; do not treat Drift storage migration as
+  complete until this marker is present.
 
 
