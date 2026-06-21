@@ -104,7 +104,7 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
                 alignment: Alignment.centerLeft,
                 child: TextButton.icon(
                   icon: const Icon(Icons.open_in_full_rounded, size: 16),
-                  label: Text(strings.viewAllTerminalWindows(hiddenCount)),
+                  label: Text(strings.viewAllTerminalWindows(sessions.length)),
                   onPressed: () => Navigator.pushNamed(
                     context,
                     '/terminal-windows',

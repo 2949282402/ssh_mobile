@@ -540,9 +540,9 @@ class AppStrings {
   String get terminalWindows => _en ? 'Terminal windows' : '终端窗口';
   String selectedWindows(int count) =>
       _en ? '$count selected' : '已选择 $count 个窗口';
-  String viewAllTerminalWindows(int hiddenCount) => _en
-      ? 'View all $hiddenCount more ${hiddenCount == 1 ? "window" : "windows"}'
-      : '查看全部，另有 $hiddenCount 个窗口';
+  String viewAllTerminalWindows(int totalCount) => _en
+      ? 'View all $totalCount ${totalCount == 1 ? "window" : "windows"}'
+      : '查看全部 $totalCount 个窗口';
   String get exitSelection => _en ? 'Exit selection' : '退出选择';
   String get selectAll => _en ? 'Select all' : '全选';
   String get closeSelectedWindows => _en ? 'Close selected windows' : '关闭选中窗口';
