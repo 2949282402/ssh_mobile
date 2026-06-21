@@ -18,7 +18,14 @@ class TerminalWindowsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final strings = AppStrings(context.watch<AppSettings>().language);
+
     return Scaffold(
+      appBar: Navigator.canPop(context)
+          ? AppBar(
+              title: Text(strings.terminalWindows),
+            )
+          : null,
       body: SafeArea(
         child: TerminalWindowsPage(connectionId: connectionId),
       ),
@@ -82,7 +89,8 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
     AppStrings strings,
   ) {
     if (widget.embedded) {
-      final visibleSessions = sessions.take(_embeddedPreviewLimit).toList();
+      final visibleSessions =
+          sessions.take(_embeddedPreviewLimit).toList(growable: false);
       final hiddenCount = sessions.length - visibleSessions.length;
 
       return Padding(

@@ -153,7 +153,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
       child: Row(
         children: [
           Text(
-            '$count ${strings.language == AppLanguage.en ? 'selected' : '已选择'}',
+            strings.selectedServers(count),
             style: TextStyle(
               color: colorScheme.onSurface,
               fontSize: 14,

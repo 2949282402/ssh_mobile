@@ -540,6 +540,8 @@ class AppStrings {
   String get terminalWindows => _en ? 'Terminal windows' : '终端窗口';
   String selectedWindows(int count) =>
       _en ? '$count selected' : '已选择 $count 个窗口';
+  String selectedServers(int count) =>
+      _en ? '$count selected' : '已选择 $count 个服务器';
   String viewAllTerminalWindows(int totalCount) => _en
       ? 'View all $totalCount ${totalCount == 1 ? "window" : "windows"}'
       : '查看全部 $totalCount 个窗口';

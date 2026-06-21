@@ -257,11 +257,17 @@ class _SshMobileAppState extends State<SshMobileApp>
             );
           case '/terminal-windows':
             final args = settings.arguments;
-            final connectionId = args is String
-                ? args
-                : args is Map<String, dynamic>
-                    ? args['connectionId'] as String?
-                    : null;
+            String? connectionId;
+
+            if (args is String) {
+              connectionId = args;
+            } else if (args is Map<String, dynamic>) {
+              final value = args['connectionId'];
+              if (value is String) {
+                connectionId = value;
+              }
+            }
+
             return MaterialPageRoute(
               builder: (_) => TerminalWindowsScreen(
                 connectionId: connectionId,
