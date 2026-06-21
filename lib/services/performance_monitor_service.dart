@@ -940,6 +940,32 @@ class ServerHealthSnapshot {
             'networkBytesPerSecond': latestSample!.networkBytesPerSecond,
           },
       };
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        other is ServerHealthSnapshot &&
+            other.connectionId == connectionId &&
+            other.level == level &&
+            other.score == score &&
+            other.summary == summary &&
+            listEquals(other.details, details) &&
+            other.updatedAt == updatedAt &&
+            other.latestSample == latestSample &&
+            other.maxDiskUsedPercent == maxDiskUsedPercent;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        connectionId,
+        level,
+        score,
+        summary,
+        Object.hashAll(details),
+        updatedAt,
+        latestSample,
+        maxDiskUsedPercent,
+      );
 }
 
 class MonitorAlert {

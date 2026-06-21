@@ -108,6 +108,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
               Expanded(
                 child: ReorderableListView.builder(
                   buildDefaultDragHandles: false,
+                  scrollCacheExtent: const ScrollCacheExtent.pixels(700),
                   padding: EdgeInsets.fromLTRB(
                     horizontalPadding,
                     0,
@@ -192,15 +193,18 @@ extension _HomeScreenStateServerList on _HomeScreenState {
     AppStrings strings, {
     int connIndex = 0,
   }) {
-    return Selector<SshService, SshConnectionOverview>(
-      key: ValueKey(conn.id),
-      selector: (_, ssh) => ssh.serverOverviewSnapshot.forConnection(conn.id),
-      builder: (context, sessionSummary, _) => _buildConnectionCardBody(
-        context,
-        conn,
-        sessionSummary,
-        strings,
-        connIndex: connIndex,
+    return RepaintBoundary(
+      key: ValueKey('server-card-${conn.id}'),
+      child: Selector<SshService, SshConnectionOverview>(
+        key: ValueKey(conn.id),
+        selector: (_, ssh) => ssh.serverOverviewSnapshot.forConnection(conn.id),
+        builder: (context, sessionSummary, _) => _buildConnectionCardBody(
+          context,
+          conn,
+          sessionSummary,
+          strings,
+          connIndex: connIndex,
+        ),
       ),
     );
   }
