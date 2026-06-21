@@ -180,7 +180,8 @@ across sessions.
 - 2026-06-21: Legacy plaintext Drift sensitive fields are re-encrypted during
   storage startup under migration marker
   `drift_sensitive_fields_encrypted_v1`. Keep the migration idempotent,
-  all-or-nothing, and retryable; do not treat Drift storage migration as
-  complete until this marker is present.
+  batch retryable, and marker-gated: each batch may commit independently, but
+  mark complete only after every batch succeeds. Logs may report row counts
+  only; never log field values.
 
 

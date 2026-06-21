@@ -70,7 +70,8 @@ or maintenance lesson should be shared across Codex and Claude Code sessions.
   failures must not silently fall back to an in-memory database. Legacy
   plaintext Drift rows from the initial migration must be re-encrypted by
   `drift_sensitive_fields_encrypted_v1` before considering storage migration
-  complete.
+  complete. That startup re-encryption runs in small retryable batches, marks
+  completion only after all batches succeed, and logs row counts only.
 - Keep SSH Host Key checks centralized in `SshHostKeyPolicy`. UI-initiated
   first use may prompt for TOFU confirmation, but AI tools and background SSH
   service code must never auto-trust unknown or changed host keys.

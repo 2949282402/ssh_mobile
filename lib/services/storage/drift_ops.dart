@@ -1,5 +1,7 @@
 part of '../storage_service.dart';
 
+const int _driftSensitiveReencryptBatchSize = 50;
+
 extension DriftOps on StorageService {
   Future<void> _initializeDriftStorage() async {
     try {
@@ -144,13 +146,16 @@ extension DriftOps on StorageService {
     }
 
     try {
-      await database.transaction(() async {
-        await _reencryptAiChatMessageRows(database);
-        await _reencryptPlaybookRows(database);
-        await database.migrationMetaDao.markComplete(
-          StorageService._driftSensitiveFieldsEncryptedKey,
-        );
-      });
+      final aiMessageRows =
+          await _reencryptAiChatMessageRowsInBatches(database);
+      final playbookRows = await _reencryptPlaybookRowsInBatches(database);
+      await database.migrationMetaDao.markComplete(
+        StorageService._driftSensitiveFieldsEncryptedKey,
+      );
+      AppLogService.instance.info(
+        'Drift sensitive fields re-encrypted',
+        details: 'aiMessages=$aiMessageRows playbooks=$playbookRows',
+      );
     } catch (e, stackTrace) {
       AppLogService.instance.error(
         'Failed to re-encrypt Drift sensitive fields',
@@ -160,8 +165,30 @@ extension DriftOps on StorageService {
     }
   }
 
-  Future<void> _reencryptAiChatMessageRows(db.AppDatabase database) async {
+  Future<int> _reencryptAiChatMessageRowsInBatches(
+    db.AppDatabase database,
+  ) async {
     final rows = await database.aiChatDao.loadAllMessagesForReencryption();
+    var updated = 0;
+    for (var start = 0;
+        start < rows.length;
+        start += _driftSensitiveReencryptBatchSize) {
+      final end = (start + _driftSensitiveReencryptBatchSize)
+          .clamp(0, rows.length)
+          .toInt();
+      final batch = rows.sublist(start, end);
+      updated += await database.transaction(
+        () => _reencryptAiChatMessageBatch(database, batch),
+      );
+    }
+    return updated;
+  }
+
+  Future<int> _reencryptAiChatMessageBatch(
+    db.AppDatabase database,
+    List<db.AiChatMessage> rows,
+  ) async {
+    var updated = 0;
     for (final row in rows) {
       final encryptedText = await _encryptIfPlaintext(row.textContent);
       final encryptedContext = row.contextText == null
@@ -187,11 +214,35 @@ extension DriftOps on StorageService {
         tracesJson: encryptedTraces,
         todoStepsJson: encryptedTodoSteps,
       );
+      updated++;
     }
+    return updated;
   }
 
-  Future<void> _reencryptPlaybookRows(db.AppDatabase database) async {
+  Future<int> _reencryptPlaybookRowsInBatches(
+    db.AppDatabase database,
+  ) async {
     final rows = await database.playbookDao.loadAllPlaybooksForReencryption();
+    var updated = 0;
+    for (var start = 0;
+        start < rows.length;
+        start += _driftSensitiveReencryptBatchSize) {
+      final end = (start + _driftSensitiveReencryptBatchSize)
+          .clamp(0, rows.length)
+          .toInt();
+      final batch = rows.sublist(start, end);
+      updated += await database.transaction(
+        () => _reencryptPlaybookBatch(database, batch),
+      );
+    }
+    return updated;
+  }
+
+  Future<int> _reencryptPlaybookBatch(
+    db.AppDatabase database,
+    List<db.Playbook> rows,
+  ) async {
+    var updated = 0;
     for (final row in rows) {
       final encryptedContent = await _encryptIfPlaintext(row.contentJson);
       if (encryptedContent == row.contentJson) continue;
@@ -200,7 +251,9 @@ extension DriftOps on StorageService {
         id: row.id,
         contentJson: encryptedContent,
       );
+      updated++;
     }
+    return updated;
   }
 
   List<T> _decodeLegacyRecordList<T>(

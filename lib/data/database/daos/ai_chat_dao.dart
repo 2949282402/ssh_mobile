@@ -27,16 +27,37 @@ class AiChatDao extends DatabaseAccessor<AppDatabase> with _$AiChatDaoMixin {
         .get();
     final result = <AiChatWithMessages>[];
     for (final chat in rows) {
-      final messages = await (select(aiChatMessages)
-            ..where((row) => row.chatId.equals(chat.id))
-            ..orderBy([
-              (row) => OrderingTerm.asc(row.createdAt),
-              (row) => OrderingTerm.asc(row.id),
-            ]))
-          .get();
+      final messages = await loadMessagesForChat(chat.id);
       result.add(AiChatWithMessages(chat: chat, messages: messages));
     }
     return result;
+  }
+
+  Future<List<AiChat>> loadChatSummaries({
+    int limit = _aiChatRetentionLimit,
+    int offset = 0,
+  }) {
+    final pageSize = limit < 1 ? 1 : (limit > 500 ? 500 : limit);
+    final pageOffset = offset < 0 ? 0 : offset;
+    return (select(aiChats)
+          ..orderBy([
+            (row) => OrderingTerm(
+                  expression: row.updatedAt,
+                  mode: OrderingMode.desc,
+                ),
+          ])
+          ..limit(pageSize, offset: pageOffset))
+        .get();
+  }
+
+  Future<List<AiChatMessage>> loadMessagesForChat(String chatId) {
+    return (select(aiChatMessages)
+          ..where((row) => row.chatId.equals(chatId))
+          ..orderBy([
+            (row) => OrderingTerm.asc(row.createdAt),
+            (row) => OrderingTerm.asc(row.id),
+          ]))
+        .get();
   }
 
   Future<void> saveChat(

@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/data/database/app_database.dart' as db;
 import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/features/playbook/models/playbook.dart';
+import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 
 void main() {
@@ -15,6 +16,7 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
+    AppLogService.instance.clear();
   });
 
   test('AppDatabase opens in tests', () async {
@@ -24,6 +26,165 @@ void main() {
     final result = await database.customSelect('SELECT 1 AS value').getSingle();
 
     expect(result.read<int>('value'), 1);
+  });
+
+  test('drift init failure falls back to protected pref storage', () async {
+    final now = DateTime.utc(2026, 6, 21, 10);
+    final legacyChat = AiChatRecord(
+      id: 'legacy-pref-chat',
+      title: 'Legacy pref',
+      model: 'model-a',
+      messages: [
+        AiChatMessageRecord(
+          role: 'assistant',
+          text: 'legacy pref message',
+          createdAt: now,
+        ),
+      ],
+      createdAt: now,
+      updatedAt: now,
+    );
+    final legacyMetric = AgentRunMetrics(
+      id: 'legacy-pref-metric',
+      startedAt: now,
+      finishedAt: now.add(const Duration(seconds: 1)),
+      model: 'model-a',
+      promptTokens: 1,
+      completionTokens: 2,
+      totalTokens: 3,
+      elapsedMs: 1000,
+    );
+    final legacyTerminal = TerminalHistoryRecord(
+      sessionId: 'legacy-pref-terminal',
+      connectionId: 'server-1',
+      connectionName: 'Prod',
+      displayName: 'Prod shell',
+      tmuxSessionName: 'tmux-prod',
+      state: 'disconnected',
+      errorMessage: null,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final legacyPlaybook = Playbook(
+      id: 'legacy-pref-playbook',
+      name: 'Legacy pref playbook',
+      description: 'Loaded from protected pref fallback',
+      steps: [
+        PlaybookStep(
+          id: 'legacy-pref-step',
+          name: 'Check',
+          command: 'uptime',
+          description: 'Check server',
+        ),
+      ],
+      createdAt: now,
+      updatedAt: now,
+    );
+    SharedPreferences.setMockInitialValues({
+      'ai_chats': jsonEncode([legacyChat.toJson()]),
+      'agent_run_metrics': jsonEncode([legacyMetric.toJson()]),
+      'terminal_history_records': jsonEncode([legacyTerminal.toJson()]),
+      'custom_playbooks': jsonEncode([legacyPlaybook.toJson()]),
+    });
+
+    final failingDatabase = _failingDatabase();
+    addTearDown(() => _closeIgnoringErrors(failingDatabase));
+    final storage = StorageService(database: failingDatabase);
+    addTearDown(storage.dispose);
+    await storage.init();
+
+    expect((await storage.loadAiChats()).single.id, 'legacy-pref-chat');
+    expect(
+        (await storage.loadAgentRunMetrics()).single.id, 'legacy-pref-metric');
+    expect((await storage.loadTerminalHistoryRecords()).single.sessionId,
+        'legacy-pref-terminal');
+    expect((await storage.loadPlaybooks()).single.id, 'legacy-pref-playbook');
+    expect(
+      AppLogService.instance.entries.any(
+        (entry) => entry.message.contains('Failed to initialize Drift storage'),
+      ),
+      isTrue,
+    );
+
+    final savedChat = AiChatRecord(
+      id: 'saved-pref-chat',
+      title: 'Saved pref',
+      model: 'model-a',
+      messages: [
+        AiChatMessageRecord(
+          role: 'assistant',
+          text: 'saved through protected pref fallback',
+          createdAt: now.add(const Duration(minutes: 1)),
+        ),
+      ],
+      createdAt: now.add(const Duration(minutes: 1)),
+      updatedAt: now.add(const Duration(minutes: 1)),
+    );
+    await storage.saveAiChat(savedChat);
+    await storage.flushPendingWrites();
+
+    final restartedDatabase = _failingDatabase();
+    addTearDown(() => _closeIgnoringErrors(restartedDatabase));
+    final restarted = StorageService(database: restartedDatabase);
+    addTearDown(restarted.dispose);
+    await restarted.init();
+
+    final loadedIds = (await restarted.loadAiChats())
+        .map((chat) => chat.id)
+        .toList(growable: false);
+    expect(loadedIds, contains('saved-pref-chat'));
+    expect(loadedIds, contains('legacy-pref-chat'));
+  });
+
+  test('AI chat DAO loads paged summaries and messages separately', () async {
+    final base = DateTime.utc(2026, 6, 21, 11);
+    final database = db.AppDatabase.forTesting();
+    addTearDown(database.close);
+
+    for (var i = 0; i < 3; i++) {
+      final created = base.add(Duration(minutes: i));
+      await database.aiChatDao.saveChat(
+        db.AiChatsCompanion(
+          id: drift.Value('chat-$i'),
+          title: drift.Value('Chat $i'),
+          model: const drift.Value('model-a'),
+          createdAt: drift.Value(created.millisecondsSinceEpoch),
+          updatedAt: drift.Value(created.millisecondsSinceEpoch),
+        ),
+        [
+          db.AiChatMessagesCompanion(
+            id: drift.Value('chat-$i:message-2'),
+            chatId: drift.Value('chat-$i'),
+            role: const drift.Value('assistant'),
+            textContent: drift.Value('second $i'),
+            createdAt: drift.Value(
+                created.add(const Duration(seconds: 2)).millisecondsSinceEpoch),
+            attachmentsJson: const drift.Value('[]'),
+            tracesJson: const drift.Value('[]'),
+            todoStepsJson: const drift.Value('[]'),
+          ),
+          db.AiChatMessagesCompanion(
+            id: drift.Value('chat-$i:message-1'),
+            chatId: drift.Value('chat-$i'),
+            role: const drift.Value('user'),
+            textContent: drift.Value('first $i'),
+            createdAt: drift.Value(
+                created.add(const Duration(seconds: 1)).millisecondsSinceEpoch),
+            attachmentsJson: const drift.Value('[]'),
+            tracesJson: const drift.Value('[]'),
+            todoStepsJson: const drift.Value('[]'),
+          ),
+        ],
+      );
+    }
+
+    final summaries =
+        await database.aiChatDao.loadChatSummaries(limit: 2, offset: 1);
+    expect(summaries.map((chat) => chat.id).toList(), ['chat-1', 'chat-0']);
+
+    final messages = await database.aiChatDao.loadMessagesForChat('chat-1');
+    expect(messages.map((message) => message.id).toList(),
+        ['chat-1:message-1', 'chat-1:message-2']);
   });
 
   test('migrates legacy AI chats to Drift and preserves message payloads',
@@ -459,6 +620,13 @@ void main() {
     addTearDown(storage.dispose);
     await storage.init();
 
+    final reencryptLog = AppLogService.instance.entries.firstWhere(
+      (entry) => entry.message == 'Drift sensitive fields re-encrypted',
+    );
+    expect(reencryptLog.details, contains('aiMessages=1'));
+    expect(reencryptLog.details, contains('playbooks=1'));
+    expect(reencryptLog.details, isNot(contains(secret)));
+
     final rawMessage = await database
         .customSelect(
           'SELECT text, context_text, attachments_json, traces_json, '
@@ -616,6 +784,202 @@ void main() {
         contains(secret));
   });
 
+  test(
+      'raw Drift storage does not contain known sensitive markers after normal save and legacy migration',
+      () async {
+    const markers = [
+      'SSH_PASSWORD_MARKER',
+      'PRIVATE_KEY_MARKER',
+      'API_KEY_MARKER',
+      'AI_TRACE_MARKER',
+      'TODO_STDOUT_MARKER',
+      'PLAYBOOK_COMMAND_MARKER',
+    ];
+    final now = DateTime.utc(2026, 6, 21, 12);
+    final millis = now.millisecondsSinceEpoch;
+    final database = db.AppDatabase.forTesting();
+    addTearDown(database.close);
+    await database.migrationMetaDao.markComplete(
+      'drift_ai_chats_migrated_v1',
+    );
+    await database.migrationMetaDao.markComplete(
+      'drift_playbooks_migrated_v1',
+    );
+
+    await database.aiChatDao.saveChat(
+      db.AiChatsCompanion(
+        id: const drift.Value('legacy-marker-chat'),
+        title: const drift.Value('Legacy marker'),
+        model: const drift.Value('model-a'),
+        createdAt: drift.Value(millis),
+        updatedAt: drift.Value(millis),
+      ),
+      [
+        db.AiChatMessagesCompanion(
+          id: const drift.Value('legacy-marker-message'),
+          chatId: const drift.Value('legacy-marker-chat'),
+          role: const drift.Value('assistant'),
+          textContent: drift.Value('text ${markers[0]}'),
+          contextText: drift.Value<String?>('context ${markers[1]}'),
+          createdAt: drift.Value(millis),
+          attachmentsJson: drift.Value(jsonEncode([
+            {
+              'fileName': 'attachment-${markers[2]}.txt',
+              'mimeType': 'text/plain',
+              'sizeBytes': markers[2].length,
+              'dataBase64': base64Encode(utf8.encode(markers[2])),
+            }
+          ])),
+          tracesJson: drift.Value(jsonEncode([
+            {
+              'id': 'trace-marker',
+              'kind': 'tool',
+              'title': 'Trace',
+              'content': 'trace ${markers[3]}',
+              'createdAt': now.toIso8601String(),
+            }
+          ])),
+          todoStepsJson: drift.Value(jsonEncode([
+            {
+              'id': 'todo-marker',
+              'name': 'Todo',
+              'command': 'echo ${markers[4]}',
+              'description': 'desc',
+              'status': 'pending',
+              'stdout': 'stdout ${markers[4]}',
+            }
+          ])),
+        ),
+      ],
+    );
+    await database.playbookDao.savePlaybook(
+      db.PlaybooksCompanion(
+        id: const drift.Value('legacy-marker-playbook'),
+        name: const drift.Value('Legacy marker playbook'),
+        description: const drift.Value('Plaintext marker row'),
+        contentJson: drift.Value(jsonEncode(
+          Playbook(
+            id: 'legacy-marker-playbook',
+            name: 'Legacy marker playbook',
+            description: 'Plaintext marker row',
+            steps: [
+              PlaybookStep(
+                id: 'legacy-marker-step',
+                name: 'Run',
+                command: 'echo ${markers[5]}',
+                description: 'desc ${markers[5]}',
+              ),
+            ],
+            createdAt: now,
+            updatedAt: now,
+          ).toJson(),
+        )),
+        createdAt: drift.Value(millis),
+        updatedAt: drift.Value(millis),
+      ),
+    );
+
+    final storage = StorageService(database: database);
+    addTearDown(storage.dispose);
+    await storage.init();
+    await storage.saveAiChat(
+      AiChatRecord(
+        id: 'normal-marker-chat',
+        title: 'Normal marker',
+        model: 'model-a',
+        messages: [
+          AiChatMessageRecord(
+            role: 'assistant',
+            text: 'text ${markers[0]}',
+            contextText: 'context ${markers[1]}',
+            attachments: [
+              AiChatAttachment(
+                fileName: 'normal-${markers[2]}.txt',
+                mimeType: 'text/plain',
+                sizeBytes: markers[2].length,
+                dataBase64: base64Encode(utf8.encode(markers[2])),
+              ),
+            ],
+            traces: [
+              AiMessageTrace(
+                id: 'normal-trace-marker',
+                kind: 'tool',
+                title: 'Trace',
+                content: 'trace ${markers[3]}',
+                createdAt: now,
+              ),
+            ],
+            todoSteps: const [
+              AiTodoStep(
+                id: 'normal-todo-marker',
+                name: 'Todo',
+                command: 'echo TODO_STDOUT_MARKER',
+                description: 'desc',
+                stdout: 'stdout TODO_STDOUT_MARKER',
+              ),
+            ],
+            createdAt: now.add(const Duration(minutes: 1)),
+          ),
+        ],
+        createdAt: now.add(const Duration(minutes: 1)),
+        updatedAt: now.add(const Duration(minutes: 1)),
+      ),
+    );
+    await storage.savePlaybook(
+      Playbook(
+        id: 'normal-marker-playbook',
+        name: 'Normal marker playbook',
+        description: 'Normal save marker row',
+        steps: [
+          PlaybookStep(
+            id: 'normal-marker-step',
+            name: 'Run',
+            command: 'echo ${markers[5]}',
+            description: 'desc ${markers[5]}',
+          ),
+        ],
+        createdAt: now.add(const Duration(minutes: 1)),
+        updatedAt: now.add(const Duration(minutes: 1)),
+      ),
+    );
+
+    final rawMessages = await database
+        .customSelect(
+          'SELECT text, context_text, attachments_json, traces_json, '
+          'todo_steps_json FROM ai_chat_messages',
+        )
+        .get();
+    for (final row in rawMessages) {
+      for (final column in [
+        'text',
+        'context_text',
+        'attachments_json',
+        'traces_json',
+        'todo_steps_json',
+      ]) {
+        _expectNoMarkers(row.read<String>(column), markers);
+      }
+    }
+
+    final rawPlaybooks =
+        await database.customSelect('SELECT content_json FROM playbooks').get();
+    for (final row in rawPlaybooks) {
+      _expectNoMarkers(row.read<String>('content_json'), markers);
+    }
+
+    final roundtrip = jsonEncode({
+      'aiChats': (await storage.loadAiChats())
+          .map((chat) => chat.toJson())
+          .toList(growable: false),
+      'playbooks': (await storage.loadPlaybooks())
+          .map((playbook) => playbook.toJson())
+          .toList(growable: false),
+    });
+    for (final marker in markers) {
+      expect(roundtrip, contains(marker));
+    }
+  });
+
   test('backup import persists AgentRunMetrics into Drift across restart',
       () async {
     final now = DateTime.utc(2026, 6, 21, 6);
@@ -647,6 +1011,134 @@ void main() {
 
     final metrics = await restarted.loadAgentRunMetrics();
     expect(metrics.single.id, 'imported-metric');
+  });
+
+  test(
+      'backup import writes AI chats and playbooks back as encrypted Drift rows',
+      () async {
+    const marker = 'BACKUP_DRIFT_MARKER_20260621';
+    const password = 'backup-server-password';
+    const privateKey = 'backup-private-key';
+    const apiKey = 'sk-backup-secret';
+    final now = DateTime.utc(2026, 6, 21, 13);
+    final database = db.AppDatabase.forTesting();
+    final storage = StorageService(database: database);
+    await storage.init();
+    await storage.addConnection(
+      ConnectionConfig(
+        id: 'backup-server',
+        name: 'Backup server',
+        host: 'backup.example.com',
+        username: 'root',
+        password: password,
+        privateKey: privateKey,
+        authMethod: AuthMethod.both,
+      ),
+    );
+    await storage.saveAiConnectionSettings(
+      baseUrl: 'https://api.example.com',
+      model: 'demo-model',
+      apiKey: apiKey,
+    );
+    await storage.saveAiChat(
+      AiChatRecord(
+        id: 'backup-chat',
+        title: 'Backup chat',
+        model: 'model-a',
+        messages: [
+          AiChatMessageRecord(
+            role: 'assistant',
+            text: 'message $marker',
+            contextText: 'context $marker',
+            traces: [
+              AiMessageTrace(
+                id: 'backup-trace',
+                kind: 'tool',
+                title: 'Trace',
+                content: 'trace $marker',
+                createdAt: now,
+              ),
+            ],
+            todoSteps: const [
+              AiTodoStep(
+                id: 'backup-step',
+                name: 'Step',
+                command: 'echo BACKUP_DRIFT_MARKER_20260621',
+                description: 'desc',
+                stdout: 'stdout BACKUP_DRIFT_MARKER_20260621',
+              ),
+            ],
+            createdAt: now,
+          ),
+        ],
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    await storage.savePlaybook(
+      Playbook(
+        id: 'backup-playbook',
+        name: 'Backup playbook',
+        description: 'Backup content',
+        steps: [
+          PlaybookStep(
+            id: 'backup-playbook-step',
+            name: 'Run',
+            command: 'echo $marker',
+            description: 'desc $marker',
+          ),
+        ],
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    final backup = await storage.exportAppDataJson();
+    expect(backup, contains(marker));
+    expect(backup, isNot(contains(password)));
+    expect(backup, isNot(contains(privateKey)));
+    expect(backup, isNot(contains(apiKey)));
+    final decoded = jsonDecode(backup) as Map<String, dynamic>;
+    final connection = (decoded['connections'] as List<dynamic>).single
+        as Map<String, dynamic>;
+    final aiSettings = decoded['aiSettings'] as Map<String, dynamic>;
+    expect(connection['password'], '');
+    expect(connection['privateKey'], '');
+    expect(aiSettings['apiKey'], '');
+
+    storage.dispose();
+    await database.close();
+    SharedPreferences.setMockInitialValues({});
+    FlutterSecureStorage.setMockInitialValues({});
+    final importedDatabase = db.AppDatabase.forTesting();
+    addTearDown(importedDatabase.close);
+    final imported = StorageService(database: importedDatabase);
+    addTearDown(imported.dispose);
+    await imported.init();
+    await imported.importAppDataJson(backup);
+
+    final rawMessage = await importedDatabase
+        .customSelect(
+          'SELECT text, context_text, traces_json, todo_steps_json '
+          'FROM ai_chat_messages',
+        )
+        .getSingle();
+    _expectNoMarkers(rawMessage.read<String>('text'), const [marker]);
+    _expectNoMarkers(rawMessage.read<String>('context_text'), const [marker]);
+    _expectNoMarkers(rawMessage.read<String>('traces_json'), const [marker]);
+    _expectNoMarkers(
+        rawMessage.read<String>('todo_steps_json'), const [marker]);
+    final rawPlaybook = await importedDatabase
+        .customSelect('SELECT content_json FROM playbooks')
+        .getSingle();
+    _expectNoMarkers(rawPlaybook.read<String>('content_json'), const [marker]);
+
+    final loadedChat = (await imported.loadAiChats()).single;
+    final loadedPlaybook = (await imported.loadPlaybooks()).single;
+    expect(jsonEncode(loadedChat.toJson()), contains(marker));
+    expect(jsonEncode(loadedPlaybook.toJson()), contains(marker));
+    expect(await imported.getPassword('backup-server'), isNull);
+    expect((await imported.loadAiConnectionSettings()).hasApiKey, isFalse);
   });
 
   test('enforces AI chat retention in Drift and cascades messages', () async {
@@ -745,4 +1237,26 @@ void main() {
     expect((await imported.loadFavoritePaths('server-1')).single.name, 'nginx');
     expect(await imported.getPassword('server-1'), isNull);
   });
+}
+
+db.AppDatabase _failingDatabase() {
+  return db.AppDatabase(
+    executor: drift.LazyDatabase(() async {
+      throw StateError('forced database open failure');
+    }),
+  );
+}
+
+Future<void> _closeIgnoringErrors(db.AppDatabase database) async {
+  try {
+    await database.close();
+  } catch (_) {
+    // The failing database may never open far enough to close cleanly.
+  }
+}
+
+void _expectNoMarkers(String value, List<String> markers) {
+  for (final marker in markers) {
+    expect(value, isNot(contains(marker)));
+  }
 }
