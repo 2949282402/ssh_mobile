@@ -1,5 +1,7 @@
 part of '../storage_service.dart';
 
+const int _aiChatRetentionLimit = 80;
+
 extension AiChatOps on StorageService {
   Future<List<AiChatRecord>> _loadAiChats() async {
     if (!_initialized || _prefs == null) return [];
@@ -38,7 +40,7 @@ extension AiChatOps on StorageService {
     final chats = upsertAiChatRecordsByUpdatedAt(
       await loadAiChats(),
       chat,
-      limit: 80,
+      limit: _aiChatRetentionLimit,
     );
     await _saveAiChats(chats, alreadySorted: true);
     notifyStorageListeners();

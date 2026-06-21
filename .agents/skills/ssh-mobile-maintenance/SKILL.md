@@ -64,6 +64,10 @@ or maintenance lesson should be shared across Codex and Claude Code sessions.
 - Growth-oriented structured data belongs behind repository interfaces and the
   `StorageService` facade, with Drift implementations under `lib/data/`.
   Small settings stay in SharedPreferences; credentials stay in secure storage.
+  Drift metadata may be plaintext for query/sort needs, but sensitive AI
+  message content, context, attachments, traces, todoSteps, and Playbook content
+  must be field-encrypted before SQLite writes. Production database open
+  failures must not silently fall back to an in-memory database.
 - Keep SSH Host Key checks centralized in `SshHostKeyPolicy`. UI-initiated
   first use may prompt for TOFU confirmation, but AI tools and background SSH
   service code must never auto-trust unknown or changed host keys.

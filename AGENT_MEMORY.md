@@ -172,5 +172,10 @@ across sessions.
   the compatibility facade, keep small settings in SharedPreferences, keep
   credentials/API keys in secure storage, and leave legacy protected-pref data
   in place for rollback during the migration window.
+- 2026-06-21: Drift security hardening: production database open failures must
+  surface to `StorageService` and fall back to legacy protected-pref paths, not
+  `NativeDatabase.memory()`. AI chat message text/context/attachments/traces/
+  todoSteps and Playbook `content_json` are field-encrypted in Drift; plaintext
+  legacy rows remain readable for compatibility.
 
 

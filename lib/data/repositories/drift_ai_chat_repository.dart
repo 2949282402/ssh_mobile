@@ -5,21 +5,25 @@ extension DriftAiChatRepositoryOps on StorageService {
     final database = _database;
     if (!_driftAiChatsActive || database == null) return const [];
     final rows = await database.aiChatDao.loadChats();
-    final chats = rows.map(_aiChatFromDrift).toList(growable: false);
+    final chats = <AiChatRecord>[];
+    for (final row in rows) {
+      chats.add(await _aiChatFromDrift(row));
+    }
     return _aiChatsCache = List.unmodifiable(chats);
   }
 
   Future<void> _saveDriftAiChat(AiChatRecord chat) async {
     final database = _database;
     if (!_driftAiChatsActive || database == null) return;
+    final messages = await _aiChatMessagesToCompanions(chat);
     await database.aiChatDao.saveChat(
       _aiChatToCompanion(chat),
-      _aiChatMessagesToCompanions(chat),
+      messages,
     );
     final chats = upsertAiChatRecordsByUpdatedAt(
       _aiChatsCache ?? const <AiChatRecord>[],
       chat,
-      limit: 80,
+      limit: _aiChatRetentionLimit,
     );
     _aiChatsCache = List.unmodifiable(chats);
   }
@@ -41,13 +45,15 @@ extension DriftAiChatRepositoryOps on StorageService {
     if (!_driftReady || database == null) return;
     final ordered = [...chats]
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-    final companions = ordered.map(_aiChatToCompanion).toList(growable: false);
+    final retained =
+        ordered.take(_aiChatRetentionLimit).toList(growable: false);
+    final companions = retained.map(_aiChatToCompanion).toList(growable: false);
     final messagesByChatId = <String, List<db.AiChatMessagesCompanion>>{};
-    for (final chat in ordered) {
-      messagesByChatId[chat.id] = _aiChatMessagesToCompanions(chat);
+    for (final chat in retained) {
+      messagesByChatId[chat.id] = await _aiChatMessagesToCompanions(chat);
     }
     await database.aiChatDao.replaceAllChats(companions, messagesByChatId);
-    _aiChatsCache = List.unmodifiable(ordered);
+    _aiChatsCache = List.unmodifiable(retained);
   }
 
   db.AiChatsCompanion _aiChatToCompanion(AiChatRecord chat) {
@@ -67,26 +73,42 @@ extension DriftAiChatRepositoryOps on StorageService {
     );
   }
 
-  List<db.AiChatMessagesCompanion> _aiChatMessagesToCompanions(
+  Future<List<db.AiChatMessagesCompanion>> _aiChatMessagesToCompanions(
     AiChatRecord chat,
-  ) {
-    return [
-      for (var index = 0; index < chat.messages.length; index++)
-        _aiChatMessageToCompanion(chat.id, chat.messages[index], index),
-    ];
+  ) async {
+    final result = <db.AiChatMessagesCompanion>[];
+    for (var index = 0; index < chat.messages.length; index++) {
+      result.add(await _aiChatMessageToCompanion(
+        chat.id,
+        chat.messages[index],
+        index,
+      ));
+    }
+    return result;
   }
 
-  db.AiChatMessagesCompanion _aiChatMessageToCompanion(
+  Future<db.AiChatMessagesCompanion> _aiChatMessageToCompanion(
     String chatId,
     AiChatMessageRecord message,
     int index,
-  ) {
+  ) async {
+    final attachmentsJson = _encodeJsonList(
+      message.attachments.map((item) => item.toJson()),
+    );
+    final tracesJson = _encodeJsonList(
+      message.traces.map((item) => item.toJson()),
+    );
+    final todoStepsJson = _encodeJsonList(
+      message.todoSteps.map((item) => item.toJson()),
+    );
     return db.AiChatMessagesCompanion(
       id: drift.Value(_messageId(chatId, message, index)),
       chatId: drift.Value(chatId),
       role: drift.Value(message.role),
-      textContent: drift.Value(message.text),
-      contextText: drift.Value(message.contextText),
+      textContent: drift.Value(await _encryptDriftText(message.text)),
+      contextText: drift.Value(message.contextText == null
+          ? null
+          : await _encryptDriftText(message.contextText!)),
       createdAt: drift.Value(_toDbMillis(message.createdAt)),
       promptTokens: drift.Value(message.promptTokens),
       completionTokens: drift.Value(message.completionTokens),
@@ -96,26 +118,24 @@ extension DriftAiChatRepositoryOps on StorageService {
       promptCacheHitTokens: drift.Value(message.promptCacheHitTokens),
       promptCacheMissTokens: drift.Value(message.promptCacheMissTokens),
       reasoningTokens: drift.Value(message.reasoningTokens),
-      attachmentsJson: drift.Value(
-        _encodeJsonList(message.attachments.map((item) => item.toJson())),
-      ),
-      tracesJson: drift.Value(
-        _encodeJsonList(message.traces.map((item) => item.toJson())),
-      ),
-      todoStepsJson: drift.Value(
-        _encodeJsonList(message.todoSteps.map((item) => item.toJson())),
-      ),
+      attachmentsJson: drift.Value(await _encryptDriftText(attachmentsJson)),
+      tracesJson: drift.Value(await _encryptDriftText(tracesJson)),
+      todoStepsJson: drift.Value(await _encryptDriftText(todoStepsJson)),
     );
   }
 
-  AiChatRecord _aiChatFromDrift(db.AiChatWithMessages row) {
+  Future<AiChatRecord> _aiChatFromDrift(db.AiChatWithMessages row) async {
     final approvedAssistant = row.chat.approvedPlanAssistantCreatedAt;
     final approvedAt = row.chat.approvedPlanApprovedAt;
+    final messages = <AiChatMessageRecord>[];
+    for (final messageRow in row.messages) {
+      messages.add(await _aiChatMessageFromDrift(messageRow));
+    }
     return AiChatRecord(
       id: row.chat.id,
       title: row.chat.title,
       model: row.chat.model,
-      messages: row.messages.map(_aiChatMessageFromDrift).toList(),
+      messages: messages,
       createdAt: _fromDbMillis(row.chat.createdAt),
       updatedAt: _fromDbMillis(row.chat.updatedAt),
       planMode: row.chat.planMode,
@@ -128,14 +148,22 @@ extension DriftAiChatRepositoryOps on StorageService {
     );
   }
 
-  AiChatMessageRecord _aiChatMessageFromDrift(db.AiChatMessage row) {
+  Future<AiChatMessageRecord> _aiChatMessageFromDrift(
+    db.AiChatMessage row,
+  ) async {
+    final text = await _decryptDriftText(row.textContent);
+    final contextText = row.contextText == null
+        ? null
+        : await _decryptDriftText(row.contextText!);
+    final attachmentsJson = await _decryptDriftText(row.attachmentsJson);
+    final tracesJson = await _decryptDriftText(row.tracesJson);
+    final todoStepsJson = await _decryptDriftText(row.todoStepsJson);
     return AiChatMessageRecord(
       role: row.role,
-      text: row.textContent,
-      contextText: row.contextText,
-      attachments:
-          _decodeJsonList(row.attachmentsJson, AiChatAttachment.fromJson),
-      traces: _decodeJsonList(row.tracesJson, AiMessageTrace.fromJson),
+      text: text,
+      contextText: contextText,
+      attachments: _decodeJsonList(attachmentsJson, AiChatAttachment.fromJson),
+      traces: _decodeJsonList(tracesJson, AiMessageTrace.fromJson),
       createdAt: _fromDbMillis(row.createdAt),
       promptTokens: row.promptTokens,
       completionTokens: row.completionTokens,
@@ -145,7 +173,7 @@ extension DriftAiChatRepositoryOps on StorageService {
       promptCacheHitTokens: row.promptCacheHitTokens,
       promptCacheMissTokens: row.promptCacheMissTokens,
       reasoningTokens: row.reasoningTokens,
-      todoSteps: _decodeJsonList(row.todoStepsJson, AiTodoStep.fromJson),
+      todoSteps: _decodeJsonList(todoStepsJson, AiTodoStep.fromJson),
     );
   }
 

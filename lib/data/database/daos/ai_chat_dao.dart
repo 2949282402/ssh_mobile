@@ -1,5 +1,7 @@
 part of '../app_database.dart';
 
+const int _aiChatRetentionLimit = 80;
+
 class AiChatWithMessages {
   final AiChat chat;
   final List<AiChatMessage> messages;
@@ -51,6 +53,7 @@ class AiChatDao extends DatabaseAccessor<AppDatabase> with _$AiChatDaoMixin {
           batch.insertAll(aiChatMessages, messages);
         });
       }
+      await _deleteChatsBeyondRetention(_aiChatRetentionLimit);
     });
   }
 
@@ -72,10 +75,29 @@ class AiChatDao extends DatabaseAccessor<AppDatabase> with _$AiChatDaoMixin {
           }
         });
       }
+      await _deleteChatsBeyondRetention(_aiChatRetentionLimit);
     });
   }
 
   Future<void> deleteChat(String id) async {
     await (delete(aiChats)..where((row) => row.id.equals(id))).go();
+  }
+
+  Future<void> _deleteChatsBeyondRetention(int limit) async {
+    final orderedIds = await (selectOnly(aiChats)
+          ..addColumns([aiChats.id])
+          ..orderBy([
+            OrderingTerm(
+              expression: aiChats.updatedAt,
+              mode: OrderingMode.desc,
+            ),
+          ]))
+        .map((row) => row.read(aiChats.id))
+        .get()
+        .then((ids) => ids.whereType<String>().toList(growable: false));
+    final staleIds = orderedIds.skip(limit).toList(growable: false);
+    if (staleIds.isNotEmpty) {
+      await (delete(aiChats)..where((row) => row.id.isIn(staleIds))).go();
+    }
   }
 }

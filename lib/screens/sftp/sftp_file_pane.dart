@@ -579,17 +579,35 @@ class _SftpPathHistorySheetState extends State<_SftpPathHistorySheet> {
   }
 
   Future<void> _toggleFavorite(SftpFavoritePathRecord? favorite) async {
-    if (favorite == null) {
-      await widget.sftp.addFavoritePath(widget.currentPath, widget.currentPath);
-    } else {
-      await widget.sftp.removeFavoritePath(favorite.id);
+    try {
+      if (favorite == null) {
+        await widget.sftp.addFavoritePath(
+          widget.currentPath,
+          widget.currentPath,
+        );
+      } else {
+        await widget.sftp.removeFavoritePath(favorite.id);
+      }
+      if (mounted) _reload();
+    } catch (e) {
+      _showHistoryError(e);
     }
-    if (mounted) _reload();
   }
 
   Future<void> _removeFavorite(String id) async {
-    await widget.sftp.removeFavoritePath(id);
-    if (mounted) _reload();
+    try {
+      await widget.sftp.removeFavoritePath(id);
+      if (mounted) _reload();
+    } catch (e) {
+      _showHistoryError(e);
+    }
+  }
+
+  void _showHistoryError(Object error) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(error.toString())),
+    );
   }
 
   Future<void> _openPath(String path) async {

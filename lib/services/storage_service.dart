@@ -35,13 +35,18 @@ part '../data/repositories/drift_sftp_history_repository.dart';
 
 const Uuid _traceUuid = Uuid();
 
-/// 中央持久化服务。管理应用的所有数据持久化，采用三层存储策略：
+/// 中央持久化服务。管理应用的所有数据持久化，采用分层存储策略：
 ///
-/// | 数据类型            | 存储位置                              | 加密方式        |
-/// |---------------------|---------------------------------------|-----------------|
-/// | SSH 密码、私钥、API | FlutterSecureStorage (平台 Keychain)  | 平台原生加密     |
-/// | 连接配置、聊天记录   | SharedPreferences + AES-256-GCM       | DataProtection   |
-/// | 主题、语言、字体     | SharedPreferences 明文                 | 无（不含敏感信息）|
+/// | 数据类型 | 存储位置 | 加密方式 |
+/// |---|---|---|
+/// | SSH 密码、私钥、API Key | FlutterSecureStorage | 平台原生加密 |
+/// | 主题、语言、字体、小设置 | SharedPreferences | 明文 |
+/// | 未迁移的兼容数据 | SharedPreferences + DataProtection | AES-256-GCM |
+/// | 增长型结构化数据 | Drift SQLite | metadata 明文，敏感正文字段级加密 |
+///
+/// 不要把凭据写入 Drift；AI message、tool trace、todoSteps 和 Playbook
+/// content 等敏感正文不得以明文 Drift column 保存。生产环境数据库打开失败时
+/// 不得 fallback 到内存数据库，调用方应退回旧 protected-pref 兼容路径。
 ///
 /// 高频写操作（AI 聊天、tmux 会话、终端历史）使用 700ms 防抖批量写入，
 /// App 进入后台时调用 flushPendingWrites() 确保数据落盘。

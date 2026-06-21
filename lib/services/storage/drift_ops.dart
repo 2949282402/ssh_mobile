@@ -167,4 +167,15 @@ extension DriftOps on StorageService {
         .map(decode)
         .toList(growable: false);
   }
+
+  Future<String> _encryptDriftText(String value) async {
+    if (value.isEmpty) return value;
+    return _dataProtection.encryptString(value);
+  }
+
+  Future<String> _decryptDriftText(String value) async {
+    if (value.isEmpty) return value;
+    if (!_dataProtection.isEncrypted(value)) return value;
+    return _dataProtection.decryptString(value);
+  }
 }

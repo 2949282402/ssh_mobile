@@ -11,16 +11,12 @@ QueryExecutor openDatabaseConnection() {
   }
 
   return LazyDatabase(() async {
-    try {
-      final directory = await getApplicationSupportDirectory();
-      if (!await directory.exists()) {
-        await directory.create(recursive: true);
-      }
-      final file = File(p.join(directory.path, 'ssh_mobile.sqlite'));
-      return NativeDatabase.createInBackground(file);
-    } catch (_) {
-      return NativeDatabase.memory();
+    final directory = await getApplicationSupportDirectory();
+    if (!await directory.exists()) {
+      await directory.create(recursive: true);
     }
+    final file = File(p.join(directory.path, 'ssh_mobile.sqlite'));
+    return NativeDatabase.createInBackground(file);
   });
 }
 

@@ -5,14 +5,19 @@ extension DriftPlaybookRepositoryOps on StorageService {
     final database = _database;
     if (!_driftPlaybooksActive || database == null) return const [];
     final rows = await database.playbookDao.loadPlaybooks();
-    final playbooks = rows.map(_playbookFromDrift).toList(growable: false);
+    final playbooks = <Playbook>[];
+    for (final row in rows) {
+      playbooks.add(await _playbookFromDrift(row));
+    }
     return _playbooksCache = List.unmodifiable(playbooks);
   }
 
   Future<void> _saveDriftPlaybook(Playbook playbook) async {
     final database = _database;
     if (!_driftPlaybooksActive || database == null) return;
-    await database.playbookDao.savePlaybook(_playbookToCompanion(playbook));
+    await database.playbookDao.savePlaybook(
+      await _playbookToCompanion(playbook),
+    );
     final playbooks = upsertPlaybooksByUpdatedAt(
       _playbooksCache ?? const <Playbook>[],
       playbook,
@@ -37,25 +42,31 @@ extension DriftPlaybookRepositoryOps on StorageService {
     if (!_driftReady || database == null) return;
     final ordered = [...playbooks]
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-    await database.playbookDao.replaceAllPlaybooks(
-      ordered.map(_playbookToCompanion).toList(growable: false),
-    );
+    final companions = <db.PlaybooksCompanion>[];
+    for (final playbook in ordered) {
+      companions.add(await _playbookToCompanion(playbook));
+    }
+    await database.playbookDao.replaceAllPlaybooks(companions);
     _playbooksCache = List.unmodifiable(ordered);
   }
 
-  db.PlaybooksCompanion _playbookToCompanion(Playbook playbook) {
+  Future<db.PlaybooksCompanion> _playbookToCompanion(Playbook playbook) async {
     return db.PlaybooksCompanion(
       id: drift.Value(playbook.id),
       name: drift.Value(playbook.name),
       description: drift.Value(playbook.description),
-      contentJson: drift.Value(jsonEncode(playbook.toJson())),
+      contentJson: drift.Value(
+        await _encryptDriftText(jsonEncode(playbook.toJson())),
+      ),
       createdAt: drift.Value(_toDbMillis(playbook.createdAt)),
       updatedAt: drift.Value(_toDbMillis(playbook.updatedAt)),
     );
   }
 
-  Playbook _playbookFromDrift(db.Playbook row) {
+  Future<Playbook> _playbookFromDrift(db.Playbook row) async {
+    final contentJson = await _decryptDriftText(row.contentJson);
     return Playbook.fromJson(
-        jsonDecode(row.contentJson) as Map<String, dynamic>);
+      jsonDecode(contentJson) as Map<String, dynamic>,
+    );
   }
 }
