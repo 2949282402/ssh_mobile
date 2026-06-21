@@ -1,26 +1,132 @@
-import re
+"""Apply low-risk list performance optimizations.
 
-with open('lib/screens/playbook_screen.dart', 'r', encoding='utf-8') as f:
-    content = f.read()
+This script patches the current Flutter sources without changing app behavior:
 
-# Replace "child: ListView(" with "child: SingleChildScrollView(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch,"
-# Note: we only want to replace the one inside _buildPlaybookEditor.
-pattern = r"(Widget _buildPlaybookEditor.*?return Form\([^)]*child:\s*)ListView\(\s*padding:\s*const EdgeInsets\.all\(16\),\s*children:\s*\["
+1. Wraps each server card in a RepaintBoundary so frequent status updates are
+   less likely to repaint neighboring cards.
+2. Caps the embedded terminal-window preview inside a server card to a small
+   number of visible rows, with a button to open the full terminal-window page.
 
-replacement = r"\g<1>SingleChildScrollView(\n        padding: const EdgeInsets.all(16),\n        child: Column(\n          crossAxisAlignment: CrossAxisAlignment.stretch,\n          children: ["
+Run from the repository root:
 
-new_content = re.sub(pattern, replacement, content, flags=re.DOTALL)
+    python fix_listview.py
+"""
 
-# Now we need to add the closing parenthesis for SingleChildScrollView.
-# The end of that Form looks like:
-#           const SizedBox(height: 48),
-#         ],
-#       ),
-#     );
-#   }
-end_pattern = r"(\s*const SizedBox\(height: 48\),\n\s*],\n\s*\)),(\n\s*\);\n\s*})"
-end_replacement = r"\g<1>,\n      )\g<2>"
-new_content = re.sub(end_pattern, end_replacement, new_content, count=1)
+from pathlib import Path
 
-with open('lib/screens/playbook_screen.dart', 'w', encoding='utf-8') as f:
-    f.write(new_content)
+
+def replace_once(path: Path, old: str, new: str, description: str) -> None:
+    content = path.read_text(encoding="utf-8")
+    if new in content:
+        print(f"skip: {description} already applied in {path}")
+        return
+    if old not in content:
+        raise RuntimeError(f"Could not find target block for {description} in {path}")
+    path.write_text(content.replace(old, new, 1), encoding="utf-8")
+    print(f"patched: {description} in {path}")
+
+
+def patch_server_cards() -> None:
+    path = Path("lib/screens/home/server_list_pane.dart")
+    old = """  }) {
+    return Selector<SshService, SshConnectionOverview>(
+      key: ValueKey(conn.id),
+      selector: (_, ssh) => ssh.serverOverviewSnapshot.forConnection(conn.id),
+      builder: (context, sessionSummary, _) => _buildConnectionCardBody(
+        context,
+        conn,
+        sessionSummary,
+        strings,
+        connIndex: connIndex,
+      ),
+    );
+  }
+"""
+    new = """  }) {
+    return RepaintBoundary(
+      key: ValueKey('server-card-${conn.id}'),
+      child: Selector<SshService, SshConnectionOverview>(
+        selector: (_, ssh) => ssh.serverOverviewSnapshot.forConnection(conn.id),
+        builder: (context, sessionSummary, _) => _buildConnectionCardBody(
+          context,
+          conn,
+          sessionSummary,
+          strings,
+          connIndex: connIndex,
+        ),
+      ),
+    );
+  }
+"""
+    replace_once(path, old, new, "server-card repaint boundary")
+
+
+def patch_embedded_terminal_windows() -> None:
+    path = Path("lib/screens/terminal_windows_screen.dart")
+    old = """    if (widget.embedded) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Column(
+          children: [
+            for (var index = 0; index < sessions.length; index++) ...[
+              if (index > 0) const SizedBox(height: 8),
+              _buildWindowItem(context, viewModel, sessions[index], strings),
+            ],
+          ],
+        ),
+      );
+    }
+"""
+    new = """    if (widget.embedded) {
+      const previewLimit = 4;
+      final visibleSessions = sessions.length > previewLimit
+          ? sessions.take(previewLimit).toList(growable: false)
+          : sessions;
+      final hiddenCount = sessions.length - visibleSessions.length;
+
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Column(
+          children: [
+            for (var index = 0; index < visibleSessions.length; index++) ...[
+              if (index > 0) const SizedBox(height: 8),
+              _buildWindowItem(
+                context,
+                viewModel,
+                visibleSessions[index],
+                strings,
+              ),
+            ],
+            if (hiddenCount > 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.open_in_full_rounded, size: 18),
+                  label: Text(
+                    strings.language == AppLanguage.en
+                        ? 'View all ${sessions.length} windows'
+                        : '查看全部 ${sessions.length} 个窗口',
+                  ),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const TerminalWindowsScreen(),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+"""
+    replace_once(path, old, new, "embedded terminal-window preview cap")
+
+
+def main() -> None:
+    patch_server_cards()
+    patch_embedded_terminal_windows()
+
+
+if __name__ == "__main__":
+    main()
