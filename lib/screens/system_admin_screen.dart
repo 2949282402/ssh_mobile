@@ -119,7 +119,6 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
 
         return Scaffold(
           appBar: AppBar(
-            title: Text(strings.systemAdmin),
             actions: [
               ValueListenableBuilder<int>(
                 valueListenable: _activeTabIndex,
