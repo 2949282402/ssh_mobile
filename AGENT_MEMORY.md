@@ -187,5 +187,6 @@ across sessions.
   `agent_trace_events`, with `StorageService` as the facade. Trace content is
   redacted, size-capped, encrypted in `content_json`, tied to assistant
   messages via `agentRunId`, and intentionally excluded from backup export.
+- 2026-06-22: Widget testing pages like LlmChatScreen with locally-scoped providers and target platform overrides must manage debug variable changes inside the testWidgets body using a try-finally block, as the binding's invariant tester runs before the global tearDown hook. Subtree provider instances can be retrieved via context lookups on public descendant widgets (e.g. Scaffold).
 
 

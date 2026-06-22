@@ -128,226 +128,226 @@ extension LlmChatServiceStreamHandler on LlmChatService {
 
     try {
       if (shouldCompressFromUsageThreshold || forceContextCompression) {
-      onTrace?.call(
-        LlmTraceEvent(
-          kind: 'context_compression_started',
-          title: 'Context compression started',
-          content: _prettyJson({
-            'estimatedBeforeCompression': estimatedBeforeCompression,
-            'contextWindowTokens': settings.contextWindowTokens,
-            'forceContextCompression': forceContextCompression,
-            'messageCountBefore': messages.length,
-          }),
-        ),
-      );
-      workingMessages = await _compressWorkingMessages(
-        baseUrl: settings.baseUrl,
-        apiKey: apiKey,
-        model: model,
-        messages: messages,
-        contextWindowTokens: settings.contextWindowTokens,
-        deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
-        deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
-        openAiReasoningEffort: settings.openAiReasoningEffort,
-        cancellationToken: cancellationToken,
-      );
-      compressed = true;
-      onTrace?.call(
-        LlmTraceEvent(
-          kind: 'context_compression_completed',
-          title: 'Context compression completed',
-          content: _prettyJson({
-            'estimatedBeforeCompression': estimatedBeforeCompression,
-            'contextWindowTokens': settings.contextWindowTokens,
-            'forceContextCompression': forceContextCompression,
-            'compressed': compressed,
-            'messageCountBefore': messages.length,
-            'messageCountAfter': workingMessages.length,
-          }),
-        ),
-      );
-      if (forceContextCompression && !shouldCompressFromUsageThreshold) {
-        AppLogService.instance.info(
-          'LLM context compression forced',
-          details:
-              'baseTokens=$estimatedBeforeCompression window=${settings.contextWindowTokens}',
-        );
-      }
-    }
-    final availableTools = await toolService.tools();
-    final normalizedAllowedTools = _normalizeToolNames(allowedTools);
-
-    final toolSelection = toolExposureRouter.selectTools(
-      availableTools,
-      context: ToolExposureContext(
-        userRequest: userRequest,
-        planMode: planMode,
-        hasWebViewSession: hasWebViewSession,
-        hasApprovedPlan: hasApprovedPlan,
-        selectedConnectionIds: selectedConnectionIds,
-        allowedTools: normalizedAllowedTools,
-      ),
-    );
-    final visibleTools = toolSelection.tools;
-
-    final hiddenTools =
-        toolSelection.decisions.where((d) => !d.selected).toList();
-    final hiddenReasons = hiddenTools.expand((d) => d.blockedBy).toList();
-    final topHiddenReasons = <String, int>{};
-    for (final reason in hiddenReasons) {
-      topHiddenReasons[reason] = (topHiddenReasons[reason] ?? 0) + 1;
-    }
-
-    onTrace?.call(
-      LlmTraceEvent(
-        kind: 'tool_exposure',
-        title: 'Tool exposure selection',
-        content: _prettyJson({
-          'requestedCapabilities':
-              toolSelection.requestedCapabilities.map((c) => c.name).toList(),
-          'selectedTools': visibleTools.map((t) => t.name).toList(),
-          'hiddenToolsCount': hiddenTools.length,
-          'topHiddenReasons': topHiddenReasons,
-          'planMode': planMode,
-          'hasApprovedPlan': hasApprovedPlan,
-          'hasWebViewSession': hasWebViewSession,
-          'selectedConnectionIdsCount': selectedConnectionIds.length,
-        }),
-      ),
-    );
-
-    selectedToolSet =
-        visibleTools.map((tool) => tool.name).toList(growable: false);
-    final visibleToolsByName = {
-      for (final tool in visibleTools) tool.name: tool,
-    };
-    var currentToolDefinitions =
-        visibleTools.map((tool) => tool.definition).toList(growable: false);
-    final readOnlyToolCache = <String, CachedToolResult>{};
-    toolBudget = LlmToolBudgetController(
-      baseBudget: settings.toolCallBudget,
-    );
-    toolLedger = <LlmToolLedgerEntry>[];
-    toolLoopController = ToolLoopController(
-      chatService: this,
-      toolBudget: toolBudget,
-      readOnlyToolCache: readOnlyToolCache,
-      toolLedger: toolLedger,
-    );
-    final originalUserGoal = _latestUserGoal(messages);
-    if (normalizedAllowedTools == null) {
-      AppLogService.instance.info(
-        'LLM tool filter skipped',
-        details:
-            'availableTools=${availableTools.length} filteredTools=${currentToolDefinitions.length} planMode=$planMode',
-      );
-    } else {
-      AppLogService.instance.info(
-        'LLM tool definitions filtered',
-        details:
-            'requestedTools=${normalizedAllowedTools.length} availableTools=${availableTools.length} filteredTools=${currentToolDefinitions.length} planMode=$planMode',
-      );
-    }
-
-    final isMultiAgent = settings.multiAgentEnabled || planMode;
-    final activeMaxAgents = planMode ? 5 : settings.multiAgentMaxAgents;
-
-    multiAgentResult = await multiAgentCoordinator.run(
-      messages: workingMessages,
-      enabled: isMultiAgent,
-      maxAgents: activeMaxAgents,
-      checkCancelled: cancellationToken?.throwIfCancelled,
-      language: language,
-      plannerPrompt: plannerPrompt,
-      operatorPrompt: operatorPrompt,
-      explorePrompt: explorePrompt,
-      reviewerPrompt: reviewerPrompt,
-      summarizerPrompt: summarizerPrompt,
-      coordinatorPrompt: coordinatorPrompt,
-      planMode: planMode,
-      classify: (classificationMessages) async {
-        final response = await _chatCompletion(
-          baseUrl: settings.baseUrl,
-          apiKey: apiKey,
-          model: helperModel,
-          messages: classificationMessages,
-          deepSeekThinkingEnabled: false,
-          deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
-          openAiReasoningEffort: 'low',
-          cancellationToken: cancellationToken,
-          operationLabel: 'LLM multi-agent classification',
-        );
-        return _contentFromChatResponse(response);
-      },
-      complete: (role, roleMessages, {required thinkingSettings}) async {
-        final response = await _chatCompletion(
-          baseUrl: settings.baseUrl,
-          apiKey: apiKey,
-          model: helperModel,
-          messages: roleMessages,
-          deepSeekThinkingEnabled: thinkingSettings.thinkingEnabled,
-          deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
-          openAiReasoningEffort: thinkingSettings.reasoningEffort,
-          cancellationToken: cancellationToken,
-          operationLabel: 'LLM multi-agent helper (${role.name})',
-        );
-        return _contentFromChatResponse(response);
-      },
-    );
-    if (multiAgentResult != null) {
-      workingMessages.add({
-        'role': 'assistant',
-        'content': multiAgentResult.memoryContent,
-      });
-      onTrace?.call(
-        LlmTraceEvent(
-          kind: 'multi_agent',
-          title: 'Multi-agent collaboration',
-          content: multiAgentResult.traceContent,
-        ),
-      );
-
-      if (planMode) {
-        final outcome = await _validateAndRepairPlanOutput(
-          initialText: multiAgentResult.memoryContent,
-          language: language,
-          settings: settings,
-          apiKey: apiKey,
-          model: model,
-          workingMessages: workingMessages,
-          cancellationToken: cancellationToken,
-          onTrace: onTrace,
-          chatId: _resolveChatId(),
-        );
-
-        yield outcome.finalText;
-        workingMessages.last['content'] = outcome.finalText;
-
-        final elapsedMs =
-            DateTime.now().difference(runStartedAt).inMilliseconds;
-        final promptTokens =
-            LlmChatService.estimateMessagesTokens(workingMessages);
-        final completionTokens =
-            LlmChatService.estimateTextTokens(outcome.finalText);
-        onStats?.call(
-          LlmRunStats(
-            promptTokens: promptTokens,
-            completionTokens: completionTokens,
-            totalTokens: promptTokens + completionTokens,
-            elapsedMs: elapsedMs,
-            usageFromProvider: false,
-            contextTokensBeforeCompression: estimatedBeforeCompression,
-            contextWindowTokens: settings.contextWindowTokens,
-            compressed: compressed,
-            helperFanout: multiAgentResult.agentCount,
-            selectedToolSet: selectedToolSet,
-            memorySources: memorySources,
+        onTrace?.call(
+          LlmTraceEvent(
+            kind: 'context_compression_started',
+            title: 'Context compression started',
+            content: _prettyJson({
+              'estimatedBeforeCompression': estimatedBeforeCompression,
+              'contextWindowTokens': settings.contextWindowTokens,
+              'forceContextCompression': forceContextCompression,
+              'messageCountBefore': messages.length,
+            }),
           ),
         );
-        visibleOutput.write(outcome.finalText);
-        return;
+        workingMessages = await _compressWorkingMessages(
+          baseUrl: settings.baseUrl,
+          apiKey: apiKey,
+          model: model,
+          messages: messages,
+          contextWindowTokens: settings.contextWindowTokens,
+          deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
+          deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
+          openAiReasoningEffort: settings.openAiReasoningEffort,
+          cancellationToken: cancellationToken,
+        );
+        compressed = true;
+        onTrace?.call(
+          LlmTraceEvent(
+            kind: 'context_compression_completed',
+            title: 'Context compression completed',
+            content: _prettyJson({
+              'estimatedBeforeCompression': estimatedBeforeCompression,
+              'contextWindowTokens': settings.contextWindowTokens,
+              'forceContextCompression': forceContextCompression,
+              'compressed': compressed,
+              'messageCountBefore': messages.length,
+              'messageCountAfter': workingMessages.length,
+            }),
+          ),
+        );
+        if (forceContextCompression && !shouldCompressFromUsageThreshold) {
+          AppLogService.instance.info(
+            'LLM context compression forced',
+            details:
+                'baseTokens=$estimatedBeforeCompression window=${settings.contextWindowTokens}',
+          );
+        }
       }
-    }
+      final availableTools = await toolService.tools();
+      final normalizedAllowedTools = _normalizeToolNames(allowedTools);
+
+      final toolSelection = toolExposureRouter.selectTools(
+        availableTools,
+        context: ToolExposureContext(
+          userRequest: userRequest,
+          planMode: planMode,
+          hasWebViewSession: hasWebViewSession,
+          hasApprovedPlan: hasApprovedPlan,
+          selectedConnectionIds: selectedConnectionIds,
+          allowedTools: normalizedAllowedTools,
+        ),
+      );
+      final visibleTools = toolSelection.tools;
+
+      final hiddenTools =
+          toolSelection.decisions.where((d) => !d.selected).toList();
+      final hiddenReasons = hiddenTools.expand((d) => d.blockedBy).toList();
+      final topHiddenReasons = <String, int>{};
+      for (final reason in hiddenReasons) {
+        topHiddenReasons[reason] = (topHiddenReasons[reason] ?? 0) + 1;
+      }
+
+      onTrace?.call(
+        LlmTraceEvent(
+          kind: 'tool_exposure',
+          title: 'Tool exposure selection',
+          content: _prettyJson({
+            'requestedCapabilities':
+                toolSelection.requestedCapabilities.map((c) => c.name).toList(),
+            'selectedTools': visibleTools.map((t) => t.name).toList(),
+            'hiddenToolsCount': hiddenTools.length,
+            'topHiddenReasons': topHiddenReasons,
+            'planMode': planMode,
+            'hasApprovedPlan': hasApprovedPlan,
+            'hasWebViewSession': hasWebViewSession,
+            'selectedConnectionIdsCount': selectedConnectionIds.length,
+          }),
+        ),
+      );
+
+      selectedToolSet =
+          visibleTools.map((tool) => tool.name).toList(growable: false);
+      final visibleToolsByName = {
+        for (final tool in visibleTools) tool.name: tool,
+      };
+      var currentToolDefinitions =
+          visibleTools.map((tool) => tool.definition).toList(growable: false);
+      final readOnlyToolCache = <String, CachedToolResult>{};
+      toolBudget = LlmToolBudgetController(
+        baseBudget: settings.toolCallBudget,
+      );
+      toolLedger = <LlmToolLedgerEntry>[];
+      toolLoopController = ToolLoopController(
+        chatService: this,
+        toolBudget: toolBudget,
+        readOnlyToolCache: readOnlyToolCache,
+        toolLedger: toolLedger,
+      );
+      final originalUserGoal = _latestUserGoal(messages);
+      if (normalizedAllowedTools == null) {
+        AppLogService.instance.info(
+          'LLM tool filter skipped',
+          details:
+              'availableTools=${availableTools.length} filteredTools=${currentToolDefinitions.length} planMode=$planMode',
+        );
+      } else {
+        AppLogService.instance.info(
+          'LLM tool definitions filtered',
+          details:
+              'requestedTools=${normalizedAllowedTools.length} availableTools=${availableTools.length} filteredTools=${currentToolDefinitions.length} planMode=$planMode',
+        );
+      }
+
+      final isMultiAgent = settings.multiAgentEnabled || planMode;
+      final activeMaxAgents = planMode ? 5 : settings.multiAgentMaxAgents;
+
+      multiAgentResult = await multiAgentCoordinator.run(
+        messages: workingMessages,
+        enabled: isMultiAgent,
+        maxAgents: activeMaxAgents,
+        checkCancelled: cancellationToken?.throwIfCancelled,
+        language: language,
+        plannerPrompt: plannerPrompt,
+        operatorPrompt: operatorPrompt,
+        explorePrompt: explorePrompt,
+        reviewerPrompt: reviewerPrompt,
+        summarizerPrompt: summarizerPrompt,
+        coordinatorPrompt: coordinatorPrompt,
+        planMode: planMode,
+        classify: (classificationMessages) async {
+          final response = await _chatCompletion(
+            baseUrl: settings.baseUrl,
+            apiKey: apiKey,
+            model: helperModel,
+            messages: classificationMessages,
+            deepSeekThinkingEnabled: false,
+            deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
+            openAiReasoningEffort: 'low',
+            cancellationToken: cancellationToken,
+            operationLabel: 'LLM multi-agent classification',
+          );
+          return _contentFromChatResponse(response);
+        },
+        complete: (role, roleMessages, {required thinkingSettings}) async {
+          final response = await _chatCompletion(
+            baseUrl: settings.baseUrl,
+            apiKey: apiKey,
+            model: helperModel,
+            messages: roleMessages,
+            deepSeekThinkingEnabled: thinkingSettings.thinkingEnabled,
+            deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
+            openAiReasoningEffort: thinkingSettings.reasoningEffort,
+            cancellationToken: cancellationToken,
+            operationLabel: 'LLM multi-agent helper (${role.name})',
+          );
+          return _contentFromChatResponse(response);
+        },
+      );
+      if (multiAgentResult != null) {
+        workingMessages.add({
+          'role': 'assistant',
+          'content': multiAgentResult.memoryContent,
+        });
+        onTrace?.call(
+          LlmTraceEvent(
+            kind: 'multi_agent',
+            title: 'Multi-agent collaboration',
+            content: multiAgentResult.traceContent,
+          ),
+        );
+
+        if (planMode) {
+          final outcome = await _validateAndRepairPlanOutput(
+            initialText: multiAgentResult.memoryContent,
+            language: language,
+            settings: settings,
+            apiKey: apiKey,
+            model: model,
+            workingMessages: workingMessages,
+            cancellationToken: cancellationToken,
+            onTrace: onTrace,
+            chatId: _resolveChatId(),
+          );
+
+          yield outcome.finalText;
+          workingMessages.last['content'] = outcome.finalText;
+
+          final elapsedMs =
+              DateTime.now().difference(runStartedAt).inMilliseconds;
+          final promptTokens =
+              LlmChatService.estimateMessagesTokens(workingMessages);
+          final completionTokens =
+              LlmChatService.estimateTextTokens(outcome.finalText);
+          onStats?.call(
+            LlmRunStats(
+              promptTokens: promptTokens,
+              completionTokens: completionTokens,
+              totalTokens: promptTokens + completionTokens,
+              elapsedMs: elapsedMs,
+              usageFromProvider: false,
+              contextTokensBeforeCompression: estimatedBeforeCompression,
+              contextWindowTokens: settings.contextWindowTokens,
+              compressed: compressed,
+              helperFanout: multiAgentResult.agentCount,
+              selectedToolSet: selectedToolSet,
+              memorySources: memorySources,
+            ),
+          );
+          visibleOutput.write(outcome.finalText);
+          return;
+        }
+      }
 
       for (var round = 0;; round++) {
         cancellationToken?.throwIfCancelled();
@@ -588,7 +588,9 @@ extension LlmChatServiceStreamHandler on LlmChatService {
       finalOutcome = AgentFinalOutcome.cancelled;
       rethrow;
     } catch (e) {
-      finalOutcome = AgentFinalOutcome.modelError;
+      if (finalOutcome == AgentFinalOutcome.success) {
+        finalOutcome = AgentFinalOutcome.modelError;
+      }
       rethrow;
     } finally {
       if (!summaryEmitted) {

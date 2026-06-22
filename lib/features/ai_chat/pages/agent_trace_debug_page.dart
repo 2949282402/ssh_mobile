@@ -101,7 +101,8 @@ class _AgentTraceDebugPageState extends State<AgentTraceDebugPage> {
                         Text(
                           widget.runId,
                           style: TextStyle(
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
                             fontSize: 12,
                           ),
                         ),

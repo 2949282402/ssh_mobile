@@ -211,8 +211,7 @@ class _MessageBubble extends StatelessWidget {
                       ],
                     ),
             ),
-            if (!isUser &&
-                message.agentRunId?.trim().isNotEmpty == true)
+            if (!isUser && message.agentRunId?.trim().isNotEmpty == true)
               _AgentTraceLink(
                 chatId: chatId,
                 runId: message.agentRunId!.trim(),
@@ -345,8 +344,9 @@ class _AgentTraceLink extends StatelessWidget {
     if (message.traces.isNotEmpty) {
       final tools =
           message.traces.where((trace) => trace.kind.contains('tool')).length;
-      final approvals =
-          message.traces.where((trace) => trace.kind.contains('approval')).length;
+      final approvals = message.traces
+          .where((trace) => trace.kind.contains('approval'))
+          .length;
       final elapsed = message.elapsedMs == null
           ? null
           : _formatElapsedForTraceLink(message.elapsedMs!);
@@ -358,7 +358,8 @@ class _AgentTraceLink extends StatelessWidget {
         if (elapsed != null) elapsed,
       ].join(' · ');
     } else {
-      final shortRunId = runId.length > 8 ? runId.substring(runId.length - 8) : runId;
+      final shortRunId =
+          runId.length > 8 ? runId.substring(runId.length - 8) : runId;
       label = 'Trace · $shortRunId';
     }
 
