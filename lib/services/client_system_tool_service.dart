@@ -509,8 +509,7 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
     List<String>? allowedExtensions,
     String? dialogTitle,
   }) async {
-    final result = await FilePicker.pickFiles(
-      withData: true,
+    final file = await FilePicker.pickFile(
       type: allowedExtensions == null || allowedExtensions.isEmpty
           ? FileType.any
           : FileType.custom,
@@ -519,12 +518,8 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
           : allowedExtensions,
       dialogTitle: dialogTitle,
     );
-    if (result == null || result.files.isEmpty) return null;
-    final file = result.files.single;
-    final bytes = file.bytes;
-    if (bytes == null) {
-      throw StateError('Unable to read the selected local file.');
-    }
+    if (file == null) return null;
+    final bytes = await file.readAsBytes();
     return ClientPickedFile(
       name: file.name,
       bytes: bytes,

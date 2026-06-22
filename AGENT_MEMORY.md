@@ -183,5 +183,9 @@ across sessions.
   batch retryable, and marker-gated: each batch may commit independently, but
   mark complete only after every batch succeeds. Logs may report row counts
   only; never log field values.
+- 2026-06-22: Agent Trace history is now a Drift-only growth store under
+  `agent_trace_events`, with `StorageService` as the facade. Trace content is
+  redacted, size-capped, encrypted in `content_json`, tied to assistant
+  messages via `agentRunId`, and intentionally excluded from backup export.
 
 

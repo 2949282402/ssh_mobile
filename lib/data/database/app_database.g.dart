@@ -786,6 +786,12 @@ class $AiChatMessagesTable extends AiChatMessages
   late final GeneratedColumn<int> reasoningTokens = GeneratedColumn<int>(
       'reasoning_tokens', aliasedName, true,
       type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _agentRunIdMeta =
+      const VerificationMeta('agentRunId');
+  @override
+  late final GeneratedColumn<String> agentRunId = GeneratedColumn<String>(
+      'agent_run_id', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
   static const VerificationMeta _attachmentsJsonMeta =
       const VerificationMeta('attachmentsJson');
   @override
@@ -826,6 +832,7 @@ class $AiChatMessagesTable extends AiChatMessages
         promptCacheHitTokens,
         promptCacheMissTokens,
         reasoningTokens,
+        agentRunId,
         attachmentsJson,
         tracesJson,
         todoStepsJson
@@ -921,6 +928,12 @@ class $AiChatMessagesTable extends AiChatMessages
           reasoningTokens.isAcceptableOrUnknown(
               data['reasoning_tokens']!, _reasoningTokensMeta));
     }
+    if (data.containsKey('agent_run_id')) {
+      context.handle(
+          _agentRunIdMeta,
+          agentRunId.isAcceptableOrUnknown(
+              data['agent_run_id']!, _agentRunIdMeta));
+    }
     if (data.containsKey('attachments_json')) {
       context.handle(
           _attachmentsJsonMeta,
@@ -976,6 +989,8 @@ class $AiChatMessagesTable extends AiChatMessages
           DriftSqlType.int, data['${effectivePrefix}prompt_cache_miss_tokens']),
       reasoningTokens: attachedDatabase.typeMapping
           .read(DriftSqlType.int, data['${effectivePrefix}reasoning_tokens']),
+      agentRunId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}agent_run_id']),
       attachmentsJson: attachedDatabase.typeMapping.read(
           DriftSqlType.string, data['${effectivePrefix}attachments_json'])!,
       tracesJson: attachedDatabase.typeMapping
@@ -1006,6 +1021,7 @@ class AiChatMessage extends DataClass implements Insertable<AiChatMessage> {
   final int? promptCacheHitTokens;
   final int? promptCacheMissTokens;
   final int? reasoningTokens;
+  final String? agentRunId;
   final String attachmentsJson;
   final String tracesJson;
   final String todoStepsJson;
@@ -1024,6 +1040,7 @@ class AiChatMessage extends DataClass implements Insertable<AiChatMessage> {
       this.promptCacheHitTokens,
       this.promptCacheMissTokens,
       this.reasoningTokens,
+      this.agentRunId,
       required this.attachmentsJson,
       required this.tracesJson,
       required this.todoStepsJson});
@@ -1061,6 +1078,9 @@ class AiChatMessage extends DataClass implements Insertable<AiChatMessage> {
     }
     if (!nullToAbsent || reasoningTokens != null) {
       map['reasoning_tokens'] = Variable<int>(reasoningTokens);
+    }
+    if (!nullToAbsent || agentRunId != null) {
+      map['agent_run_id'] = Variable<String>(agentRunId);
     }
     map['attachments_json'] = Variable<String>(attachmentsJson);
     map['traces_json'] = Variable<String>(tracesJson);
@@ -1102,6 +1122,9 @@ class AiChatMessage extends DataClass implements Insertable<AiChatMessage> {
       reasoningTokens: reasoningTokens == null && nullToAbsent
           ? const Value.absent()
           : Value(reasoningTokens),
+      agentRunId: agentRunId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(agentRunId),
       attachmentsJson: Value(attachmentsJson),
       tracesJson: Value(tracesJson),
       todoStepsJson: Value(todoStepsJson),
@@ -1129,6 +1152,7 @@ class AiChatMessage extends DataClass implements Insertable<AiChatMessage> {
       promptCacheMissTokens:
           serializer.fromJson<int?>(json['promptCacheMissTokens']),
       reasoningTokens: serializer.fromJson<int?>(json['reasoningTokens']),
+      agentRunId: serializer.fromJson<String?>(json['agentRunId']),
       attachmentsJson: serializer.fromJson<String>(json['attachmentsJson']),
       tracesJson: serializer.fromJson<String>(json['tracesJson']),
       todoStepsJson: serializer.fromJson<String>(json['todoStepsJson']),
@@ -1152,6 +1176,7 @@ class AiChatMessage extends DataClass implements Insertable<AiChatMessage> {
       'promptCacheHitTokens': serializer.toJson<int?>(promptCacheHitTokens),
       'promptCacheMissTokens': serializer.toJson<int?>(promptCacheMissTokens),
       'reasoningTokens': serializer.toJson<int?>(reasoningTokens),
+      'agentRunId': serializer.toJson<String?>(agentRunId),
       'attachmentsJson': serializer.toJson<String>(attachmentsJson),
       'tracesJson': serializer.toJson<String>(tracesJson),
       'todoStepsJson': serializer.toJson<String>(todoStepsJson),
@@ -1173,6 +1198,7 @@ class AiChatMessage extends DataClass implements Insertable<AiChatMessage> {
           Value<int?> promptCacheHitTokens = const Value.absent(),
           Value<int?> promptCacheMissTokens = const Value.absent(),
           Value<int?> reasoningTokens = const Value.absent(),
+          Value<String?> agentRunId = const Value.absent(),
           String? attachmentsJson,
           String? tracesJson,
           String? todoStepsJson}) =>
@@ -1202,6 +1228,7 @@ class AiChatMessage extends DataClass implements Insertable<AiChatMessage> {
         reasoningTokens: reasoningTokens.present
             ? reasoningTokens.value
             : this.reasoningTokens,
+        agentRunId: agentRunId.present ? agentRunId.value : this.agentRunId,
         attachmentsJson: attachmentsJson ?? this.attachmentsJson,
         tracesJson: tracesJson ?? this.tracesJson,
         todoStepsJson: todoStepsJson ?? this.todoStepsJson,
@@ -1237,6 +1264,8 @@ class AiChatMessage extends DataClass implements Insertable<AiChatMessage> {
       reasoningTokens: data.reasoningTokens.present
           ? data.reasoningTokens.value
           : this.reasoningTokens,
+      agentRunId:
+          data.agentRunId.present ? data.agentRunId.value : this.agentRunId,
       attachmentsJson: data.attachmentsJson.present
           ? data.attachmentsJson.value
           : this.attachmentsJson,
@@ -1265,6 +1294,7 @@ class AiChatMessage extends DataClass implements Insertable<AiChatMessage> {
           ..write('promptCacheHitTokens: $promptCacheHitTokens, ')
           ..write('promptCacheMissTokens: $promptCacheMissTokens, ')
           ..write('reasoningTokens: $reasoningTokens, ')
+          ..write('agentRunId: $agentRunId, ')
           ..write('attachmentsJson: $attachmentsJson, ')
           ..write('tracesJson: $tracesJson, ')
           ..write('todoStepsJson: $todoStepsJson')
@@ -1288,6 +1318,7 @@ class AiChatMessage extends DataClass implements Insertable<AiChatMessage> {
       promptCacheHitTokens,
       promptCacheMissTokens,
       reasoningTokens,
+      agentRunId,
       attachmentsJson,
       tracesJson,
       todoStepsJson);
@@ -1309,6 +1340,7 @@ class AiChatMessage extends DataClass implements Insertable<AiChatMessage> {
           other.promptCacheHitTokens == this.promptCacheHitTokens &&
           other.promptCacheMissTokens == this.promptCacheMissTokens &&
           other.reasoningTokens == this.reasoningTokens &&
+          other.agentRunId == this.agentRunId &&
           other.attachmentsJson == this.attachmentsJson &&
           other.tracesJson == this.tracesJson &&
           other.todoStepsJson == this.todoStepsJson);
@@ -1329,6 +1361,7 @@ class AiChatMessagesCompanion extends UpdateCompanion<AiChatMessage> {
   final Value<int?> promptCacheHitTokens;
   final Value<int?> promptCacheMissTokens;
   final Value<int?> reasoningTokens;
+  final Value<String?> agentRunId;
   final Value<String> attachmentsJson;
   final Value<String> tracesJson;
   final Value<String> todoStepsJson;
@@ -1348,6 +1381,7 @@ class AiChatMessagesCompanion extends UpdateCompanion<AiChatMessage> {
     this.promptCacheHitTokens = const Value.absent(),
     this.promptCacheMissTokens = const Value.absent(),
     this.reasoningTokens = const Value.absent(),
+    this.agentRunId = const Value.absent(),
     this.attachmentsJson = const Value.absent(),
     this.tracesJson = const Value.absent(),
     this.todoStepsJson = const Value.absent(),
@@ -1368,6 +1402,7 @@ class AiChatMessagesCompanion extends UpdateCompanion<AiChatMessage> {
     this.promptCacheHitTokens = const Value.absent(),
     this.promptCacheMissTokens = const Value.absent(),
     this.reasoningTokens = const Value.absent(),
+    this.agentRunId = const Value.absent(),
     this.attachmentsJson = const Value.absent(),
     this.tracesJson = const Value.absent(),
     this.todoStepsJson = const Value.absent(),
@@ -1392,6 +1427,7 @@ class AiChatMessagesCompanion extends UpdateCompanion<AiChatMessage> {
     Expression<int>? promptCacheHitTokens,
     Expression<int>? promptCacheMissTokens,
     Expression<int>? reasoningTokens,
+    Expression<String>? agentRunId,
     Expression<String>? attachmentsJson,
     Expression<String>? tracesJson,
     Expression<String>? todoStepsJson,
@@ -1415,6 +1451,7 @@ class AiChatMessagesCompanion extends UpdateCompanion<AiChatMessage> {
       if (promptCacheMissTokens != null)
         'prompt_cache_miss_tokens': promptCacheMissTokens,
       if (reasoningTokens != null) 'reasoning_tokens': reasoningTokens,
+      if (agentRunId != null) 'agent_run_id': agentRunId,
       if (attachmentsJson != null) 'attachments_json': attachmentsJson,
       if (tracesJson != null) 'traces_json': tracesJson,
       if (todoStepsJson != null) 'todo_steps_json': todoStepsJson,
@@ -1437,6 +1474,7 @@ class AiChatMessagesCompanion extends UpdateCompanion<AiChatMessage> {
       Value<int?>? promptCacheHitTokens,
       Value<int?>? promptCacheMissTokens,
       Value<int?>? reasoningTokens,
+      Value<String?>? agentRunId,
       Value<String>? attachmentsJson,
       Value<String>? tracesJson,
       Value<String>? todoStepsJson,
@@ -1457,6 +1495,7 @@ class AiChatMessagesCompanion extends UpdateCompanion<AiChatMessage> {
       promptCacheMissTokens:
           promptCacheMissTokens ?? this.promptCacheMissTokens,
       reasoningTokens: reasoningTokens ?? this.reasoningTokens,
+      agentRunId: agentRunId ?? this.agentRunId,
       attachmentsJson: attachmentsJson ?? this.attachmentsJson,
       tracesJson: tracesJson ?? this.tracesJson,
       todoStepsJson: todoStepsJson ?? this.todoStepsJson,
@@ -1511,6 +1550,9 @@ class AiChatMessagesCompanion extends UpdateCompanion<AiChatMessage> {
     if (reasoningTokens.present) {
       map['reasoning_tokens'] = Variable<int>(reasoningTokens.value);
     }
+    if (agentRunId.present) {
+      map['agent_run_id'] = Variable<String>(agentRunId.value);
+    }
     if (attachmentsJson.present) {
       map['attachments_json'] = Variable<String>(attachmentsJson.value);
     }
@@ -1543,6 +1585,7 @@ class AiChatMessagesCompanion extends UpdateCompanion<AiChatMessage> {
           ..write('promptCacheHitTokens: $promptCacheHitTokens, ')
           ..write('promptCacheMissTokens: $promptCacheMissTokens, ')
           ..write('reasoningTokens: $reasoningTokens, ')
+          ..write('agentRunId: $agentRunId, ')
           ..write('attachmentsJson: $attachmentsJson, ')
           ..write('tracesJson: $tracesJson, ')
           ..write('todoStepsJson: $todoStepsJson, ')
@@ -2526,6 +2569,597 @@ class AgentRunMetricsTableCompanion extends UpdateCompanion<AgentRunMetricRow> {
           ..write('success: $success, ')
           ..write('selectedToolSetJson: $selectedToolSetJson, ')
           ..write('memorySourcesJson: $memorySourcesJson, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $AgentTraceEventsTableTable extends AgentTraceEventsTable
+    with TableInfo<$AgentTraceEventsTableTable, AgentTraceEventRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $AgentTraceEventsTableTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+      'id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _runIdMeta = const VerificationMeta('runId');
+  @override
+  late final GeneratedColumn<String> runId = GeneratedColumn<String>(
+      'run_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _chatIdMeta = const VerificationMeta('chatId');
+  @override
+  late final GeneratedColumn<String> chatId = GeneratedColumn<String>(
+      'chat_id', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _createdAtMeta =
+      const VerificationMeta('createdAt');
+  @override
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+      'created_at', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _sequenceMeta =
+      const VerificationMeta('sequence');
+  @override
+  late final GeneratedColumn<int> sequence = GeneratedColumn<int>(
+      'sequence', aliasedName, false,
+      type: DriftSqlType.int, requiredDuringInsert: true);
+  static const VerificationMeta _kindMeta = const VerificationMeta('kind');
+  @override
+  late final GeneratedColumn<String> kind = GeneratedColumn<String>(
+      'kind', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _titleMeta = const VerificationMeta('title');
+  @override
+  late final GeneratedColumn<String> title = GeneratedColumn<String>(
+      'title', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _contentJsonMeta =
+      const VerificationMeta('contentJson');
+  @override
+  late final GeneratedColumn<String> contentJson = GeneratedColumn<String>(
+      'content_json', aliasedName, false,
+      type: DriftSqlType.string, requiredDuringInsert: true);
+  static const VerificationMeta _toolNameMeta =
+      const VerificationMeta('toolName');
+  @override
+  late final GeneratedColumn<String> toolName = GeneratedColumn<String>(
+      'tool_name', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  static const VerificationMeta _statusMeta = const VerificationMeta('status');
+  @override
+  late final GeneratedColumn<String> status = GeneratedColumn<String>(
+      'status', aliasedName, false,
+      type: DriftSqlType.string,
+      requiredDuringInsert: false,
+      defaultValue: const Constant('info'));
+  static const VerificationMeta _durationMsMeta =
+      const VerificationMeta('durationMs');
+  @override
+  late final GeneratedColumn<int> durationMs = GeneratedColumn<int>(
+      'duration_ms', aliasedName, true,
+      type: DriftSqlType.int, requiredDuringInsert: false);
+  static const VerificationMeta _parentEventIdMeta =
+      const VerificationMeta('parentEventId');
+  @override
+  late final GeneratedColumn<String> parentEventId = GeneratedColumn<String>(
+      'parent_event_id', aliasedName, true,
+      type: DriftSqlType.string, requiredDuringInsert: false);
+  @override
+  List<GeneratedColumn> get $columns => [
+        id,
+        runId,
+        chatId,
+        createdAt,
+        sequence,
+        kind,
+        title,
+        contentJson,
+        toolName,
+        status,
+        durationMs,
+        parentEventId
+      ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'agent_trace_events';
+  @override
+  VerificationContext validateIntegrity(Insertable<AgentTraceEventRow> instance,
+      {bool isInserting = false}) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('run_id')) {
+      context.handle(
+          _runIdMeta, runId.isAcceptableOrUnknown(data['run_id']!, _runIdMeta));
+    } else if (isInserting) {
+      context.missing(_runIdMeta);
+    }
+    if (data.containsKey('chat_id')) {
+      context.handle(_chatIdMeta,
+          chatId.isAcceptableOrUnknown(data['chat_id']!, _chatIdMeta));
+    } else if (isInserting) {
+      context.missing(_chatIdMeta);
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(_createdAtMeta,
+          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('sequence')) {
+      context.handle(_sequenceMeta,
+          sequence.isAcceptableOrUnknown(data['sequence']!, _sequenceMeta));
+    } else if (isInserting) {
+      context.missing(_sequenceMeta);
+    }
+    if (data.containsKey('kind')) {
+      context.handle(
+          _kindMeta, kind.isAcceptableOrUnknown(data['kind']!, _kindMeta));
+    } else if (isInserting) {
+      context.missing(_kindMeta);
+    }
+    if (data.containsKey('title')) {
+      context.handle(
+          _titleMeta, title.isAcceptableOrUnknown(data['title']!, _titleMeta));
+    } else if (isInserting) {
+      context.missing(_titleMeta);
+    }
+    if (data.containsKey('content_json')) {
+      context.handle(
+          _contentJsonMeta,
+          contentJson.isAcceptableOrUnknown(
+              data['content_json']!, _contentJsonMeta));
+    } else if (isInserting) {
+      context.missing(_contentJsonMeta);
+    }
+    if (data.containsKey('tool_name')) {
+      context.handle(_toolNameMeta,
+          toolName.isAcceptableOrUnknown(data['tool_name']!, _toolNameMeta));
+    }
+    if (data.containsKey('status')) {
+      context.handle(_statusMeta,
+          status.isAcceptableOrUnknown(data['status']!, _statusMeta));
+    }
+    if (data.containsKey('duration_ms')) {
+      context.handle(
+          _durationMsMeta,
+          durationMs.isAcceptableOrUnknown(
+              data['duration_ms']!, _durationMsMeta));
+    }
+    if (data.containsKey('parent_event_id')) {
+      context.handle(
+          _parentEventIdMeta,
+          parentEventId.isAcceptableOrUnknown(
+              data['parent_event_id']!, _parentEventIdMeta));
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  AgentTraceEventRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return AgentTraceEventRow(
+      id: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
+      runId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}run_id'])!,
+      chatId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}chat_id'])!,
+      createdAt: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}created_at'])!,
+      sequence: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}sequence'])!,
+      kind: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}kind'])!,
+      title: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}title'])!,
+      contentJson: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}content_json'])!,
+      toolName: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}tool_name']),
+      status: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}status'])!,
+      durationMs: attachedDatabase.typeMapping
+          .read(DriftSqlType.int, data['${effectivePrefix}duration_ms']),
+      parentEventId: attachedDatabase.typeMapping
+          .read(DriftSqlType.string, data['${effectivePrefix}parent_event_id']),
+    );
+  }
+
+  @override
+  $AgentTraceEventsTableTable createAlias(String alias) {
+    return $AgentTraceEventsTableTable(attachedDatabase, alias);
+  }
+}
+
+class AgentTraceEventRow extends DataClass
+    implements Insertable<AgentTraceEventRow> {
+  final String id;
+  final String runId;
+  final String chatId;
+  final int createdAt;
+  final int sequence;
+  final String kind;
+  final String title;
+  final String contentJson;
+  final String? toolName;
+  final String status;
+  final int? durationMs;
+  final String? parentEventId;
+  const AgentTraceEventRow(
+      {required this.id,
+      required this.runId,
+      required this.chatId,
+      required this.createdAt,
+      required this.sequence,
+      required this.kind,
+      required this.title,
+      required this.contentJson,
+      this.toolName,
+      required this.status,
+      this.durationMs,
+      this.parentEventId});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['run_id'] = Variable<String>(runId);
+    map['chat_id'] = Variable<String>(chatId);
+    map['created_at'] = Variable<int>(createdAt);
+    map['sequence'] = Variable<int>(sequence);
+    map['kind'] = Variable<String>(kind);
+    map['title'] = Variable<String>(title);
+    map['content_json'] = Variable<String>(contentJson);
+    if (!nullToAbsent || toolName != null) {
+      map['tool_name'] = Variable<String>(toolName);
+    }
+    map['status'] = Variable<String>(status);
+    if (!nullToAbsent || durationMs != null) {
+      map['duration_ms'] = Variable<int>(durationMs);
+    }
+    if (!nullToAbsent || parentEventId != null) {
+      map['parent_event_id'] = Variable<String>(parentEventId);
+    }
+    return map;
+  }
+
+  AgentTraceEventsTableCompanion toCompanion(bool nullToAbsent) {
+    return AgentTraceEventsTableCompanion(
+      id: Value(id),
+      runId: Value(runId),
+      chatId: Value(chatId),
+      createdAt: Value(createdAt),
+      sequence: Value(sequence),
+      kind: Value(kind),
+      title: Value(title),
+      contentJson: Value(contentJson),
+      toolName: toolName == null && nullToAbsent
+          ? const Value.absent()
+          : Value(toolName),
+      status: Value(status),
+      durationMs: durationMs == null && nullToAbsent
+          ? const Value.absent()
+          : Value(durationMs),
+      parentEventId: parentEventId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(parentEventId),
+    );
+  }
+
+  factory AgentTraceEventRow.fromJson(Map<String, dynamic> json,
+      {ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return AgentTraceEventRow(
+      id: serializer.fromJson<String>(json['id']),
+      runId: serializer.fromJson<String>(json['runId']),
+      chatId: serializer.fromJson<String>(json['chatId']),
+      createdAt: serializer.fromJson<int>(json['createdAt']),
+      sequence: serializer.fromJson<int>(json['sequence']),
+      kind: serializer.fromJson<String>(json['kind']),
+      title: serializer.fromJson<String>(json['title']),
+      contentJson: serializer.fromJson<String>(json['contentJson']),
+      toolName: serializer.fromJson<String?>(json['toolName']),
+      status: serializer.fromJson<String>(json['status']),
+      durationMs: serializer.fromJson<int?>(json['durationMs']),
+      parentEventId: serializer.fromJson<String?>(json['parentEventId']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'runId': serializer.toJson<String>(runId),
+      'chatId': serializer.toJson<String>(chatId),
+      'createdAt': serializer.toJson<int>(createdAt),
+      'sequence': serializer.toJson<int>(sequence),
+      'kind': serializer.toJson<String>(kind),
+      'title': serializer.toJson<String>(title),
+      'contentJson': serializer.toJson<String>(contentJson),
+      'toolName': serializer.toJson<String?>(toolName),
+      'status': serializer.toJson<String>(status),
+      'durationMs': serializer.toJson<int?>(durationMs),
+      'parentEventId': serializer.toJson<String?>(parentEventId),
+    };
+  }
+
+  AgentTraceEventRow copyWith(
+          {String? id,
+          String? runId,
+          String? chatId,
+          int? createdAt,
+          int? sequence,
+          String? kind,
+          String? title,
+          String? contentJson,
+          Value<String?> toolName = const Value.absent(),
+          String? status,
+          Value<int?> durationMs = const Value.absent(),
+          Value<String?> parentEventId = const Value.absent()}) =>
+      AgentTraceEventRow(
+        id: id ?? this.id,
+        runId: runId ?? this.runId,
+        chatId: chatId ?? this.chatId,
+        createdAt: createdAt ?? this.createdAt,
+        sequence: sequence ?? this.sequence,
+        kind: kind ?? this.kind,
+        title: title ?? this.title,
+        contentJson: contentJson ?? this.contentJson,
+        toolName: toolName.present ? toolName.value : this.toolName,
+        status: status ?? this.status,
+        durationMs: durationMs.present ? durationMs.value : this.durationMs,
+        parentEventId:
+            parentEventId.present ? parentEventId.value : this.parentEventId,
+      );
+  AgentTraceEventRow copyWithCompanion(AgentTraceEventsTableCompanion data) {
+    return AgentTraceEventRow(
+      id: data.id.present ? data.id.value : this.id,
+      runId: data.runId.present ? data.runId.value : this.runId,
+      chatId: data.chatId.present ? data.chatId.value : this.chatId,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      sequence: data.sequence.present ? data.sequence.value : this.sequence,
+      kind: data.kind.present ? data.kind.value : this.kind,
+      title: data.title.present ? data.title.value : this.title,
+      contentJson:
+          data.contentJson.present ? data.contentJson.value : this.contentJson,
+      toolName: data.toolName.present ? data.toolName.value : this.toolName,
+      status: data.status.present ? data.status.value : this.status,
+      durationMs:
+          data.durationMs.present ? data.durationMs.value : this.durationMs,
+      parentEventId: data.parentEventId.present
+          ? data.parentEventId.value
+          : this.parentEventId,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AgentTraceEventRow(')
+          ..write('id: $id, ')
+          ..write('runId: $runId, ')
+          ..write('chatId: $chatId, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('sequence: $sequence, ')
+          ..write('kind: $kind, ')
+          ..write('title: $title, ')
+          ..write('contentJson: $contentJson, ')
+          ..write('toolName: $toolName, ')
+          ..write('status: $status, ')
+          ..write('durationMs: $durationMs, ')
+          ..write('parentEventId: $parentEventId')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(id, runId, chatId, createdAt, sequence, kind,
+      title, contentJson, toolName, status, durationMs, parentEventId);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is AgentTraceEventRow &&
+          other.id == this.id &&
+          other.runId == this.runId &&
+          other.chatId == this.chatId &&
+          other.createdAt == this.createdAt &&
+          other.sequence == this.sequence &&
+          other.kind == this.kind &&
+          other.title == this.title &&
+          other.contentJson == this.contentJson &&
+          other.toolName == this.toolName &&
+          other.status == this.status &&
+          other.durationMs == this.durationMs &&
+          other.parentEventId == this.parentEventId);
+}
+
+class AgentTraceEventsTableCompanion
+    extends UpdateCompanion<AgentTraceEventRow> {
+  final Value<String> id;
+  final Value<String> runId;
+  final Value<String> chatId;
+  final Value<int> createdAt;
+  final Value<int> sequence;
+  final Value<String> kind;
+  final Value<String> title;
+  final Value<String> contentJson;
+  final Value<String?> toolName;
+  final Value<String> status;
+  final Value<int?> durationMs;
+  final Value<String?> parentEventId;
+  final Value<int> rowid;
+  const AgentTraceEventsTableCompanion({
+    this.id = const Value.absent(),
+    this.runId = const Value.absent(),
+    this.chatId = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.sequence = const Value.absent(),
+    this.kind = const Value.absent(),
+    this.title = const Value.absent(),
+    this.contentJson = const Value.absent(),
+    this.toolName = const Value.absent(),
+    this.status = const Value.absent(),
+    this.durationMs = const Value.absent(),
+    this.parentEventId = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  AgentTraceEventsTableCompanion.insert({
+    required String id,
+    required String runId,
+    required String chatId,
+    required int createdAt,
+    required int sequence,
+    required String kind,
+    required String title,
+    required String contentJson,
+    this.toolName = const Value.absent(),
+    this.status = const Value.absent(),
+    this.durationMs = const Value.absent(),
+    this.parentEventId = const Value.absent(),
+    this.rowid = const Value.absent(),
+  })  : id = Value(id),
+        runId = Value(runId),
+        chatId = Value(chatId),
+        createdAt = Value(createdAt),
+        sequence = Value(sequence),
+        kind = Value(kind),
+        title = Value(title),
+        contentJson = Value(contentJson);
+  static Insertable<AgentTraceEventRow> custom({
+    Expression<String>? id,
+    Expression<String>? runId,
+    Expression<String>? chatId,
+    Expression<int>? createdAt,
+    Expression<int>? sequence,
+    Expression<String>? kind,
+    Expression<String>? title,
+    Expression<String>? contentJson,
+    Expression<String>? toolName,
+    Expression<String>? status,
+    Expression<int>? durationMs,
+    Expression<String>? parentEventId,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (runId != null) 'run_id': runId,
+      if (chatId != null) 'chat_id': chatId,
+      if (createdAt != null) 'created_at': createdAt,
+      if (sequence != null) 'sequence': sequence,
+      if (kind != null) 'kind': kind,
+      if (title != null) 'title': title,
+      if (contentJson != null) 'content_json': contentJson,
+      if (toolName != null) 'tool_name': toolName,
+      if (status != null) 'status': status,
+      if (durationMs != null) 'duration_ms': durationMs,
+      if (parentEventId != null) 'parent_event_id': parentEventId,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  AgentTraceEventsTableCompanion copyWith(
+      {Value<String>? id,
+      Value<String>? runId,
+      Value<String>? chatId,
+      Value<int>? createdAt,
+      Value<int>? sequence,
+      Value<String>? kind,
+      Value<String>? title,
+      Value<String>? contentJson,
+      Value<String?>? toolName,
+      Value<String>? status,
+      Value<int?>? durationMs,
+      Value<String?>? parentEventId,
+      Value<int>? rowid}) {
+    return AgentTraceEventsTableCompanion(
+      id: id ?? this.id,
+      runId: runId ?? this.runId,
+      chatId: chatId ?? this.chatId,
+      createdAt: createdAt ?? this.createdAt,
+      sequence: sequence ?? this.sequence,
+      kind: kind ?? this.kind,
+      title: title ?? this.title,
+      contentJson: contentJson ?? this.contentJson,
+      toolName: toolName ?? this.toolName,
+      status: status ?? this.status,
+      durationMs: durationMs ?? this.durationMs,
+      parentEventId: parentEventId ?? this.parentEventId,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (runId.present) {
+      map['run_id'] = Variable<String>(runId.value);
+    }
+    if (chatId.present) {
+      map['chat_id'] = Variable<String>(chatId.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(createdAt.value);
+    }
+    if (sequence.present) {
+      map['sequence'] = Variable<int>(sequence.value);
+    }
+    if (kind.present) {
+      map['kind'] = Variable<String>(kind.value);
+    }
+    if (title.present) {
+      map['title'] = Variable<String>(title.value);
+    }
+    if (contentJson.present) {
+      map['content_json'] = Variable<String>(contentJson.value);
+    }
+    if (toolName.present) {
+      map['tool_name'] = Variable<String>(toolName.value);
+    }
+    if (status.present) {
+      map['status'] = Variable<String>(status.value);
+    }
+    if (durationMs.present) {
+      map['duration_ms'] = Variable<int>(durationMs.value);
+    }
+    if (parentEventId.present) {
+      map['parent_event_id'] = Variable<String>(parentEventId.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AgentTraceEventsTableCompanion(')
+          ..write('id: $id, ')
+          ..write('runId: $runId, ')
+          ..write('chatId: $chatId, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('sequence: $sequence, ')
+          ..write('kind: $kind, ')
+          ..write('title: $title, ')
+          ..write('contentJson: $contentJson, ')
+          ..write('toolName: $toolName, ')
+          ..write('status: $status, ')
+          ..write('durationMs: $durationMs, ')
+          ..write('parentEventId: $parentEventId, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -4937,6 +5571,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $AiChatMessagesTable aiChatMessages = $AiChatMessagesTable(this);
   late final $AgentRunMetricsTableTable agentRunMetricsTable =
       $AgentRunMetricsTableTable(this);
+  late final $AgentTraceEventsTableTable agentTraceEventsTable =
+      $AgentTraceEventsTableTable(this);
   late final $TerminalHistoryRecordsTable terminalHistoryRecords =
       $TerminalHistoryRecordsTable(this);
   late final $PlaybooksTable playbooks = $PlaybooksTable(this);
@@ -4952,6 +5588,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final AiChatDao aiChatDao = AiChatDao(this as AppDatabase);
   late final AgentMetricsDao agentMetricsDao =
       AgentMetricsDao(this as AppDatabase);
+  late final AgentTraceDao agentTraceDao = AgentTraceDao(this as AppDatabase);
   late final TerminalHistoryDao terminalHistoryDao =
       TerminalHistoryDao(this as AppDatabase);
   late final PlaybookDao playbookDao = PlaybookDao(this as AppDatabase);
@@ -4966,6 +5603,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         aiChats,
         aiChatMessages,
         agentRunMetricsTable,
+        agentTraceEventsTable,
         terminalHistoryRecords,
         playbooks,
         playbookRuns,
@@ -5462,6 +6100,7 @@ typedef $$AiChatMessagesTableCreateCompanionBuilder = AiChatMessagesCompanion
   Value<int?> promptCacheHitTokens,
   Value<int?> promptCacheMissTokens,
   Value<int?> reasoningTokens,
+  Value<String?> agentRunId,
   Value<String> attachmentsJson,
   Value<String> tracesJson,
   Value<String> todoStepsJson,
@@ -5483,6 +6122,7 @@ typedef $$AiChatMessagesTableUpdateCompanionBuilder = AiChatMessagesCompanion
   Value<int?> promptCacheHitTokens,
   Value<int?> promptCacheMissTokens,
   Value<int?> reasoningTokens,
+  Value<String?> agentRunId,
   Value<String> attachmentsJson,
   Value<String> tracesJson,
   Value<String> todoStepsJson,
@@ -5561,6 +6201,9 @@ class $$AiChatMessagesTableFilterComposer
   ColumnFilters<int> get reasoningTokens => $composableBuilder(
       column: $table.reasoningTokens,
       builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get agentRunId => $composableBuilder(
+      column: $table.agentRunId, builder: (column) => ColumnFilters(column));
 
   ColumnFilters<String> get attachmentsJson => $composableBuilder(
       column: $table.attachmentsJson,
@@ -5647,6 +6290,9 @@ class $$AiChatMessagesTableOrderingComposer
       column: $table.reasoningTokens,
       builder: (column) => ColumnOrderings(column));
 
+  ColumnOrderings<String> get agentRunId => $composableBuilder(
+      column: $table.agentRunId, builder: (column) => ColumnOrderings(column));
+
   ColumnOrderings<String> get attachmentsJson => $composableBuilder(
       column: $table.attachmentsJson,
       builder: (column) => ColumnOrderings(column));
@@ -5727,6 +6373,9 @@ class $$AiChatMessagesTableAnnotationComposer
   GeneratedColumn<int> get reasoningTokens => $composableBuilder(
       column: $table.reasoningTokens, builder: (column) => column);
 
+  GeneratedColumn<String> get agentRunId => $composableBuilder(
+      column: $table.agentRunId, builder: (column) => column);
+
   GeneratedColumn<String> get attachmentsJson => $composableBuilder(
       column: $table.attachmentsJson, builder: (column) => column);
 
@@ -5795,6 +6444,7 @@ class $$AiChatMessagesTableTableManager extends RootTableManager<
             Value<int?> promptCacheHitTokens = const Value.absent(),
             Value<int?> promptCacheMissTokens = const Value.absent(),
             Value<int?> reasoningTokens = const Value.absent(),
+            Value<String?> agentRunId = const Value.absent(),
             Value<String> attachmentsJson = const Value.absent(),
             Value<String> tracesJson = const Value.absent(),
             Value<String> todoStepsJson = const Value.absent(),
@@ -5815,6 +6465,7 @@ class $$AiChatMessagesTableTableManager extends RootTableManager<
             promptCacheHitTokens: promptCacheHitTokens,
             promptCacheMissTokens: promptCacheMissTokens,
             reasoningTokens: reasoningTokens,
+            agentRunId: agentRunId,
             attachmentsJson: attachmentsJson,
             tracesJson: tracesJson,
             todoStepsJson: todoStepsJson,
@@ -5835,6 +6486,7 @@ class $$AiChatMessagesTableTableManager extends RootTableManager<
             Value<int?> promptCacheHitTokens = const Value.absent(),
             Value<int?> promptCacheMissTokens = const Value.absent(),
             Value<int?> reasoningTokens = const Value.absent(),
+            Value<String?> agentRunId = const Value.absent(),
             Value<String> attachmentsJson = const Value.absent(),
             Value<String> tracesJson = const Value.absent(),
             Value<String> todoStepsJson = const Value.absent(),
@@ -5855,6 +6507,7 @@ class $$AiChatMessagesTableTableManager extends RootTableManager<
             promptCacheHitTokens: promptCacheHitTokens,
             promptCacheMissTokens: promptCacheMissTokens,
             reasoningTokens: reasoningTokens,
+            agentRunId: agentRunId,
             attachmentsJson: attachmentsJson,
             tracesJson: tracesJson,
             todoStepsJson: todoStepsJson,
@@ -6346,6 +6999,292 @@ typedef $$AgentRunMetricsTableTableProcessedTableManager
               AgentRunMetricRow>
         ),
         AgentRunMetricRow,
+        PrefetchHooks Function()>;
+typedef $$AgentTraceEventsTableTableCreateCompanionBuilder
+    = AgentTraceEventsTableCompanion Function({
+  required String id,
+  required String runId,
+  required String chatId,
+  required int createdAt,
+  required int sequence,
+  required String kind,
+  required String title,
+  required String contentJson,
+  Value<String?> toolName,
+  Value<String> status,
+  Value<int?> durationMs,
+  Value<String?> parentEventId,
+  Value<int> rowid,
+});
+typedef $$AgentTraceEventsTableTableUpdateCompanionBuilder
+    = AgentTraceEventsTableCompanion Function({
+  Value<String> id,
+  Value<String> runId,
+  Value<String> chatId,
+  Value<int> createdAt,
+  Value<int> sequence,
+  Value<String> kind,
+  Value<String> title,
+  Value<String> contentJson,
+  Value<String?> toolName,
+  Value<String> status,
+  Value<int?> durationMs,
+  Value<String?> parentEventId,
+  Value<int> rowid,
+});
+
+class $$AgentTraceEventsTableTableFilterComposer
+    extends Composer<_$AppDatabase, $AgentTraceEventsTableTable> {
+  $$AgentTraceEventsTableTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get runId => $composableBuilder(
+      column: $table.runId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get chatId => $composableBuilder(
+      column: $table.chatId, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get createdAt => $composableBuilder(
+      column: $table.createdAt, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get sequence => $composableBuilder(
+      column: $table.sequence, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get kind => $composableBuilder(
+      column: $table.kind, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get title => $composableBuilder(
+      column: $table.title, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get contentJson => $composableBuilder(
+      column: $table.contentJson, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get toolName => $composableBuilder(
+      column: $table.toolName, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get status => $composableBuilder(
+      column: $table.status, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<int> get durationMs => $composableBuilder(
+      column: $table.durationMs, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<String> get parentEventId => $composableBuilder(
+      column: $table.parentEventId, builder: (column) => ColumnFilters(column));
+}
+
+class $$AgentTraceEventsTableTableOrderingComposer
+    extends Composer<_$AppDatabase, $AgentTraceEventsTableTable> {
+  $$AgentTraceEventsTableTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+      column: $table.id, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get runId => $composableBuilder(
+      column: $table.runId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get chatId => $composableBuilder(
+      column: $table.chatId, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get createdAt => $composableBuilder(
+      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get sequence => $composableBuilder(
+      column: $table.sequence, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get kind => $composableBuilder(
+      column: $table.kind, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get title => $composableBuilder(
+      column: $table.title, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get contentJson => $composableBuilder(
+      column: $table.contentJson, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get toolName => $composableBuilder(
+      column: $table.toolName, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get status => $composableBuilder(
+      column: $table.status, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<int> get durationMs => $composableBuilder(
+      column: $table.durationMs, builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<String> get parentEventId => $composableBuilder(
+      column: $table.parentEventId,
+      builder: (column) => ColumnOrderings(column));
+}
+
+class $$AgentTraceEventsTableTableAnnotationComposer
+    extends Composer<_$AppDatabase, $AgentTraceEventsTableTable> {
+  $$AgentTraceEventsTableTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get runId =>
+      $composableBuilder(column: $table.runId, builder: (column) => column);
+
+  GeneratedColumn<String> get chatId =>
+      $composableBuilder(column: $table.chatId, builder: (column) => column);
+
+  GeneratedColumn<int> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<int> get sequence =>
+      $composableBuilder(column: $table.sequence, builder: (column) => column);
+
+  GeneratedColumn<String> get kind =>
+      $composableBuilder(column: $table.kind, builder: (column) => column);
+
+  GeneratedColumn<String> get title =>
+      $composableBuilder(column: $table.title, builder: (column) => column);
+
+  GeneratedColumn<String> get contentJson => $composableBuilder(
+      column: $table.contentJson, builder: (column) => column);
+
+  GeneratedColumn<String> get toolName =>
+      $composableBuilder(column: $table.toolName, builder: (column) => column);
+
+  GeneratedColumn<String> get status =>
+      $composableBuilder(column: $table.status, builder: (column) => column);
+
+  GeneratedColumn<int> get durationMs => $composableBuilder(
+      column: $table.durationMs, builder: (column) => column);
+
+  GeneratedColumn<String> get parentEventId => $composableBuilder(
+      column: $table.parentEventId, builder: (column) => column);
+}
+
+class $$AgentTraceEventsTableTableTableManager extends RootTableManager<
+    _$AppDatabase,
+    $AgentTraceEventsTableTable,
+    AgentTraceEventRow,
+    $$AgentTraceEventsTableTableFilterComposer,
+    $$AgentTraceEventsTableTableOrderingComposer,
+    $$AgentTraceEventsTableTableAnnotationComposer,
+    $$AgentTraceEventsTableTableCreateCompanionBuilder,
+    $$AgentTraceEventsTableTableUpdateCompanionBuilder,
+    (
+      AgentTraceEventRow,
+      BaseReferences<_$AppDatabase, $AgentTraceEventsTableTable,
+          AgentTraceEventRow>
+    ),
+    AgentTraceEventRow,
+    PrefetchHooks Function()> {
+  $$AgentTraceEventsTableTableTableManager(
+      _$AppDatabase db, $AgentTraceEventsTableTable table)
+      : super(TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$AgentTraceEventsTableTableFilterComposer(
+                  $db: db, $table: table),
+          createOrderingComposer: () =>
+              $$AgentTraceEventsTableTableOrderingComposer(
+                  $db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$AgentTraceEventsTableTableAnnotationComposer(
+                  $db: db, $table: table),
+          updateCompanionCallback: ({
+            Value<String> id = const Value.absent(),
+            Value<String> runId = const Value.absent(),
+            Value<String> chatId = const Value.absent(),
+            Value<int> createdAt = const Value.absent(),
+            Value<int> sequence = const Value.absent(),
+            Value<String> kind = const Value.absent(),
+            Value<String> title = const Value.absent(),
+            Value<String> contentJson = const Value.absent(),
+            Value<String?> toolName = const Value.absent(),
+            Value<String> status = const Value.absent(),
+            Value<int?> durationMs = const Value.absent(),
+            Value<String?> parentEventId = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              AgentTraceEventsTableCompanion(
+            id: id,
+            runId: runId,
+            chatId: chatId,
+            createdAt: createdAt,
+            sequence: sequence,
+            kind: kind,
+            title: title,
+            contentJson: contentJson,
+            toolName: toolName,
+            status: status,
+            durationMs: durationMs,
+            parentEventId: parentEventId,
+            rowid: rowid,
+          ),
+          createCompanionCallback: ({
+            required String id,
+            required String runId,
+            required String chatId,
+            required int createdAt,
+            required int sequence,
+            required String kind,
+            required String title,
+            required String contentJson,
+            Value<String?> toolName = const Value.absent(),
+            Value<String> status = const Value.absent(),
+            Value<int?> durationMs = const Value.absent(),
+            Value<String?> parentEventId = const Value.absent(),
+            Value<int> rowid = const Value.absent(),
+          }) =>
+              AgentTraceEventsTableCompanion.insert(
+            id: id,
+            runId: runId,
+            chatId: chatId,
+            createdAt: createdAt,
+            sequence: sequence,
+            kind: kind,
+            title: title,
+            contentJson: contentJson,
+            toolName: toolName,
+            status: status,
+            durationMs: durationMs,
+            parentEventId: parentEventId,
+            rowid: rowid,
+          ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ));
+}
+
+typedef $$AgentTraceEventsTableTableProcessedTableManager
+    = ProcessedTableManager<
+        _$AppDatabase,
+        $AgentTraceEventsTableTable,
+        AgentTraceEventRow,
+        $$AgentTraceEventsTableTableFilterComposer,
+        $$AgentTraceEventsTableTableOrderingComposer,
+        $$AgentTraceEventsTableTableAnnotationComposer,
+        $$AgentTraceEventsTableTableCreateCompanionBuilder,
+        $$AgentTraceEventsTableTableUpdateCompanionBuilder,
+        (
+          AgentTraceEventRow,
+          BaseReferences<_$AppDatabase, $AgentTraceEventsTableTable,
+              AgentTraceEventRow>
+        ),
+        AgentTraceEventRow,
         PrefetchHooks Function()>;
 typedef $$TerminalHistoryRecordsTableCreateCompanionBuilder
     = TerminalHistoryRecordsCompanion Function({
@@ -7957,6 +8896,8 @@ class $AppDatabaseManager {
       $$AiChatMessagesTableTableManager(_db, _db.aiChatMessages);
   $$AgentRunMetricsTableTableTableManager get agentRunMetricsTable =>
       $$AgentRunMetricsTableTableTableManager(_db, _db.agentRunMetricsTable);
+  $$AgentTraceEventsTableTableTableManager get agentTraceEventsTable =>
+      $$AgentTraceEventsTableTableTableManager(_db, _db.agentTraceEventsTable);
   $$TerminalHistoryRecordsTableTableManager get terminalHistoryRecords =>
       $$TerminalHistoryRecordsTableTableManager(
           _db, _db.terminalHistoryRecords);
@@ -8012,6 +8953,20 @@ class AgentMetricsDaoManager {
   $$AgentRunMetricsTableTableTableManager get agentRunMetricsTable =>
       $$AgentRunMetricsTableTableTableManager(
           _db.attachedDatabase, _db.agentRunMetricsTable);
+}
+
+mixin _$AgentTraceDaoMixin on DatabaseAccessor<AppDatabase> {
+  $AgentTraceEventsTableTable get agentTraceEventsTable =>
+      attachedDatabase.agentTraceEventsTable;
+  AgentTraceDaoManager get managers => AgentTraceDaoManager(this);
+}
+
+class AgentTraceDaoManager {
+  final _$AgentTraceDaoMixin _db;
+  AgentTraceDaoManager(this._db);
+  $$AgentTraceEventsTableTableTableManager get agentTraceEventsTable =>
+      $$AgentTraceEventsTableTableTableManager(
+          _db.attachedDatabase, _db.agentTraceEventsTable);
 }
 
 mixin _$TerminalHistoryDaoMixin on DatabaseAccessor<AppDatabase> {

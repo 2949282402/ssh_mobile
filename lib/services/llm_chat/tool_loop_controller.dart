@@ -164,6 +164,13 @@ class ToolLoopController {
           ),
         );
 
+        chatService._emitToolResultTrace(
+          onTrace,
+          call.name,
+          result,
+          outcome: outcome,
+        );
+
         continue;
       }
 
@@ -272,6 +279,13 @@ class ToolLoopController {
             ),
           );
 
+          chatService._emitToolResultTrace(
+            onTrace,
+            call.name,
+            result,
+            outcome: outcome,
+          );
+
           continue;
         }
       }
@@ -341,7 +355,11 @@ class ToolLoopController {
               auditResult: auditResult,
             );
             chatService._emitToolResultTrace(
-                onTrace, blockedCall.name, blockedResult);
+              onTrace,
+              blockedCall.name,
+              blockedResult,
+              outcome: 'budget_audit_rejected',
+            );
             workingMessages.add({
               'role': 'tool',
               'tool_call_id': blockedCall.id,
@@ -445,7 +463,11 @@ class ToolLoopController {
               auditResult: auditResult,
             );
             chatService._emitToolResultTrace(
-                onTrace, blockedCall.name, blockedResult);
+              onTrace,
+              blockedCall.name,
+              blockedResult,
+              outcome: 'budget_audit_rejected',
+            );
             workingMessages.add({
               'role': 'tool',
               'tool_call_id': blockedCall.id,
@@ -552,6 +574,20 @@ class ToolLoopController {
 
         if (!dedupBlocked && !cacheHit && approvalRequest != null) {
           approvalCount += 1;
+          onTrace?.call(
+            LlmTraceEvent(
+              kind: 'approval',
+              title: 'Tool action approval requested',
+              content: chatService._prettyJson({
+                'tool': call.name,
+                'status': 'requested',
+                'approvalType': approvalRequest.approvalType,
+                'server': approvalRequest.connectionName,
+                'command': approvalRequest.command,
+                'reason': approvalRequest.reason,
+              }),
+            ),
+          );
           if (planMode) {
             outcome = 'blocked_in_plan_mode';
             _currentOutcome = AgentFinalOutcome.planModeBlocked;
@@ -566,6 +602,7 @@ class ToolLoopController {
                 title: 'Action blocked in Plan Mode',
                 content: chatService._prettyJson({
                   'tool': call.name,
+                  'status': 'blocked_in_plan_mode',
                   'message': 'Action blocked in plan mode',
                   'command': approvalRequest.command,
                 }),
@@ -610,6 +647,7 @@ class ToolLoopController {
                   title: 'Tool action rejected',
                   content: chatService._prettyJson({
                     'tool': call.name,
+                    'status': 'rejected',
                     'approvalType': approvalRequest.approvalType,
                     'server': approvalRequest.connectionName,
                     'command': approvalRequest.command,
@@ -634,6 +672,7 @@ class ToolLoopController {
                   title: 'Tool action approved',
                   content: chatService._prettyJson({
                     'tool': call.name,
+                    'status': 'approved',
                     'approvalType': approvalRequest.approvalType,
                     'server': approvalRequest.connectionName,
                     'command': approvalRequest.command,
@@ -729,7 +768,14 @@ class ToolLoopController {
         });
       }
 
-      chatService._emitToolResultTrace(onTrace, call.name, result);
+      chatService._emitToolResultTrace(
+        onTrace,
+        call.name,
+        result,
+        outcome: outcome,
+        cacheHit: cacheHit,
+        dedupBlocked: dedupBlocked,
+      );
       workingMessages.add({
         'role': 'tool',
         'tool_call_id': call.id,
@@ -864,7 +910,10 @@ class ToolLoopController {
         'Current Plan Step:',
         '- taskId: ${currentTodoStep.id}',
         '- name: ${currentTodoStep.name}',
-        '- command: ${currentTodoStep.command}',
+        '- command: ${chatService._toolSecretPolicy.previewText(
+          currentTodoStep.command,
+          maxChars: 300,
+        )}',
         '- status: ${currentTodoStep.status.name}',
         if (currentTodoStep.connectionId?.trim().isNotEmpty == true)
           '- connectionId: ${currentTodoStep.connectionId}',

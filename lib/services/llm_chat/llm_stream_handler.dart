@@ -9,6 +9,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     void Function(LlmRunStats stats)? onStats,
     void Function(LlmTraceEvent event)? onTrace,
     LlmCancellationToken? cancellationToken,
+    String? runId,
     String userRequest = '',
     Set<String> selectedConnectionIds = const {},
     bool hasWebViewSession = false,
@@ -25,6 +26,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
       onStats: onStats,
       onTrace: onTrace,
       cancellationToken: cancellationToken,
+      runId: runId,
       userRequest: userRequest,
       selectedConnectionIds: selectedConnectionIds,
       hasWebViewSession: hasWebViewSession,
@@ -46,6 +48,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     void Function(LlmRunStats stats)? onStats,
     void Function(LlmTraceEvent event)? onTrace,
     LlmCancellationToken? cancellationToken,
+    String? runId,
     Set<String>? allowedTools,
     String userRequest = '',
     Set<String> selectedConnectionIds = const {},
@@ -62,7 +65,8 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         : const PlanExecutionController()
             .snapshot(approvedPlanMessage.todoSteps);
     final runStartedAt = DateTime.now();
-    final runId = const Uuid().v4();
+    final resolvedRunId =
+        runId?.trim().isNotEmpty == true ? runId!.trim() : const Uuid().v4();
     var finalOutcome = AgentFinalOutcome.success;
     final modelProfile = _modelProfileForSettings(
       settings,
@@ -82,6 +86,24 @@ extension LlmChatServiceStreamHandler on LlmChatService {
       details:
           'baseUrl=${settings.baseUrl} model=$model helperModel=$helperModel auditModel=$auditModel userMessages=${messages.length} forceContextCompression=$forceContextCompression planMode=$planMode',
     );
+    onTrace?.call(
+      LlmTraceEvent(
+        kind: 'agent_run_started',
+        title: 'Agent run started',
+        content: _prettyJson({
+          'runId': resolvedRunId,
+          'model': model,
+          'helperModel': helperModel,
+          'auditModel': auditModel,
+          'planMode': planMode,
+          'selectedConnectionIdsCount': selectedConnectionIds.length,
+          'hasWebViewSession': hasWebViewSession,
+          'hasApprovedPlan': hasApprovedPlan,
+          'messageCount': messages.length,
+          'startedAt': runStartedAt.toIso8601String(),
+        }),
+      ),
+    );
 
     var workingMessages = <Map<String, dynamic>>[
       {
@@ -96,6 +118,18 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     final shouldCompressFromUsageThreshold =
         estimatedBeforeCompression >= settings.contextWindowTokens * 0.9;
     if (shouldCompressFromUsageThreshold || forceContextCompression) {
+      onTrace?.call(
+        LlmTraceEvent(
+          kind: 'context_compression_started',
+          title: 'Context compression started',
+          content: _prettyJson({
+            'estimatedBeforeCompression': estimatedBeforeCompression,
+            'contextWindowTokens': settings.contextWindowTokens,
+            'forceContextCompression': forceContextCompression,
+            'messageCountBefore': messages.length,
+          }),
+        ),
+      );
       workingMessages = await _compressWorkingMessages(
         baseUrl: settings.baseUrl,
         apiKey: apiKey,
@@ -108,6 +142,20 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         cancellationToken: cancellationToken,
       );
       compressed = true;
+      onTrace?.call(
+        LlmTraceEvent(
+          kind: 'context_compression_completed',
+          title: 'Context compression completed',
+          content: _prettyJson({
+            'estimatedBeforeCompression': estimatedBeforeCompression,
+            'contextWindowTokens': settings.contextWindowTokens,
+            'forceContextCompression': forceContextCompression,
+            'compressed': compressed,
+            'messageCountBefore': messages.length,
+            'messageCountAfter': workingMessages.length,
+          }),
+        ),
+      );
       if (forceContextCompression && !shouldCompressFromUsageThreshold) {
         AppLogService.instance.info(
           'LLM context compression forced',
@@ -286,6 +334,34 @@ extension LlmChatServiceStreamHandler on LlmChatService {
             memorySources: memorySources,
           ),
         );
+        final finishedAt = DateTime.now();
+        onTrace?.call(
+          LlmTraceEvent(
+            kind: 'agent_run_summary',
+            title: 'Agent run summary',
+            content: _prettyJson(AgentRunSummary(
+              runId: resolvedRunId,
+              startedAt: runStartedAt,
+              finishedAt: finishedAt,
+              model: model,
+              helperModel: helperModel,
+              auditModel: auditModel,
+              planMode: planMode,
+              promptTokens: promptTokens,
+              completionTokens: completionTokens,
+              toolCalls: toolLedger.length,
+              cacheHits: toolLoopController.cacheHitCount,
+              dedupBlockedCalls: toolLoopController.dedupBlockedCount,
+              approvalCount: toolLoopController.approvalCount,
+              approvedCount: toolLoopController.approvedCount,
+              helperFanout: multiAgentResult.agentCount,
+              auditEscalationLevel: toolBudget.auditCount,
+              selectedToolSet: selectedToolSet,
+              memorySources: memorySources,
+              finalOutcome: AgentFinalOutcome.success,
+            ).toJson()),
+          ),
+        );
         return;
       }
     }
@@ -294,6 +370,19 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     try {
       for (var round = 0;; round++) {
         cancellationToken?.throwIfCancelled();
+        final roundStartedAt = DateTime.now();
+        onTrace?.call(
+          LlmTraceEvent(
+            kind: 'model_round_started',
+            title: 'Model round ${round + 1} started',
+            content: _prettyJson({
+              'round': round + 1,
+              'messageCount': workingMessages.length,
+              'toolDefinitionsCount': currentToolDefinitions.length,
+              'contentChars': visibleOutput.length,
+            }),
+          ),
+        );
         final content = StringBuffer();
         final chunkController = StreamController<String>();
         _StreamChatResult? streamedResponse;
@@ -345,6 +434,21 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         if (response == null) {
           throw StateError('LLM stream ended without a response.');
         }
+        onTrace?.call(
+          LlmTraceEvent(
+            kind: 'model_round_completed',
+            title: 'Model round ${round + 1} completed',
+            content: _prettyJson({
+              'round': round + 1,
+              'messageCount': workingMessages.length,
+              'toolDefinitionsCount': currentToolDefinitions.length,
+              'contentChars': content.length,
+              'toolCallCount': response.toolCalls.length,
+              'elapsedMs':
+                  DateTime.now().difference(roundStartedAt).inMilliseconds,
+            }),
+          ),
+        );
         _emitReasoningTrace(onTrace, response.reasoningContent);
 
         if (response.toolCalls.isEmpty) {
@@ -508,7 +612,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     } finally {
       final finishedAt = DateTime.now();
       final summary = AgentRunSummary(
-        runId: runId,
+        runId: resolvedRunId,
         startedAt: runStartedAt,
         finishedAt: finishedAt,
         model: model,

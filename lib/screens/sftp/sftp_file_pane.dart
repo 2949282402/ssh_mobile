@@ -122,9 +122,8 @@ class _FilePane extends StatelessWidget {
     final strings = AppStrings(settings.language);
     final messenger = ScaffoldMessenger.of(context);
 
-    final result = await FilePicker.pickFiles(withData: false);
-    if (result == null || result.files.isEmpty) return;
-    final file = result.files.single;
+    final file = await FilePicker.pickFile();
+    if (file == null) return;
 
     if (file.size > SftpService.maxUploadBytes) {
       messenger.showSnackBar(

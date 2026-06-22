@@ -1,27 +1,49 @@
+import 'package:uuid/uuid.dart';
+
+import '../../../services/app_log_service.dart';
 import '../../../services/llm_chat_service.dart';
 import '../../../services/storage_service.dart';
 import '../../../services/ai_tool_service.dart';
+import 'agent_trace_recorder.dart';
 import 'ai_chat_runtime_factory.dart';
 
 sealed class AiChatRunResult {
+  String get runId;
   const AiChatRunResult();
 }
 
 class AiChatRunSuccess extends AiChatRunResult {
+  @override
+  final String runId;
   final String answer;
   final LlmRunStats? runStats;
-  const AiChatRunSuccess(this.answer, this.runStats);
+  const AiChatRunSuccess({
+    required this.runId,
+    required this.answer,
+    required this.runStats,
+  });
 }
 
 class AiChatRunCancelled extends AiChatRunResult {
+  @override
+  final String runId;
   final String partialAnswer;
-  const AiChatRunCancelled(this.partialAnswer);
+  const AiChatRunCancelled({
+    required this.runId,
+    required this.partialAnswer,
+  });
 }
 
 class AiChatRunFailed extends AiChatRunResult {
+  @override
+  final String runId;
   final Object error;
   final String partialAnswer;
-  const AiChatRunFailed(this.error, this.partialAnswer);
+  const AiChatRunFailed({
+    required this.runId,
+    required this.error,
+    required this.partialAnswer,
+  });
 }
 
 class AiChatGenerationRunner {
@@ -47,6 +69,12 @@ class AiChatGenerationRunner {
     required Future<AiToolApprovalDecision> Function(AiToolApprovalRequest)
         requestToolApproval,
   }) async {
+    final runId = 'run-${const Uuid().v4()}';
+    final traceRecorder = AgentTraceRecorder(
+      repository: _runtimeFactory.storageService,
+      runId: runId,
+      chatId: chatId,
+    );
     final service = _runtimeFactory.createLlmChatService(
       settings: await _runtimeFactory.storageService.loadAiConnectionSettings(),
       model: model,
@@ -61,11 +89,15 @@ class AiChatGenerationRunner {
       await for (final chunk in service.stream(
         modelOverride: model,
         onStats: (stats) => runStats = stats,
-        onTrace: onTrace,
+        onTrace: (event) {
+          traceRecorder.record(event);
+          onTrace(event);
+        },
         requestToolApproval: requestToolApproval,
         allowedTools: allowedTools,
         forceContextCompression: forceContextCompression,
         cancellationToken: cancellationToken,
+        runId: runId,
         planMode: initialChat.planMode,
         userRequest: userRequest,
         selectedConnectionIds: selectedConnectionIds,
@@ -81,11 +113,33 @@ class AiChatGenerationRunner {
         onTextChunk(chunk);
       }
 
-      return AiChatRunSuccess(answer.toString(), runStats);
+      return AiChatRunSuccess(
+        runId: runId,
+        answer: answer.toString(),
+        runStats: runStats,
+      );
     } on LlmCancelledException {
-      return AiChatRunCancelled(answer.toString());
+      return AiChatRunCancelled(
+        runId: runId,
+        partialAnswer: answer.toString(),
+      );
     } catch (e) {
-      return AiChatRunFailed(e, answer.toString());
+      return AiChatRunFailed(
+        runId: runId,
+        error: e,
+        partialAnswer: answer.toString(),
+      );
+    } finally {
+      try {
+        await traceRecorder.flush();
+      } catch (e, stackTrace) {
+        AppLogService.instance.error(
+          'Failed to flush agent trace events',
+          error: e,
+          stackTrace: stackTrace,
+          details: 'chatId=$chatId runId=$runId',
+        );
+      }
     }
   }
 }

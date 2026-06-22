@@ -158,13 +158,26 @@ extension LlmChatServiceUtils on LlmChatService {
   void _emitToolResultTrace(
     void Function(LlmTraceEvent event)? onTrace,
     String toolName,
-    String result,
-  ) {
+    String result, {
+    String outcome = 'success',
+    bool cacheHit = false,
+    bool dedupBlocked = false,
+  }) {
+    final resultPreview = _toolSecretPolicy.previewText(
+      _prettyJsonString(result),
+      maxChars: 1600,
+    );
     onTrace?.call(
       LlmTraceEvent(
         kind: 'tool_result',
         title: 'Tool result: $toolName',
-        content: _prettyJsonString(result),
+        content: _prettyJson({
+          'tool': toolName,
+          'outcome': outcome,
+          'cacheHit': cacheHit,
+          'dedupBlocked': dedupBlocked,
+          'resultPreview': resultPreview,
+        }),
       ),
     );
   }

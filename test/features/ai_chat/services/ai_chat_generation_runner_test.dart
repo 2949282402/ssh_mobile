@@ -17,8 +17,23 @@ import 'package:ssh_mobile/services/app_settings.dart';
 
 class FakeLlmChatService implements LlmChatService {
   final Stream<String> Function(LlmCancellationToken? token) onStream;
+  final List<LlmTraceEvent> emittedTraces;
+  final AiToolApprovalRequest? approvalRequest;
 
-  FakeLlmChatService({required this.onStream});
+  String? receivedRunId;
+  bool? receivedForceContextCompression;
+
+  FakeLlmChatService({
+    required this.onStream,
+    this.emittedTraces = const [
+      LlmTraceEvent(
+        kind: 'reasoning',
+        title: 'Thinking',
+        content: 'Thinking process',
+      ),
+    ],
+    this.approvalRequest,
+  });
 
   @override
   Stream<String> stream({
@@ -29,6 +44,7 @@ class FakeLlmChatService implements LlmChatService {
     void Function(LlmRunStats stats)? onStats,
     void Function(LlmTraceEvent event)? onTrace,
     LlmCancellationToken? cancellationToken,
+    String? runId,
     Set<String>? allowedTools,
     String userRequest = '',
     Set<String> selectedConnectionIds = const {},
@@ -39,6 +55,8 @@ class FakeLlmChatService implements LlmChatService {
     bool planMode = false,
     AiChatMessageRecord? approvedPlanMessage,
   }) {
+    receivedRunId = runId;
+    receivedForceContextCompression = forceContextCompression;
     // 触发 stats 回调
     if (onStats != null) {
       onStats(LlmRunStats(
@@ -62,23 +80,12 @@ class FakeLlmChatService implements LlmChatService {
       ));
     }
     if (onTrace != null) {
-      onTrace(const LlmTraceEvent(
-        kind: 'reasoning',
-        title: 'Thinking',
-        content: 'Thinking process',
-      ));
+      for (final event in emittedTraces) {
+        onTrace(event);
+      }
     }
-    if (requestToolApproval != null) {
-      requestToolApproval(
-        const AiToolApprovalRequest(
-          toolName: 'run_command',
-          approvalType: 'execute',
-          connectionId: 'conn-123',
-          connectionName: 'test-conn',
-          command: 'run_cmd',
-          reason: 'diagnostics',
-        ),
-      );
+    if (requestToolApproval != null && approvalRequest != null) {
+      requestToolApproval(approvalRequest!);
     }
     return onStream(cancellationToken);
   }
@@ -197,14 +204,128 @@ void main() {
 
       expect(result, isA<AiChatRunSuccess>());
       final success = result as AiChatRunSuccess;
+      expect(success.runId, startsWith('run-'));
+      expect(fakeService.receivedRunId, success.runId);
       expect(success.answer, 'hello world');
       expect(success.runStats?.promptTokens, 10);
       expect(success.runStats?.completionTokens, 20);
       expect(receivedChunks, ['hello', ' world']);
       expect(receivedTraces, hasLength(1));
       expect(receivedTraces.first.kind, 'reasoning');
-      expect(receivedApprovals, hasLength(1));
-      expect(receivedApprovals.first.connectionName, 'test-conn');
+      expect(receivedApprovals, isEmpty);
+      final traceEvents =
+          await storageService.loadAgentTraceEvents(success.runId);
+      expect(traceEvents, hasLength(1));
+      expect(traceEvents.single.kind, 'reasoning');
+    });
+
+    test('run persists tool, approval, blocked, and compression traces',
+        () async {
+      final fakeService = FakeLlmChatService(
+        emittedTraces: const [
+          LlmTraceEvent(
+            kind: 'agent_run_started',
+            title: 'Agent run started',
+            content: '{"runId":"placeholder","model":"gpt-4o"}',
+          ),
+          LlmTraceEvent(
+            kind: 'context_compression_started',
+            title: 'Context compression started',
+            content: '{"forceContextCompression":true}',
+          ),
+          LlmTraceEvent(
+            kind: 'context_compression_completed',
+            title: 'Context compression completed',
+            content: '{"compressed":true}',
+          ),
+          LlmTraceEvent(
+            kind: 'tool_request',
+            title: 'Tool request: run_command',
+            content: '{"tool":"run_command","arguments":{"command":"uptime"}}',
+          ),
+          LlmTraceEvent(
+            kind: 'approval',
+            title: 'Tool action rejected',
+            content:
+                '{"tool":"run_command","status":"rejected","command":"sudo systemctl restart app"}',
+          ),
+          LlmTraceEvent(
+            kind: 'tool_blocked',
+            title: 'Tool blocked: hidden_tool (not visible)',
+            content:
+                '{"tool":"hidden_tool","reason":"not visible in current context"}',
+          ),
+          LlmTraceEvent(
+            kind: 'tool_result',
+            title: 'Tool result: hidden_tool',
+            content:
+                '{"tool":"hidden_tool","outcome":"tool_not_visible","resultPreview":"blocked"}',
+          ),
+        ],
+        onStream: (token) => Stream.fromIterable(['done']),
+      );
+
+      final factory = FakeAiChatRuntimeFactory(
+        serviceBuilder: () => fakeService,
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+      );
+
+      final runner = AiChatGenerationRunner(runtimeFactory: factory);
+      final result = await runner.run(
+        chatId: 'test_chat',
+        initialChat: AiChatRecord(
+          id: 'test_chat',
+          title: 'Title',
+          messages: const [],
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+          model: 'gpt-4o',
+        ),
+        model: 'gpt-4o',
+        userRequest: 'diagnose',
+        memorySources: const [],
+        allowedTools: null,
+        forceContextCompression: true,
+        cancellationToken: LlmCancellationToken(),
+        selectedConnectionIds: const {},
+        requestMessagesJson: const [],
+        onTextChunk: (_) {},
+        onTrace: (_) {},
+        requestToolApproval: (req) async =>
+            const AiToolApprovalDecision.rejected(abort: true),
+      );
+
+      expect(result, isA<AiChatRunSuccess>());
+      final runId = result.runId;
+      expect(fakeService.receivedRunId, runId);
+      expect(fakeService.receivedForceContextCompression, isTrue);
+      final traceEvents = await storageService.loadAgentTraceEvents(runId);
+      expect(
+        traceEvents.map((event) => event.kind),
+        containsAll([
+          'agent_run_started',
+          'context_compression_started',
+          'context_compression_completed',
+          'tool_request',
+          'approval',
+          'tool_blocked',
+          'tool_result',
+        ]),
+      );
+      expect(
+        traceEvents.firstWhere((event) => event.kind == 'approval').status,
+        'rejected',
+      );
+      expect(
+        traceEvents.firstWhere((event) => event.kind == 'tool_result').status,
+        'tool_not_visible',
+      );
     });
 
     test('run handles cancellation', () async {
@@ -269,7 +390,10 @@ void main() {
 
       expect(result, isA<AiChatRunCancelled>());
       final cancelled = result as AiChatRunCancelled;
+      expect(cancelled.runId, startsWith('run-'));
       expect(cancelled.partialAnswer, 'partial');
+      expect(await storageService.loadAgentTraceEvents(cancelled.runId),
+          isNotEmpty);
     });
 
     test('run handles errors', () async {
@@ -316,7 +440,10 @@ void main() {
 
       expect(result, isA<AiChatRunFailed>());
       final failed = result as AiChatRunFailed;
+      expect(failed.runId, startsWith('run-'));
       expect(failed.error.toString(), contains('network error'));
+      expect(
+          await storageService.loadAgentTraceEvents(failed.runId), isNotEmpty);
     });
   });
 }

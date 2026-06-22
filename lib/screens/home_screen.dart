@@ -411,17 +411,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final settingsVm = context.read<SettingsViewModel>();
     try {
       final success = await settingsVm.importAppData(() async {
-        final result = await FilePicker.pickFiles(
+        final file = await FilePicker.pickFile(
           type: FileType.custom,
           allowedExtensions: const ['json'],
-          withData: true,
         );
-        if (result == null || result.files.isEmpty) return null;
-        final bytes = result.files.single.bytes;
-        if (bytes == null) {
-          throw StateError('Unable to read selected file.');
-        }
-        return bytes;
+        return file?.readAsBytes();
       });
       if (!context.mounted) return;
       if (success) {

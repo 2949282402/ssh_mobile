@@ -39,8 +39,6 @@ extension _ChatAttachments on _LlmChatScreenBodyState {
     try {
       final result = await FilePicker.pickFiles(
         type: FileType.image,
-        withData: true,
-        allowMultiple: true,
       );
       if (result == null || result.files.isEmpty) return;
       if (!mounted) return;
@@ -50,7 +48,7 @@ extension _ChatAttachments on _LlmChatScreenBodyState {
       final maxBytes = settings.maxImageSizeBytes;
 
       for (final file in result.files) {
-        if (file.bytes == null || file.size == 0) continue;
+        if (file.size == 0) continue;
         if (file.size > maxBytes) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -64,12 +62,14 @@ extension _ChatAttachments on _LlmChatScreenBodyState {
           }
           continue;
         }
+        final bytes = await file.readAsBytes();
+        if (bytes.isEmpty) continue;
         final mimeType = _guessMimeType(file.name, fallback: 'image/png');
         viewModel.addAttachment(AiChatAttachment(
           fileName: file.name,
           mimeType: mimeType,
           sizeBytes: file.size,
-          dataBase64: base64Encode(file.bytes!),
+          dataBase64: base64Encode(bytes),
         ));
       }
     } catch (e) {
@@ -79,10 +79,7 @@ extension _ChatAttachments on _LlmChatScreenBodyState {
 
   Future<void> _pickFile(_AiStrings strings) async {
     try {
-      final result = await FilePicker.pickFiles(
-        withData: true,
-        allowMultiple: true,
-      );
+      final result = await FilePicker.pickFiles();
       if (result == null || result.files.isEmpty) return;
       if (!mounted) return;
 
@@ -91,7 +88,7 @@ extension _ChatAttachments on _LlmChatScreenBodyState {
       final maxBytes = settings.maxFileSizeBytes;
 
       for (final file in result.files) {
-        if (file.bytes == null || file.size == 0) continue;
+        if (file.size == 0) continue;
         if (file.size > maxBytes) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -105,12 +102,14 @@ extension _ChatAttachments on _LlmChatScreenBodyState {
           }
           continue;
         }
+        final bytes = await file.readAsBytes();
+        if (bytes.isEmpty) continue;
         final mimeType = _guessMimeType(file.name);
         viewModel.addAttachment(AiChatAttachment(
           fileName: file.name,
           mimeType: mimeType,
           sizeBytes: file.size,
-          dataBase64: base64Encode(file.bytes!),
+          dataBase64: base64Encode(bytes),
         ));
       }
     } catch (e) {

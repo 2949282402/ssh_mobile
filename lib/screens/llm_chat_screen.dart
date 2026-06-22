@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'client_webview_screen.dart';
+import '../features/ai_chat/pages/agent_trace_debug_page.dart';
 import '../features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
 import '../features/ai_chat/services/ai_chat_message_mapper.dart';
 import '../features/playbook/models/playbook.dart';
