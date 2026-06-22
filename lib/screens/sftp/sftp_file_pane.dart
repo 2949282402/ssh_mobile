@@ -248,6 +248,7 @@ class _FilePane extends StatelessWidget {
       final savedPath = await FilePicker.saveFile(
         dialogTitle: strings.downloadFile,
         fileName: entry.name,
+        bytes: Uint8List(0),
       );
       if (savedPath == null) return;
 

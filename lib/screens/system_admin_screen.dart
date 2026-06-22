@@ -118,28 +118,6 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
         );
 
         return Scaffold(
-          appBar: AppBar(
-            actions: [
-              ValueListenableBuilder<int>(
-                valueListenable: _activeTabIndex,
-                builder: (context, activeIndex, _) {
-                  final isMonitorTab = activeIndex == 0;
-                  final canManage = context.select<SystemAdminViewModel, bool>(
-                    (vm) => vm.canManageSelectedConnection,
-                  );
-                  if (!isMonitorTab && canManage) {
-                    return IconButton(
-                      icon: const Icon(Icons.refresh),
-                      onPressed: () =>
-                          context.read<SystemAdminViewModel>().refreshAllData(),
-                      tooltip: strings.refreshAll,
-                    );
-                  }
-                  return const SizedBox.shrink();
-                },
-              ),
-            ],
-          ),
           body: ValueListenableBuilder<int>(
             valueListenable: _activeTabIndex,
             builder: (context, activeIndex, _) {
@@ -338,28 +316,59 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
     // TabController organizes all Admin tabs
     return Column(
       children: [
-        TabBar(
-          controller: _tabController,
-          isScrollable: true,
-          tabAlignment: TabAlignment.start,
-          tabs: [
-            Tab(
-                text: strings.monitor,
-                icon: const Icon(Icons.monitor_heart_outlined)),
-            Tab(text: strings.listeningPorts, icon: const Icon(Icons.lan)),
-            Tab(
-                text: strings.applications,
-                icon: const Icon(Icons.apps_rounded)),
-            Tab(
-                text: strings.systemServices,
-                icon: const Icon(Icons.settings_suggest)),
-            Tab(text: strings.userAccounts, icon: const Icon(Icons.people)),
-            Tab(
-                text: strings.activeSessions,
-                icon: const Icon(Icons.co_present)),
-            Tab(
-                text: strings.systemPower,
-                icon: const Icon(Icons.power_settings_new)),
+        Row(
+          children: [
+            Expanded(
+              child: TabBar(
+                controller: _tabController,
+                isScrollable: true,
+                tabAlignment: TabAlignment.start,
+                tabs: [
+                  Tab(
+                      text: strings.monitor,
+                      icon: const Icon(Icons.monitor_heart_outlined)),
+                  Tab(
+                      text: strings.listeningPorts,
+                      icon: const Icon(Icons.lan)),
+                  Tab(
+                      text: strings.applications,
+                      icon: const Icon(Icons.apps_rounded)),
+                  Tab(
+                      text: strings.systemServices,
+                      icon: const Icon(Icons.settings_suggest)),
+                  Tab(
+                      text: strings.userAccounts,
+                      icon: const Icon(Icons.people)),
+                  Tab(
+                      text: strings.activeSessions,
+                      icon: const Icon(Icons.co_present)),
+                  Tab(
+                      text: strings.systemPower,
+                      icon: const Icon(Icons.power_settings_new)),
+                ],
+              ),
+            ),
+            ValueListenableBuilder<int>(
+              valueListenable: activeTabIndex,
+              builder: (context, activeIndex, _) {
+                final isMonitorTab = activeIndex == 0;
+                final canManage = context.select<SystemAdminViewModel, bool>(
+                  (vm) => vm.canManageSelectedConnection,
+                );
+                if (!isMonitorTab && canManage) {
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8.0),
+                    child: IconButton(
+                      icon: const Icon(Icons.refresh),
+                      onPressed: () =>
+                          context.read<SystemAdminViewModel>().refreshAllData(),
+                      tooltip: strings.refreshAll,
+                    ),
+                  );
+                }
+                return const SizedBox.shrink();
+              },
+            ),
           ],
         ),
         Expanded(

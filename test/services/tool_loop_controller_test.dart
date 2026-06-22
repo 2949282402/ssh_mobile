@@ -1280,7 +1280,8 @@ void main() {
         onTrace: (ev) => traces.add(ev),
         cancellationToken: null,
         settings: settings,
-        complete: (role, messages, {required thinkingSettings}) async => 'advice',
+        complete: (role, messages, {required thinkingSettings}) async =>
+            'advice',
         classify: (messages) async => '{}',
         planExecutionSnapshot: const PlanExecutionSnapshot(
           phase: PlanExecutionPhase.pending,
