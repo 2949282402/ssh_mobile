@@ -71,7 +71,7 @@ class _AgentTraceDebugPageState extends State<AgentTraceDebugPage> {
               child: Text('Failed to load trace: ${snapshot.error}'),
             );
           }
-          if (data == null || data.events.isEmpty) {
+          if (data == null || (data.events.isEmpty && data.metrics == null)) {
             return _EmptyTrace(runId: widget.runId);
           }
           final events = _filteredEvents(data.events);
@@ -84,24 +84,51 @@ class _AgentTraceDebugPageState extends State<AgentTraceDebugPage> {
                 metrics: data.metrics,
               ),
               const SizedBox(height: 14),
-              _FilterBar(
-                selected: _filter,
-                onSelected: (value) => setState(() => _filter = value),
-              ),
-              const SizedBox(height: 10),
-              if (events.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 36),
-                  child: Center(child: Text('No events match this filter.')),
-                )
-              else
-                for (final event in events)
-                  _TraceTimelineItem(
-                    event: event,
-                    offset: event.createdAt.difference(
-                      data.events.first.createdAt,
+              if (data.events.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 36),
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.account_tree_outlined, size: 42),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'No persisted trace events found for this run.',
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          widget.runId,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
+                )
+              else ...[
+                _FilterBar(
+                  selected: _filter,
+                  onSelected: (value) => setState(() => _filter = value),
+                ),
+                const SizedBox(height: 10),
+                if (events.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 36),
+                    child: Center(child: Text('No events match this filter.')),
+                  )
+                else
+                  for (final event in events)
+                    _TraceTimelineItem(
+                      event: event,
+                      offset: event.createdAt.difference(
+                        data.events.first.createdAt,
+                      ),
+                    ),
+              ],
             ],
           );
         },
@@ -503,7 +530,7 @@ class _EmptyTrace extends StatelessWidget {
           children: [
             const Icon(Icons.account_tree_outlined, size: 42),
             const SizedBox(height: 12),
-            const Text('No trace events found.'),
+            const Text('No persisted trace events found for this run.'),
             const SizedBox(height: 6),
             Text(
               runId,

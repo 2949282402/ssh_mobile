@@ -211,9 +211,8 @@ class _MessageBubble extends StatelessWidget {
                       ],
                     ),
             ),
-            if (isAssistant &&
-                message.agentRunId?.trim().isNotEmpty == true &&
-                message.traces.isNotEmpty)
+            if (!isUser &&
+                message.agentRunId?.trim().isNotEmpty == true)
               _AgentTraceLink(
                 chatId: chatId,
                 runId: message.agentRunId!.trim(),
@@ -342,20 +341,26 @@ class _AgentTraceLink extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final tools =
-        message.traces.where((trace) => trace.kind.contains('tool')).length;
-    final approvals =
-        message.traces.where((trace) => trace.kind.contains('approval')).length;
-    final elapsed = message.elapsedMs == null
-        ? null
-        : _formatElapsedForTraceLink(message.elapsedMs!);
-    final label = [
-      'Trace',
-      '${message.traces.length} events',
-      if (tools > 0) '$tools tools',
-      if (approvals > 0) '$approvals approvals',
-      if (elapsed != null) elapsed,
-    ].join(' · ');
+    final String label;
+    if (message.traces.isNotEmpty) {
+      final tools =
+          message.traces.where((trace) => trace.kind.contains('tool')).length;
+      final approvals =
+          message.traces.where((trace) => trace.kind.contains('approval')).length;
+      final elapsed = message.elapsedMs == null
+          ? null
+          : _formatElapsedForTraceLink(message.elapsedMs!);
+      label = [
+        'Trace',
+        '${message.traces.length} events',
+        if (tools > 0) '$tools tools',
+        if (approvals > 0) '$approvals approvals',
+        if (elapsed != null) elapsed,
+      ].join(' · ');
+    } else {
+      final shortRunId = runId.length > 8 ? runId.substring(runId.length - 8) : runId;
+      label = 'Trace · $shortRunId';
+    }
 
     return Padding(
       padding: const EdgeInsets.only(left: 4, bottom: 8),

@@ -112,6 +112,38 @@ void main() {
       expect(event.content, contains('[truncated]'));
       expect(event.content, isNot(contains('sk-abcdefghijklmnopqrstuvwxyz')));
     });
+
+    test('agent_run_summary with approvedCount should not become approved', () {
+      final recorder = AgentTraceRecorder(
+        repository: _FakeAgentTraceRepository(),
+        runId: 'run-1',
+        chatId: 'chat-1',
+      );
+
+      recorder.record(const LlmTraceEvent(
+        kind: 'agent_run_summary',
+        title: 'Agent run summary',
+        content: '{"finalOutcome":"success","approvedCount":1}',
+      ));
+
+      expect(recorder.bufferedEvents.single.status, 'success');
+    });
+
+    test('agent_run_summary without finalOutcome should become completed', () {
+      final recorder = AgentTraceRecorder(
+        repository: _FakeAgentTraceRepository(),
+        runId: 'run-1',
+        chatId: 'chat-1',
+      );
+
+      recorder.record(const LlmTraceEvent(
+        kind: 'agent_run_summary',
+        title: 'Agent run summary',
+        content: '{"approvedCount":1}',
+      ));
+
+      expect(recorder.bufferedEvents.single.status, 'completed');
+    });
   });
 }
 

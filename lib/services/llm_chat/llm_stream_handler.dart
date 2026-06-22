@@ -117,7 +117,17 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     var compressed = false;
     final shouldCompressFromUsageThreshold =
         estimatedBeforeCompression >= settings.contextWindowTokens * 0.9;
-    if (shouldCompressFromUsageThreshold || forceContextCompression) {
+
+    final visibleOutput = StringBuffer();
+    var selectedToolSet = <String>[];
+    var toolLedger = <LlmToolLedgerEntry>[];
+    ToolLoopController? toolLoopController;
+    LlmToolBudgetController? toolBudget;
+    MultiAgentRunResult? multiAgentResult;
+    var summaryEmitted = false;
+
+    try {
+      if (shouldCompressFromUsageThreshold || forceContextCompression) {
       onTrace?.call(
         LlmTraceEvent(
           kind: 'context_compression_started',
@@ -206,7 +216,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
       ),
     );
 
-    final selectedToolSet =
+    selectedToolSet =
         visibleTools.map((tool) => tool.name).toList(growable: false);
     final visibleToolsByName = {
       for (final tool in visibleTools) tool.name: tool,
@@ -214,11 +224,11 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     var currentToolDefinitions =
         visibleTools.map((tool) => tool.definition).toList(growable: false);
     final readOnlyToolCache = <String, CachedToolResult>{};
-    final toolBudget = LlmToolBudgetController(
+    toolBudget = LlmToolBudgetController(
       baseBudget: settings.toolCallBudget,
     );
-    final toolLedger = <LlmToolLedgerEntry>[];
-    final toolLoopController = ToolLoopController(
+    toolLedger = <LlmToolLedgerEntry>[];
+    toolLoopController = ToolLoopController(
       chatService: this,
       toolBudget: toolBudget,
       readOnlyToolCache: readOnlyToolCache,
@@ -242,7 +252,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     final isMultiAgent = settings.multiAgentEnabled || planMode;
     final activeMaxAgents = planMode ? 5 : settings.multiAgentMaxAgents;
 
-    final multiAgentResult = await multiAgentCoordinator.run(
+    multiAgentResult = await multiAgentCoordinator.run(
       messages: workingMessages,
       enabled: isMultiAgent,
       maxAgents: activeMaxAgents,
@@ -334,40 +344,11 @@ extension LlmChatServiceStreamHandler on LlmChatService {
             memorySources: memorySources,
           ),
         );
-        final finishedAt = DateTime.now();
-        onTrace?.call(
-          LlmTraceEvent(
-            kind: 'agent_run_summary',
-            title: 'Agent run summary',
-            content: _prettyJson(AgentRunSummary(
-              runId: resolvedRunId,
-              startedAt: runStartedAt,
-              finishedAt: finishedAt,
-              model: model,
-              helperModel: helperModel,
-              auditModel: auditModel,
-              planMode: planMode,
-              promptTokens: promptTokens,
-              completionTokens: completionTokens,
-              toolCalls: toolLedger.length,
-              cacheHits: toolLoopController.cacheHitCount,
-              dedupBlockedCalls: toolLoopController.dedupBlockedCount,
-              approvalCount: toolLoopController.approvalCount,
-              approvedCount: toolLoopController.approvedCount,
-              helperFanout: multiAgentResult.agentCount,
-              auditEscalationLevel: toolBudget.auditCount,
-              selectedToolSet: selectedToolSet,
-              memorySources: memorySources,
-              finalOutcome: AgentFinalOutcome.success,
-            ).toJson()),
-          ),
-        );
+        visibleOutput.write(outcome.finalText);
         return;
       }
     }
 
-    final visibleOutput = StringBuffer();
-    try {
       for (var round = 0;; round++) {
         cancellationToken?.throwIfCancelled();
         final roundStartedAt = DateTime.now();
@@ -610,37 +591,40 @@ extension LlmChatServiceStreamHandler on LlmChatService {
       finalOutcome = AgentFinalOutcome.modelError;
       rethrow;
     } finally {
-      final finishedAt = DateTime.now();
-      final summary = AgentRunSummary(
-        runId: resolvedRunId,
-        startedAt: runStartedAt,
-        finishedAt: finishedAt,
-        model: model,
-        helperModel: helperModel,
-        auditModel: auditModel,
-        planMode: planMode,
-        promptTokens: LlmChatService.estimateMessagesTokens(workingMessages),
-        completionTokens:
-            LlmChatService.estimateTextTokens(visibleOutput.toString()),
-        toolCalls: toolLedger.length,
-        cacheHits: toolLoopController.cacheHitCount,
-        dedupBlockedCalls: toolLoopController.dedupBlockedCount,
-        approvalCount: toolLoopController.approvalCount,
-        approvedCount: toolLoopController.approvedCount,
-        helperFanout: multiAgentResult?.agentCount ?? 0,
-        auditEscalationLevel: toolBudget.auditCount,
-        selectedToolSet: selectedToolSet,
-        memorySources: memorySources,
-        finalOutcome: finalOutcome,
-      );
+      if (!summaryEmitted) {
+        summaryEmitted = true;
+        final finishedAt = DateTime.now();
+        final summary = AgentRunSummary(
+          runId: resolvedRunId,
+          startedAt: runStartedAt,
+          finishedAt: finishedAt,
+          model: model,
+          helperModel: helperModel,
+          auditModel: auditModel,
+          planMode: planMode,
+          promptTokens: LlmChatService.estimateMessagesTokens(workingMessages),
+          completionTokens:
+              LlmChatService.estimateTextTokens(visibleOutput.toString()),
+          toolCalls: toolLedger.length,
+          cacheHits: toolLoopController?.cacheHitCount ?? 0,
+          dedupBlockedCalls: toolLoopController?.dedupBlockedCount ?? 0,
+          approvalCount: toolLoopController?.approvalCount ?? 0,
+          approvedCount: toolLoopController?.approvedCount ?? 0,
+          helperFanout: multiAgentResult?.agentCount ?? 0,
+          auditEscalationLevel: toolBudget?.auditCount ?? 0,
+          selectedToolSet: selectedToolSet,
+          memorySources: memorySources,
+          finalOutcome: finalOutcome,
+        );
 
-      onTrace?.call(
-        LlmTraceEvent(
-          kind: 'agent_run_summary',
-          title: 'Agent run summary',
-          content: _prettyJson(summary.toJson()),
-        ),
-      );
+        onTrace?.call(
+          LlmTraceEvent(
+            kind: 'agent_run_summary',
+            title: 'Agent run summary',
+            content: _prettyJson(summary.toJson()),
+          ),
+        );
+      }
     }
   }
 

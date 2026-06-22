@@ -103,6 +103,14 @@ class AgentTraceRecorder {
   }
 
   String _deriveStatus(LlmTraceEvent event, String content) {
+    if (event.kind == 'agent_run_summary') {
+      final decoded = _tryDecodeMap(content);
+      final outcome = decoded?['finalOutcome'];
+      if (outcome is String && outcome.trim().isNotEmpty) {
+        return outcome.trim();
+      }
+      return 'completed';
+    }
     final decoded = _tryDecodeMap(content);
     final decodedStatus = decoded?['status'] ?? decoded?['outcome'];
     if (decodedStatus is String && decodedStatus.trim().isNotEmpty) {
@@ -117,7 +125,6 @@ class AgentTraceRecorder {
     if (lower.contains('requested') || lower.contains('request')) {
       return 'requested';
     }
-    if (event.kind == 'agent_run_summary') return 'completed';
     return 'info';
   }
 

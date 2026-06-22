@@ -125,7 +125,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('No trace events found.'), findsOneWidget);
+    expect(find.text('No persisted trace events found for this run.'), findsOneWidget);
     expect(find.text('missing-run'), findsOneWidget);
   });
 }

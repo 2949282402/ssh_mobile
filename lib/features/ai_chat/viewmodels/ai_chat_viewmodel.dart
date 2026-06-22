@@ -1348,6 +1348,7 @@ class AiChatViewModel extends ChangeNotifier {
               role: 'error',
               text: translator.translateFailed(runResult.error),
               createdAt: DateTime.now(),
+              agentRunId: runResult.runId,
             ),
           ],
           updatedAt: DateTime.now(),

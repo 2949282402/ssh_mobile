@@ -23,22 +23,50 @@ class AgentTraceEvent {
 
   AgentTraceEvent({
     String? id,
+    required String runId,
+    required String chatId,
+    required DateTime createdAt,
+    required int sequence,
+    required String kind,
+    required String title,
+    required String content,
+    String? toolName,
+    String? status,
+    int? durationMs,
+    String? parentEventId,
+    bool truncated = false,
+  }) : this._internal(
+          id: id,
+          runId: runId,
+          chatId: chatId,
+          createdAt: createdAt,
+          sequence: sequence,
+          kind: kind,
+          title: title,
+          toolName: toolName,
+          status: status,
+          durationMs: durationMs,
+          parentEventId: parentEventId,
+          contentAndTruncated: _normalizeContent(content, truncated),
+        );
+
+  AgentTraceEvent._internal({
+    String? id,
     required this.runId,
     required this.chatId,
     required this.createdAt,
     required this.sequence,
     required this.kind,
     required this.title,
-    required String content,
     this.toolName,
     String? status,
     this.durationMs,
     this.parentEventId,
-    bool truncated = false,
+    required (String, bool) contentAndTruncated,
   })  : id = id?.trim().isNotEmpty == true ? id!.trim() : _agentTraceUuid.v4(),
         status = status?.trim().isNotEmpty == true ? status!.trim() : 'info',
-        content = _normalizeContent(content, truncated).$1,
-        truncated = _normalizeContent(content, truncated).$2;
+        content = contentAndTruncated.$1,
+        truncated = contentAndTruncated.$2;
 
   AgentTraceEvent copyWith({
     String? id,
