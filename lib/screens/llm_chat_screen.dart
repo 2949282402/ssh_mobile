@@ -19,6 +19,7 @@ import '../features/playbook/models/playbook.dart';
 import '../services/agent_model_profile.dart';
 import '../services/app_settings.dart';
 import '../services/llm_chat_service.dart';
+import '../services/llm_provider/llm_api_format.dart';
 import '../services/multi_agent_coordinator.dart';
 import '../services/performance_monitor_service.dart';
 import '../services/sftp_service.dart';

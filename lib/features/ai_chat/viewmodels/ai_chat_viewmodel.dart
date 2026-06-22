@@ -16,6 +16,7 @@ import '../services/ai_chat_context_builder.dart';
 import '../services/ai_chat_message_mapper.dart';
 import '../services/ai_chat_token_estimator.dart';
 import '../../../services/llm_chat_service.dart';
+import '../../../services/llm_provider/llm_api_format.dart';
 import '../../../services/performance_monitor_service.dart';
 import '../../../services/playbook_service.dart';
 import '../../../services/rag_service.dart';
@@ -448,6 +449,7 @@ class AiChatViewModel extends ChangeNotifier {
     String? customReviewerPrompt,
     String? customSummarizerPrompt,
     String? customCoordinatorPrompt,
+    LlmApiFormat? apiFormat,
   }) async {
     try {
       await _storageService.saveAiConnectionSettings(
@@ -484,6 +486,7 @@ class AiChatViewModel extends ChangeNotifier {
         customReviewerPrompt: customReviewerPrompt,
         customSummarizerPrompt: customSummarizerPrompt,
         customCoordinatorPrompt: customCoordinatorPrompt,
+        apiFormat: apiFormat,
       );
       notifyListeners();
     } catch (e, stackTrace) {

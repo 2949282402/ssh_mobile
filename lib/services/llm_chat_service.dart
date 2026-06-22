@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
@@ -14,6 +13,10 @@ import 'tool_exposure_router.dart';
 import 'tool_secret_policy.dart';
 import 'agent/plan_execution_controller.dart';
 import 'package:uuid/uuid.dart';
+import 'llm_provider/llm_provider_types.dart';
+import 'llm_provider/llm_provider_adapter.dart';
+import 'llm_provider/llm_provider_factory.dart';
+import 'llm_provider/openai_chat_provider.dart';
 
 part 'llm_chat/llm_chat_types.dart';
 part 'llm_chat/llm_system_prompt.dart';
@@ -72,7 +75,6 @@ abstract interface class LlmClientAdapter {
 
 /// OpenAI 兼容 LLM 流式对话服务。
 class LlmChatService implements LlmClientAdapter {
-  static const int _networkRetryCount = 3;
 
   final StorageService storageService;
   final AiToolExecutor toolService;
@@ -329,76 +331,15 @@ class LlmChatService implements LlmClientAdapter {
     required String baseUrl,
     String? apiKey,
   }) async {
+    final settings = await storageService.loadAiConnectionSettings();
+    final provider = LlmProviderFactory.fromSettings(settings);
     final resolvedApiKey = apiKey?.trim().isNotEmpty == true
         ? apiKey!.trim()
         : await storageService.getAiApiKey();
-    if (resolvedApiKey == null || resolvedApiKey.isEmpty) {
-      throw StateError('API key is not configured.');
-    }
-    _assertValidHeaderApiKey(resolvedApiKey);
-
-    final endpoint = Uri.parse(_joinUrl(baseUrl, '/models'));
-    final timeoutSeconds = await storageService.getAiRequestTimeoutSeconds();
-    final client = HttpClient();
-    final startedAt = DateTime.now();
-    AppLogService.instance.info(
-      'LLM models request sent',
-      details: 'endpoint=$endpoint',
+    return provider.fetchModels(
+      baseUrl: baseUrl,
+      apiKey: resolvedApiKey,
     );
-    try {
-      final request = await client.getUrl(endpoint).timeout(
-            Duration(seconds: timeoutSeconds),
-          );
-      request.headers.set(
-        HttpHeaders.authorizationHeader,
-        'Bearer $resolvedApiKey',
-      );
-      final response = await request.close().timeout(
-            Duration(seconds: timeoutSeconds),
-          );
-      final body = await response.transform(utf8.decoder).join();
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        AppLogService.instance.warning(
-          'LLM models request failed',
-          details:
-              'status=${response.statusCode} elapsedMs=${DateTime.now().difference(startedAt).inMilliseconds} bodyChars=${body.length}',
-        );
-        throw StateError(
-          'Fetch models failed (${response.statusCode}): $body',
-        );
-      }
-
-      final decoded = jsonDecode(body) as Map<String, dynamic>;
-      final data = decoded['data'];
-      final models = <String>[];
-      if (data is List) {
-        for (final item in data) {
-          if (item is Map && item['id'] is String) {
-            models.add((item['id'] as String).trim());
-          } else if (item is String) {
-            models.add(item.trim());
-          }
-        }
-      }
-      models.removeWhere((item) => item.isEmpty);
-      models.sort();
-      AppLogService.instance.info(
-        'LLM models received',
-        details:
-            'count=${models.length} elapsedMs=${DateTime.now().difference(startedAt).inMilliseconds}',
-      );
-      return models;
-    } catch (e, stackTrace) {
-      AppLogService.instance.error(
-        'LLM models request error',
-        error: e,
-        stackTrace: stackTrace,
-        details: 'endpoint=$endpoint timeoutSeconds=$timeoutSeconds',
-      );
-      rethrow;
-    } finally {
-      client.close(force: true);
-    }
   }
 
   @override
@@ -478,11 +419,27 @@ class LlmChatService implements LlmClientAdapter {
   }
 
   static int estimateMessagesTokens(List<Map<String, dynamic>> messages) {
-    return _estimateMessagesTokens(messages);
+    var total = 0;
+    for (final message in messages) {
+      total += 4;
+      total += estimateTextTokens('${message['role'] ?? ''}');
+      total += estimateTextTokens('${message['content'] ?? ''}');
+    }
+    return total;
   }
 
   static int estimateTextTokens(String text) {
-    return _estimateTextTokens(text);
+    if (text.isEmpty) return 0;
+    var asciiRunes = 0;
+    var nonAsciiRunes = 0;
+    for (final rune in text.runes) {
+      if (rune <= 0x7f) {
+        asciiRunes++;
+      } else {
+        nonAsciiRunes++;
+      }
+    }
+    return (asciiRunes / 4).ceil() + nonAsciiRunes;
   }
 
   static String resolveOpenAiCompatibleUrl(String baseUrl, String path) {

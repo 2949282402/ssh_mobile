@@ -7,6 +7,22 @@ class _AiStrings {
 
   bool get _en => language == AppLanguage.en;
 
+  String get apiFormat => _en ? 'API Format' : 'API 协议格式';
+  String apiFormatLabel(LlmApiFormat format) {
+    switch (format) {
+      case LlmApiFormat.openAiChatCompletions:
+        return 'OpenAI Chat Completions';
+      case LlmApiFormat.openAiResponses:
+        return 'OpenAI Responses';
+      case LlmApiFormat.anthropicMessages:
+        return 'Anthropic Messages';
+      case LlmApiFormat.geminiNative:
+        return 'Gemini Native';
+      case LlmApiFormat.geminiOpenAiCompatible:
+        return 'Gemini OpenAI-compatible';
+    }
+  }
+
   String get title => _en ? 'LLM Assistant' : '大模型助手';
   String get welcome => _en
       ? 'Ask me about your servers, logs, status, or a remote file.'

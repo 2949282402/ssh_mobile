@@ -19,6 +19,7 @@ class ToolLoopController {
   final LlmToolBudgetController toolBudget;
   final Map<String, CachedToolResult> readOnlyToolCache;
   final List<LlmToolLedgerEntry> toolLedger;
+  final LlmProviderAdapter provider;
 
   int cacheHitCount = 0;
   int dedupBlockedCount = 0;
@@ -33,6 +34,7 @@ class ToolLoopController {
     required this.toolBudget,
     required this.readOnlyToolCache,
     required this.toolLedger,
+    this.provider = const OpenAiChatProvider(),
   });
 
   Future<ToolLoopResult> handleToolCalls({
@@ -128,11 +130,14 @@ class ToolLoopController {
                 'Tool "${call.name}" is not exposed in the current context.',
           ),
         );
-        workingMessages.add({
-          'role': 'tool',
-          'tool_call_id': call.id,
-          'content': result,
-        });
+        workingMessages.add(provider.buildToolResultMessage(
+          call: LlmProviderToolCall(
+            id: call.id,
+            name: call.name,
+            argumentsJson: call.arguments,
+          ),
+          result: result,
+        ));
         workingMessages.add({
           'role': 'system',
           'content':
@@ -229,11 +234,14 @@ class ToolLoopController {
             ),
           );
 
-          workingMessages.add({
-            'role': 'tool',
-            'tool_call_id': call.id,
-            'content': result,
-          });
+          workingMessages.add(provider.buildToolResultMessage(
+            call: LlmProviderToolCall(
+              id: call.id,
+              name: call.name,
+              argumentsJson: call.arguments,
+            ),
+            result: result,
+          ));
 
           final quality = ToolResultClassifier.classify(
             toolName: call.name,
@@ -360,11 +368,14 @@ class ToolLoopController {
               blockedResult,
               outcome: 'budget_audit_rejected',
             );
-            workingMessages.add({
-              'role': 'tool',
-              'tool_call_id': blockedCall.id,
-              'content': blockedResult,
-            });
+            workingMessages.add(provider.buildToolResultMessage(
+              call: LlmProviderToolCall(
+                id: blockedCall.id,
+                name: blockedCall.name,
+                argumentsJson: blockedCall.arguments,
+              ),
+              result: blockedResult,
+            ));
           }
 
           workingMessages.add({
@@ -468,11 +479,14 @@ class ToolLoopController {
               blockedResult,
               outcome: 'budget_audit_rejected',
             );
-            workingMessages.add({
-              'role': 'tool',
-              'tool_call_id': blockedCall.id,
-              'content': blockedResult,
-            });
+            workingMessages.add(provider.buildToolResultMessage(
+              call: LlmProviderToolCall(
+                id: blockedCall.id,
+                name: blockedCall.name,
+                argumentsJson: blockedCall.arguments,
+              ),
+              result: blockedResult,
+            ));
           }
 
           workingMessages.add({
@@ -776,11 +790,14 @@ class ToolLoopController {
         cacheHit: cacheHit,
         dedupBlocked: dedupBlocked,
       );
-      workingMessages.add({
-        'role': 'tool',
-        'tool_call_id': call.id,
-        'content': result,
-      });
+      workingMessages.add(provider.buildToolResultMessage(
+        call: LlmProviderToolCall(
+          id: call.id,
+          name: call.name,
+          argumentsJson: call.arguments,
+        ),
+        result: result,
+      ));
 
       final quality = ToolResultClassifier.classify(
         toolName: call.name,

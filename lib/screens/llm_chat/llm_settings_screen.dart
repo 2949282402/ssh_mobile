@@ -46,6 +46,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   late int _maxImageSizeBytes;
   late int _maxFileSizeBytes;
   String? _selectedApiKeyId;
+  late LlmApiFormat _apiFormat;
   bool _loadingModels = false;
   bool _saving = false;
   String? _errorText;
@@ -87,6 +88,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _maxImageSizeBytes = widget.initialSettings.maxImageSizeBytes;
     _maxFileSizeBytes = widget.initialSettings.maxFileSizeBytes;
     _selectedApiKeyId = widget.initialSettings.activeApiKeyId;
+    _apiFormat = widget.initialSettings.apiFormat;
   }
 
   @override
@@ -331,6 +333,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       maxFileSizeBytes: _maxFileSizeBytes,
       apiKey: _apiKeyController.text,
       selectedApiKeyId: _selectedApiKeyId,
+      apiFormat: _apiFormat,
     );
     setState(() {
       _saving = true;
@@ -361,6 +364,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         maxFileSizeBytes: pending.maxFileSizeBytes,
         apiKey: pending.apiKey,
         selectedApiKeyId: pending.selectedApiKeyId,
+        apiFormat: pending.apiFormat,
       );
       if (mounted) {
         await appSettings.setRagEnabled(_ragEnabled);
@@ -411,6 +415,42 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
           children: [
+            DropdownButtonFormField<LlmApiFormat>(
+              initialValue: _apiFormat,
+              decoration: InputDecoration(
+                labelText: strings.apiFormat,
+              ),
+              items: LlmApiFormat.values.map((format) {
+                return DropdownMenuItem<LlmApiFormat>(
+                  value: format,
+                  child: Text(strings.apiFormatLabel(format)),
+                );
+              }).toList(),
+              onChanged: _saving ? null : (value) {
+                if (value == null) return;
+                setState(() {
+                  _apiFormat = value;
+                  if (value == LlmApiFormat.geminiOpenAiCompatible) {
+                    if (_baseUrlController.text.trim().isEmpty || 
+                        _baseUrlController.text.trim() == 'https://api.deepseek.com') {
+                      _baseUrlController.text = 'https://generativelanguage.googleapis.com/v1beta/openai';
+                    }
+                  } else if (value == LlmApiFormat.openAiChatCompletions) {
+                    if (_baseUrlController.text.trim() == 'https://generativelanguage.googleapis.com/v1beta/openai' ||
+                        _baseUrlController.text.trim() == 'https://api.anthropic.com') {
+                      _baseUrlController.text = 'https://api.deepseek.com';
+                    }
+                  } else if (value == LlmApiFormat.anthropicMessages) {
+                    if (_baseUrlController.text.trim().isEmpty || 
+                        _baseUrlController.text.trim() == 'https://api.deepseek.com' ||
+                        _baseUrlController.text.trim() == 'https://generativelanguage.googleapis.com/v1beta/openai') {
+                      _baseUrlController.text = 'https://api.anthropic.com';
+                    }
+                  }
+                });
+              },
+            ),
+            const SizedBox(height: 14),
             TextField(
               controller: _baseUrlController,
               decoration: InputDecoration(
@@ -1098,6 +1138,7 @@ class _PendingAiSettings {
   final int maxFileSizeBytes;
   final String apiKey;
   final String? selectedApiKeyId;
+  final LlmApiFormat apiFormat;
 
   const _PendingAiSettings({
     required this.baseUrl,
@@ -1123,5 +1164,6 @@ class _PendingAiSettings {
     required this.maxFileSizeBytes,
     required this.apiKey,
     required this.selectedApiKeyId,
+    required this.apiFormat,
   });
 }

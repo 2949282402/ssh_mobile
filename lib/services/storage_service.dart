@@ -17,6 +17,7 @@ import 'agent_model_profile.dart';
 import 'app_log_service.dart';
 import '../core/services/data_protection_service.dart';
 import 'multi_agent_coordinator.dart';
+import 'llm_provider/llm_api_format.dart';
 
 part 'storage/storage_models.dart';
 part 'storage/settings_ops.dart';
@@ -102,6 +103,7 @@ abstract interface class AiSettingsRepository {
     String? customReviewerPrompt,
     String? customSummarizerPrompt,
     String? customCoordinatorPrompt,
+    LlmApiFormat? apiFormat,
   });
 
   Future<String?> getAiApiKey();
@@ -295,6 +297,7 @@ class StorageService extends ChangeNotifier
     String? customReviewerPrompt,
     String? customSummarizerPrompt,
     String? customCoordinatorPrompt,
+    LlmApiFormat? apiFormat,
   }) =>
       SettingsOps(this).saveAiConnectionSettings(
         baseUrl: baseUrl,
@@ -330,6 +333,7 @@ class StorageService extends ChangeNotifier
         customReviewerPrompt: customReviewerPrompt,
         customSummarizerPrompt: customSummarizerPrompt,
         customCoordinatorPrompt: customCoordinatorPrompt,
+        apiFormat: apiFormat,
       );
 
   @override
@@ -415,6 +419,7 @@ class StorageService extends ChangeNotifier
   static const _restorableTmuxSessionsKey = 'restorable_tmux_sessions';
   static const _terminalHistoryRecordsKey = 'terminal_history_records';
   static const _aiBaseUrlKey = 'ai_base_url';
+  static const _aiApiFormatKey = 'ai_api_format';
   static const _aiBaseUrlHistoryKey = 'ai_base_url_history';
   static const _aiModelKey = 'ai_model';
   static const _aiHelperModelKey = 'ai_helper_model';

@@ -103,6 +103,7 @@ class AiConnectionSettings {
   final String customReviewerPrompt;
   final String customSummarizerPrompt;
   final String customCoordinatorPrompt;
+  final LlmApiFormat apiFormat;
 
   const AiConnectionSettings({
     required this.baseUrl,
@@ -137,6 +138,7 @@ class AiConnectionSettings {
     required this.customReviewerPrompt,
     required this.customSummarizerPrompt,
     required this.customCoordinatorPrompt,
+    this.apiFormat = LlmApiFormat.openAiChatCompletions,
   });
 
   AgentModelProfile get agentModelProfile => AgentModelProfile(
@@ -179,6 +181,7 @@ class AiConnectionSettings {
     String? customReviewerPrompt,
     String? customSummarizerPrompt,
     String? customCoordinatorPrompt,
+    LlmApiFormat? apiFormat,
   }) {
     return AiConnectionSettings(
       baseUrl: baseUrl ?? this.baseUrl,
@@ -219,6 +222,7 @@ class AiConnectionSettings {
           customSummarizerPrompt ?? this.customSummarizerPrompt,
       customCoordinatorPrompt:
           customCoordinatorPrompt ?? this.customCoordinatorPrompt,
+      apiFormat: apiFormat ?? this.apiFormat,
     );
   }
 }
