@@ -30,7 +30,6 @@ class SettingsViewModel extends ChangeNotifier {
   // APP设置暴露
   AppLanguage get language => _appSettings.language;
   ThemeMode get themeMode => _appSettings.themeMode;
-  String get fontFamilyId => _appSettings.fontFamilyId;
   int get sftpDownloadLimitBytes => _appSettings.sftpDownloadLimitBytes;
   int get sftpTextPreviewLimitBytes => _appSettings.sftpTextPreviewLimitBytes;
   int get sftpRichPreviewLimitBytes => _appSettings.sftpRichPreviewLimitBytes;
@@ -39,7 +38,6 @@ class SettingsViewModel extends ChangeNotifier {
   bool get isDarkMode => _appSettings.isDarkMode;
   bool get showServerNamesInNotifications =>
       _appSettings.showServerNamesInNotifications;
-  AppFontChoice get fontChoice => _appSettings.fontChoice;
 
   // 秘钥缓存设置暴露
   bool get secretCacheEnabled => _storageService.isSecretCacheEnabled;
@@ -56,10 +54,6 @@ class SettingsViewModel extends ChangeNotifier {
 
   void changeThemeMode(ThemeMode mode) {
     _appSettings.setThemeMode(mode);
-  }
-
-  Future<void> changeFontFamily(String familyId) async {
-    await _appSettings.setFontFamilyId(familyId);
   }
 
   Future<void> setSftpLimits({

@@ -207,51 +207,6 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                     settings.isDarkMode ? ThemeMode.light : ThemeMode.dark,
                   ),
                 ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.font_download_outlined, size: 20),
-                  title: Text(
-                    strings.appFontFamily,
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                  subtitle: Text(
-                    strings.appFontFamilyNote,
-                    style: const TextStyle(fontSize: 11),
-                  ),
-                  trailing: SizedBox(
-                    width: 150,
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        value: appSnapshot.fontFamilyId,
-                        isExpanded: true,
-                        items: [
-                          for (final font in AppFontChoice.values)
-                            DropdownMenuItem(
-                              value: font.id,
-                              child: Text(
-                                font.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                        ],
-                        onChanged: (value) {
-                          if (value != null) {
-                            settings.changeFontFamily(value);
-                          }
-                        },
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                _FontPreviewCard(
-                  currentFont: appSnapshot.fontChoice,
-                  isLikelyAvailable: appSnapshot.fontChoice.isLikelyAvailableOn(
-                    Theme.of(context).platform,
-                  ),
-                  strings: strings,
-                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -463,8 +418,6 @@ class _SettingsAppSnapshot {
   final AppLanguage language;
   final bool isEnglish;
   final bool isDarkMode;
-  final String fontFamilyId;
-  final AppFontChoice fontChoice;
   final int sftpDownloadLimitBytes;
   final int sftpTextPreviewLimitBytes;
   final int sftpRichPreviewLimitBytes;
@@ -474,8 +427,6 @@ class _SettingsAppSnapshot {
     required this.language,
     required this.isEnglish,
     required this.isDarkMode,
-    required this.fontFamilyId,
-    required this.fontChoice,
     required this.sftpDownloadLimitBytes,
     required this.sftpTextPreviewLimitBytes,
     required this.sftpRichPreviewLimitBytes,
@@ -487,8 +438,6 @@ class _SettingsAppSnapshot {
       language: settings.language,
       isEnglish: settings.isEnglish,
       isDarkMode: settings.isDarkMode,
-      fontFamilyId: settings.fontFamilyId,
-      fontChoice: settings.fontChoice,
       sftpDownloadLimitBytes: settings.sftpDownloadLimitBytes,
       sftpTextPreviewLimitBytes: settings.sftpTextPreviewLimitBytes,
       sftpRichPreviewLimitBytes: settings.sftpRichPreviewLimitBytes,
@@ -502,8 +451,6 @@ class _SettingsAppSnapshot {
         other.language == language &&
         other.isEnglish == isEnglish &&
         other.isDarkMode == isDarkMode &&
-        other.fontFamilyId == fontFamilyId &&
-        other.fontChoice == fontChoice &&
         other.sftpDownloadLimitBytes == sftpDownloadLimitBytes &&
         other.sftpTextPreviewLimitBytes == sftpTextPreviewLimitBytes &&
         other.sftpRichPreviewLimitBytes == sftpRichPreviewLimitBytes &&
@@ -515,8 +462,6 @@ class _SettingsAppSnapshot {
         language,
         isEnglish,
         isDarkMode,
-        fontFamilyId,
-        fontChoice,
         sftpDownloadLimitBytes,
         sftpTextPreviewLimitBytes,
         sftpRichPreviewLimitBytes,
@@ -595,105 +540,6 @@ class _SftpLimitTile extends StatelessWidget {
         ],
       ),
       onTap: onTap,
-    );
-  }
-}
-
-class _FontPreviewCard extends StatelessWidget {
-  final AppFontChoice currentFont;
-  final bool isLikelyAvailable;
-  final AppStrings strings;
-
-  const _FontPreviewCard({
-    required this.currentFont,
-    required this.isLikelyAvailable,
-    required this.strings,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final hasFontFamily = currentFont.fontFamily != null;
-    final fontStyle = hasFontFamily
-        ? TextStyle(
-            fontFamily: currentFont.fontFamily,
-            fontSize: 14,
-            height: 1.3,
-            color: colorScheme.onSurface,
-          )
-        : null;
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: colorScheme.outline),
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.25),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            strings.appFontCurrent,
-            style: TextStyle(
-              color: colorScheme.onSurfaceVariant,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            currentFont.name,
-            style: TextStyle(
-              color: colorScheme.onSurface,
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            strings.appFontPreview,
-            style: TextStyle(
-              color: colorScheme.onSurfaceVariant,
-              fontSize: 11,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Aa文本 Font preview sample 12345',
-            style: fontStyle ?? Theme.of(context).textTheme.bodyMedium,
-            maxLines: 2,
-          ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Icon(
-                isLikelyAvailable
-                    ? Icons.check_circle_outline
-                    : Icons.warning_amber,
-                size: 14,
-                color: isLikelyAvailable
-                    ? colorScheme.secondary
-                    : colorScheme.error,
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  isLikelyAvailable
-                      ? strings.fontPlatformHint
-                      : '${currentFont.name}  ${strings.fontFallbackHint}',
-                  style: TextStyle(
-                    color: colorScheme.onSurfaceVariant,
-                    fontSize: 10.5,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
     );
   }
 }
