@@ -8,8 +8,6 @@ import '../../../../services/app_log_service.dart';
 import '../../../../services/app_settings.dart';
 import '../../../../utils/responsive.dart';
 import '../../../../widgets/ssh_host_key_trust_dialog.dart';
-import '../../../../widgets/section_card.dart';
-import '../../../../widgets/responsive_row_or_column.dart';
 import '../viewmodels/connection_viewmodel.dart';
 
 class AddEditScreen extends StatefulWidget {
@@ -40,10 +38,6 @@ class _AddEditScreenState extends State<AddEditScreen> {
   bool _keepAlive = true;
   bool _obscurePassword = true;
   bool _isLoadingSecrets = false;
-  bool _jumpHostExpanded = false;
-  bool _advancedExpanded = false;
-  bool _privateKeyExpanded = false;
-
   bool _jumpHostExpanded = false;
   bool _advancedOptionsExpanded = false;
 
@@ -94,19 +88,12 @@ class _AddEditScreenState extends State<AddEditScreen> {
     _jumpPortController.text = config.jumpPort?.toString() ?? '22';
     _jumpUsernameController.text = config.jumpUsername ?? '';
 
-<<<<<<< HEAD
     _jumpHostExpanded = config.jumpHost != null && config.jumpHost!.isNotEmpty;
     final minutes = _secondsToDisplayMinutes(config.tmuxAutoDeleteSeconds);
-    _advancedExpanded = config.serverPlatform != ServerPlatform.linux ||
+    _advancedOptionsExpanded = config.serverPlatform != ServerPlatform.linux ||
         config.launchMode != TerminalLaunchMode.tmux ||
         !config.keepAlive ||
         minutes != 10;
-=======
-    // If jump host has values, auto expand it
-    if (_jumpHostController.text.isNotEmpty) {
-      _jumpHostExpanded = true;
-    }
->>>>>>> 46c8b2a7f3e083a10730f7a62d0d6ac9daac2f72
 
     _loadSecrets(config.id);
   }
@@ -232,7 +219,8 @@ class _AddEditScreenState extends State<AddEditScreen> {
           ),
         ],
       ),
-      bottomNavigationBar: stickyActionBar,
+      bottomNavigationBar:
+          MediaQuery.of(context).viewInsets.bottom > 0 ? null : stickyActionBar,
       body: _isLoadingSecrets
           ? const Center(
               child: SizedBox(
@@ -246,78 +234,6 @@ class _AddEditScreenState extends State<AddEditScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
                 children: [
-<<<<<<< HEAD
-                  SectionCard(
-                    title: strings.basicInfo,
-                    children: [
-                      _buildNameField(),
-                    ],
-                  ),
-                  SectionCard(
-                    title: strings.connectionInfo,
-                    children: [
-                      _buildHostField(),
-                      const SizedBox(height: 12),
-                      ResponsiveRowOrColumn(
-                        flexes: const [2, 3],
-                        children: [
-                          _buildPortField(),
-                          _buildUsernameField(),
-                        ],
-                      ),
-                    ],
-                  ),
-                  SectionCard(
-                    title: strings.authMethod,
-                    children: [
-                      _buildAuthMethodSelector(),
-                      const SizedBox(height: 12),
-                      if (_authMethod == AuthMethod.password ||
-                          _authMethod == AuthMethod.both)
-                        _buildPasswordField(),
-                      if (_authMethod == AuthMethod.privateKey ||
-                          _authMethod == AuthMethod.both) ...[
-                        const SizedBox(height: 12),
-                        _buildPrivateKeyField(),
-                      ],
-                    ],
-                  ),
-                  SectionCard(
-                    title: strings.jumpHostOptional,
-                    isCollapsible: true,
-                    isExpanded: _jumpHostExpanded,
-                    onToggle: () =>
-                        setState(() => _jumpHostExpanded = !_jumpHostExpanded),
-                    children: [
-                      _buildJumpHostField(),
-                      const SizedBox(height: 12),
-                      ResponsiveRowOrColumn(
-                        flexes: const [2, 3],
-                        children: [
-                          _buildJumpPortField(),
-                          _buildJumpUsernameField(),
-                        ],
-                      ),
-                    ],
-                  ),
-                  SectionCard(
-                    title: strings.advancedOptions,
-                    isCollapsible: true,
-                    isExpanded: _advancedExpanded,
-                    onToggle: () =>
-                        setState(() => _advancedExpanded = !_advancedExpanded),
-                    children: [
-                      _buildServerPlatformSelector(),
-                      const SizedBox(height: 16),
-                      _buildLaunchModeSelector(),
-                      if (_launchMode == TerminalLaunchMode.tmux) ...[
-                        const SizedBox(height: 12),
-                        _buildTmuxAutoDeleteField(),
-                      ],
-                      const SizedBox(height: 12),
-                      _buildKeepAliveSwitch(),
-                    ],
-=======
                   // 基础信息分组
                   Card(
                     margin: const EdgeInsets.only(bottom: 16),
@@ -419,36 +335,10 @@ class _AddEditScreenState extends State<AddEditScreen> {
                         _buildKeepAliveSwitch(),
                       ],
                     ),
->>>>>>> 46c8b2a7f3e083a10730f7a62d0d6ac9daac2f72
                   ),
                 ],
               ),
             ),
-<<<<<<< HEAD
-      bottomNavigationBar: MediaQuery.of(context).viewInsets.bottom > 0
-          ? null
-          : SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                child: FilledButton.icon(
-                  onPressed: isSaving || _isLoadingSecrets ? null : _save,
-                  icon: isSaving
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Icon(Icons.check_rounded),
-                  label: Text(
-                    isSaving ? strings.saving : _text('Verify & Save', '验证并保存'),
-                  ),
-                ),
-              ),
-            ),
-=======
     );
   }
 
@@ -461,7 +351,6 @@ class _AddEditScreenState extends State<AddEditScreen> {
         color: Theme.of(context).colorScheme.primary,
         letterSpacing: 0.6,
       ),
->>>>>>> 46c8b2a7f3e083a10730f7a62d0d6ac9daac2f72
     );
   }
 
@@ -594,15 +483,6 @@ class _AddEditScreenState extends State<AddEditScreen> {
   Widget _buildPrivateKeyField() {
     final strings = _strings(context);
     return Column(
-<<<<<<< HEAD
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        TextFormField(
-          controller: _privateKeyController,
-          maxLines: _privateKeyExpanded ? 15 : 4,
-          decoration: InputDecoration(
-            labelText: strings.sshPrivateKey,
-=======
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
@@ -632,7 +512,6 @@ class _AddEditScreenState extends State<AddEditScreen> {
           maxLines: null,
           minLines: 4,
           decoration: InputDecoration(
->>>>>>> 46c8b2a7f3e083a10730f7a62d0d6ac9daac2f72
             hintText:
                 '-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----',
             prefixIcon: const Icon(Icons.key),
@@ -646,44 +525,6 @@ class _AddEditScreenState extends State<AddEditScreen> {
             return null;
           },
         ),
-<<<<<<< HEAD
-        const SizedBox(height: 6),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            TextButton.icon(
-              icon: const Icon(Icons.paste_rounded, size: 16),
-              label: Text(_text('Paste Private Key', '粘贴私钥')),
-              onPressed: () async {
-                final data = await Clipboard.getData(Clipboard.kTextPlain);
-                if (data?.text != null) {
-                  setState(() {
-                    _privateKeyController.text = data!.text!;
-                  });
-                }
-              },
-            ),
-            const SizedBox(width: 8),
-            TextButton.icon(
-              icon: Icon(
-                _privateKeyExpanded
-                    ? Icons.unfold_less_rounded
-                    : Icons.unfold_more_rounded,
-                size: 16,
-              ),
-              label: Text(_privateKeyExpanded
-                  ? _text('Collapse', '折叠')
-                  : _text('Expand', '展开')),
-              onPressed: () {
-                setState(() {
-                  _privateKeyExpanded = !_privateKeyExpanded;
-                });
-              },
-            ),
-          ],
-        ),
-=======
->>>>>>> 46c8b2a7f3e083a10730f7a62d0d6ac9daac2f72
       ],
     );
   }
