@@ -201,7 +201,7 @@ class _HomeScreenState extends State<HomeScreen> {
             NavigationRailDestination(
               icon: const Icon(Icons.terminal_outlined),
               selectedIcon: const Icon(Icons.terminal_rounded),
-              label: Text(strings.switchToChinese == '中文' ? 'Log' : '日志'),
+              label: Text(strings.logs),
             ),
           ],
         ),
@@ -241,6 +241,11 @@ class _HomeScreenState extends State<HomeScreen> {
           icon: const Icon(Icons.admin_panel_settings_outlined),
           selectedIcon: const Icon(Icons.admin_panel_settings_rounded),
           label: strings.admin,
+        ),
+        NavigationDestination(
+          icon: const Icon(Icons.terminal_outlined),
+          selectedIcon: const Icon(Icons.terminal_rounded),
+          label: strings.logs,
         ),
       ],
     );
