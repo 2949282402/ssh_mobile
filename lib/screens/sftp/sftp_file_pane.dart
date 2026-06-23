@@ -46,7 +46,7 @@ class _FilePane extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: colorScheme.surfaceContainerHighest
                         .withValues(alpha: 0.42),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                     border: Border.all(color: colorScheme.outlineVariant),
                   ),
                   child: OverflowScrollText(
@@ -898,7 +898,7 @@ class _SftpEmptyState extends StatelessWidget {
               height: 72,
               decoration: BoxDecoration(
                 color: colorScheme.primary.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                 border: Border.all(
                   color: colorScheme.primary.withValues(alpha: 0.18),
                 ),
