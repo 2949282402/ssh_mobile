@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
@@ -6,6 +7,8 @@ import '../models/connection.dart';
 import '../../../../services/app_log_service.dart';
 import '../../../../services/app_settings.dart';
 import '../../../../widgets/ssh_host_key_trust_dialog.dart';
+import '../../../../widgets/section_card.dart';
+import '../../../../widgets/responsive_row_or_column.dart';
 import '../viewmodels/connection_viewmodel.dart';
 
 class AddEditScreen extends StatefulWidget {
@@ -36,6 +39,9 @@ class _AddEditScreenState extends State<AddEditScreen> {
   bool _keepAlive = true;
   bool _obscurePassword = true;
   bool _isLoadingSecrets = false;
+  bool _jumpHostExpanded = false;
+  bool _advancedExpanded = false;
+  bool _privateKeyExpanded = false;
 
   bool get isEditing => widget.editId != null;
 
@@ -83,6 +89,13 @@ class _AddEditScreenState extends State<AddEditScreen> {
     _jumpHostController.text = config.jumpHost ?? '';
     _jumpPortController.text = config.jumpPort?.toString() ?? '22';
     _jumpUsernameController.text = config.jumpUsername ?? '';
+
+    _jumpHostExpanded = config.jumpHost != null && config.jumpHost!.isNotEmpty;
+    final minutes = _secondsToDisplayMinutes(config.tmuxAutoDeleteSeconds);
+    _advancedExpanded = config.serverPlatform != ServerPlatform.linux ||
+        config.launchMode != TerminalLaunchMode.tmux ||
+        !config.keepAlive ||
+        minutes != 10;
 
     _loadSecrets(config.id);
   }
@@ -150,71 +163,103 @@ class _AddEditScreenState extends State<AddEditScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
                 children: [
-                  _section(strings.basicInfo),
-                  _buildNameField(),
-                  const SizedBox(height: 16),
-                  _section(strings.connectionInfo),
-                  _buildHostField(),
-                  const SizedBox(height: 12),
-                  Row(
+                  SectionCard(
+                    title: strings.basicInfo,
                     children: [
-                      Expanded(flex: 2, child: _buildPortField()),
-                      const SizedBox(width: 12),
-                      Expanded(flex: 3, child: _buildUsernameField()),
+                      _buildNameField(),
                     ],
                   ),
-                  const SizedBox(height: 20),
-                  _section(strings.authMethod),
-                  _buildAuthMethodSelector(),
-                  const SizedBox(height: 12),
-                  if (_authMethod == AuthMethod.password ||
-                      _authMethod == AuthMethod.both)
-                    _buildPasswordField(),
-                  if (_authMethod == AuthMethod.privateKey ||
-                      _authMethod == AuthMethod.both) ...[
-                    const SizedBox(height: 12),
-                    _buildPrivateKeyField(),
-                  ],
-                  const SizedBox(height: 20),
-                  _section(strings.jumpHostOptional),
-                  _buildJumpHostField(),
-                  const SizedBox(height: 12),
-                  Row(
+                  SectionCard(
+                    title: strings.connectionInfo,
                     children: [
-                      Expanded(flex: 2, child: _buildJumpPortField()),
-                      const SizedBox(width: 12),
-                      Expanded(flex: 3, child: _buildJumpUsernameField()),
+                      _buildHostField(),
+                      const SizedBox(height: 12),
+                      ResponsiveRowOrColumn(
+                        flexes: const [2, 3],
+                        children: [
+                          _buildPortField(),
+                          _buildUsernameField(),
+                        ],
+                      ),
                     ],
                   ),
-                  const SizedBox(height: 20),
-                  _section(strings.advancedOptions),
-                  _buildServerPlatformSelector(),
-                  const SizedBox(height: 12),
-                  _buildLaunchModeSelector(),
-                  if (_launchMode == TerminalLaunchMode.tmux) ...[
-                    const SizedBox(height: 12),
-                    _buildTmuxAutoDeleteField(),
-                  ],
-                  const SizedBox(height: 12),
-                  _buildKeepAliveSwitch(),
+                  SectionCard(
+                    title: strings.authMethod,
+                    children: [
+                      _buildAuthMethodSelector(),
+                      const SizedBox(height: 12),
+                      if (_authMethod == AuthMethod.password ||
+                          _authMethod == AuthMethod.both)
+                        _buildPasswordField(),
+                      if (_authMethod == AuthMethod.privateKey ||
+                          _authMethod == AuthMethod.both) ...[
+                        const SizedBox(height: 12),
+                        _buildPrivateKeyField(),
+                      ],
+                    ],
+                  ),
+                  SectionCard(
+                    title: strings.jumpHostOptional,
+                    isCollapsible: true,
+                    isExpanded: _jumpHostExpanded,
+                    onToggle: () =>
+                        setState(() => _jumpHostExpanded = !_jumpHostExpanded),
+                    children: [
+                      _buildJumpHostField(),
+                      const SizedBox(height: 12),
+                      ResponsiveRowOrColumn(
+                        flexes: const [2, 3],
+                        children: [
+                          _buildJumpPortField(),
+                          _buildJumpUsernameField(),
+                        ],
+                      ),
+                    ],
+                  ),
+                  SectionCard(
+                    title: strings.advancedOptions,
+                    isCollapsible: true,
+                    isExpanded: _advancedExpanded,
+                    onToggle: () =>
+                        setState(() => _advancedExpanded = !_advancedExpanded),
+                    children: [
+                      _buildServerPlatformSelector(),
+                      const SizedBox(height: 16),
+                      _buildLaunchModeSelector(),
+                      if (_launchMode == TerminalLaunchMode.tmux) ...[
+                        const SizedBox(height: 12),
+                        _buildTmuxAutoDeleteField(),
+                      ],
+                      const SizedBox(height: 12),
+                      _buildKeepAliveSwitch(),
+                    ],
+                  ),
                 ],
               ),
             ),
-    );
-  }
-
-  Widget _section(String title) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(
-        title,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w800,
-          color: Theme.of(context).colorScheme.primary,
-          letterSpacing: 0.6,
-        ),
-      ),
+      bottomNavigationBar: MediaQuery.of(context).viewInsets.bottom > 0
+          ? null
+          : SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: FilledButton.icon(
+                  onPressed: isSaving || _isLoadingSecrets ? null : _save,
+                  icon: isSaving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.check_rounded),
+                  label: Text(
+                    isSaving ? strings.saving : _text('Verify & Save', '验证并保存'),
+                  ),
+                ),
+              ),
+            ),
     );
   }
 
@@ -353,23 +398,63 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
   Widget _buildPrivateKeyField() {
     final strings = _strings(context);
-    return TextFormField(
-      controller: _privateKeyController,
-      maxLines: 4,
-      decoration: InputDecoration(
-        labelText: strings.sshPrivateKey,
-        hintText:
-            '-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----',
-        prefixIcon: const Icon(Icons.key),
-        alignLabelWithHint: true,
-      ),
-      validator: (value) {
-        if (_authMethod == AuthMethod.privateKey &&
-            (value == null || value.trim().isEmpty)) {
-          return strings.privateKeyRequired;
-        }
-        return null;
-      },
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextFormField(
+          controller: _privateKeyController,
+          maxLines: _privateKeyExpanded ? 15 : 4,
+          decoration: InputDecoration(
+            labelText: strings.sshPrivateKey,
+            hintText:
+                '-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----',
+            prefixIcon: const Icon(Icons.key),
+            alignLabelWithHint: true,
+          ),
+          validator: (value) {
+            if (_authMethod == AuthMethod.privateKey &&
+                (value == null || value.trim().isEmpty)) {
+              return strings.privateKeyRequired;
+            }
+            return null;
+          },
+        ),
+        const SizedBox(height: 6),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            TextButton.icon(
+              icon: const Icon(Icons.paste_rounded, size: 16),
+              label: Text(_text('Paste Private Key', '粘贴私钥')),
+              onPressed: () async {
+                final data = await Clipboard.getData(Clipboard.kTextPlain);
+                if (data?.text != null) {
+                  setState(() {
+                    _privateKeyController.text = data!.text!;
+                  });
+                }
+              },
+            ),
+            const SizedBox(width: 8),
+            TextButton.icon(
+              icon: Icon(
+                _privateKeyExpanded
+                    ? Icons.unfold_less_rounded
+                    : Icons.unfold_more_rounded,
+                size: 16,
+              ),
+              label: Text(_privateKeyExpanded
+                  ? _text('Collapse', '折叠')
+                  : _text('Expand', '展开')),
+              onPressed: () {
+                setState(() {
+                  _privateKeyExpanded = !_privateKeyExpanded;
+                });
+              },
+            ),
+          ],
+        ),
+      ],
     );
   }
 

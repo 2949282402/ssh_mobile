@@ -1,7 +1,6 @@
 part of '../home_screen.dart';
 
 extension _HomeSettingsStrings on AppStrings {
-  String get settings => language == AppLanguage.en ? 'Settings' : '设置';
   String get appearance => language == AppLanguage.en ? 'Appearance' : '外观';
   String get toolsAndAutomation =>
       language == AppLanguage.en ? 'Tools & Automation' : '工具与自动化';

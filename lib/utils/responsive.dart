@@ -62,14 +62,7 @@ double mobileUiScaleOf(BuildContext context) {
 }
 
 MediaQueryData adaptMobileMediaQuery(MediaQueryData mediaQuery) {
-  final uiScale = mobileUiScaleFor(mediaQuery);
-  if (uiScale >= 0.999) return mediaQuery;
-
-  final currentTextScale = mediaQuery.textScaler.scale(1);
-  final adaptedTextScale = (currentTextScale * uiScale).clamp(0.9, 1.6);
-  return mediaQuery.copyWith(
-    textScaler: TextScaler.linear(adaptedTextScale.toDouble()),
-  );
+  return mediaQuery;
 }
 
 VisualDensity mobileVisualDensityFor(MediaQueryData mediaQuery) {
@@ -78,4 +71,8 @@ VisualDensity mobileVisualDensityFor(MediaQueryData mediaQuery) {
 
   final density = ((uiScale - 1.0) * 10).clamp(-1.0, 0.0).toDouble();
   return VisualDensity(horizontal: density, vertical: density);
+}
+
+class OpenSettingsNotification extends Notification {
+  const OpenSettingsNotification();
 }

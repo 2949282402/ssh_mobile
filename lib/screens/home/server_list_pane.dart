@@ -68,6 +68,12 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                 height: 1.35,
               ),
             ),
+            const SizedBox(height: 18),
+            ElevatedButton.icon(
+              onPressed: () => _addConnection(context),
+              icon: const Icon(Icons.add),
+              label: Text(strings.addConnection),
+            ),
           ],
         ),
       ),
@@ -142,37 +148,38 @@ extension _HomeScreenStateServerList on _HomeScreenState {
   Widget _buildSelectionBar(BuildContext context, AppStrings strings) {
     final colorScheme = Theme.of(context).colorScheme;
     final count = _selectedServerIds.length;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHigh,
-        border: Border(
-          top: BorderSide(color: colorScheme.outlineVariant),
+    return SafeArea(
+      bottom: true,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHigh,
+          border: Border(
+            top: BorderSide(color: colorScheme.outlineVariant),
+          ),
         ),
-      ),
-      child: Row(
-        children: [
-          Text(
-            strings.selectedServers(count),
-            style: TextStyle(
-              color: colorScheme.onSurface,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
+        child: Row(
+          children: [
+            Text(
+              strings.selectedServers(count),
+              style: TextStyle(
+                color: colorScheme.onSurface,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-          ),
-          const Spacer(),
-          TextButton.icon(
-            icon: const Icon(Icons.close, size: 18),
-            label: Text(strings.cancel),
-            onPressed: () {
-              updateState(() {
-                _serverSelectionMode = false;
-                _selectedServerIds.clear();
-              });
-            },
-          ),
-          const SizedBox(width: 8),
-          if (count > 0)
+            const Spacer(),
+            TextButton.icon(
+              icon: const Icon(Icons.close, size: 18),
+              label: Text(strings.cancel),
+              onPressed: () {
+                updateState(() {
+                  _serverSelectionMode = false;
+                  _selectedServerIds.clear();
+                });
+              },
+            ),
+            const SizedBox(width: 8),
             FilledButton.tonalIcon(
               icon: const Icon(Icons.delete, size: 18),
               label: Text(strings.delete),
@@ -180,9 +187,12 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                 foregroundColor: colorScheme.error,
                 backgroundColor: colorScheme.errorContainer,
               ),
-              onPressed: () => _confirmBatchDelete(context, strings),
+              onPressed: count > 0
+                  ? () => _confirmBatchDelete(context, strings)
+                  : null,
             ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -220,7 +230,6 @@ extension _HomeScreenStateServerList on _HomeScreenState {
     final isActive = sessionSummary.hasConnected;
     final sessionCount = sessionSummary.count;
     final latestState = sessionSummary.latestState;
-    final isConnecting = latestState == SshConnectionState.connecting;
     final colorScheme = Theme.of(context).colorScheme;
     final primary = colorScheme.primary;
     final success = colorScheme.secondary;
@@ -261,14 +270,16 @@ extension _HomeScreenStateServerList on _HomeScreenState {
           boxShadow: const [],
         ),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Layer 1: Status Icon, Name, and Connection Status Chip
             Row(
               children: [
                 if (!_serverSelectionMode)
                   ReorderableDragStartListener(
                     index: connIndex,
                     child: Padding(
-                      padding: EdgeInsets.only(right: 6 * scale),
+                      padding: EdgeInsets.only(right: 8 * scale),
                       child: Icon(
                         Icons.drag_handle,
                         size: 20 * scale,
@@ -282,8 +293,8 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                     onChanged: (_) => _toggleServerSelection(conn.id),
                   ),
                 Container(
-                  width: 42 * scale,
-                  height: 42 * scale,
+                  width: 36 * scale,
+                  height: 36 * scale,
                   decoration: BoxDecoration(
                     color: isActive
                         ? success.withValues(alpha: 0.15)
@@ -293,97 +304,126 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                   child: Icon(
                     _getStatusIcon(conn, latestState),
                     color: isActive ? success : primary,
-                    size: 22 * scale,
+                    size: 20 * scale,
                   ),
                 ),
-                if (!_serverSelectionMode) SizedBox(width: 14 * scale),
-                if (_serverSelectionMode) SizedBox(width: 8 * scale),
+                SizedBox(width: 12 * scale),
                 Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      OverflowScrollText(
-                        conn.name,
-                        selectable: false,
-                        maxLines: 1,
-                        style: TextStyle(
-                          color: textColor,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      SizedBox(height: 4 * scale),
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.dns_outlined,
-                            size: 13 * scale,
-                            color: mutedTextColor.withValues(alpha: 0.72),
-                          ),
-                          SizedBox(width: 5 * scale),
-                          Flexible(
-                            child: SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: Text(
-                                '${conn.username}@${conn.host}:${conn.port}',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: mutedTextColor,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: 6 * scale),
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Selector<PerformanceMonitorService,
-                            ServerHealthSnapshot>(
-                          selector: (_, monitor) => monitor.healthFor(conn.id),
-                          builder: (context, health, _) =>
-                              _buildHealthChip(context, health, strings),
-                        ),
-                      ),
-                    ],
+                  child: OverflowScrollText(
+                    conn.name,
+                    selectable: false,
+                    maxLines: 1,
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-                if (!_serverSelectionMode && sessionCount > 0) ...[
+                if (latestState != null &&
+                    latestState != SshConnectionState.disconnected) ...[
+                  SizedBox(width: 8 * scale),
+                  _buildConnectionStatusChip(
+                      context, latestState, strings, scale),
+                ],
+              ],
+            ),
+            SizedBox(height: 8 * scale),
+            // Layer 2: username@host:port, session count badge, and health chip
+            Row(
+              children: [
+                Icon(
+                  Icons.dns_outlined,
+                  size: 13 * scale,
+                  color: mutedTextColor.withValues(alpha: 0.72),
+                ),
+                SizedBox(width: 5 * scale),
+                Flexible(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Text(
+                      '${conn.username}@${conn.host}:${conn.port}',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: mutedTextColor,
+                      ),
+                    ),
+                  ),
+                ),
+                if (sessionCount > 0) ...[
                   SizedBox(width: 8 * scale),
                   Container(
                     padding: EdgeInsets.symmetric(
-                        horizontal: 7 * scale, vertical: 3 * scale),
+                      horizontal: 6 * scale,
+                      vertical: 2 * scale,
+                    ),
                     decoration: BoxDecoration(
-                      color: success.withValues(alpha: 0.12),
+                      color: success.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(AppTheme.radiusPill),
-                      border:
-                          Border.all(color: success.withValues(alpha: 0.35)),
                     ),
                     child: Text(
-                      '$sessionCount',
+                      strings.language == AppLanguage.en
+                          ? '$sessionCount window${sessionCount == 1 ? "" : "s"}'
+                          : '$sessionCount 个窗口',
                       style: TextStyle(
                         color: success,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
                 ],
-                if (!_serverSelectionMode && isConnecting)
-                  SizedBox(
-                    width: 24 * scale,
-                    height: 24 * scale,
-                    child: CircularProgressIndicator(strokeWidth: 2 * scale),
-                  )
-                else if (!_serverSelectionMode) ...[
-                  IconButton(
-                    tooltip: strings.newWindow,
-                    icon: Icon(Icons.add_to_photos_outlined, size: 20 * scale),
-                    color: mutedTextColor,
+              ],
+            ),
+            SizedBox(height: 6 * scale),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Selector<PerformanceMonitorService, ServerHealthSnapshot>(
+                selector: (_, monitor) => monitor.healthFor(conn.id),
+                builder: (context, health, _) =>
+                    _buildHealthChip(context, health, strings),
+              ),
+            ),
+            SizedBox(height: 12 * scale),
+            Divider(height: 1, color: colorScheme.outlineVariant),
+            SizedBox(height: 8 * scale),
+            // Layer 3: Action buttons (New Window, Window List Toggle, and More Menu)
+            Row(
+              children: [
+                TextButton.icon(
+                  onPressed: () => _openNewTerminal(context, conn),
+                  icon: Icon(Icons.add_to_photos_outlined, size: 16 * scale),
+                  label: Text(strings.newWindow),
+                  style: TextButton.styleFrom(
+                    padding: EdgeInsets.symmetric(
+                        horizontal: 8 * scale, vertical: 4 * scale),
                     visualDensity: VisualDensity.compact,
-                    onPressed: () => _openNewTerminal(context, conn),
                   ),
+                ),
+                if (sessionCount > 0) ...[
+                  SizedBox(width: 8 * scale),
+                  TextButton.icon(
+                    onPressed: () => _toggleConnectionWindows(conn.id),
+                    icon: Icon(
+                      windowsExpanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      size: 16 * scale,
+                    ),
+                    label: Text(
+                      strings.language == AppLanguage.en
+                          ? 'Window List · $sessionCount'
+                          : '窗口列表 · $sessionCount',
+                    ),
+                    style: TextButton.styleFrom(
+                      padding: EdgeInsets.symmetric(
+                          horizontal: 8 * scale, vertical: 4 * scale),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
+                ],
+                const Spacer(),
+                if (!_serverSelectionMode)
                   PopupMenuButton<String>(
                     icon: Icon(Icons.more_vert,
                         color: mutedTextColor, size: 20 * scale),
@@ -404,60 +444,22 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                         value: 'delete',
                         child: Row(
                           children: [
-                            Icon(Icons.delete,
-                                size: 18 * scale,
-                                color: Theme.of(context).colorScheme.error),
+                            Icon(
+                              Icons.delete,
+                              size: 18 * scale,
+                              color: colorScheme.error,
+                            ),
                             SizedBox(width: 8 * scale),
                             Text(
                               strings.delete,
-                              style: TextStyle(
-                                  color: Theme.of(context).colorScheme.error),
+                              style: TextStyle(color: colorScheme.error),
                             ),
                           ],
                         ),
                       ),
                     ],
                   ),
-                ],
               ],
-            ),
-            SizedBox(height: 10 * scale),
-            Divider(
-                height: 1, color: Theme.of(context).colorScheme.outlineVariant),
-            InkWell(
-              borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-              onTap: () => _toggleConnectionWindows(conn.id),
-              child: Padding(
-                padding:
-                    EdgeInsets.fromLTRB(4 * scale, 9 * scale, 4 * scale, 0),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.tab_outlined,
-                      size: 17 * scale,
-                      color: mutedTextColor,
-                    ),
-                    SizedBox(width: 8 * scale),
-                    Expanded(
-                      child: Text(
-                        '${strings.terminalWindows} ($sessionCount)',
-                        style: TextStyle(
-                          color: textColor,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    Icon(
-                      windowsExpanded
-                          ? Icons.expand_less_rounded
-                          : Icons.expand_more_rounded,
-                      color: mutedTextColor,
-                      size: 20 * scale,
-                    ),
-                  ],
-                ),
-              ),
             ),
             if (windowsExpanded)
               TerminalWindowsPage(
@@ -467,6 +469,52 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                 embedded: true,
               ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildConnectionStatusChip(
+    BuildContext context,
+    SshConnectionState state,
+    AppStrings strings,
+    double scale,
+  ) {
+    final colorScheme = Theme.of(context).colorScheme;
+    Color color;
+    String label;
+    switch (state) {
+      case SshConnectionState.connected:
+        color = colorScheme.secondary;
+        label = strings.connected;
+        break;
+      case SshConnectionState.connecting:
+        color = colorScheme.primary;
+        label = strings.connecting;
+        break;
+      case SshConnectionState.error:
+        color = colorScheme.error;
+        label = strings.connectionError;
+        break;
+      case SshConnectionState.disconnected:
+        color = colorScheme.onSurfaceVariant;
+        label = strings.disconnected;
+        break;
+    }
+
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 8 * scale, vertical: 3 * scale),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(AppTheme.radiusPill),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
         ),
       ),
     );
@@ -895,7 +943,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
         content: Text(
           strings.language == AppLanguage.en
               ? 'Delete ${ids.length} selected server${ids.length == 1 ? '' : 's'}? Passwords and private keys will also be removed.'
-              : '确定删除选中的 $ids 台服务器吗？密码和私钥也会一并清除。',
+              : '确定删除选中的 ${ids.length} 台服务器吗？密码和私钥也会一并清除。',
         ),
         actions: [
           TextButton(

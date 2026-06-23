@@ -471,7 +471,7 @@ class AppStrings {
   String selectedWindows(int count) =>
       _en ? '$count selected' : '已选择 $count 个窗口';
   String selectedServers(int count) =>
-      _en ? '$count selected' : '已选择 $count 个服务器';
+      _en ? '$count selected' : '已选择 $count 台服务器';
   String viewAllTerminalWindows(int totalCount) => _en
       ? 'View all $totalCount ${totalCount == 1 ? "window" : "windows"}'
       : '查看全部 $totalCount 个窗口';
@@ -534,6 +534,7 @@ class AppStrings {
       : '检测到当前平台尚未确认后台耗电无限制。SSH 连接需要后台服务和保活心跳支持，请允许 SSH Mobile 后台运行、发送通知，并关闭可能中断后台网络的省电限制。';
   String get adjustPowerLimit => _en ? 'Adjust power settings' : '调整省电限制';
   String get openAppSettings => _en ? 'Open app settings' : '打开应用设置';
+  String get settings => _en ? 'Settings' : '设置';
   String get backgroundGuideNote => _en
       ? 'Setting names differ by platform. Look for permissions, battery, or background activity settings and allow SSH Mobile to keep running. You can continue this time; if the restriction is still detected next launch, this guide will appear again.'
       : '不同平台的设置名称可能不同，请在应用权限、电池或后台运行相关设置中允许 SSH Mobile 持续运行。本次可继续进入应用；如果下次启动时仍未放宽限制，将再次显示此引导。';
@@ -553,6 +554,7 @@ class AppStrings {
       : '桌面端和移动端使用同一套 SSH 连接来浏览远程文件。';
   String get parentDirectory => _en ? 'Parent directory' : '上级目录';
   String get pathHistory => _en ? 'Path history' : '路径记录';
+  String get inputPath => _en ? 'Input path' : '输入路径';
   String get recentPaths => _en ? 'Recent paths' : '最近路径';
   String get favoritePaths => _en ? 'Favorite paths' : '收藏路径';
   String get addFavoritePath => _en ? 'Add favorite path' : '收藏当前路径';

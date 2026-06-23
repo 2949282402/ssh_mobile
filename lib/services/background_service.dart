@@ -12,6 +12,7 @@ import 'app_log_service.dart';
 import '../features/connection/models/connection.dart';
 import '../core/services/ssh_client_factory.dart';
 import '../core/services/ssh_host_key_policy.dart';
+import 'app_log_service.dart';
 
 /// Android/iOS 前台服务管理。
 ///
@@ -54,12 +55,17 @@ class BackgroundServiceManager {
       return;
     }
 
+    AppLogService().info('Prewarming BackgroundServiceManager');
     final future = _configureService();
     _prewarmFuture = future;
     try {
       AppLogService.instance.info(
           '[BackgroundManager] Prewarming background service configuration');
       await future;
+      AppLogService().info('BackgroundServiceManager prewarmed successfully');
+    } catch (e) {
+      AppLogService()
+          .error('BackgroundServiceManager prewarm failed', error: e);
     } finally {
       _prewarmFuture = null;
     }
@@ -157,6 +163,7 @@ class BackgroundServiceManager {
       AppLogService.instance.info('[BackgroundManager] Service is not running');
     }
     await _releasePowerLocks();
+    AppLogService().info('Background SSH Service stopped');
   }
 
   static Future<bool> isIgnoringBatteryOptimizations() async {

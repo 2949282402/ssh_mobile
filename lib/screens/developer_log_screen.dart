@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
 
@@ -6,6 +6,7 @@ import '../features/developer_log/viewmodels/developer_log_viewmodel.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../widgets/overflow_scroll_text.dart';
+import '../utils/responsive.dart';
 
 extension _DeveloperLogStrings on AppStrings {
   String get copySelectedLogs =>
@@ -142,6 +143,12 @@ class _DeveloperLogToolbar extends StatelessWidget {
                     viewModel.clearLogs();
                     onClearSuccess();
                   }
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.settings_outlined),
+                onPressed: () {
+                  OpenSettingsNotification().dispatch(context);
                 },
               ),
             ],
