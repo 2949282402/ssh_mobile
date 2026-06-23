@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../features/terminal/viewmodels/terminal_history_viewmodel.dart';
@@ -204,6 +204,12 @@ class _HistoryItem extends StatelessWidget {
                         maxLines: 1,
                         style: TextStyle(
                           fontFamily: 'monospace',
+                          fontFamilyFallback: [
+                            'Consolas',
+                            'Microsoft YaHei',
+                            'PingFang SC',
+                            'sans-serif'
+                          ],
                           fontSize: 11,
                           color: colorScheme.onSurface.withValues(alpha: 0.78),
                         ),

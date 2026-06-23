@@ -1,4 +1,4 @@
-part of '../system_admin_screen.dart';
+﻿part of '../system_admin_screen.dart';
 
 class _PortsManageSnapshot {
   final bool isConnecting;
@@ -336,6 +336,12 @@ class _PortsTabState extends State<_PortsTab>
                               maxLines: 1,
                               style: const TextStyle(
                                   fontFamily: 'monospace',
+                                  fontFamilyFallback: [
+                                    'Consolas',
+                                    'Microsoft YaHei',
+                                    'PingFang SC',
+                                    'sans-serif'
+                                  ],
                                   fontWeight: FontWeight.bold,
                                   fontSize: 12),
                             ),

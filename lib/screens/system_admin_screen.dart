@@ -229,7 +229,8 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
     if (_activationScheduled) return;
     _activationScheduled = true;
 
-    final activeViewModel = viewModel ?? (mounted ? context.read<SystemAdminViewModel>() : null);
+    final activeViewModel =
+        viewModel ?? (mounted ? context.read<SystemAdminViewModel>() : null);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _activationScheduled = false;

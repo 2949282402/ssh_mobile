@@ -1,7 +1,6 @@
 // ignore: unnecessary_import
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:animations/animations.dart';
 
 class ExtendedColors extends ThemeExtension<ExtendedColors> {
@@ -66,6 +65,24 @@ class AppTheme {
   static const terminalAmber = Color(0xFFF59E0B);
   static const terminalCyan = Color(0xFF06B6D4);
 
+  static const fontFallbacks = [
+    'Microsoft YaHei',
+    'PingFang SC',
+    'Heiti SC',
+    'DengXian',
+    'SimSun',
+    'sans-serif',
+  ];
+
+  static const monospaceFallback = [
+    'Consolas',
+    'Courier New',
+    'Microsoft YaHei Mono',
+    'Microsoft YaHei',
+    'PingFang SC',
+    'monospace',
+  ];
+
   static ThemeData lightThemeFor(String? fontFamily) =>
       _applyFont(lightTheme, fontFamily);
   static ThemeData darkThemeFor(String? fontFamily) =>
@@ -73,10 +90,22 @@ class AppTheme {
 
   static ThemeData _applyFont(ThemeData theme, String? fontFamily) {
     final family = fontFamily?.trim();
-    if (family == null || family.isEmpty) return theme;
+    if (family == null || family.isEmpty) {
+      return theme.copyWith(
+        textTheme: theme.textTheme.apply(fontFamilyFallback: fontFallbacks),
+        primaryTextTheme:
+            theme.primaryTextTheme.apply(fontFamilyFallback: fontFallbacks),
+      );
+    }
     return theme.copyWith(
-      textTheme: theme.textTheme.apply(fontFamily: family),
-      primaryTextTheme: theme.primaryTextTheme.apply(fontFamily: family),
+      textTheme: theme.textTheme.apply(
+        fontFamily: family,
+        fontFamilyFallback: fontFallbacks,
+      ),
+      primaryTextTheme: theme.primaryTextTheme.apply(
+        fontFamily: family,
+        fontFamilyFallback: fontFallbacks,
+      ),
     );
   }
 

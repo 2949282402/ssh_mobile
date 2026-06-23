@@ -1,4 +1,4 @@
-part of '../llm_chat_screen.dart';
+﻿part of '../llm_chat_screen.dart';
 
 class _PromptCustomizerDialog extends StatefulWidget {
   final _AiStrings strings;
@@ -387,6 +387,12 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                     keyboardType: TextInputType.multiline,
                     style: const TextStyle(
                       fontFamily: 'monospace',
+                      fontFamilyFallback: [
+                        'Consolas',
+                        'Microsoft YaHei',
+                        'PingFang SC',
+                        'sans-serif'
+                      ],
                       fontSize: 13,
                     ),
                     decoration: InputDecoration(

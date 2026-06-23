@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../../features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
@@ -42,7 +42,15 @@ class SkillEditorForm extends StatelessWidget {
           controller: viewModel.contentController,
           minLines: 12,
           maxLines: 24,
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+          style: const TextStyle(
+              fontFamily: 'monospace',
+              fontFamilyFallback: [
+                'Consolas',
+                'Microsoft YaHei',
+                'PingFang SC',
+                'sans-serif'
+              ],
+              fontSize: 13),
           decoration: InputDecoration(
             labelText: strings.content,
             helperText: strings.contentHelp,
