@@ -117,7 +117,9 @@ void main() {
   group('AnthropicMessagesProvider tests', () {
     const provider = AnthropicMessagesProvider();
 
-    test('buildAssistantToolCallMessage construct OpenAI-style assistant messages', () {
+    test(
+        'buildAssistantToolCallMessage construct OpenAI-style assistant messages',
+        () {
       final msg = provider.buildAssistantToolCallMessage(
         text: 'hello anthropic',
         toolCalls: [
@@ -138,10 +140,12 @@ void main() {
       expect(msg['tool_calls'][0]['id'], equals('call_1'));
       expect(msg['tool_calls'][0]['type'], equals('function'));
       expect(msg['tool_calls'][0]['function']['name'], equals('client_time'));
-      expect(msg['tool_calls'][0]['function']['arguments'], equals('{"timezone":"UTC"}'));
+      expect(msg['tool_calls'][0]['function']['arguments'],
+          equals('{"timezone":"UTC"}'));
     });
 
-    test('buildToolResultMessage constructs OpenAI-style tool role messages', () {
+    test('buildToolResultMessage constructs OpenAI-style tool role messages',
+        () {
       final msg = provider.buildToolResultMessage(
         call: const LlmProviderToolCall(
           id: 'call_1',
@@ -156,7 +160,8 @@ void main() {
       expect(msg['content'], equals('result-data'));
     });
 
-    test('complete converts messages, calls endpoint, and parses usage', () async {
+    test('complete converts messages, calls endpoint, and parses usage',
+        () async {
       final responseBody = {
         'content': [
           {'type': 'text', 'text': 'hello from anthropic'}
@@ -235,35 +240,41 @@ void main() {
     group('resolveAnthropicUrl tests', () {
       test('resolves standard endpoints correctly', () {
         expect(
-          LlmUrlUtils.resolveAnthropicUrl('https://api.anthropic.com', '/v1/messages'),
+          LlmUrlUtils.resolveAnthropicUrl(
+              'https://api.anthropic.com', '/v1/messages'),
           equals('https://api.anthropic.com/v1/messages'),
         );
         expect(
-          LlmUrlUtils.resolveAnthropicUrl('https://api.anthropic.com/', '/v1/messages'),
+          LlmUrlUtils.resolveAnthropicUrl(
+              'https://api.anthropic.com/', '/v1/messages'),
           equals('https://api.anthropic.com/v1/messages'),
         );
         expect(
-          LlmUrlUtils.resolveAnthropicUrl('https://api.anthropic.com/v1', '/v1/messages'),
+          LlmUrlUtils.resolveAnthropicUrl(
+              'https://api.anthropic.com/v1', '/v1/messages'),
           equals('https://api.anthropic.com/v1/messages'),
         );
         expect(
-          LlmUrlUtils.resolveAnthropicUrl('https://api.anthropic.com/v1/', '/v1/messages'),
+          LlmUrlUtils.resolveAnthropicUrl(
+              'https://api.anthropic.com/v1/', '/v1/messages'),
           equals('https://api.anthropic.com/v1/messages'),
         );
         expect(
-          LlmUrlUtils.resolveAnthropicUrl('https://api.anthropic.com/v1/messages', '/v1/messages'),
+          LlmUrlUtils.resolveAnthropicUrl(
+              'https://api.anthropic.com/v1/messages', '/v1/messages'),
           equals('https://api.anthropic.com/v1/messages'),
         );
         expect(
-          LlmUrlUtils.resolveAnthropicUrl('https://api.anthropic.com/v1/messages', '/v1/models'),
+          LlmUrlUtils.resolveAnthropicUrl(
+              'https://api.anthropic.com/v1/messages', '/v1/models'),
           equals('https://api.anthropic.com/v1/models'),
         );
         expect(
-          LlmUrlUtils.resolveAnthropicUrl('https://api.anthropic.com/v1/models', '/v1/messages'),
+          LlmUrlUtils.resolveAnthropicUrl(
+              'https://api.anthropic.com/v1/models', '/v1/messages'),
           equals('https://api.anthropic.com/v1/messages'),
         );
       });
     });
   });
 }
-

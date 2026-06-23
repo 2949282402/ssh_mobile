@@ -225,4 +225,3 @@ class _AiStrings {
   String get commandToolsNoResult =>
       _en ? 'No tools match the search.' : '?????????';
 }
-

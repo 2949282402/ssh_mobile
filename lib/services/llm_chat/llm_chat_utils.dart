@@ -10,7 +10,6 @@ extension LlmChatServiceUtils on LlmChatService {
     return {};
   }
 
-
   Set<String>? _normalizeToolNames(Set<String>? tools) {
     if (tools == null) return null;
     final normalized = <String>{};
@@ -208,7 +207,6 @@ extension LlmChatServiceUtils on LlmChatService {
     if (visibleText.endsWith('\n')) return '\n';
     return '\n\n';
   }
-
 
   void _assertValidHeaderApiKey(String apiKey) {
     if (apiKey.contains(RegExp(r'[\r\n\t]')) ||

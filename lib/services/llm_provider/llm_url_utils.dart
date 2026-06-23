@@ -49,8 +49,10 @@ class LlmUrlUtils {
         .first
         .replaceFirst(RegExp(r'/+$'), '');
     final targetEndpoint = path.replaceFirst(RegExp(r'^/v1/'), '');
-    if (cleanBase.endsWith('/v1/messages') || cleanBase.endsWith('/v1/models')) {
-      final baseWithoutEndpoint = cleanBase.substring(0, cleanBase.lastIndexOf('/'));
+    if (cleanBase.endsWith('/v1/messages') ||
+        cleanBase.endsWith('/v1/models')) {
+      final baseWithoutEndpoint =
+          cleanBase.substring(0, cleanBase.lastIndexOf('/'));
       return '$baseWithoutEndpoint/$targetEndpoint';
     } else if (cleanBase.endsWith('/v1')) {
       return '$cleanBase/$targetEndpoint';

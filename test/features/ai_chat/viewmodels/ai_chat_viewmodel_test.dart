@@ -344,7 +344,9 @@ void main() {
 
       // Wait for async runner execution
       await waitUntil(
-        () => viewModel.activeChat?.messages.any((m) => m.role == 'error') == true,
+        () =>
+            viewModel.activeChat?.messages.any((m) => m.role == 'error') ==
+            true,
         description: 'error message after failed generation',
       );
       await waitUntil(

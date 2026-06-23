@@ -453,12 +453,14 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                   child: Text(strings.apiFormatLabel(format)),
                 );
               }).toList(),
-              onChanged: _saving ? null : (value) {
-                if (value == null) return;
-                setState(() {
-                  _apiFormat = value;
-                });
-              },
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      if (value == null) return;
+                      setState(() {
+                        _apiFormat = value;
+                      });
+                    },
             ),
             const SizedBox(height: 14),
             TextField(
@@ -491,11 +493,14 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                     ),
                   ),
                   TextButton(
-                    onPressed: _saving ? null : () {
-                      setState(() {
-                        _baseUrlController.text = _getRecommendedBaseUrl(_apiFormat);
-                      });
-                    },
+                    onPressed: _saving
+                        ? null
+                        : () {
+                            setState(() {
+                              _baseUrlController.text =
+                                  _getRecommendedBaseUrl(_apiFormat);
+                            });
+                          },
                     child: Text(strings.useRecommendedBaseUrl),
                   ),
                 ],
@@ -1215,4 +1220,3 @@ class _PendingAiSettings {
     required this.apiFormat,
   });
 }
-

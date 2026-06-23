@@ -56,7 +56,8 @@ class ToolLoopController {
     required MultiAgentClassificationCompletion classify,
     PlanExecutionSnapshot? planExecutionSnapshot,
   }) async {
-    final activeProvider = provider ?? LlmProviderFactory.fromSettings(settings);
+    final activeProvider =
+        provider ?? LlmProviderFactory.fromSettings(settings);
     for (var toolIndex = 0; toolIndex < toolCalls.length; toolIndex++) {
       final call = toolCalls[toolIndex];
       cancellationToken?.throwIfCancelled();
@@ -996,4 +997,3 @@ class ToolLoopController {
     }
   }
 }
-

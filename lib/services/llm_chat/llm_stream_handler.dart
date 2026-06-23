@@ -395,11 +395,13 @@ extension LlmChatServiceStreamHandler on LlmChatService {
             streamedResponse = _StreamChatResult(
               contentChunks: [result.text],
               reasoningContent: result.reasoningContent ?? '',
-              toolCalls: result.toolCalls.map((c) => StreamingToolCall(
-                id: c.id,
-                name: c.name,
-                arguments: c.argumentsJson,
-              )).toList(),
+              toolCalls: result.toolCalls
+                  .map((c) => StreamingToolCall(
+                        id: c.id,
+                        name: c.name,
+                        arguments: c.argumentsJson,
+                      ))
+                  .toList(),
               usage: result.usage,
             );
           } catch (e, stackTrace) {
@@ -517,11 +519,13 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         );
         final assistantToolMessage = provider.buildAssistantToolCallMessage(
           text: content.toString(),
-          toolCalls: response.toolCalls.map((c) => LlmProviderToolCall(
-            id: c.id,
-            name: c.name,
-            argumentsJson: c.arguments,
-          )).toList(),
+          toolCalls: response.toolCalls
+              .map((c) => LlmProviderToolCall(
+                    id: c.id,
+                    name: c.name,
+                    argumentsJson: c.arguments,
+                  ))
+              .toList(),
           reasoningContent: response.reasoningContent.trim().isNotEmpty
               ? response.reasoningContent
               : null,
@@ -634,8 +638,6 @@ extension LlmChatServiceStreamHandler on LlmChatService {
       }
     }
   }
-
-
 
   String? _resolveChatId() {
     final executor = toolService;
