@@ -1,4 +1,4 @@
-import '../llm_chat_service.dart';
+import '../llm_runtime/llm_runtime_types.dart';
 
 class LlmProviderToolCall {
   final String id;
@@ -23,6 +23,7 @@ class LlmProviderRequest {
   final String deepSeekReasoningEffort;
   final bool includeTools;
   final bool includeUsage;
+  final bool includeReasoningParams;
   final LlmCancellationToken? cancellationToken;
   final void Function(String textDelta)? onTextDelta;
   final int timeoutSeconds;
@@ -38,6 +39,7 @@ class LlmProviderRequest {
     this.deepSeekReasoningEffort = '',
     this.includeTools = true,
     this.includeUsage = true,
+    this.includeReasoningParams = true,
     this.cancellationToken,
     this.onTextDelta,
     this.timeoutSeconds = 30,

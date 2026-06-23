@@ -5,36 +5,39 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/services/llm_provider/openai_chat_provider.dart';
 import 'package:ssh_mobile/services/llm_provider/llm_provider_types.dart';
-import 'package:ssh_mobile/services/llm_chat_service.dart';
 
 // --- Mocks for HttpClient ---
 class MockHttpOverrides extends HttpOverrides {
   final List<List<int>> Function(Uri url) getResponseBytes;
+  final int Function(Uri url)? getResponseStatusCode;
 
-  MockHttpOverrides(this.getResponseBytes);
+  MockHttpOverrides(this.getResponseBytes, {this.getResponseStatusCode});
 
   @override
   HttpClient createHttpClient(SecurityContext? context) {
-    return MockHttpClient(getResponseBytes);
+    return MockHttpClient(getResponseBytes, getResponseStatusCode: getResponseStatusCode);
   }
 }
 
 class MockHttpClient implements HttpClient {
   final List<List<int>> Function(Uri url) getResponseBytes;
+  final int Function(Uri url)? getResponseStatusCode;
 
-  MockHttpClient(this.getResponseBytes);
+  MockHttpClient(this.getResponseBytes, {this.getResponseStatusCode});
 
   @override
   Duration? connectionTimeout;
 
   @override
   Future<HttpClientRequest> postUrl(Uri url) async {
-    return MockHttpClientRequest(getResponseBytes(url));
+    final status = getResponseStatusCode?.call(url) ?? 200;
+    return MockHttpClientRequest(getResponseBytes(url), statusCode: status);
   }
 
   @override
   Future<HttpClientRequest> getUrl(Uri url) async {
-    return MockHttpClientRequest(getResponseBytes(url));
+    final status = getResponseStatusCode?.call(url) ?? 200;
+    return MockHttpClientRequest(getResponseBytes(url), statusCode: status);
   }
 
   @override
@@ -46,6 +49,7 @@ class MockHttpClient implements HttpClient {
 
 class MockHttpClientRequest implements HttpClientRequest {
   final List<List<int>> responseBytes;
+  final int statusCode;
 
   @override
   final HttpHeaders headers = MockHttpHeaders();
@@ -53,7 +57,7 @@ class MockHttpClientRequest implements HttpClientRequest {
   @override
   int contentLength = 0;
 
-  MockHttpClientRequest(this.responseBytes);
+  MockHttpClientRequest(this.responseBytes, {this.statusCode = 200});
 
   @override
   void write(Object? obj) {}
@@ -63,7 +67,7 @@ class MockHttpClientRequest implements HttpClientRequest {
 
   @override
   Future<HttpClientResponse> close() async {
-    return MockHttpClientResponse(responseBytes);
+    return MockHttpClientResponse(responseBytes, statusCode: statusCode);
   }
 
   @override
@@ -88,11 +92,10 @@ class MockHttpHeaders implements HttpHeaders {
 class MockHttpClientResponse extends Stream<List<int>>
     implements HttpClientResponse {
   final List<List<int>> responseBytes;
-
-  MockHttpClientResponse(this.responseBytes);
-
   @override
-  int get statusCode => 200;
+  final int statusCode;
+
+  MockHttpClientResponse(this.responseBytes, {this.statusCode = 200});
 
   @override
   StreamSubscription<List<int>> listen(
@@ -229,6 +232,89 @@ void main() {
         expect(finalResult.toolCalls[0].id, equals('c1'));
         expect(finalResult.toolCalls[0].name, equals('f1'));
         expect(finalResult.usage?.promptTokens, equals(10));
+      } finally {
+        HttpOverrides.global = null;
+      }
+    });
+
+    test('complete disables reasoning parameters on unsupported error fallback', () async {
+      var requestCount = 0;
+      HttpOverrides.global = MockHttpOverrides(
+        (url) {
+          if (requestCount == 1) {
+            return [utf8.encode('{"error":"does not support reasoning_effort"}')];
+          } else {
+            return [utf8.encode(jsonEncode({
+              'choices': [
+                {
+                  'message': {
+                    'role': 'assistant',
+                    'content': 'fallback success',
+                  }
+                }
+              ]
+            }))];
+          }
+        },
+        getResponseStatusCode: (url) {
+          requestCount++;
+          if (requestCount == 1) {
+            return 400;
+          }
+          return 200;
+        },
+      );
+
+      try {
+        final result = await provider.complete(const LlmProviderRequest(
+          baseUrl: 'https://api.openai.com/v1',
+          apiKey: 'test-key',
+          model: 'o1-mini',
+          openAiReasoningEffort: 'low',
+          messages: [
+            {'role': 'user', 'content': 'hi'}
+          ],
+        ));
+
+        expect(result.text, equals('fallback success'));
+        expect(requestCount, equals(2));
+      } finally {
+        HttpOverrides.global = null;
+      }
+    });
+
+    test('streamChat disables reasoning parameters on unsupported error fallback', () async {
+      var requestCount = 0;
+      HttpOverrides.global = MockHttpOverrides(
+        (url) {
+          if (requestCount == 1) {
+            return [utf8.encode('{"error":"unsupported parameter thinking"}')];
+          } else {
+            return [utf8.encode('data: {"choices":[{"delta":{"content":"stream success"}}]}\n\ndata: [DONE]\n\n')];
+          }
+        },
+        getResponseStatusCode: (url) {
+          requestCount++;
+          if (requestCount == 1) {
+            return 400;
+          }
+          return 200;
+        },
+      );
+
+      try {
+        final result = await provider.streamChat(LlmProviderRequest(
+          baseUrl: 'https://api.deepseek.com',
+          apiKey: 'test-key',
+          model: 'deepseek-reasoner',
+          deepSeekThinkingEnabled: true,
+          messages: [
+            {'role': 'user', 'content': 'hi'}
+          ],
+        ));
+
+        expect(result.text, equals('stream success'));
+        expect(requestCount, equals(2));
       } finally {
         HttpOverrides.global = null;
       }

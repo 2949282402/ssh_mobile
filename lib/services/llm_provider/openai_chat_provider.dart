@@ -3,10 +3,11 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../app_log_service.dart';
-import '../llm_chat_service.dart';
+import '../llm_runtime/llm_runtime_types.dart';
 import '../storage_service.dart';
 import 'llm_provider_adapter.dart';
 import 'llm_provider_types.dart';
+import 'llm_url_utils.dart';
 
 class OpenAiChatProvider implements LlmProviderAdapter {
   const OpenAiChatProvider();
@@ -50,33 +51,20 @@ class OpenAiChatProvider implements LlmProviderAdapter {
         );
       }
 
-      final decoded = jsonDecode(body) as Map<String, dynamic>;
-      final data = decoded['data'];
-      final models = <String>[];
-      if (data is List) {
-        for (final item in data) {
-          if (item is Map && item['id'] is String) {
-            models.add((item['id'] as String).trim());
-          } else if (item is String) {
-            models.add(item.trim());
-          }
-        }
+      final data = jsonDecode(body);
+      if (data is Map && data['data'] is List) {
+        final list = data['data'] as List;
+        final ids = list
+            .map((item) => item is Map ? item['id'] as String? : null)
+            .whereType<String>()
+            .toList();
+        AppLogService.instance.info(
+          'LLM models request completed',
+          details: 'count=${ids.length} elapsedMs=${DateTime.now().difference(startedAt).inMilliseconds}',
+        );
+        return ids;
       }
-      models.removeWhere((item) => item.isEmpty);
-      models.sort();
-      AppLogService.instance.info(
-        'LLM models received',
-        details: 'count=${models.length} elapsedMs=${DateTime.now().difference(startedAt).inMilliseconds}',
-      );
-      return models;
-    } catch (e, stackTrace) {
-      AppLogService.instance.error(
-        'LLM models request error',
-        error: e,
-        stackTrace: stackTrace,
-        details: 'endpoint=$endpoint',
-      );
-      rethrow;
+      throw StateError('Unexpected models response format.');
     } finally {
       client.close(force: true);
     }
@@ -86,28 +74,39 @@ class OpenAiChatProvider implements LlmProviderAdapter {
   Future<LlmProviderResult> complete(LlmProviderRequest request) async {
     _assertValidHeaderApiKey(request.apiKey);
     final endpoint = Uri.parse(resolveOpenAiCompatibleUrl(request.baseUrl, '/chat/completions'));
-    request.cancellationToken?.throwIfCancelled();
 
     for (var attempt = 0; attempt <= 3; attempt++) {
       final client = HttpClient();
       request.cancellationToken?.onCancel(() => client.close(force: true));
+      final startedAt = DateTime.now();
+
+      AppLogService.instance.info(
+        'LLM completion request sent',
+        details: 'endpoint=$endpoint model=${request.model} messages=${request.messages.length} attempt=${attempt + 1}',
+      );
+
       try {
-        final httpRequest = await client.postUrl(endpoint).timeout(
-          Duration(seconds: request.timeoutSeconds),
-        );
+        request.cancellationToken?.throwIfCancelled();
+        final httpRequest = await client.postUrl(endpoint);
+        request.cancellationToken?.throwIfCancelled();
+
+        final useTools = request.includeTools && request.tools.isNotEmpty;
         final requestBody = <String, dynamic>{
           'model': request.model,
           'messages': request.messages,
+          if (useTools) ...{
+            'tools': request.tools,
+            'tool_choice': 'auto',
+          },
+          if (request.includeReasoningParams)
+            ..._providerReasoningParams(
+              baseUrl: request.baseUrl,
+              model: request.model,
+              deepSeekThinkingEnabled: request.deepSeekThinkingEnabled,
+              deepSeekReasoningEffort: request.deepSeekReasoningEffort,
+              openAiReasoningEffort: request.openAiReasoningEffort,
+            ),
         };
-        requestBody.addAll(
-          _providerReasoningParams(
-            baseUrl: request.baseUrl,
-            model: request.model,
-            deepSeekThinkingEnabled: request.deepSeekThinkingEnabled,
-            deepSeekReasoningEffort: request.deepSeekReasoningEffort,
-            openAiReasoningEffort: request.openAiReasoningEffort,
-          ),
-        );
 
         final bodyBytes = utf8.encode(jsonEncode(requestBody));
         httpRequest.headers
@@ -121,7 +120,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
         );
         final body = await response.transform(utf8.decoder).join();
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          if (response.statusCode == 400 && _looksLikeReasoningParamUnsupportedError(body)) {
+          if (request.includeReasoningParams && response.statusCode == 400 && _looksLikeReasoningParamUnsupportedError(body)) {
             AppLogService.instance.warning(
               'LLM completion reasoning params unsupported, retrying without them',
               details: 'endpoint=$endpoint model=${request.model} bodyChars=${body.length}',
@@ -137,74 +136,114 @@ class OpenAiChatProvider implements LlmProviderAdapter {
               deepSeekReasoningEffort: request.deepSeekReasoningEffort,
               includeTools: request.includeTools,
               includeUsage: request.includeUsage,
+              includeReasoningParams: false,
               cancellationToken: request.cancellationToken,
               onTextDelta: request.onTextDelta,
               timeoutSeconds: request.timeoutSeconds,
             ));
           }
+          if (useTools && looksLikeToolUnsupportedError(body)) {
+            AppLogService.instance.warning(
+              'LLM completion tools unsupported, retrying without them',
+              details: 'endpoint=$endpoint model=${request.model} bodyChars=${body.length}',
+            );
+            return complete(LlmProviderRequest(
+              baseUrl: request.baseUrl,
+              apiKey: request.apiKey,
+              model: request.model,
+              messages: request.messages,
+              tools: const [],
+              openAiReasoningEffort: request.openAiReasoningEffort,
+              deepSeekThinkingEnabled: request.deepSeekThinkingEnabled,
+              deepSeekReasoningEffort: request.deepSeekReasoningEffort,
+              includeTools: false,
+              includeUsage: request.includeUsage,
+              includeReasoningParams: request.includeReasoningParams,
+              cancellationToken: request.cancellationToken,
+              onTextDelta: request.onTextDelta,
+              timeoutSeconds: request.timeoutSeconds,
+            ));
+          }
+
+          AppLogService.instance.warning(
+            'LLM completion failed',
+            details: 'status=${response.statusCode} bodyChars=${body.length}',
+          );
           throw StateError(
             'LLM completion failed (${response.statusCode}): $body',
           );
         }
 
-        final decoded = jsonDecode(body) as Map<String, dynamic>;
-        final text = _contentFromChatResponse(decoded);
-        final choices = decoded['choices'] as List?;
-        String? reasoningContent;
-        final providerToolCalls = <LlmProviderToolCall>[];
-        LlmTokenUsage? usage;
+        final data = jsonDecode(body);
+        if (data is! Map) {
+          throw StateError('Unexpected completion response body shape.');
+        }
+        final choices = data['choices'] as List?;
+        if (choices == null || choices.isEmpty) {
+          throw StateError('No choices in completion response.');
+        }
+        final firstChoice = choices.first as Map;
+        final message = firstChoice['message'] as Map;
+        final contentText = message['content'] as String? ?? '';
 
-        if (choices != null && choices.isNotEmpty) {
-          final firstChoice = choices.first as Map;
-          final message = firstChoice['message'] as Map?;
-          if (message != null) {
-            reasoningContent = message['reasoning_content'] as String?;
-            final toolCalls = message['tool_calls'] as List?;
-            if (toolCalls != null) {
-              for (final tc in toolCalls) {
-                if (tc is Map) {
-                  final function = tc['function'] as Map?;
-                  providerToolCalls.add(LlmProviderToolCall(
-                    id: (tc['id'] as String?) ?? '',
-                    name: (function?['name'] as String?) ?? '',
-                    argumentsJson: (function?['arguments'] as String?) ?? '',
-                  ));
-                }
-              }
+        String? reasoningContent;
+        if (message.containsKey('reasoning_content')) {
+          reasoningContent = message['reasoning_content'] as String?;
+        } else if (message.containsKey('reasoning')) {
+          reasoningContent = message['reasoning'] as String?;
+        }
+
+        final rawToolCalls = message['tool_calls'] as List?;
+        final toolCalls = <LlmProviderToolCall>[];
+        if (rawToolCalls != null) {
+          for (final rawCall in rawToolCalls) {
+            if (rawCall is Map) {
+              final id = rawCall['id'] as String? ?? '';
+              final function = rawCall['function'] as Map?;
+              final name = (function?['name'] as String?) ?? '';
+              final args = (function?['arguments'] as String?) ?? '';
+              toolCalls.add(LlmProviderToolCall(
+                id: id,
+                name: name,
+                argumentsJson: args,
+              ));
             }
           }
         }
 
-        final rawUsage = decoded['usage'];
-        if (rawUsage is Map<String, dynamic>) {
-          usage = LlmTokenUsage.fromJson(rawUsage);
-        }
+        final usageJson = data['usage'];
+        final usage = usageJson is Map ? LlmTokenUsage.fromJson(Map<String, dynamic>.from(usageJson)) : null;
+
+        AppLogService.instance.info(
+          'LLM completion completed',
+          details: 'elapsedMs=${DateTime.now().difference(startedAt).inMilliseconds} chars=${contentText.length} toolCalls=${toolCalls.length} attempt=${attempt + 1}',
+        );
 
         return LlmProviderResult(
-          text: text,
+          text: contentText,
           reasoningContent: reasoningContent,
-          toolCalls: providerToolCalls,
+          toolCalls: toolCalls,
           usage: usage,
         );
       } catch (e, stackTrace) {
-        if (request.cancellationToken?.isCancelled == true) {
+        if (request.cancellationToken?.isCancelled == true ||
+            e is LlmCancelledException) {
+          AppLogService.instance.info(
+            'LLM completion cancelled',
+            details: 'endpoint=$endpoint model=${request.model}',
+          );
           throw const LlmCancelledException();
         }
         final canRetry = _isRetryableNetworkError(e) && attempt < 3;
         if (canRetry) {
           AppLogService.instance.warning(
-            'LLM completion network error, retrying',
-            details: 'endpoint=$endpoint model=${request.model} attempt=${attempt + 1} error=$e',
+            'LLM completion retryable network error',
+            details: 'error=$e attempt=${attempt + 1}',
+
           );
           await _delayBeforeNetworkRetry(attempt, request.cancellationToken);
           continue;
         }
-        AppLogService.instance.error(
-          'LLM completion request error',
-          error: e,
-          stackTrace: stackTrace,
-          details: 'endpoint=$endpoint model=${request.model} attempt=${attempt + 1}',
-        );
         rethrow;
       } finally {
         client.close(force: true);
@@ -224,7 +263,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
       final startedAt = DateTime.now();
       final contentChunks = <String>[];
       final reasoningContent = StringBuffer();
-      final toolCalls = <int, StreamingToolCall>{};
+      final toolCalls = <int, _StreamingToolCall>{};
       LlmTokenUsage? usage;
 
       AppLogService.instance.info(
@@ -246,18 +285,19 @@ class OpenAiChatProvider implements LlmProviderAdapter {
             'tools': request.tools,
             'tool_choice': 'auto',
           },
-          if (request.includeUsage) 'stream_options': {'include_usage': true},
+          if (request.includeReasoningParams)
+            ..._providerReasoningParams(
+              baseUrl: request.baseUrl,
+              model: request.model,
+              deepSeekThinkingEnabled: request.deepSeekThinkingEnabled,
+              deepSeekReasoningEffort: request.deepSeekReasoningEffort,
+              openAiReasoningEffort: request.openAiReasoningEffort,
+            ),
         };
 
-        requestBody.addAll(
-          _providerReasoningParams(
-            baseUrl: request.baseUrl,
-            model: request.model,
-            deepSeekThinkingEnabled: request.deepSeekThinkingEnabled,
-            deepSeekReasoningEffort: request.deepSeekReasoningEffort,
-            openAiReasoningEffort: request.openAiReasoningEffort,
-          ),
-        );
+        if (request.includeUsage) {
+          requestBody['stream_options'] = {'include_usage': true};
+        }
 
         final bodyBytes = utf8.encode(jsonEncode(requestBody));
         httpRequest.headers
@@ -266,14 +306,19 @@ class OpenAiChatProvider implements LlmProviderAdapter {
         httpRequest.contentLength = bodyBytes.length;
         httpRequest.add(bodyBytes);
 
-        final response = await httpRequest.close();
+        final response = await httpRequest.close().timeout(
+          Duration(seconds: request.timeoutSeconds),
+        );
+
         if (response.statusCode < 200 || response.statusCode >= 300) {
           final body = await response.transform(utf8.decoder).join();
+
           if (request.includeUsage &&
               response.statusCode == 400 &&
-              (body.contains('stream_options') || body.contains('include_usage'))) {
+              (body.toLowerCase().contains('stream_options') ||
+                  body.toLowerCase().contains('streamoptions'))) {
             AppLogService.instance.warning(
-              'LLM stream usage unsupported, retrying without usage',
+              'LLM stream options usage unsupported, retrying without them',
               details: 'endpoint=$endpoint model=${request.model} bodyChars=${body.length}',
             );
             return streamChat(LlmProviderRequest(
@@ -287,14 +332,16 @@ class OpenAiChatProvider implements LlmProviderAdapter {
               deepSeekReasoningEffort: request.deepSeekReasoningEffort,
               includeTools: request.includeTools,
               includeUsage: false,
+              includeReasoningParams: request.includeReasoningParams,
               cancellationToken: request.cancellationToken,
               onTextDelta: request.onTextDelta,
               timeoutSeconds: request.timeoutSeconds,
             ));
           }
-          if (request.includeTools && looksLikeToolUnsupportedError(body)) {
+
+          if (useTools && response.statusCode == 400 && looksLikeToolUnsupportedError(body)) {
             AppLogService.instance.warning(
-              'LLM stream tools unsupported, retrying without tools',
+              'LLM stream tools unsupported, retrying without them',
               details: 'endpoint=$endpoint model=${request.model} bodyChars=${body.length}',
             );
             return streamChat(LlmProviderRequest(
@@ -302,18 +349,20 @@ class OpenAiChatProvider implements LlmProviderAdapter {
               apiKey: request.apiKey,
               model: request.model,
               messages: request.messages,
-              tools: request.tools,
+              tools: const [],
               openAiReasoningEffort: request.openAiReasoningEffort,
               deepSeekThinkingEnabled: request.deepSeekThinkingEnabled,
               deepSeekReasoningEffort: request.deepSeekReasoningEffort,
               includeTools: false,
               includeUsage: request.includeUsage,
+              includeReasoningParams: request.includeReasoningParams,
               cancellationToken: request.cancellationToken,
               onTextDelta: request.onTextDelta,
               timeoutSeconds: request.timeoutSeconds,
             ));
           }
-          if (response.statusCode == 400 && _looksLikeReasoningParamUnsupportedError(body)) {
+
+          if (request.includeReasoningParams && response.statusCode == 400 && _looksLikeReasoningParamUnsupportedError(body)) {
             AppLogService.instance.warning(
               'LLM reasoning params unsupported, retrying without them',
               details: 'endpoint=$endpoint model=${request.model} bodyChars=${body.length}',
@@ -329,46 +378,58 @@ class OpenAiChatProvider implements LlmProviderAdapter {
               deepSeekReasoningEffort: request.deepSeekReasoningEffort,
               includeTools: request.includeTools,
               includeUsage: request.includeUsage,
+              includeReasoningParams: false,
               cancellationToken: request.cancellationToken,
               onTextDelta: request.onTextDelta,
               timeoutSeconds: request.timeoutSeconds,
             ));
           }
+
           AppLogService.instance.warning(
-            'LLM stream request failed',
-            details: 'status=${response.statusCode} elapsedMs=${DateTime.now().difference(startedAt).inMilliseconds} bodyChars=${body.length}',
+            'LLM stream failed',
+            details: 'status=${response.statusCode} bodyChars=${body.length}',
           );
           throw StateError(
             'LLM stream failed (${response.statusCode}): $body',
           );
         }
 
-        await for (final line in response
+        final lines = response
             .transform(utf8.decoder)
-            .transform(const LineSplitter())) {
-          request.cancellationToken?.throwIfCancelled();
-          final trimmed = line.trim();
-          if (!trimmed.startsWith('data:')) continue;
-          final data = trimmed.substring(5).trim();
-          if (data == '[DONE]') break;
-          if (data.isEmpty) continue;
+            .transform(const LineSplitter());
 
-          final decoded = jsonDecode(data) as Map<String, dynamic>;
-          final rawUsage = decoded['usage'];
-          if (rawUsage is Map<String, dynamic>) {
-            usage = LlmTokenUsage.fromJson(rawUsage);
+        await for (final line in lines) {
+          request.cancellationToken?.throwIfCancelled();
+          if (line.trim().isEmpty) continue;
+          if (!line.startsWith('data:')) continue;
+
+          final dataStr = line.substring(5).trim();
+          if (dataStr == '[DONE]') continue;
+
+          Map<dynamic, dynamic> parsed;
+          try {
+            parsed = jsonDecode(dataStr) as Map;
+          } catch (_) {
+            continue;
           }
-          final choices = decoded['choices'] as List<dynamic>? ?? const [];
-          if (choices.isEmpty) continue;
-          final delta =
-              (choices.first as Map<String, dynamic>)['delta'] as Map?;
+
+          final usageJson = parsed['usage'];
+          if (usageJson is Map) {
+            usage = LlmTokenUsage.fromJson(Map<String, dynamic>.from(usageJson));
+          }
+
+          final choices = parsed['choices'] as List?;
+          if (choices == null || choices.isEmpty) continue;
+
+          final firstChoice = choices.first as Map;
+          final delta = firstChoice['delta'] as Map?;
           if (delta == null) continue;
 
-          final content = delta['content'];
-          if (content is String && content.isNotEmpty) {
-            contentChunks.add(content);
+          final text = delta['content'];
+          if (text is String && text.isNotEmpty) {
+            contentChunks.add(text);
             if (request.onTextDelta != null) {
-              request.onTextDelta!(content);
+              request.onTextDelta!(text);
             }
           }
 
@@ -384,7 +445,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
               final index = rawCall['index'] as int? ?? 0;
               final current = toolCalls.putIfAbsent(
                 index,
-                () => StreamingToolCall(id: '', name: '', arguments: ''),
+                () => _StreamingToolCall(id: '', name: '', arguments: ''),
               );
               final id = rawCall['id'];
               if (id is String && id.isNotEmpty) current.id = id;
@@ -442,18 +503,13 @@ class OpenAiChatProvider implements LlmProviderAdapter {
             attempt < 3;
         if (canRetry) {
           AppLogService.instance.warning(
-            'LLM stream network error, retrying',
-            details: 'endpoint=$endpoint model=${request.model} attempt=${attempt + 1} error=$e',
+            'LLM stream retryable network error',
+            details: 'error=$e attempt=${attempt + 1}',
+
           );
           await _delayBeforeNetworkRetry(attempt, request.cancellationToken);
           continue;
         }
-        AppLogService.instance.error(
-          'LLM stream request error',
-          error: e,
-          stackTrace: stackTrace,
-          details: 'endpoint=$endpoint model=${request.model} attempt=${attempt + 1}',
-        );
         rethrow;
       } finally {
         client.close(force: true);
@@ -500,44 +556,11 @@ class OpenAiChatProvider implements LlmProviderAdapter {
   }
 
   static String resolveOpenAiCompatibleUrl(String baseUrl, String path) {
-    final trimmedBase = baseUrl
-        .trim()
-        .split(RegExp(r'[?#]'))
-        .first
-        .replaceFirst(RegExp(r'/+$'), '');
-    final normalizedPath = path.startsWith('/') ? path : '/$path';
-    final uri = Uri.tryParse(trimmedBase);
-    if (uri == null) return '$trimmedBase$normalizedPath';
-
-    final basePath = uri.path.replaceFirst(RegExp(r'/+$'), '');
-    if (basePath.endsWith(normalizedPath)) return trimmedBase;
-    const chatPath = '/chat/completions';
-    const modelsPath = '/models';
-    if (normalizedPath == modelsPath && basePath.endsWith(chatPath)) {
-      final nextPath =
-          '${basePath.substring(0, basePath.length - chatPath.length)}$modelsPath';
-      return uri
-          .replace(path: nextPath, query: null, fragment: null)
-          .toString();
-    }
-    if (normalizedPath == chatPath && basePath.endsWith(modelsPath)) {
-      final nextPath =
-          '${basePath.substring(0, basePath.length - modelsPath.length)}$chatPath';
-      return uri
-          .replace(path: nextPath, query: null, fragment: null)
-          .toString();
-    }
-    return '$trimmedBase$normalizedPath';
+    return LlmUrlUtils.resolveOpenAiCompatibleUrl(baseUrl, path);
   }
 
   static bool looksLikeToolUnsupportedError(String body) {
-    final lower = body.toLowerCase();
-    return lower.contains('tool_choice') ||
-        lower.contains('"tools"') ||
-        lower.contains("'tools'") ||
-        lower.contains('tools is not supported') ||
-        lower.contains('tool calls') ||
-        lower.contains('function calling');
+    return LlmUrlUtils.looksLikeToolUnsupportedError(body);
   }
 
   Map<String, dynamic> _providerReasoningParams({
@@ -598,30 +621,36 @@ class OpenAiChatProvider implements LlmProviderAdapter {
     cancellationToken?.throwIfCancelled();
   }
 
+  bool isDeepSeekModelId(String model) {
+    final lower = model.toLowerCase();
+    return lower.contains('deepseek');
+  }
+
   bool _isDeepSeekBaseUrl(String baseUrl) {
-    final uri = Uri.tryParse(baseUrl.trim());
-    return uri?.host.toLowerCase().endsWith('deepseek.com') == true;
+    return baseUrl.toLowerCase().contains('deepseek');
+  }
+
+  bool supportsOpenAiReasoningEffort(String model) {
+    final lower = model.toLowerCase();
+    return lower.startsWith('o1') || lower.startsWith('o3');
   }
 
   void _assertValidHeaderApiKey(String apiKey) {
-    if (apiKey.contains(RegExp(r'[\r\n\t]')) ||
-        apiKey.contains('package:flutter/') ||
-        apiKey.contains('Failed assertion') ||
-        apiKey.contains('docs.flutter.dev/testing/errors')) {
-      throw const FormatException(
-        'Invalid API key. Please re-enter the provider API key in LLM settings.',
-      );
+    if (apiKey.contains('\r') || apiKey.contains('\n')) {
+      throw ArgumentError('API key contains invalid newline characters.');
     }
-  }
-
-  String _contentFromChatResponse(Map<String, dynamic> response) {
-    final choices = response['choices'];
-    if (choices is List && choices.isNotEmpty) {
-      final message = (choices.first as Map)['message'];
-      if (message is Map && message['content'] is String) {
-        return message['content'] as String;
-      }
-    }
-    return 'No prior context summary was returned.';
   }
 }
+
+class _StreamingToolCall {
+  String id;
+  String name;
+  String arguments;
+
+  _StreamingToolCall({
+    required this.id,
+    required this.name,
+    required this.arguments,
+  });
+}
+
