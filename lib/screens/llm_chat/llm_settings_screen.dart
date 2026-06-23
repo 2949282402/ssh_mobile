@@ -48,6 +48,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   String? _selectedApiKeyId;
   late LlmApiFormat _apiFormat;
   bool _loadingModels = false;
+  bool _showUnsupportedFormatWarning = false;
   bool _saving = false;
   String? _errorText;
 
@@ -88,7 +89,18 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _maxImageSizeBytes = widget.initialSettings.maxImageSizeBytes;
     _maxFileSizeBytes = widget.initialSettings.maxFileSizeBytes;
     _selectedApiKeyId = widget.initialSettings.activeApiKeyId;
-    _apiFormat = widget.initialSettings.apiFormat;
+    const supportedApiFormats = [
+      LlmApiFormat.openAiChatCompletions,
+      LlmApiFormat.geminiOpenAiCompatible,
+      LlmApiFormat.anthropicMessages,
+    ];
+    final originalFormat = widget.initialSettings.apiFormat;
+    if (!supportedApiFormats.contains(originalFormat)) {
+      _apiFormat = LlmApiFormat.openAiChatCompletions;
+      _showUnsupportedFormatWarning = true;
+    } else {
+      _apiFormat = originalFormat;
+    }
   }
 
   @override
@@ -387,6 +399,17 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       (settings) => settings.language,
     );
     final strings = _AiStrings(language);
+    if (_showUnsupportedFormatWarning) {
+      _showUnsupportedFormatWarning = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(strings.apiFormatUnsupported),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      });
+    }
     final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
@@ -420,7 +443,11 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
               decoration: InputDecoration(
                 labelText: strings.apiFormat,
               ),
-              items: LlmApiFormat.values.map((format) {
+              items: const [
+                LlmApiFormat.openAiChatCompletions,
+                LlmApiFormat.geminiOpenAiCompatible,
+                LlmApiFormat.anthropicMessages,
+              ].map((format) {
                 return DropdownMenuItem<LlmApiFormat>(
                   value: format,
                   child: Text(strings.apiFormatLabel(format)),
@@ -430,23 +457,6 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                 if (value == null) return;
                 setState(() {
                   _apiFormat = value;
-                  if (value == LlmApiFormat.geminiOpenAiCompatible) {
-                    if (_baseUrlController.text.trim().isEmpty || 
-                        _baseUrlController.text.trim() == 'https://api.deepseek.com') {
-                      _baseUrlController.text = 'https://generativelanguage.googleapis.com/v1beta/openai';
-                    }
-                  } else if (value == LlmApiFormat.openAiChatCompletions) {
-                    if (_baseUrlController.text.trim() == 'https://generativelanguage.googleapis.com/v1beta/openai' ||
-                        _baseUrlController.text.trim() == 'https://api.anthropic.com') {
-                      _baseUrlController.text = 'https://api.deepseek.com';
-                    }
-                  } else if (value == LlmApiFormat.anthropicMessages) {
-                    if (_baseUrlController.text.trim().isEmpty || 
-                        _baseUrlController.text.trim() == 'https://api.deepseek.com' ||
-                        _baseUrlController.text.trim() == 'https://generativelanguage.googleapis.com/v1beta/openai') {
-                      _baseUrlController.text = 'https://api.anthropic.com';
-                    }
-                  }
                 });
               },
             ),
@@ -464,6 +474,31 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                       _saving ? null : () => _openBaseUrlHistory(strings),
                   icon: const Icon(Icons.arrow_drop_down_rounded),
                 ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 4),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${strings.recommendedBaseUrl}: ${_getRecommendedBaseUrl(_apiFormat)}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Colors.grey,
+                          ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _saving ? null : () {
+                      setState(() {
+                        _baseUrlController.text = _getRecommendedBaseUrl(_apiFormat);
+                      });
+                    },
+                    child: Text(strings.useRecommendedBaseUrl),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 14),
@@ -700,10 +735,10 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
               contentPadding: EdgeInsets.zero,
               title: Text(strings.language == AppLanguage.en
                   ? 'Post-tool review agent'
-                  : '异常恢复审查 Agent'),
+                  : '?????? Agent'),
               subtitle: Text(strings.language == AppLanguage.en
                   ? 'Runs a review agent after tool errors, approval rejection, unavailable approval, budget audit rejection, or loop guard blocking.'
-                  : '工具失败、审批拒绝、审批不可用、预算审计拒绝或循环阻断时，自动调用审查 Agent 分析原因并给出下一步建议。'),
+                  : '??????????????????????????????????? Agent ?????????????'),
               value: _postToolReviewEnabled,
               onChanged: _saving
                   ? null
@@ -1010,6 +1045,19 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       ),
     );
   }
+
+  String _getRecommendedBaseUrl(LlmApiFormat format) {
+    switch (format) {
+      case LlmApiFormat.openAiChatCompletions:
+        return 'https://api.deepseek.com';
+      case LlmApiFormat.geminiOpenAiCompatible:
+        return 'https://generativelanguage.googleapis.com/v1beta/openai';
+      case LlmApiFormat.anthropicMessages:
+        return 'https://api.anthropic.com';
+      default:
+        return 'https://api.deepseek.com';
+    }
+  }
 }
 
 class _SettingsHistoryAction<T> {
@@ -1167,3 +1215,4 @@ class _PendingAiSettings {
     required this.apiFormat,
   });
 }
+
