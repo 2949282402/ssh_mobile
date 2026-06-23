@@ -72,8 +72,12 @@ extension _ChatAttachments on _LlmChatScreenBodyState {
           dataBase64: base64Encode(bytes),
         ));
       }
-    } catch (e) {
-      debugPrint('Image pick failed: $e');
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Image pick failed',
+        error: e,
+        stackTrace: stackTrace,
+      );
     }
   }
 
@@ -112,8 +116,12 @@ extension _ChatAttachments on _LlmChatScreenBodyState {
           dataBase64: base64Encode(bytes),
         ));
       }
-    } catch (e) {
-      debugPrint('File pick failed: $e');
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'File pick failed',
+        error: e,
+        stackTrace: stackTrace,
+      );
     }
   }
 

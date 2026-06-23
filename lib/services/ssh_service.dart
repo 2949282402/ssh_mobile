@@ -906,17 +906,15 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
 
     _backgroundService.on('sshLogReceived').listen((data) {
       if (data == null) return;
-      final String message = data['message'];
-      final String? errorText = data['error'];
+      final String message = data['message'] ?? '';
+      final String? details = data['details'];
       final String levelName = data['level'] ?? 'info';
 
-      if (levelName == 'error') {
-        AppLogService.instance.error('[Background] $message', error: errorText);
-      } else if (levelName == 'warning') {
-        AppLogService.instance.warning('[Background] $message');
-      } else {
-        AppLogService.instance.info('[Background] $message');
-      }
+      AppLogService.instance.add(
+        levelName,
+        '[Background] $message',
+        details: details,
+      );
     });
   }
 

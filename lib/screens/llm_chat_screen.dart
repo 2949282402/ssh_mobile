@@ -31,6 +31,7 @@ import '../services/rag_service.dart';
 import '../widgets/overflow_scroll_text.dart';
 import '../widgets/destructive_confirm_dialog.dart';
 import '../theme/app_theme.dart';
+import '../services/app_log_service.dart';
 
 part 'llm_chat/assistant_run_indicator.dart';
 part 'llm_chat/llm_settings_screen.dart';

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../services/app_settings.dart';
-import '../../widgets/overflow_scroll_text.dart';
+
 
 class TerminalScreenAppBar extends StatelessWidget
     implements PreferredSizeWidget {
@@ -37,9 +37,6 @@ class TerminalScreenAppBar extends StatelessWidget
   });
 
   @override
-  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
-
-  @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final connectedColor = colorScheme.secondary;
@@ -50,154 +47,169 @@ class TerminalScreenAppBar extends StatelessWidget
     return AppBar(
       surfaceTintColor: Colors.transparent,
       titleSpacing: 4,
-      title: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      title: Row(
         children: [
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: OverflowScrollText(
-                  displayName ?? serverName ?? strings.defaultTerminal,
-                  selectable: false,
-                  maxLines: 1,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
+          Flexible(
+            child: Text(
+              displayName ?? serverName ?? strings.defaultTerminal,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
               ),
-              const SizedBox(width: 4),
-              _compactIconButton(
-                icon: Icons.add,
-                iconSize: 18,
-                tooltip: strings.newWindow,
-                onPressed: onOpenSiblingSession,
-              ),
-            ],
+            ),
           ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: statusColor.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                        color: statusColor.withValues(alpha: 0.32),
-                      ),
-                    ),
-                    child: Text(
-                      isConnected ? strings.connected : strings.disconnected,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w800,
-                        color: statusColor,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    strings.fontSize,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: colorScheme.onSurface.withValues(alpha: 0.72),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(width: 2),
-                  _compactIconButton(
-                    icon: Icons.remove,
-                    iconSize: 18,
-                    tooltip: strings.smallerFont,
-                    onPressed: onSmallerFont,
-                  ),
-                  const SizedBox(width: 2),
-                  _compactIconButton(
-                    icon: Icons.add,
-                    iconSize: 18,
-                    tooltip: strings.largerFont,
-                    onPressed: onLargerFont,
-                  ),
-                ],
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+            decoration: BoxDecoration(
+              color: statusColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: statusColor.withValues(alpha: 0.32),
+              ),
+            ),
+            child: Text(
+              isConnected ? strings.connected : strings.disconnected,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                color: statusColor,
               ),
             ),
           ),
         ],
       ),
       actions: [
-        if (!isConnected)
-          _appBarAction(
-            icon: Icons.refresh,
-            tooltip: strings.reconnect,
-            onPressed: reconnectInProgress ? null : onReconnect,
-          ),
-        _appBarAction(
-          icon: isDarkMode ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
-          tooltip:
-              isDarkMode ? strings.switchToLightMode : strings.switchToDarkMode,
-          onPressed: onToggleTheme,
-        ),
-        _appBarAction(
-          icon: Icons.view_list,
+        IconButton(
+          icon: const Icon(Icons.view_list),
           tooltip: strings.switchWindow,
           onPressed: onSwitchWindow,
         ),
-        _appBarAction(
-          icon: isConnected ? Icons.power_settings_new : Icons.warning_amber,
-          color: closeColor,
-          tooltip: isConnected ? strings.disconnect : strings.closeDisconnected,
-          onPressed: onCloseWindow,
+        PopupMenuButton<String>(
+          icon: const Icon(Icons.more_vert),
+          onSelected: (value) {
+            switch (value) {
+              case 'new_window':
+                onOpenSiblingSession();
+                break;
+              case 'smaller_font':
+                onSmallerFont();
+                break;
+              case 'larger_font':
+                onLargerFont();
+                break;
+              case 'toggle_theme':
+                onToggleTheme();
+                break;
+              case 'reconnect':
+                onReconnect();
+                break;
+              case 'close_window':
+                onCloseWindow();
+                break;
+            }
+          },
+          itemBuilder: (context) {
+            final fontStyle = TextStyle(
+              color: colorScheme.onSurface,
+              fontSize: 15,
+            );
+            return [
+              PopupMenuItem(
+                value: 'new_window',
+                child: Row(
+                  children: [
+                    const Icon(Icons.add_to_photos_outlined, size: 20),
+                    const SizedBox(width: 12),
+                    Text(strings.newWindow, style: fontStyle),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'toggle_theme',
+                child: Row(
+                  children: [
+                    Icon(
+                      isDarkMode
+                          ? Icons.light_mode_rounded
+                          : Icons.dark_mode_rounded,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      isDarkMode
+                          ? strings.switchToLightMode
+                          : strings.switchToDarkMode,
+                      style: fontStyle,
+                    ),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'smaller_font',
+                child: Row(
+                  children: [
+                    const Icon(Icons.zoom_out, size: 20),
+                    const SizedBox(width: 12),
+                    Text(strings.smallerFont, style: fontStyle),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'larger_font',
+                child: Row(
+                  children: [
+                    const Icon(Icons.zoom_in, size: 20),
+                    const SizedBox(width: 12),
+                    Text(strings.largerFont, style: fontStyle),
+                  ],
+                ),
+              ),
+              if (!isConnected)
+                PopupMenuItem(
+                  value: 'reconnect',
+                  enabled: !reconnectInProgress,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.refresh, size: 20),
+                      const SizedBox(width: 12),
+                      Text(strings.reconnect, style: fontStyle),
+                    ],
+                  ),
+                ),
+              const PopupMenuDivider(),
+              PopupMenuItem(
+                value: 'close_window',
+                child: Row(
+                  children: [
+                    Icon(
+                      isConnected
+                          ? Icons.power_settings_new
+                          : Icons.warning_amber,
+                      color: closeColor,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      isConnected
+                          ? strings.disconnect
+                          : strings.closeDisconnected,
+                      style: fontStyle.copyWith(color: closeColor),
+                    ),
+                  ],
+                ),
+              ),
+            ];
+          },
         ),
       ],
     );
   }
 
-  Widget _appBarAction({
-    required IconData icon,
-    required String tooltip,
-    required VoidCallback? onPressed,
-    Color? color,
-  }) {
-    return SizedBox(
-      width: 40,
-      child: IconButton(
-        icon: Icon(icon, size: 20, color: color),
-        tooltip: tooltip,
-        padding: EdgeInsets.zero,
-        visualDensity: VisualDensity.compact,
-        onPressed: onPressed,
-      ),
-    );
-  }
-
-  Widget _compactIconButton({
-    required IconData icon,
-    required double iconSize,
-    required String tooltip,
-    required VoidCallback onPressed,
-  }) {
-    return SizedBox(
-      width: 26,
-      height: 28,
-      child: IconButton(
-        icon: Icon(icon, size: iconSize),
-        tooltip: tooltip,
-        padding: EdgeInsets.zero,
-        visualDensity: VisualDensity.compact,
-        onPressed: onPressed,
-      ),
-    );
-  }
+  @override
+  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
 }

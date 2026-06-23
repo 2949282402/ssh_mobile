@@ -11,6 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../features/connection/models/connection.dart';
 import '../core/services/ssh_client_factory.dart';
 import '../core/services/ssh_host_key_policy.dart';
+import 'app_log_service.dart';
 
 /// Android/iOS 前台服务管理。
 ///
@@ -38,6 +39,7 @@ class BackgroundServiceManager {
 
   static Future<void> initialize() async {
     if (!_supportsNativeBackgroundService) return;
+    AppLogService().info('Initializing BackgroundServiceManager');
     await _requestNotificationPermission();
     await prewarm();
   }
@@ -51,10 +53,15 @@ class BackgroundServiceManager {
       return;
     }
 
+    AppLogService().info('Prewarming BackgroundServiceManager');
     final future = _configureService();
     _prewarmFuture = future;
     try {
       await future;
+      AppLogService().info('BackgroundServiceManager prewarmed successfully');
+    } catch (e) {
+      AppLogService()
+          .error('BackgroundServiceManager prewarm failed', error: e);
     } finally {
       _prewarmFuture = null;
     }
@@ -62,6 +69,7 @@ class BackgroundServiceManager {
 
   static Future<void> _configureService() async {
     if (_configured) return;
+    AppLogService().info('Configuring FlutterBackgroundService');
     await _createNotificationChannel();
 
     final service = FlutterBackgroundService();
@@ -84,6 +92,7 @@ class BackgroundServiceManager {
     );
 
     _configured = true;
+    AppLogService().info('FlutterBackgroundService configured successfully');
   }
 
   static Future<void> start({
@@ -91,6 +100,11 @@ class BackgroundServiceManager {
     bool showConnectionName = false,
   }) async {
     if (!_supportsNativeBackgroundService) return;
+    AppLogService().info(
+      'Starting Background SSH Service',
+      details:
+          'connectionName=$connectionName showConnectionName=$showConnectionName',
+    );
     await initialize();
     var locksAcquired = false;
     try {
@@ -100,6 +114,7 @@ class BackgroundServiceManager {
 
       final service = FlutterBackgroundService();
       if (!await service.isRunning()) {
+        AppLogService().info('Invoking service.startService()');
         await service.startService();
       }
 
@@ -110,7 +125,12 @@ class BackgroundServiceManager {
           showConnectionName: showConnectionName,
         ),
       });
-    } catch (_) {
+      AppLogService().info('Background SSH Service started successfully');
+    } catch (e) {
+      AppLogService().error(
+        'Failed to start Background SSH Service',
+        error: e,
+      );
       if (locksAcquired) {
         await _releasePowerLocks();
       }
@@ -120,11 +140,14 @@ class BackgroundServiceManager {
 
   static Future<void> stop() async {
     if (!_supportsNativeBackgroundService) return;
+    AppLogService().info('Stopping Background SSH Service');
     final service = FlutterBackgroundService();
     if (await service.isRunning()) {
       service.invoke('stopService');
+      AppLogService().info('Sent stopService event to background service');
     }
     await _releasePowerLocks();
+    AppLogService().info('Background SSH Service stopped');
   }
 
   static Future<bool> isIgnoringBatteryOptimizations() async {
@@ -167,8 +190,13 @@ class BackgroundServiceManager {
     _notificationPermissionChecked = true;
 
     final status = await Permission.notification.status;
+    AppLogService().info('Checking notification permission status',
+        details: 'status=$status');
     if (status.isDenied || status.isRestricted || status.isLimited) {
-      await Permission.notification.request();
+      AppLogService().info('Requesting notification permission');
+      final result = await Permission.notification.request();
+      AppLogService().info('Notification permission request result',
+          details: 'result=$result');
     }
   }
 

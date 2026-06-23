@@ -224,7 +224,6 @@ class _SshMobileAppState extends State<SshMobileApp>
           child: Theme(
             data: Theme.of(context).copyWith(
               visualDensity: visualDensity,
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
             child: effectiveChild,
           ),

@@ -19,6 +19,7 @@ import 'tool_secret_policy.dart';
 /// 5. 多级缓存：entries、levelCounts、entriesByLevel 惰性计算+缓存
 class AppLogService extends ChangeNotifier {
   static final AppLogService instance = AppLogService._();
+  factory AppLogService() => instance;
   static const int _maxEntries = 1200;
   final ListQueue<AppLogEntry> _entries = ListQueue<AppLogEntry>();
   List<AppLogEntry>? _cachedNewestFirstEntries;
@@ -53,8 +54,6 @@ class AppLogService extends ChangeNotifier {
   }
 
   AppLogService._();
-
-  factory AppLogService() => instance;
 
   List<AppLogEntry> get entries {
     return _cachedNewestFirstEntries ??= List.unmodifiable(

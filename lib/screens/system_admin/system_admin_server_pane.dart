@@ -390,6 +390,12 @@ class _AdminCollapsedMobileServerBar extends StatelessWidget {
                     ),
                   ),
                 ),
+                IconButton(
+                  icon: const Icon(Icons.settings_outlined),
+                  onPressed: () {
+                    OpenSettingsNotification().dispatch(context);
+                  },
+                ),
               ],
             ),
           ),
