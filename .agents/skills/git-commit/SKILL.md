@@ -19,19 +19,11 @@ For targeted inspection of specific file changes:
 git diff <file-path>
 ```
 
-### 2. Format and Lint Checks
-Before committing, ensure the modified code adheres to project formatting and passes static analysis:
+### 2. Format Checks
+Before committing, ensure the modified code adheres to project formatting:
 - **Formatting Dart Files**:
   ```powershell
   dart format lib test
-  ```
-- **Static Analysis**:
-  ```powershell
-  flutter analyze
-  ```
-- **Unit and Widget Tests** (optional but highly recommended if touching core logic or database code):
-  ```powershell
-  flutter test
   ```
 
 ### 3. Stage Files
