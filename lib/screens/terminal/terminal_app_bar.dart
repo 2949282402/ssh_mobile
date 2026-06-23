@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../../services/app_settings.dart';
 
-
 class TerminalScreenAppBar extends StatelessWidget
     implements PreferredSizeWidget {
   final TerminalStrings strings;
