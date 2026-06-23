@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../services/app_settings.dart';
@@ -193,6 +193,12 @@ class TerminalShortcutPanel extends StatelessWidget {
           style: TextStyle(
             fontSize: (11 * scale).clamp(9.5, 12.0),
             fontFamily: 'monospace',
+            fontFamilyFallback: [
+              'Consolas',
+              'Microsoft YaHei',
+              'PingFang SC',
+              'sans-serif'
+            ],
             fontWeight: FontWeight.w700,
           ),
         ),
@@ -233,6 +239,12 @@ class TerminalShortcutPanel extends StatelessWidget {
           style: TextStyle(
             fontSize: (11 * scale).clamp(9.5, 12.0),
             fontFamily: 'monospace',
+            fontFamilyFallback: [
+              'Consolas',
+              'Microsoft YaHei',
+              'PingFang SC',
+              'sans-serif'
+            ],
             fontWeight: FontWeight.w700,
           ),
         ),
@@ -388,6 +400,12 @@ class TerminalShortcutPanel extends StatelessWidget {
           style: TextStyle(
             fontSize: (11 * scale).clamp(9.5, 12.0),
             fontFamily: 'monospace',
+            fontFamilyFallback: [
+              'Consolas',
+              'Microsoft YaHei',
+              'PingFang SC',
+              'sans-serif'
+            ],
             fontWeight: FontWeight.w700,
             color: command.custom ? customBorder : foreground,
           ),

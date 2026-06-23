@@ -1,4 +1,4 @@
-part of '../system_admin_screen.dart';
+﻿part of '../system_admin_screen.dart';
 
 class _UsersTab extends StatefulWidget {
   final AppStrings strings;
@@ -489,6 +489,12 @@ class _HomeDirectoryExplorerDialogState
               style: const TextStyle(
                   fontSize: 12,
                   fontFamily: 'monospace',
+                  fontFamilyFallback: [
+                    'Consolas',
+                    'Microsoft YaHei',
+                    'PingFang SC',
+                    'sans-serif'
+                  ],
                   fontWeight: FontWeight.normal),
             ),
           ),
@@ -702,7 +708,14 @@ class _UserProcessesDialogState extends State<_UserProcessesDialog> {
                                     selectable: false,
                                     maxLines: 1,
                                     style: const TextStyle(
-                                        fontFamily: 'monospace', fontSize: 12),
+                                        fontFamily: 'monospace',
+                                        fontFamilyFallback: [
+                                          'Consolas',
+                                          'Microsoft YaHei',
+                                          'PingFang SC',
+                                          'sans-serif'
+                                        ],
+                                        fontSize: 12),
                                   ),
                                   subtitle: Text(
                                       'PID: ${p.pid}  •  CPU: ${p.cpuPercent}%  •  RAM: ${p.memPercent}%'),

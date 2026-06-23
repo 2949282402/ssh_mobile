@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../features/sftp/viewmodels/sftp_viewmodel.dart';
@@ -211,6 +211,12 @@ class _SftpEditorScreenState extends State<SftpEditorScreen> {
       ),
       style: TextStyle(
         fontFamily: 'monospace',
+        fontFamilyFallback: [
+          'Consolas',
+          'Microsoft YaHei',
+          'PingFang SC',
+          'sans-serif'
+        ],
         fontSize: _fontSize,
         height: 1.35,
       ),

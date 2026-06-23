@@ -1,4 +1,4 @@
-part of '../llm_chat_screen.dart';
+﻿part of '../llm_chat_screen.dart';
 
 class _MessageBubble extends StatelessWidget {
   final String chatId;
@@ -874,6 +874,12 @@ class _TraceEntry extends StatelessWidget {
                   height: 1.3,
                   color: colorScheme.onSurface.withValues(alpha: 0.82),
                   fontFamily: 'monospace',
+                  fontFamilyFallback: [
+                    'Consolas',
+                    'Microsoft YaHei',
+                    'PingFang SC',
+                    'sans-serif'
+                  ],
                 ),
               ),
             ),
@@ -1172,6 +1178,12 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                       step.command,
                       style: TextStyle(
                         fontFamily: 'monospace',
+                        fontFamilyFallback: [
+                          'Consolas',
+                          'Microsoft YaHei',
+                          'PingFang SC',
+                          'sans-serif'
+                        ],
                         fontSize: 10.5,
                         color: colorScheme.primary,
                       ),
@@ -1277,6 +1289,12 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                         '${step.stdout ?? ''}\n${step.stderr ?? ''}'.trim(),
                         style: const TextStyle(
                           fontFamily: 'monospace',
+                          fontFamilyFallback: [
+                            'Consolas',
+                            'Microsoft YaHei',
+                            'PingFang SC',
+                            'sans-serif'
+                          ],
                           fontSize: 10,
                           color: Colors.greenAccent,
                         ),

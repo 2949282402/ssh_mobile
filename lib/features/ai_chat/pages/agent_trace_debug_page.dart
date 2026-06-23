@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -461,6 +461,12 @@ class _TraceTimelineItem extends StatelessWidget {
                   event.content.isEmpty ? '-' : event.content,
                   style: const TextStyle(
                     fontFamily: 'monospace',
+                    fontFamilyFallback: [
+                      'Consolas',
+                      'Microsoft YaHei',
+                      'PingFang SC',
+                      'sans-serif'
+                    ],
                     fontSize: 12,
                     height: 1.35,
                   ),

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
 
@@ -345,6 +345,12 @@ class _LogEntryTileState extends State<_LogEntryTile> {
               maxLines: _expanded ? null : _collapsedLines,
               style: TextStyle(
                 fontFamily: 'monospace',
+                fontFamilyFallback: [
+                  'Consolas',
+                  'Microsoft YaHei',
+                  'PingFang SC',
+                  'sans-serif'
+                ],
                 fontSize: 11,
                 height: 1.35,
                 color: colorScheme.onSurface,
