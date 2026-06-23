@@ -19,7 +19,7 @@ class ToolLoopController {
   final LlmToolBudgetController toolBudget;
   final Map<String, CachedToolResult> readOnlyToolCache;
   final List<LlmToolLedgerEntry> toolLedger;
-  final LlmProviderAdapter provider;
+  final LlmProviderAdapter? provider;
 
   int cacheHitCount = 0;
   int dedupBlockedCount = 0;
@@ -34,7 +34,7 @@ class ToolLoopController {
     required this.toolBudget,
     required this.readOnlyToolCache,
     required this.toolLedger,
-    this.provider = const OpenAiChatProvider(),
+    this.provider,
   });
 
   Future<ToolLoopResult> handleToolCalls({
@@ -56,6 +56,7 @@ class ToolLoopController {
     required MultiAgentClassificationCompletion classify,
     PlanExecutionSnapshot? planExecutionSnapshot,
   }) async {
+    final activeProvider = provider ?? LlmProviderFactory.fromSettings(settings);
     for (var toolIndex = 0; toolIndex < toolCalls.length; toolIndex++) {
       final call = toolCalls[toolIndex];
       cancellationToken?.throwIfCancelled();
@@ -130,7 +131,7 @@ class ToolLoopController {
                 'Tool "${call.name}" is not exposed in the current context.',
           ),
         );
-        workingMessages.add(provider.buildToolResultMessage(
+        workingMessages.add(activeProvider.buildToolResultMessage(
           call: LlmProviderToolCall(
             id: call.id,
             name: call.name,
@@ -234,7 +235,7 @@ class ToolLoopController {
             ),
           );
 
-          workingMessages.add(provider.buildToolResultMessage(
+          workingMessages.add(activeProvider.buildToolResultMessage(
             call: LlmProviderToolCall(
               id: call.id,
               name: call.name,
@@ -368,7 +369,7 @@ class ToolLoopController {
               blockedResult,
               outcome: 'budget_audit_rejected',
             );
-            workingMessages.add(provider.buildToolResultMessage(
+            workingMessages.add(activeProvider.buildToolResultMessage(
               call: LlmProviderToolCall(
                 id: blockedCall.id,
                 name: blockedCall.name,
@@ -479,7 +480,7 @@ class ToolLoopController {
               blockedResult,
               outcome: 'budget_audit_rejected',
             );
-            workingMessages.add(provider.buildToolResultMessage(
+            workingMessages.add(activeProvider.buildToolResultMessage(
               call: LlmProviderToolCall(
                 id: blockedCall.id,
                 name: blockedCall.name,
@@ -790,7 +791,7 @@ class ToolLoopController {
         cacheHit: cacheHit,
         dedupBlocked: dedupBlocked,
       );
-      workingMessages.add(provider.buildToolResultMessage(
+      workingMessages.add(activeProvider.buildToolResultMessage(
         call: LlmProviderToolCall(
           id: call.id,
           name: call.name,
@@ -995,3 +996,4 @@ class ToolLoopController {
     }
   }
 }
+

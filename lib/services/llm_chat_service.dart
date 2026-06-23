@@ -13,10 +13,11 @@ import 'tool_exposure_router.dart';
 import 'tool_secret_policy.dart';
 import 'agent/plan_execution_controller.dart';
 import 'package:uuid/uuid.dart';
+import 'llm_runtime/llm_runtime_types.dart';
 import 'llm_provider/llm_provider_types.dart';
 import 'llm_provider/llm_provider_adapter.dart';
 import 'llm_provider/llm_provider_factory.dart';
-import 'llm_provider/openai_chat_provider.dart';
+import 'llm_provider/llm_url_utils.dart';
 
 part 'llm_chat/llm_chat_types.dart';
 part 'llm_chat/llm_system_prompt.dart';
@@ -73,7 +74,7 @@ abstract interface class LlmClientAdapter {
   });
 }
 
-/// OpenAI 兼容 LLM 流式对话服务。
+/// OpenAI ?? LLM ???????
 class LlmChatService implements LlmClientAdapter {
 
   final StorageService storageService;
@@ -190,53 +191,53 @@ class LlmChatService implements LlmClientAdapter {
             '     }\n'
             '   - **Verification**: How to verify the plan succeeded.\n'
             '5. Execution handoff: Once the user approves the plan, execute the persisted steps sequentially and call client_task_update with status running, success, failed, or skipped. The legacy alias in_progress may still appear in old prompts or histories, but running is the canonical status.'
-        : '\n\n【规划模式已激活】\n'
-            '你当前处于“规划模式”。你的目标是针对用户的运维请求设计一份详细的、分步的操作执行计划。\n'
-            '1. 行为限制：绝对不能调用任何会改变系统状态的工具（如 sftp_write_text, playbook_execute 等）或执行有修改副作用的 shell 命令。仅提供只读建议并描述预期效果。\n'
-            '2. 输出格式：你必须用以下清晰的结构输出你的规划建议：\n'
-            '   - **上下文 (Context)**: 现状汇总与系统诊断事实。\n'
-            '   - **方案建议 (Proposal)**: 详细的分步步骤。将这些步骤包裹在一个标准的 markdown JSON 代码块 ```playbook ... ``` 中。这个标记仅用于让应用解析并持久化聊天内 TODO 任务，并不代表自动保存成可复用剧本：\n'
+        : '\n\n?????????\n'
+            '????????????????????????????????????????????\n'
+            '1. ????????????????????????? sftp_write_text, playbook_execute ???????????? shell ??????????????????\n'
+            '2. ?????????????????????????\n'
+            '   - **??? (Context)**: ????????????\n'
+            '   - **???? (Proposal)**: ????????????????????? markdown JSON ??? ```playbook ... ``` ????????????????????? TODO ??????????????????\n'
             '     {\n'
-            '       "name": "计划名称",\n'
-            '       "description": "简要描述",\n'
+            '       "name": "????",\n'
+            '       "description": "????",\n'
             '       "steps": [\n'
-            '         {"name": "步骤 1 名称", "command": "命令内容", "description": "操作说明"}\n'
+            '         {"name": "?? 1 ??", "command": "????", "description": "????"}\n'
             '       ]\n'
             '     }\n'
-            '   - **验证 (Verification)**: 运维步骤完成后如何验证成功。';
+            '   - **?? (Verification)**: ??????????????';
     final normalizedPlanInstructions = isEn
         ? planInstructions
         : '\n\n[PLAN MODE ACTIVE]\n'
-            '你当前处于规划模式。目标是为用户请求产出一份详细、可执行、分步骤的计划。\n'
-            '1. 限制：不要调用任何 state-changing 工具，也不要执行会修改状态的 shell 命令；只能做只读诊断、分析和规划。\n'
-            '2. 工具语义：规划模式下只允许只读工具、plan-only 工具（如 client_task_create）以及计划控制工具；execution-only 工具（如 client_task_update）在规划阶段不可用。\n'
-            '3. 计划持久化：应用可以通过两种方式持久化 todoSteps：一是调用 client_task_create，二是解析你最终回复里的合法 ```playbook JSON 代码块。这个代码块只是聊天计划的持久化格式，不会自动创建已保存的可复用 Playbook。即使不调用 client_task_create，也必须返回合法的 ```playbook JSON。\n'
-            '   - 默认行为：普通请求一律先制定聊天内执行计划。只有当用户明确要求保存、复用、管理或运行可复用剧本/脚本时，才使用 Playbook 相关工具。\n'
-            '4. 输出格式：最终答案必须包含清晰的计划结构：\n'
-            '   - Context：当前状态与诊断结论。\n'
-            '   - Proposal：分步骤执行方案。必须把结构化步骤包在 ```playbook ... ``` JSON 代码块中，便于应用后续解析并持久化聊天内 todoSteps，而不是保存独立 Playbook：\n'
+            '????????????????????????????????????\n'
+            '1. ????????? state-changing ?????????????? shell ?????????????????\n'
+            '2. ??????????????????plan-only ???? client_task_create??????????execution-only ???? client_task_update??????????\n'
+            '3. ??????????????????? todoSteps????? client_task_create?????????????? ```playbook JSON ??????????????????????????????????? Playbook?????? client_task_create????????? ```playbook JSON?\n'
+            '   - ???????????????????????????????????????????????/??????? Playbook ?????\n'
+            '4. ?????????????????????\n'
+            '   - Context???????????\n'
+            '   - Proposal??????????????????? ```playbook ... ``` JSON ???????????????????? todoSteps???????? Playbook?\n'
             '     {\n'
-            '       "name": "计划名称",\n'
-            '       "description": "简要说明",\n'
+            '       "name": "????",\n'
+            '       "description": "????",\n'
             '       "steps": [\n'
-            '         {"name": "步骤 1", "command": "命令", "description": "说明", "connectionId": "可选服务器 ID"}\n'
+            '         {"name": "?? 1", "command": "??", "description": "??", "connectionId": "????? ID"}\n'
             '       ]\n'
             '     }\n'
-            '   - Verification：如何验证计划成功。\n'
-            '5. 执行交接：用户批准后，必须按顺序执行持久化后的步骤，并使用 client_task_update 把状态更新为 running、success、failed 或 skipped。旧提示里可能仍出现 in_progress，但规范写法是 running。';
+            '   - Verification??????????\n'
+            '5. ????????????????????????????? client_task_update ?????? running?success?failed ? skipped?????????? in_progress??????? running?';
     return '$base$normalizedPlanInstructions';
   }
 
   String get compressionPrompt {
     return language == AppLanguage.en
         ? 'Summarize this conversation for continuing an SSH/SFTP assistant chat. Preserve server names, paths, commands, decisions, approvals, errors, and unresolved tasks. Be concise but operationally complete.'
-        : '总结此对话以继续进行 SSH/SFTP 助手聊天。保留服务器名称、路径、命令、决策、审批、错误和未解决的任务。保持简明，但操作信息需完整。';
+        : '?????????? SSH/SFTP ?????????????????????????????????????????????????';
   }
 
   String get conversationMemorySummaryHeader {
     return language == AppLanguage.en
         ? 'Conversation memory summary:\n'
-        : '对话历史记忆摘要：\n';
+        : '?????????\n';
   }
 
   String get plannerPrompt {
@@ -443,43 +444,13 @@ class LlmChatService implements LlmClientAdapter {
   }
 
   static String resolveOpenAiCompatibleUrl(String baseUrl, String path) {
-    final trimmedBase = baseUrl
-        .trim()
-        .split(RegExp(r'[?#]'))
-        .first
-        .replaceFirst(RegExp(r'/+$'), '');
-    final normalizedPath = path.startsWith('/') ? path : '/$path';
-    final uri = Uri.tryParse(trimmedBase);
-    if (uri == null) return '$trimmedBase$normalizedPath';
-
-    final basePath = uri.path.replaceFirst(RegExp(r'/+$'), '');
-    if (basePath.endsWith(normalizedPath)) return trimmedBase;
-    const chatPath = '/chat/completions';
-    const modelsPath = '/models';
-    if (normalizedPath == modelsPath && basePath.endsWith(chatPath)) {
-      final nextPath =
-          '${basePath.substring(0, basePath.length - chatPath.length)}$modelsPath';
-      return uri
-          .replace(path: nextPath, query: null, fragment: null)
-          .toString();
-    }
-    if (normalizedPath == chatPath && basePath.endsWith(modelsPath)) {
-      final nextPath =
-          '${basePath.substring(0, basePath.length - modelsPath.length)}$chatPath';
-      return uri
-          .replace(path: nextPath, query: null, fragment: null)
-          .toString();
-    }
-    return '$trimmedBase$normalizedPath';
+    return LlmUrlUtils.resolveOpenAiCompatibleUrl(baseUrl, path);
   }
 
   static bool looksLikeToolUnsupportedError(String body) {
-    final lower = body.toLowerCase();
-    return lower.contains('tool_choice') ||
-        lower.contains('"tools"') ||
-        lower.contains("'tools'") ||
-        lower.contains('tools is not supported') ||
-        lower.contains('tool calls') ||
-        lower.contains('function calling');
+    return LlmUrlUtils.looksLikeToolUnsupportedError(body);
   }
 }
+
+
+
