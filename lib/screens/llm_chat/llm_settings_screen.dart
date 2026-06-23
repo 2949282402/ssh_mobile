@@ -52,6 +52,10 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   bool _saving = false;
   String? _errorText;
 
+  late bool _initialRagEnabled;
+  late String _initialRagSearchMode;
+  late LlmApiFormat _initialApiFormat;
+
   @override
   void initState() {
     super.initState();
@@ -79,8 +83,10 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _webSearchEnabled = widget.initialSettings.webSearchEnabled;
     _webSearchMaxResults = widget.initialSettings.webSearchMaxResults;
     _webSearchEngine = widget.initialSettings.webSearchEngine;
-    _ragEnabled = context.read<AppSettings>().ragEnabled;
-    _ragSearchMode = context.read<AppSettings>().ragSearchMode;
+    _initialRagEnabled = context.read<AppSettings>().ragEnabled;
+    _initialRagSearchMode = context.read<AppSettings>().ragSearchMode;
+    _ragEnabled = _initialRagEnabled;
+    _ragSearchMode = _initialRagSearchMode;
     _multiAgentEnabled = widget.initialSettings.multiAgentEnabled;
     _multiAgentMaxAgents = widget.initialSettings.multiAgentMaxAgents;
     _postToolReviewEnabled = widget.initialSettings.postToolReviewEnabled;
@@ -101,10 +107,27 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     } else {
       _apiFormat = originalFormat;
     }
+    _initialApiFormat = _apiFormat;
+
+    _baseUrlController.addListener(_onTextChanged);
+    _modelController.addListener(_onTextChanged);
+    _helperModelController.addListener(_onTextChanged);
+    _auditModelController.addListener(_onTextChanged);
+    _apiKeyController.addListener(_onTextChanged);
+    _quarkApiKeyController.addListener(_onTextChanged);
+    _quarkEndpointController.addListener(_onTextChanged);
   }
 
   @override
   void dispose() {
+    _baseUrlController.removeListener(_onTextChanged);
+    _modelController.removeListener(_onTextChanged);
+    _helperModelController.removeListener(_onTextChanged);
+    _auditModelController.removeListener(_onTextChanged);
+    _apiKeyController.removeListener(_onTextChanged);
+    _quarkApiKeyController.removeListener(_onTextChanged);
+    _quarkEndpointController.removeListener(_onTextChanged);
+
     _baseUrlController.dispose();
     _modelController.dispose();
     _helperModelController.dispose();
@@ -113,6 +136,40 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _quarkApiKeyController.dispose();
     _quarkEndpointController.dispose();
     super.dispose();
+  }
+
+  void _onTextChanged() {
+    setState(() {});
+  }
+
+  bool _hasChanges() {
+    final initial = widget.initialSettings;
+    return _baseUrlController.text != initial.baseUrl ||
+        _modelController.text != initial.model ||
+        _helperModelController.text != initial.helperModel ||
+        _auditModelController.text != initial.auditModel ||
+        _apiKeyController.text.isNotEmpty ||
+        _quarkApiKeyController.text.isNotEmpty ||
+        _quarkEndpointController.text != initial.quarkSearchEndpoint ||
+        _contextWindowTokens != initial.contextWindowTokens ||
+        _timeoutSeconds != initial.timeoutSeconds ||
+        _deepSeekThinkingEnabled != initial.deepSeekThinkingEnabled ||
+        _deepSeekReasoningEffort != initial.deepSeekReasoningEffort ||
+        _openAiReasoningEffort != initial.openAiReasoningEffort ||
+        _webSearchEnabled != initial.webSearchEnabled ||
+        _webSearchMaxResults != initial.webSearchMaxResults ||
+        _webSearchEngine != initial.webSearchEngine ||
+        _ragEnabled != _initialRagEnabled ||
+        _ragSearchMode != _initialRagSearchMode ||
+        _multiAgentEnabled != initial.multiAgentEnabled ||
+        _multiAgentMaxAgents != initial.multiAgentMaxAgents ||
+        _postToolReviewEnabled != initial.postToolReviewEnabled ||
+        _modelFallbackPolicy != initial.modelFallbackPolicy ||
+        _toolCallBudget != initial.toolCallBudget ||
+        _maxImageSizeBytes != initial.maxImageSizeBytes ||
+        _maxFileSizeBytes != initial.maxFileSizeBytes ||
+        _selectedApiKeyId != initial.activeApiKeyId ||
+        _apiFormat != _initialApiFormat;
   }
 
   String? get _selectedApiKeyMasked {
@@ -414,25 +471,35 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(strings.settings),
-        actions: [
-          TextButton(
-            onPressed: _saving ? null : () => Navigator.pop(context),
-            child: Text(strings.cancel),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: FilledButton(
-              onPressed: _saving ? null : () => _save(strings),
-              child: _saving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Text(strings.save),
-            ),
-          ),
-        ],
+        actions: _hasChanges()
+            ? [
+                TextButton(
+                  onPressed: _saving ? null : () => Navigator.pop(context),
+                  child: Text(strings.cancel),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: FilledButton(
+                    onPressed: _saving ? null : () => _save(strings),
+                    child: _saving
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(strings.save),
+                  ),
+                ),
+              ]
+            : [
+                Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: Text(strings.close),
+                  ),
+                ),
+              ],
       ),
       body: SafeArea(
         child: ListView(
