@@ -1,6 +1,6 @@
 ---
 name: git-commit
-description: Use when staging files, running pre-commit checks (formatting, analysis, testing), generating standard commit messages, and committing changes in this repository.
+description: Use when the user requests to commit changes, git commit, stage files, or asks "提交一下", "git 提交", "git提交一下", running pre-commit checks (formatting, analysis, testing), generating standard commit messages, and committing changes in this repository.
 ---
 
 # Git Commit Skill
