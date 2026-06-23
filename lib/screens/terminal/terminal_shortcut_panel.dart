@@ -11,28 +11,24 @@ class TerminalShortcutPanel extends StatelessWidget {
   final String sessionId;
   final TerminalStrings strings;
   final Color toolbarColor;
-  final bool advancedKeyboardVisible;
   final TextEditingController complexInputController;
   final FocusNode terminalFocusNode;
   final bool ctrlActive;
   final VoidCallback onToggleCtrl;
   final bool altActive;
   final VoidCallback onToggleAlt;
-  final VoidCallback onToggleAdvancedKeyboard;
 
   const TerminalShortcutPanel({
     super.key,
     required this.sessionId,
     required this.strings,
     required this.toolbarColor,
-    required this.advancedKeyboardVisible,
     required this.complexInputController,
     required this.terminalFocusNode,
     required this.ctrlActive,
     required this.onToggleCtrl,
     required this.altActive,
     required this.onToggleAlt,
-    required this.onToggleAdvancedKeyboard,
   });
 
   @override
@@ -470,7 +466,37 @@ class TerminalShortcutPanel extends StatelessWidget {
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 16),
+                    Text(
+                      strings.navigationShell,
+                      style: TextStyle(
+                        fontSize: 12 * scale,
+                        fontWeight: FontWeight.w600,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _keyGroup(
+                        context,
+                        [
+                          const _KeySpec('HOME', '\x1b[H'),
+                          const _KeySpec('END', '\x1b[F'),
+                          const _KeySpec('PGUP', '\x1b[5~'),
+                          const _KeySpec('PGDN', '\x1b[6~'),
+                          const _KeySpec('CTRL+D', '\x04'),
+                          const _KeySpec('CTRL+L', '\x0c'),
+                        ],
+                        scale),
+                    const SizedBox(height: 16),
+                    Text(
+                      strings.editControl,
+                      style: TextStyle(
+                        fontSize: 12 * scale,
+                        fontWeight: FontWeight.w600,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
                     _keyGroup(
                         context,
                         [
@@ -485,15 +511,24 @@ class TerminalShortcutPanel extends StatelessWidget {
                           const _KeySpec('CTRL+R', '\x12'),
                           const _KeySpec('CTRL+Z', '\x1a'),
                           const _KeySpec('CTRL+\\', '\x1c'),
+                          const _KeySpec('ALT+B', '\x1bb'),
+                          const _KeySpec('ALT+F', '\x1bf'),
+                          const _KeySpec('ALT+D', '\x1bd'),
                         ],
                         scale),
+                    const SizedBox(height: 16),
+                    Text(
+                      strings.functionKeys,
+                      style: TextStyle(
+                        fontSize: 12 * scale,
+                        fontWeight: FontWeight.w600,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
                     const SizedBox(height: 8),
                     _keyGroup(
                         context,
                         [
-                          const _KeySpec('ALT+B', '\x1bb'),
-                          const _KeySpec('ALT+F', '\x1bf'),
-                          const _KeySpec('ALT+D', '\x1bd'),
                           const _KeySpec('F1', '\x1bOP'),
                           const _KeySpec('F2', '\x1bOQ'),
                           const _KeySpec('F3', '\x1bOR'),

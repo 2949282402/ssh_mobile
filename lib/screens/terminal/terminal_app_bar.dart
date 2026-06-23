@@ -91,6 +91,7 @@ class TerminalScreenAppBar extends StatelessWidget
         ),
         PopupMenuButton<String>(
           icon: const Icon(Icons.more_vert),
+          tooltip: strings.moreActions,
           onSelected: (value) {
             switch (value) {
               case 'new_window':
