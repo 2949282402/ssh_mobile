@@ -18,6 +18,7 @@ import '../features/ai_chat/services/ai_chat_message_mapper.dart';
 import '../features/playbook/models/playbook.dart';
 import '../services/agent_model_profile.dart';
 import '../services/app_settings.dart';
+import '../services/app_log_service.dart';
 import '../services/llm_chat_service.dart';
 import '../services/llm_provider/llm_api_format.dart';
 import '../services/multi_agent_coordinator.dart';

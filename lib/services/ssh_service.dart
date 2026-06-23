@@ -904,20 +904,21 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
       notifyListeners();
     });
 
-    _backgroundService.on('sshLogReceived').listen((data) {
-      if (data == null) return;
-      final String message = data['message'];
-      final String? errorText = data['error'];
-      final String levelName = data['level'] ?? 'info';
+    _backgroundService.on('sshLogReceived').listen(handleBackgroundLog);
+  }
 
-      if (levelName == 'error') {
-        AppLogService.instance.error('[Background] $message', error: errorText);
-      } else if (levelName == 'warning') {
-        AppLogService.instance.warning('[Background] $message');
-      } else {
-        AppLogService.instance.info('[Background] $message');
-      }
-    });
+  @visibleForTesting
+  void handleBackgroundLog(Map<String, dynamic>? data) {
+    if (data == null) return;
+    final String message = data['message'] ?? '';
+    final String levelName = data['level'] ?? 'info';
+    final String? details = data['details'];
+
+    AppLogService.instance.add(
+      levelName,
+      '[Background] $message',
+      details: details,
+    );
   }
 
   void _refreshSessionsView() {
