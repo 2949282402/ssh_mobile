@@ -756,4 +756,8 @@ class TerminalStrings {
       ? '"$name" is already disconnected. Close this window?'
       : '"$name" 已经断开。关闭这个窗口吗？';
   String get copyAll => _en ? 'Copy all' : '复制全部';
+  String get moreActions => _en ? 'More actions' : '更多操作';
+  String get navigationShell => _en ? 'Navigation & Shell' : '导航与 Shell';
+  String get editControl => _en ? 'Edit & Control' : '编辑与控制';
+  String get functionKeys => _en ? 'Function Keys' : '功能键';
 }

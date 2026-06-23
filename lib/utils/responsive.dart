@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 /// 移动端布局自适应工具函数。
 ///
 /// 设计目标：在大屏设备（平板、桌面）上保持标准间距，在小屏手机上
-/// 通过缩小 text scale + 收紧 VisualDensity 来适配。
+/// 保留系统默认的 text scale（保障无障碍可访问性）并收紧 VisualDensity 来适配。
 ///
 /// isDesktopLayout() 在性能监控等页面用于切换紧凑/展开布局。
 /// adaptMobileMediaQuery() + mobileVisualDensityFor() 在 main.dart 的 builder 中

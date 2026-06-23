@@ -52,7 +52,6 @@ class _TerminalScreenState extends State<TerminalScreen>
   Timer? _resizeTimer;
   int _activePointers = 0;
   bool _terminalMenuOpen = false;
-  bool _advancedKeyboardVisible = false;
   TerminalTheme? _cachedTerminalTheme;
   bool? _cachedTerminalThemeIsDark;
   Color? _cachedTerminalThemeBackground;
@@ -253,7 +252,6 @@ class _TerminalScreenState extends State<TerminalScreen>
             sessionId: widget.sessionId,
             strings: strings,
             toolbarColor: toolbarColor,
-            advancedKeyboardVisible: _advancedKeyboardVisible,
             complexInputController: viewModel.complexInputController,
             terminalFocusNode: _isWindowsTerminalTarget
                 ? viewModel.commandInputFocusNode
@@ -273,11 +271,6 @@ class _TerminalScreenState extends State<TerminalScreen>
                 viewModel.setCtrlActive(false);
               }
               _requestWindowsAwareTerminalFocus(viewModel);
-            },
-            onToggleAdvancedKeyboard: () {
-              setState(
-                () => _advancedKeyboardVisible = !_advancedKeyboardVisible,
-              );
             },
           );
 
