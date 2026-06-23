@@ -33,9 +33,24 @@ class AppLogService extends ChangeNotifier {
   File? _logFile;
   final List<String> _logWriteQueue = [];
   bool _isWriting = false;
+  Completer<void>? _writeCompleter;
   int logSizeLimit = 5 * 1024 * 1024;
   bool writeDiskLogsInRelease = false;
   final ToolSecretPolicy _secretPolicy = const ToolSecretPolicy();
+
+  /// A future that completes when all pending log writes to disk are finished.
+  @visibleForTesting
+  Future<void> get pendingWrites {
+    if (!_isWriting && _logWriteQueue.isEmpty) {
+      return Future.value();
+    }
+    return (_writeCompleter ??= Completer<void>()).future;
+  }
+
+  @visibleForTesting
+  void resetLogFileForTesting() {
+    _logFile = null;
+  }
 
   AppLogService._();
 
@@ -226,6 +241,11 @@ class AppLogService extends ChangeNotifier {
       }
     }
     _isWriting = false;
+    final completer = _writeCompleter;
+    if (completer != null) {
+      _writeCompleter = null;
+      completer.complete();
+    }
   }
 
   Future<void> _rotateLogs() async {
