@@ -20,6 +20,165 @@ class _FilePane extends StatelessWidget {
       return _SftpEmptyState(strings: strings);
     }
 
+    final isMobile = !isDesktopLayout(context);
+    final statusColor = snapshot.state == SftpConnectionState.connected
+        ? colorScheme.secondary
+        : snapshot.state == SftpConnectionState.connecting
+            ? colorScheme.primary
+            : colorScheme.error;
+
+    final statusText = snapshot.state == SftpConnectionState.connected
+        ? strings.connected
+        : snapshot.state == SftpConnectionState.connecting
+            ? strings.connecting
+            : (strings.language == AppLanguage.en ? 'Error' : '错误');
+
+    Widget buildPathContainer() {
+      return InkWell(
+        onTap: snapshot.isBusy
+            ? null
+            : () => showModalBottomSheet<void>(
+                  context: context,
+                  showDragHandle: true,
+                  isScrollControlled: true,
+                  builder: (_) => _SftpPathHistorySheet(
+                    strings: strings,
+                    sftp: sftp,
+                    currentPath: snapshot.currentPath,
+                  ),
+                ),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+        child: Container(
+          height: 40,
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.42),
+            borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+            border: Border.all(color: colorScheme.outlineVariant),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: OverflowScrollText(
+                  snapshot.currentPath,
+                  selectable: false,
+                  maxLines: 1,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(
+                Icons.edit_outlined,
+                size: 16,
+                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (isMobile) {
+      return Column(
+        children: [
+          // 第一层：当前服务器状态 + 当前路径
+          Container(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+            color: colorScheme.surface,
+            child: Row(
+              children: [
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: statusColor.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(4),
+                    border:
+                        Border.all(color: statusColor.withValues(alpha: 0.3)),
+                  ),
+                  child: Text(
+                    statusText,
+                    style: TextStyle(
+                      color: statusColor,
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(child: buildPathContainer()),
+              ],
+            ),
+          ),
+          // 第二层：上级目录、路径历史/收藏、刷新、上传、更多
+          Container(
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+            decoration: BoxDecoration(
+              color: colorScheme.surface,
+              border: Border(
+                bottom: BorderSide(color: colorScheme.outlineVariant),
+              ),
+            ),
+            child: Row(
+              children: [
+                IconButton(
+                  tooltip: strings.parentDirectory,
+                  icon: const Icon(Icons.arrow_upward_rounded),
+                  onPressed: snapshot.isBusy ? null : sftp.openParent,
+                ),
+                const SizedBox(width: 8),
+                _SftpPathMenuButton(
+                  strings: strings,
+                  sftp: sftp,
+                  currentPath: snapshot.currentPath,
+                  disabled: snapshot.isBusy,
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  tooltip: strings.refresh,
+                  icon: const Icon(Icons.refresh_rounded),
+                  onPressed: snapshot.isBusy ? null : sftp.refresh,
+                ),
+                const Spacer(),
+                IconButton.filledTonal(
+                  tooltip: strings.uploadFile,
+                  icon: const Icon(Icons.upload_file_rounded),
+                  onPressed:
+                      snapshot.isBusy ? null : () => _uploadFile(context),
+                ),
+                const SizedBox(width: 8),
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert),
+                  onSelected: (val) {
+                    if (val == 'disconnect') {
+                      sftp.disconnect();
+                    }
+                  },
+                  itemBuilder: (ctx) => [
+                    PopupMenuItem(
+                      value: 'disconnect',
+                      child: Row(
+                        children: [
+                          Icon(Icons.link_off_rounded,
+                              color: colorScheme.error),
+                          const SizedBox(width: 8),
+                          Text(
+                            strings.disconnect,
+                            style: TextStyle(color: colorScheme.error),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
     return Column(
       children: [
         Container(
@@ -38,25 +197,7 @@ class _FilePane extends StatelessWidget {
                 onPressed: snapshot.isBusy ? null : sftp.openParent,
               ),
               const SizedBox(width: 4),
-              Expanded(
-                child: Container(
-                  height: 40,
-                  alignment: Alignment.centerLeft,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainerHighest
-                        .withValues(alpha: 0.42),
-                    borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                    border: Border.all(color: colorScheme.outlineVariant),
-                  ),
-                  child: OverflowScrollText(
-                    snapshot.currentPath,
-                    selectable: false,
-                    maxLines: 1,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ),
+              Expanded(child: buildPathContainer()),
               const SizedBox(width: 4),
               _SftpPathMenuButton(
                 strings: strings,
@@ -454,7 +595,21 @@ class _SftpPathHistorySheet extends StatefulWidget {
 }
 
 class _SftpPathHistorySheetState extends State<_SftpPathHistorySheet> {
-  late Future<_SftpPathHistoryData> _future = _load();
+  late final TextEditingController _pathController;
+  late Future<_SftpPathHistoryData> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _pathController = TextEditingController(text: widget.currentPath);
+    _future = _load();
+  }
+
+  @override
+  void dispose() {
+    _pathController.dispose();
+    super.dispose();
+  }
 
   Future<_SftpPathHistoryData> _load() async {
     final favorites = await widget.sftp.loadFavoritePaths();
@@ -487,6 +642,44 @@ class _SftpPathHistorySheetState extends State<_SftpPathHistorySheet> {
             return Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // 路径输入跳转栏
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _pathController,
+                          decoration: InputDecoration(
+                            hintText: widget.strings.language == AppLanguage.en
+                                ? 'Go to path...'
+                                : '输入路径跳转...',
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            border: const OutlineInputBorder(),
+                          ),
+                          onSubmitted: (value) {
+                            if (value.trim().isNotEmpty) {
+                              widget.sftp.openPath(value.trim());
+                              Navigator.pop(context);
+                            }
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      IconButton.filled(
+                        icon: const Icon(Icons.arrow_forward),
+                        onPressed: () {
+                          final value = _pathController.text.trim();
+                          if (value.isNotEmpty) {
+                            widget.sftp.openPath(value);
+                            Navigator.pop(context);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 0, 8, 8),
                   child: Row(
@@ -725,6 +918,100 @@ class _SftpEntryList extends StatelessWidget {
     required this.entryMeta,
   });
 
+  IconData _getFileIcon(SftpEntry entry) {
+    if (entry.isDirectory) return Icons.folder_rounded;
+    if (entry.isLink) return Icons.shortcut_rounded;
+
+    final name = entry.lowerName;
+    if (name.endsWith('.txt') ||
+        name.endsWith('.log') ||
+        name.endsWith('.md') ||
+        name.endsWith('.json') ||
+        name.endsWith('.yaml') ||
+        name.endsWith('.yml') ||
+        name.endsWith('.xml') ||
+        name.endsWith('.conf') ||
+        name.endsWith('.cfg') ||
+        name.endsWith('.sh') ||
+        name.endsWith('.py') ||
+        name.endsWith('.js') ||
+        name.endsWith('.dart') ||
+        name.endsWith('.html') ||
+        name.endsWith('.css')) {
+      return Icons.article_outlined;
+    }
+
+    return Icons.description_outlined;
+  }
+
+  void _showEntryMenu(BuildContext context, SftpEntry entry) {
+    final RenderBox? renderBox = context.findRenderObject() as RenderBox?;
+    final offset = renderBox?.localToGlobal(Offset.zero) ?? Offset.zero;
+    final colorScheme = Theme.of(context).colorScheme;
+
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        offset.dx + (renderBox?.size.width ?? 0) / 2,
+        offset.dy + (renderBox?.size.height ?? 0) / 2,
+        offset.dx + (renderBox?.size.width ?? 0) / 2,
+        offset.dy + (renderBox?.size.height ?? 0) / 2,
+      ),
+      items: [
+        if (!entry.isDirectory)
+          PopupMenuItem(
+            value: 'view',
+            child: Row(
+              children: [
+                const Icon(Icons.visibility_outlined, size: 18),
+                const SizedBox(width: 8),
+                Text(strings.viewFile),
+              ],
+            ),
+          ),
+        if (!entry.isDirectory)
+          PopupMenuItem(
+            value: 'edit',
+            child: Row(
+              children: [
+                const Icon(Icons.edit_outlined, size: 18),
+                const SizedBox(width: 8),
+                Text(strings.edit),
+              ],
+            ),
+          ),
+        if (!entry.isDirectory)
+          PopupMenuItem(
+            value: 'download',
+            child: Row(
+              children: [
+                const Icon(Icons.download_rounded, size: 18),
+                const SizedBox(width: 8),
+                Text(strings.downloadFile),
+              ],
+            ),
+          ),
+        PopupMenuItem(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 18, color: colorScheme.error),
+              const SizedBox(width: 8),
+              Text(
+                strings.delete,
+                style: TextStyle(color: colorScheme.error),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ).then((action) {
+      if (action != null && context.mounted) {
+        onEntryAction(context, action, entry);
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final scale = mobileUiScaleOf(context);
@@ -756,16 +1043,15 @@ class _SftpEntryList extends StatelessWidget {
         return RepaintBoundary(
           key: ValueKey('${entry.connectionId}:${entry.path}'),
           child: TactileFeedback(
-            onTap: entry.isDirectory ? () => sftp.openPath(entry.path) : null,
+            onTap: entry.isDirectory
+                ? () => sftp.openPath(entry.path)
+                : () => onEntryAction(context, 'view', entry),
+            onLongPress: () => _showEntryMenu(context, entry),
             child: ListTile(
               dense: scale < 0.95,
               minLeadingWidth: 26 * scale,
               leading: Icon(
-                entry.isDirectory
-                    ? Icons.folder_rounded
-                    : entry.isLink
-                        ? Icons.shortcut_rounded
-                        : Icons.description_outlined,
+                _getFileIcon(entry),
                 color: entry.isDirectory
                     ? colorScheme.primary
                     : colorScheme.onSurface.withValues(alpha: 0.72),

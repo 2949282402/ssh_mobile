@@ -130,12 +130,12 @@ class _SettingsPanelState extends State<_SettingsPanel> {
     final cacheOptions = secretSnapshot.cacheOptions;
 
     return ListTileTheme(
-      dense: true,
+      dense: false,
       minLeadingWidth: 28,
       horizontalTitleGap: 10,
       iconColor: colorScheme.onSurfaceVariant,
       child: DefaultTextStyle.merge(
-        style: const TextStyle(fontSize: 13),
+        style: const TextStyle(fontSize: 14),
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
           children: [
@@ -599,13 +599,10 @@ class _SettingsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final strings = AppStrings(context.read<AppSettings>().language);
     return Scaffold(
       appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Text(appTitle),
+        title: Text(strings.settings),
         backgroundColor: colorScheme.surface,
       ),
       body: _SettingsPanel(

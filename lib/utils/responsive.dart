@@ -62,14 +62,8 @@ double mobileUiScaleOf(BuildContext context) {
 }
 
 MediaQueryData adaptMobileMediaQuery(MediaQueryData mediaQuery) {
-  final uiScale = mobileUiScaleFor(mediaQuery);
-  if (uiScale >= 0.999) return mediaQuery;
-
-  final currentTextScale = mediaQuery.textScaler.scale(1);
-  final adaptedTextScale = (currentTextScale * uiScale).clamp(0.9, 1.6);
-  return mediaQuery.copyWith(
-    textScaler: TextScaler.linear(adaptedTextScale.toDouble()),
-  );
+  // 不再全局缩放 textScaler，保留系统默认以保障无障碍可访问性
+  return mediaQuery;
 }
 
 VisualDensity mobileVisualDensityFor(MediaQueryData mediaQuery) {

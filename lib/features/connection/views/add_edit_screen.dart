@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/connection.dart';
 import '../../../../services/app_log_service.dart';
 import '../../../../services/app_settings.dart';
+import '../../../../utils/responsive.dart';
 import '../../../../widgets/ssh_host_key_trust_dialog.dart';
 import '../viewmodels/connection_viewmodel.dart';
 
@@ -36,6 +38,9 @@ class _AddEditScreenState extends State<AddEditScreen> {
   bool _keepAlive = true;
   bool _obscurePassword = true;
   bool _isLoadingSecrets = false;
+
+  bool _jumpHostExpanded = false;
+  bool _advancedOptionsExpanded = false;
 
   bool get isEditing => widget.editId != null;
 
@@ -84,6 +89,11 @@ class _AddEditScreenState extends State<AddEditScreen> {
     _jumpPortController.text = config.jumpPort?.toString() ?? '22';
     _jumpUsernameController.text = config.jumpUsername ?? '';
 
+    // If jump host has values, auto expand it
+    if (_jumpHostController.text.isNotEmpty) {
+      _jumpHostExpanded = true;
+    }
+
     _loadSecrets(config.id);
   }
 
@@ -120,23 +130,95 @@ class _AddEditScreenState extends State<AddEditScreen> {
     final strings = _strings(context);
     final isSaving =
         context.select<ConnectionViewModel, bool>((vm) => vm.isSaving);
+
+    final isDesktop = isDesktopLayout(context);
+
+    final portAndUserRow = isDesktop
+        ? Row(
+            children: [
+              Expanded(flex: 2, child: _buildPortField()),
+              const SizedBox(width: 12),
+              Expanded(flex: 3, child: _buildUsernameField()),
+            ],
+          )
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildPortField(),
+              const SizedBox(height: 12),
+              _buildUsernameField(),
+            ],
+          );
+
+    final jumpPortAndUserRow = isDesktop
+        ? Row(
+            children: [
+              Expanded(flex: 2, child: _buildJumpPortField()),
+              const SizedBox(width: 12),
+              Expanded(flex: 3, child: _buildJumpUsernameField()),
+            ],
+          )
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildJumpPortField(),
+              const SizedBox(height: 12),
+              _buildJumpUsernameField(),
+            ],
+          );
+
+    final stickyActionBar = SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+        child: SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: FilledButton(
+            onPressed: isSaving || _isLoadingSecrets ? null : _save,
+            child: isSaving
+                ? Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(strings.saving),
+                    ],
+                  )
+                : Text(
+                    strings.language == AppLanguage.en
+                        ? 'Verify & Save'
+                        : '验证并保存',
+                  ),
+          ),
+        ),
+      ),
+    );
+
     return Scaffold(
       appBar: AppBar(
         title: Text(isEditing ? strings.editConnection : strings.addConnection),
         actions: [
-          TextButton.icon(
+          IconButton(
             onPressed: isSaving || _isLoadingSecrets ? null : _save,
             icon: isSaving
                 ? const SizedBox(
-                    width: 16,
-                    height: 16,
+                    width: 18,
+                    height: 18,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.check),
-            label: Text(isSaving ? strings.saving : strings.save),
+            tooltip: strings.save,
           ),
         ],
       ),
+      bottomNavigationBar: stickyActionBar,
       body: _isLoadingSecrets
           ? const Center(
               child: SizedBox(
@@ -150,53 +232,108 @@ class _AddEditScreenState extends State<AddEditScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
                 children: [
-                  _section(strings.basicInfo),
-                  _buildNameField(),
-                  const SizedBox(height: 16),
-                  _section(strings.connectionInfo),
-                  _buildHostField(),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(flex: 2, child: _buildPortField()),
-                      const SizedBox(width: 12),
-                      Expanded(flex: 3, child: _buildUsernameField()),
-                    ],
+                  // 基础信息分组
+                  Card(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _section(strings.basicInfo),
+                          const SizedBox(height: 10),
+                          _buildNameField(),
+                        ],
+                      ),
+                    ),
                   ),
-                  const SizedBox(height: 20),
-                  _section(strings.authMethod),
-                  _buildAuthMethodSelector(),
-                  const SizedBox(height: 12),
-                  if (_authMethod == AuthMethod.password ||
-                      _authMethod == AuthMethod.both)
-                    _buildPasswordField(),
-                  if (_authMethod == AuthMethod.privateKey ||
-                      _authMethod == AuthMethod.both) ...[
-                    const SizedBox(height: 12),
-                    _buildPrivateKeyField(),
-                  ],
-                  const SizedBox(height: 20),
-                  _section(strings.jumpHostOptional),
-                  _buildJumpHostField(),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(flex: 2, child: _buildJumpPortField()),
-                      const SizedBox(width: 12),
-                      Expanded(flex: 3, child: _buildJumpUsernameField()),
-                    ],
+
+                  // 连接信息分组
+                  Card(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _section(strings.connectionInfo),
+                          const SizedBox(height: 10),
+                          _buildHostField(),
+                          const SizedBox(height: 12),
+                          portAndUserRow,
+                        ],
+                      ),
+                    ),
                   ),
-                  const SizedBox(height: 20),
-                  _section(strings.advancedOptions),
-                  _buildServerPlatformSelector(),
-                  const SizedBox(height: 12),
-                  _buildLaunchModeSelector(),
-                  if (_launchMode == TerminalLaunchMode.tmux) ...[
-                    const SizedBox(height: 12),
-                    _buildTmuxAutoDeleteField(),
-                  ],
-                  const SizedBox(height: 12),
-                  _buildKeepAliveSwitch(),
+
+                  // 认证信息分组
+                  Card(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _section(strings.authMethod),
+                          const SizedBox(height: 10),
+                          _buildAuthMethodSelector(),
+                          const SizedBox(height: 12),
+                          if (_authMethod == AuthMethod.password ||
+                              _authMethod == AuthMethod.both) ...[
+                            _buildPasswordField(),
+                            const SizedBox(height: 12),
+                          ],
+                          if (_authMethod == AuthMethod.privateKey ||
+                              _authMethod == AuthMethod.both) ...[
+                            _buildPrivateKeyField(),
+                            const SizedBox(height: 12),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  // 跳板机分组（默认折叠）
+                  Card(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    clipBehavior: Clip.antiAlias,
+                    child: ExpansionTile(
+                      title: _section(strings.jumpHostOptional),
+                      initiallyExpanded: _jumpHostExpanded,
+                      onExpansionChanged: (val) =>
+                          setState(() => _jumpHostExpanded = val),
+                      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      children: [
+                        _buildJumpHostField(),
+                        const SizedBox(height: 12),
+                        jumpPortAndUserRow,
+                      ],
+                    ),
+                  ),
+
+                  // 高级选项分组（默认折叠）
+                  Card(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    clipBehavior: Clip.antiAlias,
+                    child: ExpansionTile(
+                      title: _section(strings.advancedOptions),
+                      initiallyExpanded: _advancedOptionsExpanded,
+                      onExpansionChanged: (val) =>
+                          setState(() => _advancedOptionsExpanded = val),
+                      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      children: [
+                        _buildServerPlatformSelector(),
+                        const SizedBox(height: 16),
+                        _buildLaunchModeSelector(),
+                        if (_launchMode == TerminalLaunchMode.tmux) ...[
+                          const SizedBox(height: 12),
+                          _buildTmuxAutoDeleteField(),
+                        ],
+                        const SizedBox(height: 12),
+                        _buildKeepAliveSwitch(),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -204,16 +341,13 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Widget _section(String title) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(
-        title,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w800,
-          color: Theme.of(context).colorScheme.primary,
-          letterSpacing: 0.6,
-        ),
+    return Text(
+      title,
+      style: TextStyle(
+        fontSize: 13,
+        fontWeight: FontWeight.w800,
+        color: Theme.of(context).colorScheme.primary,
+        letterSpacing: 0.6,
       ),
     );
   }
@@ -285,42 +419,35 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
   Widget _buildAuthMethodSelector() {
     final strings = _strings(context);
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: SegmentedButton<AuthMethod>(
-        showSelectedIcon: false,
-        segments: [
-          ButtonSegment(
-            value: AuthMethod.password,
-            label: Text(
-              strings.password,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            icon: const Icon(Icons.lock_outline, size: 18),
-          ),
-          ButtonSegment(
-            value: AuthMethod.privateKey,
-            label: Text(
-              strings.privateKey,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            icon: const Icon(Icons.key, size: 18),
-          ),
-          ButtonSegment(
-            value: AuthMethod.both,
-            label: Text(
-              strings.privateKeyPassword,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            icon: const Icon(Icons.enhanced_encryption, size: 18),
-          ),
-        ],
-        selected: {_authMethod},
-        onSelectionChanged: (set) => setState(() => _authMethod = set.first),
-      ),
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        ChoiceChip(
+          label: Text(strings.password),
+          avatar: const Icon(Icons.lock_outline, size: 16),
+          selected: _authMethod == AuthMethod.password,
+          onSelected: (selected) {
+            if (selected) setState(() => _authMethod = AuthMethod.password);
+          },
+        ),
+        ChoiceChip(
+          label: Text(strings.privateKey),
+          avatar: const Icon(Icons.key, size: 16),
+          selected: _authMethod == AuthMethod.privateKey,
+          onSelected: (selected) {
+            if (selected) setState(() => _authMethod = AuthMethod.privateKey);
+          },
+        ),
+        ChoiceChip(
+          label: Text(strings.privateKeyPassword),
+          avatar: const Icon(Icons.enhanced_encryption, size: 16),
+          selected: _authMethod == AuthMethod.both,
+          onSelected: (selected) {
+            if (selected) setState(() => _authMethod = AuthMethod.both);
+          },
+        ),
+      ],
     );
   }
 
@@ -353,23 +480,50 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
   Widget _buildPrivateKeyField() {
     final strings = _strings(context);
-    return TextFormField(
-      controller: _privateKeyController,
-      maxLines: 4,
-      decoration: InputDecoration(
-        labelText: strings.sshPrivateKey,
-        hintText:
-            '-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----',
-        prefixIcon: const Icon(Icons.key),
-        alignLabelWithHint: true,
-      ),
-      validator: (value) {
-        if (_authMethod == AuthMethod.privateKey &&
-            (value == null || value.trim().isEmpty)) {
-          return strings.privateKeyRequired;
-        }
-        return null;
-      },
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              strings.sshPrivateKey,
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+            ),
+            TextButton.icon(
+              icon: const Icon(Icons.paste_rounded, size: 16),
+              label: Text(_text('Paste', '粘贴')),
+              onPressed: () async {
+                final data = await Clipboard.getData(Clipboard.kTextPlain);
+                if (data?.text != null) {
+                  setState(() {
+                    _privateKeyController.text = data!.text!;
+                  });
+                }
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        TextFormField(
+          controller: _privateKeyController,
+          maxLines: null,
+          minLines: 4,
+          decoration: InputDecoration(
+            hintText:
+                '-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----',
+            prefixIcon: const Icon(Icons.key),
+            alignLabelWithHint: true,
+          ),
+          validator: (value) {
+            if (_authMethod == AuthMethod.privateKey &&
+                (value == null || value.trim().isEmpty)) {
+              return strings.privateKeyRequired;
+            }
+            return null;
+          },
+        ),
+      ],
     );
   }
 

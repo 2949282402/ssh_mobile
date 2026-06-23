@@ -35,21 +35,20 @@ part 'home/server_list_pane.dart';
 class HomeScreen extends StatefulWidget {
   final int initialIndex;
 
-  // AI stays first in navigation, but launch still lands on Servers because
-  // connection management is the app's operational home page.
-  const HomeScreen({super.key, this.initialIndex = 1});
+  // Servers is index 0, aligning bottom navigation with initial landing page.
+  const HomeScreen({super.key, this.initialIndex = 0});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  static const int _aiPage = 0;
-  static const int _serverPage = 1;
+  static const int _serverPage = 0;
+  static const int _aiPage = 1;
   static const int _sftpPage = 2;
   static const int _adminPage = 3;
   static const int _logPage = 4;
-  static const int _firstPage = _aiPage;
+  static const int _firstPage = _serverPage;
   static const int _lastPage = _logPage;
 
   late final PageController _pageController;
@@ -175,18 +174,18 @@ class _HomeScreenState extends State<HomeScreen> {
       children: [
         NavigationRail(
           extended: extended,
-          selectedIndex: _navigationIndex,
-          onDestinationSelected: _switchNavigationPage,
+          selectedIndex: _desktopNavigationIndex,
+          onDestinationSelected: (idx) => _switchNavigationPage(idx, true),
           destinations: [
-            NavigationRailDestination(
-              icon: const Icon(Icons.smart_toy_outlined),
-              selectedIcon: const Icon(Icons.smart_toy_rounded),
-              label: Text(settingsLabelAi(context)),
-            ),
             NavigationRailDestination(
               icon: const Icon(Icons.dns_outlined),
               selectedIcon: const Icon(Icons.dns_rounded),
               label: Text(strings.servers),
+            ),
+            NavigationRailDestination(
+              icon: const Icon(Icons.smart_toy_outlined),
+              selectedIcon: const Icon(Icons.smart_toy_rounded),
+              label: Text(settingsLabelAi(context)),
             ),
             NavigationRailDestination(
               icon: const Icon(Icons.folder_open_outlined),
@@ -202,6 +201,11 @@ class _HomeScreenState extends State<HomeScreen> {
               icon: const Icon(Icons.terminal_outlined),
               selectedIcon: const Icon(Icons.terminal_rounded),
               label: Text(strings.switchToChinese == '中文' ? 'Log' : '日志'),
+            ),
+            NavigationRailDestination(
+              icon: const Icon(Icons.settings_outlined),
+              selectedIcon: const Icon(Icons.settings_rounded),
+              label: Text(strings.settings),
             ),
           ],
         ),
@@ -219,18 +223,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildBottomNavigation(BuildContext context, AppStrings strings) {
     return NavigationBar(
-      selectedIndex: _navigationIndex,
-      onDestinationSelected: _switchNavigationPage,
+      selectedIndex: _selectedIndex >= 4 ? 0 : _selectedIndex,
+      onDestinationSelected: (idx) => _switchNavigationPage(idx, false),
       destinations: [
-        NavigationDestination(
-          icon: const Icon(Icons.smart_toy_outlined),
-          selectedIcon: const Icon(Icons.smart_toy_rounded),
-          label: settingsLabelAi(context),
-        ),
         NavigationDestination(
           icon: const Icon(Icons.dns_outlined),
           selectedIcon: const Icon(Icons.dns_rounded),
           label: strings.servers,
+        ),
+        NavigationDestination(
+          icon: const Icon(Icons.smart_toy_outlined),
+          selectedIcon: const Icon(Icons.smart_toy_rounded),
+          label: settingsLabelAi(context),
         ),
         NavigationDestination(
           icon: const Icon(Icons.folder_open_outlined),
@@ -242,22 +246,37 @@ class _HomeScreenState extends State<HomeScreen> {
           selectedIcon: const Icon(Icons.admin_panel_settings_rounded),
           label: strings.admin,
         ),
+        NavigationDestination(
+          icon: const Icon(Icons.settings_outlined),
+          selectedIcon: const Icon(Icons.settings_rounded),
+          label: strings.settings,
+        ),
       ],
     );
   }
 
-  int get _navigationIndex {
+  int get _desktopNavigationIndex {
     if (_selectedIndex == _logPage) {
       return 4;
     }
     return _selectedIndex;
   }
 
-  void _switchNavigationPage(int index) {
-    if (index == 4) {
-      _switchPage(_logPage);
+  void _switchNavigationPage(int index, bool isDesktop) {
+    if (isDesktop) {
+      if (index == 5) {
+        _openSettings(context);
+      } else if (index == 4) {
+        _switchPage(_logPage);
+      } else {
+        _switchPage(index);
+      }
     } else {
-      _switchPage(index);
+      if (index == 4) {
+        _openSettings(context);
+      } else {
+        _switchPage(index);
+      }
     }
   }
 
