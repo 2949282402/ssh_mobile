@@ -8,10 +8,6 @@ extension _HomeSettingsStrings on AppStrings {
   String get aiSkillsHint => language == AppLanguage.en
       ? 'Manage custom AI prompts, workflows, and references'
       : '管理自定义 AI 提示词、工作流及规则说明';
-  String get appFontFamily => language == AppLanguage.en ? 'App font' : '应用字体';
-  String get appFontFamilyNote => language == AppLanguage.en
-      ? 'Applied across the app. Font files are not bundled.'
-      : '全局统一使用。应用不内置字体文件。';
   String get security => language == AppLanguage.en ? 'Security' : '安全';
   String get credentialCache => language == AppLanguage.en
       ? 'Cache SSH credentials in memory'
@@ -70,17 +66,4 @@ extension _HomeSettingsStrings on AppStrings {
       language == AppLanguage.en ? 'Export failed: $error' : '导出失败：$error';
   String importFailed(Object error) =>
       language == AppLanguage.en ? 'Import failed: $error' : '导入失败：$error';
-}
-
-extension _HomeFontSettingStrings on AppStrings {
-  String get appFontPreview =>
-      language == AppLanguage.en ? 'Font preview' : '字体预览';
-  String get appFontCurrent =>
-      language == AppLanguage.en ? 'Current font' : '当前字体';
-  String get fontFallbackHint => language == AppLanguage.en
-      ? 'If this font is unavailable on your device, system fallback will be used.'
-      : '如该字体在设备上不存在，系统将自动回退到默认字体。';
-  String get fontPlatformHint => language == AppLanguage.en
-      ? 'Font availability depends on platform resources; install the font to force direct usage.'
-      : '字体是否可用取决于平台资源，若需要可安装该字体后再使用。';
 }

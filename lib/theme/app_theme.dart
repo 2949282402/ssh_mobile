@@ -83,29 +83,14 @@ class AppTheme {
     'monospace',
   ];
 
-  static ThemeData lightThemeFor(String? fontFamily) =>
-      _applyFont(lightTheme, fontFamily);
-  static ThemeData darkThemeFor(String? fontFamily) =>
-      _applyFont(darkTheme, fontFamily);
+  static ThemeData lightThemeFor() => _applyFont(lightTheme);
+  static ThemeData darkThemeFor() => _applyFont(darkTheme);
 
-  static ThemeData _applyFont(ThemeData theme, String? fontFamily) {
-    final family = fontFamily?.trim();
-    if (family == null || family.isEmpty) {
-      return theme.copyWith(
-        textTheme: theme.textTheme.apply(fontFamilyFallback: fontFallbacks),
-        primaryTextTheme:
-            theme.primaryTextTheme.apply(fontFamilyFallback: fontFallbacks),
-      );
-    }
+  static ThemeData _applyFont(ThemeData theme) {
     return theme.copyWith(
-      textTheme: theme.textTheme.apply(
-        fontFamily: family,
-        fontFamilyFallback: fontFallbacks,
-      ),
-      primaryTextTheme: theme.primaryTextTheme.apply(
-        fontFamily: family,
-        fontFamilyFallback: fontFallbacks,
-      ),
+      textTheme: theme.textTheme.apply(fontFamilyFallback: fontFallbacks),
+      primaryTextTheme:
+          theme.primaryTextTheme.apply(fontFamilyFallback: fontFallbacks),
     );
   }
 
