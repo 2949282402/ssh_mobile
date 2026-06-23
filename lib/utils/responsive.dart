@@ -62,6 +62,10 @@ double mobileUiScaleOf(BuildContext context) {
 }
 
 MediaQueryData adaptMobileMediaQuery(MediaQueryData mediaQuery) {
+<<<<<<< HEAD
+=======
+  // 不再全局缩放 textScaler，保留系统默认以保障无障碍可访问性
+>>>>>>> 46c8b2a7f3e083a10730f7a62d0d6ac9daac2f72
   return mediaQuery;
 }
 

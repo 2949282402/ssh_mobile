@@ -68,11 +68,20 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                 height: 1.35,
               ),
             ),
+<<<<<<< HEAD
             const SizedBox(height: 18),
             ElevatedButton.icon(
               onPressed: () => _addConnection(context),
               icon: const Icon(Icons.add),
               label: Text(strings.addConnection),
+=======
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              icon: const Icon(Icons.add),
+              label: Text(
+                  strings.language == AppLanguage.en ? 'Add Server' : '添加服务器'),
+              onPressed: () => Navigator.pushNamed(context, '/add'),
+>>>>>>> 46c8b2a7f3e083a10730f7a62d0d6ac9daac2f72
             ),
           ],
         ),
@@ -150,6 +159,10 @@ extension _HomeScreenStateServerList on _HomeScreenState {
     final count = _selectedServerIds.length;
     return SafeArea(
       bottom: true,
+<<<<<<< HEAD
+=======
+      top: false,
+>>>>>>> 46c8b2a7f3e083a10730f7a62d0d6ac9daac2f72
       child: Container(
         padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
         decoration: BoxDecoration(
@@ -161,11 +174,18 @@ extension _HomeScreenStateServerList on _HomeScreenState {
         child: Row(
           children: [
             Text(
+<<<<<<< HEAD
               strings.selectedServers(count),
+=======
+              strings.language == AppLanguage.en
+                  ? '$count selected'
+                  : '已选择 $count 台服务器',
+>>>>>>> 46c8b2a7f3e083a10730f7a62d0d6ac9daac2f72
               style: TextStyle(
                 color: colorScheme.onSurface,
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
+<<<<<<< HEAD
               ),
             ),
             const Spacer(),
@@ -191,6 +211,32 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                   ? () => _confirmBatchDelete(context, strings)
                   : null,
             ),
+=======
+              ),
+            ),
+            const Spacer(),
+            TextButton.icon(
+              icon: const Icon(Icons.close, size: 18),
+              label: Text(strings.cancel),
+              onPressed: () {
+                updateState(() {
+                  _serverSelectionMode = false;
+                  _selectedServerIds.clear();
+                });
+              },
+            ),
+            const SizedBox(width: 8),
+            if (count > 0)
+              FilledButton.tonalIcon(
+                icon: const Icon(Icons.delete, size: 18),
+                label: Text(strings.delete),
+                style: FilledButton.styleFrom(
+                  foregroundColor: colorScheme.error,
+                  backgroundColor: colorScheme.errorContainer,
+                ),
+                onPressed: () => _confirmBatchDelete(context, strings),
+              ),
+>>>>>>> 46c8b2a7f3e083a10730f7a62d0d6ac9daac2f72
           ],
         ),
       ),
@@ -214,6 +260,50 @@ extension _HomeScreenStateServerList on _HomeScreenState {
           sessionSummary,
           strings,
           connIndex: connIndex,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusChip(
+    BuildContext context,
+    SshConnectionState? state,
+    SshConnectionOverview sessionSummary,
+    AppStrings strings,
+  ) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final success = colorScheme.secondary;
+
+    final Color color;
+    final String text;
+
+    if (sessionSummary.hasConnected) {
+      color = success;
+      text = strings.connected;
+    } else if (state == SshConnectionState.connecting) {
+      color = colorScheme.primary;
+      text = strings.connecting;
+    } else if (state == SshConnectionState.error) {
+      color = colorScheme.error;
+      text = strings.language == AppLanguage.en ? 'Error' : '错误';
+    } else {
+      color = colorScheme.onSurface.withValues(alpha: 0.4);
+      text = strings.disconnected;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withValues(alpha: 0.3), width: 1),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
         ),
       ),
     );
@@ -272,7 +362,11 @@ extension _HomeScreenStateServerList on _HomeScreenState {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+<<<<<<< HEAD
             // Layer 1: Status Icon, Name, and Connection Status Chip
+=======
+            // 第一层：拖拽柄/多选框 + 状态图标 + 名称 + 连接状态 Chip
+>>>>>>> 46c8b2a7f3e083a10730f7a62d0d6ac9daac2f72
             Row(
               children: [
                 if (!_serverSelectionMode)
@@ -293,16 +387,26 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                     onChanged: (_) => _toggleServerSelection(conn.id),
                   ),
                 Container(
+<<<<<<< HEAD
                   width: 36 * scale,
                   height: 36 * scale,
+=======
+                  width: 38 * scale,
+                  height: 38 * scale,
+>>>>>>> 46c8b2a7f3e083a10730f7a62d0d6ac9daac2f72
                   decoration: BoxDecoration(
                     color: isActive
                         ? success.withValues(alpha: 0.15)
-                        : primary.withValues(alpha: 0.1),
+                        : isConnecting
+                            ? colorScheme.primary.withValues(alpha: 0.1)
+                            : latestState == SshConnectionState.error
+                                ? colorScheme.error.withValues(alpha: 0.1)
+                                : primary.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                   ),
                   child: Icon(
                     _getStatusIcon(conn, latestState),
+<<<<<<< HEAD
                     color: isActive ? success : primary,
                     size: 20 * scale,
                   ),
@@ -398,6 +502,132 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                     padding: EdgeInsets.symmetric(
                         horizontal: 8 * scale, vertical: 4 * scale),
                     visualDensity: VisualDensity.compact,
+=======
+                    color: isActive
+                        ? success
+                        : isConnecting
+                            ? colorScheme.primary
+                            : latestState == SshConnectionState.error
+                                ? colorScheme.error
+                                : primary,
+                    size: 20 * scale,
+                  ),
+                ),
+                SizedBox(width: 10 * scale),
+                Expanded(
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OverflowScrollText(
+                          conn.name,
+                          selectable: false,
+                          maxLines: 1,
+                          style: TextStyle(
+                            color: textColor,
+                            fontSize: 15 * scale,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      _buildStatusChip(
+                          context, latestState, sessionSummary, strings),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 10 * scale),
+            // 第二层：主机信息 + 健康状态
+            Padding(
+              padding:
+                  EdgeInsets.only(left: _serverSelectionMode ? 0 : 26 * scale),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.dns_outlined,
+                        size: 13 * scale,
+                        color: mutedTextColor.withValues(alpha: 0.72),
+                      ),
+                      SizedBox(width: 5 * scale),
+                      Flexible(
+                        child: Text(
+                          '${conn.username}@${conn.host}:${conn.port}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12.5 * scale,
+                            color: mutedTextColor,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (conn.id.isNotEmpty) ...[
+                    SizedBox(height: 6 * scale),
+                    Selector<PerformanceMonitorService, ServerHealthSnapshot>(
+                      selector: (_, monitor) => monitor.healthFor(conn.id),
+                      builder: (context, health, _) =>
+                          _buildHealthChip(context, health, strings),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            SizedBox(height: 12 * scale),
+            Divider(height: 1, color: colorScheme.outlineVariant),
+            SizedBox(height: 8 * scale),
+            // 第三层：窗口列表整行按钮 + 1个常用操作(连接/打开) + 更多菜单(编辑/删除)
+            Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: () => _toggleConnectionWindows(conn.id),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                          vertical: 6 * scale, horizontal: 8 * scale),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.tab_outlined,
+                            size: 16 * scale,
+                            color: mutedTextColor,
+                          ),
+                          SizedBox(width: 6 * scale),
+                          Text(
+                            strings.language == AppLanguage.en
+                                ? 'Windows · $sessionCount'
+                                : '窗口列表 · $sessionCount',
+                            style: TextStyle(
+                              color: textColor,
+                              fontSize: 13 * scale,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          SizedBox(width: 4 * scale),
+                          Icon(
+                            windowsExpanded
+                                ? Icons.expand_less_rounded
+                                : Icons.expand_more_rounded,
+                            color: mutedTextColor,
+                            size: 18 * scale,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                if (!_serverSelectionMode) ...[
+                  TextButton.icon(
+                    icon: Icon(Icons.play_arrow_rounded, size: 18 * scale),
+                    label: Text(
+                        strings.language == AppLanguage.en ? 'Connect' : '连接'),
+                    onPressed: () => _openNewTerminal(context, conn),
+>>>>>>> 46c8b2a7f3e083a10730f7a62d0d6ac9daac2f72
                   ),
                 ),
                 if (sessionCount > 0) ...[
@@ -426,7 +656,9 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                 if (!_serverSelectionMode)
                   PopupMenuButton<String>(
                     icon: Icon(Icons.more_vert,
-                        color: mutedTextColor, size: 20 * scale),
+                        color: mutedTextColor, size: 18 * scale),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
                     onSelected: (action) =>
                         _handleAction(context, conn, action),
                     itemBuilder: (_) => [
@@ -434,8 +666,8 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                         value: 'edit',
                         child: Row(
                           children: [
-                            Icon(Icons.edit, size: 18 * scale),
-                            SizedBox(width: 8 * scale),
+                            const Icon(Icons.edit, size: 18),
+                            const SizedBox(width: 8),
                             Text(strings.edit),
                           ],
                         ),
@@ -446,10 +678,17 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                           children: [
                             Icon(
                               Icons.delete,
+<<<<<<< HEAD
                               size: 18 * scale,
                               color: colorScheme.error,
                             ),
                             SizedBox(width: 8 * scale),
+=======
+                              size: 18,
+                              color: colorScheme.error,
+                            ),
+                            const SizedBox(width: 8),
+>>>>>>> 46c8b2a7f3e083a10730f7a62d0d6ac9daac2f72
                             Text(
                               strings.delete,
                               style: TextStyle(color: colorScheme.error),
@@ -461,13 +700,19 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                   ),
               ],
             ),
+<<<<<<< HEAD
             if (windowsExpanded)
+=======
+            if (windowsExpanded) ...[
+              const SizedBox(height: 8),
+>>>>>>> 46c8b2a7f3e083a10730f7a62d0d6ac9daac2f72
               TerminalWindowsPage(
                 key: PageStorageKey<String>('server-windows-${conn.id}'),
                 connectionId: conn.id,
                 showHeader: false,
                 embedded: true,
               ),
+            ],
           ],
         ),
       ),

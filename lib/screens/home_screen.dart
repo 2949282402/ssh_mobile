@@ -35,7 +35,11 @@ part 'home/server_list_pane.dart';
 class HomeScreen extends StatefulWidget {
   final int initialIndex;
 
+<<<<<<< HEAD
   // Servers stays first in navigation. App launch lands on Servers.
+=======
+  // Servers is index 0, aligning bottom navigation with initial landing page.
+>>>>>>> 46c8b2a7f3e083a10730f7a62d0d6ac9daac2f72
   const HomeScreen({super.key, this.initialIndex = 0});
 
   @override
@@ -165,6 +169,7 @@ class _HomeScreenState extends State<HomeScreen> {
       children: [
         NavigationRail(
           extended: extended,
+<<<<<<< HEAD
           selectedIndex: _navigationIndex,
           onDestinationSelected: _switchNavigationPage,
           trailing: Expanded(
@@ -180,6 +185,10 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ),
+=======
+          selectedIndex: _desktopNavigationIndex,
+          onDestinationSelected: (idx) => _switchNavigationPage(idx, true),
+>>>>>>> 46c8b2a7f3e083a10730f7a62d0d6ac9daac2f72
           destinations: [
             NavigationRailDestination(
               icon: const Icon(Icons.dns_outlined),
@@ -206,6 +215,11 @@ class _HomeScreenState extends State<HomeScreen> {
               selectedIcon: const Icon(Icons.terminal_rounded),
               label: Text(strings.logs),
             ),
+            NavigationRailDestination(
+              icon: const Icon(Icons.settings_outlined),
+              selectedIcon: const Icon(Icons.settings_rounded),
+              label: Text(strings.settings),
+            ),
           ],
         ),
         VerticalDivider(
@@ -222,8 +236,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildBottomNavigation(BuildContext context, AppStrings strings) {
     return NavigationBar(
-      selectedIndex: _navigationIndex,
-      onDestinationSelected: _switchNavigationPage,
+      selectedIndex: _selectedIndex >= 4 ? 0 : _selectedIndex,
+      onDestinationSelected: (idx) => _switchNavigationPage(idx, false),
       destinations: [
         NavigationDestination(
           icon: const Icon(Icons.dns_outlined),
@@ -246,20 +260,52 @@ class _HomeScreenState extends State<HomeScreen> {
           label: strings.admin,
         ),
         NavigationDestination(
+<<<<<<< HEAD
           icon: const Icon(Icons.terminal_outlined),
           selectedIcon: const Icon(Icons.terminal_rounded),
           label: strings.logs,
+=======
+          icon: const Icon(Icons.settings_outlined),
+          selectedIcon: const Icon(Icons.settings_rounded),
+          label: strings.settings,
+>>>>>>> 46c8b2a7f3e083a10730f7a62d0d6ac9daac2f72
         ),
       ],
     );
   }
 
+<<<<<<< HEAD
   int get _navigationIndex {
     return _selectedIndex;
   }
 
   void _switchNavigationPage(int index) {
     _switchPage(index);
+=======
+  int get _desktopNavigationIndex {
+    if (_selectedIndex == _logPage) {
+      return 4;
+    }
+    return _selectedIndex;
+  }
+
+  void _switchNavigationPage(int index, bool isDesktop) {
+    if (isDesktop) {
+      if (index == 5) {
+        _openSettings(context);
+      } else if (index == 4) {
+        _switchPage(_logPage);
+      } else {
+        _switchPage(index);
+      }
+    } else {
+      if (index == 4) {
+        _openSettings(context);
+      } else {
+        _switchPage(index);
+      }
+    }
+>>>>>>> 46c8b2a7f3e083a10730f7a62d0d6ac9daac2f72
   }
 
   void _switchPage(int index) {
