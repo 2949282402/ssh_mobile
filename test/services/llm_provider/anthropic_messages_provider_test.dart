@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/services/llm_provider/anthropic_messages_provider.dart';
 import 'package:ssh_mobile/services/llm_provider/llm_provider_types.dart';
-import 'package:ssh_mobile/services/llm_chat_service.dart';
+import 'package:ssh_mobile/services/llm_provider/llm_url_utils.dart';
 
 // --- Mocks for HttpClient ---
 class MockHttpOverrides extends HttpOverrides {
@@ -231,5 +231,39 @@ void main() {
         HttpOverrides.global = null;
       }
     });
+
+    group('resolveAnthropicUrl tests', () {
+      test('resolves standard endpoints correctly', () {
+        expect(
+          LlmUrlUtils.resolveAnthropicUrl('https://api.anthropic.com', '/v1/messages'),
+          equals('https://api.anthropic.com/v1/messages'),
+        );
+        expect(
+          LlmUrlUtils.resolveAnthropicUrl('https://api.anthropic.com/', '/v1/messages'),
+          equals('https://api.anthropic.com/v1/messages'),
+        );
+        expect(
+          LlmUrlUtils.resolveAnthropicUrl('https://api.anthropic.com/v1', '/v1/messages'),
+          equals('https://api.anthropic.com/v1/messages'),
+        );
+        expect(
+          LlmUrlUtils.resolveAnthropicUrl('https://api.anthropic.com/v1/', '/v1/messages'),
+          equals('https://api.anthropic.com/v1/messages'),
+        );
+        expect(
+          LlmUrlUtils.resolveAnthropicUrl('https://api.anthropic.com/v1/messages', '/v1/messages'),
+          equals('https://api.anthropic.com/v1/messages'),
+        );
+        expect(
+          LlmUrlUtils.resolveAnthropicUrl('https://api.anthropic.com/v1/messages', '/v1/models'),
+          equals('https://api.anthropic.com/v1/models'),
+        );
+        expect(
+          LlmUrlUtils.resolveAnthropicUrl('https://api.anthropic.com/v1/models', '/v1/messages'),
+          equals('https://api.anthropic.com/v1/messages'),
+        );
+      });
+    });
   });
 }
+

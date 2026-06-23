@@ -3,9 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../app_log_service.dart';
-import '../llm_chat_service.dart';
+import '../llm_runtime/llm_runtime_types.dart';
 import 'llm_provider_adapter.dart';
 import 'llm_provider_types.dart';
+import 'llm_url_utils.dart';
+import 'llm_url_utils.dart';
+import 'llm_url_utils.dart';
 
 class _StreamingAnthropicToolCall {
   String id;
@@ -390,6 +393,15 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
     throw StateError('Anthropic stream failed after network retries.');
   }
 
+  // NOTE: This returns an OpenAI-style canonical message v1 Map.
+  // It will be converted to Anthropic tool_use blocks in _convertOpenAiMessagesToAnthropic.
+  // TODO: Introduce LlmCanonicalMessage to fully replace OpenAI-style Maps internally.
+  // NOTE: This returns an OpenAI-style canonical message v1 Map.
+  // It will be converted to Anthropic tool_use blocks in _convertOpenAiMessagesToAnthropic.
+  // TODO: Introduce LlmCanonicalMessage to fully replace OpenAI-style Maps internally.
+  // NOTE: This returns an OpenAI-style canonical message v1 Map.
+  // It will be converted to Anthropic tool_use blocks in _convertOpenAiMessagesToAnthropic.
+  // TODO: Introduce LlmCanonicalMessage to fully replace OpenAI-style Maps internally.
   @override
   Map<String, dynamic> buildAssistantToolCallMessage({
     required String? text,
@@ -415,6 +427,15 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
     };
   }
 
+  // NOTE: This returns an OpenAI-style canonical message v1 Map.
+  // It will be converted to Anthropic tool_result blocks in _convertOpenAiMessagesToAnthropic.
+  // TODO: Introduce LlmCanonicalMessage to fully replace OpenAI-style Maps internally.
+  // NOTE: This returns an OpenAI-style canonical message v1 Map.
+  // It will be converted to Anthropic tool_result blocks in _convertOpenAiMessagesToAnthropic.
+  // TODO: Introduce LlmCanonicalMessage to fully replace OpenAI-style Maps internally.
+  // NOTE: This returns an OpenAI-style canonical message v1 Map.
+  // It will be converted to Anthropic tool_result blocks in _convertOpenAiMessagesToAnthropic.
+  // TODO: Introduce LlmCanonicalMessage to fully replace OpenAI-style Maps internally.
   @override
   Map<String, dynamic> buildToolResultMessage({
     required LlmProviderToolCall call,
@@ -428,13 +449,7 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
   }
 
   String _joinUrl(String baseUrl, String path) {
-    final trimmedBase = baseUrl
-        .trim()
-        .split(RegExp(r'[?#]'))
-        .first
-        .replaceFirst(RegExp(r'/+$'), '');
-    final normalizedPath = path.startsWith('/') ? path : '/$path';
-    return '$trimmedBase$normalizedPath';
+    return LlmUrlUtils.resolveAnthropicUrl(baseUrl, path);
   }
 
   List<Map<String, dynamic>> _convertOpenAiMessagesToAnthropic(
@@ -614,3 +629,7 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
     }
   }
 }
+
+
+
+
