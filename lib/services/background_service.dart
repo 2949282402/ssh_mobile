@@ -583,6 +583,8 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
         onUserInfoRequest: authOptions.onUserInfoRequest,
       );
 
+      await client.authenticated.timeout(const Duration(seconds: 15));
+
       if (launchMode == 'tmux') {
         try {
           await ensureTmuxInstalled(

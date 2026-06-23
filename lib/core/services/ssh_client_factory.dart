@@ -82,7 +82,7 @@ class SshClientFactory {
     );
 
     try {
-      return SSHClient(
+      final client = SSHClient(
         socket,
         username: config.username,
         onVerifyHostKey: (algorithm, fingerprint) =>
@@ -95,6 +95,8 @@ class SshClientFactory {
         onPasswordRequest: authOptions.onPasswordRequest,
         onUserInfoRequest: authOptions.onUserInfoRequest,
       );
+      await client.authenticated.timeout(timeout);
+      return client;
     } catch (e, stackTrace) {
       AppLogService.instance.error(
         'SshClientFactory: client setup failed',
