@@ -11,6 +11,9 @@ enum ToolResultQuality {
   loopBlocked,
   planModeBlocked,
   cacheHit,
+  planStepNeedsUpdate,
+  connectionRequired,
+  skipReasonRequired,
 }
 
 class ToolResultClassifier {
@@ -25,6 +28,31 @@ class ToolResultClassifier {
     required bool cacheHit,
     required bool dedupBlocked,
   }) {
+    final trimmed = resultJson.trim();
+    if (trimmed.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(trimmed);
+        if (decoded is Map) {
+          final code = decoded['code'];
+          if (code == 'task_update_required') {
+            return ToolResultQuality.planStepNeedsUpdate;
+          }
+          if (code == 'skip_reason_required') {
+            return ToolResultQuality.skipReasonRequired;
+          }
+          if (code == 'connection_required') {
+            return ToolResultQuality.connectionRequired;
+          }
+          if (code == 'plan_execution_blocked') {
+            return ToolResultQuality.unsafeBlocked;
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (outcome == 'connection_required') {
+      return ToolResultQuality.connectionRequired;
+    }
     if (dedupBlocked || outcome == 'loop_guard_blocked') {
       return ToolResultQuality.loopBlocked;
     }
@@ -40,8 +68,10 @@ class ToolResultClassifier {
     if (outcome == 'execution_error' || outcome == 'tool_error') {
       return ToolResultQuality.error;
     }
+    if (outcome == 'tool_not_visible' || outcome == 'approval_unavailable') {
+      return ToolResultQuality.unsafeBlocked;
+    }
 
-    final trimmed = resultJson.trim();
     if (trimmed.isEmpty) {
       return ToolResultQuality.empty;
     }
@@ -106,6 +136,22 @@ class ToolResultClassifier {
         return isEn
             ? 'System Hint: Loop guard has blocked this repeating tool call. Please summarize the current findings and complete the conversation.'
             : '系统提示：循环保护机制已阻断了此重复工具调用。请整理并总结当前已获取的诊断发现，完成本次对话。';
+      case ToolResultQuality.planStepNeedsUpdate:
+        return isEn
+            ? 'System Hint: Before using this remote tool in Execution Mode, mark the current TODO step as running with client_task_update, then mark it success or failed after the result.'
+            : '系统提示：在执行模式下调用该远程工具前，必须先用 client_task_update 将当前 TODO 步骤标记为 running，工具返回后再标记为 success 或 failed。';
+      case ToolResultQuality.connectionRequired:
+        return isEn
+            ? 'System Hint: This tool requires a selected server connection. Do not repeat the same call. Ask the user to select a server, or provide a read-only plan.'
+            : '系统提示：该工具需要先选择服务器连接。不要继续重复调用同一个工具，请先让用户选择服务器，或给出只读计划。';
+      case ToolResultQuality.skipReasonRequired:
+        return isEn
+            ? 'System Hint: Skipping a task requires a reason. Please provide a clear justification of why it is safe to skip this step.'
+            : '系统提示：跳过任务需要说明原因。请提供清晰合理的理由以说明为什么跳过此步骤是安全的。';
+      case ToolResultQuality.unsafeBlocked:
+        return isEn
+            ? 'The tool call was blocked by the plan execution gate. A preceding step has failed, or you are trying to execute out of order. Ask the user how to proceed (retry/skip).'
+            : '工具调用被计划执行状态机阻止。前置步骤已失败，或者你正在尝试无序执行。请询问用户接下来如何处理（重试或跳过）。';
       default:
         return null;
     }

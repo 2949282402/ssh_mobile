@@ -40,12 +40,15 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   late String _ragSearchMode;
   late bool _multiAgentEnabled;
   late int _multiAgentMaxAgents;
+  late bool _postToolReviewEnabled;
   late String _modelFallbackPolicy;
   late int _toolCallBudget;
   late int _maxImageSizeBytes;
   late int _maxFileSizeBytes;
   String? _selectedApiKeyId;
+  late LlmApiFormat _apiFormat;
   bool _loadingModels = false;
+  bool _showUnsupportedFormatWarning = false;
   bool _saving = false;
   String? _errorText;
 
@@ -80,11 +83,24 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _ragSearchMode = context.read<AppSettings>().ragSearchMode;
     _multiAgentEnabled = widget.initialSettings.multiAgentEnabled;
     _multiAgentMaxAgents = widget.initialSettings.multiAgentMaxAgents;
+    _postToolReviewEnabled = widget.initialSettings.postToolReviewEnabled;
     _modelFallbackPolicy = widget.initialSettings.modelFallbackPolicy;
     _toolCallBudget = widget.initialSettings.toolCallBudget;
     _maxImageSizeBytes = widget.initialSettings.maxImageSizeBytes;
     _maxFileSizeBytes = widget.initialSettings.maxFileSizeBytes;
     _selectedApiKeyId = widget.initialSettings.activeApiKeyId;
+    const supportedApiFormats = [
+      LlmApiFormat.openAiChatCompletions,
+      LlmApiFormat.geminiOpenAiCompatible,
+      LlmApiFormat.anthropicMessages,
+    ];
+    final originalFormat = widget.initialSettings.apiFormat;
+    if (!supportedApiFormats.contains(originalFormat)) {
+      _apiFormat = LlmApiFormat.openAiChatCompletions;
+      _showUnsupportedFormatWarning = true;
+    } else {
+      _apiFormat = originalFormat;
+    }
   }
 
   @override
@@ -323,11 +339,13 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       quarkApiKey: _quarkApiKeyController.text,
       multiAgentEnabled: _multiAgentEnabled,
       multiAgentMaxAgents: _multiAgentMaxAgents,
+      postToolReviewEnabled: _postToolReviewEnabled,
       toolCallBudget: _toolCallBudget,
       maxImageSizeBytes: _maxImageSizeBytes,
       maxFileSizeBytes: _maxFileSizeBytes,
       apiKey: _apiKeyController.text,
       selectedApiKeyId: _selectedApiKeyId,
+      apiFormat: _apiFormat,
     );
     setState(() {
       _saving = true;
@@ -352,11 +370,13 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         quarkApiKey: pending.quarkApiKey,
         multiAgentEnabled: pending.multiAgentEnabled,
         multiAgentMaxAgents: pending.multiAgentMaxAgents,
+        postToolReviewEnabled: pending.postToolReviewEnabled,
         toolCallBudget: pending.toolCallBudget,
         maxImageSizeBytes: pending.maxImageSizeBytes,
         maxFileSizeBytes: pending.maxFileSizeBytes,
         apiKey: pending.apiKey,
         selectedApiKeyId: pending.selectedApiKeyId,
+        apiFormat: pending.apiFormat,
       );
       if (mounted) {
         await appSettings.setRagEnabled(_ragEnabled);
@@ -379,6 +399,17 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       (settings) => settings.language,
     );
     final strings = _AiStrings(language);
+    if (_showUnsupportedFormatWarning) {
+      _showUnsupportedFormatWarning = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(strings.apiFormatUnsupported),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      });
+    }
     final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
@@ -407,6 +438,31 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
           children: [
+            DropdownButtonFormField<LlmApiFormat>(
+              initialValue: _apiFormat,
+              decoration: InputDecoration(
+                labelText: strings.apiFormat,
+              ),
+              items: const [
+                LlmApiFormat.openAiChatCompletions,
+                LlmApiFormat.geminiOpenAiCompatible,
+                LlmApiFormat.anthropicMessages,
+              ].map((format) {
+                return DropdownMenuItem<LlmApiFormat>(
+                  value: format,
+                  child: Text(strings.apiFormatLabel(format)),
+                );
+              }).toList(),
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      if (value == null) return;
+                      setState(() {
+                        _apiFormat = value;
+                      });
+                    },
+            ),
+            const SizedBox(height: 14),
             TextField(
               controller: _baseUrlController,
               decoration: InputDecoration(
@@ -420,6 +476,34 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                       _saving ? null : () => _openBaseUrlHistory(strings),
                   icon: const Icon(Icons.arrow_drop_down_rounded),
                 ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 4),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${strings.recommendedBaseUrl}: ${_getRecommendedBaseUrl(_apiFormat)}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Colors.grey,
+                          ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _saving
+                        ? null
+                        : () {
+                            setState(() {
+                              _baseUrlController.text =
+                                  _getRecommendedBaseUrl(_apiFormat);
+                            });
+                          },
+                    child: Text(strings.useRecommendedBaseUrl),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 14),
@@ -649,6 +733,22 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                       if (value != null) {
                         setState(() => _multiAgentMaxAgents = value);
                       }
+                    },
+            ),
+            const SizedBox(height: 14),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: Text(strings.language == AppLanguage.en
+                  ? 'Post-tool review agent'
+                  : '?????? Agent'),
+              subtitle: Text(strings.language == AppLanguage.en
+                  ? 'Runs a review agent after tool errors, approval rejection, unavailable approval, budget audit rejection, or loop guard blocking.'
+                  : '??????????????????????????????????? Agent ?????????????'),
+              value: _postToolReviewEnabled,
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      setState(() => _postToolReviewEnabled = value);
                     },
             ),
             const SizedBox(height: 14),
@@ -950,6 +1050,19 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       ),
     );
   }
+
+  String _getRecommendedBaseUrl(LlmApiFormat format) {
+    switch (format) {
+      case LlmApiFormat.openAiChatCompletions:
+        return 'https://api.deepseek.com';
+      case LlmApiFormat.geminiOpenAiCompatible:
+        return 'https://generativelanguage.googleapis.com/v1beta/openai';
+      case LlmApiFormat.anthropicMessages:
+        return 'https://api.anthropic.com';
+      default:
+        return 'https://api.deepseek.com';
+    }
+  }
 }
 
 class _SettingsHistoryAction<T> {
@@ -1072,11 +1185,13 @@ class _PendingAiSettings {
   final String quarkApiKey;
   final bool multiAgentEnabled;
   final int multiAgentMaxAgents;
+  final bool postToolReviewEnabled;
   final int toolCallBudget;
   final int maxImageSizeBytes;
   final int maxFileSizeBytes;
   final String apiKey;
   final String? selectedApiKeyId;
+  final LlmApiFormat apiFormat;
 
   const _PendingAiSettings({
     required this.baseUrl,
@@ -1096,10 +1211,12 @@ class _PendingAiSettings {
     required this.quarkApiKey,
     required this.multiAgentEnabled,
     required this.multiAgentMaxAgents,
+    required this.postToolReviewEnabled,
     required this.toolCallBudget,
     required this.maxImageSizeBytes,
     required this.maxFileSizeBytes,
     required this.apiKey,
     required this.selectedApiKeyId,
+    required this.apiFormat,
   });
 }

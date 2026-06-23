@@ -106,6 +106,8 @@ extension SettingsOps on StorageService {
         _prefs?.getString(StorageService._aiCustomSummarizerPromptKey) ?? '';
     final customCoordinatorPrompt =
         _prefs?.getString(StorageService._aiCustomCoordinatorPromptKey) ?? '';
+    final apiFormatStr = _prefs?.getString(StorageService._aiApiFormatKey);
+    final apiFormat = LlmApiFormat.fromValue(apiFormatStr);
     return AiConnectionSettings(
       baseUrl:
           baseUrl?.isNotEmpty == true ? baseUrl! : 'https://api.deepseek.com',
@@ -131,6 +133,8 @@ extension SettingsOps on StorageService {
       multiAgentMaxAgents: AiMultiAgentMaxAgents.normalize(
         _prefs?.getInt(StorageService._aiMultiAgentMaxAgentsKey),
       ),
+      postToolReviewEnabled:
+          _prefs?.getBool(StorageService._aiPostToolReviewEnabledKey) ?? true,
       toolCallBudget: AiToolCallBudget.normalize(
         _prefs?.getInt(StorageService._aiToolCallBudgetKey),
       ),
@@ -151,6 +155,7 @@ extension SettingsOps on StorageService {
       customReviewerPrompt: customReviewerPrompt,
       customSummarizerPrompt: customSummarizerPrompt,
       customCoordinatorPrompt: customCoordinatorPrompt,
+      apiFormat: apiFormat,
     );
   }
 
@@ -405,6 +410,7 @@ extension SettingsOps on StorageService {
     String? webSearchEngine,
     bool? multiAgentEnabled,
     int? multiAgentMaxAgents,
+    bool? postToolReviewEnabled,
     int? toolCallBudget,
     int? maxImageSizeBytes,
     int? maxFileSizeBytes,
@@ -422,6 +428,7 @@ extension SettingsOps on StorageService {
     String? customReviewerPrompt,
     String? customSummarizerPrompt,
     String? customCoordinatorPrompt,
+    LlmApiFormat? apiFormat,
   }) async {
     if (!_initialized || _prefs == null) return;
     final normalizedBaseUrl = baseUrl.trim();
@@ -429,6 +436,9 @@ extension SettingsOps on StorageService {
     final normalizedHelperModel = helperModel?.trim() ?? '';
     final normalizedAuditModel = auditModel?.trim() ?? '';
     await _prefs!.setString(StorageService._aiBaseUrlKey, normalizedBaseUrl);
+    if (apiFormat != null) {
+      await _prefs!.setString(StorageService._aiApiFormatKey, apiFormat.value);
+    }
     await _persistAiBaseUrlHistory(normalizedBaseUrl);
     await _prefs!.setString(StorageService._aiModelKey, normalizedModel);
     if (normalizedHelperModel.isEmpty) {
@@ -541,6 +551,11 @@ extension SettingsOps on StorageService {
       StorageService._aiMultiAgentEnabledKey,
       multiAgentEnabled ??
           (_prefs!.getBool(StorageService._aiMultiAgentEnabledKey) ?? true),
+    );
+    await _prefs!.setBool(
+      StorageService._aiPostToolReviewEnabledKey,
+      postToolReviewEnabled ??
+          (_prefs!.getBool(StorageService._aiPostToolReviewEnabledKey) ?? true),
     );
     await _prefs!.setInt(
       StorageService._aiMultiAgentMaxAgentsKey,

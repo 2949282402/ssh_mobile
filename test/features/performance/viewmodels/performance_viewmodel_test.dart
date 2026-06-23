@@ -79,4 +79,41 @@ void main() {
       expect(viewModel.isRunning, isFalse);
     });
   });
+
+  group('ServerHealthSnapshot Tests', () {
+    test('equality compares value fields and details', () {
+      final updatedAt = DateTime(2026, 6, 21, 10, 30);
+      final first = ServerHealthSnapshot(
+        connectionId: 'server-1',
+        level: ServerHealthLevel.warning,
+        score: 72,
+        summary: 'Warning',
+        details: const ['CPU 86.0%'],
+        updatedAt: updatedAt,
+        maxDiskUsedPercent: 42.5,
+      );
+      final second = ServerHealthSnapshot(
+        connectionId: 'server-1',
+        level: ServerHealthLevel.warning,
+        score: 72,
+        summary: 'Warning',
+        details: const ['CPU 86.0%'],
+        updatedAt: updatedAt,
+        maxDiskUsedPercent: 42.5,
+      );
+      final changedDetails = ServerHealthSnapshot(
+        connectionId: 'server-1',
+        level: ServerHealthLevel.warning,
+        score: 72,
+        summary: 'Warning',
+        details: const ['Memory 86.0%'],
+        updatedAt: updatedAt,
+        maxDiskUsedPercent: 42.5,
+      );
+
+      expect(first, equals(second));
+      expect(first.hashCode, equals(second.hashCode));
+      expect(first, isNot(equals(changedDetails)));
+    });
+  });
 }

@@ -18,25 +18,220 @@ class _FlatSnapshotItem<T> {
   });
 }
 
-class _ServerSnapshotTab<T> extends StatelessWidget {
+class _ServerSnapshotTab<T> extends StatefulWidget {
   final AppStrings strings;
   final List<ConnectionConfig> connections;
   final String emptyText;
   final Future<Map<String, List<T>>>? future;
+  final Map<String, List<T>>? dataOverride;
   final VoidCallback onRefresh;
   final Widget Function(BuildContext context, T item) itemBuilder;
 
   const _ServerSnapshotTab({
+    super.key,
     required this.strings,
     required this.connections,
     required this.emptyText,
     required this.future,
+    this.dataOverride,
     required this.onRefresh,
     required this.itemBuilder,
   });
 
   @override
+  State<_ServerSnapshotTab<T>> createState() => _ServerSnapshotTabState<T>();
+}
+
+class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
+  List<ConnectionConfig>? _lastConnections;
+  Map<String, List<T>>? _lastData;
+  List<_FlatSnapshotItem<T>>? _flatItemsCache;
+
+  List<_FlatSnapshotItem<T>> _getFlatItems(Map<String, List<T>> data) {
+    final connections = widget.connections;
+    if (_lastConnections != null &&
+        _lastData != null &&
+        listEquals(connections, _lastConnections) &&
+        _areMapsEqual(data, _lastData!) &&
+        _flatItemsCache != null) {
+      return _flatItemsCache!;
+    }
+
+    _lastConnections = List.from(connections);
+    _lastData = Map.from(data);
+
+    final flatItems = <_FlatSnapshotItem<T>>[];
+    for (final connection in connections) {
+      final items = data[connection.id] ?? const [];
+      if (items.isEmpty) {
+        flatItems.add(_FlatSnapshotItem<T>(
+          connection: connection,
+          isHeader: true,
+          isFirst: true,
+          isLast: false,
+        ));
+        flatItems.add(_FlatSnapshotItem<T>(
+          connection: connection,
+          emptyText: widget.emptyText,
+          isHeader: false,
+          isFirst: false,
+          isLast: true,
+        ));
+      } else {
+        flatItems.add(_FlatSnapshotItem<T>(
+          connection: connection,
+          isHeader: true,
+          isFirst: true,
+          isLast: false,
+        ));
+        for (int i = 0; i < items.length; i++) {
+          flatItems.add(_FlatSnapshotItem<T>(
+            connection: connection,
+            item: items[i],
+            isHeader: false,
+            isFirst: false,
+            isLast: i == items.length - 1,
+          ));
+        }
+      }
+    }
+    _flatItemsCache = flatItems;
+    return flatItems;
+  }
+
+  bool _areMapsEqual(Map<String, List<T>> a, Map<String, List<T>> b) {
+    if (a.length != b.length) return false;
+    for (final key in a.keys) {
+      if (!b.containsKey(key)) return false;
+      final listA = a[key]!;
+      final listB = b[key]!;
+      if (!identical(listA, listB)) return false;
+    }
+    return true;
+  }
+
+  Widget _buildHeader(BuildContext context, {required bool isRefreshing}) {
+    final connections = widget.connections;
+    final strings = widget.strings;
+    final onRefresh = widget.onRefresh;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+      child: Row(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Text(
+                _serverSummary(strings, connections),
+                maxLines: 1,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+          IconButton.outlined(
+            onPressed: isRefreshing ? null : onRefresh,
+            icon: isRefreshing
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.refresh_rounded),
+            tooltip: strings.refresh,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFlatList(BuildContext context, Map<String, List<T>> data) {
+    final flatItems = _getFlatItems(data);
+    final colorScheme = Theme.of(context).colorScheme;
+    final borderSide = BorderSide(color: colorScheme.outlineVariant);
+    final itemBuilder = widget.itemBuilder;
+
+    return ListView.builder(
+      scrollCacheExtent: const ScrollCacheExtent.pixels(900),
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+      itemCount: flatItems.length,
+      itemBuilder: (context, index) {
+        final flatItem = flatItems[index];
+        final isFirst = flatItem.isFirst;
+        final isLast = flatItem.isLast;
+
+        final decoration = BoxDecoration(
+          color: colorScheme.surface,
+          borderRadius: BorderRadius.only(
+            topLeft: isFirst
+                ? const Radius.circular(AppTheme.radiusSmall)
+                : Radius.zero,
+            topRight: isFirst
+                ? const Radius.circular(AppTheme.radiusSmall)
+                : Radius.zero,
+            bottomLeft: isLast
+                ? const Radius.circular(AppTheme.radiusSmall)
+                : Radius.zero,
+            bottomRight: isLast
+                ? const Radius.circular(AppTheme.radiusSmall)
+                : Radius.zero,
+          ),
+          border: Border(
+            left: borderSide,
+            right: borderSide,
+            top: isFirst ? borderSide : BorderSide.none,
+            bottom: isLast ? borderSide : BorderSide.none,
+          ),
+        );
+
+        final margin = EdgeInsets.only(
+          left: 0,
+          right: 0,
+          top: isFirst ? 12.0 : 0.0,
+          bottom: isLast ? 12.0 : 0.0,
+        );
+
+        if (flatItem.isHeader) {
+          return Container(
+            key: ValueKey('header-${flatItem.connection.id}'),
+            margin: margin,
+            decoration: decoration,
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
+            child: Text(
+              flatItem.connection.name,
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+            ),
+          );
+        }
+
+        if (flatItem.emptyText != null) {
+          return Container(
+            key: ValueKey('empty-${flatItem.connection.id}'),
+            margin: margin,
+            decoration: decoration,
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+            child: Text(
+              flatItem.emptyText!,
+              style:
+                  TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
+            ),
+          );
+        }
+
+        return Container(
+          margin: margin,
+          decoration: decoration,
+          child: itemBuilder(context, flatItem.item as T),
+        );
+      },
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final connections = widget.connections;
+    final strings = widget.strings;
+    final future = widget.future;
+
     if (connections.isEmpty) {
       return Center(
         child: Builder(
@@ -58,179 +253,60 @@ class _ServerSnapshotTab<T> extends StatelessWidget {
         ),
       );
     }
+
+    if (widget.dataOverride != null) {
+      return Column(
+        children: [
+          _buildHeader(context, isRefreshing: false),
+          Expanded(
+            child: _buildFlatList(context, widget.dataOverride!),
+          ),
+        ],
+      );
+    }
+
     return FutureBuilder<Map<String, List<T>>>(
       future: future,
       builder: (context, snapshot) {
         final isRefreshing =
             snapshot.connectionState == ConnectionState.waiting;
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Column(
+            children: [
+              _buildHeader(context, isRefreshing: true),
+              const Expanded(
+                child: Center(
+                  child: SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              ),
+            ],
+          );
+        }
+        if (snapshot.hasError) {
+          return Column(
+            children: [
+              _buildHeader(context, isRefreshing: false),
+              Expanded(
+                child: Center(
+                  child: Text(
+                    '${_monitorText(strings, 'Load failed', '加载失败')}: ${snapshot.error}',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            ],
+          );
+        }
+        final data = snapshot.data ?? const {};
         return Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Text(
-                        _serverSummary(strings, connections),
-                        maxLines: 1,
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                    ),
-                  ),
-                  IconButton.outlined(
-                    onPressed: isRefreshing ? null : onRefresh,
-                    icon: isRefreshing
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.refresh_rounded),
-                    tooltip: strings.refresh,
-                  ),
-                ],
-              ),
-            ),
+            _buildHeader(context, isRefreshing: isRefreshing),
             Expanded(
-              child: Builder(
-                builder: (context) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(
-                      child: SizedBox(
-                        width: 28,
-                        height: 28,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    );
-                  }
-                  if (snapshot.hasError) {
-                    return Center(
-                      child: Text(
-                        '${_monitorText(strings, 'Load failed', '加载失败')}: ${snapshot.error}',
-                        textAlign: TextAlign.center,
-                      ),
-                    );
-                  }
-                  final data = snapshot.data ?? const {};
-
-                  // Build the flat list of items
-                  final flatItems = <_FlatSnapshotItem<T>>[];
-                  for (final connection in connections) {
-                    final items = data[connection.id] ?? const [];
-                    if (items.isEmpty) {
-                      flatItems.add(_FlatSnapshotItem<T>(
-                        connection: connection,
-                        isHeader: true,
-                        isFirst: true,
-                        isLast: false,
-                      ));
-                      flatItems.add(_FlatSnapshotItem<T>(
-                        connection: connection,
-                        emptyText: emptyText,
-                        isHeader: false,
-                        isFirst: false,
-                        isLast: true,
-                      ));
-                    } else {
-                      flatItems.add(_FlatSnapshotItem<T>(
-                        connection: connection,
-                        isHeader: true,
-                        isFirst: true,
-                        isLast: false,
-                      ));
-                      for (int i = 0; i < items.length; i++) {
-                        flatItems.add(_FlatSnapshotItem<T>(
-                          connection: connection,
-                          item: items[i],
-                          isHeader: false,
-                          isFirst: false,
-                          isLast: i == items.length - 1,
-                        ));
-                      }
-                    }
-                  }
-
-                  final colorScheme = Theme.of(context).colorScheme;
-                  final borderSide =
-                      BorderSide(color: colorScheme.outlineVariant);
-
-                  return ListView.builder(
-                    cacheExtent: 900,
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
-                    itemCount: flatItems.length,
-                    itemBuilder: (context, index) {
-                      final flatItem = flatItems[index];
-                      final isFirst = flatItem.isFirst;
-                      final isLast = flatItem.isLast;
-
-                      // Render decoration for continuous border
-                      final decoration = BoxDecoration(
-                        color: colorScheme.surface,
-                        borderRadius: BorderRadius.only(
-                          topLeft:
-                              isFirst ? const Radius.circular(AppTheme.radiusSmall) : Radius.zero,
-                          topRight:
-                              isFirst ? const Radius.circular(AppTheme.radiusSmall) : Radius.zero,
-                          bottomLeft:
-                              isLast ? const Radius.circular(AppTheme.radiusSmall) : Radius.zero,
-                          bottomRight:
-                              isLast ? const Radius.circular(AppTheme.radiusSmall) : Radius.zero,
-                        ),
-                        border: Border(
-                          left: borderSide,
-                          right: borderSide,
-                          top: isFirst ? borderSide : BorderSide.none,
-                          bottom: isLast ? borderSide : BorderSide.none,
-                        ),
-                      );
-
-                      final margin = EdgeInsets.only(
-                        left: 0,
-                        right: 0,
-                        top: isFirst ? 12.0 : 0.0,
-                        bottom: isLast ? 12.0 : 0.0,
-                      );
-
-                      if (flatItem.isHeader) {
-                        return Container(
-                          key: ValueKey('header-${flatItem.connection.id}'),
-                          margin: margin,
-                          decoration: decoration,
-                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
-                          child: Text(
-                            flatItem.connection.name,
-                            style: const TextStyle(
-                                fontWeight: FontWeight.w800, fontSize: 14),
-                          ),
-                        );
-                      }
-
-                      if (flatItem.emptyText != null) {
-                        return Container(
-                          key: ValueKey('empty-${flatItem.connection.id}'),
-                          margin: margin,
-                          decoration: decoration,
-                          padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-                          child: Text(
-                            flatItem.emptyText!,
-                            style: TextStyle(
-                                color: colorScheme.onSurfaceVariant,
-                                fontSize: 12),
-                          ),
-                        );
-                      }
-
-                      return Container(
-                        margin: margin,
-                        decoration: decoration,
-                        child: itemBuilder(context, flatItem.item as T),
-                      );
-                    },
-                  );
-                },
-              ),
+              child: _buildFlatList(context, data),
             ),
           ],
         );

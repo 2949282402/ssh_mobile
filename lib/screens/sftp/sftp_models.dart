@@ -46,12 +46,14 @@ class _SftpPaneStatusSnapshot {
   final String currentPath;
   final SftpConnectionState state;
   final String? errorMessage;
+  final SftpTransferState? activeTransfer;
 
   const _SftpPaneStatusSnapshot({
     required this.connectionId,
     required this.currentPath,
     required this.state,
     required this.errorMessage,
+    required this.activeTransfer,
   });
 
   factory _SftpPaneStatusSnapshot.from(SftpViewModel service) {
@@ -60,6 +62,7 @@ class _SftpPaneStatusSnapshot {
       currentPath: service.currentPath,
       state: service.state,
       errorMessage: service.errorMessage,
+      activeTransfer: service.activeTransfer,
     );
   }
 
@@ -73,7 +76,8 @@ class _SftpPaneStatusSnapshot {
         other.connectionId == connectionId &&
         other.currentPath == currentPath &&
         other.state == state &&
-        other.errorMessage == errorMessage;
+        other.errorMessage == errorMessage &&
+        other.activeTransfer == activeTransfer;
   }
 
   @override
@@ -82,6 +86,7 @@ class _SftpPaneStatusSnapshot {
         currentPath,
         state,
         errorMessage,
+        activeTransfer,
       );
 }
 

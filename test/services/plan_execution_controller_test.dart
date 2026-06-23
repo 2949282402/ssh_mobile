@@ -396,6 +396,173 @@ void main() {
       expect(current, isNotNull);
       expect(current!.id, 't-2');
     });
+
+    test('isStepScopedTool checks step scoped criteria', () {
+      expect(controller.isStepScopedTool('run_command'), isTrue);
+      expect(controller.isStepScopedTool('detect_os'), isTrue);
+      expect(controller.isStepScopedTool('sftp_read_text'), isTrue);
+      expect(controller.isStepScopedTool('monitor_get_samples'), isTrue);
+      expect(controller.isStepScopedTool('get_server_details'), isTrue);
+      expect(controller.isStepScopedTool('client_task_update'), isFalse);
+      expect(controller.isStepScopedTool('web_search'), isFalse);
+      expect(controller.isStepScopedTool('client_time'), isFalse);
+      expect(
+          controller.isStepScopedTool('app_get_operational_settings'), isFalse);
+      expect(controller.isStepScopedTool('list_servers'), isFalse);
+    });
+
+    test('canRunToolForCurrentStep: empty steps is allowed', () {
+      final res = controller.canRunToolForCurrentStep(
+        steps: [],
+        toolName: 'run_command',
+        arguments: {},
+      );
+      expect(res.allowed, isTrue);
+    });
+
+    test('canRunToolForCurrentStep: client/app/local tool is allowed', () {
+      final steps = [
+        const AiTodoStep(
+          id: 't-1',
+          name: 'Step 1',
+          command: 'c1',
+          description: 'd',
+          status: StepStatus.pending,
+        ),
+      ];
+      final res = controller.canRunToolForCurrentStep(
+        steps: steps,
+        toolName: 'client_time',
+        arguments: {},
+      );
+      expect(res.allowed, isTrue);
+    });
+
+    test(
+        'canRunToolForCurrentStep: read-only remote tool detect_os is blocked when pending',
+        () {
+      final steps = [
+        const AiTodoStep(
+          id: 't-1',
+          name: 'Step 1',
+          command: 'c1',
+          description: 'd',
+          status: StepStatus.pending,
+        ),
+      ];
+      final res = controller.canRunToolForCurrentStep(
+        steps: steps,
+        toolName: 'detect_os',
+        arguments: {},
+      );
+      expect(res.allowed, isFalse);
+      expect(res.reason, 'task_update_required');
+    });
+
+    test('canRunToolForCurrentStep: completed plan blocks mutating tools', () {
+      final steps = [
+        const AiTodoStep(
+          id: 't-1',
+          name: 'Step 1',
+          command: 'c1',
+          description: 'd',
+          status: StepStatus.success,
+        ),
+      ];
+      final res = controller.canRunToolForCurrentStep(
+        steps: steps,
+        toolName: 'run_command',
+        arguments: {},
+      );
+      expect(res.allowed, isFalse);
+      expect(res.reason, 'plan_completed');
+    });
+
+    test('canRunToolForCurrentStep: failed steps block execution', () {
+      final steps = [
+        const AiTodoStep(
+          id: 't-1',
+          name: 'Step 1',
+          command: 'c1',
+          description: 'd',
+          status: StepStatus.failed,
+        ),
+        const AiTodoStep(
+          id: 't-2',
+          name: 'Step 2',
+          command: 'c2',
+          description: 'd',
+          status: StepStatus.pending,
+        ),
+      ];
+      final res = controller.canRunToolForCurrentStep(
+        steps: steps,
+        toolName: 'run_command',
+        arguments: {},
+      );
+      expect(res.allowed, isFalse);
+      expect(res.reason, 'previous_step_failed');
+    });
+
+    test('canRunToolForCurrentStep: pending current step requires running', () {
+      final steps = [
+        const AiTodoStep(
+          id: 't-1',
+          name: 'Step 1',
+          command: 'c1',
+          description: 'd',
+          status: StepStatus.pending,
+        ),
+      ];
+      final res = controller.canRunToolForCurrentStep(
+        steps: steps,
+        toolName: 'run_command',
+        arguments: {},
+      );
+      expect(res.allowed, isFalse);
+      expect(res.reason, 'task_update_required');
+      expect(res.requiresTaskUpdateBeforeTool, isTrue);
+    });
+
+    test('canRunToolForCurrentStep: running status allows matching execution',
+        () {
+      final steps = [
+        const AiTodoStep(
+          id: 't-1',
+          name: 'Step 1',
+          command: 'c1',
+          description: 'd',
+          status: StepStatus.running,
+          connectionId: 'conn-1',
+        ),
+      ];
+
+      // Matching taskId & connectionId
+      final matchRes = controller.canRunToolForCurrentStep(
+        steps: steps,
+        toolName: 'run_command',
+        arguments: {'taskId': 't-1', 'connectionId': 'conn-1'},
+      );
+      expect(matchRes.allowed, isTrue);
+
+      // Task ID mismatch
+      final idMismatchRes = controller.canRunToolForCurrentStep(
+        steps: steps,
+        toolName: 'run_command',
+        arguments: {'taskId': 't-2', 'connectionId': 'conn-1'},
+      );
+      expect(idMismatchRes.allowed, isFalse);
+      expect(idMismatchRes.reason, 'task_id_mismatch');
+
+      // Connection ID mismatch
+      final connMismatchRes = controller.canRunToolForCurrentStep(
+        steps: steps,
+        toolName: 'run_command',
+        arguments: {'taskId': 't-1', 'connectionId': 'conn-2'},
+      );
+      expect(connMismatchRes.allowed, isFalse);
+      expect(connMismatchRes.reason, 'connection_mismatch');
+    });
   });
 
   group('ApprovedPlanContext context rendering tests', () {

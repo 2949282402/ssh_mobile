@@ -64,10 +64,12 @@ class _ServerPane extends StatelessWidget {
                   ),
                 );
               },
-              onReorder: (oldIndex, newIndex) {
+              onReorderItem: (oldIndex, newIndex) {
+                final storageNewIndex =
+                    newIndex > oldIndex ? newIndex + 1 : newIndex;
                 context
                     .read<ConnectionViewModel>()
-                    .reorderConnections(oldIndex, newIndex);
+                    .reorderConnections(oldIndex, storageNewIndex);
               },
             ),
           ),

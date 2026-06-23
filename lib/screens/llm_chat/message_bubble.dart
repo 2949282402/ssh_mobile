@@ -99,7 +99,8 @@ class _MessageBubble extends StatelessWidget {
                                   if (attachment.isImage &&
                                       attachment.dataBase64.isNotEmpty)
                                     ClipRRect(
-                                      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                                      borderRadius: BorderRadius.circular(
+                                          AppTheme.radiusSmall),
                                       child: Image.memory(
                                         base64Decode(attachment.dataBase64),
                                         width: 120,
@@ -112,8 +113,8 @@ class _MessageBubble extends StatelessWidget {
                                           decoration: BoxDecoration(
                                             color: colorScheme
                                                 .surfaceContainerHighest,
-                                            borderRadius:
-                                                BorderRadius.circular(AppTheme.radiusSmall),
+                                            borderRadius: BorderRadius.circular(
+                                                AppTheme.radiusSmall),
                                           ),
                                           child: Text(
                                             attachment.fileName,
@@ -135,7 +136,8 @@ class _MessageBubble extends StatelessWidget {
                                       decoration: BoxDecoration(
                                         color:
                                             colorScheme.surfaceContainerHighest,
-                                        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                                        borderRadius: BorderRadius.circular(
+                                            AppTheme.radiusSmall),
                                       ),
                                       child: Row(
                                         mainAxisSize: MainAxisSize.min,
@@ -209,6 +211,12 @@ class _MessageBubble extends StatelessWidget {
                       ],
                     ),
             ),
+            if (!isUser && message.agentRunId?.trim().isNotEmpty == true)
+              _AgentTraceLink(
+                chatId: chatId,
+                runId: message.agentRunId!.trim(),
+                message: message,
+              ),
             if (canAct &&
                 (onEditUser != null ||
                     onRegenerate != null ||
@@ -313,6 +321,89 @@ class _MessageBubble extends StatelessWidget {
   }
 
   String _formatElapsed(int ms) {
+    if (ms < 1000) return '${ms}ms';
+    return '${(ms / 1000).toStringAsFixed(1)}s';
+  }
+}
+
+class _AgentTraceLink extends StatelessWidget {
+  final String chatId;
+  final String runId;
+  final AiChatMessageRecord message;
+
+  const _AgentTraceLink({
+    required this.chatId,
+    required this.runId,
+    required this.message,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final String label;
+    if (message.traces.isNotEmpty) {
+      final tools =
+          message.traces.where((trace) => trace.kind.contains('tool')).length;
+      final approvals = message.traces
+          .where((trace) => trace.kind.contains('approval'))
+          .length;
+      final elapsed = message.elapsedMs == null
+          ? null
+          : _formatElapsedForTraceLink(message.elapsedMs!);
+      label = [
+        'Trace',
+        '${message.traces.length} events',
+        if (tools > 0) '$tools tools',
+        if (approvals > 0) '$approvals approvals',
+        if (elapsed != null) elapsed,
+      ].join(' · ');
+    } else {
+      final shortRunId =
+          runId.length > 8 ? runId.substring(runId.length - 8) : runId;
+      label = 'Trace · $shortRunId';
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, bottom: 8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => AgentTraceDebugPage(
+                chatId: chatId,
+                runId: runId,
+              ),
+            ),
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.account_tree_outlined,
+                size: 14,
+                color: colorScheme.primary,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: colorScheme.primary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  static String _formatElapsedForTraceLink(int ms) {
     if (ms < 1000) return '${ms}ms';
     return '${(ms / 1000).toStringAsFixed(1)}s';
   }
@@ -619,7 +710,8 @@ class _MessageActions extends StatelessWidget {
                       decoration: BoxDecoration(
                         color: colorScheme.surfaceContainerHighest
                             .withValues(alpha: 0.36),
-                        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                        borderRadius:
+                            BorderRadius.circular(AppTheme.radiusSmall),
                         border: Border.all(
                           color: colorScheme.outlineVariant
                               .withValues(alpha: 0.72),
@@ -942,6 +1034,12 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
     final hasLogs =
         (step.stdout?.isNotEmpty == true || step.stderr?.isNotEmpty == true);
 
+    final snapshot =
+        const PlanExecutionController().snapshot(widget.message.todoSteps);
+    final isCurrent = snapshot.currentStep?.id == step.id;
+    final isFailed = step.status == StepStatus.failed;
+    final isRunning = step.status == StepStatus.running;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -956,8 +1054,28 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
             });
           },
           borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+          child: Container(
+            decoration: BoxDecoration(
+              color: isRunning
+                  ? colorScheme.primary.withValues(alpha: 0.08)
+                  : isFailed
+                      ? colorScheme.error.withValues(alpha: 0.08)
+                      : isCurrent && step.status == StepStatus.pending
+                          ? colorScheme.secondaryContainer
+                              .withValues(alpha: 0.3)
+                          : null,
+              borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+              border: Border.all(
+                color: isRunning
+                    ? colorScheme.primary.withValues(alpha: 0.24)
+                    : isFailed
+                        ? colorScheme.error.withValues(alpha: 0.3)
+                        : isCurrent && step.status == StepStatus.pending
+                            ? colorScheme.secondary.withValues(alpha: 0.15)
+                            : Colors.transparent,
+              ),
+            ),
+            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1008,7 +1126,8 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                       decoration: BoxDecoration(
                         color: colorScheme.surfaceContainerHighest
                             .withValues(alpha: 0.6),
-                        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                        borderRadius:
+                            BorderRadius.circular(AppTheme.radiusSmall),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -1039,24 +1158,110 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainerHighest
-                        .withValues(alpha: 0.48),
-                    borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                    border: Border.all(color: colorScheme.outlineVariant),
-                  ),
-                  child: Text(
-                    step.command,
-                    style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 10.5,
-                      color: colorScheme.primary,
+                if (step.command.isNotEmpty) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerHighest
+                          .withValues(alpha: 0.48),
+                      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                      border: Border.all(color: colorScheme.outlineVariant),
+                    ),
+                    child: Text(
+                      step.command,
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 10.5,
+                        color: colorScheme.primary,
+                      ),
                     ),
                   ),
-                ),
+                ],
+                if (isFailed) ...[
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          context
+                              .read<AiChatViewModel>()
+                              .retryTodoStep(step.id);
+                        },
+                        icon: const Icon(Icons.refresh, size: 13),
+                        label: Text(isEn ? 'Retry Step' : '重试此步骤'),
+                        style: ElevatedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 6),
+                          textStyle: const TextStyle(
+                              fontSize: 11, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          final reasonController = TextEditingController();
+                          final confirmed = await showDialog<bool>(
+                            context: context,
+                            builder: (dialogCtx) => AlertDialog(
+                              title: Text(isEn ? 'Skip Step' : '跳过步骤'),
+                              content: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(isEn
+                                      ? 'Provide a reason for skipping this task:'
+                                      : '请输入跳过此任务的原因：'),
+                                  const SizedBox(height: 8),
+                                  TextField(
+                                    controller: reasonController,
+                                    decoration: InputDecoration(
+                                      hintText: isEn
+                                          ? 'e.g. Completed manually'
+                                          : '例如：已手动完成',
+                                      border: const OutlineInputBorder(),
+                                    ),
+                                    autofocus: true,
+                                  ),
+                                ],
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () =>
+                                      Navigator.pop(dialogCtx, false),
+                                  child: Text(isEn ? 'Cancel' : '取消'),
+                                ),
+                                ElevatedButton(
+                                  onPressed: () =>
+                                      Navigator.pop(dialogCtx, true),
+                                  child: Text(isEn ? 'Skip' : '跳过'),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (confirmed == true &&
+                              reasonController.text.trim().isNotEmpty) {
+                            if (context.mounted) {
+                              context.read<AiChatViewModel>().skipTodoStep(
+                                    step.id,
+                                    reasonController.text.trim(),
+                                  );
+                            }
+                          }
+                        },
+                        icon: const Icon(Icons.skip_next, size: 13),
+                        label: Text(isEn ? 'Skip Step' : '跳过此步骤'),
+                        style: OutlinedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 6),
+                          textStyle: const TextStyle(fontSize: 11),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
                 if (hasLogs) ...[
                   const SizedBox(height: 4),
                   Container(

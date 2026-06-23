@@ -110,6 +110,7 @@ class ToolExposureRouter {
         blockedBy.add('webview_session_missing');
       }
       if (tool.needsServerSelection &&
+          !context.planMode &&
           context.selectedConnectionIds.isEmpty &&
           !_isServerRelevantRequest(context.userRequest, requestedCaps)) {
         blockedBy.add('server_selection_missing');
@@ -171,10 +172,15 @@ class ToolExposureRouter {
       'news',
       'web',
       'browser',
+      'current',
+      'client/sch',
       '网址',
       '搜索',
       '网页',
       '外部',
+      '最新',
+      '新闻',
+      '现在',
     ])) {
       caps.add(AiToolCapability.web);
     }

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ssh_mobile/features/ai_chat/models/agent_trace_event.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 
@@ -264,6 +265,28 @@ void main() {
     expect(aiSettings['multiAgentEnabled'], isFalse);
     expect(aiSettings['multiAgentMaxAgents'], 4);
     expect(aiSettings['toolCallBudget'], 40);
+  });
+
+  test('export excludes agent trace events by default', () async {
+    storage = await initializedStorage();
+    await storage.saveAgentTraceEvent(
+      AgentTraceEvent(
+        id: 'trace-1',
+        runId: 'run-1',
+        chatId: 'chat-1',
+        createdAt: DateTime.utc(2026, 6, 22),
+        sequence: 0,
+        kind: 'tool_result',
+        title: 'Tool result: run_command',
+        content: 'TRACE_BACKUP_SECRET_MARKER',
+      ),
+    );
+
+    final jsonText = await storage.exportAppDataJson();
+    final decoded = jsonDecode(jsonText) as Map<String, dynamic>;
+
+    expect(decoded.containsKey('agentTraceEvents'), isFalse);
+    expect(jsonText, isNot(contains('TRACE_BACKUP_SECRET_MARKER')));
   });
 
   test('trustHostKey persists known host metadata without clearing secrets',

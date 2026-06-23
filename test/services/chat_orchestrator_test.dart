@@ -232,4 +232,157 @@ void main() {
 
     storage.dispose();
   });
+
+  test(
+      'finalizeAssistantTurn preserves existing todoSteps and does not overwrite',
+      () async {
+    final storage = StorageService();
+    await storage.init();
+    final orchestrator = ChatOrchestrator(
+      storageService: storage,
+      contextAssembler: ChatContextAssembler(storageService: storage),
+      memoryRetriever: OperationalMemoryRetriever(
+        storageService: storage,
+        ragService: RagService(storageService: storage),
+      ),
+    );
+    final now = DateTime.now();
+    final chat = AiChatRecord(
+      id: 'chat-preserve',
+      title: 'Draft',
+      model: 'demo-model',
+      messages: const [],
+      createdAt: now,
+      updatedAt: now,
+      planMode: true,
+    );
+    final assistant = AiChatMessageRecord(
+      role: 'assistant',
+      text: '',
+      createdAt: now,
+      todoSteps: const [
+        AiTodoStep(
+            id: 'existing-1',
+            name: 'Existing Step',
+            command: 'echo existing',
+            description: '')
+      ],
+    );
+
+    final completion = orchestrator.finalizeAssistantTurn(
+      initialChat: chat,
+      assistantMessage: assistant,
+      answerText: '''
+```playbook
+{"steps":[{"name":"New Step","command":"echo new"}]}
+```
+''',
+      traces: const [],
+    );
+
+    expect(completion.assistantMessage.todoSteps, hasLength(1));
+    expect(completion.assistantMessage.todoSteps.first.id, 'existing-1');
+    expect(completion.assistantMessage.todoSteps.first.name, 'Existing Step');
+
+    storage.dispose();
+  });
+
+  test(
+      'finalizeAssistantTurn skips first invalid playbook and parses second valid playbook',
+      () async {
+    final storage = StorageService();
+    await storage.init();
+    final orchestrator = ChatOrchestrator(
+      storageService: storage,
+      contextAssembler: ChatContextAssembler(storageService: storage),
+      memoryRetriever: OperationalMemoryRetriever(
+        storageService: storage,
+        ragService: RagService(storageService: storage),
+      ),
+    );
+    final now = DateTime.now();
+    final chat = AiChatRecord(
+      id: 'chat-two-playbooks',
+      title: 'Draft',
+      model: 'demo-model',
+      messages: const [],
+      createdAt: now,
+      updatedAt: now,
+      planMode: true,
+    );
+    final assistant = AiChatMessageRecord(
+      role: 'assistant',
+      text: '',
+      createdAt: now,
+    );
+
+    final completion = orchestrator.finalizeAssistantTurn(
+      initialChat: chat,
+      assistantMessage: assistant,
+      answerText: '''
+First bad block:
+```playbook
+{"steps":[]}
+```
+
+Second good block:
+```playbook
+{"steps":[{"name":"Good step","command":"echo 1"}]}
+```
+''',
+      traces: const [],
+    );
+
+    expect(completion.shouldExitPlanMode, isTrue);
+    expect(completion.assistantMessage.todoSteps, hasLength(1));
+    expect(completion.assistantMessage.todoSteps.first.name, 'Good step');
+
+    storage.dispose();
+  });
+
+  test(
+      'finalizeAssistantTurn fails parsing steps with missing name and skips block',
+      () async {
+    final storage = StorageService();
+    await storage.init();
+    final orchestrator = ChatOrchestrator(
+      storageService: storage,
+      contextAssembler: ChatContextAssembler(storageService: storage),
+      memoryRetriever: OperationalMemoryRetriever(
+        storageService: storage,
+        ragService: RagService(storageService: storage),
+      ),
+    );
+    final now = DateTime.now();
+    final chat = AiChatRecord(
+      id: 'chat-missing-name',
+      title: 'Draft',
+      model: 'demo-model',
+      messages: const [],
+      createdAt: now,
+      updatedAt: now,
+      planMode: true,
+    );
+    final assistant = AiChatMessageRecord(
+      role: 'assistant',
+      text: '',
+      createdAt: now,
+    );
+
+    final completion = orchestrator.finalizeAssistantTurn(
+      initialChat: chat,
+      assistantMessage: assistant,
+      answerText: '''
+```playbook
+{"steps":[{"command":"echo 1"}]}
+```
+''',
+      traces: const [],
+    );
+
+    expect(completion.shouldExitPlanMode, isFalse);
+    expect(completion.assistantMessage.todoSteps, isEmpty);
+
+    storage.dispose();
+  });
 }

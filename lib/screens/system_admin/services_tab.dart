@@ -1,16 +1,62 @@
 part of '../system_admin_screen.dart';
 
+class _ServicesManageSnapshot {
+  final bool isConnecting;
+  final bool isManageModeAvailable;
+  final String? errorMessage;
+  final bool loadingServices;
+  final List<SystemdService> services;
+
+  const _ServicesManageSnapshot({
+    required this.isConnecting,
+    required this.isManageModeAvailable,
+    required this.errorMessage,
+    required this.loadingServices,
+    required this.services,
+  });
+
+  factory _ServicesManageSnapshot.from(SystemAdminViewModel vm) {
+    return _ServicesManageSnapshot(
+      isConnecting: vm.isConnectingSelectedConnection,
+      isManageModeAvailable: vm.canManageSelectedConnection,
+      errorMessage:
+          vm.hasManagementErrorForSelectedConnection ? vm.errorMessage : null,
+      loadingServices: vm.loadingServices,
+      services: vm.services,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is _ServicesManageSnapshot &&
+        other.isConnecting == isConnecting &&
+        other.isManageModeAvailable == isManageModeAvailable &&
+        other.errorMessage == errorMessage &&
+        other.loadingServices == loadingServices &&
+        listEquals(other.services, services);
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        isConnecting,
+        isManageModeAvailable,
+        errorMessage,
+        loadingServices,
+        Object.hashAll(services),
+      );
+}
+
 class _ServicesTab extends StatefulWidget {
   final AppStrings strings;
   final ColorScheme colorScheme;
   final SystemAdminViewModel viewModel;
-  final bool active;
+  final ValueNotifier<int> activeTabIndex;
 
   const _ServicesTab({
     required this.strings,
     required this.colorScheme,
     required this.viewModel,
-    required this.active,
+    required this.activeTabIndex,
   });
 
   @override
@@ -23,7 +69,6 @@ class _ServicesTabState extends State<_ServicesTab>
       TextEditingController();
   final TextEditingController _snapshotSearchController =
       TextEditingController();
-  List<ServiceStatusSnapshot> _filteredSnapshotServices = [];
   Map<String, List<ServiceStatusSnapshot>> _rawSnapshotData = {};
 
   bool _isManageMode = false;
@@ -33,6 +78,12 @@ class _ServicesTabState extends State<_ServicesTab>
   String? _lastActivatedModeKey;
   bool _modeActivationScheduled = false;
 
+  Timer? _serviceSearchDebounce;
+  List<SystemdService> _visibleManageServicesCache = [];
+  String? _lastManageFilterKey;
+
+  bool get _isActive => widget.activeTabIndex.value == 3;
+
   @override
   bool get wantKeepAlive => true;
 
@@ -40,10 +91,6 @@ class _ServicesTabState extends State<_ServicesTab>
     final connectionId = widget.viewModel.selectedConnectionId;
     final config = widget.viewModel.connectionById(connectionId);
     return config?.serverPlatform == ServerPlatform.linux;
-  }
-
-  bool get _isManageModeAvailable {
-    return widget.viewModel.canManageSelectedConnection && _isLinux;
   }
 
   void _refreshServicesFuture({bool force = false}) {
@@ -77,7 +124,6 @@ class _ServicesTabState extends State<_ServicesTab>
     final result = {connectionId: list};
     setState(() {
       _rawSnapshotData = result;
-      _applySnapshotFilterWithoutSetState();
     });
     return result;
   }
@@ -88,6 +134,7 @@ class _ServicesTabState extends State<_ServicesTab>
     _lastSelectedConnectionId = widget.viewModel.selectedConnectionId;
     _serviceSearchController.addListener(_filterServices);
     _snapshotSearchController.addListener(_filterSnapshotServices);
+    widget.activeTabIndex.addListener(_onTabChanged);
     _scheduleModeActivation();
   }
 
@@ -100,11 +147,10 @@ class _ServicesTabState extends State<_ServicesTab>
       _servicesSelectionKey = null;
       _servicesFuture = null;
       _rawSnapshotData = {};
-      _filteredSnapshotServices = [];
       _lastActivatedModeKey = null;
       _isManageMode = false;
     }
-    if (widget.active) {
+    if (_isActive) {
       _scheduleModeActivation();
     }
   }
@@ -113,51 +159,60 @@ class _ServicesTabState extends State<_ServicesTab>
   void dispose() {
     _serviceSearchController.dispose();
     _snapshotSearchController.dispose();
+    _serviceSearchDebounce?.cancel();
+    widget.activeTabIndex.removeListener(_onTabChanged);
     super.dispose();
   }
 
-  void _filterServices() {
+  void _onTabChanged() {
     if (!mounted) return;
-    setState(() {});
+    if (_isActive) {
+      _scheduleModeActivation();
+    }
   }
 
-  List<SystemdService> _visibleManageServices() {
+  void _filterServices() {
+    _serviceSearchDebounce?.cancel();
+    _serviceSearchDebounce = Timer(const Duration(milliseconds: 180), () {
+      if (!mounted) return;
+      setState(() {
+        _lastManageFilterKey = null;
+      });
+    });
+  }
+
+  void _rebuildVisibleManageServicesCache(List<SystemdService> services) {
     final query = _serviceSearchController.text.trim().toLowerCase();
-    final services = widget.viewModel.services;
+    final connectionId = widget.viewModel.selectedConnectionId;
+    final servicesHash = Object.hashAll(services.map((s) => Object.hash(
+        s.name, s.loadState, s.activeState, s.subState, s.description)));
+    final key = '$connectionId|$query|$servicesHash';
+
+    if (_lastManageFilterKey == key) return;
+    _lastManageFilterKey = key;
 
     if (query.isEmpty) {
-      return services;
+      _visibleManageServicesCache = services;
+    } else {
+      _visibleManageServicesCache = services.where((service) {
+        return service.name.toLowerCase().contains(query) ||
+            service.description.toLowerCase().contains(query);
+      }).toList();
     }
+  }
 
-    return services.where((service) {
-      return service.name.toLowerCase().contains(query) ||
-          service.description.toLowerCase().contains(query);
-    }).toList();
+  List<SystemdService> _visibleManageServices(List<SystemdService> services) {
+    _rebuildVisibleManageServicesCache(services);
+    return _visibleManageServicesCache;
   }
 
   void _filterSnapshotServices() {
     if (!mounted) return;
-    setState(_applySnapshotFilterWithoutSetState);
-  }
-
-  void _applySnapshotFilterWithoutSetState() {
-    final query = _snapshotSearchController.text.trim().toLowerCase();
-    final connectionId = widget.viewModel.selectedConnectionId;
-    if (connectionId == null) return;
-    final list = _rawSnapshotData[connectionId] ?? [];
-    if (query.isEmpty) {
-      _filteredSnapshotServices = List.from(list);
-    } else {
-      _filteredSnapshotServices = list
-          .where((s) =>
-              s.name.toLowerCase().contains(query) ||
-              s.displayName.toLowerCase().contains(query))
-          .toList();
-    }
+    setState(() {});
   }
 
   void _scheduleModeActivation() {
-    if (!widget.active || _modeActivationScheduled) return;
+    if (!_isActive || _modeActivationScheduled) return;
     final id = widget.viewModel.selectedConnectionId;
     if (id == null) return;
 
@@ -173,7 +228,7 @@ class _ServicesTabState extends State<_ServicesTab>
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _modeActivationScheduled = false;
-      if (!mounted || !widget.active) return;
+      if (!mounted || !_isActive) return;
       unawaited(_activateCurrentMode());
     });
   }
@@ -210,11 +265,28 @@ class _ServicesTabState extends State<_ServicesTab>
     });
   }
 
+  Map<String, List<ServiceStatusSnapshot>> get _filteredSnapshotData {
+    final connectionId = widget.viewModel.selectedConnectionId;
+    if (connectionId == null) return {};
+    final list = _rawSnapshotData[connectionId] ?? [];
+    final query = _snapshotSearchController.text.trim().toLowerCase();
+    if (query.isEmpty) {
+      return {connectionId: list};
+    }
+    final filtered = list
+        .where((s) =>
+            s.name.toLowerCase().contains(query) ||
+            s.displayName.toLowerCase().contains(query))
+        .toList();
+    return {connectionId: filtered};
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final viewModel = widget.viewModel;
-    final id = viewModel.selectedConnectionId;
+    final id = context.select<SystemAdminViewModel, String?>(
+      (vm) => vm.selectedConnectionId,
+    );
 
     if (id == null) {
       return Center(
@@ -229,7 +301,7 @@ class _ServicesTabState extends State<_ServicesTab>
       );
     }
 
-    if (widget.active) {
+    if (_isActive) {
       _scheduleModeActivation();
     }
 
@@ -273,121 +345,128 @@ class _ServicesTabState extends State<_ServicesTab>
   }
 
   Widget _buildManageView(String id) {
-    final viewModel = widget.viewModel;
-    if (viewModel.isConnectingSelectedConnection) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    return Selector<SystemAdminViewModel, _ServicesManageSnapshot>(
+      selector: (_, vm) => _ServicesManageSnapshot.from(vm),
+      builder: (context, snapshot, _) {
+        if (snapshot.isConnecting) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-    if (!_isManageModeAvailable) {
-      return _RootRequiredView(
-        strings: widget.strings,
-        errorMessage: viewModel.hasManagementErrorForSelectedConnection
-            ? viewModel.errorMessage
-            : null,
-        onConnect: () {
-          _lastActivatedModeKey = null;
-          _scheduleModeActivation();
-        },
-      );
-    }
+        if (!snapshot.isManageModeAvailable) {
+          return _RootRequiredView(
+            strings: widget.strings,
+            errorMessage: snapshot.errorMessage,
+            onConnect: () {
+              _lastActivatedModeKey = null;
+              _scheduleModeActivation();
+            },
+          );
+        }
 
-    if (viewModel.loadingServices) {
-      return const Center(child: CircularProgressIndicator());
-    }
+        if (snapshot.loadingServices) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-    final visibleServices = _visibleManageServices();
+        final visibleServices = _visibleManageServices(snapshot.services);
 
-    return RefreshIndicator(
-      onRefresh: () => viewModel.fetchServices(id, force: true),
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: TextField(
-              controller: _serviceSearchController,
-              decoration: InputDecoration(
-                hintText: widget.strings.searchService,
-                prefixIcon: const Icon(Icons.search),
-                border: const OutlineInputBorder(),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-              ),
-            ),
-          ),
-          Expanded(
-            child: visibleServices.isEmpty
-                ? ListView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    children: const [
-                      SizedBox(height: 100),
-                      Center(child: Text('No services found.')),
-                    ],
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    itemCount: visibleServices.length,
-                    itemBuilder: (context, index) {
-                      final service = visibleServices[index];
-                      return Card(
-                        child: ListTile(
-                          leading: Icon(
-                            service.isRunning
-                                ? Icons.play_circle
-                                : Icons.stop_circle,
-                            color: service.isRunning
-                                ? widget.colorScheme.secondary
-                                : widget.colorScheme.onSurfaceVariant
-                                    .withValues(alpha: 0.5),
-                          ),
-                          title: OverflowScrollText(
-                            service.name,
-                            selectable: false,
-                            maxLines: 1,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          subtitle: OverflowScrollText(
-                            '${service.activeState} (${service.subState}) • ${service.description}',
-                            selectable: false,
-                            maxLines: 1,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: widget.colorScheme.onSurface
-                                  .withValues(alpha: 0.58),
-                            ),
-                          ),
-                          trailing: PopupMenuButton<String>(
-                            onSelected: (action) =>
-                                _manageService(service.name, action),
-                            itemBuilder: (context) => [
-                              PopupMenuItem(
-                                  value: 'start',
-                                  child: Text(widget.strings.serviceStart)),
-                              PopupMenuItem(
-                                  value: 'stop',
-                                  child: Text(widget.strings.serviceStop)),
-                              PopupMenuItem(
-                                  value: 'restart',
-                                  child: Text(widget.strings.serviceRestart)),
-                              PopupMenuItem(
-                                  value: 'enable',
-                                  child: Text(widget.strings.serviceEnable)),
-                              PopupMenuItem(
-                                  value: 'disable',
-                                  child: Text(widget.strings.serviceDisable)),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
+        return RefreshIndicator(
+          onRefresh: () => widget.viewModel.fetchServices(id, force: true),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: TextField(
+                  controller: _serviceSearchController,
+                  decoration: InputDecoration(
+                    hintText: widget.strings.searchService,
+                    prefixIcon: const Icon(Icons.search),
+                    border: const OutlineInputBorder(),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12),
                   ),
+                ),
+              ),
+              Expanded(
+                child: visibleServices.isEmpty
+                    ? ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: const [
+                          SizedBox(height: 100),
+                          Center(child: Text('No services found.')),
+                        ],
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        itemCount: visibleServices.length,
+                        itemBuilder: (context, index) {
+                          final service = visibleServices[index];
+                          return Card(
+                            child: ListTile(
+                              leading: Icon(
+                                service.isRunning
+                                    ? Icons.play_circle
+                                    : Icons.stop_circle,
+                                color: service.isRunning
+                                    ? widget.colorScheme.secondary
+                                    : widget.colorScheme.onSurfaceVariant
+                                        .withValues(alpha: 0.5),
+                              ),
+                              title: OverflowScrollText(
+                                service.name,
+                                selectable: false,
+                                maxLines: 1,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold),
+                              ),
+                              subtitle: OverflowScrollText(
+                                '${service.activeState} (${service.subState}) • ${service.description}',
+                                selectable: false,
+                                maxLines: 1,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: widget.colorScheme.onSurface
+                                      .withValues(alpha: 0.58),
+                                ),
+                              ),
+                              trailing: PopupMenuButton<String>(
+                                onSelected: (action) =>
+                                    _manageService(service.name, action),
+                                itemBuilder: (context) => [
+                                  PopupMenuItem(
+                                      value: 'start',
+                                      child: Text(widget.strings.serviceStart)),
+                                  PopupMenuItem(
+                                      value: 'stop',
+                                      child: Text(widget.strings.serviceStop)),
+                                  PopupMenuItem(
+                                      value: 'restart',
+                                      child:
+                                          Text(widget.strings.serviceRestart)),
+                                  PopupMenuItem(
+                                      value: 'enable',
+                                      child:
+                                          Text(widget.strings.serviceEnable)),
+                                  PopupMenuItem(
+                                      value: 'disable',
+                                      child:
+                                          Text(widget.strings.serviceDisable)),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
   Widget _buildSnapshotView(String id) {
     final currentConfigList =
         widget.viewModel.connections.where((c) => c.id == id).toList();
+    final snapshotData = _filteredSnapshotData;
 
     return Column(
       children: [
@@ -404,7 +483,7 @@ class _ServicesTabState extends State<_ServicesTab>
           ),
         ),
         Expanded(
-          child: _filteredSnapshotServices.isEmpty &&
+          child: snapshotData.values.expand((e) => e).isEmpty &&
                   _snapshotSearchController.text.isNotEmpty
               ? ListView(
                   physics: const AlwaysScrollableScrollPhysics(),
@@ -419,17 +498,10 @@ class _ServicesTabState extends State<_ServicesTab>
                   emptyText: _monitorText(
                       widget.strings, 'No running services found', '未发现运行中的服务'),
                   future: _servicesFuture,
+                  dataOverride: _rawSnapshotData.isEmpty ? null : snapshotData,
                   onRefresh: () =>
                       setState(() => _refreshServicesFuture(force: true)),
                   itemBuilder: (context, service) {
-                    // Filter if query is present, since itemBuilder runs on individual items
-                    final query =
-                        _snapshotSearchController.text.trim().toLowerCase();
-                    if (query.isNotEmpty &&
-                        !service.name.toLowerCase().contains(query) &&
-                        !service.displayName.toLowerCase().contains(query)) {
-                      return const SizedBox.shrink();
-                    }
                     return _ServiceStatusTile(
                       strings: widget.strings,
                       service: service,

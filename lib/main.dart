@@ -20,6 +20,7 @@ import 'screens/sftp_screen.dart';
 import 'screens/startup_screen.dart';
 import 'screens/terminal_history_screen.dart';
 import 'screens/terminal_screen.dart';
+import 'screens/terminal_windows_screen.dart';
 import 'screens/rag_knowledge_screen.dart';
 import 'services/app_log_service.dart';
 import 'services/background_service.dart';
@@ -253,6 +254,24 @@ class _SshMobileAppState extends State<SshMobileApp>
           case '/history':
             return MaterialPageRoute(
               builder: (_) => const TerminalHistoryScreen(),
+            );
+          case '/terminal-windows':
+            final args = settings.arguments;
+            String? connectionId;
+
+            if (args is String) {
+              connectionId = args;
+            } else if (args is Map<String, dynamic>) {
+              final value = args['connectionId'];
+              if (value is String) {
+                connectionId = value;
+              }
+            }
+
+            return MaterialPageRoute(
+              builder: (_) => TerminalWindowsScreen(
+                connectionId: connectionId,
+              ),
             );
           case '/sftp':
             return MaterialPageRoute(

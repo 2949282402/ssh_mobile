@@ -9,11 +9,20 @@ import '../utils/responsive.dart';
 import '../widgets/overflow_scroll_text.dart';
 
 class TerminalWindowsScreen extends StatelessWidget {
-  const TerminalWindowsScreen({super.key});
+  final String? connectionId;
+
+  const TerminalWindowsScreen({
+    super.key,
+    this.connectionId,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(body: SafeArea(child: TerminalWindowsPage()));
+    return Scaffold(
+      body: SafeArea(
+        child: TerminalWindowsPage(connectionId: connectionId),
+      ),
+    );
   }
 }
 
@@ -34,6 +43,8 @@ class TerminalWindowsPage extends StatefulWidget {
 }
 
 class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
+  static const int _embeddedPreviewLimit = 4;
+
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider<TerminalWindowsViewModel>(
@@ -71,13 +82,37 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
     AppStrings strings,
   ) {
     if (widget.embedded) {
+      final visibleSessions =
+          sessions.take(_embeddedPreviewLimit).toList(growable: false);
+      final hiddenCount = sessions.length - visibleSessions.length;
+
       return Padding(
         padding: const EdgeInsets.only(top: 8),
         child: Column(
           children: [
-            for (var index = 0; index < sessions.length; index++) ...[
+            for (var index = 0; index < visibleSessions.length; index++) ...[
               if (index > 0) const SizedBox(height: 8),
-              _buildWindowItem(context, viewModel, sessions[index], strings),
+              _buildWindowItem(
+                context,
+                viewModel,
+                visibleSessions[index],
+                strings,
+              ),
+            ],
+            if (hiddenCount > 0) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  icon: const Icon(Icons.open_in_full_rounded, size: 16),
+                  label: Text(strings.viewAllTerminalWindows(sessions.length)),
+                  onPressed: () => Navigator.pushNamed(
+                    context,
+                    '/terminal-windows',
+                    arguments: widget.connectionId,
+                  ),
+                ),
+              ),
             ],
           ],
         ),
@@ -169,6 +204,12 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
               icon: const Icon(Icons.close),
               tooltip: strings.exitSelection,
               onPressed: viewModel.clearSelection,
+            )
+          else if (!widget.embedded && Navigator.canPop(context))
+            IconButton(
+              icon: const Icon(Icons.arrow_back_rounded),
+              tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+              onPressed: () => Navigator.pop(context),
             ),
           Expanded(
             child: Text(

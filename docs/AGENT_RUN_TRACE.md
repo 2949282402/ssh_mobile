@@ -41,6 +41,7 @@ An Agent Run represents a single session starting from a user message, progressi
 * **Loop Guard Protection**: A deterministic guard monitors repeating identical signature patterns. Read-only tool execution is terminated if a single tool is repeated $\ge 3$ times or alternating loop sequences are detected.
 * **Safety Audit Escalation**: Once tool calls reach the safety budget ceiling, the system performs an internal safety audit, asking the LLM to inspect the ledger log for loops or drift.
 * **Sequential Transitions**: Step execution progresses in strict order (`pending -> running -> success/failed/skipped`). Sequential constraints are strictly checked before starting (`running`) or skipping (`skipped`) any task step. If any preceding step is not completed, transition is blocked with code `order_violation`. Completed step mutations are locked (`completed_task_locked`). If a preceding step failed, subsequent execution is blocked with code `failed_dependency` (though skipping subsequent steps is permitted).
+* **Tool Visibility Boundary**: Tool exposure is an execution boundary, not only a prompt hint. If the model requests a tool that is not present in `visibleToolsByName`, `ToolLoopController` returns a `tool_not_visible` tool result and does not call approval or execution paths. Hidden tools must not consume tool budget, trigger approval, or reach `AiToolService.execute`.
 
 ---
 
@@ -75,3 +76,43 @@ Every run computes statistics published via `onStats` and logged to `AppLogServi
 Trace contents and ledger summaries undergo strict privacy stripping:
 * **Secret Masking**: Passwords, private keys, and API tokens are redacted as `[REDACTED]` or masked (e.g., `api_key=sk-...12`) before recording in the trace or passing to sub-agents.
 * **Argument Preview Truncation**: Arguments are capped at 400 characters, and tool stdout results are capped at 600 characters to prevent prompt bloat and data leakage.
+
+---
+
+## 4. Operational & Execution Boundaries
+
+### Post-tool Review Toggle
+`multiAgentEnabled` controls normal preflight collaboration.
+`postToolReviewEnabled` controls recovery review after tool failures, approval rejection, unavailable approval, budget audit rejection, and loop guard blocking.
+They are intentionally separate so users can disable normal helper agents while still keeping safety recovery enabled.
+
+### Connection Required Boundary
+Plan Mode may expose server-related tools for planning or diagnostics, but execution still requires an explicit `connectionId`.
+If a server/SSH/SFTP/monitor tool is called without a selected connection, the tool layer returns `connection_required` and does not perform remote operations.
+
+---
+
+## 5. Plan Output Validation
+
+Plan Mode final output is validated before execution handoff. A valid Plan Mode result must either:
+1. Persist chat-bound `todoSteps` (e.g. from `client_task_create` calls), or
+2. Include a valid ` ```playbook ` JSON block with non-empty steps.
+
+If validation fails, the model gets one format-only repair attempt. If the repair still fails, the chat stays in Plan Mode and the user receives an explicit explanation.
+
+### Plan Mode Streaming and Persistence Boundary
+
+During Plan Mode, single-LLM text is fully buffered until output validation/repair completes. The user should see the validated final plan, not an invalid draft followed by a repair. 
+`LlmChatService` owns validation, one-shot repair, and tracing. `ChatOrchestrator` owns the final conversion from a valid playbook JSON block to chat-bound `todoSteps`. The service layer must not directly write to the database (mutate `AiChatRecord`) during validation/repair, avoiding race conditions and ensuring a clean MVVM data flow.
+
+---
+
+## 6. Step-scoped remote tools
+
+In Execution Mode, step gating applies to remote/server-scoped tools, including read-only diagnostics.
+The assistant must mark the current todoStep as running before calling server/ssh/sftp/monitor tools, not only before mutating tools.
+Pure client/app tools such as `client_time`, `app_get_operational_settings`, `web_search`, and `list_servers` may run outside the step gate.
+Step-gate block traces include `stepScoped`, `executionMode`, `reason`, and the current step status.
+Approval-aware tools such as `client_task_skip` must be executed through `AiToolService.execute` so that the `approvedWrite` flag is correctly propagated; the direct handler fallback intentionally enforces `approvedWrite=false` to prevent bypassing approval.
+
+

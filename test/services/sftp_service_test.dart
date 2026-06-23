@@ -22,6 +22,12 @@ void main() {
     expect(sftp.entries, isEmpty);
     expect(sftp.isConnected, isFalse);
     expect(sftp.isBusy, isFalse);
+    expect(sftp.activeTransfer, isNull);
+    expect(sftp.hasActiveTransfer, isFalse);
+  });
+
+  test('cancelActiveTransfer returns normally when no active transfer', () {
+    expect(() => sftp.cancelActiveTransfer(), returnsNormally);
   });
 
   test('disconnectAll is safe before any connection is opened', () async {
@@ -37,5 +43,33 @@ void main() {
 
     expect(sftp.state, SftpConnectionState.error);
     expect(sftp.errorMessage, 'Connection config not found');
+  });
+
+  test('SftpTransferState models progress and copyWith and equality', () {
+    const state = SftpTransferState(
+      id: 'tx_123',
+      name: 'test.bin',
+      totalBytes: 1000,
+      isUpload: true,
+      bytesTransferred: 200,
+    );
+
+    expect(state.progress, 0.2);
+    expect(state.isUpload, isTrue);
+
+    final updated = state.copyWith(bytesTransferred: 500);
+    expect(updated.bytesTransferred, 500);
+    expect(updated.progress, 0.5);
+    expect(updated.id, 'tx_123');
+
+    final identicalState = SftpTransferState(
+      id: 'tx_123',
+      name: 'test.bin',
+      totalBytes: 1000,
+      isUpload: true,
+      bytesTransferred: 200,
+    );
+    expect(state, identicalState);
+    expect(state.hashCode, identicalState.hashCode);
   });
 }

@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/core/services/ssh_host_key_policy.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
+import 'package:ssh_mobile/features/playbook/models/playbook.dart';
 import 'package:ssh_mobile/services/ai_tool_service.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
@@ -753,7 +754,24 @@ void main() {
     expect(decoded.containsKey('hasApiKeyConfigured'), isTrue);
     expect(decoded['multiAgentEnabled'], isTrue);
     expect(decoded['multiAgentMaxAgents'], 3);
+    expect(decoded['postToolReviewEnabled'], isTrue);
     expect(decoded['toolCallBudget'], 20);
+  });
+
+  test('app settings tool updates postToolReviewEnabled setting with approval',
+      () async {
+    final raw = await tools.execute(
+      'app_update_operational_settings',
+      {
+        'postToolReviewEnabled': false,
+      },
+      approvedWrite: true,
+    );
+    final decoded = jsonDecode(raw) as Map<String, dynamic>;
+    final settings = await storage.loadAiConnectionSettings();
+
+    expect(decoded['postToolReviewEnabled'], isFalse);
+    expect(settings.postToolReviewEnabled, isFalse);
   });
 
   test('app settings tool updates multi-agent settings with approval',
@@ -814,7 +832,12 @@ void main() {
       final rawFalse =
           await tools.execute('client_set_plan_mode', {'enabled': false});
       final decodedFalse = jsonDecode(rawFalse) as Map<String, dynamic>;
-      expect(decodedFalse['error'], contains('Cannot exit Plan Mode'));
+      expect(
+          decodedFalse['error'],
+          anyOf(
+            contains('Cannot exit Plan Mode'),
+            contains('无法退出规划模式'),
+          ));
 
       final chatStillTrue =
           (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
@@ -969,6 +992,237 @@ void main() {
           jsonDecode(rawUpdateInvalid) as Map<String, dynamic>;
       expect(decodedUpdateInvalid['error'], contains('Task step not found'));
     });
+
+    test(
+        'enforces strict status validations and expected commands for task updates',
+        () async {
+      final now = DateTime.now();
+      var chat = AiChatRecord(
+        id: 'chat-1',
+        title: 'Draft',
+        model: 'deepseek-v4-flash',
+        messages: [
+          AiChatMessageRecord(
+            role: 'assistant',
+            text: 'plan',
+            createdAt: now,
+            todoSteps: [
+              AiTodoStep(
+                id: 'task-1',
+                name: 'Step 1',
+                command: 'echo ok',
+                description: 'Persisted plan step',
+                status: StepStatus.pending,
+                connectionId: 'server-1',
+              ),
+            ],
+          ),
+        ],
+        createdAt: now,
+        updatedAt: now,
+        planMode: false,
+      );
+      await storage.saveAiChat(chat);
+
+      // 1. Invalid status
+      final rawInvalid = await tools.execute('client_task_update', {
+        'taskId': 'task-1',
+        'status': 'unknown_status',
+      });
+      final decodedInvalid = jsonDecode(rawInvalid) as Map<String, dynamic>;
+      expect(decodedInvalid['code'], 'invalid_task_status');
+      expect(decodedInvalid['allowed'], contains('running'));
+
+      // 2. Skipped status requires reason
+      final rawSkippedNoReason = await tools.execute('client_task_update', {
+        'taskId': 'task-1',
+        'status': 'skipped',
+      });
+      final decodedSkippedNoReason =
+          jsonDecode(rawSkippedNoReason) as Map<String, dynamic>;
+      expect(decodedSkippedNoReason['code'], 'skip_reason_required');
+
+      // 3. Skipped with reason succeeds
+      final rawSkippedWithReason = await tools.execute('client_task_update', {
+        'taskId': 'task-1',
+        'status': 'skipped',
+        'reason': 'not needed',
+      });
+      final decodedSkippedWithReason =
+          jsonDecode(rawSkippedWithReason) as Map<String, dynamic>;
+      expect(decodedSkippedWithReason['status'], 'success');
+
+      // Reset step to pending and running to test running output payload
+      final resetChat = chat.copyWith(
+        messages: [
+          AiChatMessageRecord(
+            role: 'assistant',
+            text: 'plan',
+            createdAt: now,
+            todoSteps: [
+              AiTodoStep(
+                id: 'task-1',
+                name: 'Step 1',
+                command: 'echo ok',
+                description: 'Persisted plan step',
+                status: StepStatus.pending,
+                connectionId: 'server-1',
+              ),
+            ],
+          ),
+        ],
+      );
+      await storage.saveAiChat(resetChat);
+
+      final rawRunning = await tools.execute('client_task_update', {
+        'taskId': 'task-1',
+        'status': 'running',
+      });
+      final decodedRunning = jsonDecode(rawRunning) as Map<String, dynamic>;
+      expect(decodedRunning['status'], 'success');
+      expect(decodedRunning['expectedCommand'], 'echo ok');
+      expect(decodedRunning['expectedConnectionId'], 'server-1');
+
+      // Update to failed
+      final rawFailed = await tools.execute('client_task_update', {
+        'taskId': 'task-1',
+        'status': 'failed',
+        'errorSummary': 'failed execution',
+      });
+      final decodedFailed = jsonDecode(rawFailed) as Map<String, dynamic>;
+      expect(decodedFailed['status'], 'success');
+      expect(decodedFailed['newStatus'], 'failed');
+      expect(decodedFailed['nextAction'], contains('Stop execution'));
+
+      final chatFailed =
+          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      expect(chatFailed.messages.last.todoSteps.first.stderr,
+          contains('Error Summary: failed execution'));
+    });
+
+    test('client_task_retry and client_task_skip control execution step flows',
+        () async {
+      final now = DateTime.now();
+      var chat = AiChatRecord(
+        id: 'chat-1',
+        title: 'Draft',
+        model: 'deepseek-v4-flash',
+        messages: [
+          AiChatMessageRecord(
+            role: 'assistant',
+            text: 'plan',
+            createdAt: now,
+            todoSteps: [
+              AiTodoStep(
+                id: 'task-1',
+                name: 'Step 1',
+                command: 'echo ok',
+                description: 'Persisted plan step',
+                status: StepStatus.failed,
+              ),
+            ],
+          ),
+        ],
+        createdAt: now,
+        updatedAt: now,
+        planMode: false,
+      );
+      await storage.saveAiChat(chat);
+
+      // 1. Retry failed step -> should reset to pending
+      final rawRetry = await tools.execute('client_task_retry', {
+        'taskId': 'task-1',
+        'reason': 'retrying for correction',
+      });
+      final decodedRetry = jsonDecode(rawRetry) as Map<String, dynamic>;
+      expect(decodedRetry['status'], 'success');
+      expect(decodedRetry['newStatus'], 'pending');
+      expect(decodedRetry['reason'], 'retrying for correction');
+
+      final chatAfterRetry =
+          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      expect(chatAfterRetry.messages.last.todoSteps.first.status,
+          StepStatus.pending);
+
+      // 2. Retry non-failed step -> should fail
+      final rawRetryPending = await tools.execute('client_task_retry', {
+        'taskId': 'task-1',
+      });
+      final decodedRetryPending =
+          jsonDecode(rawRetryPending) as Map<String, dynamic>;
+      expect(decodedRetryPending['error'],
+          contains('Only failed tasks can be retried'));
+
+      // 3. Skip pending step without approval -> should fail
+      final rawSkipNoApproval = await tools.execute('client_task_skip', {
+        'taskId': 'task-1',
+        'reason': 'manual override',
+      });
+      expect(jsonDecode(rawSkipNoApproval)['error'],
+          contains('requires user approval'));
+
+      // 4. Skip pending step with approval -> should mark skipped with reason in stdout
+      final rawSkip = await tools.execute(
+          'client_task_skip',
+          {
+            'taskId': 'task-1',
+            'reason': 'manual override',
+          },
+          approvedWrite: true);
+      final decodedSkip = jsonDecode(rawSkip) as Map<String, dynamic>;
+      expect(decodedSkip['status'], 'success');
+      expect(decodedSkip['newStatus'], 'skipped');
+
+      final chatAfterSkip =
+          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      final skippedStep = chatAfterSkip.messages.last.todoSteps.first;
+      expect(skippedStep.status, StepStatus.skipped);
+      expect(skippedStep.stdout, contains('Skipped: manual override'));
+
+      // 5. Try to skip a running task -> should fail
+      final chatRunning = chat.copyWith(
+        messages: [
+          AiChatMessageRecord(
+            role: 'assistant',
+            text: 'plan',
+            createdAt: now,
+            todoSteps: [
+              AiTodoStep(
+                id: 'task-1',
+                name: 'Step 1',
+                command: 'echo ok',
+                description: 'Persisted plan step',
+                status: StepStatus.running,
+              ),
+            ],
+          ),
+        ],
+      );
+      await storage.saveAiChat(chatRunning);
+
+      final rawSkipRunning = await tools.execute(
+          'client_task_skip',
+          {
+            'taskId': 'task-1',
+            'reason': 'manual override',
+          },
+          approvedWrite: true);
+      final decodedSkipRunning =
+          jsonDecode(rawSkipRunning) as Map<String, dynamic>;
+      expect(decodedSkipRunning['error'],
+          contains('Only pending or failed tasks can be skipped'));
+      expect(decodedSkipRunning['code'], 'invalid_skip_state');
+
+      // 6. Verify approvalRequestFor generates correct request for client_task_skip
+      final skipRequest = await tools.approvalRequestFor('client_task_skip', {
+        'taskId': 'task-1',
+        'reason': 'manual override',
+      });
+      expect(skipRequest, isNotNull);
+      expect(skipRequest!.approvalType, 'plan_task_change');
+      expect(skipRequest.command, contains('SKIP PLAN TASK task-1'));
+      expect(skipRequest.contentPreview, contains('Reason: manual override'));
+    });
   });
 
   group('client_update_skill approval and security flow', () {
@@ -1066,6 +1320,96 @@ void main() {
       expect(request.contentPreview,
           isNot(contains('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9')));
       expect(request.contentPreview, contains('password=[REDACTED]'));
+    });
+  });
+
+  group('needsServerSelection tools connectionId boundary check tests', () {
+    test('server tool without connectionId returns connection_required',
+        () async {
+      final raw = await tools.execute('get_server_details', {});
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      expect(
+          decoded['error'], contains('requires a selected server connection'));
+      expect(decoded['code'], 'connection_required');
+      expect(decoded['tool'], 'get_server_details');
+    });
+
+    test('sftp write without connectionId returns connection_required',
+        () async {
+      final raw = await tools.execute('sftp_write_text', {
+        'path': '/tmp/test.txt',
+        'content': 'hello',
+      });
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      expect(
+          decoded['error'], contains('requires a selected server connection'));
+      expect(decoded['code'], 'connection_required');
+      expect(decoded['tool'], 'sftp_write_text');
+    });
+
+    test('ssh run_command without connectionId returns connection_required',
+        () async {
+      final raw = await tools.execute('run_command', {
+        'command': 'ls -la',
+      });
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      expect(
+          decoded['error'], contains('requires a selected server connection'));
+      expect(decoded['code'], 'connection_required');
+      expect(decoded['tool'], 'run_command');
+    });
+
+    test('ssh run_command with local connectionId returns connection_required',
+        () async {
+      final raw = await tools.execute('run_command', {
+        'connectionId': 'local',
+        'command': 'ls -la',
+      });
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      expect(
+          decoded['error'], contains('requires a selected server connection'));
+      expect(decoded['code'], 'connection_required');
+      expect(decoded['tool'], 'run_command');
+    });
+
+    test('monitor汇总工具不需要选中服务器连接就可以执行', () async {
+      // monitor_get_state
+      final rawState = await tools.execute('monitor_get_state', {});
+      final decodedState = jsonDecode(rawState) as Map<String, dynamic>;
+      expect(decodedState['error'], isNull);
+
+      // monitor_get_health
+      final rawHealth = await tools.execute('monitor_get_health', {});
+      final decodedHealth = jsonDecode(rawHealth) as Map<String, dynamic>;
+      expect(decodedHealth['error'], isNull);
+
+      // monitor_get_alerts
+      final rawAlerts = await tools.execute('monitor_get_alerts', {});
+      final decodedAlerts = jsonDecode(rawAlerts) as Map<String, dynamic>;
+      expect(decodedAlerts['error'], isNull);
+    });
+
+    test('其他monitor工具和停止监视工具依然必须有服务器连接', () async {
+      final toolsToTest = [
+        'monitor_get_samples',
+        'monitor_get_ports',
+        'monitor_get_applications',
+        'monitor_stop_for_connection'
+      ];
+      for (final toolName in toolsToTest) {
+        final raw = await tools.execute(toolName, {});
+        final decoded = jsonDecode(raw) as Map<String, dynamic>;
+        expect(
+          decoded['error'],
+          contains('requires a selected server connection'),
+          reason: 'Tool $toolName should require a server connection.',
+        );
+        expect(
+          decoded['code'],
+          'connection_required',
+          reason: 'Tool $toolName should fail with connection_required.',
+        );
+      }
     });
   });
 }
@@ -1547,6 +1891,28 @@ class _FakeSftpClient implements SftpClientAdapter {
 
   @override
   Future<void> disconnectAll({bool notify = true}) async {}
+
+  @override
+  SftpTransferState? get activeTransfer => null;
+
+  @override
+  bool get hasActiveTransfer => false;
+
+  @override
+  void cancelActiveTransfer() {}
+
+  @override
+  Future<void> uploadFile({
+    required String localPath,
+    required String filename,
+  }) async {}
+
+  @override
+  Future<void> downloadFile(
+    SftpEntry entry, {
+    required String localPath,
+    int maxBytes = SftpService.maxDownloadBytes,
+  }) async {}
 }
 
 class _FakeServerDiagnosticsService implements ServerDiagnosticsAdapter {

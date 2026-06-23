@@ -1,11 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:drift/drift.dart' as drift;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import '../data/database/app_database.dart' as db;
+import '../data/database/migrations.dart';
+import '../features/ai_chat/models/agent_trace_event.dart';
 import '../features/connection/models/connection.dart';
 import '../features/playbook/models/playbook.dart';
 import '../utils/skill_frontmatter.dart';
@@ -13,6 +17,7 @@ import 'agent_model_profile.dart';
 import 'app_log_service.dart';
 import '../core/services/data_protection_service.dart';
 import 'multi_agent_coordinator.dart';
+import 'llm_provider/llm_api_format.dart';
 
 part 'storage/storage_models.dart';
 part 'storage/settings_ops.dart';
@@ -23,19 +28,32 @@ part 'storage/terminal_ops.dart';
 part 'storage/playbook_ops.dart';
 part 'storage/backup_ops.dart';
 part 'storage/buffered_write_ops.dart';
+part 'storage/drift_ops.dart';
+part '../data/repositories/drift_ai_chat_repository.dart';
+part '../data/repositories/drift_agent_metrics_repository.dart';
+part '../data/repositories/drift_agent_trace_repository.dart';
+part '../data/repositories/drift_terminal_history_repository.dart';
+part '../data/repositories/drift_playbook_repository.dart';
+part '../data/repositories/drift_sftp_history_repository.dart';
 
 const Uuid _traceUuid = Uuid();
 
-/// 中央持久化服务。管理应用的所有数据持久化，采用三层存储策略：
+/// 中央持久化服务。管理应用的所有数据持久化，采用分层存储策略：
 ///
-/// | 数据类型            | 存储位置                              | 加密方式        |
-/// |---------------------|---------------------------------------|-----------------|
-/// | SSH 密码、私钥、API | FlutterSecureStorage (平台 Keychain)  | 平台原生加密     |
-/// | 连接配置、聊天记录   | SharedPreferences + AES-256-GCM       | DataProtection   |
-/// | 主题、语言、字体     | SharedPreferences 明文                 | 无（不含敏感信息）|
+/// | 数据类型 | 存储位置 | 加密方式 |
+/// |---|---|---|
+/// | SSH 密码、私钥、API Key | FlutterSecureStorage | 平台原生加密 |
+/// | 主题、语言、字体、小设置 | SharedPreferences | 明文 |
+/// | 未迁移的兼容数据 | SharedPreferences + DataProtection | AES-256-GCM |
+/// | 增长型结构化数据 | Drift SQLite | metadata 明文，敏感正文字段级加密 |
 ///
-/// 高频写操作（AI 聊天、tmux 会话、终端历史）使用 700ms 防抖批量写入，
-/// App 进入后台时调用 flushPendingWrites() 确保数据落盘。
+/// 不要把凭据写入 Drift；AI message、tool trace、todoSteps 和 Playbook
+/// content 等敏感正文不得以明文 Drift column 保存。生产环境数据库打开失败时
+/// 不得 fallback 到内存数据库，调用方应退回旧 protected-pref 兼容路径。
+///
+/// 旧 protected-pref 写入仍使用 700ms 防抖；Drift-backed 数据通过 DAO
+/// transaction 持久化。历史 Drift 明文敏感字段由
+/// drift_sensitive_fields_encrypted_v1 启动迁移重加密。
 abstract interface class ConnectionRepository {
   List<ConnectionConfig> get connections;
   Future<void> addConnection(ConnectionConfig config);
@@ -67,6 +85,7 @@ abstract interface class AiSettingsRepository {
     String? webSearchEngine,
     bool? multiAgentEnabled,
     int? multiAgentMaxAgents,
+    bool? postToolReviewEnabled,
     int? toolCallBudget,
     int? maxImageSizeBytes,
     int? maxFileSizeBytes,
@@ -84,6 +103,7 @@ abstract interface class AiSettingsRepository {
     String? customReviewerPrompt,
     String? customSummarizerPrompt,
     String? customCoordinatorPrompt,
+    LlmApiFormat? apiFormat,
   });
 
   Future<String?> getAiApiKey();
@@ -130,6 +150,17 @@ abstract interface class AgentRunMetricsRepository {
   Future<void> saveAgentRunMetrics(AgentRunMetrics metrics);
 }
 
+abstract interface class AgentTraceRepository {
+  Future<List<AgentTraceEvent>> loadAgentTraceEvents(String runId);
+  Future<List<String>> loadRecentAgentTraceRunIdsForChat(
+    String chatId, {
+    int limit,
+  });
+  Future<void> saveAgentTraceEvent(AgentTraceEvent event);
+  Future<void> saveAgentTraceEvents(List<AgentTraceEvent> events);
+  Future<void> deleteAgentTraceEvents(String runId);
+}
+
 abstract interface class TerminalHistoryRepository {
   Future<List<TerminalHistoryRecord>> loadTerminalHistoryRecords();
   Future<void> saveTerminalHistoryRecord(TerminalHistoryRecord record);
@@ -140,6 +171,26 @@ abstract interface class PlaybookRepository {
   Future<List<Playbook>> loadPlaybooks();
   Future<void> savePlaybook(Playbook playbook);
   Future<void> deletePlaybook(String id);
+}
+
+abstract interface class SftpPathHistoryRepository {
+  Future<void> recordVisitedPath(String connectionId, String path);
+  Future<List<SftpRecentPathRecord>> loadRecentPaths(
+    String connectionId, {
+    int limit,
+  });
+  Future<SftpFavoritePathRecord> addFavoritePath(
+    String connectionId,
+    String path,
+    String name,
+  );
+  Future<void> removeFavoritePath(String id);
+  Future<void> renameFavoritePath(String id, String name);
+  Future<List<SftpFavoritePathRecord>> loadFavoritePaths(String connectionId);
+  Future<SftpFavoritePathRecord?> findFavoritePath(
+    String connectionId,
+    String path,
+  );
 }
 
 abstract interface class AppBackupRepository {
@@ -154,9 +205,15 @@ class StorageService extends ChangeNotifier
         AiChatRepository,
         AiSkillRepository,
         AgentRunMetricsRepository,
+        AgentTraceRepository,
         TerminalHistoryRepository,
         PlaybookRepository,
+        SftpPathHistoryRepository,
         AppBackupRepository {
+  final db.AppDatabase? _providedDatabase;
+
+  StorageService({db.AppDatabase? database}) : _providedDatabase = database;
+
   @override
   Future<void> addConnection(ConnectionConfig config) =>
       ConnectionOps(this).addConnection(config);
@@ -222,6 +279,7 @@ class StorageService extends ChangeNotifier
     String? webSearchEngine,
     bool? multiAgentEnabled,
     int? multiAgentMaxAgents,
+    bool? postToolReviewEnabled,
     int? toolCallBudget,
     int? maxImageSizeBytes,
     int? maxFileSizeBytes,
@@ -239,6 +297,7 @@ class StorageService extends ChangeNotifier
     String? customReviewerPrompt,
     String? customSummarizerPrompt,
     String? customCoordinatorPrompt,
+    LlmApiFormat? apiFormat,
   }) =>
       SettingsOps(this).saveAiConnectionSettings(
         baseUrl: baseUrl,
@@ -256,6 +315,7 @@ class StorageService extends ChangeNotifier
         webSearchEngine: webSearchEngine,
         multiAgentEnabled: multiAgentEnabled,
         multiAgentMaxAgents: multiAgentMaxAgents,
+        postToolReviewEnabled: postToolReviewEnabled,
         toolCallBudget: toolCallBudget,
         maxImageSizeBytes: maxImageSizeBytes,
         maxFileSizeBytes: maxFileSizeBytes,
@@ -273,6 +333,7 @@ class StorageService extends ChangeNotifier
         customReviewerPrompt: customReviewerPrompt,
         customSummarizerPrompt: customSummarizerPrompt,
         customCoordinatorPrompt: customCoordinatorPrompt,
+        apiFormat: apiFormat,
       );
 
   @override
@@ -358,6 +419,7 @@ class StorageService extends ChangeNotifier
   static const _restorableTmuxSessionsKey = 'restorable_tmux_sessions';
   static const _terminalHistoryRecordsKey = 'terminal_history_records';
   static const _aiBaseUrlKey = 'ai_base_url';
+  static const _aiApiFormatKey = 'ai_api_format';
   static const _aiBaseUrlHistoryKey = 'ai_base_url_history';
   static const _aiModelKey = 'ai_model';
   static const _aiHelperModelKey = 'ai_helper_model';
@@ -375,6 +437,7 @@ class StorageService extends ChangeNotifier
   static const _quarkApiKeySecureKey = 'ai_quark_api_key';
   static const _aliyunApiKeySecureKey = 'ai_aliyun_api_key';
   static const _aiMultiAgentEnabledKey = 'ai_multi_agent_enabled';
+  static const _aiPostToolReviewEnabledKey = 'ai_post_tool_review_enabled';
   static const _aiMultiAgentMaxAgentsKey = 'ai_multi_agent_max_agents';
   static const _aiToolCallBudgetKey = 'ai_tool_call_budget';
   static const _aiMaxImageSizeBytesKey = 'ai_max_image_size_bytes';
@@ -396,6 +459,14 @@ class StorageService extends ChangeNotifier
   static const _aiSkillsKey = 'ai_skills';
   static const _agentRunMetricsKey = 'agent_run_metrics';
   static const _playbooksKey = 'custom_playbooks';
+  static const _driftAiChatsMigratedKey = 'drift_ai_chats_migrated_v1';
+  static const _driftAgentMetricsMigratedKey =
+      'drift_agent_metrics_migrated_v1';
+  static const _driftTerminalHistoryMigratedKey =
+      'drift_terminal_history_migrated_v1';
+  static const _driftPlaybooksMigratedKey = 'drift_playbooks_migrated_v1';
+  static const _driftSensitiveFieldsEncryptedKey =
+      'drift_sensitive_fields_encrypted_v1';
   static const _secretCacheEnabledKey = 'secret_cache_enabled';
   static const _secretCacheTtlSecondsKey = 'secret_cache_ttl_seconds';
   static const _defaultSecretCacheTtl = Duration(minutes: 15);
@@ -410,6 +481,15 @@ class StorageService extends ChangeNotifier
     mOptions: MacOsOptions(usesDataProtectionKeychain: false),
   );
   final DataProtectionService _dataProtection = DataProtectionService.instance;
+  db.AppDatabase? _database;
+  bool _ownsDatabase = false;
+  bool _driftReady = false;
+  bool _driftAiChatsActive = false;
+  bool _driftAgentMetricsActive = false;
+  bool _driftAgentTraceActive = false;
+  bool _driftTerminalHistoryActive = false;
+  bool _driftPlaybooksActive = false;
+  bool _driftSftpHistoryActive = false;
 
   Future<String?> _readSecure(String key) async {
     try {
@@ -461,6 +541,7 @@ class StorageService extends ChangeNotifier
   List<AiChatRecord>? _aiChatsCache;
   List<AiSkillRecord>? _aiSkillsCache;
   List<AgentRunMetrics>? _agentRunMetricsCache;
+  final Map<String, List<AgentTraceEvent>> _agentTraceEventsCache = {};
   List<Playbook>? _playbooksCache;
   List<RestorableTmuxSession>? _restorableTmuxSessionsCache;
   List<TerminalHistoryRecord>? _terminalHistoryRecordsCache;
@@ -506,6 +587,7 @@ class StorageService extends ChangeNotifier
       _powerGuideSeen = _prefs?.getBool(_powerGuideSeenKey) ?? false;
       await _loadSecretCacheSettings();
       await _loadConnections();
+      await _initializeDriftStorage();
     } catch (e) {
       AppLogService.instance
           .error('Failed to initialize storage service', error: e);
@@ -547,6 +629,29 @@ class StorageService extends ChangeNotifier
       _saveAgentRunMetrics(metrics);
 
   @override
+  Future<List<AgentTraceEvent>> loadAgentTraceEvents(String runId) =>
+      _loadAgentTraceEvents(runId);
+
+  @override
+  Future<List<String>> loadRecentAgentTraceRunIdsForChat(
+    String chatId, {
+    int limit = 20,
+  }) =>
+      _loadRecentAgentTraceRunIdsForChat(chatId, limit: limit);
+
+  @override
+  Future<void> saveAgentTraceEvent(AgentTraceEvent event) =>
+      _saveAgentTraceEvent(event);
+
+  @override
+  Future<void> saveAgentTraceEvents(List<AgentTraceEvent> events) =>
+      _saveAgentTraceEvents(events);
+
+  @override
+  Future<void> deleteAgentTraceEvents(String runId) =>
+      _deleteAgentTraceEvents(runId);
+
+  @override
   Future<List<Playbook>> loadPlaybooks() => _loadPlaybooks();
 
   @override
@@ -554,6 +659,43 @@ class StorageService extends ChangeNotifier
 
   @override
   Future<void> deletePlaybook(String id) => _deletePlaybook(id);
+
+  @override
+  Future<void> recordVisitedPath(String connectionId, String path) =>
+      _recordSftpVisitedPath(connectionId, path);
+
+  @override
+  Future<List<SftpRecentPathRecord>> loadRecentPaths(
+    String connectionId, {
+    int limit = 30,
+  }) =>
+      _loadSftpRecentPaths(connectionId, limit: limit);
+
+  @override
+  Future<SftpFavoritePathRecord> addFavoritePath(
+    String connectionId,
+    String path,
+    String name,
+  ) =>
+      _addSftpFavoritePath(connectionId, path, name);
+
+  @override
+  Future<void> removeFavoritePath(String id) => _removeSftpFavoritePath(id);
+
+  @override
+  Future<void> renameFavoritePath(String id, String name) =>
+      _renameSftpFavoritePath(id, name);
+
+  @override
+  Future<List<SftpFavoritePathRecord>> loadFavoritePaths(String connectionId) =>
+      _loadSftpFavoritePaths(connectionId);
+
+  @override
+  Future<SftpFavoritePathRecord?> findFavoritePath(
+    String connectionId,
+    String path,
+  ) =>
+      _findSftpFavoritePath(connectionId, path);
 
   @override
   Future<String> exportAppDataJson() => _exportAppDataJson();
@@ -595,6 +737,9 @@ class StorageService extends ChangeNotifier
       pending.timer?.cancel();
     }
     unawaited(flushPendingWrites());
+    if (_ownsDatabase) {
+      unawaited(_database?.close());
+    }
     super.dispose();
   }
 }

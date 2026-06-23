@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:dartssh2/dartssh2.dart';
 import 'package:ssh_mobile/core/services/ssh_host_key_policy.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/core/services/ssh_client_factory.dart';
@@ -249,6 +250,41 @@ void main() {
           ),
         ),
         throwsA(isA<SshHostKeyMismatchException>()),
+      );
+    });
+
+    test('host key exceptions implement SSHError', () {
+      expect(
+        const SshHostKeyUntrustedException(
+          connectionName: 'test',
+          host: '127.0.0.1',
+          port: 22,
+          algorithm: 'ssh-ed25519',
+          fingerprint: 'MD5:...',
+        ),
+        isA<SSHError>(),
+      );
+      expect(
+        const SshHostKeyRejectedException(
+          connectionName: 'test',
+          host: '127.0.0.1',
+          port: 22,
+          algorithm: 'ssh-ed25519',
+          fingerprint: 'MD5:...',
+        ),
+        isA<SSHError>(),
+      );
+      expect(
+        const SshHostKeyMismatchException(
+          connectionName: 'test',
+          host: '127.0.0.1',
+          port: 22,
+          expectedAlgorithm: 'ssh-ed25519',
+          expectedFingerprint: 'MD5:...',
+          actualAlgorithm: 'ssh-ed25519',
+          actualFingerprint: 'MD5:abc...',
+        ),
+        isA<SSHError>(),
       );
     });
   });

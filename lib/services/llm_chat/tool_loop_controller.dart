@@ -19,6 +19,7 @@ class ToolLoopController {
   final LlmToolBudgetController toolBudget;
   final Map<String, CachedToolResult> readOnlyToolCache;
   final List<LlmToolLedgerEntry> toolLedger;
+  final LlmProviderAdapter? provider;
 
   int cacheHitCount = 0;
   int dedupBlockedCount = 0;
@@ -33,6 +34,7 @@ class ToolLoopController {
     required this.toolBudget,
     required this.readOnlyToolCache,
     required this.toolLedger,
+    this.provider,
   });
 
   Future<ToolLoopResult> handleToolCalls({
@@ -54,9 +56,46 @@ class ToolLoopController {
     required MultiAgentClassificationCompletion classify,
     PlanExecutionSnapshot? planExecutionSnapshot,
   }) async {
+    final activeProvider =
+        provider ?? LlmProviderFactory.fromSettings(settings);
     for (var toolIndex = 0; toolIndex < toolCalls.length; toolIndex++) {
       final call = toolCalls[toolIndex];
       cancellationToken?.throwIfCancelled();
+
+      PlanExecutionSnapshot? activeSnapshot = planExecutionSnapshot;
+      if (!planMode) {
+        final ts = chatService.toolService;
+        if (ts is AiToolService && ts.clientWebViewSessionId != null) {
+          final chatId = ts.clientWebViewSessionId!;
+          final chats = await chatService.storageService.loadAiChats();
+          final chatIndex = chats.indexWhere((c) => c.id == chatId);
+          if (chatIndex != -1) {
+            final chat = chats[chatIndex];
+            final approvedPlanRef = chat.approvedPlan;
+            if (approvedPlanRef != null) {
+              final planMsg = chatAssistantMessageByCreatedAt(
+                chat,
+                approvedPlanRef.assistantCreatedAt,
+              );
+              if (planMsg != null) {
+                activeSnapshot =
+                    const PlanExecutionController().snapshot(planMsg.todoSteps);
+              }
+            }
+          }
+        }
+      }
+
+      var result = jsonEncode({
+        'error': 'Tool execution did not complete.',
+      });
+      var outcome = 'success';
+      var approvalRequired = false;
+      var approvedWrite = false;
+      var stopAfterToolResult = false;
+      var cacheHit = false;
+      var dedupBlocked = false;
+      String? stopMessage;
 
       final arguments = chatService._decodeArguments(call.arguments);
       onTrace?.call(
@@ -78,6 +117,188 @@ class ToolLoopController {
         call.name,
         signatureArguments,
       );
+
+      if (tool == null) {
+        outcome = 'tool_not_visible';
+        result = jsonEncode({
+          'error': 'Tool is not available in the current context.',
+          'tool': call.name,
+        });
+        onTrace?.call(
+          LlmTraceEvent(
+            kind: 'tool_blocked',
+            title: 'Tool blocked: ${call.name} (not visible)',
+            content:
+                'Tool "${call.name}" is not exposed in the current context.',
+          ),
+        );
+        workingMessages.add(activeProvider.buildToolResultMessage(
+          call: LlmProviderToolCall(
+            id: call.id,
+            name: call.name,
+            argumentsJson: call.arguments,
+          ),
+          result: result,
+        ));
+        workingMessages.add({
+          'role': 'system',
+          'content':
+              'The requested tool is not available in the current context. Do not call hidden or unavailable tools. Use only the tools currently exposed to you, or ask the user to select the required server/session/mode first.',
+        });
+
+        toolLedger.add(
+          LlmToolLedgerEntry(
+            index: toolBudget.usedCalls,
+            toolName: call.name,
+            signature: signature,
+            argumentsPreview: chatService._toolSecretPolicy.previewText(
+              chatService._prettyJson(redactedArguments),
+              maxChars: 400,
+            ),
+            outcome: outcome,
+            approvalRequired: false,
+            approved: false,
+            failed: true,
+            emptyResult: false,
+            cacheHit: false,
+            dedupBlocked: false,
+            auditEscalationLevel: toolBudget.auditCount,
+            quality: ToolResultQuality.unsafeBlocked.name,
+            resultPreview: chatService._toolSecretPolicy.previewText(
+              chatService._prettyJsonString(result),
+              maxChars: 600,
+            ),
+          ),
+        );
+
+        chatService._emitToolResultTrace(
+          onTrace,
+          call.name,
+          result,
+          outcome: outcome,
+        );
+
+        continue;
+      }
+
+      if (!planMode &&
+          activeSnapshot != null &&
+          activeSnapshot.steps.isNotEmpty) {
+        final gateResult =
+            const PlanExecutionController().canRunToolForCurrentStep(
+          steps: activeSnapshot.steps,
+          toolName: tool.name,
+          arguments: arguments,
+        );
+
+        if (!gateResult.allowed) {
+          outcome = 'plan_execution_blocked';
+          _currentOutcome = AgentFinalOutcome.planExecutionBlocked;
+
+          final Map<String, dynamic> errorObj = {
+            'error': 'Tool call blocked by plan execution gate.',
+          };
+          if (gateResult.reason == 'task_update_required') {
+            errorObj['code'] = 'task_update_required';
+            errorObj['taskId'] = gateResult.currentStep?.id;
+            errorObj['nextAction'] =
+                'Call client_task_update with status=running for the current task before executing this tool.';
+          } else if (gateResult.reason == 'previous_step_failed') {
+            errorObj['code'] = 'plan_execution_blocked';
+            errorObj['reason'] = 'A preceding step has failed.';
+            errorObj['nextAction'] =
+                'Stop execution and ask the user whether to retry, skip, or revise the plan.';
+          } else {
+            errorObj['code'] = 'plan_execution_blocked';
+            errorObj['reason'] = gateResult.reason;
+          }
+          if (gateResult.currentStep != null) {
+            errorObj['currentStep'] = {
+              'taskId': gateResult.currentStep!.id,
+              'name': gateResult.currentStep!.name,
+              'status': gateResult.currentStep!.status.name,
+            };
+          }
+          result = jsonEncode(errorObj);
+
+          onTrace?.call(
+            LlmTraceEvent(
+              kind: 'tool_blocked',
+              title: 'Tool blocked by plan execution gate: ${call.name}',
+              content: chatService._prettyJson({
+                'tool': call.name,
+                'executionMode': tool.executionMode.name,
+                'stepScoped': true,
+                'reason': gateResult.reason,
+                'currentStepId': gateResult.currentStep?.id,
+                'currentStepStatus': gateResult.currentStep?.status.name,
+              }),
+            ),
+          );
+
+          workingMessages.add(activeProvider.buildToolResultMessage(
+            call: LlmProviderToolCall(
+              id: call.id,
+              name: call.name,
+              argumentsJson: call.arguments,
+            ),
+            result: result,
+          ));
+
+          final quality = ToolResultClassifier.classify(
+            toolName: call.name,
+            resultJson: result,
+            outcome: outcome,
+            approvalRequired: false,
+            approved: false,
+            cacheHit: false,
+            dedupBlocked: false,
+          );
+
+          final hint =
+              ToolResultClassifier.getSystemHint(call.name, quality, language);
+          if (hint != null) {
+            workingMessages.add({
+              'role': 'system',
+              'content': hint,
+            });
+          }
+
+          toolLedger.add(
+            LlmToolLedgerEntry(
+              index: toolBudget.usedCalls,
+              toolName: call.name,
+              signature: signature,
+              argumentsPreview: chatService._toolSecretPolicy.previewText(
+                chatService._prettyJson(redactedArguments),
+                maxChars: 400,
+              ),
+              outcome: outcome,
+              approvalRequired: false,
+              approved: false,
+              failed: true,
+              emptyResult: false,
+              cacheHit: false,
+              dedupBlocked: false,
+              auditEscalationLevel: toolBudget.auditCount,
+              quality: quality.name,
+              resultPreview: chatService._toolSecretPolicy.previewText(
+                chatService._prettyJsonString(result),
+                maxChars: 600,
+              ),
+            ),
+          );
+
+          chatService._emitToolResultTrace(
+            onTrace,
+            call.name,
+            result,
+            outcome: outcome,
+          );
+
+          continue;
+        }
+      }
 
       final budgetCheck = toolBudget.checkBeforeToolCall();
       if (budgetCheck.requiresAudit) {
@@ -144,12 +365,19 @@ class ToolLoopController {
               auditResult: auditResult,
             );
             chatService._emitToolResultTrace(
-                onTrace, blockedCall.name, blockedResult);
-            workingMessages.add({
-              'role': 'tool',
-              'tool_call_id': blockedCall.id,
-              'content': blockedResult,
-            });
+              onTrace,
+              blockedCall.name,
+              blockedResult,
+              outcome: 'budget_audit_rejected',
+            );
+            workingMessages.add(activeProvider.buildToolResultMessage(
+              call: LlmProviderToolCall(
+                id: blockedCall.id,
+                name: blockedCall.name,
+                argumentsJson: blockedCall.arguments,
+              ),
+              result: blockedResult,
+            ));
           }
 
           workingMessages.add({
@@ -168,7 +396,8 @@ class ToolLoopController {
             classify: classify,
             onTrace: onTrace,
             cancellationToken: cancellationToken,
-            planExecutionSnapshot: planExecutionSnapshot,
+            settings: settings,
+            planExecutionSnapshot: activeSnapshot,
           );
           return const ToolLoopResult(
             toolsShouldBeDisabled: true,
@@ -247,12 +476,19 @@ class ToolLoopController {
               auditResult: auditResult,
             );
             chatService._emitToolResultTrace(
-                onTrace, blockedCall.name, blockedResult);
-            workingMessages.add({
-              'role': 'tool',
-              'tool_call_id': blockedCall.id,
-              'content': blockedResult,
-            });
+              onTrace,
+              blockedCall.name,
+              blockedResult,
+              outcome: 'budget_audit_rejected',
+            );
+            workingMessages.add(activeProvider.buildToolResultMessage(
+              call: LlmProviderToolCall(
+                id: blockedCall.id,
+                name: blockedCall.name,
+                argumentsJson: blockedCall.arguments,
+              ),
+              result: blockedResult,
+            ));
           }
 
           workingMessages.add({
@@ -271,7 +507,8 @@ class ToolLoopController {
             classify: classify,
             onTrace: onTrace,
             cancellationToken: cancellationToken,
-            planExecutionSnapshot: planExecutionSnapshot,
+            settings: settings,
+            planExecutionSnapshot: activeSnapshot,
           );
           return const ToolLoopResult(
             toolsShouldBeDisabled: true,
@@ -294,16 +531,16 @@ class ToolLoopController {
         );
       }
 
-      var result = jsonEncode({
+      result = jsonEncode({
         'error': 'Tool execution did not complete.',
       });
-      var outcome = 'success';
-      var approvalRequired = false;
-      var approvedWrite = false;
-      var stopAfterToolResult = false;
-      var cacheHit = false;
-      var dedupBlocked = false;
-      String? stopMessage;
+      outcome = 'success';
+      approvalRequired = false;
+      approvedWrite = false;
+      stopAfterToolResult = false;
+      cacheHit = false;
+      dedupBlocked = false;
+      stopMessage = null;
 
       try {
         final repeatedStreak = chatService._nextRepeatedSignatureStreak(
@@ -311,8 +548,7 @@ class ToolLoopController {
           signature,
         );
 
-        if (tool != null &&
-            tool.executionMode == AiToolExecutionMode.readOnly &&
+        if (tool.executionMode == AiToolExecutionMode.readOnly &&
             (repeatedStreak >= 3 ||
                 chatService._wouldTriggerAlternatingLoop(
                     toolLedger, signature))) {
@@ -333,9 +569,8 @@ class ToolLoopController {
           });
         }
 
-        final cacheEntry = tool == null ? null : readOnlyToolCache[signature];
+        final cacheEntry = readOnlyToolCache[signature];
         if (!dedupBlocked &&
-            tool != null &&
             tool.executionMode == AiToolExecutionMode.readOnly &&
             tool.effectiveCacheTtl > Duration.zero &&
             cacheEntry != null &&
@@ -355,6 +590,20 @@ class ToolLoopController {
 
         if (!dedupBlocked && !cacheHit && approvalRequest != null) {
           approvalCount += 1;
+          onTrace?.call(
+            LlmTraceEvent(
+              kind: 'approval',
+              title: 'Tool action approval requested',
+              content: chatService._prettyJson({
+                'tool': call.name,
+                'status': 'requested',
+                'approvalType': approvalRequest.approvalType,
+                'server': approvalRequest.connectionName,
+                'command': approvalRequest.command,
+                'reason': approvalRequest.reason,
+              }),
+            ),
+          );
           if (planMode) {
             outcome = 'blocked_in_plan_mode';
             _currentOutcome = AgentFinalOutcome.planModeBlocked;
@@ -369,6 +618,7 @@ class ToolLoopController {
                 title: 'Action blocked in Plan Mode',
                 content: chatService._prettyJson({
                   'tool': call.name,
+                  'status': 'blocked_in_plan_mode',
                   'message': 'Action blocked in plan mode',
                   'command': approvalRequest.command,
                 }),
@@ -376,11 +626,15 @@ class ToolLoopController {
             );
           } else if (requestToolApproval == null) {
             outcome = 'approval_unavailable';
+            _currentOutcome = AgentFinalOutcome.approvalUnavailable;
             result = jsonEncode({
               'error':
                   'This tool action requires user approval, but no approval UI is available.',
               'command': approvalRequest.command,
             });
+            stopAfterToolResult = true;
+            stopMessage =
+                '\n\nTool action requires approval, but approval is unavailable. Operation stopped.';
           } else {
             AppLogService.instance.info(
               'AI tool approval requested',
@@ -409,6 +663,7 @@ class ToolLoopController {
                   title: 'Tool action rejected',
                   content: chatService._prettyJson({
                     'tool': call.name,
+                    'status': 'rejected',
                     'approvalType': approvalRequest.approvalType,
                     'server': approvalRequest.connectionName,
                     'command': approvalRequest.command,
@@ -433,6 +688,7 @@ class ToolLoopController {
                   title: 'Tool action approved',
                   content: chatService._prettyJson({
                     'tool': call.name,
+                    'status': 'approved',
                     'approvalType': approvalRequest.approvalType,
                     'server': approvalRequest.connectionName,
                     'command': approvalRequest.command,
@@ -451,6 +707,33 @@ class ToolLoopController {
         if (!dedupBlocked &&
             !cacheHit &&
             (approvedWrite || !approvalRequired)) {
+          if (!planMode &&
+              activeSnapshot != null &&
+              activeSnapshot.steps.isNotEmpty) {
+            final currentStep = activeSnapshot.currentStep;
+            if (currentStep != null) {
+              final stepIndex = activeSnapshot.steps
+                  .indexWhere((s) => s.id == currentStep.id);
+              onTrace?.call(
+                LlmTraceEvent(
+                  kind: 'plan_step_tool_binding',
+                  title:
+                      'Step-Tool Binding: ${currentStep.name} -> ${call.name}',
+                  content: chatService._prettyJson({
+                    'taskId': currentStep.id,
+                    'stepIndex': stepIndex,
+                    'stepName': currentStep.name,
+                    'toolName': call.name,
+                    'connectionId': currentStep.connectionId,
+                    'commandPreview': chatService._toolSecretPolicy
+                        .previewText(currentStep.command, maxChars: 300),
+                    'statusBefore': currentStep.status.name,
+                  }),
+                ),
+              );
+            }
+          }
+
           result = await chatService.toolService.execute(
             call.name,
             arguments,
@@ -459,8 +742,31 @@ class ToolLoopController {
           cancellationToken?.throwIfCancelled();
           outcome = chatService._classifyToolResultOutcome(result);
 
-          if (tool != null &&
-              tool.executionMode == AiToolExecutionMode.readOnly &&
+          if (!planMode &&
+              activeSnapshot != null &&
+              activeSnapshot.steps.isNotEmpty) {
+            final currentStep = activeSnapshot.currentStep;
+            if (currentStep != null) {
+              onTrace?.call(
+                LlmTraceEvent(
+                  kind: 'plan_step_tool_binding',
+                  title:
+                      'Step-Tool Outcome: ${currentStep.name} -> ${call.name}',
+                  content: chatService._prettyJson({
+                    'taskId': currentStep.id,
+                    'toolName': call.name,
+                    'toolOutcome': outcome,
+                    'resultPreview': chatService._toolSecretPolicy
+                        .previewText(result, maxChars: 300),
+                    'suggestedTaskStatus':
+                        outcome == 'success' ? 'success' : 'failed',
+                  }),
+                ),
+              );
+            }
+          }
+
+          if (tool.executionMode == AiToolExecutionMode.readOnly &&
               tool.effectiveCacheTtl > Duration.zero) {
             readOnlyToolCache[signature] = CachedToolResult(
               result: result,
@@ -478,12 +784,22 @@ class ToolLoopController {
         });
       }
 
-      chatService._emitToolResultTrace(onTrace, call.name, result);
-      workingMessages.add({
-        'role': 'tool',
-        'tool_call_id': call.id,
-        'content': result,
-      });
+      chatService._emitToolResultTrace(
+        onTrace,
+        call.name,
+        result,
+        outcome: outcome,
+        cacheHit: cacheHit,
+        dedupBlocked: dedupBlocked,
+      );
+      workingMessages.add(activeProvider.buildToolResultMessage(
+        call: LlmProviderToolCall(
+          id: call.id,
+          name: call.name,
+          argumentsJson: call.arguments,
+        ),
+        result: result,
+      ));
 
       final quality = ToolResultClassifier.classify(
         toolName: call.name,
@@ -540,7 +856,8 @@ class ToolLoopController {
           classify: classify,
           onTrace: onTrace,
           cancellationToken: cancellationToken,
-          planExecutionSnapshot: planExecutionSnapshot,
+          settings: settings,
+          planExecutionSnapshot: activeSnapshot,
         );
         return ToolLoopResult(
           shouldStop: true,
@@ -561,6 +878,7 @@ class ToolLoopController {
       classify: classify,
       onTrace: onTrace,
       cancellationToken: cancellationToken,
+      settings: settings,
       planExecutionSnapshot: planExecutionSnapshot,
     );
 
@@ -580,14 +898,27 @@ class ToolLoopController {
     required MultiAgentClassificationCompletion classify,
     required void Function(LlmTraceEvent event)? onTrace,
     required LlmCancellationToken? cancellationToken,
+    required AiConnectionSettings settings,
     PlanExecutionSnapshot? planExecutionSnapshot,
   }) async {
     final needsPostReview = (finalOutcome == AgentFinalOutcome.toolError ||
         finalOutcome == AgentFinalOutcome.loopGuardBlocked ||
         finalOutcome == AgentFinalOutcome.approvalRejected ||
-        finalOutcome == AgentFinalOutcome.budgetAuditRejected);
+        finalOutcome == AgentFinalOutcome.budgetAuditRejected ||
+        finalOutcome == AgentFinalOutcome.approvalUnavailable);
 
     if (!needsPostReview) return;
+
+    if (!settings.postToolReviewEnabled) {
+      onTrace?.call(
+        LlmTraceEvent(
+          kind: 'multi_agent_post_tool_review_skipped',
+          title: 'Post-tool review skipped',
+          content: 'skipped_by_setting: postToolReviewEnabled=false',
+        ),
+      );
+      return;
+    }
 
     final currentTodoStep = planExecutionSnapshot?.currentStep;
     final recentLedger = toolLedger.isNotEmpty ? toolLedger.last : null;
@@ -598,7 +929,10 @@ class ToolLoopController {
         'Current Plan Step:',
         '- taskId: ${currentTodoStep.id}',
         '- name: ${currentTodoStep.name}',
-        '- command: ${currentTodoStep.command}',
+        '- command: ${chatService._toolSecretPolicy.previewText(
+          currentTodoStep.command,
+          maxChars: 300,
+        )}',
         '- status: ${currentTodoStep.status.name}',
         if (currentTodoStep.connectionId?.trim().isNotEmpty == true)
           '- connectionId: ${currentTodoStep.connectionId}',
@@ -629,6 +963,8 @@ class ToolLoopController {
         MultiAgentTrigger.postApprovalRejection,
       AgentFinalOutcome.budgetAuditRejected =>
         MultiAgentTrigger.postBudgetAudit,
+      AgentFinalOutcome.approvalUnavailable =>
+        MultiAgentTrigger.postToolFailure,
       _ => MultiAgentTrigger.postToolFailure,
     };
 
@@ -636,8 +972,8 @@ class ToolLoopController {
 
     final reviewResult = await chatService.multiAgentCoordinator.run(
       messages: workingMessages,
-      enabled: true,
-      maxAgents: 5,
+      enabled: settings.postToolReviewEnabled,
+      maxAgents: settings.multiAgentMaxAgents,
       trigger: trigger,
       postToolContext: postToolContext,
       checkCancelled: cancellationToken?.throwIfCancelled,

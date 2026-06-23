@@ -10,6 +10,11 @@ import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
+import 'package:ssh_mobile/features/ai_chat/services/ai_chat_runtime_factory.dart';
+import 'package:ssh_mobile/services/ai_tool_service.dart';
+import 'package:ssh_mobile/services/llm_chat_service.dart';
+import 'package:ssh_mobile/services/llm_runtime/llm_runtime_types.dart';
+import '../../../test_utils/wait_until.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -258,6 +263,16 @@ void main() {
     test(
         '/plan <args> enables Plan Mode and proceeds into the normal send flow',
         () async {
+      final factory = FakeSuccessRuntimeFactory(
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+      );
+
       final viewModel = AiChatViewModel(
         storageService: storageService,
         sshService: sshService,
@@ -266,6 +281,7 @@ void main() {
         playbookService: playbookService,
         ragService: ragService,
         appSettings: appSettings,
+        runtimeFactory: factory,
       );
 
       await viewModel.loadInitialDraft();
@@ -281,9 +297,197 @@ void main() {
       expect(result, isA<SendTextSuccess>());
       expect(viewModel.activeChat!.planMode, isTrue);
 
+      // Wait for generation to finish to avoid unawaited async leaks
+      await waitUntil(
+        () => viewModel.sending == false,
+        description: 'generation finishes',
+      );
+
       final messages = viewModel.activeChat!.messages;
       final userMessage = messages.firstWhere((m) => m.role == 'user');
       expect(userMessage.text, equals('diagnose nginx'));
     });
+
+    test(
+        'generate assistant response failure with empty partialAnswer assigns agentRunId to error message',
+        () async {
+      await storageService.saveAiConnectionSettings(
+        baseUrl: 'https://api.example.com',
+        model: 'demo-model',
+        apiKey: 'dummy-key',
+      );
+
+      final factory = FakeFailureRuntimeFactory(
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+      );
+
+      final viewModel = AiChatViewModel(
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+        runtimeFactory: factory,
+      );
+
+      await viewModel.loadInitialDraft();
+      final result = await viewModel.sendText(text: 'hello');
+      expect(result, isA<SendTextSuccess>());
+
+      // Wait for async runner execution
+      await waitUntil(
+        () =>
+            viewModel.activeChat?.messages.any((m) => m.role == 'error') ==
+            true,
+        description: 'error message after failed generation',
+      );
+      await waitUntil(
+        () => viewModel.sending == false,
+        description: 'generation finishes after failure',
+      );
+
+      final messages = viewModel.activeChat!.messages;
+      expect(messages, isNotEmpty);
+      final errorMessage = messages.firstWhere((m) => m.role == 'error');
+      expect(errorMessage.agentRunId, isNotNull);
+      expect(errorMessage.agentRunId, isNotEmpty);
+    });
   });
+}
+
+class FailureLlmChatService extends LlmChatService {
+  FailureLlmChatService({
+    required super.storageService,
+  }) : super(
+          toolService: const _FakeAiToolExecutor(),
+        );
+
+  @override
+  Stream<String> stream({
+    required List<Map<String, dynamic>> messages,
+    String? modelOverride,
+    Future<AiToolApprovalDecision> Function(AiToolApprovalRequest request)?
+        requestToolApproval,
+    void Function(LlmRunStats stats)? onStats,
+    void Function(LlmTraceEvent event)? onTrace,
+    LlmCancellationToken? cancellationToken,
+    String? runId,
+    Set<String>? allowedTools,
+    String userRequest = '',
+    Set<String> selectedConnectionIds = const {},
+    bool hasWebViewSession = false,
+    bool hasApprovedPlan = false,
+    List<String> memorySources = const [],
+    bool forceContextCompression = false,
+    bool planMode = false,
+    AiChatMessageRecord? approvedPlanMessage,
+  }) {
+    throw StateError('Chat service failure');
+  }
+}
+
+class FakeSuccessLlmChatService extends LlmChatService {
+  FakeSuccessLlmChatService({
+    required super.storageService,
+  }) : super(
+          toolService: const _FakeAiToolExecutor(),
+        );
+
+  @override
+  Stream<String> stream({
+    required List<Map<String, dynamic>> messages,
+    String? modelOverride,
+    Future<AiToolApprovalDecision> Function(AiToolApprovalRequest request)?
+        requestToolApproval,
+    void Function(LlmRunStats stats)? onStats,
+    void Function(LlmTraceEvent event)? onTrace,
+    LlmCancellationToken? cancellationToken,
+    String? runId,
+    Set<String>? allowedTools,
+    String userRequest = '',
+    Set<String> selectedConnectionIds = const {},
+    bool hasWebViewSession = false,
+    bool hasApprovedPlan = false,
+    List<String> memorySources = const [],
+    bool forceContextCompression = false,
+    bool planMode = false,
+    AiChatMessageRecord? approvedPlanMessage,
+  }) async* {
+    if (onTrace != null) {
+      onTrace(const LlmTraceEvent(
+        kind: 'agent_run_summary',
+        title: 'Run Summary',
+        content: '{"finalOutcome":"success","stepsCount":0,"durationMs":0}',
+      ));
+    }
+    if (onStats != null) {
+      onStats(const LlmRunStats(
+        promptTokens: 10,
+        completionTokens: 20,
+        totalTokens: 30,
+        elapsedMs: 100,
+        usageFromProvider: true,
+        contextTokensBeforeCompression: 10,
+        contextWindowTokens: 259000,
+        compressed: false,
+      ));
+    }
+    yield 'ok';
+  }
+}
+
+class _FakeAiToolExecutor implements AiToolExecutor {
+  const _FakeAiToolExecutor();
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class FakeFailureRuntimeFactory extends AiChatRuntimeFactory {
+  FakeFailureRuntimeFactory({
+    required super.storageService,
+    required super.sshService,
+    required super.sftpService,
+    required super.performanceMonitorService,
+    required super.playbookService,
+    required super.ragService,
+    required super.appSettings,
+  });
+
+  @override
+  LlmChatService createLlmChatService({
+    required AiConnectionSettings settings,
+    required String model,
+    required String chatId,
+  }) {
+    return FailureLlmChatService(storageService: storageService);
+  }
+}
+
+class FakeSuccessRuntimeFactory extends AiChatRuntimeFactory {
+  FakeSuccessRuntimeFactory({
+    required super.storageService,
+    required super.sshService,
+    required super.sftpService,
+    required super.performanceMonitorService,
+    required super.playbookService,
+    required super.ragService,
+    required super.appSettings,
+  });
+
+  @override
+  LlmChatService createLlmChatService({
+    required AiConnectionSettings settings,
+    required String model,
+    required String chatId,
+  }) {
+    return FakeSuccessLlmChatService(storageService: storageService);
+  }
 }

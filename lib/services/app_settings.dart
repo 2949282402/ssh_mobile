@@ -540,6 +540,11 @@ class AppStrings {
   String get terminalWindows => _en ? 'Terminal windows' : '终端窗口';
   String selectedWindows(int count) =>
       _en ? '$count selected' : '已选择 $count 个窗口';
+  String selectedServers(int count) =>
+      _en ? '$count selected' : '已选择 $count 个服务器';
+  String viewAllTerminalWindows(int totalCount) => _en
+      ? 'View all $totalCount ${totalCount == 1 ? "window" : "windows"}'
+      : '查看全部 $totalCount 个窗口';
   String get exitSelection => _en ? 'Exit selection' : '退出选择';
   String get selectAll => _en ? 'Select all' : '全选';
   String get closeSelectedWindows => _en ? 'Close selected windows' : '关闭选中窗口';
@@ -617,6 +622,13 @@ class AppStrings {
       ? 'Browse remote files with the same saved SSH connections on desktop and mobile.'
       : '桌面端和移动端使用同一套 SSH 连接来浏览远程文件。';
   String get parentDirectory => _en ? 'Parent directory' : '上级目录';
+  String get pathHistory => _en ? 'Path history' : '路径记录';
+  String get recentPaths => _en ? 'Recent paths' : '最近路径';
+  String get favoritePaths => _en ? 'Favorite paths' : '收藏路径';
+  String get addFavoritePath => _en ? 'Add favorite path' : '收藏当前路径';
+  String get removeFavoritePath => _en ? 'Remove favorite path' : '取消收藏路径';
+  String get noRecentPaths => _en ? 'No recent paths' : '暂无最近路径';
+  String get noFavoritePaths => _en ? 'No favorite paths' : '暂无收藏路径';
   String get refresh => _en ? 'Refresh' : '刷新';
   String get retry => _en ? 'Retry' : '重试';
   String get disconnect => _en ? 'Disconnect' : '断开连接';

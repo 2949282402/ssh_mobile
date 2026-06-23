@@ -38,6 +38,8 @@ void main() {
       expect(viewModel.entries, isEmpty);
       expect(viewModel.isConnected, isFalse);
       expect(viewModel.isBusy, isFalse);
+      expect(viewModel.activeTransfer, isNull);
+      expect(viewModel.hasActiveTransfer, isFalse);
     });
 
     test('isConnectionBusy and isConnectionOpen basic values', () {
@@ -50,6 +52,11 @@ void main() {
       final viewModel = SftpViewModel(sftpService: sftpService);
       expect(() => viewModel.disconnect(), returnsNormally);
       expect(() => viewModel.refresh(), returnsNormally);
+    });
+
+    test('cancelActiveTransfer calls service without throw', () {
+      final viewModel = SftpViewModel(sftpService: sftpService);
+      expect(() => viewModel.cancelActiveTransfer(), returnsNormally);
     });
   });
 }

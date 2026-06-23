@@ -63,3 +63,85 @@ class SftpPathInfo {
     };
   }
 }
+
+enum SftpTransferDirection {
+  upload,
+  download,
+}
+
+class SftpTransferCancelledException implements Exception {
+  final String message;
+  const SftpTransferCancelledException(
+      [this.message = 'Transfer cancelled by user']);
+
+  @override
+  String toString() => 'SftpTransferCancelledException: $message';
+}
+
+class SftpTransferState {
+  final String id;
+  final String name;
+  final int totalBytes;
+  final bool isUpload;
+  final int bytesTransferred;
+  final bool isCancelled;
+  final bool isError;
+  final String? errorMessage;
+
+  const SftpTransferState({
+    required this.id,
+    required this.name,
+    required this.totalBytes,
+    required this.isUpload,
+    this.bytesTransferred = 0,
+    this.isCancelled = false,
+    this.isError = false,
+    this.errorMessage,
+  });
+
+  double get progress => totalBytes > 0 ? bytesTransferred / totalBytes : 0.0;
+
+  SftpTransferState copyWith({
+    int? bytesTransferred,
+    bool? isCancelled,
+    bool? isError,
+    String? errorMessage,
+  }) {
+    return SftpTransferState(
+      id: id,
+      name: name,
+      totalBytes: totalBytes,
+      isUpload: isUpload,
+      bytesTransferred: bytesTransferred ?? this.bytesTransferred,
+      isCancelled: isCancelled ?? this.isCancelled,
+      isError: isError ?? this.isError,
+      errorMessage: errorMessage ?? this.errorMessage,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is SftpTransferState &&
+        other.id == id &&
+        other.name == name &&
+        other.totalBytes == totalBytes &&
+        other.isUpload == isUpload &&
+        other.bytesTransferred == bytesTransferred &&
+        other.isCancelled == isCancelled &&
+        other.isError == isError &&
+        other.errorMessage == errorMessage;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        id,
+        name,
+        totalBytes,
+        isUpload,
+        bytesTransferred,
+        isCancelled,
+        isError,
+        errorMessage,
+      );
+}

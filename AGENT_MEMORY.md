@@ -159,3 +159,34 @@ across sessions.
   文件 read/download 与日志读取走审批；WebView AI 读取阻断本地/内网/metadata
   URL 和敏感表单；日志统一经 `ToolSecretPolicy` 脱敏；backup import 先做
   大小、数量、字段长度和 schema 校验并继续丢弃凭据；后台通知默认隐藏服务器名。
+- 2026-06-20: Tool visibility is a hard execution boundary. Tool calls must be blocked when the requested tool is absent from `visibleToolsByName`. Hidden/unexposed tools must not enter approval, execution, cache, loop guard, or budget-audit paths. This preserves ToolExposureRouter as an actual security boundary rather than only a model hint.
+- 2026-06-20: Post-tool review and connection-required boundaries. Post-tool review is controlled by `postToolReviewEnabled`, separate from normal `multiAgentEnabled`. Tool execution must enforce connection requirements independently from ToolExposureRouter. Server/SSH/SFTP/monitor tools without `connectionId` should return `connection_required` and must not perform remote operations.
+- 2026-06-20: Plan Mode output validation before execution handoff. A valid plan must have persisted chat-bound `todoSteps` or a valid ` ```playbook ` JSON block with non-empty steps. If validation fails, the service requests one format-only repair attempt without execution tools. 
+- 2026-06-20: Plan Mode streaming is buffered before validation. Plan Mode plain-text output is buffered until structural validation/repair finishes. `LlmChatService` does not directly mutate chat storage for playbook persistence; `ChatOrchestrator` is the final todoSteps persistence boundary. This prevents showing invalid plans and avoids storage write conflicts with the ViewModel final save.
+- 2026-06-20: Execution Mode step-by-step reliability. Mutating remote tools are gated by the current step status during execution mode: pending tasks must be marked running first, failed tasks block subsequent execution, and skipped tasks require reasons. Added dedicated `client_task_retry` and `client_task_skip` tools and UI buttons in message bubble.
+- 2026-06-21: Execution Mode step-scoped remote tools gate. Gating now covers all server/ssh/sftp/monitor tools, including read-only diagnostics such as detect_os and sftp_read_text, to enforce proper step update workflows. Skipping running steps directly is disallowed; skipping a step from AI triggers a plan_task_change approval request.
+- 2026-06-21: Execution Mode step gate trace and approval-aware handler boundary. Plan execution gate traces include step-scoped metadata for easier debugging. Approval-aware tools such as client_task_skip must execute through AiToolService.execute/provider.execute so approvedWrite is propagated; direct handlers must not bypass approval.
+- 2026-06-21: Drift is now the persistence backend for growth-oriented
+  structured data: AI chats/messages, AgentRunMetrics, terminal history
+  metadata, Playbooks, and SFTP recent/favorite paths. Keep `StorageService` as
+  the compatibility facade, keep small settings in SharedPreferences, keep
+  credentials/API keys in secure storage, and leave legacy protected-pref data
+  in place for rollback during the migration window.
+- 2026-06-21: Drift security hardening: production database open failures must
+  surface to `StorageService` and fall back to legacy protected-pref paths, not
+  `NativeDatabase.memory()`. AI chat message text/context/attachments/traces/
+  todoSteps and Playbook `content_json` are field-encrypted in Drift; plaintext
+  legacy rows remain readable for compatibility.
+- 2026-06-21: Legacy plaintext Drift sensitive fields are re-encrypted during
+  storage startup under migration marker
+  `drift_sensitive_fields_encrypted_v1`. Keep the migration idempotent,
+  batch retryable, and marker-gated: each batch may commit independently, but
+  mark complete only after every batch succeeds. Logs may report row counts
+  only; never log field values.
+- 2026-06-22: Agent Trace history is now a Drift-only growth store under
+  `agent_trace_events`, with `StorageService` as the facade. Trace content is
+  redacted, size-capped, encrypted in `content_json`, tied to assistant
+  messages via `agentRunId`, and intentionally excluded from backup export.
+- 2026-06-22: Widget testing pages like LlmChatScreen with locally-scoped providers and target platform overrides must manage debug variable changes inside the testWidgets body using a try-finally block, as the binding's invariant tester runs before the global tearDown hook. Subtree provider instances can be retrieved via context lookups on public descendant widgets (e.g. Scaffold).
+
+

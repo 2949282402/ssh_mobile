@@ -14,6 +14,7 @@ class AiChatRunMetricsRecorder {
     required DateTime finishedAt,
     required int ragHits,
     required bool success,
+    String? runId,
     LlmRunStats? runStats,
   }) async {
     final promptTokens = runStats?.promptTokens ?? 0;
@@ -25,7 +26,9 @@ class AiChatRunMetricsRecorder {
 
     await _storageService.saveAgentRunMetrics(
       AgentRunMetrics(
-        id: 'run-${startedAt.microsecondsSinceEpoch}',
+        id: runId?.trim().isNotEmpty == true
+            ? runId!.trim()
+            : 'run-${startedAt.microsecondsSinceEpoch}',
         startedAt: startedAt,
         finishedAt: finishedAt,
         model: model,

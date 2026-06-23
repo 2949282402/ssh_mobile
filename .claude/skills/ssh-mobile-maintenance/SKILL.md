@@ -61,6 +61,17 @@ or maintenance lesson should be shared across Codex and Claude Code sessions.
   SSH unless the user is really targeting WSL or another Linux-like shell.
 - Keep secrets out of exports, logs, AI tool results, and docs. Stored API keys
   and credentials belong in secure storage, not plain preferences.
+- Growth-oriented structured data belongs behind repository interfaces and the
+  `StorageService` facade, with Drift implementations under `lib/data/`.
+  Small settings stay in SharedPreferences; credentials stay in secure storage.
+  Drift metadata may be plaintext for query/sort needs, but sensitive AI
+  message content, context, attachments, traces, todoSteps, and Playbook content
+  must be field-encrypted before SQLite writes. Production database open
+  failures must not silently fall back to an in-memory database. Legacy
+  plaintext Drift rows from the initial migration must be re-encrypted by
+  `drift_sensitive_fields_encrypted_v1` before considering storage migration
+  complete. That startup re-encryption runs in small retryable batches, marks
+  completion only after all batches succeed, and logs row counts only.
 - Keep SSH Host Key checks centralized in `SshHostKeyPolicy`. UI-initiated
   first use may prompt for TOFU confirmation, but AI tools and background SSH
   service code must never auto-trust unknown or changed host keys.
@@ -144,6 +155,9 @@ Primary entry points are `lib/features/sftp/viewmodels/sftp_viewmodel.dart`,
 
 - Keep multi-server switching warm when practical.
 - Restore the last remote path after reconnect.
+- Recent and favorite SFTP paths are per server and Drift-backed. Keep them out
+  of the SFTP protocol layer; record successful directory opens through the
+  service/facade path.
 - Require typed-name confirmation before delete.
 - Use dedicated editor/viewer pages for larger previews and text edits.
 - Read download, preview, and edit size limits from `AppSettings` instead of
@@ -205,8 +219,9 @@ Primary entry points are
 - Keep deferred page activation so heavy pages mount only when selected.
 - Keep the AI chat page alive across page switches.
 - Backup/import/export covers saved servers, restorable windows, terminal
-  history, AI settings, AI chats, and custom skills, but never passwords,
-  private keys, API keys, tokens, or other secrets.
+  history, AI settings, AI chats, AgentRunMetrics, Playbooks, SFTP
+  recent/favorite paths, and custom skills, but never passwords, private keys,
+  API keys, tokens, or other secrets.
 - Backup imports must enforce size, count, field-length, and schema limits
   before replacing local state, and high-risk content such as playbooks,
   custom prompts, shortcuts, and AI skills must remain user-approved import

@@ -687,6 +687,18 @@ class AiToolService implements AiToolExecutor {
           reason:
               'Executing sequential commands on a server requires user approval.',
         );
+      case 'client_task_skip':
+        final taskId = _arg(arguments, 'taskId');
+        final reason = _arg(arguments, 'reason');
+        return AiToolApprovalRequest(
+          toolName: name,
+          approvalType: 'plan_task_change',
+          connectionId: _clientScopeId,
+          connectionName: _clientScopeName,
+          command: 'SKIP PLAN TASK $taskId',
+          reason: 'Skipping an execution plan step requires user approval.',
+          contentPreview: 'Reason: $reason',
+        );
       default:
         return null;
     }
@@ -727,6 +739,23 @@ class AiToolService implements AiToolExecutor {
       AppLogService.instance
           .warning('Unknown AI tool requested', details: name);
       return jsonEncode({'error': 'Unknown tool: $name'});
+    }
+
+    final tool = availableTools.firstWhere((t) => t.name == name);
+    if (tool.needsServerSelection) {
+      final connId = arguments['connectionId'];
+      if (connId == null ||
+          connId is! String ||
+          connId.trim().isEmpty ||
+          connId.trim() == 'local') {
+        return jsonEncode({
+          'error': 'This tool requires a selected server connection.',
+          'code': 'connection_required',
+          'tool': name,
+          'nextAction':
+              'Ask the user to select a server connection before running this tool.'
+        });
+      }
     }
 
     final startedAt = DateTime.now();

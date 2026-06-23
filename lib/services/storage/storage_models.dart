@@ -88,6 +88,7 @@ class AiConnectionSettings {
   final bool hasQuarkApiKey;
   final bool multiAgentEnabled;
   final int multiAgentMaxAgents;
+  final bool postToolReviewEnabled;
   final int toolCallBudget;
   final int maxImageSizeBytes;
   final int maxFileSizeBytes;
@@ -102,6 +103,7 @@ class AiConnectionSettings {
   final String customReviewerPrompt;
   final String customSummarizerPrompt;
   final String customCoordinatorPrompt;
+  final LlmApiFormat apiFormat;
 
   const AiConnectionSettings({
     required this.baseUrl,
@@ -121,6 +123,7 @@ class AiConnectionSettings {
     required this.hasQuarkApiKey,
     required this.multiAgentEnabled,
     required this.multiAgentMaxAgents,
+    required this.postToolReviewEnabled,
     required this.toolCallBudget,
     required this.maxImageSizeBytes,
     required this.maxFileSizeBytes,
@@ -135,6 +138,7 @@ class AiConnectionSettings {
     required this.customReviewerPrompt,
     required this.customSummarizerPrompt,
     required this.customCoordinatorPrompt,
+    this.apiFormat = LlmApiFormat.openAiChatCompletions,
   });
 
   AgentModelProfile get agentModelProfile => AgentModelProfile(
@@ -143,6 +147,84 @@ class AiConnectionSettings {
         auditModel: auditModel,
         fallbackPolicy: modelFallbackPolicy,
       );
+
+  AiConnectionSettings copyWith({
+    String? baseUrl,
+    String? model,
+    String? helperModel,
+    String? auditModel,
+    String? modelFallbackPolicy,
+    int? contextWindowTokens,
+    int? timeoutSeconds,
+    bool? deepSeekThinkingEnabled,
+    String? deepSeekReasoningEffort,
+    String? openAiReasoningEffort,
+    bool? webSearchEnabled,
+    int? webSearchMaxResults,
+    String? webSearchEngine,
+    String? quarkSearchEndpoint,
+    bool? hasQuarkApiKey,
+    bool? multiAgentEnabled,
+    int? multiAgentMaxAgents,
+    bool? postToolReviewEnabled,
+    int? toolCallBudget,
+    int? maxImageSizeBytes,
+    int? maxFileSizeBytes,
+    bool? hasApiKey,
+    String? activeApiKeyId,
+    String? activeApiKeyMasked,
+    bool? useCustomPrompts,
+    String? customSystemPrompt,
+    String? customPlannerPrompt,
+    String? customOperatorPrompt,
+    String? customExplorePrompt,
+    String? customReviewerPrompt,
+    String? customSummarizerPrompt,
+    String? customCoordinatorPrompt,
+    LlmApiFormat? apiFormat,
+  }) {
+    return AiConnectionSettings(
+      baseUrl: baseUrl ?? this.baseUrl,
+      model: model ?? this.model,
+      helperModel: helperModel ?? this.helperModel,
+      auditModel: auditModel ?? this.auditModel,
+      modelFallbackPolicy: modelFallbackPolicy ?? this.modelFallbackPolicy,
+      contextWindowTokens: contextWindowTokens ?? this.contextWindowTokens,
+      timeoutSeconds: timeoutSeconds ?? this.timeoutSeconds,
+      deepSeekThinkingEnabled:
+          deepSeekThinkingEnabled ?? this.deepSeekThinkingEnabled,
+      deepSeekReasoningEffort:
+          deepSeekReasoningEffort ?? this.deepSeekReasoningEffort,
+      openAiReasoningEffort:
+          openAiReasoningEffort ?? this.openAiReasoningEffort,
+      webSearchEnabled: webSearchEnabled ?? this.webSearchEnabled,
+      webSearchMaxResults: webSearchMaxResults ?? this.webSearchMaxResults,
+      webSearchEngine: webSearchEngine ?? this.webSearchEngine,
+      quarkSearchEndpoint: quarkSearchEndpoint ?? this.quarkSearchEndpoint,
+      hasQuarkApiKey: hasQuarkApiKey ?? this.hasQuarkApiKey,
+      multiAgentEnabled: multiAgentEnabled ?? this.multiAgentEnabled,
+      multiAgentMaxAgents: multiAgentMaxAgents ?? this.multiAgentMaxAgents,
+      postToolReviewEnabled:
+          postToolReviewEnabled ?? this.postToolReviewEnabled,
+      toolCallBudget: toolCallBudget ?? this.toolCallBudget,
+      maxImageSizeBytes: maxImageSizeBytes ?? this.maxImageSizeBytes,
+      maxFileSizeBytes: maxFileSizeBytes ?? this.maxFileSizeBytes,
+      hasApiKey: hasApiKey ?? this.hasApiKey,
+      activeApiKeyId: activeApiKeyId ?? this.activeApiKeyId,
+      activeApiKeyMasked: activeApiKeyMasked ?? this.activeApiKeyMasked,
+      useCustomPrompts: useCustomPrompts ?? this.useCustomPrompts,
+      customSystemPrompt: customSystemPrompt ?? this.customSystemPrompt,
+      customPlannerPrompt: customPlannerPrompt ?? this.customPlannerPrompt,
+      customOperatorPrompt: customOperatorPrompt ?? this.customOperatorPrompt,
+      customExplorePrompt: customExplorePrompt ?? this.customExplorePrompt,
+      customReviewerPrompt: customReviewerPrompt ?? this.customReviewerPrompt,
+      customSummarizerPrompt:
+          customSummarizerPrompt ?? this.customSummarizerPrompt,
+      customCoordinatorPrompt:
+          customCoordinatorPrompt ?? this.customCoordinatorPrompt,
+      apiFormat: apiFormat ?? this.apiFormat,
+    );
+  }
 }
 
 class AiApiKeyHistoryEntry {
@@ -836,6 +918,7 @@ class AiChatMessageRecord {
   final List<AiChatAttachment> attachments;
   final int? reasoningTokens;
   final List<AiTodoStep> todoSteps;
+  final String? agentRunId;
 
   const AiChatMessageRecord({
     required this.role,
@@ -853,6 +936,7 @@ class AiChatMessageRecord {
     this.promptCacheMissTokens,
     this.reasoningTokens,
     this.todoSteps = const [],
+    this.agentRunId,
   });
 
   AiChatMessageRecord copyWith({
@@ -871,6 +955,7 @@ class AiChatMessageRecord {
     int? promptCacheMissTokens,
     int? reasoningTokens,
     List<AiTodoStep>? todoSteps,
+    String? agentRunId,
   }) {
     return AiChatMessageRecord(
       role: role ?? this.role,
@@ -889,6 +974,7 @@ class AiChatMessageRecord {
           promptCacheMissTokens ?? this.promptCacheMissTokens,
       reasoningTokens: reasoningTokens ?? this.reasoningTokens,
       todoSteps: todoSteps ?? this.todoSteps,
+      agentRunId: agentRunId ?? this.agentRunId,
     );
   }
 
@@ -915,6 +1001,7 @@ class AiChatMessageRecord {
       if (reasoningTokens != null) 'reasoningTokens': reasoningTokens,
       if (todoSteps.isNotEmpty)
         'todoSteps': todoSteps.map((s) => s.toJson()).toList(),
+      if (agentRunId?.trim().isNotEmpty == true) 'agentRunId': agentRunId,
     };
   }
 
@@ -943,6 +1030,7 @@ class AiChatMessageRecord {
       todoSteps: ((json['todoSteps'] as List<dynamic>?) ?? const [])
           .map((item) => AiTodoStep.fromJson(item as Map<String, dynamic>))
           .toList(),
+      agentRunId: json['agentRunId'] as String?,
     );
   }
 }
@@ -1102,6 +1190,94 @@ class TerminalHistoryRecord {
 
   static String _shellQuote(String value) {
     return "'${value.replaceAll("'", "'\"'\"'")}'";
+  }
+}
+
+class SftpRecentPathRecord {
+  final String id;
+  final String connectionId;
+  final String path;
+  final DateTime visitedAt;
+
+  const SftpRecentPathRecord({
+    required this.id,
+    required this.connectionId,
+    required this.path,
+    required this.visitedAt,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'connectionId': connectionId,
+      'path': path,
+      'visitedAt': visitedAt.toIso8601String(),
+    };
+  }
+
+  factory SftpRecentPathRecord.fromJson(Map<String, dynamic> json) {
+    return SftpRecentPathRecord(
+      id: json['id'] as String? ?? _traceUuid.v4(),
+      connectionId: json['connectionId'] as String? ?? '',
+      path: json['path'] as String? ?? '.',
+      visitedAt: DateTime.tryParse(json['visitedAt'] as String? ?? '') ??
+          DateTime.now(),
+    );
+  }
+}
+
+class SftpFavoritePathRecord {
+  final String id;
+  final String connectionId;
+  final String path;
+  final String name;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  const SftpFavoritePathRecord({
+    required this.id,
+    required this.connectionId,
+    required this.path,
+    required this.name,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  SftpFavoritePathRecord copyWith({
+    String? name,
+    DateTime? updatedAt,
+  }) {
+    return SftpFavoritePathRecord(
+      id: id,
+      connectionId: connectionId,
+      path: path,
+      name: name ?? this.name,
+      createdAt: createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'connectionId': connectionId,
+      'path': path,
+      'name': name,
+      'createdAt': createdAt.toIso8601String(),
+      'updatedAt': updatedAt.toIso8601String(),
+    };
+  }
+
+  factory SftpFavoritePathRecord.fromJson(Map<String, dynamic> json) {
+    final now = DateTime.now();
+    return SftpFavoritePathRecord(
+      id: json['id'] as String? ?? _traceUuid.v4(),
+      connectionId: json['connectionId'] as String? ?? '',
+      path: json['path'] as String? ?? '.',
+      name: json['name'] as String? ?? '',
+      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? now,
+      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ?? now,
+    );
   }
 }
 
