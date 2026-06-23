@@ -12,7 +12,6 @@ import 'app_log_service.dart';
 import '../features/connection/models/connection.dart';
 import '../core/services/ssh_client_factory.dart';
 import '../core/services/ssh_host_key_policy.dart';
-import 'app_log_service.dart';
 
 /// Android/iOS 前台服务管理。
 ///

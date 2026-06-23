@@ -307,8 +307,6 @@ class TerminalShortcutPanel extends StatelessWidget {
     );
   }
 
-
-
   Widget _keyGroup(BuildContext context, List<_KeySpec> keys, double scale) {
     final commands = keys
         .map(

@@ -807,10 +807,10 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
               contentPadding: EdgeInsets.zero,
               title: Text(strings.language == AppLanguage.en
                   ? 'Post-tool review agent'
-                  : '?????? Agent'),
+                  : '异常恢复审查 Agent'),
               subtitle: Text(strings.language == AppLanguage.en
                   ? 'Runs a review agent after tool errors, approval rejection, unavailable approval, budget audit rejection, or loop guard blocking.'
-                  : '??????????????????????????????????? Agent ?????????????'),
+                  : '工具失败、审批拒绝、审批不可用、预算审计拒绝或循环阻断时，自动调用审查 Agent 分析原因并给出下一步建议。'),
               value: _postToolReviewEnabled,
               onChanged: _saving
                   ? null
