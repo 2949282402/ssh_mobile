@@ -340,88 +340,18 @@ class AppFontChoice {
       platformSpecific: false,
       supportedPlatforms: TargetPlatform.values,
     ),
-    AppFontChoice(
-      id: 'noto_sans_sc',
-      name: 'Noto Sans SC',
-      fontFamily: 'Noto Sans SC',
-      licenseNote: 'Open font; app does not bundle font files.',
-      platformSpecific: false,
-      supportedPlatforms: TargetPlatform.values,
-    ),
-    AppFontChoice(
-      id: 'noto_sans',
-      name: 'Noto Sans',
-      fontFamily: 'Noto Sans',
-      licenseNote: 'Open font; app does not bundle font files.',
-      platformSpecific: false,
-      supportedPlatforms: TargetPlatform.values,
-    ),
-    AppFontChoice(
-      id: 'source_han_sans_sc',
-      name: 'Source Han Sans SC',
-      fontFamily: 'Source Han Sans SC',
-      licenseNote: 'Open font; app does not bundle font files.',
-      platformSpecific: false,
-      supportedPlatforms: [
-        TargetPlatform.windows,
-        TargetPlatform.macOS,
-        TargetPlatform.android,
-      ],
-    ),
-    AppFontChoice(
-      id: 'roboto',
-      name: 'Roboto',
-      fontFamily: 'Roboto',
-      licenseNote: 'Open font; app does not bundle font files.',
-      platformSpecific: false,
-      supportedPlatforms: [
-        TargetPlatform.android,
-        TargetPlatform.iOS,
-        TargetPlatform.macOS,
-        TargetPlatform.windows,
-        TargetPlatform.linux,
-      ],
-    ),
-    AppFontChoice(
-      id: 'microsoft_yahei',
-      name: 'Microsoft YaHei',
-      fontFamily: 'Microsoft YaHei',
-      licenseNote: 'Uses the platform-installed Windows font.',
-      platformSpecific: true,
-      supportedPlatforms: [TargetPlatform.windows],
-    ),
-    AppFontChoice(
-      id: 'pingfang_sc',
-      name: 'PingFang SC',
-      fontFamily: 'PingFang SC',
-      licenseNote: 'Uses the platform-installed Apple font.',
-      platformSpecific: true,
-      supportedPlatforms: [TargetPlatform.macOS, TargetPlatform.iOS],
-    ),
-    AppFontChoice(
-      id: 'segoe_ui',
-      name: 'Segoe UI',
-      fontFamily: 'Segoe UI',
-      licenseNote: 'Uses the platform-installed Windows font.',
-      platformSpecific: true,
-      supportedPlatforms: [TargetPlatform.windows],
-    ),
   ];
 
   static String normalize(String? id) {
-    if (id == null || id.isEmpty) return systemId;
-    return values.any((item) => item.id == id) ? id : systemId;
+    return systemId;
   }
 
   static AppFontChoice byId(String? id) {
-    final normalized = normalize(id);
-    return values.firstWhere((item) => item.id == normalized);
+    return values[0];
   }
 
   bool isLikelyAvailableOn(TargetPlatform platform) {
-    final platforms = supportedPlatforms;
-    if (platforms == null || platforms.isEmpty) return true;
-    return platforms.contains(platform);
+    return true;
   }
 }
 
@@ -541,7 +471,7 @@ class AppStrings {
   String selectedWindows(int count) =>
       _en ? '$count selected' : '已选择 $count 个窗口';
   String selectedServers(int count) =>
-      _en ? '$count selected' : '已选择 $count 个服务器';
+      _en ? '$count selected' : '已选择 $count 台服务器';
   String viewAllTerminalWindows(int totalCount) => _en
       ? 'View all $totalCount ${totalCount == 1 ? "window" : "windows"}'
       : '查看全部 $totalCount 个窗口';
@@ -604,6 +534,7 @@ class AppStrings {
       : '检测到当前平台尚未确认后台耗电无限制。SSH 连接需要后台服务和保活心跳支持，请允许 SSH Mobile 后台运行、发送通知，并关闭可能中断后台网络的省电限制。';
   String get adjustPowerLimit => _en ? 'Adjust power settings' : '调整省电限制';
   String get openAppSettings => _en ? 'Open app settings' : '打开应用设置';
+  String get settings => _en ? 'Settings' : '设置';
   String get backgroundGuideNote => _en
       ? 'Setting names differ by platform. Look for permissions, battery, or background activity settings and allow SSH Mobile to keep running. You can continue this time; if the restriction is still detected next launch, this guide will appear again.'
       : '不同平台的设置名称可能不同，请在应用权限、电池或后台运行相关设置中允许 SSH Mobile 持续运行。本次可继续进入应用；如果下次启动时仍未放宽限制，将再次显示此引导。';
@@ -623,6 +554,7 @@ class AppStrings {
       : '桌面端和移动端使用同一套 SSH 连接来浏览远程文件。';
   String get parentDirectory => _en ? 'Parent directory' : '上级目录';
   String get pathHistory => _en ? 'Path history' : '路径记录';
+  String get inputPath => _en ? 'Input path' : '输入路径';
   String get recentPaths => _en ? 'Recent paths' : '最近路径';
   String get favoritePaths => _en ? 'Favorite paths' : '收藏路径';
   String get addFavoritePath => _en ? 'Add favorite path' : '收藏当前路径';
@@ -824,4 +756,8 @@ class TerminalStrings {
       ? '"$name" is already disconnected. Close this window?'
       : '"$name" 已经断开。关闭这个窗口吗？';
   String get copyAll => _en ? 'Copy all' : '复制全部';
+  String get moreActions => _en ? 'More actions' : '更多操作';
+  String get navigationShell => _en ? 'Navigation & Shell' : '导航与 Shell';
+  String get editControl => _en ? 'Edit & Control' : '编辑与控制';
+  String get functionKeys => _en ? 'Function Keys' : '功能键';
 }

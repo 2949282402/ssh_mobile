@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:dartssh2/dartssh2.dart';
+
 import '../../features/connection/models/connection.dart';
 import '../../services/app_log_service.dart';
 
@@ -154,7 +156,7 @@ class SshHostKeyPolicy {
   }
 }
 
-class SshHostKeyUntrustedException implements Exception {
+class SshHostKeyUntrustedException implements Exception, SSHError {
   final String connectionName;
   final String host;
   final int port;
@@ -177,7 +179,7 @@ class SshHostKeyUntrustedException implements Exception {
   }
 }
 
-class SshHostKeyRejectedException implements Exception {
+class SshHostKeyRejectedException implements Exception, SSHError {
   final String connectionName;
   final String host;
   final int port;
@@ -199,7 +201,7 @@ class SshHostKeyRejectedException implements Exception {
   }
 }
 
-class SshHostKeyMismatchException implements Exception {
+class SshHostKeyMismatchException implements Exception, SSHError {
   final String connectionName;
   final String host;
   final int port;

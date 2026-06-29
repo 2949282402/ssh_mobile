@@ -19,6 +19,7 @@ import 'tool_secret_policy.dart';
 /// 5. 多级缓存：entries、levelCounts、entriesByLevel 惰性计算+缓存
 class AppLogService extends ChangeNotifier {
   static final AppLogService instance = AppLogService._();
+  factory AppLogService() => instance;
   static const int _maxEntries = 1200;
   final ListQueue<AppLogEntry> _entries = ListQueue<AppLogEntry>();
   List<AppLogEntry>? _cachedNewestFirstEntries;
@@ -33,13 +34,26 @@ class AppLogService extends ChangeNotifier {
   File? _logFile;
   final List<String> _logWriteQueue = [];
   bool _isWriting = false;
+  Completer<void>? _writeCompleter;
   int logSizeLimit = 5 * 1024 * 1024;
   bool writeDiskLogsInRelease = false;
   final ToolSecretPolicy _secretPolicy = const ToolSecretPolicy();
 
-  AppLogService._();
+  /// A future that completes when all pending log writes to disk are finished.
+  @visibleForTesting
+  Future<void> get pendingWrites {
+    if (!_isWriting && _logWriteQueue.isEmpty) {
+      return Future.value();
+    }
+    return (_writeCompleter ??= Completer<void>()).future;
+  }
 
-  factory AppLogService() => instance;
+  @visibleForTesting
+  void resetLogFileForTesting() {
+    _logFile = null;
+  }
+
+  AppLogService._();
 
   List<AppLogEntry> get entries {
     return _cachedNewestFirstEntries ??= List.unmodifiable(
@@ -226,6 +240,11 @@ class AppLogService extends ChangeNotifier {
       }
     }
     _isWriting = false;
+    final completer = _writeCompleter;
+    if (completer != null) {
+      _writeCompleter = null;
+      completer.complete();
+    }
   }
 
   Future<void> _rotateLogs() async {

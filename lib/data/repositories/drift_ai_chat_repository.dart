@@ -31,6 +31,10 @@ extension DriftAiChatRepositoryOps on StorageService {
   Future<void> _deleteDriftAiChat(String id) async {
     final database = _database;
     if (!_driftAiChatsActive || database == null) return;
+    if (_driftAgentTraceActive) {
+      await database.agentTraceDao.deleteEventsForChat(id);
+      _agentTraceEventsCache.clear();
+    }
     await database.aiChatDao.deleteChat(id);
     final cached = _aiChatsCache;
     if (cached != null) {
@@ -118,6 +122,7 @@ extension DriftAiChatRepositoryOps on StorageService {
       promptCacheHitTokens: drift.Value(message.promptCacheHitTokens),
       promptCacheMissTokens: drift.Value(message.promptCacheMissTokens),
       reasoningTokens: drift.Value(message.reasoningTokens),
+      agentRunId: drift.Value(message.agentRunId),
       attachmentsJson: drift.Value(await _encryptDriftText(attachmentsJson)),
       tracesJson: drift.Value(await _encryptDriftText(tracesJson)),
       todoStepsJson: drift.Value(await _encryptDriftText(todoStepsJson)),
@@ -174,6 +179,7 @@ extension DriftAiChatRepositoryOps on StorageService {
       promptCacheMissTokens: row.promptCacheMissTokens,
       reasoningTokens: row.reasoningTokens,
       todoSteps: _decodeJsonList(todoStepsJson, AiTodoStep.fromJson),
+      agentRunId: row.agentRunId,
     );
   }
 

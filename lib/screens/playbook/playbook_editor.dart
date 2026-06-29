@@ -1,4 +1,4 @@
-part of '../playbook_screen.dart';
+﻿part of '../playbook_screen.dart';
 
 extension _PlaybookScreenPlaybookEditor on _PlaybookScreenState {
   Widget _buildPlaybookEditor(
@@ -143,7 +143,14 @@ extension _PlaybookScreenPlaybookEditor on _PlaybookScreenState {
                               ? 'Command is required'
                               : null,
                           style: const TextStyle(
-                              fontFamily: 'monospace', fontSize: 13),
+                              fontFamily: 'monospace',
+                              fontFamilyFallback: [
+                                'Consolas',
+                                'Microsoft YaHei',
+                                'PingFang SC',
+                                'sans-serif'
+                              ],
+                              fontSize: 13),
                         ),
                         const SizedBox(height: 12),
                         TextFormField(

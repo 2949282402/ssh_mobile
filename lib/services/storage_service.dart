@@ -9,6 +9,7 @@ import 'package:uuid/uuid.dart';
 
 import '../data/database/app_database.dart' as db;
 import '../data/database/migrations.dart';
+import '../features/ai_chat/models/agent_trace_event.dart';
 import '../features/connection/models/connection.dart';
 import '../features/playbook/models/playbook.dart';
 import '../utils/skill_frontmatter.dart';
@@ -16,6 +17,7 @@ import 'agent_model_profile.dart';
 import 'app_log_service.dart';
 import '../core/services/data_protection_service.dart';
 import 'multi_agent_coordinator.dart';
+import 'llm_provider/llm_api_format.dart';
 
 part 'storage/storage_models.dart';
 part 'storage/settings_ops.dart';
@@ -29,6 +31,7 @@ part 'storage/buffered_write_ops.dart';
 part 'storage/drift_ops.dart';
 part '../data/repositories/drift_ai_chat_repository.dart';
 part '../data/repositories/drift_agent_metrics_repository.dart';
+part '../data/repositories/drift_agent_trace_repository.dart';
 part '../data/repositories/drift_terminal_history_repository.dart';
 part '../data/repositories/drift_playbook_repository.dart';
 part '../data/repositories/drift_sftp_history_repository.dart';
@@ -100,6 +103,7 @@ abstract interface class AiSettingsRepository {
     String? customReviewerPrompt,
     String? customSummarizerPrompt,
     String? customCoordinatorPrompt,
+    LlmApiFormat? apiFormat,
   });
 
   Future<String?> getAiApiKey();
@@ -146,6 +150,17 @@ abstract interface class AgentRunMetricsRepository {
   Future<void> saveAgentRunMetrics(AgentRunMetrics metrics);
 }
 
+abstract interface class AgentTraceRepository {
+  Future<List<AgentTraceEvent>> loadAgentTraceEvents(String runId);
+  Future<List<String>> loadRecentAgentTraceRunIdsForChat(
+    String chatId, {
+    int limit,
+  });
+  Future<void> saveAgentTraceEvent(AgentTraceEvent event);
+  Future<void> saveAgentTraceEvents(List<AgentTraceEvent> events);
+  Future<void> deleteAgentTraceEvents(String runId);
+}
+
 abstract interface class TerminalHistoryRepository {
   Future<List<TerminalHistoryRecord>> loadTerminalHistoryRecords();
   Future<void> saveTerminalHistoryRecord(TerminalHistoryRecord record);
@@ -190,6 +205,7 @@ class StorageService extends ChangeNotifier
         AiChatRepository,
         AiSkillRepository,
         AgentRunMetricsRepository,
+        AgentTraceRepository,
         TerminalHistoryRepository,
         PlaybookRepository,
         SftpPathHistoryRepository,
@@ -281,6 +297,7 @@ class StorageService extends ChangeNotifier
     String? customReviewerPrompt,
     String? customSummarizerPrompt,
     String? customCoordinatorPrompt,
+    LlmApiFormat? apiFormat,
   }) =>
       SettingsOps(this).saveAiConnectionSettings(
         baseUrl: baseUrl,
@@ -316,6 +333,7 @@ class StorageService extends ChangeNotifier
         customReviewerPrompt: customReviewerPrompt,
         customSummarizerPrompt: customSummarizerPrompt,
         customCoordinatorPrompt: customCoordinatorPrompt,
+        apiFormat: apiFormat,
       );
 
   @override
@@ -401,6 +419,7 @@ class StorageService extends ChangeNotifier
   static const _restorableTmuxSessionsKey = 'restorable_tmux_sessions';
   static const _terminalHistoryRecordsKey = 'terminal_history_records';
   static const _aiBaseUrlKey = 'ai_base_url';
+  static const _aiApiFormatKey = 'ai_api_format';
   static const _aiBaseUrlHistoryKey = 'ai_base_url_history';
   static const _aiModelKey = 'ai_model';
   static const _aiHelperModelKey = 'ai_helper_model';
@@ -467,6 +486,7 @@ class StorageService extends ChangeNotifier
   bool _driftReady = false;
   bool _driftAiChatsActive = false;
   bool _driftAgentMetricsActive = false;
+  bool _driftAgentTraceActive = false;
   bool _driftTerminalHistoryActive = false;
   bool _driftPlaybooksActive = false;
   bool _driftSftpHistoryActive = false;
@@ -521,6 +541,7 @@ class StorageService extends ChangeNotifier
   List<AiChatRecord>? _aiChatsCache;
   List<AiSkillRecord>? _aiSkillsCache;
   List<AgentRunMetrics>? _agentRunMetricsCache;
+  final Map<String, List<AgentTraceEvent>> _agentTraceEventsCache = {};
   List<Playbook>? _playbooksCache;
   List<RestorableTmuxSession>? _restorableTmuxSessionsCache;
   List<TerminalHistoryRecord>? _terminalHistoryRecordsCache;
@@ -606,6 +627,29 @@ class StorageService extends ChangeNotifier
   @override
   Future<void> saveAgentRunMetrics(AgentRunMetrics metrics) =>
       _saveAgentRunMetrics(metrics);
+
+  @override
+  Future<List<AgentTraceEvent>> loadAgentTraceEvents(String runId) =>
+      _loadAgentTraceEvents(runId);
+
+  @override
+  Future<List<String>> loadRecentAgentTraceRunIdsForChat(
+    String chatId, {
+    int limit = 20,
+  }) =>
+      _loadRecentAgentTraceRunIdsForChat(chatId, limit: limit);
+
+  @override
+  Future<void> saveAgentTraceEvent(AgentTraceEvent event) =>
+      _saveAgentTraceEvent(event);
+
+  @override
+  Future<void> saveAgentTraceEvents(List<AgentTraceEvent> events) =>
+      _saveAgentTraceEvents(events);
+
+  @override
+  Future<void> deleteAgentTraceEvents(String runId) =>
+      _deleteAgentTraceEvents(runId);
 
   @override
   Future<List<Playbook>> loadPlaybooks() => _loadPlaybooks();

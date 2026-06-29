@@ -117,29 +117,6 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
         );
 
         return Scaffold(
-          appBar: AppBar(
-            title: Text(strings.systemAdmin),
-            actions: [
-              ValueListenableBuilder<int>(
-                valueListenable: _activeTabIndex,
-                builder: (context, activeIndex, _) {
-                  final isMonitorTab = activeIndex == 0;
-                  final canManage = context.select<SystemAdminViewModel, bool>(
-                    (vm) => vm.canManageSelectedConnection,
-                  );
-                  if (!isMonitorTab && canManage) {
-                    return IconButton(
-                      icon: const Icon(Icons.refresh),
-                      onPressed: () =>
-                          context.read<SystemAdminViewModel>().refreshAllData(),
-                      tooltip: strings.refreshAll,
-                    );
-                  }
-                  return const SizedBox.shrink();
-                },
-              ),
-            ],
-          ),
           body: ValueListenableBuilder<int>(
             valueListenable: _activeTabIndex,
             builder: (context, activeIndex, _) {
@@ -244,21 +221,23 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
     _lastObservedConnections = currentConnections;
     _lastActivatedConnectionId = null;
 
-    _scheduleCurrentTabActivation();
+    _scheduleCurrentTabActivation(viewModel);
   }
 
-  void _scheduleCurrentTabActivation() {
+  void _scheduleCurrentTabActivation([SystemAdminViewModel? viewModel]) {
     if (_activationScheduled) return;
     _activationScheduled = true;
 
+    final activeViewModel =
+        viewModel ?? (mounted ? context.read<SystemAdminViewModel>() : null);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _activationScheduled = false;
-      if (!mounted) return;
+      if (!mounted || activeViewModel == null) return;
 
-      final viewModel = context.read<SystemAdminViewModel>();
-      viewModel.validateSelectedConnection();
+      activeViewModel.validateSelectedConnection();
 
-      final selectedId = viewModel.selectedConnectionId;
+      final selectedId = activeViewModel.selectedConnectionId;
       if (selectedId == null) return;
 
       final index = _tabController.index;
@@ -270,7 +249,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
       _lastActivatedTabIndex = index;
       _lastActivatedConnectionId = selectedId;
 
-      unawaited(_activateTab(index, viewModel));
+      unawaited(_activateTab(index, activeViewModel));
     });
   }
 
@@ -338,28 +317,59 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
     // TabController organizes all Admin tabs
     return Column(
       children: [
-        TabBar(
-          controller: _tabController,
-          isScrollable: true,
-          tabAlignment: TabAlignment.start,
-          tabs: [
-            Tab(
-                text: strings.monitor,
-                icon: const Icon(Icons.monitor_heart_outlined)),
-            Tab(text: strings.listeningPorts, icon: const Icon(Icons.lan)),
-            Tab(
-                text: strings.applications,
-                icon: const Icon(Icons.apps_rounded)),
-            Tab(
-                text: strings.systemServices,
-                icon: const Icon(Icons.settings_suggest)),
-            Tab(text: strings.userAccounts, icon: const Icon(Icons.people)),
-            Tab(
-                text: strings.activeSessions,
-                icon: const Icon(Icons.co_present)),
-            Tab(
-                text: strings.systemPower,
-                icon: const Icon(Icons.power_settings_new)),
+        Row(
+          children: [
+            Expanded(
+              child: TabBar(
+                controller: _tabController,
+                isScrollable: true,
+                tabAlignment: TabAlignment.start,
+                tabs: [
+                  Tab(
+                      text: strings.monitor,
+                      icon: const Icon(Icons.monitor_heart_outlined)),
+                  Tab(
+                      text: strings.listeningPorts,
+                      icon: const Icon(Icons.lan)),
+                  Tab(
+                      text: strings.applications,
+                      icon: const Icon(Icons.apps_rounded)),
+                  Tab(
+                      text: strings.systemServices,
+                      icon: const Icon(Icons.settings_suggest)),
+                  Tab(
+                      text: strings.userAccounts,
+                      icon: const Icon(Icons.people)),
+                  Tab(
+                      text: strings.activeSessions,
+                      icon: const Icon(Icons.co_present)),
+                  Tab(
+                      text: strings.systemPower,
+                      icon: const Icon(Icons.power_settings_new)),
+                ],
+              ),
+            ),
+            ValueListenableBuilder<int>(
+              valueListenable: activeTabIndex,
+              builder: (context, activeIndex, _) {
+                final isMonitorTab = activeIndex == 0;
+                final canManage = context.select<SystemAdminViewModel, bool>(
+                  (vm) => vm.canManageSelectedConnection,
+                );
+                if (!isMonitorTab && canManage) {
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8.0),
+                    child: IconButton(
+                      icon: const Icon(Icons.refresh),
+                      onPressed: () =>
+                          context.read<SystemAdminViewModel>().refreshAllData(),
+                      tooltip: strings.refreshAll,
+                    ),
+                  );
+                }
+                return const SizedBox.shrink();
+              },
+            ),
           ],
         ),
         Expanded(

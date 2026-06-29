@@ -16,6 +16,8 @@ import '../services/ai_chat_context_builder.dart';
 import '../services/ai_chat_message_mapper.dart';
 import '../services/ai_chat_token_estimator.dart';
 import '../../../services/llm_chat_service.dart';
+import '../../../services/llm_runtime/llm_runtime_types.dart';
+import '../../../services/llm_provider/llm_api_format.dart';
 import '../../../services/performance_monitor_service.dart';
 import '../../../services/playbook_service.dart';
 import '../../../services/rag_service.dart';
@@ -23,6 +25,7 @@ import '../../../services/sftp_service.dart';
 import '../../../services/ssh_service.dart';
 import '../../../services/storage_service.dart';
 import '../../../services/client_webview_service.dart';
+import '../../../services/tool_secret_policy.dart';
 import '../../connection/models/connection.dart';
 import '../../../utils/text_chunker.dart';
 
@@ -138,6 +141,7 @@ class AiChatViewModel extends ChangeNotifier {
   late final AiChatContextBuilder _contextBuilder;
   late final AiChatMessageMapper _messageMapper;
   late final AiChatTokenEstimator _tokenEstimator;
+  static const ToolSecretPolicy _traceSecretPolicy = ToolSecretPolicy();
 
   // 聊天会话状态列表
   List<AiChatRecord> _chats = const [];
@@ -446,6 +450,7 @@ class AiChatViewModel extends ChangeNotifier {
     String? customReviewerPrompt,
     String? customSummarizerPrompt,
     String? customCoordinatorPrompt,
+    LlmApiFormat? apiFormat,
   }) async {
     try {
       await _storageService.saveAiConnectionSettings(
@@ -482,6 +487,7 @@ class AiChatViewModel extends ChangeNotifier {
         customReviewerPrompt: customReviewerPrompt,
         customSummarizerPrompt: customSummarizerPrompt,
         customCoordinatorPrompt: customCoordinatorPrompt,
+        apiFormat: apiFormat,
       );
       notifyListeners();
     } catch (e, stackTrace) {
@@ -1219,6 +1225,7 @@ class AiChatViewModel extends ChangeNotifier {
             promptCacheHitTokens: runResult.runStats?.promptCacheHitTokens,
             promptCacheMissTokens: runResult.runStats?.promptCacheMissTokens,
             reasoningTokens: runResult.runStats?.reasoningTokens,
+            agentRunId: runResult.runId,
           );
         }
 
@@ -1250,6 +1257,7 @@ class AiChatViewModel extends ChangeNotifier {
           runStats: runResult.runStats,
           ragHits: ragHits,
           success: true,
+          runId: runResult.runId,
         );
       } else if (runResult is AiChatRunCancelled) {
         AppLogService.instance.info(
@@ -1281,6 +1289,7 @@ class AiChatViewModel extends ChangeNotifier {
             text: stoppedText,
             traces: traces,
             contextText: _contextTextForAssistant(stoppedText, traces: traces),
+            agentRunId: runResult.runId,
           );
         }
         final cancelledChat = currentChat.copyWith(
@@ -1304,6 +1313,7 @@ class AiChatViewModel extends ChangeNotifier {
           finishedAt: DateTime.now(),
           ragHits: ragHits,
           success: false,
+          runId: runResult.runId,
         );
       } else if (runResult is AiChatRunFailed) {
         final currentChat = _chatById(chatId) ?? initialChat;
@@ -1326,6 +1336,12 @@ class AiChatViewModel extends ChangeNotifier {
                 partialText,
                 traces: errorMessages[assistantIndex].traces,
               ),
+              agentRunId: runResult.runId,
+            );
+          } else {
+            errorMessages[assistantIndex] =
+                errorMessages[assistantIndex].copyWith(
+              agentRunId: runResult.runId,
             );
           }
         }
@@ -1336,6 +1352,7 @@ class AiChatViewModel extends ChangeNotifier {
               role: 'error',
               text: translator.translateFailed(runResult.error),
               createdAt: DateTime.now(),
+              agentRunId: runResult.runId,
             ),
           ],
           updatedAt: DateTime.now(),
@@ -1357,6 +1374,7 @@ class AiChatViewModel extends ChangeNotifier {
           finishedAt: DateTime.now(),
           ragHits: ragHits,
           success: false,
+          runId: runResult.runId,
         );
       }
     } catch (e, stackTrace) {
@@ -1472,8 +1490,8 @@ class AiChatViewModel extends ChangeNotifier {
         ...messages[assistantIndex].traces,
         AiMessageTrace.create(
           kind: event.kind,
-          title: event.title,
-          content: event.content,
+          title: _traceSecretPolicy.redactText(event.title),
+          content: _traceSecretPolicy.redactJsonText(event.content),
         ),
       ],
     );

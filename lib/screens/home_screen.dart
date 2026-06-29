@@ -34,21 +34,20 @@ part 'home/server_list_pane.dart';
 class HomeScreen extends StatefulWidget {
   final int initialIndex;
 
-  // AI stays first in navigation, but launch still lands on Servers because
-  // connection management is the app's operational home page.
-  const HomeScreen({super.key, this.initialIndex = 1});
+  // Servers stays first in navigation. App launch lands on Servers.
+  const HomeScreen({super.key, this.initialIndex = 0});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  static const int _aiPage = 0;
-  static const int _serverPage = 1;
+  static const int _serverPage = 0;
+  static const int _aiPage = 1;
   static const int _sftpPage = 2;
   static const int _adminPage = 3;
   static const int _logPage = 4;
-  static const int _firstPage = _aiPage;
+  static const int _firstPage = _serverPage;
   static const int _lastPage = _logPage;
 
   late final PageController _pageController;
@@ -87,30 +86,37 @@ class _HomeScreenState extends State<HomeScreen> {
     final settingsVm = context.watch<SettingsViewModel>();
     final isBusy = settingsVm.isImporting || settingsVm.isExporting;
 
-    final content = NotificationListener<SwitchToAiTabNotification>(
+    final content = NotificationListener<OpenSettingsNotification>(
       onNotification: (notification) {
-        _switchPage(_aiPage);
+        _openSettings(context);
         return true;
       },
-      child: NotificationListener<ScrollNotification>(
+      child: NotificationListener<SwitchToAiTabNotification>(
         onNotification: (notification) {
-          if (desktop || notification.metrics.axis != Axis.horizontal) {
-            return false;
-          }
-          return false;
+          _switchPage(_aiPage);
+          return true;
         },
-        child: PageView.builder(
-          controller: _pageController,
-          itemCount: _lastPage + 1,
-          physics: const NeverScrollableScrollPhysics(),
-          allowImplicitScrolling: false,
-          onPageChanged: (index) {
-            setState(() {
-              _selectedIndex = index;
-              _settledIndex = index;
-            });
+        child: NotificationListener<ScrollNotification>(
+          onNotification: (notification) {
+            if (desktop || notification.metrics.axis != Axis.horizontal) {
+              return false;
+            }
+            return false;
           },
-          itemBuilder: (context, index) => _buildPage(context, index, strings),
+          child: PageView.builder(
+            controller: _pageController,
+            itemCount: _lastPage + 1,
+            physics: const NeverScrollableScrollPhysics(),
+            allowImplicitScrolling: false,
+            onPageChanged: (index) {
+              setState(() {
+                _selectedIndex = index;
+                _settledIndex = index;
+              });
+            },
+            itemBuilder: (context, index) =>
+                _buildPage(context, index, strings),
+          ),
         ),
       ),
     );
@@ -121,22 +127,6 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Stack(
           children: [
             desktop ? _buildDesktopShell(context, content, strings) : content,
-            Positioned(
-              left: 0,
-              top: 0,
-              bottom: 0,
-              width: 28,
-              child: GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onHorizontalDragEnd: (details) {
-                  if (details.primaryVelocity != null &&
-                      details.primaryVelocity! > 300) {
-                    _openSettings(context);
-                  }
-                },
-                child: const SizedBox.expand(),
-              ),
-            ),
             if (isBusy)
               ColoredBox(
                 color: Theme.of(context)
@@ -176,16 +166,29 @@ class _HomeScreenState extends State<HomeScreen> {
           extended: extended,
           selectedIndex: _navigationIndex,
           onDestinationSelected: _switchNavigationPage,
-          destinations: [
-            NavigationRailDestination(
-              icon: const Icon(Icons.smart_toy_outlined),
-              selectedIcon: const Icon(Icons.smart_toy_rounded),
-              label: Text(settingsLabelAi(context)),
+          trailing: Expanded(
+            child: Align(
+              alignment: Alignment.bottomCenter,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: IconButton(
+                  tooltip: strings.settings,
+                  icon: const Icon(Icons.settings_outlined),
+                  onPressed: () => _openSettings(context),
+                ),
+              ),
             ),
+          ),
+          destinations: [
             NavigationRailDestination(
               icon: const Icon(Icons.dns_outlined),
               selectedIcon: const Icon(Icons.dns_rounded),
               label: Text(strings.servers),
+            ),
+            NavigationRailDestination(
+              icon: const Icon(Icons.smart_toy_outlined),
+              selectedIcon: const Icon(Icons.smart_toy_rounded),
+              label: Text(settingsLabelAi(context)),
             ),
             NavigationRailDestination(
               icon: const Icon(Icons.folder_open_outlined),
@@ -200,7 +203,7 @@ class _HomeScreenState extends State<HomeScreen> {
             NavigationRailDestination(
               icon: const Icon(Icons.terminal_outlined),
               selectedIcon: const Icon(Icons.terminal_rounded),
-              label: Text(strings.switchToChinese == '中文' ? 'Log' : '日志'),
+              label: Text(strings.logs),
             ),
           ],
         ),
@@ -222,14 +225,14 @@ class _HomeScreenState extends State<HomeScreen> {
       onDestinationSelected: _switchNavigationPage,
       destinations: [
         NavigationDestination(
-          icon: const Icon(Icons.smart_toy_outlined),
-          selectedIcon: const Icon(Icons.smart_toy_rounded),
-          label: settingsLabelAi(context),
-        ),
-        NavigationDestination(
           icon: const Icon(Icons.dns_outlined),
           selectedIcon: const Icon(Icons.dns_rounded),
           label: strings.servers,
+        ),
+        NavigationDestination(
+          icon: const Icon(Icons.smart_toy_outlined),
+          selectedIcon: const Icon(Icons.smart_toy_rounded),
+          label: settingsLabelAi(context),
         ),
         NavigationDestination(
           icon: const Icon(Icons.folder_open_outlined),
@@ -241,23 +244,21 @@ class _HomeScreenState extends State<HomeScreen> {
           selectedIcon: const Icon(Icons.admin_panel_settings_rounded),
           label: strings.admin,
         ),
+        NavigationDestination(
+          icon: const Icon(Icons.terminal_outlined),
+          selectedIcon: const Icon(Icons.terminal_rounded),
+          label: strings.logs,
+        ),
       ],
     );
   }
 
   int get _navigationIndex {
-    if (_selectedIndex == _logPage) {
-      return 4;
-    }
     return _selectedIndex;
   }
 
   void _switchNavigationPage(int index) {
-    if (index == 4) {
-      _switchPage(_logPage);
-    } else {
-      _switchPage(index);
-    }
+    _switchPage(index);
   }
 
   void _switchPage(int index) {
@@ -410,17 +411,11 @@ class _HomeScreenState extends State<HomeScreen> {
     final settingsVm = context.read<SettingsViewModel>();
     try {
       final success = await settingsVm.importAppData(() async {
-        final result = await FilePicker.pickFiles(
+        final file = await FilePicker.pickFile(
           type: FileType.custom,
           allowedExtensions: const ['json'],
-          withData: true,
         );
-        if (result == null || result.files.isEmpty) return null;
-        final bytes = result.files.single.bytes;
-        if (bytes == null) {
-          throw StateError('Unable to read selected file.');
-        }
-        return bytes;
+        return file?.readAsBytes();
       });
       if (!context.mounted) return;
       if (success) {

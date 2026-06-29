@@ -10,36 +10,36 @@ dependencies:
   flutter:
     sdk: flutter
 
-  dartssh2: ^2.8.2
+  dartssh2: any
   xterm:
     path: third_party/xterm
-  flutter_background_service: ^5.1.0
-  flutter_local_notifications: ^21.0.0
-  flutter_secure_storage: ^10.1.0
-  provider: ^6.1.2
-  shared_preferences: ^2.3.4
-  path_provider: ^2.1.5
-  uuid: ^4.5.1
-  intl: ^0.20.2
-  path: ^1.9.1
-  permission_handler: ^12.0.1
-  cryptography: ^2.7.0
-  file_picker: ^11.0.2
-  flutter_markdown: ^0.7.7+1
-  webview_flutter: ^4.13.1
-  printing: ^5.14.3
-  fl_chart: ^1.2.0
-  animations: ^2.2.0
-  drift: ^2.34.0
-  drift_flutter: ^0.3.0
-  sqlite3_flutter_libs: ^0.6.0+eol
+  flutter_background_service: any
+  flutter_local_notifications: any
+  flutter_secure_storage: any
+  provider: any
+  shared_preferences: any
+  path_provider: any
+  uuid: any
+  intl: any
+  path: any
+  permission_handler: any
+  cryptography: any
+  file_picker: ^12.0.0-beta.7
+  flutter_markdown: any
+  webview_flutter: any
+  printing: any
+  fl_chart: any
+  animations: any
+  drift: any
+  drift_flutter: any
+  sqlite3_flutter_libs: any
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^6.0.0
-  build_runner: ^2.10.4
-  drift_dev: ^2.34.0
+  flutter_lints: any
+  build_runner: any
+  drift_dev: any
 
 flutter:
   uses-material-design: true

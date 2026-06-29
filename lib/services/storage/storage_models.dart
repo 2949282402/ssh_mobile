@@ -103,6 +103,7 @@ class AiConnectionSettings {
   final String customReviewerPrompt;
   final String customSummarizerPrompt;
   final String customCoordinatorPrompt;
+  final LlmApiFormat apiFormat;
 
   const AiConnectionSettings({
     required this.baseUrl,
@@ -137,6 +138,7 @@ class AiConnectionSettings {
     required this.customReviewerPrompt,
     required this.customSummarizerPrompt,
     required this.customCoordinatorPrompt,
+    this.apiFormat = LlmApiFormat.openAiChatCompletions,
   });
 
   AgentModelProfile get agentModelProfile => AgentModelProfile(
@@ -179,6 +181,7 @@ class AiConnectionSettings {
     String? customReviewerPrompt,
     String? customSummarizerPrompt,
     String? customCoordinatorPrompt,
+    LlmApiFormat? apiFormat,
   }) {
     return AiConnectionSettings(
       baseUrl: baseUrl ?? this.baseUrl,
@@ -219,6 +222,7 @@ class AiConnectionSettings {
           customSummarizerPrompt ?? this.customSummarizerPrompt,
       customCoordinatorPrompt:
           customCoordinatorPrompt ?? this.customCoordinatorPrompt,
+      apiFormat: apiFormat ?? this.apiFormat,
     );
   }
 }
@@ -914,6 +918,7 @@ class AiChatMessageRecord {
   final List<AiChatAttachment> attachments;
   final int? reasoningTokens;
   final List<AiTodoStep> todoSteps;
+  final String? agentRunId;
 
   const AiChatMessageRecord({
     required this.role,
@@ -931,6 +936,7 @@ class AiChatMessageRecord {
     this.promptCacheMissTokens,
     this.reasoningTokens,
     this.todoSteps = const [],
+    this.agentRunId,
   });
 
   AiChatMessageRecord copyWith({
@@ -949,6 +955,7 @@ class AiChatMessageRecord {
     int? promptCacheMissTokens,
     int? reasoningTokens,
     List<AiTodoStep>? todoSteps,
+    String? agentRunId,
   }) {
     return AiChatMessageRecord(
       role: role ?? this.role,
@@ -967,6 +974,7 @@ class AiChatMessageRecord {
           promptCacheMissTokens ?? this.promptCacheMissTokens,
       reasoningTokens: reasoningTokens ?? this.reasoningTokens,
       todoSteps: todoSteps ?? this.todoSteps,
+      agentRunId: agentRunId ?? this.agentRunId,
     );
   }
 
@@ -993,6 +1001,7 @@ class AiChatMessageRecord {
       if (reasoningTokens != null) 'reasoningTokens': reasoningTokens,
       if (todoSteps.isNotEmpty)
         'todoSteps': todoSteps.map((s) => s.toJson()).toList(),
+      if (agentRunId?.trim().isNotEmpty == true) 'agentRunId': agentRunId,
     };
   }
 
@@ -1021,6 +1030,7 @@ class AiChatMessageRecord {
       todoSteps: ((json['todoSteps'] as List<dynamic>?) ?? const [])
           .map((item) => AiTodoStep.fromJson(item as Map<String, dynamic>))
           .toList(),
+      agentRunId: json['agentRunId'] as String?,
     );
   }
 }

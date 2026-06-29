@@ -19,7 +19,9 @@ extension LlmChatServiceSafetyAuditor on LlmChatService {
         ? toolLedger
         : toolLedger.sublist(toolLedger.length - 12);
     try {
-      final response = await _chatCompletion(
+      final settings = await storageService.loadAiConnectionSettings();
+      final provider = LlmProviderFactory.fromSettings(settings);
+      final response = await provider.complete(LlmProviderRequest(
         baseUrl: baseUrl,
         apiKey: apiKey,
         model: model,
@@ -49,10 +51,10 @@ extension LlmChatServiceSafetyAuditor on LlmChatService {
             ? 'low'
             : openAiReasoningEffort,
         cancellationToken: cancellationToken,
-        operationLabel: 'LLM tool budget safety audit',
-      );
+        timeoutSeconds: settings.timeoutSeconds,
+      ));
       cancellationToken?.throwIfCancelled();
-      final content = _contentFromChatResponse(response);
+      final content = response.text;
       final auditResult = _parseToolSafetyAuditResult(
         content,
         signals: signals,

@@ -11,28 +11,24 @@ class TerminalShortcutPanel extends StatelessWidget {
   final String sessionId;
   final TerminalStrings strings;
   final Color toolbarColor;
-  final bool advancedKeyboardVisible;
   final TextEditingController complexInputController;
   final FocusNode terminalFocusNode;
   final bool ctrlActive;
   final VoidCallback onToggleCtrl;
   final bool altActive;
   final VoidCallback onToggleAlt;
-  final VoidCallback onToggleAdvancedKeyboard;
 
   const TerminalShortcutPanel({
     super.key,
     required this.sessionId,
     required this.strings,
     required this.toolbarColor,
-    required this.advancedKeyboardVisible,
     required this.complexInputController,
     required this.terminalFocusNode,
     required this.ctrlActive,
     required this.onToggleCtrl,
     required this.altActive,
     required this.onToggleAlt,
-    required this.onToggleAdvancedKeyboard,
   });
 
   @override
@@ -71,15 +67,13 @@ class TerminalShortcutPanel extends StatelessWidget {
                 _toolbarIconButton(
                   context,
                   scale: scale,
-                  icon: advancedKeyboardVisible
-                      ? Icons.keyboard_hide
-                      : Icons.keyboard_command_key,
+                  icon: Icons.keyboard_command_key,
                   tooltip: strings.complexKeyboard,
-                  onPressed: onToggleAdvancedKeyboard,
+                  onPressed: () =>
+                      _showAdvancedKeyboardBottomSheet(context, scale),
                 ),
               ],
             ),
-            if (advancedKeyboardVisible) _buildAdvancedKeyboard(context, scale),
           ],
         ),
       ),
@@ -111,6 +105,7 @@ class TerminalShortcutPanel extends StatelessWidget {
   }
 
   Widget _buildShortcutBar(BuildContext context, double scale) {
+    final colorScheme = Theme.of(context).colorScheme;
     final shortcuts = context.read<ShortcutCommandService>();
     context.select<ShortcutCommandService, int>(
       (service) => service.orderVersion,
@@ -118,7 +113,8 @@ class TerminalShortcutPanel extends StatelessWidget {
     final customCommands =
         context.select<ShortcutCommandService, List<ShortcutCommand>>(
             (service) => service.customCommands);
-    final commands = shortcuts.sortByUsage([
+
+    final allBuiltin = [
       const ShortcutCommand(id: 'tab', label: 'TAB', code: '\t'),
       const ShortcutCommand(id: 'esc', label: 'ESC', code: '\x1b'),
       const ShortcutCommand(id: 'enter', label: 'ENTER', code: '\r'),
@@ -134,8 +130,26 @@ class TerminalShortcutPanel extends StatelessWidget {
       const ShortcutCommand(id: 'ctrl_c', label: 'CTRL+C', code: '\x03'),
       const ShortcutCommand(id: 'ctrl_d', label: 'CTRL+D', code: '\x04'),
       const ShortcutCommand(id: 'ctrl_l', label: 'CTRL+L', code: '\x0c'),
-      ...customCommands,
-    ]);
+    ];
+
+    final sortedAll = shortcuts.sortByUsage([...allBuiltin, ...customCommands]);
+
+    final primaryIds = {
+      'tab',
+      'esc',
+      'enter',
+      'bksp',
+      'up',
+      'down',
+      'left',
+      'right',
+      'ctrl_c'
+    };
+    final primaryCommands =
+        sortedAll.where((c) => primaryIds.contains(c.id) || c.custom).toList();
+    final secondaryCommands = sortedAll
+        .where((c) => !primaryIds.contains(c.id) && !c.custom)
+        .toList();
 
     return Row(
       children: [
@@ -149,17 +163,26 @@ class TerminalShortcutPanel extends StatelessWidget {
             child: ReorderableListView.builder(
               scrollDirection: Axis.horizontal,
               buildDefaultDragHandles: false,
+<<<<<<< HEAD
               itemCount: commands.length,
               onReorder: (oldIndex, newIndex) {
                 final reordered = commands.toList();
+=======
+              itemCount: primaryCommands.length,
+              onReorderItem: (oldIndex, newIndex) {
+                final reordered = primaryCommands.toList();
+>>>>>>> 966b1e8a57f0af560d3b077dd4e84102657f662d
                 final item = reordered.removeAt(oldIndex);
                 reordered.insert(newIndex, item);
-                shortcuts.reorderCommands(
-                  reordered.map((command) => command.id).toList(),
-                );
+                // Also reconstruct full commands list order to keep customized list state
+                final finalIds = [
+                  ...reordered.map((c) => c.id),
+                  ...secondaryCommands.map((c) => c.id),
+                ];
+                shortcuts.reorderCommands(finalIds);
               },
               itemBuilder: (context, index) {
-                final command = commands[index];
+                final command = primaryCommands[index];
                 return ReorderableDelayedDragStartListener(
                   key: ValueKey(command.id),
                   index: index,
@@ -169,6 +192,29 @@ class TerminalShortcutPanel extends StatelessWidget {
             ),
           ),
         ),
+        if (secondaryCommands.isNotEmpty) ...[
+          SizedBox(width: 4 * scale),
+          InputChip(
+            label: Text(
+              strings.language == AppLanguage.en ? 'MORE' : '更多键',
+              style: TextStyle(
+                fontSize: (11 * scale).clamp(9.5, 12.0),
+                fontWeight: FontWeight.w700,
+                color: colorScheme.primary,
+              ),
+            ),
+            backgroundColor: colorScheme.primary.withValues(alpha: 0.08),
+            side:
+                BorderSide(color: colorScheme.primary.withValues(alpha: 0.35)),
+            padding: EdgeInsets.symmetric(
+              horizontal: (7 * scale).clamp(4.0, 8.0),
+              vertical: (3 * scale).clamp(1.5, 4.0),
+            ),
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            onPressed: () =>
+                _showMoreKeysBottomSheet(context, secondaryCommands, scale),
+          ),
+        ],
       ],
     );
   }
@@ -180,10 +226,9 @@ class TerminalShortcutPanel extends StatelessWidget {
     final activeBorder = colorScheme.primary;
     final activeForeground = colorScheme.onPrimary;
 
-    final normalBackground =
-        colorScheme.surfaceContainerHighest.withValues(alpha: 0.5);
-    final normalBorder = colorScheme.outlineVariant;
-    final normalForeground = colorScheme.onSurfaceVariant;
+    final normalBackground = Colors.transparent;
+    final normalBorder = colorScheme.primary.withValues(alpha: 0.48);
+    final normalForeground = colorScheme.primary;
 
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 2 * scale),
@@ -193,6 +238,12 @@ class TerminalShortcutPanel extends StatelessWidget {
           style: TextStyle(
             fontSize: (11 * scale).clamp(9.5, 12.0),
             fontFamily: 'monospace',
+            fontFamilyFallback: const [
+              'Consolas',
+              'Microsoft YaHei',
+              'PingFang SC',
+              'sans-serif'
+            ],
             fontWeight: FontWeight.w700,
           ),
         ),
@@ -220,10 +271,9 @@ class TerminalShortcutPanel extends StatelessWidget {
     final activeBorder = colorScheme.primary;
     final activeForeground = colorScheme.onPrimary;
 
-    final normalBackground =
-        colorScheme.surfaceContainerHighest.withValues(alpha: 0.5);
-    final normalBorder = colorScheme.outlineVariant;
-    final normalForeground = colorScheme.onSurfaceVariant;
+    final normalBackground = Colors.transparent;
+    final normalBorder = colorScheme.primary.withValues(alpha: 0.48);
+    final normalForeground = colorScheme.primary;
 
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 2 * scale),
@@ -233,6 +283,12 @@ class TerminalShortcutPanel extends StatelessWidget {
           style: TextStyle(
             fontSize: (11 * scale).clamp(9.5, 12.0),
             fontFamily: 'monospace',
+            fontFamilyFallback: const [
+              'Consolas',
+              'Microsoft YaHei',
+              'PingFang SC',
+              'sans-serif'
+            ],
             fontWeight: FontWeight.w700,
           ),
         ),
@@ -249,101 +305,6 @@ class TerminalShortcutPanel extends StatelessWidget {
         ),
         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         onPressed: onToggleAlt,
-      ),
-    );
-  }
-
-  Widget _buildAdvancedKeyboard(BuildContext context, double scale) {
-    return Padding(
-      padding: EdgeInsets.only(top: 6 * scale),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _keyGroup(
-              context,
-              [
-                const _KeySpec('INS', '\x1b[2~'),
-                const _KeySpec('DEL', '\x1b[3~'),
-                const _KeySpec('SPACE', ' '),
-                const _KeySpec('CTRL+A', '\x01'),
-                const _KeySpec('CTRL+E', '\x05'),
-                const _KeySpec('CTRL+U', '\x15'),
-                const _KeySpec('CTRL+K', '\x0b'),
-                const _KeySpec('CTRL+W', '\x17'),
-                const _KeySpec('CTRL+R', '\x12'),
-                const _KeySpec('CTRL+Z', '\x1a'),
-                const _KeySpec('CTRL+\\', '\x1c'),
-              ],
-              scale),
-          SizedBox(height: 4 * scale),
-          _keyGroup(
-              context,
-              [
-                const _KeySpec('ALT+B', '\x1bb'),
-                const _KeySpec('ALT+F', '\x1bf'),
-                const _KeySpec('ALT+D', '\x1bd'),
-                const _KeySpec('F1', '\x1bOP'),
-                const _KeySpec('F2', '\x1bOQ'),
-                const _KeySpec('F3', '\x1bOR'),
-                const _KeySpec('F4', '\x1bOS'),
-                const _KeySpec('F5', '\x1b[15~'),
-                const _KeySpec('F6', '\x1b[17~'),
-                const _KeySpec('F7', '\x1b[18~'),
-                const _KeySpec('F8', '\x1b[19~'),
-                const _KeySpec('F9', '\x1b[20~'),
-                const _KeySpec('F10', '\x1b[21~'),
-                const _KeySpec('F11', '\x1b[23~'),
-                const _KeySpec('F12', '\x1b[24~'),
-              ],
-              scale),
-          SizedBox(height: 6 * scale),
-          SizedBox(
-            height: 118 * scale,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: complexInputController,
-                    decoration: InputDecoration(
-                      hintText: strings.multilineHint,
-                      alignLabelWithHint: true,
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 10 * scale,
-                        vertical: 8 * scale,
-                      ),
-                    ),
-                    keyboardType: TextInputType.multiline,
-                    textInputAction: TextInputAction.newline,
-                    minLines: null,
-                    maxLines: null,
-                    expands: true,
-                  ),
-                ),
-                SizedBox(width: 6 * scale),
-                SizedBox(
-                  width: 44 * scale,
-                  height: 44 * scale,
-                  child: IconButton(
-                    icon: Icon(Icons.send, size: 20 * scale),
-                    tooltip: strings.send,
-                    style: IconButton.styleFrom(
-                      backgroundColor: Theme.of(context)
-                          .colorScheme
-                          .primary
-                          .withValues(alpha: 0.1),
-                      foregroundColor: Theme.of(context).colorScheme.primary,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    onPressed: () => _sendComplexInput(context),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -383,13 +344,23 @@ class TerminalShortcutPanel extends StatelessWidget {
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 2 * scale),
       child: InputChip(
-        label: Text(
-          command.label,
-          style: TextStyle(
-            fontSize: (11 * scale).clamp(9.5, 12.0),
-            fontFamily: 'monospace',
-            fontWeight: FontWeight.w700,
-            color: command.custom ? customBorder : foreground,
+        label: Container(
+          constraints: BoxConstraints(maxWidth: 80 * scale),
+          child: Text(
+            command.label,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: (11 * scale).clamp(9.5, 12.0),
+              fontFamily: 'monospace',
+              fontFamilyFallback: const [
+                'Consolas',
+                'Microsoft YaHei',
+                'PingFang SC',
+                'sans-serif'
+              ],
+              fontWeight: FontWeight.w700,
+              color: command.custom ? customBorder : foreground,
+            ),
           ),
         ),
         backgroundColor: command.custom ? customBackground : normalBackground,
@@ -414,6 +385,225 @@ class TerminalShortcutPanel extends StatelessWidget {
           terminalFocusNode.requestFocus();
         },
       ),
+    );
+  }
+
+  void _showMoreKeysBottomSheet(
+    BuildContext context,
+    List<ShortcutCommand> secondaryCommands,
+    double scale,
+  ) {
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  strings.language == AppLanguage.en ? 'More Keys' : '更多快捷键',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: secondaryCommands.map((cmd) {
+                    return InputChip(
+                      label: Text(
+                        cmd.label,
+                        style: TextStyle(
+                          fontSize: (11 * scale).clamp(9.5, 12.0),
+                          fontFamily: 'monospace',
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      onPressed: () {
+                        context
+                            .read<ShortcutCommandService>()
+                            .recordUse(cmd.id);
+                        context
+                            .read<SshService>()
+                            .sendData(sessionId, cmd.code);
+                        terminalFocusNode.requestFocus();
+                      },
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showAdvancedKeyboardBottomSheet(BuildContext context, double scale) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) {
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(ctx).viewInsets.bottom,
+          ),
+          child: SafeArea(
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      strings.complexKeyboard,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      strings.navigationShell,
+                      style: TextStyle(
+                        fontSize: 12 * scale,
+                        fontWeight: FontWeight.w600,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _keyGroup(
+                        context,
+                        [
+                          const _KeySpec('HOME', '\x1b[H'),
+                          const _KeySpec('END', '\x1b[F'),
+                          const _KeySpec('PGUP', '\x1b[5~'),
+                          const _KeySpec('PGDN', '\x1b[6~'),
+                          const _KeySpec('CTRL+D', '\x04'),
+                          const _KeySpec('CTRL+L', '\x0c'),
+                        ],
+                        scale),
+                    const SizedBox(height: 16),
+                    Text(
+                      strings.editControl,
+                      style: TextStyle(
+                        fontSize: 12 * scale,
+                        fontWeight: FontWeight.w600,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _keyGroup(
+                        context,
+                        [
+                          const _KeySpec('INS', '\x1b[2~'),
+                          const _KeySpec('DEL', '\x1b[3~'),
+                          const _KeySpec('SPACE', ' '),
+                          const _KeySpec('CTRL+A', '\x01'),
+                          const _KeySpec('CTRL+E', '\x05'),
+                          const _KeySpec('CTRL+U', '\x15'),
+                          const _KeySpec('CTRL+K', '\x0b'),
+                          const _KeySpec('CTRL+W', '\x17'),
+                          const _KeySpec('CTRL+R', '\x12'),
+                          const _KeySpec('CTRL+Z', '\x1a'),
+                          const _KeySpec('CTRL+\\', '\x1c'),
+                          const _KeySpec('ALT+B', '\x1bb'),
+                          const _KeySpec('ALT+F', '\x1bf'),
+                          const _KeySpec('ALT+D', '\x1bd'),
+                        ],
+                        scale),
+                    const SizedBox(height: 16),
+                    Text(
+                      strings.functionKeys,
+                      style: TextStyle(
+                        fontSize: 12 * scale,
+                        fontWeight: FontWeight.w600,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _keyGroup(
+                        context,
+                        [
+                          const _KeySpec('F1', '\x1bOP'),
+                          const _KeySpec('F2', '\x1bOQ'),
+                          const _KeySpec('F3', '\x1bOR'),
+                          const _KeySpec('F4', '\x1bOS'),
+                          const _KeySpec('F5', '\x1b[15~'),
+                          const _KeySpec('F6', '\x1b[17~'),
+                          const _KeySpec('F7', '\x1b[18~'),
+                          const _KeySpec('F8', '\x1b[19~'),
+                          const _KeySpec('F9', '\x1b[20~'),
+                          const _KeySpec('F10', '\x1b[21~'),
+                          const _KeySpec('F11', '\x1b[23~'),
+                          const _KeySpec('F12', '\x1b[24~'),
+                        ],
+                        scale),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: SizedBox(
+                            height: 48 * scale,
+                            child: TextField(
+                              controller: complexInputController,
+                              decoration: InputDecoration(
+                                hintText: strings.multilineHint,
+                                alignLabelWithHint: true,
+                                contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 10 * scale,
+                                  vertical: 8 * scale,
+                                ),
+                              ),
+                              keyboardType: TextInputType.multiline,
+                              textInputAction: TextInputAction.newline,
+                              minLines: null,
+                              maxLines: null,
+                              expands: true,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 48 * scale,
+                          height: 48 * scale,
+                          child: IconButton(
+                            icon: Icon(Icons.send, size: 20 * scale),
+                            tooltip: strings.send,
+                            style: IconButton.styleFrom(
+                              backgroundColor: Theme.of(context)
+                                  .colorScheme
+                                  .primary
+                                  .withValues(alpha: 0.1),
+                              foregroundColor:
+                                  Theme.of(context).colorScheme.primary,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                            onPressed: () {
+                              _sendComplexInput(context);
+                              Navigator.pop(ctx);
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 

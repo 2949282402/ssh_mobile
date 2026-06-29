@@ -46,9 +46,15 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   late int _maxImageSizeBytes;
   late int _maxFileSizeBytes;
   String? _selectedApiKeyId;
+  late LlmApiFormat _apiFormat;
   bool _loadingModels = false;
+  bool _showUnsupportedFormatWarning = false;
   bool _saving = false;
   String? _errorText;
+
+  late bool _initialRagEnabled;
+  late String _initialRagSearchMode;
+  late LlmApiFormat _initialApiFormat;
 
   @override
   void initState() {
@@ -77,8 +83,10 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _webSearchEnabled = widget.initialSettings.webSearchEnabled;
     _webSearchMaxResults = widget.initialSettings.webSearchMaxResults;
     _webSearchEngine = widget.initialSettings.webSearchEngine;
-    _ragEnabled = context.read<AppSettings>().ragEnabled;
-    _ragSearchMode = context.read<AppSettings>().ragSearchMode;
+    _initialRagEnabled = context.read<AppSettings>().ragEnabled;
+    _initialRagSearchMode = context.read<AppSettings>().ragSearchMode;
+    _ragEnabled = _initialRagEnabled;
+    _ragSearchMode = _initialRagSearchMode;
     _multiAgentEnabled = widget.initialSettings.multiAgentEnabled;
     _multiAgentMaxAgents = widget.initialSettings.multiAgentMaxAgents;
     _postToolReviewEnabled = widget.initialSettings.postToolReviewEnabled;
@@ -87,10 +95,39 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _maxImageSizeBytes = widget.initialSettings.maxImageSizeBytes;
     _maxFileSizeBytes = widget.initialSettings.maxFileSizeBytes;
     _selectedApiKeyId = widget.initialSettings.activeApiKeyId;
+    const supportedApiFormats = [
+      LlmApiFormat.openAiChatCompletions,
+      LlmApiFormat.geminiOpenAiCompatible,
+      LlmApiFormat.anthropicMessages,
+    ];
+    final originalFormat = widget.initialSettings.apiFormat;
+    if (!supportedApiFormats.contains(originalFormat)) {
+      _apiFormat = LlmApiFormat.openAiChatCompletions;
+      _showUnsupportedFormatWarning = true;
+    } else {
+      _apiFormat = originalFormat;
+    }
+    _initialApiFormat = _apiFormat;
+
+    _baseUrlController.addListener(_onTextChanged);
+    _modelController.addListener(_onTextChanged);
+    _helperModelController.addListener(_onTextChanged);
+    _auditModelController.addListener(_onTextChanged);
+    _apiKeyController.addListener(_onTextChanged);
+    _quarkApiKeyController.addListener(_onTextChanged);
+    _quarkEndpointController.addListener(_onTextChanged);
   }
 
   @override
   void dispose() {
+    _baseUrlController.removeListener(_onTextChanged);
+    _modelController.removeListener(_onTextChanged);
+    _helperModelController.removeListener(_onTextChanged);
+    _auditModelController.removeListener(_onTextChanged);
+    _apiKeyController.removeListener(_onTextChanged);
+    _quarkApiKeyController.removeListener(_onTextChanged);
+    _quarkEndpointController.removeListener(_onTextChanged);
+
     _baseUrlController.dispose();
     _modelController.dispose();
     _helperModelController.dispose();
@@ -99,6 +136,40 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _quarkApiKeyController.dispose();
     _quarkEndpointController.dispose();
     super.dispose();
+  }
+
+  void _onTextChanged() {
+    setState(() {});
+  }
+
+  bool _hasChanges() {
+    final initial = widget.initialSettings;
+    return _baseUrlController.text != initial.baseUrl ||
+        _modelController.text != initial.model ||
+        _helperModelController.text != initial.helperModel ||
+        _auditModelController.text != initial.auditModel ||
+        _apiKeyController.text.isNotEmpty ||
+        _quarkApiKeyController.text.isNotEmpty ||
+        _quarkEndpointController.text != initial.quarkSearchEndpoint ||
+        _contextWindowTokens != initial.contextWindowTokens ||
+        _timeoutSeconds != initial.timeoutSeconds ||
+        _deepSeekThinkingEnabled != initial.deepSeekThinkingEnabled ||
+        _deepSeekReasoningEffort != initial.deepSeekReasoningEffort ||
+        _openAiReasoningEffort != initial.openAiReasoningEffort ||
+        _webSearchEnabled != initial.webSearchEnabled ||
+        _webSearchMaxResults != initial.webSearchMaxResults ||
+        _webSearchEngine != initial.webSearchEngine ||
+        _ragEnabled != _initialRagEnabled ||
+        _ragSearchMode != _initialRagSearchMode ||
+        _multiAgentEnabled != initial.multiAgentEnabled ||
+        _multiAgentMaxAgents != initial.multiAgentMaxAgents ||
+        _postToolReviewEnabled != initial.postToolReviewEnabled ||
+        _modelFallbackPolicy != initial.modelFallbackPolicy ||
+        _toolCallBudget != initial.toolCallBudget ||
+        _maxImageSizeBytes != initial.maxImageSizeBytes ||
+        _maxFileSizeBytes != initial.maxFileSizeBytes ||
+        _selectedApiKeyId != initial.activeApiKeyId ||
+        _apiFormat != _initialApiFormat;
   }
 
   String? get _selectedApiKeyMasked {
@@ -331,6 +402,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       maxFileSizeBytes: _maxFileSizeBytes,
       apiKey: _apiKeyController.text,
       selectedApiKeyId: _selectedApiKeyId,
+      apiFormat: _apiFormat,
     );
     setState(() {
       _saving = true;
@@ -361,6 +433,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         maxFileSizeBytes: pending.maxFileSizeBytes,
         apiKey: pending.apiKey,
         selectedApiKeyId: pending.selectedApiKeyId,
+        apiFormat: pending.apiFormat,
       );
       if (mounted) {
         await appSettings.setRagEnabled(_ragEnabled);
@@ -383,34 +456,80 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       (settings) => settings.language,
     );
     final strings = _AiStrings(language);
+    if (_showUnsupportedFormatWarning) {
+      _showUnsupportedFormatWarning = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(strings.apiFormatUnsupported),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      });
+    }
     final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(
         title: Text(strings.settings),
-        actions: [
-          TextButton(
-            onPressed: _saving ? null : () => Navigator.pop(context),
-            child: Text(strings.cancel),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: FilledButton(
-              onPressed: _saving ? null : () => _save(strings),
-              child: _saving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Text(strings.save),
-            ),
-          ),
-        ],
+        actions: _hasChanges()
+            ? [
+                TextButton(
+                  onPressed: _saving ? null : () => Navigator.pop(context),
+                  child: Text(strings.cancel),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: FilledButton(
+                    onPressed: _saving ? null : () => _save(strings),
+                    child: _saving
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(strings.save),
+                  ),
+                ),
+              ]
+            : [
+                Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: Text(strings.close),
+                  ),
+                ),
+              ],
       ),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
           children: [
+            DropdownButtonFormField<LlmApiFormat>(
+              initialValue: _apiFormat,
+              decoration: InputDecoration(
+                labelText: strings.apiFormat,
+              ),
+              items: const [
+                LlmApiFormat.openAiChatCompletions,
+                LlmApiFormat.geminiOpenAiCompatible,
+                LlmApiFormat.anthropicMessages,
+              ].map((format) {
+                return DropdownMenuItem<LlmApiFormat>(
+                  value: format,
+                  child: Text(strings.apiFormatLabel(format)),
+                );
+              }).toList(),
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      if (value == null) return;
+                      setState(() {
+                        _apiFormat = value;
+                      });
+                    },
+            ),
+            const SizedBox(height: 14),
             TextField(
               controller: _baseUrlController,
               decoration: InputDecoration(
@@ -424,6 +543,34 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                       _saving ? null : () => _openBaseUrlHistory(strings),
                   icon: const Icon(Icons.arrow_drop_down_rounded),
                 ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 4),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${strings.recommendedBaseUrl}: ${_getRecommendedBaseUrl(_apiFormat)}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Colors.grey,
+                          ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _saving
+                        ? null
+                        : () {
+                            setState(() {
+                              _baseUrlController.text =
+                                  _getRecommendedBaseUrl(_apiFormat);
+                            });
+                          },
+                    child: Text(strings.useRecommendedBaseUrl),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 14),
@@ -970,6 +1117,19 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       ),
     );
   }
+
+  String _getRecommendedBaseUrl(LlmApiFormat format) {
+    switch (format) {
+      case LlmApiFormat.openAiChatCompletions:
+        return 'https://api.deepseek.com';
+      case LlmApiFormat.geminiOpenAiCompatible:
+        return 'https://generativelanguage.googleapis.com/v1beta/openai';
+      case LlmApiFormat.anthropicMessages:
+        return 'https://api.anthropic.com';
+      default:
+        return 'https://api.deepseek.com';
+    }
+  }
 }
 
 class _SettingsHistoryAction<T> {
@@ -1098,6 +1258,7 @@ class _PendingAiSettings {
   final int maxFileSizeBytes;
   final String apiKey;
   final String? selectedApiKeyId;
+  final LlmApiFormat apiFormat;
 
   const _PendingAiSettings({
     required this.baseUrl,
@@ -1123,5 +1284,6 @@ class _PendingAiSettings {
     required this.maxFileSizeBytes,
     required this.apiKey,
     required this.selectedApiKeyId,
+    required this.apiFormat,
   });
 }

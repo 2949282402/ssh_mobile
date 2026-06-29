@@ -125,7 +125,7 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
     final messenger = ScaffoldMessenger.of(context);
 
     try {
-      final result = await FilePicker.pickFiles(
+      final file = await FilePicker.pickFile(
         type: FileType.custom,
         allowedExtensions: [
           'pdf',
@@ -137,17 +137,15 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
           'yml',
           'csv'
         ],
-        withData: true,
       );
 
-      if (result == null || result.files.isEmpty) return;
-
-      final file = result.files.first;
-      if (file.bytes == null || file.bytes!.isEmpty) return;
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) return;
 
       await viewModel.addDocument(
         file.name,
-        file.bytes!,
+        bytes,
         file.extension == 'pdf' ? 'application/pdf' : 'text/plain',
       );
 

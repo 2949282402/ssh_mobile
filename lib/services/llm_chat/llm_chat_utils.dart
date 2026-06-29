@@ -10,14 +10,6 @@ extension LlmChatServiceUtils on LlmChatService {
     return {};
   }
 
-  String _joinUrl(String baseUrl, String path) {
-    return LlmChatService.resolveOpenAiCompatibleUrl(baseUrl, path);
-  }
-
-  bool _looksLikeToolUnsupportedError(String body) {
-    return LlmChatService.looksLikeToolUnsupportedError(body);
-  }
-
   Set<String>? _normalizeToolNames(Set<String>? tools) {
     if (tools == null) return null;
     final normalized = <String>{};
@@ -158,13 +150,26 @@ extension LlmChatServiceUtils on LlmChatService {
   void _emitToolResultTrace(
     void Function(LlmTraceEvent event)? onTrace,
     String toolName,
-    String result,
-  ) {
+    String result, {
+    String outcome = 'success',
+    bool cacheHit = false,
+    bool dedupBlocked = false,
+  }) {
+    final resultPreview = _toolSecretPolicy.previewText(
+      _prettyJsonString(result),
+      maxChars: 1600,
+    );
     onTrace?.call(
       LlmTraceEvent(
         kind: 'tool_result',
         title: 'Tool result: $toolName',
-        content: _prettyJsonString(result),
+        content: _prettyJson({
+          'tool': toolName,
+          'outcome': outcome,
+          'cacheHit': cacheHit,
+          'dedupBlocked': dedupBlocked,
+          'resultPreview': resultPreview,
+        }),
       ),
     );
   }
@@ -201,69 +206,6 @@ extension LlmChatServiceUtils on LlmChatService {
     if (visibleText.endsWith('\n\n')) return '';
     if (visibleText.endsWith('\n')) return '\n';
     return '\n\n';
-  }
-
-  Map<String, dynamic> _providerReasoningParams({
-    required String baseUrl,
-    required String model,
-    required bool deepSeekThinkingEnabled,
-    required String deepSeekReasoningEffort,
-    required String openAiReasoningEffort,
-  }) {
-    if (isDeepSeekModelId(model) || _isDeepSeekBaseUrl(baseUrl)) {
-      final params = <String, dynamic>{
-        'thinking': {
-          'type': deepSeekThinkingEnabled ? 'enabled' : 'disabled',
-        },
-      };
-      if (deepSeekThinkingEnabled) {
-        params['reasoning_effort'] = DeepSeekReasoningEffort.normalize(
-          deepSeekReasoningEffort,
-        );
-      }
-      return params;
-    }
-    if (supportsOpenAiReasoningEffort(model)) {
-      return {
-        'reasoning_effort': OpenAiReasoningEffort.normalize(
-          openAiReasoningEffort,
-        ),
-      };
-    }
-    return const {};
-  }
-
-  bool _looksLikeReasoningParamUnsupportedError(String text) {
-    final lower = text.toLowerCase();
-    return lower.contains('reasoning_effort') ||
-        lower.contains('xhigh') ||
-        lower.contains('"thinking"') ||
-        lower.contains("'thinking'") ||
-        lower.contains('unknown parameter') ||
-        lower.contains('unsupported parameter') ||
-        lower.contains('does not support reasoning');
-  }
-
-  bool _isRetryableNetworkError(Object error) {
-    return error is SocketException ||
-        error is HttpException ||
-        error is HandshakeException ||
-        error is TlsException ||
-        error is IOException;
-  }
-
-  Future<void> _delayBeforeNetworkRetry(
-    int attempt,
-    LlmCancellationToken? cancellationToken,
-  ) async {
-    cancellationToken?.throwIfCancelled();
-    await Future<void>.delayed(Duration(milliseconds: 350 * (attempt + 1)));
-    cancellationToken?.throwIfCancelled();
-  }
-
-  bool _isDeepSeekBaseUrl(String baseUrl) {
-    final uri = Uri.tryParse(baseUrl.trim());
-    return uri?.host.toLowerCase().endsWith('deepseek.com') == true;
   }
 
   void _assertValidHeaderApiKey(String apiKey) {

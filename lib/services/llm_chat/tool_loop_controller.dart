@@ -19,6 +19,7 @@ class ToolLoopController {
   final LlmToolBudgetController toolBudget;
   final Map<String, CachedToolResult> readOnlyToolCache;
   final List<LlmToolLedgerEntry> toolLedger;
+  final LlmProviderAdapter? provider;
 
   int cacheHitCount = 0;
   int dedupBlockedCount = 0;
@@ -33,6 +34,7 @@ class ToolLoopController {
     required this.toolBudget,
     required this.readOnlyToolCache,
     required this.toolLedger,
+    this.provider,
   });
 
   Future<ToolLoopResult> handleToolCalls({
@@ -54,6 +56,8 @@ class ToolLoopController {
     required MultiAgentClassificationCompletion classify,
     PlanExecutionSnapshot? planExecutionSnapshot,
   }) async {
+    final activeProvider =
+        provider ?? LlmProviderFactory.fromSettings(settings);
     for (var toolIndex = 0; toolIndex < toolCalls.length; toolIndex++) {
       final call = toolCalls[toolIndex];
       cancellationToken?.throwIfCancelled();
@@ -128,11 +132,14 @@ class ToolLoopController {
                 'Tool "${call.name}" is not exposed in the current context.',
           ),
         );
-        workingMessages.add({
-          'role': 'tool',
-          'tool_call_id': call.id,
-          'content': result,
-        });
+        workingMessages.add(activeProvider.buildToolResultMessage(
+          call: LlmProviderToolCall(
+            id: call.id,
+            name: call.name,
+            argumentsJson: call.arguments,
+          ),
+          result: result,
+        ));
         workingMessages.add({
           'role': 'system',
           'content':
@@ -162,6 +169,13 @@ class ToolLoopController {
               maxChars: 600,
             ),
           ),
+        );
+
+        chatService._emitToolResultTrace(
+          onTrace,
+          call.name,
+          result,
+          outcome: outcome,
         );
 
         continue;
@@ -222,11 +236,14 @@ class ToolLoopController {
             ),
           );
 
-          workingMessages.add({
-            'role': 'tool',
-            'tool_call_id': call.id,
-            'content': result,
-          });
+          workingMessages.add(activeProvider.buildToolResultMessage(
+            call: LlmProviderToolCall(
+              id: call.id,
+              name: call.name,
+              argumentsJson: call.arguments,
+            ),
+            result: result,
+          ));
 
           final quality = ToolResultClassifier.classify(
             toolName: call.name,
@@ -270,6 +287,13 @@ class ToolLoopController {
                 maxChars: 600,
               ),
             ),
+          );
+
+          chatService._emitToolResultTrace(
+            onTrace,
+            call.name,
+            result,
+            outcome: outcome,
           );
 
           continue;
@@ -341,12 +365,19 @@ class ToolLoopController {
               auditResult: auditResult,
             );
             chatService._emitToolResultTrace(
-                onTrace, blockedCall.name, blockedResult);
-            workingMessages.add({
-              'role': 'tool',
-              'tool_call_id': blockedCall.id,
-              'content': blockedResult,
-            });
+              onTrace,
+              blockedCall.name,
+              blockedResult,
+              outcome: 'budget_audit_rejected',
+            );
+            workingMessages.add(activeProvider.buildToolResultMessage(
+              call: LlmProviderToolCall(
+                id: blockedCall.id,
+                name: blockedCall.name,
+                argumentsJson: blockedCall.arguments,
+              ),
+              result: blockedResult,
+            ));
           }
 
           workingMessages.add({
@@ -445,12 +476,19 @@ class ToolLoopController {
               auditResult: auditResult,
             );
             chatService._emitToolResultTrace(
-                onTrace, blockedCall.name, blockedResult);
-            workingMessages.add({
-              'role': 'tool',
-              'tool_call_id': blockedCall.id,
-              'content': blockedResult,
-            });
+              onTrace,
+              blockedCall.name,
+              blockedResult,
+              outcome: 'budget_audit_rejected',
+            );
+            workingMessages.add(activeProvider.buildToolResultMessage(
+              call: LlmProviderToolCall(
+                id: blockedCall.id,
+                name: blockedCall.name,
+                argumentsJson: blockedCall.arguments,
+              ),
+              result: blockedResult,
+            ));
           }
 
           workingMessages.add({
@@ -552,6 +590,20 @@ class ToolLoopController {
 
         if (!dedupBlocked && !cacheHit && approvalRequest != null) {
           approvalCount += 1;
+          onTrace?.call(
+            LlmTraceEvent(
+              kind: 'approval',
+              title: 'Tool action approval requested',
+              content: chatService._prettyJson({
+                'tool': call.name,
+                'status': 'requested',
+                'approvalType': approvalRequest.approvalType,
+                'server': approvalRequest.connectionName,
+                'command': approvalRequest.command,
+                'reason': approvalRequest.reason,
+              }),
+            ),
+          );
           if (planMode) {
             outcome = 'blocked_in_plan_mode';
             _currentOutcome = AgentFinalOutcome.planModeBlocked;
@@ -566,6 +618,7 @@ class ToolLoopController {
                 title: 'Action blocked in Plan Mode',
                 content: chatService._prettyJson({
                   'tool': call.name,
+                  'status': 'blocked_in_plan_mode',
                   'message': 'Action blocked in plan mode',
                   'command': approvalRequest.command,
                 }),
@@ -610,6 +663,7 @@ class ToolLoopController {
                   title: 'Tool action rejected',
                   content: chatService._prettyJson({
                     'tool': call.name,
+                    'status': 'rejected',
                     'approvalType': approvalRequest.approvalType,
                     'server': approvalRequest.connectionName,
                     'command': approvalRequest.command,
@@ -634,6 +688,7 @@ class ToolLoopController {
                   title: 'Tool action approved',
                   content: chatService._prettyJson({
                     'tool': call.name,
+                    'status': 'approved',
                     'approvalType': approvalRequest.approvalType,
                     'server': approvalRequest.connectionName,
                     'command': approvalRequest.command,
@@ -729,12 +784,22 @@ class ToolLoopController {
         });
       }
 
-      chatService._emitToolResultTrace(onTrace, call.name, result);
-      workingMessages.add({
-        'role': 'tool',
-        'tool_call_id': call.id,
-        'content': result,
-      });
+      chatService._emitToolResultTrace(
+        onTrace,
+        call.name,
+        result,
+        outcome: outcome,
+        cacheHit: cacheHit,
+        dedupBlocked: dedupBlocked,
+      );
+      workingMessages.add(activeProvider.buildToolResultMessage(
+        call: LlmProviderToolCall(
+          id: call.id,
+          name: call.name,
+          argumentsJson: call.arguments,
+        ),
+        result: result,
+      ));
 
       final quality = ToolResultClassifier.classify(
         toolName: call.name,
@@ -864,7 +929,10 @@ class ToolLoopController {
         'Current Plan Step:',
         '- taskId: ${currentTodoStep.id}',
         '- name: ${currentTodoStep.name}',
-        '- command: ${currentTodoStep.command}',
+        '- command: ${chatService._toolSecretPolicy.previewText(
+          currentTodoStep.command,
+          maxChars: 300,
+        )}',
         '- status: ${currentTodoStep.status.name}',
         if (currentTodoStep.connectionId?.trim().isNotEmpty == true)
           '- connectionId: ${currentTodoStep.connectionId}',

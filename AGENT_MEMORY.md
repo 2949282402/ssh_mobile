@@ -183,5 +183,9 @@ across sessions.
   batch retryable, and marker-gated: each batch may commit independently, but
   mark complete only after every batch succeeds. Logs may report row counts
   only; never log field values.
-
-
+- 2026-06-22: Agent Trace history is now a Drift-only growth store under
+  `agent_trace_events`, with `StorageService` as the facade. Trace content is
+  redacted, size-capped, encrypted in `content_json`, tied to assistant
+  messages via `agentRunId`, and intentionally excluded from backup export.
+- 2026-06-22: Widget testing pages like LlmChatScreen with locally-scoped providers and target platform overrides must manage debug variable changes inside the testWidgets body using a try-finally block, as the binding's invariant tester runs before the global tearDown hook. Subtree provider instances can be retrieved via context lookups on public descendant widgets (e.g. Scaffold).
+- 2026-06-23: App typography is now configured to completely rely on the native system fonts on all supported platforms (Android, Windows, iOS, macOS), and the custom app-level font selection feature has been completely removed to simplify settings and ensure standard system font behavior.

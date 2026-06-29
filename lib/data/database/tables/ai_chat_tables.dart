@@ -41,6 +41,7 @@ class AiChatMessages extends Table {
   IntColumn get promptCacheHitTokens => integer().nullable()();
   IntColumn get promptCacheMissTokens => integer().nullable()();
   IntColumn get reasoningTokens => integer().nullable()();
+  TextColumn get agentRunId => text().nullable()();
   TextColumn get attachmentsJson => text().withDefault(const Constant('[]'))();
   TextColumn get tracesJson => text().withDefault(const Constant('[]'))();
   TextColumn get todoStepsJson => text().withDefault(const Constant('[]'))();

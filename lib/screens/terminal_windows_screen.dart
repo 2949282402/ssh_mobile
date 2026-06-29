@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../features/terminal/viewmodels/terminal_windows_viewmodel.dart';
@@ -484,6 +484,12 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
                 maxLines: 1,
                 style: TextStyle(
                   fontFamily: 'monospace',
+                  fontFamilyFallback: [
+                    'Consolas',
+                    'Microsoft YaHei',
+                    'PingFang SC',
+                    'sans-serif'
+                  ],
                   fontSize: 11,
                   color: colorScheme.onSurface.withValues(alpha: 0.78),
                 ),
@@ -665,7 +671,15 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
               const SizedBox(height: 8),
               SelectableText(
                 cleanupCommand,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontFamilyFallback: [
+                      'Consolas',
+                      'Microsoft YaHei',
+                      'PingFang SC',
+                      'sans-serif'
+                    ],
+                    fontSize: 12),
               ),
             ],
           ],

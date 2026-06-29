@@ -904,25 +904,66 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
       notifyListeners();
     });
 
-    _backgroundService.on('sshLogReceived').listen((data) {
-      if (data == null) return;
-      final String message = data['message'];
-      final String? errorText = data['error'];
-      final String levelName = data['level'] ?? 'info';
+    _backgroundService.on('sshLogReceived').listen(handleBackgroundLog);
+  }
 
-      if (levelName == 'error') {
-        AppLogService.instance.error('[Background] $message', error: errorText);
-      } else if (levelName == 'warning') {
-        AppLogService.instance.warning('[Background] $message');
-      } else {
-        AppLogService.instance.info('[Background] $message');
-      }
-    });
+  @visibleForTesting
+  void handleBackgroundLog(Map<String, dynamic>? data) {
+    if (data == null) return;
+    final String message = data['message'] ?? '';
+    final String levelName = data['level'] ?? 'info';
+    final String? details = data['details'];
+
+    AppLogService.instance.add(
+      levelName,
+      '[Background] $message',
+      details: details,
+    );
   }
 
   void _refreshSessionsView() {
     _sessionsView = List.unmodifiable(_sessions.values.toList()
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt)));
+
+    if (!_usesBackgroundService) {
+      final byConnection = <String, SshConnectionOverview>{};
+      for (final session in _sessions.values) {
+        final connId = session.connectionId;
+        final current = byConnection[connId];
+        if (current == null) {
+          byConnection[connId] = SshConnectionOverview(
+            count: 1,
+            latestState: session.state,
+            hasConnected: session.state == SshConnectionState.connected,
+          );
+        } else {
+          final SshConnectionState newState;
+          if (current.latestState == SshConnectionState.connected ||
+              session.state == SshConnectionState.connected) {
+            newState = SshConnectionState.connected;
+          } else if (current.latestState == SshConnectionState.connecting ||
+              session.state == SshConnectionState.connecting) {
+            newState = SshConnectionState.connecting;
+          } else if (current.latestState == SshConnectionState.error ||
+              session.state == SshConnectionState.error) {
+            newState = SshConnectionState.error;
+          } else {
+            newState = SshConnectionState.disconnected;
+          }
+
+          byConnection[connId] = SshConnectionOverview(
+            count: current.count + 1,
+            latestState: newState,
+            hasConnected: current.hasConnected ||
+                session.state == SshConnectionState.connected,
+          );
+        }
+      }
+      _serverOverviewSnapshot = SshServerOverviewSnapshot(
+        byConnection: byConnection,
+        windowCount: _sessions.length,
+      );
+    }
   }
 
   void _notifySessionMetadataChanged() {

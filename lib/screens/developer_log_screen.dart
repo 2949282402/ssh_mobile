@@ -5,6 +5,7 @@ import '../features/developer_log/viewmodels/developer_log_viewmodel.dart';
 import '../services/app_log_service.dart';
 import '../services/app_settings.dart';
 import '../widgets/overflow_scroll_text.dart';
+import '../utils/responsive.dart';
 
 extension _DeveloperLogStrings on AppStrings {
   String get copySelectedLogs =>
@@ -141,6 +142,12 @@ class _DeveloperLogToolbar extends StatelessWidget {
                     viewModel.clearLogs();
                     onClearSuccess();
                   }
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.settings_outlined),
+                onPressed: () {
+                  OpenSettingsNotification().dispatch(context);
                 },
               ),
             ],
@@ -344,6 +351,12 @@ class _LogEntryTileState extends State<_LogEntryTile> {
               maxLines: _expanded ? null : _collapsedLines,
               style: TextStyle(
                 fontFamily: 'monospace',
+                fontFamilyFallback: [
+                  'Consolas',
+                  'Microsoft YaHei',
+                  'PingFang SC',
+                  'sans-serif'
+                ],
                 fontSize: 11,
                 height: 1.35,
                 color: colorScheme.onSurface,

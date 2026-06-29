@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'app_log_service.dart';
 
 import '../features/connection/models/connection.dart';
 import '../core/services/ssh_client_factory.dart';
@@ -38,6 +39,8 @@ class BackgroundServiceManager {
 
   static Future<void> initialize() async {
     if (!_supportsNativeBackgroundService) return;
+    AppLogService.instance
+        .info('[BackgroundManager] Initializing background service manager');
     await _requestNotificationPermission();
     await prewarm();
   }
@@ -51,10 +54,17 @@ class BackgroundServiceManager {
       return;
     }
 
+    AppLogService().info('Prewarming BackgroundServiceManager');
     final future = _configureService();
     _prewarmFuture = future;
     try {
+      AppLogService.instance.info(
+          '[BackgroundManager] Prewarming background service configuration');
       await future;
+      AppLogService().info('BackgroundServiceManager prewarmed successfully');
+    } catch (e) {
+      AppLogService()
+          .error('BackgroundServiceManager prewarm failed', error: e);
     } finally {
       _prewarmFuture = null;
     }
@@ -62,7 +72,14 @@ class BackgroundServiceManager {
 
   static Future<void> _configureService() async {
     if (_configured) return;
-    await _createNotificationChannel();
+    try {
+      await _createNotificationChannel();
+      AppLogService.instance.info(
+          '[BackgroundManager] Notification channel created successfully');
+    } catch (e) {
+      AppLogService.instance.warning(
+          '[BackgroundManager] Failed to create notification channel: $e');
+    }
 
     final service = FlutterBackgroundService();
     await service.configure(
@@ -84,6 +101,8 @@ class BackgroundServiceManager {
     );
 
     _configured = true;
+    AppLogService.instance
+        .info('[BackgroundManager] Background service configured successfully');
   }
 
   static Future<void> start({
@@ -91,6 +110,8 @@ class BackgroundServiceManager {
     bool showConnectionName = false,
   }) async {
     if (!_supportsNativeBackgroundService) return;
+    AppLogService.instance.info(
+        '[BackgroundManager] Starting background service for connection: $connectionName');
     await initialize();
     var locksAcquired = false;
     try {
@@ -100,7 +121,12 @@ class BackgroundServiceManager {
 
       final service = FlutterBackgroundService();
       if (!await service.isRunning()) {
-        await service.startService();
+        final started = await service.startService();
+        AppLogService.instance.info(
+            '[BackgroundManager] service.startService() invoked, result: $started');
+      } else {
+        AppLogService.instance
+            .info('[BackgroundManager] Background service is already running');
       }
 
       service.invoke('update', {
@@ -110,7 +136,12 @@ class BackgroundServiceManager {
           showConnectionName: showConnectionName,
         ),
       });
-    } catch (_) {
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        '[BackgroundManager] Error starting background service',
+        error: e,
+        stackTrace: stackTrace,
+      );
       if (locksAcquired) {
         await _releasePowerLocks();
       }
@@ -120,11 +151,18 @@ class BackgroundServiceManager {
 
   static Future<void> stop() async {
     if (!_supportsNativeBackgroundService) return;
+    AppLogService.instance
+        .info('[BackgroundManager] Stopping background service');
     final service = FlutterBackgroundService();
     if (await service.isRunning()) {
       service.invoke('stopService');
+      AppLogService.instance
+          .info('[BackgroundManager] Invoked stopService command');
+    } else {
+      AppLogService.instance.info('[BackgroundManager] Service is not running');
     }
     await _releasePowerLocks();
+    AppLogService().info('Background SSH Service stopped');
   }
 
   static Future<bool> isIgnoringBatteryOptimizations() async {
@@ -133,7 +171,9 @@ class BackgroundServiceManager {
       return await _powerChannel
               .invokeMethod<bool>('isIgnoringBatteryOptimizations') ??
           false;
-    } catch (_) {
+    } catch (e) {
+      AppLogService.instance.warning(
+          '[BackgroundManager] Error checking battery optimizations: $e');
       return false;
     }
   }
@@ -144,14 +184,20 @@ class BackgroundServiceManager {
       await _powerChannel.invokeMethod<bool>(
         'requestBatteryOptimizationExemption',
       );
-    } catch (_) {}
+    } catch (e) {
+      AppLogService.instance.warning(
+          '[BackgroundManager] Error requesting battery optimizations: $e');
+    }
   }
 
   static Future<void> openAppSettings() async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
     try {
       await _powerChannel.invokeMethod<bool>('openAppSettings');
-    } catch (_) {}
+    } catch (e) {
+      AppLogService.instance
+          .warning('[BackgroundManager] Error opening app settings: $e');
+    }
   }
 
   static void updateStatus(String content) {
@@ -167,8 +213,12 @@ class BackgroundServiceManager {
     _notificationPermissionChecked = true;
 
     final status = await Permission.notification.status;
+    AppLogService.instance.info(
+        '[BackgroundManager] Current notification permission status: $status');
     if (status.isDenied || status.isRestricted || status.isLimited) {
-      await Permission.notification.request();
+      final result = await Permission.notification.request();
+      AppLogService.instance.info(
+          '[BackgroundManager] Requested notification permission, result: $result');
     }
   }
 
@@ -193,13 +243,23 @@ class BackgroundServiceManager {
   static Future<void> _acquirePowerLocks() async {
     try {
       await _powerChannel.invokeMethod<bool>('acquireLocks');
-    } catch (_) {}
+      AppLogService.instance
+          .info('[BackgroundManager] Power locks acquired successfully');
+    } catch (e) {
+      AppLogService.instance
+          .warning('[BackgroundManager] Failed to acquire power locks: $e');
+    }
   }
 
   static Future<void> _releasePowerLocks() async {
     try {
       await _powerChannel.invokeMethod<bool>('releaseLocks');
-    } catch (_) {}
+      AppLogService.instance
+          .info('[BackgroundManager] Power locks released successfully');
+    } catch (e) {
+      AppLogService.instance
+          .warning('[BackgroundManager] Failed to release power locks: $e');
+    }
   }
 
   static Future<void> _requestBatteryOptimizationExemption() async {
@@ -207,12 +267,19 @@ class BackgroundServiceManager {
       final ignoring = await _powerChannel
               .invokeMethod<bool>('isIgnoringBatteryOptimizations') ??
           true;
+      AppLogService.instance.info(
+          '[BackgroundManager] Battery optimization ignoring check: $ignoring');
       if (!ignoring) {
         await _powerChannel.invokeMethod<bool>(
           'requestBatteryOptimizationExemption',
         );
+        AppLogService.instance.info(
+            '[BackgroundManager] Requested battery optimization exemption');
       }
-    } catch (_) {}
+    } catch (e) {
+      AppLogService.instance.warning(
+          '[BackgroundManager] Failed battery optimization exemption request: $e');
+    }
   }
 
   static String _notificationContent(
@@ -582,6 +649,8 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
         onPasswordRequest: authOptions.onPasswordRequest,
         onUserInfoRequest: authOptions.onUserInfoRequest,
       );
+
+      await client.authenticated.timeout(const Duration(seconds: 15));
 
       if (launchMode == 'tmux') {
         try {

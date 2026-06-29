@@ -1,4 +1,4 @@
-part of '../llm_chat_screen.dart';
+﻿part of '../llm_chat_screen.dart';
 
 class _ToolApprovalPanel extends StatelessWidget {
   final PendingToolApproval pending;
@@ -158,6 +158,12 @@ class _ToolApprovalPanel extends StatelessWidget {
                         pending.request.command,
                         style: TextStyle(
                           fontFamily: 'monospace',
+                          fontFamilyFallback: [
+                            'Consolas',
+                            'Microsoft YaHei',
+                            'PingFang SC',
+                            'sans-serif'
+                          ],
                           color: colorScheme.onSurface,
                         ),
                       ),
@@ -191,6 +197,12 @@ class _ToolApprovalPanel extends StatelessWidget {
                     preview,
                     style: TextStyle(
                       fontFamily: 'monospace',
+                      fontFamilyFallback: [
+                        'Consolas',
+                        'Microsoft YaHei',
+                        'PingFang SC',
+                        'sans-serif'
+                      ],
                       color: colorScheme.onSurface,
                     ),
                   ),

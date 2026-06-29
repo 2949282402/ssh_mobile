@@ -1,4 +1,4 @@
-part of '../playbook_screen.dart';
+﻿part of '../playbook_screen.dart';
 
 extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
   Widget _buildExecutionDashboard(
@@ -259,6 +259,12 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                           maxLines: 1,
                           style: TextStyle(
                             fontFamily: 'monospace',
+                            fontFamilyFallback: [
+                              'Consolas',
+                              'Microsoft YaHei',
+                              'PingFang SC',
+                              'sans-serif'
+                            ],
                             fontSize: 12,
                             backgroundColor: colorScheme.surfaceContainerHighest
                                 .withValues(alpha: 0.5),
@@ -351,6 +357,12 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                         style: const TextStyle(
                             color: AppTheme.terminalAmber,
                             fontFamily: 'monospace',
+                            fontFamilyFallback: [
+                              'Consolas',
+                              'Microsoft YaHei',
+                              'PingFang SC',
+                              'sans-serif'
+                            ],
                             fontSize: 11,
                             fontWeight: FontWeight.bold),
                       ),
@@ -361,6 +373,12 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                       style: TextStyle(
                           color: AppTheme.terminalGreen,
                           fontFamily: 'monospace',
+                          fontFamilyFallback: [
+                            'Consolas',
+                            'Microsoft YaHei',
+                            'PingFang SC',
+                            'sans-serif'
+                          ],
                           fontSize: 10,
                           fontWeight: FontWeight.bold),
                     ),
@@ -370,6 +388,12 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                       style: const TextStyle(
                           color: Colors.white70,
                           fontFamily: 'monospace',
+                          fontFamilyFallback: [
+                            'Consolas',
+                            'Microsoft YaHei',
+                            'PingFang SC',
+                            'sans-serif'
+                          ],
                           fontSize: 11),
                     ),
                     const SizedBox(height: 8),
@@ -380,6 +404,12 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                       style: TextStyle(
                           color: Theme.of(context).colorScheme.error,
                           fontFamily: 'monospace',
+                          fontFamilyFallback: [
+                            'Consolas',
+                            'Microsoft YaHei',
+                            'PingFang SC',
+                            'sans-serif'
+                          ],
                           fontSize: 10,
                           fontWeight: FontWeight.bold),
                     ),
@@ -392,6 +422,12 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                               .error
                               .withValues(alpha: 0.9),
                           fontFamily: 'monospace',
+                          fontFamilyFallback: [
+                            'Consolas',
+                            'Microsoft YaHei',
+                            'PingFang SC',
+                            'sans-serif'
+                          ],
                           fontSize: 11),
                     ),
                   ],

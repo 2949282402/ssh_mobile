@@ -39,7 +39,6 @@ void main() {
 
       expect(viewModel.language, equals(AppLanguage.zh));
       expect(viewModel.themeMode, equals(ThemeMode.light));
-      expect(viewModel.fontFamilyId, equals('system'));
       expect(viewModel.isImporting, isFalse);
       expect(viewModel.isExporting, isFalse);
       expect(viewModel.lastOperationMessage, isNull);

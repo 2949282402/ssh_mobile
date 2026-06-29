@@ -267,6 +267,7 @@ void main() {
 
       final workingMessages = <Map<String, dynamic>>[];
       final settings = await storage.loadAiConnectionSettings();
+      final traces = <LlmTraceEvent>[];
 
       final loopResult = await controller.handleToolCalls(
         toolCalls: [
@@ -295,7 +296,7 @@ void main() {
         requestToolApproval: (req) async =>
             const AiToolApprovalDecision.rejected(
                 abort: true, feedback: 'no way'),
-        onTrace: null,
+        onTrace: (event) => traces.add(event),
         cancellationToken: null,
         settings: settings,
         complete: (role, messages, {required thinkingSettings}) async =>
@@ -310,6 +311,12 @@ void main() {
           m['content'].contains('User rejected the requested tool action'));
       expect(hasRejectedMsg, isTrue);
       expect(loopResult.finalOutcome, AgentFinalOutcome.approvalRejected);
+      expect(
+        traces.where((event) => event.kind == 'approval').map((event) {
+          return jsonDecode(event.content)['status'];
+        }),
+        containsAll(['requested', 'rejected']),
+      );
     });
 
     test('budget safety audit rejection triggers postBudgetAudit review',
@@ -485,6 +492,7 @@ void main() {
 
       final workingMessages = <Map<String, dynamic>>[];
       final settings = await storage.loadAiConnectionSettings();
+      final traces = <LlmTraceEvent>[];
 
       final loopResult = await controller.handleToolCalls(
         toolCalls: [
@@ -515,7 +523,7 @@ void main() {
           throw StateError(
               'Approval callback should not be called for unexposed tools.');
         },
-        onTrace: null,
+        onTrace: (event) => traces.add(event),
         cancellationToken: null,
         settings: settings,
         complete: (role, messages, {required thinkingSettings}) async =>
@@ -535,6 +543,13 @@ void main() {
       expect(ledger.last.outcome, 'tool_not_visible');
       expect(ledger.last.failed, isTrue);
       expect(ledger.last.quality, ToolResultQuality.unsafeBlocked.name);
+      final resultTrace = traces.lastWhere((event) =>
+          event.kind == 'tool_result' &&
+          event.title == 'Tool result: sftp_write_text');
+      final resultJson = jsonDecode(resultTrace.content);
+      expect(resultJson['outcome'], 'tool_not_visible');
+      expect(resultJson['resultPreview'],
+          contains('Tool is not available in the current context.'));
     });
 
     test(
@@ -1280,7 +1295,8 @@ void main() {
         onTrace: (ev) => traces.add(ev),
         cancellationToken: null,
         settings: settings,
-        complete: (role, messages, {required thinkingSettings}) async => 'advice',
+        complete: (role, messages, {required thinkingSettings}) async =>
+            'advice',
         classify: (messages) async => '{}',
         planExecutionSnapshot: const PlanExecutionSnapshot(
           phase: PlanExecutionPhase.pending,
@@ -1311,6 +1327,11 @@ void main() {
       expect(blockTrace.content, contains('"executionMode": "readOnly"'));
       expect(blockTrace.content, contains('"reason": "task_update_required"'));
       expect(blockTrace.content, contains('"currentStepStatus": "pending"'));
+      final resultTrace = traces.lastWhere((ev) => ev.kind == 'tool_result');
+      final resultJson = jsonDecode(resultTrace.content);
+      expect(resultJson['outcome'], 'plan_execution_blocked');
+      expect(resultJson['resultPreview'],
+          contains('Tool call blocked by plan execution gate.'));
     });
   });
 }

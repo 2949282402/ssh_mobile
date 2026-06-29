@@ -173,7 +173,7 @@ class _MobileCollapseButton extends StatelessWidget {
       child: Material(
         color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.42),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
           side: BorderSide(color: colorScheme.outlineVariant),
         ),
         clipBehavior: Clip.antiAlias,
@@ -321,7 +321,7 @@ class _ServerStatusIcon extends StatelessWidget {
         color: selected
             ? colorScheme.primary.withValues(alpha: 0.16)
             : colorScheme.primary.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
         border: selected
             ? Border.all(color: colorScheme.primary.withValues(alpha: 0.42))
             : null,
@@ -380,7 +380,7 @@ class _ServerTile extends StatelessWidget {
             color: selected
                 ? colorScheme.primary.withValues(alpha: 0.12)
                 : colorScheme.surface,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
             border: Border.all(color: borderColor),
           ),
           child: Row(

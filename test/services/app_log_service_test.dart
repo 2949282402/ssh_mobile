@@ -22,6 +22,8 @@ void main() {
   }
 
   setUp(() async {
+    await AppLogService.instance.pendingWrites;
+    AppLogService.instance.resetLogFileForTesting();
     await cleanLogFiles();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
@@ -30,7 +32,9 @@ void main() {
   });
 
   tearDown(() async {
+    await AppLogService.instance.pendingWrites;
     AppLogService.instance.clear();
+    AppLogService.instance.resetLogFileForTesting();
     await cleanLogFiles();
   });
 
@@ -75,7 +79,7 @@ void main() {
     expect(entry.stackTrace, isNot(contains('secret')));
     expect(entry.text, contains('[REDACTED]'));
 
-    await Future.delayed(const Duration(milliseconds: 100));
+    await logs.pendingWrites;
     final logFile = File('app.log');
     final content = await logFile.readAsString();
     expect(content, isNot(contains('abc123')));
@@ -105,9 +109,9 @@ void main() {
     // Set a tiny limit for testing log rotation
     logs.logSizeLimit = 50; // 50 bytes
 
-    // Adding logs should write to disk. Since it's async, let's wait a bit.
+    // Adding logs should write to disk.
     logs.info('Log entry one');
-    await Future.delayed(const Duration(milliseconds: 100));
+    await logs.pendingWrites;
 
     // Check that app.log exists and contains the text
     final logFile = File('app.log');
@@ -117,13 +121,13 @@ void main() {
 
     // Write more logs to trigger rotation
     logs.info('Log entry two');
-    await Future.delayed(const Duration(milliseconds: 100));
+    await logs.pendingWrites;
 
     logs.info('Log entry three');
-    await Future.delayed(const Duration(milliseconds: 100));
+    await logs.pendingWrites;
 
     logs.info('Log entry four');
-    await Future.delayed(const Duration(milliseconds: 100));
+    await logs.pendingWrites;
 
     // After multiple writes exceeding 50 bytes, rotation should have occurred.
     // Check that rotated files exist

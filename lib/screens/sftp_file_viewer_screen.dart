@@ -1,4 +1,4 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -352,6 +352,12 @@ class _TextPreview extends StatelessWidget {
           text,
           style: const TextStyle(
             fontFamily: 'monospace',
+            fontFamilyFallback: [
+              'Consolas',
+              'Microsoft YaHei',
+              'PingFang SC',
+              'sans-serif'
+            ],
             fontSize: 13,
             height: 1.35,
           ),

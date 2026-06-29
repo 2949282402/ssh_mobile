@@ -13,6 +13,7 @@ extension DriftOps on StorageService {
 
       _driftAiChatsActive = await _migrateAiChatsToDrift();
       _driftAgentMetricsActive = await _migrateAgentMetricsToDrift();
+      _driftAgentTraceActive = true;
       _driftTerminalHistoryActive = await _migrateTerminalHistoryToDrift();
       _driftPlaybooksActive = await _migratePlaybooksToDrift();
       await _reencryptDriftSensitiveFieldsIfNeeded();
@@ -21,6 +22,7 @@ extension DriftOps on StorageService {
       _driftReady = false;
       _driftAiChatsActive = false;
       _driftAgentMetricsActive = false;
+      _driftAgentTraceActive = false;
       _driftTerminalHistoryActive = false;
       _driftPlaybooksActive = false;
       _driftSftpHistoryActive = false;
