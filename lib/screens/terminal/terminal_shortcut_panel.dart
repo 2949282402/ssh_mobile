@@ -150,7 +150,7 @@ class TerminalShortcutPanel extends StatelessWidget {
               scrollDirection: Axis.horizontal,
               buildDefaultDragHandles: false,
               itemCount: commands.length,
-              onReorderItem: (oldIndex, newIndex) {
+              onReorder: (oldIndex, newIndex) {
                 final reordered = commands.toList();
                 final item = reordered.removeAt(oldIndex);
                 reordered.insert(newIndex, item);

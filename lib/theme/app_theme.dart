@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:animations/animations.dart';
 
 class ExtendedColors extends ThemeExtension<ExtendedColors> {

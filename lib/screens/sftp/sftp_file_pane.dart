@@ -747,7 +747,7 @@ class _SftpEntryList extends StatelessWidget {
 
     final colorScheme = Theme.of(context).colorScheme;
     return ListView.separated(
-      scrollCacheExtent: const ScrollCacheExtent.pixels(900),
+      cacheExtent: 900.0,
       padding: EdgeInsets.fromLTRB(8 * scale, 8 * scale, 8 * scale, 24 * scale),
       itemCount: entries.length,
       separatorBuilder: (_, __) => const Divider(height: 1),

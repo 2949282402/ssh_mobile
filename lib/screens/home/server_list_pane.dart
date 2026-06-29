@@ -108,7 +108,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
               Expanded(
                 child: ReorderableListView.builder(
                   buildDefaultDragHandles: false,
-                  scrollCacheExtent: const ScrollCacheExtent.pixels(700),
+                  cacheExtent: 700.0,
                   padding: EdgeInsets.fromLTRB(
                     horizontalPadding,
                     0,
@@ -122,7 +122,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                     strings,
                     connIndex: index,
                   ),
-                  onReorderItem: (oldIndex, newIndex) {
+                  onReorder: (oldIndex, newIndex) {
                     final storageNewIndex =
                         newIndex > oldIndex ? newIndex + 1 : newIndex;
                     context
