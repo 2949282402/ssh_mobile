@@ -20,6 +20,7 @@ import 'tool_exposure_router.dart';
 import 'tool_secret_policy.dart';
 import 'skill/skill_domain_service.dart';
 import 'agent/plan_execution_controller.dart';
+import 'llm_provider/llm_api_format.dart';
 
 part 'ai_tool/ai_tool_types.dart';
 part 'ai_tool/client_tools.dart';
@@ -375,9 +376,12 @@ class AiToolService implements AiToolExecutor {
       case 'update_server_metadata':
         final connectionId = _arg(arguments, 'connectionId');
         final config = storageService.getConnection(connectionId);
-        final keys = arguments.keys
-            .where((key) => key != 'connectionId')
-            .toList(growable: false);
+        final changes = <String, dynamic>{
+          for (final entry in arguments.entries)
+            if (entry.key != 'connectionId' && entry.value != null)
+              entry.key: entry.value,
+        };
+        final keys = changes.keys.toList(growable: false);
         return AiToolApprovalRequest(
           toolName: name,
           approvalType: 'server_metadata_change',

@@ -1238,6 +1238,7 @@ class ClientToolsProvider implements AiToolProvider {
         description:
             'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Get the client system time, UTC time, timezone, and locale.',
         properties: const {},
+        parallelSafeReadOnly: true,
         handler: (_) async =>
             jsonEncode(clientSystemToolService.getClientTime()),
       ),
@@ -1246,6 +1247,7 @@ class ClientToolsProvider implements AiToolProvider {
         description:
             'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Get client OS/platform, locale, timezone, hostname, CPU count, and supported client integrations.',
         properties: const {},
+        parallelSafeReadOnly: true,
         handler: (_) async =>
             jsonEncode(clientSystemToolService.getClientDeviceInfo()),
       ),
@@ -1254,6 +1256,7 @@ class ClientToolsProvider implements AiToolProvider {
         description:
             'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Get client network status such as connectivity, transport, Wi-Fi details where available, and proxy or VPN indicators.',
         properties: const {},
+        parallelSafeReadOnly: true,
         handler: (_) async =>
             jsonEncode(await clientSystemToolService.getNetworkInfo()),
       ),
@@ -1262,6 +1265,7 @@ class ClientToolsProvider implements AiToolProvider {
         description:
             'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Get client battery level, charging state, battery saver, and app battery-optimization exemption status where available.',
         properties: const {},
+        parallelSafeReadOnly: true,
         handler: (_) async =>
             jsonEncode(await clientSystemToolService.getBatteryStatus()),
       ),
@@ -1270,6 +1274,7 @@ class ClientToolsProvider implements AiToolProvider {
         description:
             'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Get client notification permission, background-service support, and Android battery-optimization exemption status where available.',
         properties: const {},
+        parallelSafeReadOnly: true,
         handler: (_) async =>
             jsonEncode(await clientSystemToolService.getPermissionStatus()),
       ),

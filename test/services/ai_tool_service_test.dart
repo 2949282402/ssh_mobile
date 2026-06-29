@@ -221,6 +221,93 @@ void main() {
     expect(limit['description'], contains('8 results'));
   });
 
+  test('OpenAI strict tool definition strips unsupported schema keywords',
+      () async {
+    final settings = (await storage.loadAiConnectionSettings()).copyWith(
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-4o-2024-08-06',
+    );
+    final tool = AiTool(
+      name: 'demo_tool',
+      description: 'Demo tool',
+      properties: {
+        'limit': {
+          'type': 'integer',
+          'description': 'Optional limit.',
+          'minimum': 1,
+          'maximum': 10,
+          'default': 5,
+        },
+        'tags': {
+          'type': 'array',
+          'description': 'Optional tags.',
+          'items': {
+            'type': 'string',
+            'minLength': 2,
+          },
+          'minItems': 1,
+        },
+        'mode': {
+          'type': 'string',
+          'description': 'Required mode.',
+          'enum': ['fast', 'safe'],
+        },
+      },
+      required: const ['mode'],
+      handler: (args) async => '{}',
+    );
+
+    final definition = tool.definitionFor(settings);
+    final function = definition['function'] as Map<String, dynamic>;
+    final parameters = function['parameters'] as Map<String, dynamic>;
+    final properties = parameters['properties'] as Map<String, dynamic>;
+    final limit = properties['limit'] as Map<String, dynamic>;
+    final tags = properties['tags'] as Map<String, dynamic>;
+    final tagItems = tags['items'] as Map<String, dynamic>;
+    final mode = properties['mode'] as Map<String, dynamic>;
+
+    expect(function['strict'], isTrue);
+    expect(parameters['required'], ['limit', 'tags', 'mode']);
+    expect(limit.keys, isNot(contains('minimum')));
+    expect(limit.keys, isNot(contains('maximum')));
+    expect(limit.keys, isNot(contains('default')));
+    expect(limit['type'], contains('null'));
+    expect(tags.keys, isNot(contains('minItems')));
+    expect(tagItems.keys, isNot(contains('minLength')));
+    expect(tags['type'], contains('null'));
+    expect(mode['type'], 'string');
+    expect(mode['enum'], ['fast', 'safe']);
+  });
+
+  test('OpenAI strict tool definition is disabled for fine-tuned models',
+      () async {
+    final settings = (await storage.loadAiConnectionSettings()).copyWith(
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'ft:gpt-4o-mini:org:suffix:id',
+    );
+    final tool = AiTool(
+      name: 'demo_tool',
+      description: 'Demo tool',
+      properties: {
+        'limit': {
+          'type': 'integer',
+          'description': 'Optional limit.',
+          'minimum': 1,
+        },
+      },
+      handler: (args) async => '{}',
+    );
+
+    final definition = tool.definitionFor(settings);
+    final function = definition['function'] as Map<String, dynamic>;
+    final parameters = function['parameters'] as Map<String, dynamic>;
+    final properties = parameters['properties'] as Map<String, dynamic>;
+    final limit = properties['limit'] as Map<String, dynamic>;
+
+    expect(function.containsKey('strict'), isFalse);
+    expect(limit['minimum'], 1);
+  });
+
   test('hides local web search when disabled by the user', () async {
     await storage.saveAiConnectionSettings(
       baseUrl: 'https://api.example.com',
@@ -326,6 +413,38 @@ void main() {
       (navigateProps['action'] as Map<String, dynamic>)['enum'],
       ['open', 'back', 'forward', 'refresh'],
     );
+  });
+
+  test('update server metadata ignores strict-schema null optional fields',
+      () async {
+    final arguments = {
+      'connectionId': 'server-1',
+      'name': 'Renamed Server',
+      'serverPlatform': null,
+      'launchMode': null,
+      'jumpHost': null,
+      'jumpPort': null,
+      'jumpUsername': null,
+    };
+    final approval = await tools.approvalRequestFor(
+      'update_server_metadata',
+      arguments,
+    );
+    final result = await tools.execute(
+      'update_server_metadata',
+      arguments,
+      approvedWrite: true,
+    );
+
+    final decoded = jsonDecode(result) as Map<String, dynamic>;
+    final changes = serverCatalog.lastMetadataChanges!;
+
+    expect(approval?.command, 'UPDATE SERVER METADATA (name)');
+    expect(approval?.contentPreview, 'name');
+    expect(decoded['updated'], isTrue);
+    expect(changes, {'name': 'Renamed Server'});
+    expect(changes.containsKey('serverPlatform'), isFalse);
+    expect(changes.containsKey('launchMode'), isFalse);
   });
 
   test('client permission tool delegates to the client system adapter',
@@ -1954,6 +2073,7 @@ class _FakeServerDiagnosticsService implements ServerDiagnosticsAdapter {
 
 class _FakeServerCatalogService implements ServerCatalogAdapter {
   String? lastDetailsConnectionId;
+  Map<String, dynamic>? lastMetadataChanges;
 
   @override
   Future<Map<String, dynamic>> deleteServer(String connectionId) async => {
@@ -1993,14 +2113,16 @@ class _FakeServerCatalogService implements ServerCatalogAdapter {
   Future<Map<String, dynamic>> updateServerMetadata({
     required String connectionId,
     required Map<String, dynamic> changes,
-  }) async =>
-      {
-        'updated': true,
-        'server': {
-          'id': connectionId,
-          ...changes,
-        },
-      };
+  }) async {
+    lastMetadataChanges = Map<String, dynamic>.from(changes);
+    return {
+      'updated': true,
+      'server': {
+        'id': connectionId,
+        ...changes,
+      },
+    };
+  }
 }
 
 class _FakePerformanceMonitorToolService

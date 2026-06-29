@@ -116,6 +116,37 @@ void main() {
     expect(settings.toolCallBudget, 40);
   });
 
+  test('agent loop mode defaults and normalizes on save', () async {
+    storage = await initializedStorage();
+
+    var settings = await storage.loadAiConnectionSettings();
+    expect(settings.agentLoopMode, AiAgentLoopMode.balanced);
+
+    await storage.saveAiConnectionSettings(
+      baseUrl: 'https://api.example.com',
+      model: 'demo-model',
+      agentLoopMode: 'invalid',
+    );
+    settings = await storage.loadAiConnectionSettings();
+    expect(settings.agentLoopMode, AiAgentLoopMode.balanced);
+
+    await storage.saveAiConnectionSettings(
+      baseUrl: 'https://api.example.com',
+      model: 'demo-model',
+      agentLoopMode: AiAgentLoopMode.deep,
+    );
+    settings = await storage.loadAiConnectionSettings();
+    expect(settings.agentLoopMode, AiAgentLoopMode.deep);
+
+    await storage.saveAiConnectionSettings(
+      baseUrl: 'https://api.example.com',
+      model: 'demo-model',
+      agentLoopMode: AiAgentLoopMode.unlimited,
+    );
+    settings = await storage.loadAiConnectionSettings();
+    expect(settings.agentLoopMode, AiAgentLoopMode.unlimited);
+  });
+
   test('base URL history keeps newest first and deduplicated', () async {
     storage = await initializedStorage();
 
@@ -225,6 +256,10 @@ void main() {
       await storage.loadCachedAiModels(baseUrl: 'https://api.example.com'),
       isEmpty,
     );
+    expect(
+      (await storage.loadAiConnectionSettings()).agentLoopMode,
+      AiAgentLoopMode.balanced,
+    );
   });
 
   test('export keeps connection and AI credentials empty', () async {
@@ -248,6 +283,7 @@ void main() {
       multiAgentEnabled: false,
       multiAgentMaxAgents: 4,
       toolCallBudget: 40,
+      agentLoopMode: AiAgentLoopMode.deep,
     );
 
     final jsonText = await storage.exportAppDataJson();
@@ -265,6 +301,7 @@ void main() {
     expect(aiSettings['multiAgentEnabled'], isFalse);
     expect(aiSettings['multiAgentMaxAgents'], 4);
     expect(aiSettings['toolCallBudget'], 40);
+    expect(aiSettings['agentLoopMode'], AiAgentLoopMode.deep);
   });
 
   test('export excludes agent trace events by default', () async {

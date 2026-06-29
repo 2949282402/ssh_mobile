@@ -82,6 +82,7 @@ extension BackupOps on StorageService {
         'multiAgentEnabled': settings.multiAgentEnabled,
         'multiAgentMaxAgents': settings.multiAgentMaxAgents,
         'toolCallBudget': settings.toolCallBudget,
+        'agentLoopMode': settings.agentLoopMode,
         'maxImageSizeBytes': settings.maxImageSizeBytes,
         'maxFileSizeBytes': settings.maxFileSizeBytes,
         'apiKey': '',
@@ -181,6 +182,7 @@ extension BackupOps on StorageService {
         multiAgentMaxAgents:
             (aiSettings['multiAgentMaxAgents'] as num?)?.toInt(),
         toolCallBudget: (aiSettings['toolCallBudget'] as num?)?.toInt(),
+        agentLoopMode: aiSettings['agentLoopMode'] as String?,
         maxImageSizeBytes: (aiSettings['maxImageSizeBytes'] as num?)?.toInt(),
         maxFileSizeBytes: (aiSettings['maxFileSizeBytes'] as num?)?.toInt(),
       );
@@ -402,6 +404,7 @@ void _validateBackupSchema(Map<String, dynamic> decoded) {
     _optionalStringLimit(aiSettings, 'model', 256);
     _optionalStringLimit(aiSettings, 'helperModel', 256);
     _optionalStringLimit(aiSettings, 'auditModel', 256);
+    _optionalStringLimit(aiSettings, 'agentLoopMode', _maxShortFieldChars);
     _optionalStringLimit(aiSettings, 'customSystemPrompt', _maxPromptChars);
     _optionalStringLimit(aiSettings, 'customPlannerPrompt', _maxPromptChars);
     _optionalStringLimit(aiSettings, 'customOperatorPrompt', _maxPromptChars);

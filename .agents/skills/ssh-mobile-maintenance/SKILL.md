@@ -131,6 +131,10 @@ with its `lib/screens/llm_chat/` part files.
   calls, the first limit hit auto-extends by half, and every later extension
   requires an internal safety audit that can disable further tools and force a
   final no-tools summary.
+- Agent loop round limits are separate from tool-call budgets. Balanced uses
+  16 primary model rounds and approved +8 extensions, Deep uses 24/+12, and
+  Unlimited removes only the primary loop round cap; tool budgets, approval
+  gates, safety policies, and user cancellation remain active.
 - State-changing tool actions must pause for the generic approval UI. Keep the
   approval model broader than `run_command`.
 - `run_command` uses one-shot SSH exec, respects `serverPlatform`, and blocks

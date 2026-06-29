@@ -43,6 +43,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   late bool _postToolReviewEnabled;
   late String _modelFallbackPolicy;
   late int _toolCallBudget;
+  late String _agentLoopMode;
   late int _maxImageSizeBytes;
   late int _maxFileSizeBytes;
   String? _selectedApiKeyId;
@@ -92,6 +93,8 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _postToolReviewEnabled = widget.initialSettings.postToolReviewEnabled;
     _modelFallbackPolicy = widget.initialSettings.modelFallbackPolicy;
     _toolCallBudget = widget.initialSettings.toolCallBudget;
+    _agentLoopMode =
+        AiAgentLoopMode.normalize(widget.initialSettings.agentLoopMode);
     _maxImageSizeBytes = widget.initialSettings.maxImageSizeBytes;
     _maxFileSizeBytes = widget.initialSettings.maxFileSizeBytes;
     _selectedApiKeyId = widget.initialSettings.activeApiKeyId;
@@ -166,6 +169,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         _postToolReviewEnabled != initial.postToolReviewEnabled ||
         _modelFallbackPolicy != initial.modelFallbackPolicy ||
         _toolCallBudget != initial.toolCallBudget ||
+        _agentLoopMode != AiAgentLoopMode.normalize(initial.agentLoopMode) ||
         _maxImageSizeBytes != initial.maxImageSizeBytes ||
         _maxFileSizeBytes != initial.maxFileSizeBytes ||
         _selectedApiKeyId != initial.activeApiKeyId ||
@@ -398,6 +402,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
       multiAgentMaxAgents: _multiAgentMaxAgents,
       postToolReviewEnabled: _postToolReviewEnabled,
       toolCallBudget: _toolCallBudget,
+      agentLoopMode: _agentLoopMode,
       maxImageSizeBytes: _maxImageSizeBytes,
       maxFileSizeBytes: _maxFileSizeBytes,
       apiKey: _apiKeyController.text,
@@ -429,6 +434,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
         multiAgentMaxAgents: pending.multiAgentMaxAgents,
         postToolReviewEnabled: pending.postToolReviewEnabled,
         toolCallBudget: pending.toolCallBudget,
+        agentLoopMode: pending.agentLoopMode,
         maxImageSizeBytes: pending.maxImageSizeBytes,
         maxFileSizeBytes: pending.maxFileSizeBytes,
         apiKey: pending.apiKey,
@@ -839,6 +845,50 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
                   : (value) {
                       if (value != null) {
                         setState(() => _toolCallBudget = value);
+                      }
+                    },
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<String>(
+              initialValue: AiAgentLoopMode.normalize(_agentLoopMode),
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: strings.language == AppLanguage.en
+                    ? 'Agent loop rounds'
+                    : 'Agent 循环轮次',
+                helperText: strings.language == AppLanguage.en
+                    ? 'Controls primary model rounds separately from tool call budget. Balanced 16 (+8), Deep 24 (+12), Unlimited has no round cap. Tool call budget is unchanged.'
+                    : '单独控制主模型循环轮次，不影响工具调用预算。均衡 16（批准 +8），深度 24（批准 +12），无限制不设轮次上限。工具预算保持不变。',
+                helperMaxLines: 4,
+              ),
+              items: [
+                for (final value in AiAgentLoopMode.values)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text(
+                      switch (value) {
+                        AiAgentLoopMode.deep =>
+                          strings.language == AppLanguage.en ? 'Deep' : '深度',
+                        AiAgentLoopMode.unlimited =>
+                          strings.language == AppLanguage.en
+                              ? 'Unlimited'
+                              : '无限制',
+                        _ => strings.language == AppLanguage.en
+                            ? 'Balanced'
+                            : '均衡',
+                      },
+                    ),
+                  ),
+              ],
+              onChanged: _saving
+                  ? null
+                  : (value) {
+                      if (value != null) {
+                        setState(
+                          () => _agentLoopMode = AiAgentLoopMode.normalize(
+                            value,
+                          ),
+                        );
                       }
                     },
             ),
@@ -1254,6 +1304,7 @@ class _PendingAiSettings {
   final int multiAgentMaxAgents;
   final bool postToolReviewEnabled;
   final int toolCallBudget;
+  final String agentLoopMode;
   final int maxImageSizeBytes;
   final int maxFileSizeBytes;
   final String apiKey;
@@ -1280,6 +1331,7 @@ class _PendingAiSettings {
     required this.multiAgentMaxAgents,
     required this.postToolReviewEnabled,
     required this.toolCallBudget,
+    required this.agentLoopMode,
     required this.maxImageSizeBytes,
     required this.maxFileSizeBytes,
     required this.apiKey,

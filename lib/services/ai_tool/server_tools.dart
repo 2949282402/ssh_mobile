@@ -76,8 +76,11 @@ class ServerToolsProvider implements AiToolProvider {
       });
     }
     final connectionId = service._arg(arguments, 'connectionId');
-    final changes = Map<String, dynamic>.from(arguments)
-      ..remove('connectionId');
+    final changes = <String, dynamic>{
+      for (final entry in arguments.entries)
+        if (entry.key != 'connectionId' && entry.value != null)
+          entry.key: entry.value,
+    };
     if (changes.isEmpty) {
       return jsonEncode({
         'updated': false,

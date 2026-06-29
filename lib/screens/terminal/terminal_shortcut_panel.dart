@@ -31,6 +31,11 @@ class TerminalShortcutPanel extends StatelessWidget {
     required this.onToggleAlt,
   });
 
+  @visibleForTesting
+  static int adjustedReorderIndex(int oldIndex, int newIndex) {
+    return newIndex > oldIndex ? newIndex - 1 : newIndex;
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -163,17 +168,12 @@ class TerminalShortcutPanel extends StatelessWidget {
             child: ReorderableListView.builder(
               scrollDirection: Axis.horizontal,
               buildDefaultDragHandles: false,
-<<<<<<< HEAD
-              itemCount: commands.length,
-              onReorder: (oldIndex, newIndex) {
-                final reordered = commands.toList();
-=======
               itemCount: primaryCommands.length,
-              onReorderItem: (oldIndex, newIndex) {
+              onReorder: (oldIndex, newIndex) {
                 final reordered = primaryCommands.toList();
->>>>>>> 966b1e8a57f0af560d3b077dd4e84102657f662d
                 final item = reordered.removeAt(oldIndex);
-                reordered.insert(newIndex, item);
+                final insertIndex = adjustedReorderIndex(oldIndex, newIndex);
+                reordered.insert(insertIndex, item);
                 // Also reconstruct full commands list order to keep customized list state
                 final finalIds = [
                   ...reordered.map((c) => c.id),

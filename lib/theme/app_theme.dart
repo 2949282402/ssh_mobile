@@ -1,8 +1,5 @@
-<<<<<<< HEAD
-=======
 // ignore: unnecessary_import
 import 'package:flutter/cupertino.dart';
->>>>>>> 966b1e8a57f0af560d3b077dd4e84102657f662d
 import 'package:flutter/material.dart';
 import 'package:animations/animations.dart';
 

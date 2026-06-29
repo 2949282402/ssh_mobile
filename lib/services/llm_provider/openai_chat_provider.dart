@@ -135,6 +135,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
         request.cancellationToken?.throwIfCancelled();
 
         final useTools = request.includeTools && request.tools.isNotEmpty;
+        final hasStrictTools = useTools && _hasStrictTools(request.tools);
 
         final requestBody = <String, dynamic>{
           'model': request.model,
@@ -142,6 +143,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
           if (useTools) ...{
             'tools': request.tools,
             'tool_choice': 'auto',
+            if (hasStrictTools) 'parallel_tool_calls': false,
           },
           if (request.includeReasoningParams)
             ..._providerReasoningParams(
@@ -369,6 +371,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
         request.cancellationToken?.throwIfCancelled();
 
         final useTools = request.includeTools && request.tools.isNotEmpty;
+        final hasStrictTools = useTools && _hasStrictTools(request.tools);
 
         final requestBody = <String, dynamic>{
           'model': request.model,
@@ -377,6 +380,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
           if (useTools) ...{
             'tools': request.tools,
             'tool_choice': 'auto',
+            if (hasStrictTools) 'parallel_tool_calls': false,
           },
           if (request.includeReasoningParams)
             ..._providerReasoningParams(
@@ -781,6 +785,13 @@ class OpenAiChatProvider implements LlmProviderAdapter {
     final lower = model.toLowerCase();
 
     return lower.startsWith('o1') || lower.startsWith('o3');
+  }
+
+  bool _hasStrictTools(List<Map<String, dynamic>> tools) {
+    return tools.any((tool) {
+      final function = tool['function'];
+      return function is Map && function['strict'] == true;
+    });
   }
 
   void _assertValidHeaderApiKey(String apiKey) {
