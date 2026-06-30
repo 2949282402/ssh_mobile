@@ -1,8 +1,8 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../../../features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
-import '../../../../services/app_settings.dart';
+import 'package:ssh_mobile/features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
+import 'package:ssh_mobile/services/app_settings.dart';
 
 class SkillEditorForm extends StatelessWidget {
   const SkillEditorForm({super.key});

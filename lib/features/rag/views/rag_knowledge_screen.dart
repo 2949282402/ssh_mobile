@@ -3,9 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
-import '../features/rag/viewmodels/rag_knowledge_viewmodel.dart';
-import '../services/app_settings.dart';
-import '../services/rag_service.dart';
+import 'package:ssh_mobile/features/rag/viewmodels/rag_knowledge_viewmodel.dart';
+import 'package:ssh_mobile/services/app_settings.dart';
+import 'package:ssh_mobile/services/rag_service.dart';
 
 class _RagStrings {
   final bool isEn;

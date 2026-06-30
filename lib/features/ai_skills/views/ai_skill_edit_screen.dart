@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
-import '../services/app_settings.dart';
-import 'ai_skills/widgets/skill_editor_form.dart';
-import 'ai_skills/widgets/reference_config_panel.dart';
+import 'package:ssh_mobile/features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
+import 'package:ssh_mobile/services/app_settings.dart';
+import 'widgets/skill_editor_form.dart';
+import 'widgets/reference_config_panel.dart';
 
 class AiSkillEditScreen extends StatelessWidget {
   const AiSkillEditScreen({super.key});

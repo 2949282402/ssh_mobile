@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
-import '../services/app_settings.dart';
-import '../widgets/overflow_scroll_text.dart';
+import 'package:ssh_mobile/features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
+import 'package:ssh_mobile/services/app_settings.dart';
+import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
 
 class AiSkillsScreen extends StatefulWidget {
   const AiSkillsScreen({super.key});

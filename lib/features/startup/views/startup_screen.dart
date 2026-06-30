@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../features/startup/viewmodels/startup_viewmodel.dart';
-import '../services/app_settings.dart';
-import '../theme/app_theme.dart';
-import 'home_screen.dart';
+import 'package:ssh_mobile/features/startup/viewmodels/startup_viewmodel.dart';
+import 'package:ssh_mobile/services/app_settings.dart';
+import 'package:ssh_mobile/theme/app_theme.dart';
+import 'package:ssh_mobile/features/home/views/home_screen.dart';
 
 class StartupScreen extends StatefulWidget {
   const StartupScreen({super.key});

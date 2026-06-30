@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../features/developer_log/viewmodels/developer_log_viewmodel.dart';
-import '../services/app_log_service.dart';
-import '../services/app_settings.dart';
-import '../widgets/overflow_scroll_text.dart';
-import '../utils/responsive.dart';
+import 'package:ssh_mobile/features/developer_log/viewmodels/developer_log_viewmodel.dart';
+import 'package:ssh_mobile/services/app_log_service.dart';
+import 'package:ssh_mobile/services/app_settings.dart';
+import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
+import 'package:ssh_mobile/utils/responsive.dart';
 
 extension _DeveloperLogStrings on AppStrings {
   String get copySelectedLogs =>

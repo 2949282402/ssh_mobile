@@ -1,19 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../features/connection/models/connection.dart';
-import '../features/playbook/models/playbook.dart';
-import '../features/playbook/viewmodels/playbook_viewmodel.dart';
-import '../services/app_settings.dart';
-import '../theme/app_theme.dart';
-import '../widgets/overflow_scroll_text.dart';
-import '../widgets/destructive_confirm_dialog.dart';
-import 'home_screen.dart';
+import 'package:ssh_mobile/features/connection/models/connection.dart';
+import 'package:ssh_mobile/features/playbook/models/playbook.dart';
+import 'package:ssh_mobile/features/playbook/viewmodels/playbook_viewmodel.dart';
+import 'package:ssh_mobile/services/app_settings.dart';
+import 'package:ssh_mobile/theme/app_theme.dart';
+import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
+import 'package:ssh_mobile/widgets/destructive_confirm_dialog.dart';
+import 'package:ssh_mobile/features/home/views/home_screen.dart';
 
-part 'playbook/playbook_strings.dart';
-part 'playbook/playbooks_list.dart';
-part 'playbook/playbook_editor.dart';
-part 'playbook/execution_dashboard.dart';
+part 'widgets/playbook_strings.dart';
+part 'widgets/playbooks_list.dart';
+part 'widgets/playbook_editor.dart';
+part 'widgets/execution_dashboard.dart';
 
 class PlaybookScreen extends StatefulWidget {
   const PlaybookScreen({super.key});
