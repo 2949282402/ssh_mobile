@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -8,6 +9,7 @@ import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/features/connection/viewmodels/connection_viewmodel.dart';
 import 'package:ssh_mobile/features/settings/viewmodels/settings_viewmodel.dart';
 import 'package:ssh_mobile/features/system_admin/viewmodels/system_admin_viewmodel.dart';
+import 'package:ssh_mobile/features/sftp/viewmodels/sftp_viewmodel.dart';
 import 'package:ssh_mobile/features/developer_log/viewmodels/developer_log_viewmodel.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
@@ -264,12 +266,32 @@ class _HomeScreenState extends State<HomeScreen> {
     _switchPage(index);
   }
 
+  String? _lastSynchronizedAdminConnectionId;
+
   void _switchPage(int index) {
     if (_selectedIndex == index) return;
     setState(() {
       _selectedIndex = index;
     });
     _pageController.jumpToPage(index);
+
+    if (index == _sftpPage) {
+      final adminVm = context.read<SystemAdminViewModel>();
+      final sftpVm = context.read<SftpViewModel>();
+      final selectedId = adminVm.selectedConnectionId;
+      if (selectedId != null &&
+          (sftpVm.connectionId == null ||
+              selectedId != _lastSynchronizedAdminConnectionId)) {
+        _lastSynchronizedAdminConnectionId = selectedId;
+        if (sftpVm.connectionId != selectedId) {
+          unawaited(sftpVm.connect(
+            selectedId,
+            onUnknownHostKey: (request) =>
+                showSshHostKeyTrustDialog(context, request),
+          ));
+        }
+      }
+    }
   }
 
   String settingsLabelAi(BuildContext context) {
