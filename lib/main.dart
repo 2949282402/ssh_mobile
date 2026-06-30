@@ -13,6 +13,7 @@ import 'features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
 import 'features/startup/viewmodels/startup_viewmodel.dart';
 import 'features/performance/viewmodels/performance_viewmodel.dart';
 import 'features/sftp/viewmodels/sftp_viewmodel.dart';
+import 'features/system_admin/viewmodels/system_admin_viewmodel.dart';
 import 'package:ssh_mobile/features/ai_skills/views/ai_skills_screen.dart';
 import 'package:ssh_mobile/features/ai_skills/views/ai_skill_edit_screen.dart';
 import 'package:ssh_mobile/features/home/views/home_screen.dart';
@@ -139,6 +140,12 @@ Future<void> main() async {
             ChangeNotifierProvider(
               create: (context) => SftpViewModel(
                 sftpService: context.read<SftpService>(),
+              ),
+            ),
+            ChangeNotifierProvider(
+              create: (context) => SystemAdminViewModel(
+                adminService: context.read<SystemAdminService>(),
+                storageService: context.read<StorageService>(),
               ),
             ),
           ],

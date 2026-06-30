@@ -14,8 +14,6 @@ import 'package:ssh_mobile/features/developer_log/viewmodels/developer_log_viewm
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
-import 'package:ssh_mobile/services/storage_service.dart';
-import 'package:ssh_mobile/services/system_admin_service.dart';
 import 'package:ssh_mobile/utils/responsive.dart';
 import 'package:ssh_mobile/widgets/connection_progress_dialog.dart';
 import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
@@ -355,13 +353,7 @@ class _HomeScreenState extends State<HomeScreen> {
             case _sftpPage:
               return const SftpScreen();
             case _adminPage:
-              return ChangeNotifierProvider(
-                create: (context) => SystemAdminViewModel(
-                  adminService: context.read<SystemAdminService>(),
-                  storageService: context.read<StorageService>(),
-                ),
-                child: const SystemAdminScreen(),
-              );
+              return const SystemAdminScreen();
             case _logPage:
             default:
               return ChangeNotifierProvider(
