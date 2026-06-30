@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../models/connection.dart';
 import '../../../../services/app_log_service.dart';
@@ -235,14 +236,13 @@ class _AddEditScreenState extends State<AddEditScreen> {
                 padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
                 children: [
                   // 基础信息分组
-                  Card(
-                    margin: const EdgeInsets.only(bottom: 16),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: ShadCard(
+                      title: _section(strings.basicInfo),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _section(strings.basicInfo),
                           const SizedBox(height: 10),
                           _buildNameField(),
                         ],
@@ -251,14 +251,13 @@ class _AddEditScreenState extends State<AddEditScreen> {
                   ),
 
                   // 连接信息分组
-                  Card(
-                    margin: const EdgeInsets.only(bottom: 16),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: ShadCard(
+                      title: _section(strings.connectionInfo),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _section(strings.connectionInfo),
                           const SizedBox(height: 10),
                           _buildHostField(),
                           const SizedBox(height: 12),
@@ -269,14 +268,13 @@ class _AddEditScreenState extends State<AddEditScreen> {
                   ),
 
                   // 认证信息分组
-                  Card(
-                    margin: const EdgeInsets.only(bottom: 16),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: ShadCard(
+                      title: _section(strings.authMethod),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _section(strings.authMethod),
                           const SizedBox(height: 10),
                           _buildAuthMethodSelector(),
                           const SizedBox(height: 12),
@@ -296,44 +294,70 @@ class _AddEditScreenState extends State<AddEditScreen> {
                   ),
 
                   // 跳板机分组（默认折叠）
-                  Card(
-                    margin: const EdgeInsets.only(bottom: 16),
-                    clipBehavior: Clip.antiAlias,
-                    child: ExpansionTile(
-                      title: _section(strings.jumpHostOptional),
-                      initiallyExpanded: _jumpHostExpanded,
-                      onExpansionChanged: (val) =>
-                          setState(() => _jumpHostExpanded = val),
-                      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                      children: [
-                        _buildJumpHostField(),
-                        const SizedBox(height: 12),
-                        jumpPortAndUserRow,
-                      ],
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: ShadCard(
+                      title: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          _section(strings.jumpHostOptional),
+                          IconButton(
+                            icon: Icon(_jumpHostExpanded
+                                ? Icons.expand_less_rounded
+                                : Icons.expand_more_rounded),
+                            onPressed: () =>
+                                setState(() => _jumpHostExpanded = !_jumpHostExpanded),
+                          ),
+                        ],
+                      ),
+                      child: _jumpHostExpanded
+                          ? Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const SizedBox(height: 10),
+                                _buildJumpHostField(),
+                                const SizedBox(height: 12),
+                                jumpPortAndUserRow,
+                              ],
+                            )
+                          : const SizedBox.shrink(),
                     ),
                   ),
 
                   // 高级选项分组（默认折叠）
-                  Card(
-                    margin: const EdgeInsets.only(bottom: 16),
-                    clipBehavior: Clip.antiAlias,
-                    child: ExpansionTile(
-                      title: _section(strings.advancedOptions),
-                      initiallyExpanded: _advancedOptionsExpanded,
-                      onExpansionChanged: (val) =>
-                          setState(() => _advancedOptionsExpanded = val),
-                      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                      children: [
-                        _buildServerPlatformSelector(),
-                        const SizedBox(height: 16),
-                        _buildLaunchModeSelector(),
-                        if (_launchMode == TerminalLaunchMode.tmux) ...[
-                          const SizedBox(height: 12),
-                          _buildTmuxAutoDeleteField(),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: ShadCard(
+                      title: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          _section(strings.advancedOptions),
+                          IconButton(
+                            icon: Icon(_advancedOptionsExpanded
+                                ? Icons.expand_less_rounded
+                                : Icons.expand_more_rounded),
+                            onPressed: () => setState(() =>
+                                _advancedOptionsExpanded = !_advancedOptionsExpanded),
+                          ),
                         ],
-                        const SizedBox(height: 12),
-                        _buildKeepAliveSwitch(),
-                      ],
+                      ),
+                      child: _advancedOptionsExpanded
+                          ? Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const SizedBox(height: 10),
+                                _buildServerPlatformSelector(),
+                                const SizedBox(height: 16),
+                                _buildLaunchModeSelector(),
+                                if (_launchMode == TerminalLaunchMode.tmux) ...[
+                                  const SizedBox(height: 12),
+                                  _buildTmuxAutoDeleteField(),
+                                ],
+                                const SizedBox(height: 12),
+                                _buildKeepAliveSwitch(),
+                              ],
+                            )
+                          : const SizedBox.shrink(),
                     ),
                   ),
                 ],
@@ -356,14 +380,16 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
   Widget _buildNameField() {
     final strings = _strings(context);
-    return TextFormField(
+    return ShadInputFormField(
+      id: 'name',
       controller: _nameController,
-      decoration: InputDecoration(
-        labelText: strings.connectionName,
-        hintText: strings.connectionNameHint,
-        prefixIcon: const Icon(Icons.label_outline),
+      label: Text(strings.connectionName),
+      placeholder: Text(strings.connectionNameHint),
+      leading: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 8),
+        child: Icon(Icons.label_outline, size: 18),
       ),
-      validator: (value) => value == null || value.trim().isEmpty
+      validator: (value) => value.trim().isEmpty
           ? strings.enterConnectionName
           : null,
     );
@@ -371,15 +397,17 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
   Widget _buildHostField() {
     final strings = _strings(context);
-    return TextFormField(
+    return ShadInputFormField(
+      id: 'host',
       controller: _hostController,
-      decoration: InputDecoration(
-        labelText: strings.hostAddress,
-        hintText: strings.hostAddressHint,
-        prefixIcon: const Icon(Icons.computer),
+      label: Text(strings.hostAddress),
+      placeholder: Text(strings.hostAddressHint),
+      leading: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 8),
+        child: Icon(Icons.computer, size: 18),
       ),
       keyboardType: TextInputType.url,
-      validator: (value) => value == null || value.trim().isEmpty
+      validator: (value) => value.trim().isEmpty
           ? strings.enterHostAddress
           : null,
     );
@@ -387,16 +415,18 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
   Widget _buildPortField() {
     final strings = _strings(context);
-    return TextFormField(
+    return ShadInputFormField(
+      id: 'port',
       controller: _portController,
-      decoration: InputDecoration(
-        labelText: strings.port,
-        hintText: '22',
-        prefixIcon: const Icon(Icons.numbers),
+      label: Text(strings.port),
+      placeholder: const Text('22'),
+      leading: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 8),
+        child: Icon(Icons.numbers, size: 18),
       ),
       keyboardType: TextInputType.number,
       validator: (value) {
-        final port = int.tryParse(value ?? '');
+        final port = int.tryParse(value);
         if (port == null || port < 1 || port > 65535) {
           return strings.invalidPort;
         }
@@ -407,15 +437,17 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
   Widget _buildUsernameField() {
     final strings = _strings(context);
-    return TextFormField(
+    return ShadInputFormField(
+      id: 'username',
       controller: _usernameController,
-      decoration: InputDecoration(
-        labelText: strings.username,
-        hintText: 'root',
-        prefixIcon: const Icon(Icons.person_outline),
+      label: Text(strings.username),
+      placeholder: const Text('root'),
+      leading: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 8),
+        child: Icon(Icons.person_outline, size: 18),
       ),
       validator: (value) =>
-          value == null || value.trim().isEmpty ? strings.enterUsername : null,
+          value.trim().isEmpty ? strings.enterUsername : null,
     );
   }
 
@@ -455,24 +487,25 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
   Widget _buildPasswordField() {
     final strings = _strings(context);
-    return TextFormField(
+    return ShadInputFormField(
+      id: 'password',
       controller: _passwordController,
       obscureText: _obscurePassword,
-      decoration: InputDecoration(
-        labelText: strings.password,
-        hintText: strings.passwordHint,
-        prefixIcon: const Icon(Icons.lock_outline),
-        suffixIcon: IconButton(
-          icon: Icon(
-            _obscurePassword ? Icons.visibility_off : Icons.visibility,
-            size: 20,
-          ),
-          onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+      label: Text(strings.password),
+      placeholder: Text(strings.passwordHint),
+      leading: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 8),
+        child: Icon(Icons.lock_outline, size: 18),
+      ),
+      trailing: IconButton(
+        icon: Icon(
+          _obscurePassword ? Icons.visibility_off : Icons.visibility,
+          size: 18,
         ),
+        onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
       ),
       validator: (value) {
-        if (_authMethod == AuthMethod.password &&
-            (value == null || value.trim().isEmpty)) {
+        if (_authMethod == AuthMethod.password && value.trim().isEmpty) {
           return strings.passwordRequired;
         }
         return null;
@@ -507,19 +540,20 @@ class _AddEditScreenState extends State<AddEditScreen> {
           ],
         ),
         const SizedBox(height: 6),
-        TextFormField(
+        ShadInputFormField(
+          id: 'privateKey',
           controller: _privateKeyController,
           maxLines: null,
           minLines: 4,
-          decoration: InputDecoration(
-            hintText:
-                '-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----',
-            prefixIcon: const Icon(Icons.key),
-            alignLabelWithHint: true,
+          placeholder: const Text(
+            '-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----',
+          ),
+          leading: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8),
+            child: Icon(Icons.key, size: 18),
           ),
           validator: (value) {
-            if (_authMethod == AuthMethod.privateKey &&
-                (value == null || value.trim().isEmpty)) {
+            if (_authMethod == AuthMethod.privateKey && value.trim().isEmpty) {
               return strings.privateKeyRequired;
             }
             return null;
@@ -531,36 +565,35 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
   Widget _buildJumpHostField() {
     final strings = _strings(context);
-    return TextFormField(
+    return ShadInputFormField(
+      id: 'jumpHost',
       controller: _jumpHostController,
-      decoration: InputDecoration(
-        labelText: strings.jumpHost,
-        hintText: strings.jumpHostHint,
-        prefixIcon: const Icon(Icons.hub_outlined),
+      label: Text(strings.jumpHost),
+      placeholder: Text(strings.jumpHostHint),
+      leading: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 8),
+        child: Icon(Icons.hub_outlined, size: 18),
       ),
     );
   }
 
   Widget _buildJumpPortField() {
     final strings = _strings(context);
-    return TextFormField(
+    return ShadInputFormField(
+      id: 'jumpPort',
       controller: _jumpPortController,
-      decoration: InputDecoration(
-        labelText: strings.jumpPort,
-        hintText: '22',
-      ),
-      keyboardType: TextInputType.number,
+      label: Text(strings.jumpPort),
+      placeholder: const Text('22'),
     );
   }
 
   Widget _buildJumpUsernameField() {
     final strings = _strings(context);
-    return TextFormField(
+    return ShadInputFormField(
+      id: 'jumpUsername',
       controller: _jumpUsernameController,
-      decoration: InputDecoration(
-        labelText: strings.jumpUsername,
-        hintText: strings.optional,
-      ),
+      label: Text(strings.jumpUsername),
+      placeholder: Text(strings.optional),
     );
   }
 
@@ -674,18 +707,20 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
   Widget _buildTmuxAutoDeleteField() {
     final strings = _strings(context);
-    return TextFormField(
+    return ShadInputFormField(
+      id: 'tmuxAutoDelete',
       controller: _tmuxAutoDeleteController,
-      decoration: InputDecoration(
-        labelText: strings.tmuxAutoDeleteMinutes,
-        hintText: '10',
-        helperText: strings.tmuxAutoDeleteHelp,
-        prefixIcon: const Icon(Icons.timer_outlined),
+      label: Text(strings.tmuxAutoDeleteMinutes),
+      placeholder: const Text('10'),
+      description: Text(strings.tmuxAutoDeleteHelp),
+      leading: const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 8),
+        child: Icon(Icons.timer_outlined, size: 18),
       ),
       keyboardType: TextInputType.number,
       validator: (value) {
         if (_launchMode != TerminalLaunchMode.tmux) return null;
-        final minutes = int.tryParse(value?.trim() ?? '');
+        final minutes = int.tryParse(value.trim());
         if (minutes == null || minutes < 1) return strings.minOneMinute;
         if (minutes > 1440) return strings.max1440Minutes;
         return null;

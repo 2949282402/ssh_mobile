@@ -37,15 +37,29 @@ class _SettingsPanelState extends State<_SettingsPanel> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                TextField(
+                ShadInput(
                   controller: controller,
                   autofocus: true,
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(
-                    labelText: 'MB',
-                    helperText: strings.sftpLimitDialogHint,
-                    errorText: errorText,
+                  placeholder: const Text('MB'),
+                ),
+                if (errorText != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    errorText!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 6),
+                Text(
+                  strings.sftpLimitDialogHint,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    fontSize: 12,
                   ),
                 ),
                 const SizedBox(height: 10),

@@ -1,8 +1,8 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:gpt_markdown/gpt_markdown.dart';
 import 'package:printing/printing.dart';
 import 'package:provider/provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -192,10 +192,9 @@ class _SftpFileViewerScreenState extends State<SftpFileViewerScreen> {
 
                 switch (_kind) {
                   case _PreviewKind.markdown:
-                    return Markdown(
-                      data: text,
-                      selectable: true,
+                    return SingleChildScrollView(
                       padding: const EdgeInsets.all(16),
+                      child: GptMarkdown(text),
                     );
                   case _PreviewKind.html:
                     return _HtmlPreview(

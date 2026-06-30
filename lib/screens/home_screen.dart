@@ -20,6 +20,7 @@ import '../widgets/ssh_host_key_trust_dialog.dart';
 import '../widgets/tactile_feedback.dart';
 import '../widgets/window_name_dialog.dart';
 import '../theme/app_theme.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
 import 'developer_log_screen.dart';
 import 'llm_chat_screen.dart';
 import 'sftp_screen.dart';

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
 
 import '../services/app_settings.dart';
 
@@ -40,34 +41,49 @@ class _WindowNameDialogState extends State<WindowNameDialog> {
     final strings = AppStrings(language);
     final name = _controller.text.trim();
     final valid = widget.isNameAvailable(name);
-    return AlertDialog(
+    final errorText = name.isEmpty
+        ? strings.enterWindowName
+        : valid
+            ? null
+            : strings.duplicateWindowName;
+
+    return ShadDialog(
       title: Text(strings.newTerminalWindow),
-      content: TextField(
-        controller: _controller,
-        autofocus: true,
-        decoration: InputDecoration(
-          labelText: strings.windowName,
-          errorText: name.isEmpty
-              ? strings.enterWindowName
-              : valid
-                  ? null
-                  : strings.duplicateWindowName,
-        ),
-        onChanged: (_) => setState(() {}),
-        onSubmitted: (_) {
-          if (valid) Navigator.pop(context, name);
-        },
-      ),
       actions: [
-        TextButton(
+        ShadButton.outline(
           onPressed: () => Navigator.pop(context),
           child: Text(strings.cancel),
         ),
-        TextButton(
+        ShadButton(
           onPressed: valid ? () => Navigator.pop(context, name) : null,
           child: Text(strings.create),
         ),
       ],
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ShadInput(
+            controller: _controller,
+            autofocus: true,
+            placeholder: Text(strings.windowName),
+            onChanged: (_) => setState(() {}),
+            onSubmitted: (_) {
+              if (valid) Navigator.pop(context, name);
+            },
+          ),
+          if (errorText != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              errorText,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.error,
+                fontSize: 12,
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

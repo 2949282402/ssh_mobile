@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
 
 class DestructiveConfirmDialog extends StatelessWidget {
   final String title;
@@ -35,21 +36,19 @@ class DestructiveConfirmDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return AlertDialog(
+    return ShadDialog(
       title: Text(title),
-      content: Text(content),
       actions: [
-        TextButton(
+        ShadButton.outline(
           onPressed: () => Navigator.pop(context, false),
           child: Text(cancelLabel),
         ),
-        FilledButton(
-          style: FilledButton.styleFrom(backgroundColor: colorScheme.error),
+        ShadButton.destructive(
           onPressed: () => Navigator.pop(context, true),
           child: Text(confirmLabel),
         ),
       ],
+      child: Text(content),
     );
   }
 }

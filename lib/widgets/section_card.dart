@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
 
 class SectionCard extends StatelessWidget {
   final String title;
@@ -21,48 +22,31 @@ class SectionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: colorScheme.outlineVariant),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: colorScheme.primary,
-                    ),
-                  ),
-                ),
-                if (isCollapsible && onToggle != null)
-                  IconButton(
-                    icon: Icon(isExpanded
-                        ? Icons.expand_less_rounded
-                        : Icons.expand_more_rounded),
-                    onPressed: onToggle,
-                  )
-                else if (trailing != null)
-                  trailing!,
-              ],
-            ),
-            if (isExpanded) ...[
-              const SizedBox(height: 12),
-              ...children,
-            ],
-          ],
+    return ShadCard(
+      title: Text(
+        title,
+        style: TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w700,
+          color: colorScheme.primary,
         ),
+      ),
+      trailing: isCollapsible && onToggle != null
+          ? IconButton(
+              icon: Icon(isExpanded
+                  ? Icons.expand_less_rounded
+                  : Icons.expand_more_rounded),
+              onPressed: onToggle,
+            )
+          : trailing,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (isExpanded) ...[
+            const SizedBox(height: 8),
+            ...children,
+          ],
+        ],
       ),
     );
   }

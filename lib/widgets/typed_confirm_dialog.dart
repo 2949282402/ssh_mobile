@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
 
 class TypedConfirmDialog extends StatefulWidget {
   final String title;
@@ -65,38 +66,32 @@ class _TypedConfirmDialogState extends State<TypedConfirmDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return AlertDialog(
+    return ShadDialog(
       title: Text(widget.title),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(widget.content),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _controller,
-            autofocus: true,
-            decoration: InputDecoration(
-              border: const OutlineInputBorder(),
-              isDense: true,
-              helperText: widget.requiredText,
-            ),
-          ),
-        ],
-      ),
       actions: [
-        TextButton(
+        ShadButton.outline(
           onPressed: () => Navigator.pop(context, false),
           child: Text(widget.cancelLabel),
         ),
-        FilledButton(
-          style: FilledButton.styleFrom(backgroundColor: colorScheme.error),
+        ShadButton.destructive(
           onPressed:
               _matchesRequiredText ? () => Navigator.pop(context, true) : null,
           child: Text(widget.confirmLabel),
         ),
       ],
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(widget.content),
+          const SizedBox(height: 12),
+          ShadInput(
+            controller: _controller,
+            autofocus: true,
+            placeholder: Text(widget.requiredText),
+          ),
+        ],
+      ),
     );
   }
 }

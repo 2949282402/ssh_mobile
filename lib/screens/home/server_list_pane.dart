@@ -471,7 +471,12 @@ extension _HomeScreenStateServerList on _HomeScreenState {
           ],
         ),
       ),
-    );
+    ).animate().fade(duration: 250.ms).slideY(
+          begin: 0.08,
+          end: 0,
+          duration: 250.ms,
+          curve: Curves.easeOutQuart,
+        );
   }
 
   Widget _buildConnectionStatusChip(
@@ -564,7 +569,6 @@ extension _HomeScreenStateServerList on _HomeScreenState {
   ) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final cardColor = _panelColor(context);
     final textColor = _panelTextColor(context);
     final mutedTextColor = _panelMutedTextColor(context);
     final headerSnapshot = context.select<SshService, _ServerHeaderSnapshot>(
@@ -625,14 +629,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
               ],
             ),
           ),
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: cardColor,
-              borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-              border: Border.all(color: _panelBorderColor(context)),
-              boxShadow: const [],
-            ),
+          ShadCard(
             child: Row(
               children: [
                 _summaryItem(

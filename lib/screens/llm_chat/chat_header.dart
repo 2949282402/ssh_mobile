@@ -48,15 +48,20 @@ class _ChatHeader extends StatelessWidget {
             ? 0.0
             : snapshot.contextTokens / snapshot.contextWindowTokens;
 
-        return Container(
-          padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-          decoration: BoxDecoration(
-            color: colorScheme.surfaceContainer,
-            border: Border(
-              bottom: BorderSide(color: colorScheme.outlineVariant),
-            ),
-          ),
-          child: Row(
+        return ClipRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainer.withValues(alpha: 0.55),
+                border: Border(
+                  bottom: BorderSide(
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.4),
+                  ),
+                ),
+              ),
+              child: Row(
             children: [
               IconButton(
                 tooltip: strings.history,
@@ -125,7 +130,9 @@ class _ChatHeader extends StatelessWidget {
               ),
             ],
           ),
-        );
+        ),
+      ),
+    );
       },
     );
   }

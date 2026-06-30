@@ -1,12 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui';
 
 // ignore_for_file: unused_element
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:gpt_markdown/gpt_markdown.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
@@ -392,10 +393,6 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
             children: [
               Column(
                 children: [
-                  _ChatHeader(
-                    onShowHistory: () => _showHistory(context, strings),
-                    onShowSettings: () => _showSettings(context, strings),
-                  ),
                   Expanded(
                     child: _ChatMessageList(
                       scrollController: _scrollController,
@@ -423,6 +420,15 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
                     ),
                   ),
                 ],
+              ),
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: _ChatHeader(
+                  onShowHistory: () => _showHistory(context, strings),
+                  onShowSettings: () => _showSettings(context, strings),
+                ),
               ),
               _ChatHistoryOverlay(strings: strings),
               _ChatJumpToBottomButton(

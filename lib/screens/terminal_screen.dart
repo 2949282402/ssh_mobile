@@ -215,9 +215,9 @@ class _TerminalScreenState extends State<TerminalScreen>
           final isConnected = viewModel.isConnected;
           final isDark = Theme.of(context).brightness == Brightness.dark;
           final terminalBackground =
-              isDark ? AppTheme.terminalBg : const Color(0xFFFAFBFC);
+              isDark ? const Color(0xFF09090B) : const Color(0xFFFAFAFA);
           final toolbarColor = isDark
-              ? const Color(0xFF161B22)
+              ? const Color(0xFF09090B)
               : Theme.of(context).colorScheme.surface;
           final useWideDesktopSideShortcutPanel =
               !_useWindowsBottomShortcutPanel &&

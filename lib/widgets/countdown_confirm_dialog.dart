@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
 
 class CountdownConfirmDialog extends StatefulWidget {
   final String title;
@@ -73,24 +74,22 @@ class _CountdownConfirmDialogState extends State<CountdownConfirmDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     final confirmText = _canConfirm
         ? widget.confirmLabel
         : '${widget.confirmLabel} ($_remainingSeconds)';
-    return AlertDialog(
+    return ShadDialog(
       title: Text(widget.title),
-      content: Text(widget.content),
       actions: [
-        TextButton(
+        ShadButton.outline(
           onPressed: () => Navigator.pop(context, false),
           child: Text(widget.cancelLabel),
         ),
-        FilledButton(
-          style: FilledButton.styleFrom(backgroundColor: colorScheme.error),
+        ShadButton.destructive(
           onPressed: _canConfirm ? () => Navigator.pop(context, true) : null,
           child: Text(confirmText),
         ),
       ],
+      child: Text(widget.content),
     );
   }
 }

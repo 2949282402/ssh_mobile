@@ -1,4 +1,4 @@
-﻿part of '../llm_chat_screen.dart';
+part of '../llm_chat_screen.dart';
 
 class _MessageBubble extends StatelessWidget {
   final String chatId;
@@ -525,29 +525,11 @@ class _AssistantMarkdownBody extends StatelessWidget {
 
   Widget _buildMarkdown(BuildContext context, String value) {
     final colorScheme = Theme.of(context).colorScheme;
-    return MarkdownBody(
-      data: value.isEmpty ? '...' : value,
-      selectable: false,
-      styleSheet: MarkdownStyleSheet.fromTheme(
-        Theme.of(context),
-      ).copyWith(
-        p: TextStyle(
-          color: colorScheme.onSurface,
-          height: 1.35,
-        ),
-        code: TextStyle(
-          color: colorScheme.onSurface,
-          backgroundColor: colorScheme.surfaceContainerHighest.withValues(
-            alpha: 0.72,
-          ),
-        ),
-        codeblockDecoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHighest.withValues(
-            alpha: 0.72,
-          ),
-          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-          border: Border.all(color: colorScheme.outlineVariant),
-        ),
+    return GptMarkdown(
+      value.isEmpty ? '...' : value,
+      style: TextStyle(
+        color: colorScheme.onSurface,
+        height: 1.35,
       ),
     );
   }
