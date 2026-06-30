@@ -556,29 +556,32 @@ class _SettingsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.32),
+    return Material(
+      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.32),
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: colorScheme.outlineVariant),
+        side: BorderSide(color: colorScheme.outlineVariant),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
-            child: Text(
-              title,
-              style: TextStyle(
-                color: colorScheme.onSurfaceVariant,
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
+              child: Text(
+                title,
+                style: TextStyle(
+                  color: colorScheme.onSurfaceVariant,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ),
-          ),
-          ...children,
-        ],
+            ...children,
+          ],
+        ),
       ),
     );
   }

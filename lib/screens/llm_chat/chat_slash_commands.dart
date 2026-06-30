@@ -96,13 +96,13 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
     return Container(
       constraints: const BoxConstraints(maxHeight: 180),
       margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
+      child: Material(
         color: colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: colorScheme.outlineVariant),
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: BorderSide(color: colorScheme.outlineVariant),
+        ),
+        clipBehavior: Clip.antiAlias,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
