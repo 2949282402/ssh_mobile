@@ -314,7 +314,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _DeferredNavPage(
         active: active,
         loading: _buildLoadingState(),
-        keepAliveAfterFirstBuild: index == _aiPage,
+        keepAliveAfterFirstBuild:
+            index == _aiPage || index == _sftpPage || index == _adminPage,
         builder: (context) {
           switch (index) {
             case _aiPage:
