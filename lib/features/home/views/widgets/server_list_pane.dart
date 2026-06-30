@@ -114,7 +114,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
               Expanded(
                 child: ReorderableListView.builder(
                   buildDefaultDragHandles: false,
-                  cacheExtent: 700.0,
+                  scrollCacheExtent: const ScrollCacheExtent.pixels(700.0),
                   padding: EdgeInsets.fromLTRB(
                     horizontalPadding,
                     0,
@@ -128,12 +128,10 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                     strings,
                     connIndex: index,
                   ),
-                  onReorder: (oldIndex, newIndex) {
-                    final storageNewIndex =
-                        newIndex > oldIndex ? newIndex + 1 : newIndex;
+                  onReorderItem: (oldIndex, newIndex) {
                     context
                         .read<ConnectionViewModel>()
-                        .reorderConnections(oldIndex, storageNewIndex);
+                        .reorderConnections(oldIndex, newIndex);
                   },
                 ),
               ),

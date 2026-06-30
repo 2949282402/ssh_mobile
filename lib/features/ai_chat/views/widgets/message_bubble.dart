@@ -89,7 +89,8 @@ class _MessageBubble extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         if (isUser && message.attachments.isNotEmpty)
-                          MessageAttachmentsWrap(attachments: message.attachments),
+                          MessageAttachmentsWrap(
+                              attachments: message.attachments),
                         SelectableText(
                           message.text.isEmpty ? '...' : message.text,
                           style: TextStyle(
@@ -672,8 +673,6 @@ class _MessageActions extends StatelessWidget {
     );
   }
 }
-
-
 
 class _ChatTodoPanel extends StatefulWidget {
   final String chatId;

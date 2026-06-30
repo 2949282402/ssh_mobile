@@ -62,77 +62,78 @@ class _ChatHeader extends StatelessWidget {
                 ),
               ),
               child: Row(
-            children: [
-              IconButton(
-                tooltip: strings.history,
-                icon: const Icon(Icons.menu_rounded),
-                onPressed: onShowHistory,
-              ),
-              Expanded(
-                child: TweenAnimationBuilder<double>(
-                  key: ValueKey('chat-title-${snapshot.chatId}'),
-                  tween: Tween(begin: 0, end: 1),
-                  duration: const Duration(milliseconds: 220),
-                  curve: Curves.easeOutCubic,
-                  builder: (context, value, child) {
-                    return Opacity(
-                      opacity: value,
-                      child: Transform.translate(
-                        offset: Offset(12 * (1 - value), 0),
-                        child: child,
-                      ),
-                    );
-                  },
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      OverflowScrollText(
-                        snapshot.title,
-                        selectable: false,
-                        maxLines: 1,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      OverflowScrollText(
-                        _contextUsage(
-                          snapshot.contextTokens,
-                          snapshot.contextWindowTokens,
-                          contextPercent,
-                        ),
-                        selectable: false,
-                        maxLines: 1,
-                        style: TextStyle(
-                          color: colorScheme.onSurface.withValues(alpha: 0.62),
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
+                children: [
+                  IconButton(
+                    tooltip: strings.history,
+                    icon: const Icon(Icons.menu_rounded),
+                    onPressed: onShowHistory,
                   ),
-                ),
-              ),
-              IconButton(
-                tooltip: strings.newChat,
-                icon: const Icon(Icons.add_comment_outlined),
-                onPressed: snapshot.sending
-                    ? null
-                    : () {
-                        context
-                            .read<AiChatViewModel>()
-                            .createChatFromSettings();
+                  Expanded(
+                    child: TweenAnimationBuilder<double>(
+                      key: ValueKey('chat-title-${snapshot.chatId}'),
+                      tween: Tween(begin: 0, end: 1),
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOutCubic,
+                      builder: (context, value, child) {
+                        return Opacity(
+                          opacity: value,
+                          child: Transform.translate(
+                            offset: Offset(12 * (1 - value), 0),
+                            child: child,
+                          ),
+                        );
                       },
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          OverflowScrollText(
+                            snapshot.title,
+                            selectable: false,
+                            maxLines: 1,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          OverflowScrollText(
+                            _contextUsage(
+                              snapshot.contextTokens,
+                              snapshot.contextWindowTokens,
+                              contextPercent,
+                            ),
+                            selectable: false,
+                            maxLines: 1,
+                            style: TextStyle(
+                              color:
+                                  colorScheme.onSurface.withValues(alpha: 0.62),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: strings.newChat,
+                    icon: const Icon(Icons.add_comment_outlined),
+                    onPressed: snapshot.sending
+                        ? null
+                        : () {
+                            context
+                                .read<AiChatViewModel>()
+                                .createChatFromSettings();
+                          },
+                  ),
+                  IconButton(
+                    tooltip: strings.settings,
+                    icon: const Icon(Icons.tune_rounded),
+                    onPressed: onShowSettings,
+                  ),
+                ],
               ),
-              IconButton(
-                tooltip: strings.settings,
-                icon: const Icon(Icons.tune_rounded),
-                onPressed: onShowSettings,
-              ),
-            ],
+            ),
           ),
-        ),
-      ),
-    );
+        );
       },
     );
   }

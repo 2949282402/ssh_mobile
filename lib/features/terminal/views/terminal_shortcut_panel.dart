@@ -169,11 +169,10 @@ class TerminalShortcutPanel extends StatelessWidget {
               scrollDirection: Axis.horizontal,
               buildDefaultDragHandles: false,
               itemCount: primaryCommands.length,
-              onReorder: (oldIndex, newIndex) {
+              onReorderItem: (oldIndex, newIndex) {
                 final reordered = primaryCommands.toList();
                 final item = reordered.removeAt(oldIndex);
-                final insertIndex = adjustedReorderIndex(oldIndex, newIndex);
-                reordered.insert(insertIndex, item);
+                reordered.insert(newIndex, item);
                 // Also reconstruct full commands list order to keep customized list state
                 final finalIds = [
                   ...reordered.map((c) => c.id),
@@ -453,7 +452,7 @@ class TerminalShortcutPanel extends StatelessWidget {
       builder: (ctx) {
         return Padding(
           padding: EdgeInsets.only(
-            bottom: MediaQuery.of(ctx).viewInsets.bottom,
+            bottom: MediaQuery.viewInsetsOf(ctx).bottom,
           ),
           child: SafeArea(
             child: SingleChildScrollView(

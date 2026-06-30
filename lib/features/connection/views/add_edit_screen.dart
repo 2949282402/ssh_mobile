@@ -221,7 +221,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
         ],
       ),
       bottomNavigationBar:
-          MediaQuery.of(context).viewInsets.bottom > 0 ? null : stickyActionBar,
+          MediaQuery.viewInsetsOf(context).bottom > 0 ? null : stickyActionBar,
       body: _isLoadingSecrets
           ? const Center(
               child: SizedBox(
@@ -305,8 +305,8 @@ class _AddEditScreenState extends State<AddEditScreen> {
                             icon: Icon(_jumpHostExpanded
                                 ? Icons.expand_less_rounded
                                 : Icons.expand_more_rounded),
-                            onPressed: () =>
-                                setState(() => _jumpHostExpanded = !_jumpHostExpanded),
+                            onPressed: () => setState(
+                                () => _jumpHostExpanded = !_jumpHostExpanded),
                           ),
                         ],
                       ),
@@ -337,7 +337,8 @@ class _AddEditScreenState extends State<AddEditScreen> {
                                 ? Icons.expand_less_rounded
                                 : Icons.expand_more_rounded),
                             onPressed: () => setState(() =>
-                                _advancedOptionsExpanded = !_advancedOptionsExpanded),
+                                _advancedOptionsExpanded =
+                                    !_advancedOptionsExpanded),
                           ),
                         ],
                       ),
@@ -389,9 +390,8 @@ class _AddEditScreenState extends State<AddEditScreen> {
         padding: EdgeInsets.symmetric(horizontal: 8),
         child: Icon(Icons.label_outline, size: 18),
       ),
-      validator: (value) => value.trim().isEmpty
-          ? strings.enterConnectionName
-          : null,
+      validator: (value) =>
+          value.trim().isEmpty ? strings.enterConnectionName : null,
     );
   }
 
@@ -407,9 +407,8 @@ class _AddEditScreenState extends State<AddEditScreen> {
         child: Icon(Icons.computer, size: 18),
       ),
       keyboardType: TextInputType.url,
-      validator: (value) => value.trim().isEmpty
-          ? strings.enterHostAddress
-          : null,
+      validator: (value) =>
+          value.trim().isEmpty ? strings.enterHostAddress : null,
     );
   }
 
@@ -446,8 +445,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
         padding: EdgeInsets.symmetric(horizontal: 8),
         child: Icon(Icons.person_outline, size: 18),
       ),
-      validator: (value) =>
-          value.trim().isEmpty ? strings.enterUsername : null,
+      validator: (value) => value.trim().isEmpty ? strings.enterUsername : null,
     );
   }
 

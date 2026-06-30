@@ -20,18 +20,20 @@ class _FilePane extends StatelessWidget {
       return _SftpEmptyState(strings: strings);
     }
 
-    final connectionVm = context.watch<ConnectionViewModel>();
     final activeId = sftp.connectionId;
-    final conn = connectionVm.connections.firstWhere(
-      (c) => c.id == activeId,
-      orElse: () => ConnectionConfig(
-        id: '',
-        name: '',
-        host: '',
-        port: 22,
-        username: '',
-      ),
-    );
+    final connName = context.select<ConnectionViewModel, String>((vm) {
+      final conn = vm.connections.firstWhere(
+        (c) => c.id == activeId,
+        orElse: () => ConnectionConfig(
+          id: '',
+          name: '',
+          host: '',
+          port: 22,
+          username: '',
+        ),
+      );
+      return conn.name;
+    });
     final desktop = isDesktopLayout(context);
 
     final topBar = Container(
@@ -105,7 +107,7 @@ class _FilePane extends StatelessWidget {
                     const SizedBox(width: 6),
                     Flexible(
                       child: Text(
-                        conn.name.isNotEmpty ? conn.name : 'SFTP',
+                        connName.isNotEmpty ? connName : 'SFTP',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -643,7 +645,7 @@ class _SftpPathHistorySheetState extends State<_SftpPathHistorySheet> {
     return SafeArea(
       child: Padding(
         padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom,
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
         ),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxHeight: 560),
@@ -951,7 +953,7 @@ class _SftpEntryList extends StatelessWidget {
 
     final colorScheme = Theme.of(context).colorScheme;
     return ListView.separated(
-      cacheExtent: 900.0,
+      scrollCacheExtent: const ScrollCacheExtent.pixels(900.0),
       padding: EdgeInsets.fromLTRB(8 * scale, 8 * scale, 8 * scale, 24 * scale),
       itemCount: entries.length,
       separatorBuilder: (_, __) => const Divider(height: 1),

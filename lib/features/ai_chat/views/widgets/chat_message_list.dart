@@ -76,7 +76,7 @@ class _ChatMessageList extends StatelessWidget {
             },
             child: ListView.builder(
               controller: scrollController,
-              cacheExtent: 900.0,
+              scrollCacheExtent: const ScrollCacheExtent.pixels(900.0),
               padding: const EdgeInsets.fromLTRB(12, 72, 12, 18),
               itemCount: visibleMessages.length,
               itemBuilder: (context, index) {

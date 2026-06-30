@@ -14,7 +14,7 @@ class MessageAttachmentsWrap extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (attachments.isEmpty) return const SizedBox.shrink();
-    
+
     final colorScheme = Theme.of(context).colorScheme;
 
     return Padding(

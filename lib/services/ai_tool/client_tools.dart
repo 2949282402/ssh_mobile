@@ -102,6 +102,4 @@ class ClientToolsProvider implements AiToolProvider {
         return null;
     }
   }
-
-
 }

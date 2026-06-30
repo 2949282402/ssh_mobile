@@ -209,9 +209,9 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final settings = context.watch<AppSettings>();
+    final isEnglish = context.select<AppSettings, bool>((s) => s.isEnglish);
     final viewModel = context.watch<RagKnowledgeViewModel>();
-    final strings = _RagStrings(settings.isEnglish);
+    final strings = _RagStrings(isEnglish);
     final theme = Theme.of(context);
 
     return Scaffold(

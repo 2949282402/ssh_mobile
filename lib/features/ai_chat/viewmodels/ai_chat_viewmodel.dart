@@ -1406,10 +1406,10 @@ class AiChatViewModel extends ChangeNotifier {
     }
   }
 
-
   void notify() {
     notifyListeners();
   }
+
   void _beginStreamingAssistant({
     required String chatId,
     required DateTime assistantCreatedAt,
@@ -1489,5 +1489,4 @@ class AiChatViewModel extends ChangeNotifier {
   }
 
   // 内部辅助，从Slash命令提取
-
 }

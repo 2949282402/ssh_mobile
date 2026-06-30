@@ -1,5 +1,6 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 
@@ -84,8 +85,9 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     final strings = AppStrings(language);
     final desktop = isDesktopLayout(context);
-    final settingsVm = context.watch<SettingsViewModel>();
-    final isBusy = settingsVm.isImporting || settingsVm.isExporting;
+    final isBusy = context.select<SettingsViewModel, bool>(
+      (vm) => vm.isImporting || vm.isExporting,
+    );
 
     final content = NotificationListener<OpenSettingsNotification>(
       onNotification: (notification) {

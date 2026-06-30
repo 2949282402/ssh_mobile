@@ -83,12 +83,15 @@ class _MonitorConfigPanelV2 extends StatelessWidget {
             decoration: BoxDecoration(
               color: colorScheme.primary.withValues(alpha: 0.08),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: colorScheme.primary.withValues(alpha: 0.18)),
+              border: Border.all(
+                  color: colorScheme.primary.withValues(alpha: 0.18)),
             ),
             child: Text(
               isRunning
-                  ? _monitorText(strings, '$monitoringCount servers', '监控中 $monitoringCount 台')
-                  : _monitorText(strings, '$selectedCount selected', '已选择 $selectedCount 台'),
+                  ? _monitorText(strings, '$monitoringCount servers',
+                      '监控中 $monitoringCount 台')
+                  : _monitorText(strings, '$selectedCount selected',
+                      '已选择 $selectedCount 台'),
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
@@ -208,7 +211,9 @@ class _MonitorConfigPanelV2 extends StatelessWidget {
                       style: TextStyle(
                         fontWeight: FontWeight.w800,
                         fontSize: 13,
-                        color: isRunning ? Colors.green.shade700 : colorScheme.onSurface,
+                        color: isRunning
+                            ? Colors.green.shade700
+                            : colorScheme.onSurface,
                       ),
                     ),
                     const SizedBox(height: 2),
@@ -216,8 +221,14 @@ class _MonitorConfigPanelV2 extends StatelessWidget {
                       children: [
                         Text(
                           isRunning
-                              ? _monitorText(strings, '$monitoringCount servers', '监控 $monitoringCount 台')
-                              : _monitorText(strings, '$selectedCount servers selected', '已选择 $selectedCount 台'),
+                              ? _monitorText(
+                                  strings,
+                                  '$monitoringCount servers',
+                                  '监控 $monitoringCount 台')
+                              : _monitorText(
+                                  strings,
+                                  '$selectedCount servers selected',
+                                  '已选择 $selectedCount 台'),
                           style: TextStyle(
                             fontSize: 11,
                             color: colorScheme.onSurfaceVariant,
@@ -225,9 +236,13 @@ class _MonitorConfigPanelV2 extends StatelessWidget {
                         ),
                         if (isRunning) ...[
                           const SizedBox(width: 8),
-                          Text('•', style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant)),
+                          Text('•',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: colorScheme.onSurfaceVariant)),
                           const SizedBox(width: 8),
-                          _DurationTracker(startedAt: monitor.startedAt, strings: strings),
+                          _DurationTracker(
+                              startedAt: monitor.startedAt, strings: strings),
                         ],
                       ],
                     ),
@@ -238,7 +253,9 @@ class _MonitorConfigPanelV2 extends StatelessWidget {
                 isSelected: expanded,
                 icon: Icon(
                   Icons.tune_rounded,
-                  color: expanded ? colorScheme.primary : colorScheme.onSurfaceVariant,
+                  color: expanded
+                      ? colorScheme.primary
+                      : colorScheme.onSurfaceVariant,
                 ),
                 onPressed: onToggle,
                 tooltip: _monitorText(strings, 'Settings', '设置'),
@@ -266,14 +283,19 @@ class _MonitorConfigPanelV2 extends StatelessWidget {
         ),
         AnimatedCrossFade(
           duration: const Duration(milliseconds: 200),
-          crossFadeState: expanded ? CrossFadeState.showFirst : CrossFadeState.showSecond,
+          crossFadeState:
+              expanded ? CrossFadeState.showFirst : CrossFadeState.showSecond,
           secondChild: const SizedBox(width: double.infinity),
           firstChild: Container(
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
             decoration: BoxDecoration(
-              color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.15),
-              border: Border(top: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.5))),
+              color:
+                  colorScheme.surfaceContainerHighest.withValues(alpha: 0.15),
+              border: Border(
+                  top: BorderSide(
+                      color:
+                          colorScheme.outlineVariant.withValues(alpha: 0.5))),
             ),
             child: Wrap(
               spacing: 8,
@@ -367,7 +389,8 @@ class _PulsingDotState extends State<_PulsingDot>
               height: 18,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: widget.color.withValues(alpha: 0.35 * (1 - _controller.value)),
+                color: widget.color
+                    .withValues(alpha: 0.35 * (1 - _controller.value)),
               ),
             ),
             Container(
@@ -375,7 +398,8 @@ class _PulsingDotState extends State<_PulsingDot>
               height: 14,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: widget.color.withValues(alpha: 0.55 * (1 - _controller.value)),
+                color: widget.color
+                    .withValues(alpha: 0.55 * (1 - _controller.value)),
               ),
             ),
             Container(
@@ -410,7 +434,8 @@ class _DurationTrackerState extends State<_DurationTracker> {
   @override
   void initState() {
     super.initState();
-    _durationNotifier = ValueNotifier<String>(_runDurationLabel(widget.startedAt));
+    _durationNotifier =
+        ValueNotifier<String>(_runDurationLabel(widget.startedAt));
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
         _durationNotifier.value = _runDurationLabel(widget.startedAt);
@@ -504,7 +529,8 @@ class _DurationMenu extends StatelessWidget {
             decoration: BoxDecoration(
               color: colorScheme.surfaceContainerLow,
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.8)),
+              border: Border.all(
+                  color: colorScheme.outlineVariant.withValues(alpha: 0.8)),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -543,7 +569,8 @@ class _DurationMenu extends StatelessWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.edit_outlined, size: 16, color: colorScheme.secondary),
+                    Icon(Icons.edit_outlined,
+                        size: 16, color: colorScheme.secondary),
                     const SizedBox(width: 8),
                     Text(
                       _monitorText(strings, 'Custom', '自定义'),
@@ -605,12 +632,14 @@ class _ServersPerChartMenu extends StatelessWidget {
             decoration: BoxDecoration(
               color: colorScheme.surfaceContainerLow,
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.8)),
+              border: Border.all(
+                  color: colorScheme.outlineVariant.withValues(alpha: 0.8)),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.stacked_line_chart_rounded, size: 16, color: colorScheme.primary),
+                Icon(Icons.stacked_line_chart_rounded,
+                    size: 16, color: colorScheme.primary),
                 const SizedBox(width: 6),
                 Text(
                   _monitorText(strings, '$value', '$value 台'),
@@ -644,7 +673,8 @@ class _ServersPerChartMenu extends StatelessWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.edit_outlined, size: 16, color: colorScheme.secondary),
+                    Icon(Icons.edit_outlined,
+                        size: 16, color: colorScheme.secondary),
                     const SizedBox(width: 8),
                     Text(
                       _monitorText(strings, 'Custom', '自定义'),

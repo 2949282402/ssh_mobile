@@ -28,7 +28,7 @@ extension _ChatRagSheet on _LlmChatScreenBodyState {
               16,
               16,
               16,
-              MediaQuery.of(context).viewInsets.bottom + 24,
+              MediaQuery.viewInsetsOf(context).bottom + 24,
             ),
             child: SingleChildScrollView(
               child: Column(

@@ -92,7 +92,6 @@ extension ConnectionOps on StorageService {
 
   Future<void> reorderConnections(int oldIndex, int newIndex) async {
     if (!_initialized) return;
-    if (newIndex > oldIndex) newIndex--;
     final item = _connections.removeAt(oldIndex);
     _connections.insert(newIndex, item);
     _refreshConnectionsView();

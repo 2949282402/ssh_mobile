@@ -1200,8 +1200,6 @@ class _SettingsHistoryAction<T> {
   }
 }
 
-
-
 class _PendingAiSettings {
   final String baseUrl;
   final String model;

@@ -31,5 +31,4 @@ extension AiChatViewModelApprovals on AiChatViewModel {
           : const AiToolApprovalDecision.rejected(),
     );
   }
-
 }
