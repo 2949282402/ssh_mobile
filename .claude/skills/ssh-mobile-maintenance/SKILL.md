@@ -7,13 +7,7 @@ description: Use when modifying or debugging this SSH Mobile Flutter project, es
 
 ## Quick Start
 
-Before changing code, inspect the nearest feature under `lib/features/` plus
-the coordinating page in `lib/screens/`. The project now uses a feature-first
-MVVM split: feature-owned state/actions live in `viewmodels`, feature-owned
-models/forms live in `models` or `views`, large page shells still use Dart
-`part` files under `lib/screens/`, and protocol/storage infrastructure stays in
-`lib/services/` plus `lib/core/services/`. Keep changes narrow and run
-validation afterward.
+Before changing code, inspect the nearest feature under `lib/features/`. The project now uses a pure feature-first MVVM split: feature-owned state/actions live in `viewmodels`, feature-owned models/forms live in `models` or `views`, UI view files live in `lib/features/<feature>/views/` along with their part files or child widgets in `widgets/`, and protocol/storage infrastructure stays in `lib/services/` plus `lib/core/services/`. Keep changes narrow and run validation afterward.
 Resolve the local Flutter SDK dynamically; different machines may use different
 SDK locations:
 
@@ -88,8 +82,8 @@ Primary entry points are `lib/features/connection/models/connection.dart`,
 `lib/features/connection/viewmodels/connection_viewmodel.dart`,
 `lib/features/connection/views/add_edit_screen.dart`,
 `lib/features/terminal/viewmodels/terminal_viewmodel.dart`,
-`lib/screens/home_screen.dart`, and `lib/screens/terminal_screen.dart` with
-their `lib/screens/home/` and `lib/screens/terminal/` part files.
+`lib/features/home/views/home_screen.dart` (along with its `widgets/` part files), and `lib/features/terminal/views/terminal_screen.dart` with
+their `widgets/` part files.
 
 - Keep saved-connection CRUD, validation, and verify-before-save flow in
   `ConnectionViewModel` plus repository/service seams rather than burying that
@@ -102,10 +96,10 @@ their `lib/screens/home/` and `lib/screens/terminal/` part files.
 
 ### LLM Chat and Tools
 
-Primary entry points are `lib/features/ai_chat/viewmodels/ai_chat_viewmodel.dart`,
+Primary entry points are `lib/features/ai_chat/viewmodels/ai_chat_viewmodel.dart` (split into approvals and slash command extensions),
 `lib/features/ai_chat/services/`, `lib/services/llm_chat_service.dart`,
-`lib/services/ai_tool_service.dart`, and `lib/screens/llm_chat_screen.dart`
-with its `lib/screens/llm_chat/` part files.
+`lib/services/ai_tool_service.dart` (with `client_tools.dart` split into schema and impl files), and `lib/features/ai_chat/views/llm_chat_screen.dart`
+with its `widgets/` part files.
 
 - Chat uses SSE streaming and must tolerate split `tool_calls` deltas.
 - The `+` toolbar below the input row is the current entry point for server
@@ -154,8 +148,8 @@ with its `lib/screens/llm_chat/` part files.
 ### SFTP
 
 Primary entry points are `lib/features/sftp/viewmodels/sftp_viewmodel.dart`,
-`lib/services/sftp_service.dart`, `lib/screens/sftp_screen.dart`, and
-`lib/screens/sftp/`.
+`lib/services/sftp_service.dart`, and `lib/features/sftp/views/sftp_screen.dart` with
+its `views/` parts.
 
 - Keep multi-server switching warm when practical.
 - Restore the last remote path after reconnect.
@@ -179,9 +173,9 @@ Primary entry points are `lib/features/sftp/viewmodels/sftp_viewmodel.dart`,
 Primary entry points are
 `lib/features/performance/viewmodels/performance_viewmodel.dart`,
 `lib/services/performance_monitor_service.dart`,
-`lib/services/server_status_probe.dart`,
-`lib/screens/system_admin_screen.dart`, and
-`lib/screens/system_admin/`.
+`lib/services/server_status_probe.dart`, and
+`lib/features/system_admin/views/system_admin_screen.dart` with
+its child widgets.
 
 - The performance monitor is integrated as the default "Monitor" tab in the
   System Administration console.
@@ -214,7 +208,7 @@ Primary entry points are
 - `lib/main.dart` composes infrastructure services and feature ViewModels
   through `MultiProvider`.
 - `lib/features/settings/viewmodels/settings_viewmodel.dart` bridges
-  `AppSettings` plus `StorageService`, while `lib/screens/home_screen.dart`
+  `AppSettings` plus `StorageService`, while `lib/features/home/views/home_screen.dart`
   remains the navigation shell and settings entry surface.
 - Main page order is AI, Servers, SFTP, Performance Monitor, then Logs.
 - App launch still lands on Servers even though AI is the first navigation item.
