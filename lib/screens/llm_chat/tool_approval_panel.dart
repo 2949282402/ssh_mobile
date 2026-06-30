@@ -1,4 +1,4 @@
-﻿part of '../llm_chat_screen.dart';
+part of '../llm_chat_screen.dart';
 
 class _ToolApprovalPanel extends StatelessWidget {
   final PendingToolApproval pending;
@@ -18,6 +18,8 @@ class _ToolApprovalPanel extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final en = strings.language == AppLanguage.en;
     final isBudgetAudit = pending.request.approvalType == 'budget_audit';
+    final isAgentLoopBudget =
+        pending.request.approvalType == 'agent_loop_round_budget';
     final title = switch (pending.request.approvalType) {
       'remote_delete' => en ? 'Approve remote delete' : '确认远端删除操作',
       'server_metadata_change' =>
@@ -32,15 +34,23 @@ class _ToolApprovalPanel extends StatelessWidget {
       'local_log_change' => en ? 'Approve local log change' : '确认本地日志变更',
       'app_setting_change' => en ? 'Approve app settings change' : '确认应用设置变更',
       'budget_audit' => strings.budgetAuditTitle,
+      'agent_loop_round_budget' =>
+        en ? 'Extend agent loop rounds' : '延长 Agent 循环轮次',
       _ => en ? 'Approve tool action' : '确认工具操作',
     };
     final description = isBudgetAudit
         ? strings.budgetAuditReason
-        : (en
-            ? 'The model wants to perform this action on ${pending.request.connectionName}. Reason: ${pending.request.reason}'
-            : '模型想在 ${pending.request.connectionName} 上执行该操作。原因：${pending.request.reason}');
-    final reject = en ? 'Reject' : '拒绝';
-    final approve = en ? 'Approve' : '同意';
+        : (isAgentLoopBudget
+            ? (en
+                ? '${pending.request.reason} Tool call budget and safety approvals remain unchanged.'
+                : '${pending.request.reason} 工具调用预算与安全审批保持不变。')
+            : (en
+                ? 'The model wants to perform this action on ${pending.request.connectionName}. Reason: ${pending.request.reason}'
+                : '模型想在 ${pending.request.connectionName} 上执行该操作。原因：${pending.request.reason}'));
+    final reject =
+        isAgentLoopBudget ? (en ? 'Pause' : '暂停') : (en ? 'Reject' : '拒绝');
+    final approve =
+        isAgentLoopBudget ? (en ? 'Continue' : '继续') : (en ? 'Approve' : '同意');
     final maxCommandHeight =
         (MediaQuery.sizeOf(context).height * 0.24).clamp(96.0, 180.0);
     final targetLabel = en ? 'Target' : '目标';
@@ -127,7 +137,7 @@ class _ToolApprovalPanel extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 8),
-          if (!isBudgetAudit) ...[
+          if (!isBudgetAudit && !isAgentLoopBudget) ...[
             metaRow(targetLabel, pending.request.connectionName),
             const SizedBox(height: 8),
           ],
@@ -139,7 +149,7 @@ class _ToolApprovalPanel extends StatelessWidget {
             metaRow(bytesLabel, '${pending.request.byteLength}'),
             const SizedBox(height: 8),
           ],
-          if (!isBudgetAudit)
+          if (!isBudgetAudit && !isAgentLoopBudget)
             ConstrainedBox(
               constraints: BoxConstraints(maxHeight: maxCommandHeight),
               child: Container(

@@ -138,6 +138,9 @@ extension SettingsOps on StorageService {
       toolCallBudget: AiToolCallBudget.normalize(
         _prefs?.getInt(StorageService._aiToolCallBudgetKey),
       ),
+      agentLoopMode: AiAgentLoopMode.normalize(
+        _prefs?.getString(StorageService._aiAgentLoopModeKey),
+      ),
       maxImageSizeBytes: AiUploadSizeLimit.normalizeImage(
         _prefs?.getInt(StorageService._aiMaxImageSizeBytesKey),
       ),
@@ -412,6 +415,7 @@ extension SettingsOps on StorageService {
     int? multiAgentMaxAgents,
     bool? postToolReviewEnabled,
     int? toolCallBudget,
+    String? agentLoopMode,
     int? maxImageSizeBytes,
     int? maxFileSizeBytes,
     String? apiKey,
@@ -570,6 +574,12 @@ extension SettingsOps on StorageService {
         toolCallBudget ?? _prefs!.getInt(StorageService._aiToolCallBudgetKey),
       ),
     );
+    await _prefs!.setString(
+      StorageService._aiAgentLoopModeKey,
+      AiAgentLoopMode.normalize(
+        agentLoopMode ?? _prefs!.getString(StorageService._aiAgentLoopModeKey),
+      ),
+    );
     await _prefs!.setInt(
       StorageService._aiMaxImageSizeBytesKey,
       AiUploadSizeLimit.normalizeImage(
@@ -637,7 +647,7 @@ extension SettingsOps on StorageService {
     AppLogService.instance.info(
       'LLM settings saved',
       details:
-          'baseUrl=$normalizedBaseUrl model=$normalizedModel helperModel=$normalizedHelperModel auditModel=$normalizedAuditModel fallbackPolicy=${AgentModelFallbackPolicy.normalize(modelFallbackPolicy ?? _prefs!.getString(StorageService._aiModelFallbackPolicyKey))} contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} timeoutSeconds=${AiRequestTimeout.normalize(timeoutSeconds)} deepSeekThinking=${deepSeekThinkingEnabled ?? (_prefs!.getBool(StorageService._aiDeepSeekThinkingEnabledKey) ?? true)} deepSeekEffort=${DeepSeekReasoningEffort.normalize(deepSeekReasoningEffort ?? _prefs!.getString(StorageService._aiDeepSeekReasoningEffortKey))} openAiEffort=${OpenAiReasoningEffort.normalize(openAiReasoningEffort ?? _prefs!.getString(StorageService._aiOpenAiReasoningEffortKey))} webSearch=${webSearchEnabled ?? (_prefs!.getBool(StorageService._aiWebSearchEnabledKey) ?? true)} webSearchEngine=${AiWebSearchEngine.normalize(webSearchEngine ?? _prefs!.getString(StorageService._aiWebSearchEngineKey))} quarkSearchEndpoint=${_prefs!.getString(StorageService._aiQuarkSearchEndpointKey)} quarkApiKeyUpdated=$quarkApiKeyUpdated multiAgent=${multiAgentEnabled ?? (_prefs!.getBool(StorageService._aiMultiAgentEnabledKey) ?? true)} maxAgents=${AiMultiAgentMaxAgents.normalize(multiAgentMaxAgents ?? _prefs!.getInt(StorageService._aiMultiAgentMaxAgentsKey))} toolCallBudget=${AiToolCallBudget.normalize(toolCallBudget ?? _prefs!.getInt(StorageService._aiToolCallBudgetKey))} apiKeyUpdated=$apiKeyUpdated useCustomPrompts=$useCustomPrompts',
+          'baseUrl=$normalizedBaseUrl model=$normalizedModel helperModel=$normalizedHelperModel auditModel=$normalizedAuditModel fallbackPolicy=${AgentModelFallbackPolicy.normalize(modelFallbackPolicy ?? _prefs!.getString(StorageService._aiModelFallbackPolicyKey))} contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} timeoutSeconds=${AiRequestTimeout.normalize(timeoutSeconds)} deepSeekThinking=${deepSeekThinkingEnabled ?? (_prefs!.getBool(StorageService._aiDeepSeekThinkingEnabledKey) ?? true)} deepSeekEffort=${DeepSeekReasoningEffort.normalize(deepSeekReasoningEffort ?? _prefs!.getString(StorageService._aiDeepSeekReasoningEffortKey))} openAiEffort=${OpenAiReasoningEffort.normalize(openAiReasoningEffort ?? _prefs!.getString(StorageService._aiOpenAiReasoningEffortKey))} webSearch=${webSearchEnabled ?? (_prefs!.getBool(StorageService._aiWebSearchEnabledKey) ?? true)} webSearchEngine=${AiWebSearchEngine.normalize(webSearchEngine ?? _prefs!.getString(StorageService._aiWebSearchEngineKey))} quarkSearchEndpoint=${_prefs!.getString(StorageService._aiQuarkSearchEndpointKey)} quarkApiKeyUpdated=$quarkApiKeyUpdated multiAgent=${multiAgentEnabled ?? (_prefs!.getBool(StorageService._aiMultiAgentEnabledKey) ?? true)} maxAgents=${AiMultiAgentMaxAgents.normalize(multiAgentMaxAgents ?? _prefs!.getInt(StorageService._aiMultiAgentMaxAgentsKey))} toolCallBudget=${AiToolCallBudget.normalize(toolCallBudget ?? _prefs!.getInt(StorageService._aiToolCallBudgetKey))} agentLoopMode=${AiAgentLoopMode.normalize(agentLoopMode ?? _prefs!.getString(StorageService._aiAgentLoopModeKey))} apiKeyUpdated=$apiKeyUpdated useCustomPrompts=$useCustomPrompts',
     );
   }
 

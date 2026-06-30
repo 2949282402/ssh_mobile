@@ -123,6 +123,140 @@ void main() {
       expect(workingMessages.first['content'], contains('2026-06-17 12:00:00'));
     });
 
+    test('parallel-safe read-only tools execute as a traced batch', () async {
+      final budget = LlmToolBudgetController(baseBudget: 10);
+      final cache = <String, CachedToolResult>{};
+      final ledger = <LlmToolLedgerEntry>[];
+      final traces = <LlmTraceEvent>[];
+      final controller = ToolLoopController(
+        chatService: llm,
+        toolBudget: budget,
+        readOnlyToolCache: cache,
+        toolLedger: ledger,
+      );
+      final settings = await storage.loadAiConnectionSettings();
+      final availableTools = {
+        for (final tool in await tools.tools()) tool.name: tool,
+      };
+      final workingMessages = <Map<String, dynamic>>[];
+
+      final loopResult = await controller.handleToolCalls(
+        toolCalls: [
+          StreamingToolCall(
+            id: 'call_1',
+            name: 'client_get_time',
+            arguments: '{}',
+          ),
+          StreamingToolCall(
+            id: 'call_2',
+            name: 'client_get_device_info',
+            arguments: '{}',
+          ),
+        ],
+        visibleToolsByName: availableTools,
+        planMode: false,
+        language: AppLanguage.zh,
+        apiKey: 'key',
+        auditModel: 'audit-model',
+        originalUserGoal: 'Goal',
+        workingMessages: workingMessages,
+        requestToolApproval: null,
+        onTrace: traces.add,
+        cancellationToken: null,
+        settings: settings,
+        complete: (role, messages, {required thinkingSettings}) async =>
+            'advice',
+        classify: (messages) async => '{}',
+      );
+
+      expect(loopResult.shouldStop, isFalse);
+      expect(budget.usedCalls, 2);
+      expect(ledger.map((entry) => entry.toolName), [
+        'client_get_time',
+        'client_get_device_info',
+      ]);
+      expect(ledger.every((entry) => entry.outcome == 'success'), isTrue);
+      expect(
+        traces.any((event) => event.kind == 'tool_parallel_batch'),
+        isTrue,
+      );
+      expect(workingMessages.where((m) => m['role'] == 'tool'), hasLength(2));
+    });
+
+    test(
+        'parallel-safe batch falls back to serial before budget audit boundary',
+        () async {
+      final budget = LlmToolBudgetController(baseBudget: 10);
+      for (var i = 0; i < 14; i++) {
+        budget.recordAcceptedToolCall();
+      }
+      for (var i = 0; i < 3; i++) {
+        budget.recordAuditTriggered();
+      }
+      expect(budget.currentLimit, 15);
+      expect(budget.canAcceptCallsWithoutAudit(1), isTrue);
+      expect(budget.canAcceptCallsWithoutAudit(2), isFalse);
+
+      final cache = <String, CachedToolResult>{};
+      final ledger = <LlmToolLedgerEntry>[];
+      final traces = <LlmTraceEvent>[];
+      final approvals = <AiToolApprovalRequest>[];
+      final controller = ToolLoopController(
+        chatService: llm,
+        toolBudget: budget,
+        readOnlyToolCache: cache,
+        toolLedger: ledger,
+      );
+      final settings = await storage.loadAiConnectionSettings();
+      final availableTools = {
+        for (final tool in await tools.tools()) tool.name: tool,
+      };
+      final workingMessages = <Map<String, dynamic>>[];
+
+      final loopResult = await controller.handleToolCalls(
+        toolCalls: [
+          StreamingToolCall(
+            id: 'call_1',
+            name: 'client_get_time',
+            arguments: '{}',
+          ),
+          StreamingToolCall(
+            id: 'call_2',
+            name: 'client_get_device_info',
+            arguments: '{}',
+          ),
+        ],
+        visibleToolsByName: availableTools,
+        planMode: false,
+        language: AppLanguage.zh,
+        apiKey: 'key',
+        auditModel: 'audit-model',
+        originalUserGoal: 'Goal',
+        workingMessages: workingMessages,
+        requestToolApproval: (request) async {
+          approvals.add(request);
+          return const AiToolApprovalDecision.rejected(abort: false);
+        },
+        onTrace: traces.add,
+        cancellationToken: null,
+        settings: settings,
+        complete: (role, messages, {required thinkingSettings}) async =>
+            'advice',
+        classify: (messages) async => '{}',
+      );
+
+      expect(loopResult.finalOutcome, AgentFinalOutcome.budgetAuditRejected);
+      expect(
+        traces.any((event) => event.kind == 'tool_parallel_batch'),
+        isFalse,
+      );
+      expect(approvals, hasLength(1));
+      expect(approvals.single.approvalType, 'budget_audit');
+      expect(budget.usedCalls, 15);
+      expect(ledger.map((entry) => entry.toolName), ['client_get_time']);
+      expect(workingMessages.where((m) => m['role'] == 'tool'), hasLength(2));
+    });
+
     test('repeated read-only call reaches loop guard and disables tools',
         () async {
       final budget = LlmToolBudgetController(baseBudget: 10);

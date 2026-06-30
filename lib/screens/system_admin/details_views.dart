@@ -151,7 +151,7 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
     final itemBuilder = widget.itemBuilder;
 
     return ListView.builder(
-      scrollCacheExtent: const ScrollCacheExtent.pixels(900),
+      cacheExtent: 900.0,
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
       itemCount: flatItems.length,
       itemBuilder: (context, index) {

@@ -87,6 +87,7 @@ abstract interface class AiSettingsRepository {
     int? multiAgentMaxAgents,
     bool? postToolReviewEnabled,
     int? toolCallBudget,
+    String? agentLoopMode,
     int? maxImageSizeBytes,
     int? maxFileSizeBytes,
     String? apiKey,
@@ -281,6 +282,7 @@ class StorageService extends ChangeNotifier
     int? multiAgentMaxAgents,
     bool? postToolReviewEnabled,
     int? toolCallBudget,
+    String? agentLoopMode,
     int? maxImageSizeBytes,
     int? maxFileSizeBytes,
     String? apiKey,
@@ -317,6 +319,7 @@ class StorageService extends ChangeNotifier
         multiAgentMaxAgents: multiAgentMaxAgents,
         postToolReviewEnabled: postToolReviewEnabled,
         toolCallBudget: toolCallBudget,
+        agentLoopMode: agentLoopMode,
         maxImageSizeBytes: maxImageSizeBytes,
         maxFileSizeBytes: maxFileSizeBytes,
         apiKey: apiKey,
@@ -440,6 +443,7 @@ class StorageService extends ChangeNotifier
   static const _aiPostToolReviewEnabledKey = 'ai_post_tool_review_enabled';
   static const _aiMultiAgentMaxAgentsKey = 'ai_multi_agent_max_agents';
   static const _aiToolCallBudgetKey = 'ai_tool_call_budget';
+  static const _aiAgentLoopModeKey = 'ai_agent_loop_mode';
   static const _aiMaxImageSizeBytesKey = 'ai_max_image_size_bytes';
   static const _aiMaxFileSizeBytesKey = 'ai_max_file_size_bytes';
   static const _aiUseCustomPromptsKey = 'ai_use_custom_prompts';

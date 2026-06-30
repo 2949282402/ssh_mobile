@@ -86,6 +86,59 @@ void main() {
     );
   });
 
+  group('AgentLoopGuard', () {
+    test('balanced uses 16 rounds and repeatable +8 approvals', () {
+      final guard = AgentLoopGuard(mode: AiAgentLoopMode.balanced);
+
+      expect(guard.modelRoundLimit, 16);
+      expect(guard.extensionSize, 8);
+      expect(guard.shouldRequestApproval(toolsEnabled: true), isFalse);
+
+      for (var i = 0; i < 16; i++) {
+        guard.recordModelRoundStarted();
+      }
+
+      expect(guard.modelRoundsUsed, 16);
+      expect(guard.shouldRequestApproval(toolsEnabled: true), isTrue);
+      expect(guard.approveExtension(), 24);
+      expect(guard.loopExtensionCount, 1);
+
+      for (var i = 0; i < 8; i++) {
+        guard.recordModelRoundStarted();
+      }
+
+      expect(guard.shouldRequestApproval(toolsEnabled: true), isTrue);
+      expect(guard.approveExtension(), 32);
+      expect(guard.loopExtensionCount, 2);
+    });
+
+    test('deep uses 24 rounds and +12 approval extension', () {
+      final guard = AgentLoopGuard(mode: AiAgentLoopMode.deep);
+
+      expect(guard.modelRoundLimit, 24);
+      expect(guard.extensionSize, 12);
+      for (var i = 0; i < 24; i++) {
+        guard.recordModelRoundStarted();
+      }
+
+      expect(guard.shouldRequestApproval(toolsEnabled: true), isTrue);
+      expect(guard.approveExtension(), 36);
+    });
+
+    test('unlimited has no round approval limit', () {
+      final guard = AgentLoopGuard(mode: AiAgentLoopMode.unlimited);
+
+      expect(guard.modelRoundLimit, isNull);
+      expect(guard.isUnlimited, isTrue);
+      for (var i = 0; i < 100; i++) {
+        guard.recordModelRoundStarted();
+      }
+
+      expect(guard.shouldRequestApproval(toolsEnabled: true), isFalse);
+      expect(guard.shouldRequestApproval(toolsEnabled: false), isFalse);
+    });
+  });
+
   group('LlmChatService cancellation & compression', () {
     setUp(() {
       debugDefaultTargetPlatformOverride = TargetPlatform.windows;

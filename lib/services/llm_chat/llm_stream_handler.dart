@@ -69,6 +69,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     final resolvedRunId =
         runId?.trim().isNotEmpty == true ? runId!.trim() : const Uuid().v4();
     var finalOutcome = AgentFinalOutcome.success;
+    final agentLoopGuard = AgentLoopGuard(mode: settings.agentLoopMode);
     final modelProfile = _modelProfileForSettings(
       settings,
       mainModelOverride: modelOverride,
@@ -101,6 +102,8 @@ extension LlmChatServiceStreamHandler on LlmChatService {
           'hasWebViewSession': hasWebViewSession,
           'hasApprovedPlan': hasApprovedPlan,
           'messageCount': messages.length,
+          'agentLoopMode': agentLoopGuard.mode,
+          'modelRoundLimit': agentLoopGuard.modelRoundLimit,
           'startedAt': runStartedAt.toIso8601String(),
         }),
       ),
@@ -223,7 +226,9 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         for (final tool in visibleTools) tool.name: tool,
       };
       var currentToolDefinitions =
-          visibleTools.map((tool) => tool.definition).toList(growable: false);
+          visibleTools.map((tool) => tool.definitionFor(settings)).toList(
+                growable: false,
+              );
       final readOnlyToolCache = <String, CachedToolResult>{};
       toolBudget = LlmToolBudgetController(
         baseBudget: settings.toolCallBudget,
@@ -344,6 +349,11 @@ extension LlmChatServiceStreamHandler on LlmChatService {
               helperFanout: multiAgentResult.agentCount,
               selectedToolSet: selectedToolSet,
               memorySources: memorySources,
+              agentLoopMode: agentLoopGuard.mode,
+              modelRoundsUsed: agentLoopGuard.modelRoundsUsed,
+              modelRoundLimit: agentLoopGuard.modelRoundLimit,
+              loopExtensionCount: agentLoopGuard.loopExtensionCount,
+              loopStopReason: agentLoopGuard.loopStopReason,
             ),
           );
           visibleOutput.write(outcome.finalText);
@@ -351,18 +361,41 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         }
       }
 
-      for (var round = 0;; round++) {
+      while (true) {
         cancellationToken?.throwIfCancelled();
+        if (agentLoopGuard.shouldRequestApproval(
+          toolsEnabled: currentToolDefinitions.isNotEmpty,
+        )) {
+          final approved = await _requestAgentLoopRoundApproval(
+            guard: agentLoopGuard,
+            requestToolApproval: requestToolApproval,
+            onTrace: onTrace,
+          );
+          if (!approved) {
+            finalOutcome =
+                agentLoopGuard.loopStopReason == 'approval_unavailable'
+                    ? AgentFinalOutcome.approvalUnavailable
+                    : AgentFinalOutcome.agentLoopStopped;
+            currentToolDefinitions = const [];
+            workingMessages.add({
+              'role': 'system',
+              'content': _agentLoopPausedInstruction(language),
+            });
+          }
+        }
+        agentLoopGuard.recordModelRoundStarted();
+        final roundNumber = agentLoopGuard.modelRoundsUsed;
         final roundStartedAt = DateTime.now();
         onTrace?.call(
           LlmTraceEvent(
             kind: 'model_round_started',
-            title: 'Model round ${round + 1} started',
+            title: 'Model round $roundNumber started',
             content: _prettyJson({
-              'round': round + 1,
+              'round': roundNumber,
               'messageCount': workingMessages.length,
               'toolDefinitionsCount': currentToolDefinitions.length,
               'contentChars': visibleOutput.length,
+              'agentLoop': agentLoopGuard.toJson(),
             }),
           ),
         );
@@ -433,13 +466,14 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         onTrace?.call(
           LlmTraceEvent(
             kind: 'model_round_completed',
-            title: 'Model round ${round + 1} completed',
+            title: 'Model round $roundNumber completed',
             content: _prettyJson({
-              'round': round + 1,
+              'round': roundNumber,
               'messageCount': workingMessages.length,
               'toolDefinitionsCount': currentToolDefinitions.length,
               'contentChars': content.length,
               'toolCallCount': response.toolCalls.length,
+              'agentLoop': agentLoopGuard.toJson(),
               'elapsedMs':
                   DateTime.now().difference(roundStartedAt).inMilliseconds,
             }),
@@ -476,7 +510,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
           }
           AppLogService.instance.info(
             'LLM chat completed',
-            details: 'rounds=${round + 1} answerChars=${answer.length}',
+            details: 'rounds=$roundNumber answerChars=${answer.length}',
           );
           final elapsedMs =
               DateTime.now().difference(runStartedAt).inMilliseconds;
@@ -507,6 +541,11 @@ extension LlmChatServiceStreamHandler on LlmChatService {
               memorySources: memorySources,
               approvalCount: toolLoopController.approvalCount,
               approvedCount: toolLoopController.approvedCount,
+              agentLoopMode: agentLoopGuard.mode,
+              modelRoundsUsed: agentLoopGuard.modelRoundsUsed,
+              modelRoundLimit: agentLoopGuard.modelRoundLimit,
+              loopExtensionCount: agentLoopGuard.loopExtensionCount,
+              loopStopReason: agentLoopGuard.loopStopReason,
             ),
           );
           return;
@@ -515,7 +554,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         AppLogService.instance.info(
           'LLM requested tools',
           details:
-              'round=${round + 1} tools=${response.toolCalls.map((call) => call.name).join(',')}',
+              'round=$roundNumber tools=${response.toolCalls.map((call) => call.name).join(',')}',
         );
         final assistantToolMessage = provider.buildAssistantToolCallMessage(
           text: content.toString(),
@@ -531,6 +570,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
               : null,
         );
         workingMessages.add(assistantToolMessage);
+        final toolLedgerStart = toolLedger.length;
         final loopResult = await toolLoopController.handleToolCalls(
           toolCalls: response.toolCalls,
           visibleToolsByName: visibleToolsByName,
@@ -573,6 +613,10 @@ extension LlmChatServiceStreamHandler on LlmChatService {
             ));
             return response.text;
           },
+        );
+        agentLoopGuard.recordToolRound(
+          contentChars: content.length,
+          newEntries: toolLedger.sublist(toolLedgerStart),
         );
 
         finalOutcome = loopResult.finalOutcome ?? AgentFinalOutcome.success;
@@ -626,6 +670,11 @@ extension LlmChatServiceStreamHandler on LlmChatService {
           selectedToolSet: selectedToolSet,
           memorySources: memorySources,
           finalOutcome: finalOutcome,
+          agentLoopMode: agentLoopGuard.mode,
+          modelRoundsUsed: agentLoopGuard.modelRoundsUsed,
+          modelRoundLimit: agentLoopGuard.modelRoundLimit,
+          loopExtensionCount: agentLoopGuard.loopExtensionCount,
+          loopStopReason: agentLoopGuard.loopStopReason,
         );
 
         onTrace?.call(
@@ -637,6 +686,104 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         );
       }
     }
+  }
+
+  Future<bool> _requestAgentLoopRoundApproval({
+    required AgentLoopGuard guard,
+    required Future<AiToolApprovalDecision> Function(
+            AiToolApprovalRequest request)?
+        requestToolApproval,
+    required void Function(LlmTraceEvent event)? onTrace,
+  }) async {
+    final currentLimit = guard.modelRoundLimit;
+    if (currentLimit == null) return true;
+    final extension = guard.extensionSize;
+    final nextLimit = currentLimit + extension;
+    final tracePayload = {
+      'approvalType': 'agent_loop_round_budget',
+      'agentLoopMode': guard.mode,
+      'modelRoundsUsed': guard.modelRoundsUsed,
+      'currentLimit': currentLimit,
+      'extensionRounds': extension,
+      'nextLimit': nextLimit,
+      'loopExtensionCount': guard.loopExtensionCount,
+      'toolBudgetUnchanged': true,
+    };
+
+    onTrace?.call(
+      LlmTraceEvent(
+        kind: 'agent_loop_round_budget_requested',
+        title: 'Agent loop round extension requested',
+        content: _prettyJson(tracePayload),
+      ),
+    );
+
+    if (requestToolApproval == null) {
+      guard.markStopped('approval_unavailable');
+      onTrace?.call(
+        LlmTraceEvent(
+          kind: 'agent_loop_round_budget_unavailable',
+          title: 'Agent loop round approval unavailable',
+          content: _prettyJson(tracePayload),
+        ),
+      );
+      return false;
+    }
+
+    final decision = await requestToolApproval(
+      AiToolApprovalRequest(
+        toolName: 'agent_loop_round_budget',
+        approvalType: 'agent_loop_round_budget',
+        connectionId: 'local',
+        connectionName: 'System',
+        command:
+            'Extend agent loop round limit from $currentLimit to $nextLimit',
+        reason:
+            'The primary agent loop reached the ${guard.mode} round limit before finishing. Continue for $extension more model rounds?',
+        contentPreview:
+            'Primary model rounds used: ${guard.modelRoundsUsed}/$currentLimit\n'
+            'Extension: +$extension rounds\n'
+            'Next limit: $nextLimit\n'
+            'Tool call budget is unchanged.',
+      ),
+    );
+
+    if (decision.approved) {
+      final approvedLimit = guard.approveExtension();
+      onTrace?.call(
+        LlmTraceEvent(
+          kind: 'agent_loop_round_budget_approved',
+          title: 'Agent loop round extension approved',
+          content: _prettyJson({
+            ...tracePayload,
+            'approvedLimit': approvedLimit,
+            'loopExtensionCount': guard.loopExtensionCount,
+          }),
+        ),
+      );
+      return true;
+    }
+
+    guard.markStopped('user_paused');
+    onTrace?.call(
+      LlmTraceEvent(
+        kind: 'agent_loop_round_budget_rejected',
+        title: 'Agent loop round extension paused',
+        content: _prettyJson({
+          ...tracePayload,
+          'feedback': decision.feedback,
+          'abort': decision.abort,
+        }),
+      ),
+    );
+    return false;
+  }
+
+  String _agentLoopPausedInstruction(AppLanguage language) {
+    if (language == AppLanguage.en) {
+      return 'The user paused additional agent loop rounds. Do not call tools again. Summarize the current findings and clearly state what remains unresolved.';
+    }
+    return '用户已暂停继续增加 Agent 循环轮次。不要再调用工具。请基于已有结果总结当前发现，并明确说明仍未解决的事项。';
   }
 
   String? _resolveChatId() {

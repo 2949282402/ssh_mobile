@@ -35,6 +35,11 @@ class LlmRunStats {
   final List<String> memorySources;
   final int approvalCount;
   final int approvedCount;
+  final String agentLoopMode;
+  final int modelRoundsUsed;
+  final int? modelRoundLimit;
+  final int loopExtensionCount;
+  final String loopStopReason;
 
   const LlmRunStats({
     required this.promptTokens,
@@ -57,6 +62,11 @@ class LlmRunStats {
     this.memorySources = const [],
     this.approvalCount = 0,
     this.approvedCount = 0,
+    this.agentLoopMode = AiAgentLoopMode.defaultValue,
+    this.modelRoundsUsed = 0,
+    this.modelRoundLimit,
+    this.loopExtensionCount = 0,
+    this.loopStopReason = '',
   });
 }
 
@@ -106,6 +116,27 @@ class LlmToolBudgetController {
       return const LlmToolBudgetCheck.auditRequired();
     }
     return const LlmToolBudgetCheck.allowed();
+  }
+
+  bool canAcceptCallsWithoutAudit(int count) {
+    if (count <= 0) return true;
+    var usedCalls = _usedCalls;
+    var currentLimit = _currentLimit;
+    var initialExtensionGranted = _initialExtensionGranted;
+
+    for (var i = 0; i < count; i++) {
+      if (initialExtensionGranted && usedCalls >= currentLimit) {
+        return false;
+      }
+
+      usedCalls += 1;
+      if (!initialExtensionGranted && usedCalls >= baseBudget) {
+        initialExtensionGranted = true;
+        currentLimit = baseBudget + extensionSize;
+      }
+    }
+
+    return true;
   }
 
   LlmToolBudgetEvent? recordAcceptedToolCall() {
@@ -262,6 +293,109 @@ class LlmToolLedgerEntry {
       'dedupBlocked': dedupBlocked,
       'auditEscalationLevel': auditEscalationLevel,
       'quality': quality,
+    };
+  }
+}
+
+class AgentLoopGuard {
+  final String mode;
+  final int? initialRoundLimit;
+  final int extensionSize;
+  int _modelRoundsUsed = 0;
+  int? _modelRoundLimit;
+  int _loopExtensionCount = 0;
+  int _noProgressRounds = 0;
+  int _invalidToolRounds = 0;
+  String _loopStopReason = '';
+
+  AgentLoopGuard({required String mode})
+      : mode = AiAgentLoopMode.normalize(mode),
+        initialRoundLimit = AiAgentLoopMode.initialRoundLimit(mode),
+        extensionSize = AiAgentLoopMode.extensionSize(mode),
+        _modelRoundLimit = AiAgentLoopMode.initialRoundLimit(mode);
+
+  int get modelRoundsUsed => _modelRoundsUsed;
+  int? get modelRoundLimit => _modelRoundLimit;
+  int get loopExtensionCount => _loopExtensionCount;
+  int get noProgressRounds => _noProgressRounds;
+  int get invalidToolRounds => _invalidToolRounds;
+  String get loopStopReason => _loopStopReason;
+  bool get isUnlimited => _modelRoundLimit == null;
+
+  void recordModelRoundStarted() {
+    _modelRoundsUsed += 1;
+  }
+
+  bool shouldRequestApproval({required bool toolsEnabled}) {
+    final limit = _modelRoundLimit;
+    if (!toolsEnabled || limit == null) return false;
+    return _modelRoundsUsed >= limit;
+  }
+
+  int approveExtension() {
+    final currentLimit = _modelRoundLimit;
+    if (currentLimit == null) return _modelRoundsUsed;
+    _modelRoundLimit = currentLimit + extensionSize;
+    _loopExtensionCount += 1;
+    _loopStopReason = '';
+    return _modelRoundLimit!;
+  }
+
+  void markStopped(String reason) {
+    _loopStopReason = reason;
+  }
+
+  void recordToolRound({
+    required int contentChars,
+    required List<LlmToolLedgerEntry> newEntries,
+  }) {
+    final hasTextProgress = contentChars > 0;
+    final hasUsefulToolProgress = newEntries.any(_isUsefulToolResult);
+    if (hasTextProgress || hasUsefulToolProgress) {
+      _noProgressRounds = 0;
+    } else {
+      _noProgressRounds += 1;
+    }
+
+    if (newEntries.isNotEmpty && newEntries.every(_isInvalidToolResult)) {
+      _invalidToolRounds += 1;
+    } else if (hasUsefulToolProgress) {
+      _invalidToolRounds = 0;
+    }
+  }
+
+  bool _isUsefulToolResult(LlmToolLedgerEntry entry) {
+    if (entry.failed || entry.emptyResult || entry.dedupBlocked) return false;
+    return !_invalidOutcomes.contains(entry.outcome);
+  }
+
+  bool _isInvalidToolResult(LlmToolLedgerEntry entry) {
+    return _invalidOutcomes.contains(entry.outcome) ||
+        entry.quality == ToolResultQuality.unsafeBlocked.name;
+  }
+
+  static const Set<String> _invalidOutcomes = {
+    'tool_not_visible',
+    'plan_execution_blocked',
+    'loop_guard_blocked',
+    'blocked_in_plan_mode',
+    'approval_unavailable',
+    'approval_rejected',
+    'budget_audit_rejected',
+    'connection_required',
+    'tool_error',
+    'empty_result',
+  };
+
+  Map<String, dynamic> toJson() {
+    return {
+      'agentLoopMode': mode,
+      'modelRoundsUsed': _modelRoundsUsed,
+      'modelRoundLimit': _modelRoundLimit,
+      'loopExtensionCount': _loopExtensionCount,
+      'noProgressRounds': _noProgressRounds,
+      'invalidToolRounds': _invalidToolRounds,
+      'loopStopReason': _loopStopReason,
     };
   }
 }
@@ -461,6 +595,7 @@ enum AgentFinalOutcome {
   planModeBlocked,
   budgetAuditRejected,
   loopGuardBlocked,
+  agentLoopStopped,
   approvalUnavailable,
   planExecutionBlocked,
 }
@@ -485,6 +620,11 @@ class AgentRunSummary {
   final List<String> selectedToolSet;
   final List<String> memorySources;
   final AgentFinalOutcome finalOutcome;
+  final String agentLoopMode;
+  final int modelRoundsUsed;
+  final int? modelRoundLimit;
+  final int loopExtensionCount;
+  final String loopStopReason;
 
   const AgentRunSummary({
     required this.runId,
@@ -506,6 +646,11 @@ class AgentRunSummary {
     required this.selectedToolSet,
     required this.memorySources,
     required this.finalOutcome,
+    this.agentLoopMode = AiAgentLoopMode.defaultValue,
+    this.modelRoundsUsed = 0,
+    this.modelRoundLimit,
+    this.loopExtensionCount = 0,
+    this.loopStopReason = '',
   });
 
   Map<String, dynamic> toJson() {
@@ -529,6 +674,11 @@ class AgentRunSummary {
       'selectedToolSet': selectedToolSet,
       'memorySources': memorySources,
       'finalOutcome': finalOutcome.name,
+      'agentLoopMode': agentLoopMode,
+      'modelRoundsUsed': modelRoundsUsed,
+      'modelRoundLimit': modelRoundLimit,
+      'loopExtensionCount': loopExtensionCount,
+      'loopStopReason': loopStopReason,
     };
   }
 }

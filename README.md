@@ -192,6 +192,8 @@ LLM 设置集中在单独的设置页中，包含 Base URL、API Key 历史、�
 
 AI 聊天的 tool 调用现在有按单次请求计算的预算保护：默认预算为 20 次，首次达到预算会自动增加一半，并在 trace 中提醒用户观察工具调用是否仍然合理；之后每次继续扩容前都会运行一次内部安全审计，必要时会停止继续调用工具，并强制模型给出一次无工具的总结与下一步建议。
 
+Agent loop 轮次与 tool 调用预算独立计数。LLM 设置页提供 Balanced、Deep 和 Unlimited 三种 Agent loop 模式；Balanced 默认允许 16 个主模型 round，用户批准后每次增加 8 个 round，Deep 为 24/+12，Unlimited 只取消 Agent loop 轮次上限，tool 调用预算和安全审批仍然生效。
+
 本地 AI 技能（AI Skills）无论是通过界面直接创建/修改，还是大模型调用 `client_save_experience_skill` 或 `client_update_skill` 进行的自动技能沉淀与更改，由于属于本地状态的写入与修改，均必须通过用户的 `local_skill_change` 审批。审批界面会展示详细的前后 Name、Description、Enabled 以及 References 变动差异预览，以便用户进行安全与有效性核实。
 
 默认情况下，AI 会先为当前聊天生成可批准执行的 `todoSteps` 计划；只有当用户明确要求保存、复用或管理这次运维脚本时，才应创建或运行独立的 `Playbook`。

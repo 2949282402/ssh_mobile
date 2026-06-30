@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:provider/provider.dart';
 
 import '../features/developer_log/viewmodels/developer_log_viewmodel.dart';
@@ -206,7 +205,7 @@ class _DeveloperLogList extends StatelessWidget {
       return Center(child: Text(strings.noLogsForLevel));
     }
     return ListView.separated(
-      scrollCacheExtent: const ScrollCacheExtent.pixels(900),
+      cacheExtent: 900.0,
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
       itemCount: entries.length,
       separatorBuilder: (_, __) => const SizedBox(height: 8),

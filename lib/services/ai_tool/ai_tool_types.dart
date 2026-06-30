@@ -75,6 +75,28 @@ class AiToolApprovalDecision {
   }) : approved = false;
 }
 
+class AiPendingApprovalSnapshot {
+  final String id;
+  final AiToolApprovalRequest request;
+  final Map<String, dynamic> arguments;
+  final DateTime createdAt;
+
+  const AiPendingApprovalSnapshot({
+    required this.id,
+    required this.request,
+    required this.arguments,
+    required this.createdAt,
+  });
+}
+
+abstract interface class AiPendingApprovalSnapshotStore {
+  Future<void> savePendingApprovalSnapshot(AiPendingApprovalSnapshot snapshot);
+
+  Future<AiPendingApprovalSnapshot?> loadPendingApprovalSnapshot(String id);
+
+  Future<void> clearPendingApprovalSnapshot(String id);
+}
+
 class AiCommandReview {
   final bool requiresApproval;
   final bool blocked;
@@ -118,6 +140,7 @@ class AiTool {
   final bool requiresServerSelection;
   final bool requiresWebViewSession;
   final bool preferredInPlanMode;
+  final bool parallelSafeReadOnly;
   final Duration? cacheTtl;
   final Future<String> Function(Map<String, dynamic> arguments) handler;
 
@@ -132,6 +155,7 @@ class AiTool {
     this.requiresServerSelection = false,
     this.requiresWebViewSession = false,
     this.preferredInPlanMode = false,
+    this.parallelSafeReadOnly = false,
     this.cacheTtl,
   });
 
@@ -221,6 +245,211 @@ class AiTool {
       },
     };
   }
+
+  Map<String, dynamic> definitionFor(AiConnectionSettings settings) {
+    if (!_supportsOpenAiStrict(settings)) {
+      return definition;
+    }
+    return {
+      'type': 'function',
+      'function': {
+        'name': name,
+        'description': description,
+        'strict': true,
+        'parameters': {
+          'type': 'object',
+          'properties': {
+            for (final entry in properties.entries)
+              entry.key: _strictSchemaNode(
+                entry.value,
+                required: required.contains(entry.key),
+              ),
+          },
+          'required': properties.keys.toList(growable: false),
+          'additionalProperties': false,
+        },
+      },
+    };
+  }
+
+  bool _supportsOpenAiStrict(AiConnectionSettings settings) {
+    if (settings.apiFormat != LlmApiFormat.openAiChatCompletions) {
+      return false;
+    }
+    final host =
+        Uri.tryParse(settings.baseUrl.trim())?.host.toLowerCase().trim() ?? '';
+    return host == 'api.openai.com' &&
+        _isKnownOpenAiStrictModel(settings.model);
+  }
+
+  Map<String, dynamic> _strictSchemaNode(
+    Object? value, {
+    required bool required,
+  }) {
+    if (value is! Map) return <String, dynamic>{};
+    final source = <String, dynamic>{
+      for (final entry in value.entries) '${entry.key}': entry.value,
+    };
+
+    final node = <String, dynamic>{};
+    final description = source['description'];
+    if (description is String && description.trim().isNotEmpty) {
+      node['description'] = description;
+    }
+
+    final anyOf = source['anyOf'];
+    if (anyOf is List) {
+      final variants = [
+        for (final item in anyOf)
+          if (item is Map) _strictSchemaNode(item, required: true),
+      ];
+      if (!required && !variants.any(_schemaAllowsNull)) {
+        variants.add(const {'type': 'null'});
+      }
+      node['anyOf'] = variants;
+      return node;
+    }
+
+    final type = source['type'];
+    final allowNull = !required || _typeContains(type, 'null');
+    final hasObjectType =
+        _typeContains(type, 'object') || source['properties'] is Map;
+    if (hasObjectType) {
+      final props = source['properties'];
+      final sourceRequired = _stringSet(source['required']);
+      final normalizedProps = <String, dynamic>{};
+      if (props is Map) {
+        for (final entry in props.entries) {
+          final key = '${entry.key}';
+          normalizedProps[key] = _strictSchemaNode(
+            entry.value,
+            required: sourceRequired.contains(key),
+          );
+        }
+      }
+      node['type'] =
+          _strictType(type, fallback: 'object', allowNull: allowNull);
+      node['properties'] = normalizedProps;
+      node['required'] = normalizedProps.keys.toList(growable: false);
+      node['additionalProperties'] = false;
+      return node;
+    }
+
+    final hasArrayType = _typeContains(type, 'array') || source['items'] is Map;
+    if (hasArrayType) {
+      node['type'] = _strictType(type, fallback: 'array', allowNull: allowNull);
+      final items = source['items'];
+      if (items is Map) {
+        node['items'] = _strictSchemaNode(items, required: true);
+      }
+      _copyEnum(source, node, required: required);
+      return node;
+    }
+
+    final normalizedType = _strictType(type, allowNull: allowNull);
+    if (normalizedType != null) {
+      node['type'] = normalizedType;
+    }
+    _copyEnum(source, node, required: required);
+    final constValue = source['const'];
+    if (constValue != null) {
+      node['const'] = constValue;
+    }
+    return node;
+  }
+
+  bool _isKnownOpenAiStrictModel(String model) {
+    final normalized = model.trim().toLowerCase();
+    if (normalized.isEmpty || normalized.startsWith('ft:')) {
+      return false;
+    }
+    return _openAiStrictModelPrefixes.any(normalized.startsWith);
+  }
+
+  Object? _strictType(
+    Object? type, {
+    String? fallback,
+    required bool allowNull,
+  }) {
+    final types = <String>[];
+    void addType(Object? raw) {
+      if (raw is! String || !_openAiStrictJsonTypes.contains(raw)) {
+        return;
+      }
+      if (!types.contains(raw)) {
+        types.add(raw);
+      }
+    }
+
+    if (type is List) {
+      for (final item in type) {
+        addType(item);
+      }
+    } else {
+      addType(type);
+    }
+    if (types.isEmpty && fallback != null) {
+      addType(fallback);
+    }
+    if (allowNull) {
+      addType('null');
+    } else {
+      types.remove('null');
+    }
+    if (types.isEmpty) return null;
+    return types.length == 1 ? types.first : types;
+  }
+
+  bool _typeContains(Object? type, String expected) {
+    return type == expected || (type is List && type.contains(expected));
+  }
+
+  Set<String> _stringSet(Object? value) {
+    if (value is! List) return const {};
+    return {
+      for (final item in value)
+        if (item is String) item,
+    };
+  }
+
+  bool _schemaAllowsNull(Map<String, dynamic> schema) {
+    return _typeContains(schema['type'], 'null');
+  }
+
+  void _copyEnum(
+    Map<String, dynamic> source,
+    Map<String, dynamic> target, {
+    required bool required,
+  }) {
+    final enumValues = source['enum'];
+    if (enumValues is! List) return;
+    final normalizedEnum = List<Object?>.from(enumValues);
+    if (!required && !normalizedEnum.contains(null)) {
+      normalizedEnum.add(null);
+    }
+    target['enum'] = normalizedEnum;
+  }
+
+  static const Set<String> _openAiStrictJsonTypes = {
+    'string',
+    'number',
+    'integer',
+    'boolean',
+    'object',
+    'array',
+    'null',
+  };
+
+  static const Set<String> _openAiStrictModelPrefixes = {
+    'gpt-5',
+    'gpt-4.1',
+    'gpt-4.5',
+    'gpt-4o',
+    'chatgpt-4o',
+    'o1',
+    'o3',
+    'o4',
+  };
 }
 
 class _UnavailablePerformanceMonitorToolService

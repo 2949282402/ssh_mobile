@@ -153,7 +153,7 @@ class _AdminServerPane extends StatelessWidget {
                   ),
                 );
               },
-              onReorderItem: (oldIndex, newIndex) {
+              onReorder: (oldIndex, newIndex) {
                 final storageNewIndex =
                     newIndex > oldIndex ? newIndex + 1 : newIndex;
                 context

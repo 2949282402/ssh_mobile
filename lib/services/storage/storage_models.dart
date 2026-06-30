@@ -90,6 +90,7 @@ class AiConnectionSettings {
   final int multiAgentMaxAgents;
   final bool postToolReviewEnabled;
   final int toolCallBudget;
+  final String agentLoopMode;
   final int maxImageSizeBytes;
   final int maxFileSizeBytes;
   final bool hasApiKey;
@@ -125,6 +126,7 @@ class AiConnectionSettings {
     required this.multiAgentMaxAgents,
     required this.postToolReviewEnabled,
     required this.toolCallBudget,
+    this.agentLoopMode = AiAgentLoopMode.defaultValue,
     required this.maxImageSizeBytes,
     required this.maxFileSizeBytes,
     required this.hasApiKey,
@@ -168,6 +170,7 @@ class AiConnectionSettings {
     int? multiAgentMaxAgents,
     bool? postToolReviewEnabled,
     int? toolCallBudget,
+    String? agentLoopMode,
     int? maxImageSizeBytes,
     int? maxFileSizeBytes,
     bool? hasApiKey,
@@ -207,6 +210,8 @@ class AiConnectionSettings {
       postToolReviewEnabled:
           postToolReviewEnabled ?? this.postToolReviewEnabled,
       toolCallBudget: toolCallBudget ?? this.toolCallBudget,
+      agentLoopMode:
+          AiAgentLoopMode.normalize(agentLoopMode ?? this.agentLoopMode),
       maxImageSizeBytes: maxImageSizeBytes ?? this.maxImageSizeBytes,
       maxFileSizeBytes: maxFileSizeBytes ?? this.maxFileSizeBytes,
       hasApiKey: hasApiKey ?? this.hasApiKey,
@@ -317,6 +322,55 @@ class AiToolCallBudget {
 
   static String label(int value) {
     return '${normalize(value)}';
+  }
+}
+
+class AiAgentLoopMode {
+  static const String balanced = 'balanced';
+  static const String deep = 'deep';
+  static const String unlimited = 'unlimited';
+  static const String defaultValue = balanced;
+  static const List<String> values = [balanced, deep, unlimited];
+
+  static String normalize(String? value) {
+    final normalized = value?.trim().toLowerCase();
+    return values.contains(normalized) ? normalized! : defaultValue;
+  }
+
+  static int? initialRoundLimit(String? value) {
+    switch (normalize(value)) {
+      case deep:
+        return 24;
+      case unlimited:
+        return null;
+      case balanced:
+      default:
+        return 16;
+    }
+  }
+
+  static int extensionSize(String? value) {
+    switch (normalize(value)) {
+      case deep:
+        return 12;
+      case unlimited:
+        return 0;
+      case balanced:
+      default:
+        return 8;
+    }
+  }
+
+  static String label(String value, {bool english = false}) {
+    switch (normalize(value)) {
+      case deep:
+        return english ? 'Deep' : '深度';
+      case unlimited:
+        return english ? 'Unlimited' : '无限制';
+      case balanced:
+      default:
+        return english ? 'Balanced' : '均衡';
+    }
   }
 }
 
