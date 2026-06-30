@@ -31,6 +31,10 @@ extension DriftOps on StorageService {
         error: e,
         stackTrace: stackTrace,
       );
+    } finally {
+      if (!_driftInitCompleter.isCompleted) {
+        _driftInitCompleter.complete();
+      }
     }
   }
 

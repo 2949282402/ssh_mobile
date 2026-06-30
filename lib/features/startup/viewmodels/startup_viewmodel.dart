@@ -57,6 +57,13 @@ class StartupViewModel extends ChangeNotifier {
       return;
     }
 
+    if (_storageService.powerGuideSeen) {
+      _powerStatusChecked = true;
+      _shouldShowPowerGuide = false;
+      notifyListeners();
+      return;
+    }
+
     _checkingPowerStatus = true;
     notifyListeners();
 

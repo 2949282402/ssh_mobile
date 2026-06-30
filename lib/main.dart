@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'features/connection/views/add_edit_screen.dart';
 import 'features/connection/viewmodels/connection_viewmodel.dart';
@@ -52,6 +53,7 @@ Future<void> main() async {
       WidgetsFlutterBinding.ensureInitialized();
       appLogService.install(); // 替换 debugPrint / FlutterError.onError 等全局钩子
       appLogService.info('Application bootstrap started');
+      unawaited(SharedPreferences.getInstance());
 
       // --- 服务装配与异步加载通过 MultiProvider 懒加载自动完成 ---
       runApp(

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:drift/drift.dart' as drift;
 import 'package:flutter/foundation.dart';
@@ -552,6 +553,18 @@ class StorageService extends ChangeNotifier
   bool _initialized = false;
   final Completer<void> _initCompleter = Completer<void>();
   Future<void> get initFuture => _initCompleter.future;
+  final Completer<void> _driftInitCompleter = Completer<void>();
+  Future<void> get driftInitFuture => _driftInitCompleter.future;
+
+  bool _initCalled = false;
+
+  Future<T> _executeDrift<T>(Future<T> Function() action) async {
+    if (_initCalled) {
+      await driftInitFuture;
+    }
+    return action();
+  }
+
   bool _powerGuideSeen = false;
   bool _secretCacheEnabled = true;
   Duration _secretCacheTtl = const Duration(minutes: 15);
@@ -584,6 +597,7 @@ class StorageService extends ChangeNotifier
   bool get powerGuideSeen => _powerGuideSeen;
 
   Future<void> init() async {
+    _initCalled = true;
     try {
       _prefs = await SharedPreferences.getInstance().timeout(
         const Duration(seconds: 3),
@@ -591,10 +605,9 @@ class StorageService extends ChangeNotifier
       _powerGuideSeen = _prefs?.getBool(_powerGuideSeenKey) ?? false;
       await _loadSecretCacheSettings();
       await _loadConnections();
-      await _initializeDriftStorage();
     } catch (e) {
       AppLogService.instance
-          .error('Failed to initialize storage service', error: e);
+          .error('Failed to initialize storage service preferences', error: e);
       _connections = [];
       _refreshConnectionsView();
       _powerGuideSeen = false;
@@ -604,17 +617,30 @@ class StorageService extends ChangeNotifier
         _initCompleter.complete();
       }
       notifyListeners();
+
+      if (Platform.environment.containsKey('FLUTTER_TEST')) {
+        await _initializeDriftStorage();
+      } else {
+        // Asynchronously initialize Drift database in the background to not block cold start
+        unawaited(_initializeDriftStorage().catchError((e) {
+          AppLogService.instance
+              .error('Asynchronous Drift initialization failed', error: e);
+        }));
+      }
     }
   }
 
   @override
-  Future<List<AiChatRecord>> loadAiChats() => _loadAiChats();
+  Future<List<AiChatRecord>> loadAiChats() =>
+      _executeDrift(() => _loadAiChats());
 
   @override
-  Future<void> saveAiChat(AiChatRecord chat) => _saveAiChat(chat);
+  Future<void> saveAiChat(AiChatRecord chat) =>
+      _executeDrift(() => _saveAiChat(chat));
 
   @override
-  Future<void> deleteAiChat(String id) => _deleteAiChat(id);
+  Future<void> deleteAiChat(String id) =>
+      _executeDrift(() => _deleteAiChat(id));
 
   @override
   Future<List<AiSkillRecord>> loadAiSkills() => _loadAiSkills();
@@ -626,54 +652,59 @@ class StorageService extends ChangeNotifier
   Future<void> deleteAiSkill(String id) => _deleteAiSkill(id);
 
   @override
-  Future<List<AgentRunMetrics>> loadAgentRunMetrics() => _loadAgentRunMetrics();
+  Future<List<AgentRunMetrics>> loadAgentRunMetrics() =>
+      _executeDrift(() => _loadAgentRunMetrics());
 
   @override
   Future<void> saveAgentRunMetrics(AgentRunMetrics metrics) =>
-      _saveAgentRunMetrics(metrics);
+      _executeDrift(() => _saveAgentRunMetrics(metrics));
 
   @override
   Future<List<AgentTraceEvent>> loadAgentTraceEvents(String runId) =>
-      _loadAgentTraceEvents(runId);
+      _executeDrift(() => _loadAgentTraceEvents(runId));
 
   @override
   Future<List<String>> loadRecentAgentTraceRunIdsForChat(
     String chatId, {
     int limit = 20,
   }) =>
-      _loadRecentAgentTraceRunIdsForChat(chatId, limit: limit);
+      _executeDrift(
+          () => _loadRecentAgentTraceRunIdsForChat(chatId, limit: limit));
 
   @override
   Future<void> saveAgentTraceEvent(AgentTraceEvent event) =>
-      _saveAgentTraceEvent(event);
+      _executeDrift(() => _saveAgentTraceEvent(event));
 
   @override
   Future<void> saveAgentTraceEvents(List<AgentTraceEvent> events) =>
-      _saveAgentTraceEvents(events);
+      _executeDrift(() => _saveAgentTraceEvents(events));
 
   @override
   Future<void> deleteAgentTraceEvents(String runId) =>
-      _deleteAgentTraceEvents(runId);
+      _executeDrift(() => _deleteAgentTraceEvents(runId));
 
   @override
-  Future<List<Playbook>> loadPlaybooks() => _loadPlaybooks();
+  Future<List<Playbook>> loadPlaybooks() =>
+      _executeDrift(() => _loadPlaybooks());
 
   @override
-  Future<void> savePlaybook(Playbook playbook) => _savePlaybook(playbook);
+  Future<void> savePlaybook(Playbook playbook) =>
+      _executeDrift(() => _savePlaybook(playbook));
 
   @override
-  Future<void> deletePlaybook(String id) => _deletePlaybook(id);
+  Future<void> deletePlaybook(String id) =>
+      _executeDrift(() => _deletePlaybook(id));
 
   @override
   Future<void> recordVisitedPath(String connectionId, String path) =>
-      _recordSftpVisitedPath(connectionId, path);
+      _executeDrift(() => _recordSftpVisitedPath(connectionId, path));
 
   @override
   Future<List<SftpRecentPathRecord>> loadRecentPaths(
     String connectionId, {
     int limit = 30,
   }) =>
-      _loadSftpRecentPaths(connectionId, limit: limit);
+      _executeDrift(() => _loadSftpRecentPaths(connectionId, limit: limit));
 
   @override
   Future<SftpFavoritePathRecord> addFavoritePath(
@@ -681,46 +712,49 @@ class StorageService extends ChangeNotifier
     String path,
     String name,
   ) =>
-      _addSftpFavoritePath(connectionId, path, name);
+      _executeDrift(() => _addSftpFavoritePath(connectionId, path, name));
 
   @override
-  Future<void> removeFavoritePath(String id) => _removeSftpFavoritePath(id);
+  Future<void> removeFavoritePath(String id) =>
+      _executeDrift(() => _removeSftpFavoritePath(id));
 
   @override
   Future<void> renameFavoritePath(String id, String name) =>
-      _renameSftpFavoritePath(id, name);
+      _executeDrift(() => _renameSftpFavoritePath(id, name));
 
   @override
   Future<List<SftpFavoritePathRecord>> loadFavoritePaths(String connectionId) =>
-      _loadSftpFavoritePaths(connectionId);
+      _executeDrift(() => _loadSftpFavoritePaths(connectionId));
 
   @override
   Future<SftpFavoritePathRecord?> findFavoritePath(
     String connectionId,
     String path,
   ) =>
-      _findSftpFavoritePath(connectionId, path);
+      _executeDrift(() => _findSftpFavoritePath(connectionId, path));
 
   @override
-  Future<String> exportAppDataJson() => _exportAppDataJson();
+  Future<String> exportAppDataJson() =>
+      _executeDrift(() => _exportAppDataJson());
 
   @override
   Future<void> importAppDataJson(String jsonText) async {
+    await driftInitFuture;
     await _importAppDataJson(jsonText);
     notifyListeners();
   }
 
   @override
   Future<List<TerminalHistoryRecord>> loadTerminalHistoryRecords() =>
-      _loadTerminalHistoryRecords();
+      _executeDrift(() => _loadTerminalHistoryRecords());
 
   @override
   Future<void> saveTerminalHistoryRecord(TerminalHistoryRecord record) =>
-      _saveTerminalHistoryRecord(record);
+      _executeDrift(() => _saveTerminalHistoryRecord(record));
 
   @override
   Future<void> removeTerminalHistoryRecord(String sessionId) =>
-      _removeTerminalHistoryRecord(sessionId);
+      _executeDrift(() => _removeTerminalHistoryRecord(sessionId));
 
   Future<void> markPowerGuideSeen() async {
     if (!_initialized) return;
@@ -735,8 +769,18 @@ class StorageService extends ChangeNotifier
     }
   }
 
+  bool _disposed = false;
+
+  @override
+  void notifyListeners() {
+    if (!_disposed) {
+      super.notifyListeners();
+    }
+  }
+
   @override
   void dispose() {
+    _disposed = true;
     for (final pending in _pendingProtectedPrefWrites.values) {
       pending.timer?.cancel();
     }

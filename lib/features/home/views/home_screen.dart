@@ -509,7 +509,10 @@ class _DeferredNavPageState extends State<_DeferredNavPage> {
         offstage: !widget.active,
         child: TickerMode(
           enabled: widget.active,
-          child: Builder(builder: widget.builder),
+          child: _AnimatedPageFadeIn(
+            active: widget.active,
+            child: Builder(builder: widget.builder),
+          ),
         ),
       );
     }
@@ -521,7 +524,40 @@ class _DeferredNavPageState extends State<_DeferredNavPage> {
       _scheduleActivation();
       return widget.loading;
     }
-    return widget.builder(context);
+    return _AnimatedPageFadeIn(
+      active: true,
+      child: widget.builder(context),
+    );
+  }
+}
+
+class _AnimatedPageFadeIn extends StatelessWidget {
+  final Widget child;
+  final bool active;
+
+  const _AnimatedPageFadeIn({required this.child, required this.active});
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      key: ValueKey(active),
+      tween: Tween(begin: 0.0, end: active ? 1.0 : 0.0),
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+      builder: (context, value, child) {
+        if (value == 0.0 && !active) {
+          return const SizedBox.shrink();
+        }
+        return Opacity(
+          opacity: value,
+          child: Transform.translate(
+            offset: Offset(0, 16 * (1 - value)),
+            child: child,
+          ),
+        );
+      },
+      child: child,
+    );
   }
 }
 
