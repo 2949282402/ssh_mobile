@@ -507,6 +507,7 @@ class _AdminServerStatusIcon extends StatelessWidget {
   final bool selected;
   final bool compact;
   final bool isMonitorTab;
+  final Color? seriesColor;
 
   const _AdminServerStatusIcon({
     required this.busy,
@@ -514,6 +515,7 @@ class _AdminServerStatusIcon extends StatelessWidget {
     this.selected = false,
     this.compact = false,
     required this.isMonitorTab,
+    this.seriesColor,
   });
 
   @override
@@ -522,16 +524,17 @@ class _AdminServerStatusIcon extends StatelessWidget {
     final scale = mobileUiScaleOf(context);
     final size = (compact ? 30.0 : 38.0) * scale;
     final iconSize = (compact ? 18.0 : 22.0) * scale;
+    final themeColor = seriesColor ?? colorScheme.primary;
     return Container(
       width: size,
       height: size,
       decoration: BoxDecoration(
         color: selected
-            ? colorScheme.primary.withValues(alpha: 0.16)
-            : colorScheme.primary.withValues(alpha: 0.1),
+            ? themeColor.withValues(alpha: 0.16)
+            : themeColor.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
         border: selected
-            ? Border.all(color: colorScheme.primary.withValues(alpha: 0.42))
+            ? Border.all(color: themeColor.withValues(alpha: 0.42))
             : null,
       ),
       child: busy
@@ -547,7 +550,7 @@ class _AdminServerStatusIcon extends StatelessWidget {
                   : (connected
                       ? Icons.admin_panel_settings_rounded
                       : Icons.admin_panel_settings_outlined),
-              color: colorScheme.primary,
+              color: themeColor,
               size: iconSize,
             ),
     );
@@ -562,6 +565,7 @@ class _AdminServerTile extends StatelessWidget {
   final bool compact;
   final bool isMonitorTab;
   final VoidCallback onTap;
+  final Color? seriesColor;
 
   const _AdminServerTile({
     required this.connection,
@@ -571,14 +575,16 @@ class _AdminServerTile extends StatelessWidget {
     required this.onTap,
     required this.isMonitorTab,
     this.compact = false,
+    this.seriesColor,
   });
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final scale = mobileUiScaleOf(context);
+    final themeColor = seriesColor ?? colorScheme.primary;
     final borderColor = selected
-        ? colorScheme.primary.withValues(alpha: 0.54)
+        ? themeColor.withValues(alpha: 0.54)
         : colorScheme.outlineVariant;
 
     return Padding(
@@ -592,7 +598,7 @@ class _AdminServerTile extends StatelessWidget {
           ),
           decoration: BoxDecoration(
             color: selected
-                ? colorScheme.primary.withValues(alpha: 0.12)
+                ? themeColor.withValues(alpha: 0.08)
                 : colorScheme.surface,
             borderRadius: BorderRadius.circular(
               compact ? AppTheme.radiusSmall : AppTheme.radiusMedium,
@@ -611,6 +617,7 @@ class _AdminServerTile extends StatelessWidget {
                   selected: selected,
                   compact: true,
                   isMonitorTab: isMonitorTab,
+                  seriesColor: seriesColor,
                 ),
               ),
               SizedBox(width: 8 * scale),
@@ -673,6 +680,12 @@ class _AdminServerTileBinding extends StatelessWidget {
             _MonitorConnectionStatusSnapshot.from(monitor, connection.id),
         builder: (context, status, _) {
           final monitor = context.read<PerformanceMonitorViewModel>();
+          final connections =
+              context.select<SystemAdminViewModel, List<ConnectionConfig>>(
+            (vm) => vm.connections,
+          );
+          final index = connections.indexWhere((c) => c.id == connection.id);
+          final seriesColor = index != -1 ? _monitorSeriesColor(index) : null;
           return _AdminServerTile(
             connection: connection,
             selected: status.selected,
@@ -680,6 +693,7 @@ class _AdminServerTileBinding extends StatelessWidget {
             connected: status.connected,
             compact: compact,
             isMonitorTab: true,
+            seriesColor: seriesColor,
             onTap: () {
               if (status.running) {
                 final strings =

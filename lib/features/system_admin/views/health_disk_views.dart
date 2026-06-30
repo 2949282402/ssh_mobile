@@ -170,12 +170,13 @@ class _HealthAlertPanel extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
-              for (final connection in connections)
+              for (var i = 0; i < connections.length; i++)
                 _HealthBadge(
                   strings: strings,
-                  connection: connection,
-                  health: monitor.healthFor(connection.id),
-                  alert: alertsById[connection.id],
+                  connection: connections[i],
+                  seriesColor: _monitorSeriesColor(i),
+                  health: monitor.healthFor(connections[i].id),
+                  alert: alertsById[connections[i].id],
                 ),
             ],
           ),
@@ -190,11 +191,13 @@ class _HealthBadge extends StatelessWidget {
   final ConnectionConfig connection;
   final ServerHealthSnapshot health;
   final MonitorAlert? alert;
+  final Color seriesColor;
 
   const _HealthBadge({
     required this.strings,
     required this.connection,
     required this.health,
+    required this.seriesColor,
     this.alert,
   });
 
@@ -208,15 +211,21 @@ class _HealthBadge extends StatelessWidget {
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 260),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        padding: const EdgeInsets.fromLTRB(6, 8, 10, 8),
         decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.1),
+          color: color.withValues(alpha: 0.08),
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: color.withValues(alpha: 0.35)),
+          border: Border(
+            left: BorderSide(color: seriesColor, width: 4),
+            top: BorderSide(color: color.withValues(alpha: 0.25)),
+            right: BorderSide(color: color.withValues(alpha: 0.25)),
+            bottom: BorderSide(color: color.withValues(alpha: 0.25)),
+          ),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            const SizedBox(width: 4),
             Icon(_healthIcon(health.level), color: color, size: 17),
             const SizedBox(width: 7),
             Flexible(
