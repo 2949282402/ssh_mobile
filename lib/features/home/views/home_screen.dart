@@ -45,8 +45,8 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   static const int _serverPage = 0;
-  static const int _aiPage = 1;
-  static const int _sftpPage = 2;
+  static const int _sftpPage = 1;
+  static const int _aiPage = 2;
   static const int _adminPage = 3;
   static const int _logPage = 4;
   static const int _firstPage = _serverPage;
@@ -55,6 +55,7 @@ class _HomeScreenState extends State<HomeScreen> {
   late final PageController _pageController;
   late int _selectedIndex;
   late int _settledIndex;
+  double _scrollPosition = 0.0;
   final Set<String> _expandedConnectionWindowIds = {};
   bool _aiHistoryVisible = false;
   bool _serverSelectionMode = false;
@@ -65,11 +66,25 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _selectedIndex = widget.initialIndex.clamp(_firstPage, _lastPage);
     _settledIndex = _selectedIndex;
+    _scrollPosition = _selectedIndex.toDouble();
     _pageController = PageController(initialPage: _selectedIndex);
+    _pageController.addListener(_handleScroll);
+  }
+
+  void _handleScroll() {
+    if (_pageController.hasClients) {
+      final page = _pageController.page;
+      if (page != null && page != _scrollPosition) {
+        setState(() {
+          _scrollPosition = page;
+        });
+      }
+    }
   }
 
   @override
   void dispose() {
+    _pageController.removeListener(_handleScroll);
     _pageController.dispose();
     super.dispose();
   }
@@ -109,13 +124,16 @@ class _HomeScreenState extends State<HomeScreen> {
           child: PageView.builder(
             controller: _pageController,
             itemCount: _lastPage + 1,
-            physics: const NeverScrollableScrollPhysics(),
+            physics: const BouncingScrollPhysics(),
             allowImplicitScrolling: false,
             onPageChanged: (index) {
-              setState(() {
-                _selectedIndex = index;
-                _settledIndex = index;
-              });
+              if (_selectedIndex != index) {
+                setState(() {
+                  _selectedIndex = index;
+                  _settledIndex = index;
+                });
+                _onPageActive(index);
+              }
             },
             itemBuilder: (context, index) =>
                 _buildPage(context, index, strings),
@@ -190,14 +208,14 @@ class _HomeScreenState extends State<HomeScreen> {
               label: Text(strings.servers),
             ),
             NavigationRailDestination(
-              icon: const Icon(Icons.smart_toy_outlined),
-              selectedIcon: const Icon(Icons.smart_toy_rounded),
-              label: Text(settingsLabelAi(context)),
-            ),
-            NavigationRailDestination(
               icon: const Icon(Icons.folder_open_outlined),
               selectedIcon: const Icon(Icons.folder_open_rounded),
               label: Text(strings.sftp),
+            ),
+            NavigationRailDestination(
+              icon: const Icon(Icons.smart_toy_outlined),
+              selectedIcon: const Icon(Icons.smart_toy_rounded),
+              label: _buildAiLabel(context, _selectedIndex == _aiPage),
             ),
             NavigationRailDestination(
               icon: const Icon(Icons.admin_panel_settings_outlined),
@@ -224,36 +242,222 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildBottomNavigation(BuildContext context, AppStrings strings) {
-    return NavigationBar(
-      selectedIndex: _navigationIndex,
-      onDestinationSelected: _switchNavigationPage,
-      destinations: [
-        NavigationDestination(
-          icon: const Icon(Icons.dns_outlined),
-          selectedIcon: const Icon(Icons.dns_rounded),
-          label: strings.servers,
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final mediaQuery = MediaQuery.of(context);
+
+    return CustomPaint(
+      painter: BottomNavCurvePainter(
+        scrollPosition: _scrollPosition,
+        backgroundColor: colorScheme.surface,
+        borderColor: colorScheme.outlineVariant.withValues(alpha: 0.5),
+      ),
+      child: Container(
+        height: 80 + mediaQuery.padding.bottom,
+        color: Colors.transparent,
+        child: SafeArea(
+          top: false,
+          child: Row(
+            children: [
+              _buildNavItem(
+                context: context,
+                icon: const Icon(Icons.dns_outlined),
+                selectedIcon: const Icon(Icons.dns_rounded),
+                label: strings.servers,
+                index: _serverPage,
+              ),
+              _buildNavItem(
+                context: context,
+                icon: const Icon(Icons.folder_open_outlined),
+                selectedIcon: const Icon(Icons.folder_open_rounded),
+                label: strings.sftp,
+                index: _sftpPage,
+              ),
+              _buildAiNavItem(
+                context: context,
+                icon: const Icon(Icons.smart_toy_outlined),
+                selectedIcon: const Icon(Icons.smart_toy_rounded),
+                index: _aiPage,
+              ),
+              _buildNavItem(
+                context: context,
+                icon: const Icon(Icons.admin_panel_settings_outlined),
+                selectedIcon: const Icon(Icons.admin_panel_settings_rounded),
+                label: strings.admin,
+                index: _adminPage,
+              ),
+              _buildNavItem(
+                context: context,
+                icon: const Icon(Icons.terminal_outlined),
+                selectedIcon: const Icon(Icons.terminal_rounded),
+                label: strings.logs,
+                index: _logPage,
+              ),
+            ],
+          ),
         ),
-        NavigationDestination(
-          icon: const Icon(Icons.smart_toy_outlined),
-          selectedIcon: const Icon(Icons.smart_toy_rounded),
-          label: settingsLabelAi(context),
+      ),
+    );
+  }
+
+  Widget _buildNavItem({
+    required BuildContext context,
+    required Widget icon,
+    required Widget selectedIcon,
+    required String label,
+    required int index,
+  }) {
+    final isSelected = _selectedIndex == index;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return Expanded(
+      child: TactileFeedback(
+        onTap: () => _switchNavigationPage(index),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeOutCubic,
+              transform: Matrix4.translationValues(0, isSelected ? -6 : 0, 0),
+              child: Stack(
+                alignment: Alignment.center,
+                clipBehavior: Clip.none,
+                children: [
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 250),
+                    curve: Curves.easeOutCubic,
+                    width: 64,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? colorScheme.primary.withValues(alpha: 0.08)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  IconTheme(
+                    data: IconThemeData(
+                      color: isSelected
+                          ? colorScheme.primary
+                          : colorScheme.onSurfaceVariant,
+                      size: 22,
+                    ),
+                    child: isSelected ? selectedIcon : icon,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 4),
+            AnimatedDefaultTextStyle(
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeOutCubic,
+              style: TextStyle(
+                color: isSelected
+                    ? colorScheme.primary
+                    : colorScheme.onSurfaceVariant,
+                fontSize: 12,
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                letterSpacing: 0,
+              ),
+              child: Text(label),
+            ),
+          ],
         ),
-        NavigationDestination(
-          icon: const Icon(Icons.folder_open_outlined),
-          selectedIcon: const Icon(Icons.folder_open_rounded),
-          label: strings.sftp,
+      ),
+    );
+  }
+
+  Widget _buildAiNavItem({
+    required BuildContext context,
+    required Widget icon,
+    required Widget selectedIcon,
+    required int index,
+  }) {
+    final isSelected = _selectedIndex == index;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return Expanded(
+      child: TactileFeedback(
+        onTap: () => _switchNavigationPage(index),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeOutCubic,
+              transform: Matrix4.translationValues(0, isSelected ? -6 : 0, 0),
+              child: Stack(
+                alignment: Alignment.center,
+                clipBehavior: Clip.none,
+                children: [
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 250),
+                    curve: Curves.easeOutCubic,
+                    width: 64,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? colorScheme.primary.withValues(alpha: 0.08)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  IconTheme(
+                    data: IconThemeData(
+                      color: isSelected
+                          ? colorScheme.primary
+                          : colorScheme.onSurfaceVariant,
+                      size: 22,
+                    ),
+                    child: isSelected ? selectedIcon : icon,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 4),
+            _buildAiLabel(context, isSelected),
+          ],
         ),
-        NavigationDestination(
-          icon: const Icon(Icons.admin_panel_settings_outlined),
-          selectedIcon: const Icon(Icons.admin_panel_settings_rounded),
-          label: strings.admin,
+      ),
+    );
+  }
+
+  Widget _buildAiLabel(BuildContext context, bool isSelected) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: isSelected
+              ? [colorScheme.primary, colorScheme.tertiary]
+              : [
+                  colorScheme.primary.withValues(alpha: 0.15),
+                  colorScheme.tertiary.withValues(alpha: 0.15)
+                ],
         ),
-        NavigationDestination(
-          icon: const Icon(Icons.terminal_outlined),
-          selectedIcon: const Icon(Icons.terminal_rounded),
-          label: strings.logs,
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: isSelected
+            ? [
+                BoxShadow(
+                  color: colorScheme.primary.withValues(alpha: 0.25),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                )
+              ]
+            : null,
+      ),
+      child: Text(
+        'AI',
+        style: TextStyle(
+          color: isSelected ? Colors.white : colorScheme.primary,
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 0.5,
         ),
-      ],
+      ),
     );
   }
 
@@ -271,9 +475,17 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_selectedIndex == index) return;
     setState(() {
       _selectedIndex = index;
+      _settledIndex = index;
     });
-    _pageController.jumpToPage(index);
+    _pageController.animateToPage(
+      index,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOutCubic,
+    );
+    _onPageActive(index);
+  }
 
+  void _onPageActive(int index) {
     if (index == _sftpPage) {
       final adminVm = context.read<SystemAdminViewModel>();
       final sftpVm = context.read<SftpViewModel>();
@@ -615,4 +827,103 @@ class _ServerHeaderSnapshot {
 
 class SwitchToAiTabNotification extends Notification {
   const SwitchToAiTabNotification();
+}
+
+class BottomNavCurvePainter extends CustomPainter {
+  final double scrollPosition;
+  final Color backgroundColor;
+  final Color borderColor;
+  final double domeWidth;
+  final double domeHeight;
+
+  BottomNavCurvePainter({
+    required this.scrollPosition,
+    required this.backgroundColor,
+    required this.borderColor,
+    this.domeWidth = 75.0,
+    this.domeHeight = 10.0,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = backgroundColor
+      ..style = PaintingStyle.fill;
+
+    final borderPaint = Paint()
+      ..color = borderColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+
+    final double tabWidth = size.width / 5;
+    final double centerX = (scrollPosition + 0.5) * tabWidth;
+
+    final path = Path();
+    path.moveTo(0, 0);
+
+    final domeStart = centerX - domeWidth / 2;
+    final domeEnd = centerX + domeWidth / 2;
+
+    if (domeStart > 0) {
+      path.lineTo(domeStart, 0);
+    } else {
+      path.moveTo(0, 0);
+    }
+
+    path.cubicTo(
+      centerX - domeWidth / 4,
+      0,
+      centerX - domeWidth / 4,
+      -domeHeight,
+      centerX,
+      -domeHeight,
+    );
+    path.cubicTo(
+      centerX + domeWidth / 4,
+      -domeHeight,
+      centerX + domeWidth / 4,
+      0,
+      domeEnd,
+      0,
+    );
+
+    path.lineTo(size.width, 0);
+    path.lineTo(size.width, size.height);
+    path.lineTo(0, size.height);
+    path.close();
+
+    canvas.drawPath(path, paint);
+
+    final borderPath = Path();
+    borderPath.moveTo(0, 0);
+    if (domeStart > 0) {
+      borderPath.lineTo(domeStart, 0);
+    }
+    borderPath.cubicTo(
+      centerX - domeWidth / 4,
+      0,
+      centerX - domeWidth / 4,
+      -domeHeight,
+      centerX,
+      -domeHeight,
+    );
+    borderPath.cubicTo(
+      centerX + domeWidth / 4,
+      -domeHeight,
+      centerX + domeWidth / 4,
+      0,
+      domeEnd,
+      0,
+    );
+    borderPath.lineTo(size.width, 0);
+
+    canvas.drawPath(borderPath, borderPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant BottomNavCurvePainter oldDelegate) {
+    return oldDelegate.scrollPosition != scrollPosition ||
+        oldDelegate.backgroundColor != backgroundColor ||
+        oldDelegate.borderColor != borderColor;
+  }
 }
