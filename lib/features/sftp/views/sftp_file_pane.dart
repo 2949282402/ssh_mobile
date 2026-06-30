@@ -20,20 +20,6 @@ class _FilePane extends StatelessWidget {
       return _SftpEmptyState(strings: strings);
     }
 
-    final activeId = sftp.connectionId;
-    final connName = context.select<ConnectionViewModel, String>((vm) {
-      final conn = vm.connections.firstWhere(
-        (c) => c.id == activeId,
-        orElse: () => ConnectionConfig(
-          id: '',
-          name: '',
-          host: '',
-          port: 22,
-          username: '',
-        ),
-      );
-      return conn.name;
-    });
     final desktop = isDesktopLayout(context);
 
     final topBar = Container(
@@ -98,124 +84,92 @@ class _FilePane extends StatelessWidget {
                 ),
               ],
             )
-          : Column(
+          : Row(
               children: [
-                Row(
-                  children: [
-                    Icon(Icons.dns_outlined,
-                        size: 16, color: colorScheme.primary),
-                    const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        connName.isNotEmpty ? connName : 'SFTP',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 13),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: InkWell(
-                        onTap: snapshot.isBusy
-                            ? null
-                            : () => _showPathHistorySheet(
-                                context, sftp, snapshot.currentPath),
+                IconButton(
+                  tooltip: strings.parentDirectory,
+                  icon: const Icon(Icons.arrow_upward_rounded),
+                  onPressed: snapshot.isBusy ? null : sftp.openParent,
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: InkWell(
+                    onTap: snapshot.isBusy
+                        ? null
+                        : () => _showPathHistorySheet(
+                            context, sftp, snapshot.currentPath),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                    child: Container(
+                      height: 36,
+                      alignment: Alignment.centerLeft,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      decoration: BoxDecoration(
+                        color: colorScheme.surfaceContainerHighest
+                            .withValues(alpha: 0.42),
                         borderRadius:
                             BorderRadius.circular(AppTheme.radiusSmall),
-                        child: Container(
-                          height: 36,
-                          alignment: Alignment.centerLeft,
-                          padding: const EdgeInsets.symmetric(horizontal: 10),
-                          decoration: BoxDecoration(
-                            color: colorScheme.surfaceContainerHighest
-                                .withValues(alpha: 0.42),
-                            borderRadius:
-                                BorderRadius.circular(AppTheme.radiusSmall),
-                            border:
-                                Border.all(color: colorScheme.outlineVariant),
+                        border: Border.all(color: colorScheme.outlineVariant),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: OverflowScrollText(
+                              snapshot.currentPath,
+                              selectable: false,
+                              maxLines: 1,
+                              style: const TextStyle(
+                                  fontSize: 12, fontWeight: FontWeight.w600),
+                            ),
                           ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: OverflowScrollText(
-                                  snapshot.currentPath,
-                                  selectable: false,
-                                  maxLines: 1,
-                                  style: const TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600),
-                                ),
-                              ),
-                              Icon(Icons.edit,
-                                  size: 14,
-                                  color: colorScheme.onSurfaceVariant),
-                            ],
-                          ),
-                        ),
+                          Icon(Icons.edit,
+                              size: 14, color: colorScheme.onSurfaceVariant),
+                        ],
                       ),
                     ),
-                    IconButton(
-                      tooltip: strings.settings,
-                      icon: const Icon(Icons.settings_outlined),
-                      onPressed: () {
-                        const OpenSettingsNotification().dispatch(context);
-                      },
-                    ),
-                  ],
+                  ),
                 ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    IconButton(
-                      tooltip: strings.parentDirectory,
-                      icon: const Icon(Icons.arrow_upward_rounded),
-                      onPressed: snapshot.isBusy ? null : sftp.openParent,
-                    ),
-                    const SizedBox(width: 4),
-                    _SftpPathMenuButton(
-                      strings: strings,
-                      sftp: sftp,
-                      currentPath: snapshot.currentPath,
-                      disabled: snapshot.isBusy,
-                    ),
-                    const SizedBox(width: 4),
-                    IconButton(
-                      tooltip: strings.refresh,
-                      icon: const Icon(Icons.refresh_rounded),
-                      onPressed: snapshot.isBusy ? null : sftp.refresh,
-                    ),
-                    const SizedBox(width: 4),
-                    IconButton(
-                      tooltip: strings.uploadFile,
-                      icon: const Icon(Icons.upload_file_rounded),
-                      onPressed:
-                          snapshot.isBusy ? null : () => _uploadFile(context),
-                    ),
-                    const Spacer(),
-                    PopupMenuButton<String>(
-                      icon: const Icon(Icons.more_vert),
-                      onSelected: (value) {
-                        if (value == 'disconnect') {
-                          sftp.disconnect();
-                        }
-                      },
-                      itemBuilder: (ctx) => [
-                        PopupMenuItem(
-                          value: 'disconnect',
-                          child: Row(
-                            children: [
-                              Icon(Icons.link_off_rounded,
-                                  color: colorScheme.error),
-                              const SizedBox(width: 8),
-                              Text(
-                                strings.disconnect,
-                                style: TextStyle(color: colorScheme.error),
-                              ),
-                            ],
+                const SizedBox(width: 4),
+                _SftpPathMenuButton(
+                  strings: strings,
+                  sftp: sftp,
+                  currentPath: snapshot.currentPath,
+                  disabled: snapshot.isBusy,
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  tooltip: strings.refresh,
+                  icon: const Icon(Icons.refresh_rounded),
+                  onPressed: snapshot.isBusy ? null : sftp.refresh,
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  tooltip: strings.uploadFile,
+                  icon: const Icon(Icons.upload_file_rounded),
+                  onPressed:
+                      snapshot.isBusy ? null : () => _uploadFile(context),
+                ),
+                const SizedBox(width: 4),
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert),
+                  onSelected: (value) {
+                    if (value == 'disconnect') {
+                      sftp.disconnect();
+                    }
+                  },
+                  itemBuilder: (ctx) => [
+                    PopupMenuItem(
+                      value: 'disconnect',
+                      child: Row(
+                        children: [
+                          Icon(Icons.link_off_rounded,
+                              color: colorScheme.error),
+                          const SizedBox(width: 8),
+                          Text(
+                            strings.disconnect,
+                            style: TextStyle(color: colorScheme.error),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ],
                 ),
