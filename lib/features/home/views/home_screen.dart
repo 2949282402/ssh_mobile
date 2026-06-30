@@ -169,6 +169,7 @@ class _HomeScreenState extends State<HomeScreen> {
       children: [
         NavigationRail(
           extended: extended,
+          labelType: extended ? null : NavigationRailLabelType.all,
           selectedIndex: _navigationIndex,
           onDestinationSelected: _switchNavigationPage,
           trailing: Expanded(
