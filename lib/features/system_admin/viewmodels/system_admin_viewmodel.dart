@@ -137,7 +137,9 @@ class SystemAdminViewModel extends ChangeNotifier {
     );
     if (stored is bool) {
       _serversCollapsed = stored;
-      notifyListeners();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        notifyListeners();
+      });
     }
   }
 
