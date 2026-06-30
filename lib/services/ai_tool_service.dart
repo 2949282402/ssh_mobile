@@ -24,6 +24,8 @@ import 'llm_provider/llm_api_format.dart';
 
 part 'ai_tool/ai_tool_types.dart';
 part 'ai_tool/client_tools.dart';
+part 'ai_tool/tools/client_tools_schemas.dart';
+part 'ai_tool/tools/client_tools_impl.dart';
 part 'ai_tool/server_tools.dart';
 part 'ai_tool/ssh_tools.dart';
 part 'ai_tool/sftp_tools.dart';

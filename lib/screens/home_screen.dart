@@ -22,10 +22,10 @@ import '../widgets/window_name_dialog.dart';
 import '../theme/app_theme.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'developer_log_screen.dart';
-import 'llm_chat_screen.dart';
-import 'sftp_screen.dart';
-import 'system_admin_screen.dart';
-import 'terminal_windows_screen.dart';
+import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
+import 'package:ssh_mobile/features/sftp/views/sftp_screen.dart';
+import 'package:ssh_mobile/features/system_admin/views/system_admin_screen.dart';
+import 'package:ssh_mobile/features/terminal/views/terminal_windows_screen.dart';
 import '../services/performance_monitor_service.dart';
 
 part 'home/home_settings_strings.dart';

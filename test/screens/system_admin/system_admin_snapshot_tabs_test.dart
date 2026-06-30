@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:ssh_mobile/screens/system_admin_screen.dart';
+import 'package:ssh_mobile/features/system_admin/views/system_admin_screen.dart';
 import 'package:ssh_mobile/core/services/ssh_host_key_policy.dart';
 import 'package:ssh_mobile/features/system_admin/viewmodels/system_admin_viewmodel.dart';
 import 'package:ssh_mobile/widgets/system_power_confirm_flow.dart';

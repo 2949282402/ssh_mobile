@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ssh_mobile/screens/terminal/terminal_shortcut_panel.dart';
+import 'package:ssh_mobile/features/terminal/views/terminal_shortcut_panel.dart';
 
 void main() {
   test('adjusted reorder index follows Flutter reorder semantics', () {

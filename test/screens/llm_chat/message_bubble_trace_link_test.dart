@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:ssh_mobile/features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
-import 'package:ssh_mobile/screens/llm_chat_screen.dart';
+import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
