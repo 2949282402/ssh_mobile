@@ -455,6 +455,37 @@ void main() {
     expect(decoded['notificationGranted'], isTrue);
   });
 
+  test('client runtime health tool exposes schema and blocking result',
+      () async {
+    final definitions = await tools.toolDefinitions();
+    final names = definitions
+        .map((definition) => (definition['function'] as Map)['name'])
+        .toList();
+    expect(names, contains('client_check_runtime_health'));
+
+    clientSystem.networkInfo = {
+      'execution': 'client',
+      'target': 'client_device',
+      'supported': true,
+      'connected': true,
+      'validated': false,
+    };
+    final raw = await tools.execute(
+      'client_check_runtime_health',
+      {'profile': 'agent_execution'},
+    );
+    final decoded = jsonDecode(raw) as Map<String, dynamic>;
+
+    expect(decoded['status'], 'blocking');
+    expect(decoded['canProceed'], isFalse);
+    final issues = decoded['issues'] as List<dynamic>;
+    expect(
+      issues.map((issue) => (issue as Map)['code']),
+      contains('network_not_validated'),
+    );
+    expect(decoded['raw'], isA<Map<String, dynamic>>());
+  });
+
   test('client log query uses default limit and passes filters', () async {
     final raw = await tools.execute(
       'client_query_logs',
@@ -1570,6 +1601,9 @@ class _FakeClientSystemToolService implements ClientSystemToolAdapter {
   List<int>? deletedLogIds;
   bool clearLogsCalled = false;
   ClientPickedFile? nextPickedFile;
+  Map<String, dynamic>? networkInfo;
+  Map<String, dynamic>? batteryStatus;
+  Map<String, dynamic>? permissionStatus;
 
   @override
   Map<String, dynamic> getClientTime() => {'execution': 'client'};
@@ -1578,23 +1612,43 @@ class _FakeClientSystemToolService implements ClientSystemToolAdapter {
   Map<String, dynamic> getClientDeviceInfo() => {'execution': 'client'};
 
   @override
-  Future<Map<String, dynamic>> getNetworkInfo() async => {
+  Future<Map<String, dynamic>> getNetworkInfo() async =>
+      networkInfo ??
+      {
         'execution': 'client',
         'target': 'client_device',
+        'supported': true,
+        'connected': true,
+        'validated': true,
       };
 
   @override
-  Future<Map<String, dynamic>> getBatteryStatus() async => {
+  Future<Map<String, dynamic>> getBatteryStatus() async =>
+      batteryStatus ??
+      {
         'execution': 'client',
         'target': 'client_device',
+        'supported': true,
+        'batteryPercent': 80,
+        'powerSaveMode': false,
+        'ignoringBatteryOptimizations': true,
+        'plugged': {
+          'ac': false,
+          'usb': false,
+          'wireless': false,
+        },
       };
 
   @override
-  Future<Map<String, dynamic>> getPermissionStatus() async => {
+  Future<Map<String, dynamic>> getPermissionStatus() async =>
+      permissionStatus ??
+      {
         'execution': 'client',
         'target': 'client_device',
         'notificationGranted': true,
+        'supportsNativeBackgroundService': true,
         'supportsBatteryOptimizationExemption': true,
+        'ignoringBatteryOptimizations': true,
       };
 
   @override

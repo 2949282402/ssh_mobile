@@ -7,6 +7,7 @@ import '../features/playbook/models/playbook.dart';
 import 'app_log_service.dart';
 import 'app_settings.dart';
 import 'client_system_tool_service.dart';
+import 'client_health_advisor.dart';
 import 'client_webview_service.dart';
 import 'multi_agent_coordinator.dart';
 import 'performance_monitor_tool_service.dart';
@@ -42,6 +43,7 @@ class AiToolService implements AiToolExecutor {
   final SshClientAdapter sshService;
   final SftpClientAdapter sftpService;
   final ClientSystemToolAdapter clientSystemToolService;
+  final ClientHealthAdvisorAdapter clientHealthAdvisor;
   final ClientWebViewAdapter clientWebViewService;
   final ServerCatalogAdapter serverCatalogService;
   final PerformanceMonitorToolAdapter performanceMonitorToolService;
@@ -60,6 +62,7 @@ class AiToolService implements AiToolExecutor {
     required this.sshService,
     required this.sftpService,
     ClientSystemToolAdapter? clientSystemToolService,
+    ClientHealthAdvisorAdapter? clientHealthAdvisor,
     ClientWebViewAdapter? clientWebViewService,
     ServerCatalogAdapter? serverCatalogService,
     PerformanceMonitorToolAdapter? performanceMonitorToolService,
@@ -71,6 +74,12 @@ class AiToolService implements AiToolExecutor {
     this.clientWebViewSessionId,
   })  : clientSystemToolService =
             clientSystemToolService ?? ClientSystemToolService.instance,
+        clientHealthAdvisor = clientHealthAdvisor ??
+            ClientHealthAdvisor(
+              clientSystemToolService:
+                  clientSystemToolService ?? ClientSystemToolService.instance,
+              secretPolicy: secretPolicy ?? const ToolSecretPolicy(),
+            ),
         clientWebViewService =
             clientWebViewService ?? ClientWebViewService.instance,
         serverCatalogService = serverCatalogService ??
@@ -95,6 +104,12 @@ class AiToolService implements AiToolExecutor {
               sftpService: sftpService,
               clientSystemToolService:
                   clientSystemToolService ?? ClientSystemToolService.instance,
+              clientHealthAdvisor: clientHealthAdvisor ??
+                  ClientHealthAdvisor(
+                    clientSystemToolService: clientSystemToolService ??
+                        ClientSystemToolService.instance,
+                    secretPolicy: secretPolicy ?? const ToolSecretPolicy(),
+                  ),
               clientWebViewService:
                   clientWebViewService ?? ClientWebViewService.instance,
               serverCatalogService: serverCatalogService ??
@@ -123,6 +138,7 @@ class AiToolService implements AiToolExecutor {
     required SshClientAdapter sshService,
     required SftpClientAdapter sftpService,
     required ClientSystemToolAdapter clientSystemToolService,
+    required ClientHealthAdvisorAdapter clientHealthAdvisor,
     required ClientWebViewAdapter clientWebViewService,
     required ServerCatalogAdapter serverCatalogService,
     required PerformanceMonitorToolAdapter performanceMonitorToolService,
@@ -137,6 +153,7 @@ class AiToolService implements AiToolExecutor {
       ClientToolsProvider(
         storageService: storageService,
         clientSystemToolService: clientSystemToolService,
+        clientHealthAdvisor: clientHealthAdvisor,
         clientWebViewService: clientWebViewService,
         clientWebViewSessionId: clientWebViewSessionId,
         secretPolicy: secretPolicy,

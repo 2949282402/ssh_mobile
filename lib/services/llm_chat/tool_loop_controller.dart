@@ -5,12 +5,14 @@ class ToolLoopResult {
   final String? stopMessage;
   final bool toolsShouldBeDisabled;
   final AgentFinalOutcome? finalOutcome;
+  final PlanExecutionSnapshot? planExecutionSnapshot;
 
   const ToolLoopResult({
     this.shouldStop = false,
     this.stopMessage,
     this.toolsShouldBeDisabled = false,
     this.finalOutcome,
+    this.planExecutionSnapshot,
   });
 }
 
@@ -70,33 +72,10 @@ class ToolLoopController {
     if (parallelResult != null) {
       return parallelResult;
     }
+    PlanExecutionSnapshot? activeSnapshot = planExecutionSnapshot;
     for (var toolIndex = 0; toolIndex < toolCalls.length; toolIndex++) {
       final call = toolCalls[toolIndex];
       cancellationToken?.throwIfCancelled();
-
-      PlanExecutionSnapshot? activeSnapshot = planExecutionSnapshot;
-      if (!planMode) {
-        final ts = chatService.toolService;
-        if (ts is AiToolService && ts.clientWebViewSessionId != null) {
-          final chatId = ts.clientWebViewSessionId!;
-          final chats = await chatService.storageService.loadAiChats();
-          final chatIndex = chats.indexWhere((c) => c.id == chatId);
-          if (chatIndex != -1) {
-            final chat = chats[chatIndex];
-            final approvedPlanRef = chat.approvedPlan;
-            if (approvedPlanRef != null) {
-              final planMsg = chatAssistantMessageByCreatedAt(
-                chat,
-                approvedPlanRef.assistantCreatedAt,
-              );
-              if (planMsg != null) {
-                activeSnapshot =
-                    const PlanExecutionController().snapshot(planMsg.todoSteps);
-              }
-            }
-          }
-        }
-      }
 
       var result = jsonEncode({
         'error': 'Tool execution did not complete.',
@@ -411,9 +390,10 @@ class ToolLoopController {
             settings: settings,
             planExecutionSnapshot: activeSnapshot,
           );
-          return const ToolLoopResult(
+          return ToolLoopResult(
             toolsShouldBeDisabled: true,
             finalOutcome: AgentFinalOutcome.budgetAuditRejected,
+            planExecutionSnapshot: activeSnapshot,
           );
         }
 
@@ -522,9 +502,10 @@ class ToolLoopController {
             settings: settings,
             planExecutionSnapshot: activeSnapshot,
           );
-          return const ToolLoopResult(
+          return ToolLoopResult(
             toolsShouldBeDisabled: true,
             finalOutcome: AgentFinalOutcome.budgetAuditRejected,
+            planExecutionSnapshot: activeSnapshot,
           );
         }
       }
@@ -753,6 +734,15 @@ class ToolLoopController {
           );
           cancellationToken?.throwIfCancelled();
           outcome = chatService._classifyToolResultOutcome(result);
+          if (!planMode) {
+            activeSnapshot = _snapshotAfterClientTaskTool(
+              current: activeSnapshot,
+              toolName: call.name,
+              arguments: arguments,
+              resultJson: result,
+              outcome: outcome,
+            );
+          }
 
           if (!planMode &&
               activeSnapshot != null &&
@@ -876,6 +866,7 @@ class ToolLoopController {
           stopMessage: stopMessage,
           toolsShouldBeDisabled: _toolsDisabled,
           finalOutcome: finalOutcome,
+          planExecutionSnapshot: activeSnapshot,
         );
       }
     }
@@ -891,13 +882,14 @@ class ToolLoopController {
       onTrace: onTrace,
       cancellationToken: cancellationToken,
       settings: settings,
-      planExecutionSnapshot: planExecutionSnapshot,
+      planExecutionSnapshot: activeSnapshot,
     );
 
     return ToolLoopResult(
       shouldStop: false,
       toolsShouldBeDisabled: _toolsDisabled,
       finalOutcome: finalOutcome,
+      planExecutionSnapshot: activeSnapshot,
     );
   }
 
@@ -1140,6 +1132,90 @@ class ToolLoopController {
       toolsShouldBeDisabled: _toolsDisabled,
       finalOutcome: _currentOutcome,
     );
+  }
+
+  PlanExecutionSnapshot? _snapshotAfterClientTaskTool({
+    required PlanExecutionSnapshot? current,
+    required String toolName,
+    required Map<String, dynamic> arguments,
+    required String resultJson,
+    required String outcome,
+  }) {
+    if (current == null || current.steps.isEmpty || outcome != 'success') {
+      return current;
+    }
+    if (toolName != 'client_task_update' &&
+        toolName != 'client_task_retry' &&
+        toolName != 'client_task_skip') {
+      return current;
+    }
+
+    final taskId = arguments['taskId'];
+    if (taskId is! String || taskId.trim().isEmpty) return current;
+    final index = current.steps.indexWhere((step) => step.id == taskId);
+    if (index == -1) return current;
+
+    StepStatus? nextStatus;
+    if (toolName == 'client_task_retry') {
+      nextStatus = StepStatus.pending;
+    } else if (toolName == 'client_task_skip') {
+      nextStatus = StepStatus.skipped;
+    } else {
+      nextStatus = _statusFromTaskToolResult(resultJson) ??
+          _statusFromRaw(arguments['status']);
+    }
+    if (nextStatus == null) return current;
+
+    final steps = [...current.steps];
+    final previous = steps[index];
+    final stdout = arguments['stdout'] is String
+        ? (arguments['stdout'] as String)
+        : previous.stdout;
+    final stderr = arguments['stderr'] is String
+        ? (arguments['stderr'] as String)
+        : previous.stderr;
+    final exitCode = switch (nextStatus) {
+      StepStatus.success => 0,
+      StepStatus.failed => 1,
+      StepStatus.pending => null,
+      StepStatus.skipped => null,
+      StepStatus.running => previous.exitCode,
+    };
+
+    steps[index] = AiTodoStep(
+      id: previous.id,
+      name: previous.name,
+      command: previous.command,
+      description: previous.description,
+      status: nextStatus,
+      stdout: nextStatus == StepStatus.pending ? null : stdout,
+      stderr: nextStatus == StepStatus.pending ? null : stderr,
+      exitCode: exitCode,
+      connectionId: previous.connectionId,
+    );
+    return const PlanExecutionController().snapshot(steps);
+  }
+
+  StepStatus? _statusFromTaskToolResult(String resultJson) {
+    try {
+      final decoded = jsonDecode(resultJson);
+      if (decoded is Map) {
+        return _statusFromRaw(decoded['newStatus']);
+      }
+    } catch (_) {
+      return null;
+    }
+    return null;
+  }
+
+  StepStatus? _statusFromRaw(Object? raw) {
+    if (raw is! String) return null;
+    final normalized = raw.trim().toLowerCase();
+    if (normalized == 'in_progress') return StepStatus.running;
+    for (final value in StepStatus.values) {
+      if (value.name == normalized) return value;
+    }
+    return null;
   }
 
   Future<void> _triggerPostToolReview({

@@ -191,6 +191,34 @@ Future<String> _clientSetClipboard(ClientToolsProvider provider,
   );
 }
 
+Future<String> _clientCheckRuntimeHealth(
+  ClientToolsProvider provider,
+  AiToolService service,
+  Map<String, dynamic> arguments,
+) async {
+  final profile = _clientHealthProfileFromRaw(
+    service._optionalString(arguments, 'profile'),
+  );
+  final report = await provider.clientHealthAdvisor.check(profile: profile);
+  return jsonEncode(report.toJson());
+}
+
+ClientHealthCheckProfile _clientHealthProfileFromRaw(String? value) {
+  switch (value?.trim().toLowerCase()) {
+    case 'general':
+      return ClientHealthCheckProfile.general;
+    case 'background':
+      return ClientHealthCheckProfile.background;
+    case 'agent_execution':
+    case 'agentexecution':
+    case null:
+    case '':
+      return ClientHealthCheckProfile.agentExecution;
+    default:
+      return ClientHealthCheckProfile.agentExecution;
+  }
+}
+
 Future<String> _clientSaveExperienceSkill(
   ClientToolsProvider provider,
   AiToolService service,

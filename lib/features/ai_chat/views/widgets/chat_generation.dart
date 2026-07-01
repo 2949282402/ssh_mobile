@@ -75,7 +75,123 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
 
   Future<void> approvePlanAndExecute(DateTime assistantCreatedAt) async {
     final viewModel = context.read<AiChatViewModel>();
-    await viewModel.approvePlanAndExecute(assistantCreatedAt);
+    final result = await viewModel.approvePlanAndExecute(assistantCreatedAt);
+    if (!mounted) return;
+    if (result is ApprovePlanExecutionBlocked) {
+      await _showRuntimeHealthDialog(
+        report: result.healthReport!,
+        allowContinue: false,
+      );
+    } else if (result is ApprovePlanExecutionWarning) {
+      final confirmed = await _showRuntimeHealthDialog(
+        report: result.healthReport!,
+        allowContinue: true,
+      );
+      if (confirmed && mounted) {
+        await viewModel.approvePlanAndExecute(
+          assistantCreatedAt,
+          forceAfterWarning: true,
+        );
+      }
+    }
+  }
+
+  Future<bool> _showRuntimeHealthDialog({
+    required ClientRuntimeHealthReport report,
+    required bool allowContinue,
+  }) async {
+    final isEn = context.read<AppSettings>().language == AppLanguage.en;
+    final colorScheme = Theme.of(context).colorScheme;
+    final title = allowContinue
+        ? (isEn ? 'Runtime warnings' : '运行环境风险')
+        : (isEn ? 'Runtime check blocked execution' : '运行环境检查阻止执行');
+    final issues = report.issues;
+    final bool? result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  allowContinue
+                      ? (isEn
+                          ? 'The plan can run, but the client device has conditions that may interrupt long agent work.'
+                          : '计划可以继续执行，但客户端设备存在可能影响长时间 Agent 任务的风险。')
+                      : (isEn
+                          ? 'Fix the following client-side issues before running this plan.'
+                          : '请先处理以下客户端问题，再执行此计划。'),
+                ),
+                const SizedBox(height: 12),
+                for (final issue in issues) ...[
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        issue.severity == ClientRuntimeHealthStatus.blocking
+                            ? Icons.error_outline
+                            : Icons.warning_amber_outlined,
+                        size: 18,
+                        color:
+                            issue.severity == ClientRuntimeHealthStatus.blocking
+                                ? colorScheme.error
+                                : colorScheme.tertiary,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              issue.title,
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(issue.detail),
+                            const SizedBox(height: 2),
+                            Text(
+                              issue.recommendation,
+                              style: TextStyle(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(isEn ? 'Close' : '关闭'),
+          ),
+          TextButton(
+            onPressed: () async {
+              await ClientSystemToolService.instance.openAppSettings();
+              if (ctx.mounted) Navigator.of(ctx).pop(false);
+            },
+            child: Text(isEn ? 'App Settings' : '系统设置'),
+          ),
+          if (allowContinue)
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: Text(isEn ? 'Continue' : '继续执行'),
+            ),
+        ],
+      ),
+    );
+    return result == true;
   }
 
   void _stopGeneration() {

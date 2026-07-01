@@ -260,6 +260,11 @@ class ToolExposureRouter {
     if (_containsAny(request, const [
       'setting',
       'permission',
+      'runtime',
+      'health',
+      'battery',
+      'network',
+      'background',
       'device',
       'clipboard',
       'skill',
@@ -267,6 +272,11 @@ class ToolExposureRouter {
       'experience',
       '设置',
       '权限',
+      '运行环境',
+      '健康',
+      '电池',
+      '网络',
+      '后台',
       '设备',
       '剪贴板',
       '技能',
@@ -287,6 +297,9 @@ class ToolExposureRouter {
   bool _isBaselineTool(AiTool tool, ToolExposureContext context) {
     if (tool.name == 'list_servers') return true;
     if (tool.name == 'client_set_plan_mode') return context.planMode;
+    if (tool.name == 'client_check_runtime_health') {
+      return context.hasApprovedPlan;
+    }
     if (tool.name == 'client_task_create') return context.planMode;
     if (tool.name == 'client_task_update') return context.hasApprovedPlan;
     return false;

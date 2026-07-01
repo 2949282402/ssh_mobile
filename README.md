@@ -207,6 +207,7 @@ Current agent architecture in the Flutter client:
 - AI settings now support `mainModel`, `helperModel`, `auditModel`, and a fallback policy so lightweight helper and audit turns can run on cheaper/faster models while the main assistant keeps the primary tool loop.
 - `ToolExposureRouter` trims the tool set per request based on plan mode, approved plans, selected servers, and WebView availability to reduce prompt noise.
 - The LLM tool loop now includes deterministic read-only loop blocking, short-TTL cache reuse, richer ledger metadata, and persisted `AgentRunMetrics`.
+- Approved plan execution runs a client runtime health preflight on Android/client state; blocking issues stop execution, while warnings require explicit confirmation.
 - New composite diagnostic tools are available for higher-signal troubleshooting: `inspect_service_health`, `collect_incident_context`, and `compare_server_states`.
 - Operational memory retrieval now mixes RAG chunks, AI skills, prior todo/playbook wins, and useful traces before each run.
 
@@ -216,7 +217,7 @@ AI tools 以能力分组维护在 `lib/services/ai_tool/` 中，而不是把逻�
 
 - 服务器与诊断：`list_servers`、`run_command`、`get_server_status`、`generate_ops_report`
 - SFTP 路径操作：目录列表、元数据、文本读取、下载，以及写入、上传、创建目录、重命名、删除
-- 客户端工具：时间、设备、网络、电池、权限、剪贴板、提醒、日志、备份、应用设置
+- 客户端工具：时间、设备、网络、电池、权限、运行健康检查、剪贴板、提醒、日志、备份、应用设置
 - WebView / 搜索：`web_search`、当前聊天 WebView 读取和导航
 - 技能记忆：如 `client_save_experience_skill`
 
@@ -224,6 +225,7 @@ AI tools 以能力分组维护在 `lib/services/ai_tool/` 中，而不是把逻�
 
 - 普通运维请求默认使用当前聊天内的 `todoSteps` 执行计划；只有用户明确要求保存/复用剧本时，才使用 `create_playbook`、`run_playbook` 等 Playbook 工具。
 - `client_*` tools 运行在 SSH Mobile 客户端，不连接服务器。
+- `client_check_runtime_health` 汇总客户端网络、通知权限、电池优化、省电模式和热状态，用于长时间 agent 执行、SSH 保活、SFTP 传输和监控前的端上预检。
 - `run_command` 会强制遵守保存的 `serverPlatform`，并阻断环境变量 dump、云 metadata endpoint 和敏感路径读取；日志读取默认需要审批。
 - 远程写入、远程文件读取/下载、本地导入、日志删除/清空、监控状态变更等操作必须经过统一审批。
 - AI destructive shell delete/remove 命令会被拦截；SFTP 敏感路径读取、下载和写入会直接阻断。

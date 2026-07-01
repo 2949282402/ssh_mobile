@@ -78,6 +78,26 @@ List<AiTool> _getClientTools(
           await provider.clientSystemToolService.getPermissionStatus()),
     ),
     AiTool(
+      name: 'client_check_runtime_health',
+      description:
+          'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Check whether the Android/client runtime is healthy enough for long agent execution, SSH keep-alive, SFTP transfers, or monitoring. Returns ok, warning, or blocking issues plus recommendations.',
+      properties: {
+        'profile': {
+          'type': 'string',
+          'enum': const ['general', 'agent_execution', 'background'],
+          'description':
+              'Optional health profile. Use agent_execution before approved plan execution; use background for SSH keep-alive or monitor sampling. Defaults to agent_execution.',
+          'default': 'agent_execution',
+        },
+      },
+      parallelSafeReadOnly: true,
+      capabilities: const {
+        AiToolCapability.client,
+      },
+      cacheTtl: const Duration(seconds: 10),
+      handler: (args) => _clientCheckRuntimeHealth(provider, service, args),
+    ),
+    AiTool(
       name: 'client_open_app_settings',
       description:
           'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Open the operating system app settings page so the user can grant notifications, battery, or background permissions.',

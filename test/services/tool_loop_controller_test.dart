@@ -980,6 +980,112 @@ void main() {
     });
 
     test(
+        'client_task_update refreshes in-memory snapshot before next remote tool',
+        () async {
+      final budget = LlmToolBudgetController(baseBudget: 10);
+      final cache = <String, CachedToolResult>{};
+      final ledger = <LlmToolLedgerEntry>[];
+      final executed = <String>[];
+      final mockTools = MockToolService(
+        onExecute: (name, args) async {
+          executed.add(name);
+          if (name == 'client_task_update') {
+            return '{"status":"success","taskId":"task-1","newStatus":"running"}';
+          }
+          return '{"success":true}';
+        },
+      );
+      final localLlm = LlmChatService(
+        storageService: storage,
+        toolService: mockTools,
+      );
+
+      final controller = ToolLoopController(
+        chatService: localLlm,
+        toolBudget: budget,
+        readOnlyToolCache: cache,
+        toolLedger: ledger,
+      );
+
+      final workingMessages = <Map<String, dynamic>>[];
+      final settings = await storage.loadAiConnectionSettings();
+
+      final loopResult = await controller.handleToolCalls(
+        toolCalls: [
+          StreamingToolCall(
+            id: 'call_task_running',
+            name: 'client_task_update',
+            arguments: '{"taskId":"task-1","status":"running"}',
+          ),
+          StreamingToolCall(
+            id: 'call_remote_after_running',
+            name: 'detect_os',
+            arguments: '{"connectionId":"server-1"}',
+          ),
+        ],
+        visibleToolsByName: {
+          'client_task_update': AiTool(
+            name: 'client_task_update',
+            description: 'Update task',
+            properties: const {},
+            required: const [],
+            executionMode: AiToolExecutionMode.executionOnly,
+            handler: (args) async => '{}',
+          ),
+          'detect_os': AiTool(
+            name: 'detect_os',
+            description: 'Detect OS',
+            properties: const {},
+            required: const [],
+            executionMode: AiToolExecutionMode.readOnly,
+            handler: (args) async => '{}',
+          ),
+        },
+        planMode: false,
+        language: AppLanguage.zh,
+        apiKey: 'key',
+        auditModel: 'audit-model',
+        originalUserGoal: 'Goal',
+        workingMessages: workingMessages,
+        requestToolApproval: null,
+        onTrace: null,
+        cancellationToken: null,
+        settings: settings,
+        complete: (role, messages, {required thinkingSettings}) async =>
+            'advice',
+        classify: (messages) async => '{}',
+        planExecutionSnapshot: const PlanExecutionSnapshot(
+          phase: PlanExecutionPhase.pending,
+          steps: [
+            AiTodoStep(
+              id: 'task-1',
+              name: 'Step 1',
+              command: 'cmd',
+              description: 'desc',
+              status: StepStatus.pending,
+            ),
+          ],
+          currentStepIndex: 0,
+          currentStep: AiTodoStep(
+            id: 'task-1',
+            name: 'Step 1',
+            command: 'cmd',
+            description: 'desc',
+            status: StepStatus.pending,
+          ),
+          hasFailedStep: false,
+          isCompleted: false,
+        ),
+      );
+
+      expect(loopResult.shouldStop, isFalse);
+      expect(executed, ['client_task_update', 'detect_os']);
+      expect(loopResult.planExecutionSnapshot?.currentStep?.status,
+          StepStatus.running);
+      expect(ledger.map((entry) => entry.outcome), everyElement('success'));
+    });
+
+    test(
         'remote mutating tool call is allowed by gate when current step is running',
         () async {
       final budget = LlmToolBudgetController(baseBudget: 10);

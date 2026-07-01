@@ -61,7 +61,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
   }) async* {
     final settings = await storageService.loadAiConnectionSettings();
     final provider = LlmProviderFactory.fromSettings(settings);
-    final planExecutionSnapshot = approvedPlanMessage == null
+    var planExecutionSnapshot = approvedPlanMessage == null
         ? null
         : const PlanExecutionController()
             .snapshot(approvedPlanMessage.todoSteps);
@@ -614,6 +614,8 @@ extension LlmChatServiceStreamHandler on LlmChatService {
             return response.text;
           },
         );
+        planExecutionSnapshot =
+            loopResult.planExecutionSnapshot ?? planExecutionSnapshot;
         agentLoopGuard.recordToolRound(
           contentChars: content.length,
           newEntries: toolLedger.sublist(toolLedgerStart),

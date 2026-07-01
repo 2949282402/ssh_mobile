@@ -74,6 +74,11 @@ across sessions.
   `usesCleartextTraffic=false`; debug/profile manifests override it for local
   provider testing only. Do not re-enable release cleartext unless a scoped
   network security config and README/ADR note are added.
+- 2026-07-01: Android app Gradle config no longer applies
+  `org.jetbrains.kotlin.android` in `android/app/build.gradle.kts`. Keep KGP
+  only as the settings classpath entry and configure Kotlin with top-level
+  `kotlin { compilerOptions { ... } }` to avoid Flutter built-in Kotlin
+  migration warnings.
 - 2026-05-28: Core SSH/SFTP/LLM/AI tool and storage flows expose small Dart
   contracts for future fake injection. Backup imports intentionally clear any
   cached AI API key and ignore credential fields from JSON; users must
@@ -189,3 +194,4 @@ across sessions.
   messages via `agentRunId`, and intentionally excluded from backup export.
 - 2026-06-22: Widget testing pages like LlmChatScreen with locally-scoped providers and target platform overrides must manage debug variable changes inside the testWidgets body using a try-finally block, as the binding's invariant tester runs before the global tearDown hook. Subtree provider instances can be retrieved via context lookups on public descendant widgets (e.g. Scaffold).
 - 2026-06-23: App typography is now configured to completely rely on the native system fonts on all supported platforms (Android, Windows, iOS, macOS), and the custom app-level font selection feature has been completely removed to simplify settings and ensure standard system font behavior.
+- 2026-07-01: Approved AI plan execution now performs a client runtime health preflight through `ClientHealthAdvisor` / `client_check_runtime_health`. Blocking client-side issues stop execution; warning issues require explicit confirmation. Tool loop plan gating refreshes the in-memory `PlanExecutionSnapshot` from successful `client_task_update/retry/skip` calls instead of reloading chats before every tool call.

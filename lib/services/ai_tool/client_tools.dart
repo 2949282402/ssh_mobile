@@ -3,6 +3,7 @@ part of '../ai_tool_service.dart';
 class ClientToolsProvider implements AiToolProvider {
   final StorageService storageService;
   final ClientSystemToolAdapter clientSystemToolService;
+  final ClientHealthAdvisorAdapter clientHealthAdvisor;
   final ClientWebViewAdapter clientWebViewService;
   final String? clientWebViewSessionId;
   final ToolSecretPolicy secretPolicy;
@@ -11,6 +12,7 @@ class ClientToolsProvider implements AiToolProvider {
   const ClientToolsProvider({
     required this.storageService,
     required this.clientSystemToolService,
+    required this.clientHealthAdvisor,
     required this.clientWebViewService,
     this.clientWebViewSessionId,
     required this.secretPolicy,
@@ -43,6 +45,8 @@ class ClientToolsProvider implements AiToolProvider {
         return jsonEncode(await clientSystemToolService.getBatteryStatus());
       case 'client_get_permission_status':
         return jsonEncode(await clientSystemToolService.getPermissionStatus());
+      case 'client_check_runtime_health':
+        return _clientCheckRuntimeHealth(this, service, arguments);
       case 'client_open_app_settings':
         return jsonEncode(await clientSystemToolService.openAppSettings());
       case 'client_set_clipboard':

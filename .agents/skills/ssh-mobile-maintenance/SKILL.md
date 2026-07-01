@@ -136,9 +136,16 @@ with its `widgets/` part files.
 - Default AI planning stays in chat-bound `todoSteps` for the current request.
   Only create or run saved `Playbook` records when the user explicitly asks to
   save, reuse, manage, or execute a reusable script/playbook.
+- Approved plan execution runs a client runtime health preflight before the
+  execution prompt. Blocking client issues stop execution, warning issues
+  require explicit user confirmation before continuing.
 - Client-side tools stay in `ClientSystemToolService` and
   `ClientWebViewService`, use the `client_` prefix, and return
   `execution: client`.
+- Keep `client_check_runtime_health` as the aggregate client readiness tool for
+  long-running agent execution, SSH keep-alive, SFTP transfers, and monitoring;
+  it should reuse client network, battery, permission, and background-service
+  adapters and redact raw payloads with `ToolSecretPolicy`.
 - Route tool arguments, approvals, results, and trace content through
   `ToolSecretPolicy`.
 - AI tools must block secret-bearing server paths, environment dumps, and cloud

@@ -24,7 +24,7 @@ When the user asks to summarize an experience and persist it as a Skill (includi
 4) Send `title` if obvious; otherwise infer one from the request.
 5) Never include secrets or credential-like data in summary/title/content.
 6) If the tool call fails, do not continue with a normal summary response—report the failure and ask to retry after the tool result.
-Use client_get_permission_status when the user needs notification, background-run, or Android battery-optimization diagnostics on the client device.
+Use client_check_runtime_health before long-running agent execution, SSH keep-alive, SFTP transfers, or monitoring on the client device. Use client_get_permission_status only when raw notification, background-run, or Android battery-optimization details are needed.
 Use client_query_logs and client_get_log_counts to inspect recent redacted client logs for SSH, SFTP, LLM, AI tools, WebView, or background issues.
 Use get_server_details to inspect saved non-sensitive server metadata. Never ask for secrets because saved server credentials are not accessible to you.
 The web_search tool is also client-side: it uses the WebView bound to the current chat session to load a public search page and returns readable search result titles, URLs, and snippets.
@@ -54,7 +54,7 @@ const String systemPromptZhSafety = '''
 4) 如果标题显而易见，请发送 `title`；否则根据请求推导一个。
 5) 绝对不要在 summary/title/content 中包含敏感秘密或类似凭据的数据。
 6) 如果工具调用失败，不要继续进行常规 of 总结回复——请报告失败并要求在工具结果之后重试。
-当用户在客户端设备上需要通知、后台运行或 Android 电池优化诊断时，使用 client_get_permission_status。
+当用户准备在客户端设备上执行较长时间的 Agent 计划、SSH 保活、SFTP 传输或监控任务时，优先使用 client_check_runtime_health；只有需要原始通知、后台运行或 Android 电池优化细节时再使用 client_get_permission_status。
 当用户需要诊断 SSH、SFTP、LLM、AI 工具、WebView 或后台问题时，使用 client_query_logs 和 client_get_log_counts。
 使用 get_server_details 来查看已保存的非敏感服务器元数据。绝不要索取敏感秘密，因为你无法访问已保存的服务器凭证。
 web_search 工具也是客户端工具：它使用绑定 to 当前聊天会话的 WebView 来加载公开搜索页面，并返回可读的搜索结果标题、URL 和片段。

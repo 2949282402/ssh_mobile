@@ -25,6 +25,8 @@ import '../../../services/sftp_service.dart';
 import '../../../services/ssh_service.dart';
 import '../../../services/storage_service.dart';
 import '../../../services/client_webview_service.dart';
+import '../../../services/client_health_advisor.dart';
+import '../../../services/client_system_tool_service.dart';
 import '../../../services/tool_secret_policy.dart';
 import '../../connection/models/connection.dart';
 import '../../../utils/text_chunker.dart';
@@ -92,6 +94,33 @@ class SendTextSlashCommandOpenToolsSelector extends SendTextResult {
   });
 }
 
+sealed class ApprovePlanExecutionResult {
+  final ClientRuntimeHealthReport? healthReport;
+  const ApprovePlanExecutionResult({this.healthReport});
+}
+
+class ApprovePlanExecutionStarted extends ApprovePlanExecutionResult {
+  const ApprovePlanExecutionStarted({super.healthReport});
+}
+
+class ApprovePlanExecutionBlocked extends ApprovePlanExecutionResult {
+  const ApprovePlanExecutionBlocked(ClientRuntimeHealthReport report)
+      : super(healthReport: report);
+}
+
+class ApprovePlanExecutionWarning extends ApprovePlanExecutionResult {
+  const ApprovePlanExecutionWarning(ClientRuntimeHealthReport report)
+      : super(healthReport: report);
+}
+
+class ApprovePlanExecutionNoPlan extends ApprovePlanExecutionResult {
+  const ApprovePlanExecutionNoPlan();
+}
+
+class ApprovePlanExecutionAlreadySending extends ApprovePlanExecutionResult {
+  const ApprovePlanExecutionAlreadySending();
+}
+
 class _StreamingAssistantTarget {
   final String chatId;
   final DateTime assistantCreatedAt;
@@ -141,6 +170,7 @@ class AiChatViewModel extends ChangeNotifier {
   final PlaybookService _playbookService;
   final AppSettings _appSettings;
   final AiChatRuntimeFactory _runtimeFactory;
+  final ClientHealthAdvisorAdapter _clientHealthAdvisor;
   late final AiChatContextBuilder _contextBuilder;
   late final AiChatMessageMapper _messageMapper;
   late final AiChatTokenEstimator _tokenEstimator;
@@ -168,6 +198,7 @@ class AiChatViewModel extends ChangeNotifier {
   // 工具审批
   PendingToolApproval? _pendingApproval;
   LlmCancellationToken? _activeCancellationToken;
+  ClientRuntimeHealthReport? _lastRuntimeHealthReport;
 
   // 上下文限制
   int _contextWindowTokens = AiContextWindowSize.k259;
@@ -192,6 +223,7 @@ class AiChatViewModel extends ChangeNotifier {
     required RagService ragService,
     required AppSettings appSettings,
     AiChatRuntimeFactory? runtimeFactory,
+    ClientHealthAdvisorAdapter? clientHealthAdvisor,
     AiChatContextBuilder? contextBuilder,
     AiChatMessageMapper? messageMapper,
     AiChatTokenEstimator? tokenEstimator,
@@ -207,6 +239,10 @@ class AiChatViewModel extends ChangeNotifier {
               playbookService: playbookService,
               ragService: ragService,
               appSettings: appSettings,
+            ),
+        _clientHealthAdvisor = clientHealthAdvisor ??
+            ClientHealthAdvisor(
+              clientSystemToolService: ClientSystemToolService.instance,
             ) {
     final resolvedContextBuilder =
         contextBuilder ?? const AiChatContextBuilder();
@@ -231,6 +267,8 @@ class AiChatViewModel extends ChangeNotifier {
       Set.unmodifiable(_selectedConnectionIds);
   List<AiChatAttachment> get pendingAttachments => _pendingAttachments;
   PendingToolApproval? get pendingApproval => _pendingApproval;
+  ClientRuntimeHealthReport? get lastRuntimeHealthReport =>
+      _lastRuntimeHealthReport;
   int get contextWindowTokens => _contextWindowTokens;
   Stream<void> get scrollRequests => _scrollRequests.stream;
 
@@ -711,14 +749,30 @@ class AiChatViewModel extends ChangeNotifier {
     return const SendTextSuccess();
   }
 
-  Future<void> approvePlanAndExecute(DateTime assistantCreatedAt) async {
-    if (_sending) return;
+  Future<ApprovePlanExecutionResult> approvePlanAndExecute(
+    DateTime assistantCreatedAt, {
+    bool forceAfterWarning = false,
+  }) async {
+    if (_sending) return const ApprovePlanExecutionAlreadySending();
     final activeChat = this.activeChat;
-    if (activeChat == null) return;
+    if (activeChat == null) return const ApprovePlanExecutionNoPlan();
     final planMessage =
         chatAssistantMessageByCreatedAt(activeChat, assistantCreatedAt);
     if (planMessage == null || planMessage.todoSteps.isEmpty) {
-      return;
+      return const ApprovePlanExecutionNoPlan();
+    }
+
+    final healthReport = await _clientHealthAdvisor.check(
+      profile: ClientHealthCheckProfile.agentExecution,
+    );
+    _lastRuntimeHealthReport = healthReport;
+    notifyListeners();
+    if (healthReport.status == ClientRuntimeHealthStatus.blocking) {
+      return ApprovePlanExecutionBlocked(healthReport);
+    }
+    if (healthReport.status == ClientRuntimeHealthStatus.warning &&
+        !forceAfterWarning) {
+      return ApprovePlanExecutionWarning(healthReport);
     }
 
     final approvedAt = DateTime.now();
@@ -740,6 +794,7 @@ class AiChatViewModel extends ChangeNotifier {
       text: isEn ? 'Execute the approved plan.' : '执行已批准的计划。',
       approvedPlanRef: approvedPlan,
     );
+    return ApprovePlanExecutionStarted(healthReport: healthReport);
   }
 
   Future<void> retryTodoStep(String taskId) async {

@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import '../features/playbook/models/playbook.dart';
 import 'ai_tool_service.dart';
 import 'agent_model_profile.dart';
 import 'app_log_service.dart';

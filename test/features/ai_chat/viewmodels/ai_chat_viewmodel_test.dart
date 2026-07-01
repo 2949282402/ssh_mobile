@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
+import 'package:ssh_mobile/services/client_health_advisor.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/playbook_service.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
@@ -308,6 +309,128 @@ void main() {
       expect(userMessage.text, equals('diagnose nginx'));
     });
 
+    test('approvePlanAndExecute blocks when runtime health is blocking',
+        () async {
+      final viewModel = AiChatViewModel(
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+        clientHealthAdvisor: const FakeHealthAdvisor(
+          ClientRuntimeHealthStatus.blocking,
+        ),
+      );
+
+      await viewModel.loadInitialDraft();
+      final assistantCreatedAt = DateTime.now();
+      await viewModel.updateActiveChat(
+        viewModel.activeChat!.copyWith(
+          planMode: true,
+          messages: [
+            AiChatMessageRecord(
+              role: 'assistant',
+              text: 'plan',
+              createdAt: assistantCreatedAt,
+              todoSteps: const [
+                AiTodoStep(
+                  id: 'task-1',
+                  name: 'Check service',
+                  command: 'systemctl status nginx',
+                  description: 'Check service status',
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+
+      final result = await viewModel.approvePlanAndExecute(assistantCreatedAt);
+
+      expect(result, isA<ApprovePlanExecutionBlocked>());
+      expect(viewModel.activeChat!.planMode, isTrue);
+      expect(viewModel.activeChat!.approvedPlan, isNull);
+      expect(viewModel.sending, isFalse);
+    });
+
+    test('approvePlanAndExecute warning requires explicit force to continue',
+        () async {
+      await storageService.saveAiConnectionSettings(
+        baseUrl: 'https://api.example.com',
+        model: 'demo-model',
+        apiKey: 'dummy-key',
+      );
+      final factory = FakeSuccessRuntimeFactory(
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+      );
+      final viewModel = AiChatViewModel(
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+        runtimeFactory: factory,
+        clientHealthAdvisor: const FakeHealthAdvisor(
+          ClientRuntimeHealthStatus.warning,
+        ),
+      );
+
+      await viewModel.loadInitialDraft();
+      final assistantCreatedAt = DateTime.now();
+      await viewModel.updateActiveChat(
+        viewModel.activeChat!.copyWith(
+          planMode: true,
+          messages: [
+            AiChatMessageRecord(
+              role: 'assistant',
+              text: 'plan',
+              createdAt: assistantCreatedAt,
+              todoSteps: const [
+                AiTodoStep(
+                  id: 'task-1',
+                  name: 'Check service',
+                  command: 'systemctl status nginx',
+                  description: 'Check service status',
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+
+      final warning = await viewModel.approvePlanAndExecute(assistantCreatedAt);
+      expect(warning, isA<ApprovePlanExecutionWarning>());
+      expect(viewModel.activeChat!.approvedPlan, isNull);
+
+      final started = await viewModel.approvePlanAndExecute(
+        assistantCreatedAt,
+        forceAfterWarning: true,
+      );
+      expect(started, isA<ApprovePlanExecutionStarted>());
+
+      await waitUntil(
+        () => viewModel.sending == false,
+        description: 'forced warning execution finishes',
+      );
+      expect(viewModel.activeChat!.approvedPlan, isNotNull);
+      expect(
+        viewModel.activeChat!.messages.any(
+          (message) => message.role == 'user' && message.text.contains('执行'),
+        ),
+        isTrue,
+      );
+    });
+
     test(
         'generate assistant response failure with empty partialAnswer assigns agentRunId to error message',
         () async {
@@ -448,6 +571,40 @@ class _FakeAiToolExecutor implements AiToolExecutor {
   const _FakeAiToolExecutor();
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class FakeHealthAdvisor implements ClientHealthAdvisorAdapter {
+  final ClientRuntimeHealthStatus status;
+
+  const FakeHealthAdvisor(this.status);
+
+  @override
+  Future<ClientRuntimeHealthReport> check({
+    ClientHealthCheckProfile profile = ClientHealthCheckProfile.general,
+  }) async {
+    if (status == ClientRuntimeHealthStatus.ok) {
+      return const ClientRuntimeHealthReport(
+        status: ClientRuntimeHealthStatus.ok,
+        issues: [],
+        raw: {},
+      );
+    }
+    return ClientRuntimeHealthReport(
+      status: status,
+      issues: [
+        ClientRuntimeHealthIssue(
+          code: status == ClientRuntimeHealthStatus.blocking
+              ? 'network_not_validated'
+              : 'battery_optimization_active',
+          severity: status,
+          title: 'Runtime issue',
+          detail: 'Runtime issue detail',
+          recommendation: 'Fix runtime issue',
+        ),
+      ],
+      raw: const {},
+    );
+  }
 }
 
 class FakeFailureRuntimeFactory extends AiChatRuntimeFactory {
