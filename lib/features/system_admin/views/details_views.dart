@@ -220,7 +220,10 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
         return Container(
           margin: margin,
           decoration: decoration,
-          child: itemBuilder(context, flatItem.item as T),
+          child: Material(
+            color: Colors.transparent,
+            child: itemBuilder(context, flatItem.item as T),
+          ),
         );
       },
     );

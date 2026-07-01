@@ -728,14 +728,17 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
   Widget _buildKeepAliveSwitch() {
     final strings = _strings(context);
-    return SwitchListTile(
-      contentPadding: EdgeInsets.zero,
-      title: Text(strings.keepAliveTitle),
-      subtitle:
-          Text(strings.keepAliveSubtitle, style: const TextStyle(fontSize: 12)),
-      value: _keepAlive,
-      activeThumbColor: Theme.of(context).colorScheme.secondary,
-      onChanged: (value) => setState(() => _keepAlive = value),
+    return Material(
+      color: Colors.transparent,
+      child: SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        title: Text(strings.keepAliveTitle),
+        subtitle: Text(strings.keepAliveSubtitle,
+            style: const TextStyle(fontSize: 12)),
+        value: _keepAlive,
+        activeThumbColor: Theme.of(context).colorScheme.secondary,
+        onChanged: (value) => setState(() => _keepAlive = value),
+      ),
     );
   }
 
