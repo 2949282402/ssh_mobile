@@ -7,6 +7,58 @@ extension _HomeSettingsStrings on AppStrings {
   String get aiSkillsHint => language == AppLanguage.en
       ? 'Manage custom AI prompts, workflows, and references'
       : '管理自定义 AI 提示词、工作流及规则说明';
+  String get mcpServer =>
+      language == AppLanguage.en ? 'MCP Server' : 'MCP Server';
+  String get mcpServerHint => language == AppLanguage.en
+      ? 'Local Streamable HTTP endpoint for Codex, Claude Code, and Gemini CLI.'
+      : '供 Codex、Claude Code、Gemini CLI 使用的本地 Streamable HTTP 端点。';
+  String get mcpHost => language == AppLanguage.en ? 'Host' : '主机';
+  String get mcpPort => language == AppLanguage.en ? 'Port' : '端口';
+  String get mcpCheckPort => language == AppLanguage.en ? 'Check port' : '检查端口';
+  String get mcpRestart =>
+      language == AppLanguage.en ? 'Restart MCP Server' : '重启 MCP Server';
+  String get mcpRegenerateToken =>
+      language == AppLanguage.en ? 'Regenerate token' : '重新生成 Token';
+  String get mcpCopyCodex =>
+      language == AppLanguage.en ? 'Copy Codex config' : '复制 Codex 配置';
+  String get mcpCopyClaude =>
+      language == AppLanguage.en ? 'Copy Claude command' : '复制 Claude 命令';
+  String get mcpCopyGemini =>
+      language == AppLanguage.en ? 'Copy Gemini config' : '复制 Gemini 配置';
+  String get mcpAllowWriteTools =>
+      language == AppLanguage.en ? 'Expose write tools' : '暴露写入工具';
+  String get mcpAllowWriteToolsHint => language == AppLanguage.en
+      ? 'Off by default. Dangerous tools still require approval.'
+      : '默认关闭。危险工具仍需审批。';
+  String get mcpRequireApproval => language == AppLanguage.en
+      ? 'Require approval for write tools'
+      : '写入工具需要审批';
+  String get mcpPortAvailable =>
+      language == AppLanguage.en ? 'Port is available' : '端口可用';
+  String get mcpPortOccupied => language == AppLanguage.en
+      ? 'Port is already in use. Choose another port.'
+      : '端口已被占用，请选择其他端口。';
+  String get mcpPortInvalidMessage => language == AppLanguage.en
+      ? 'Port must be between 1024 and 65535.'
+      : '端口必须在 1024 到 65535 之间。';
+  String get mcpPortRestartNeeded => language == AppLanguage.en
+      ? 'Changing port requires restart.'
+      : '端口变更需要重启 MCP Server。';
+  String get mcpStopped =>
+      language == AppLanguage.en ? 'MCP Server stopped' : 'MCP Server 已停止';
+  String get mcpCheckingPort =>
+      language == AppLanguage.en ? 'Checking port...' : '正在检查端口...';
+  String get mcpStarting => language == AppLanguage.en
+      ? 'Starting MCP Server...'
+      : '正在启动 MCP Server...';
+  String mcpRunningAt(String url) =>
+      language == AppLanguage.en ? 'Running at $url' : '运行中：$url';
+  String get mcpFailed =>
+      language == AppLanguage.en ? 'MCP Server failed' : 'MCP Server 启动失败';
+  String get mcpTokenRegenerated =>
+      language == AppLanguage.en ? 'MCP token regenerated' : 'MCP Token 已重新生成';
+  String get mcpCopied =>
+      language == AppLanguage.en ? 'MCP config copied' : 'MCP 配置已复制';
   String get security => language == AppLanguage.en ? 'Security' : '安全';
   String get credentialCache => language == AppLanguage.en
       ? 'Cache SSH credentials in memory'

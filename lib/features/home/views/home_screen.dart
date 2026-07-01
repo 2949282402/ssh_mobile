@@ -3,6 +3,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'package:ssh_mobile/features/connection/models/connection.dart';
@@ -28,6 +29,9 @@ import 'package:ssh_mobile/features/sftp/views/sftp_screen.dart';
 import 'package:ssh_mobile/features/system_admin/views/system_admin_screen.dart';
 import 'package:ssh_mobile/features/terminal/views/terminal_windows_screen.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
+import 'package:ssh_mobile/services/mcp/mcp_port_probe.dart';
+import 'package:ssh_mobile/services/mcp/mcp_server_controller.dart';
+import 'package:ssh_mobile/services/mcp/mcp_server_settings.dart';
 
 part 'widgets/home_settings_strings.dart';
 part 'widgets/settings_panel.dart';

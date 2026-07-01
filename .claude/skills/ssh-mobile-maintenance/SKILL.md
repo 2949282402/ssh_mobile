@@ -151,6 +151,12 @@ with its `widgets/` part files.
 - AI tools must block secret-bearing server paths, environment dumps, and cloud
   metadata endpoints. Remote log reads and ordinary SFTP file reads/downloads
   require user approval; sensitive SFTP paths are blocked.
+- The local MCP Server lives in `lib/services/mcp/` and is implemented in
+  Flutter/Dart, not native runners. It binds only to local hosts, serves
+  Streamable HTTP JSON-RPC at `POST /mcp`, stores its Bearer token in secure
+  storage, and reuses `AiToolService` through `McpToolExposurePolicy`; external
+  MCP clients must not silently execute write/destructive tools and should get
+  `approval_required` until an app approval queue exists.
 
 ### SFTP
 

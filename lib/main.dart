@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'features/connection/views/add_edit_screen.dart';
 import 'features/connection/viewmodels/connection_viewmodel.dart';
+import 'features/ai_chat/services/ai_chat_runtime_factory.dart';
 import 'features/settings/viewmodels/settings_viewmodel.dart';
 import 'features/playbook/viewmodels/playbook_viewmodel.dart';
 import 'features/rag/viewmodels/rag_knowledge_viewmodel.dart';
@@ -35,6 +36,7 @@ import 'services/sftp_service.dart';
 import 'services/storage_service.dart';
 import 'services/rag_service.dart';
 import 'services/system_admin_service.dart';
+import 'services/mcp/mcp_server_controller.dart';
 import 'theme/app_theme.dart';
 import 'utils/responsive.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
@@ -115,6 +117,21 @@ Future<void> main() async {
               },
             ),
             ChangeNotifierProvider(
+              create: (context) => McpServerController(
+                appSettings: context.read<AppSettings>(),
+                toolServiceFactory: () => AiChatRuntimeFactory(
+                  storageService: context.read<StorageService>(),
+                  sshService: context.read<SshService>(),
+                  sftpService: context.read<SftpService>(),
+                  performanceMonitorService:
+                      context.read<PerformanceMonitorService>(),
+                  playbookService: context.read<PlaybookService>(),
+                  ragService: context.read<RagService>(),
+                  appSettings: context.read<AppSettings>(),
+                ).createToolService(),
+              ),
+            ),
+            ChangeNotifierProvider(
               create: (context) =>
                   SystemAdminService(context.read<StorageService>()),
             ),
@@ -130,6 +147,7 @@ Future<void> main() async {
               create: (context) => SettingsViewModel(
                 appSettings: context.read<AppSettings>(),
                 storageService: context.read<StorageService>(),
+                mcpServerController: context.read<McpServerController>(),
               ),
             ),
             ChangeNotifierProvider(
@@ -191,6 +209,10 @@ class _SshMobileAppState extends State<SshMobileApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(context.read<McpServerController>().startIfEnabled());
+    });
   }
 
   @override
@@ -200,12 +222,16 @@ class _SshMobileAppState extends State<SshMobileApp>
         state == AppLifecycleState.detached) {
       unawaited(context.read<StorageService>().flushPendingWrites());
     }
+    if (state == AppLifecycleState.detached) {
+      unawaited(context.read<McpServerController>().stop());
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     unawaited(context.read<StorageService>().flushPendingWrites());
+    unawaited(context.read<McpServerController>().stop());
     super.dispose();
   }
 

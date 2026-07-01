@@ -4,26 +4,34 @@ import 'package:flutter/material.dart';
 
 import '../../../services/app_log_service.dart';
 import '../../../services/app_settings.dart';
+import '../../../services/mcp/mcp_config_templates.dart';
+import '../../../services/mcp/mcp_port_probe.dart';
+import '../../../services/mcp/mcp_server_controller.dart';
 import '../../../services/storage_service.dart';
 
 class SettingsViewModel extends ChangeNotifier {
   final AppSettings _appSettings;
   final StorageService _storageService;
+  final McpServerController? _mcpServerController;
 
   SettingsViewModel({
     required AppSettings appSettings,
     required StorageService storageService,
+    McpServerController? mcpServerController,
   })  : _appSettings = appSettings,
-        _storageService = storageService {
+        _storageService = storageService,
+        _mcpServerController = mcpServerController {
     // 监听底层 AppSettings 的更新，联动通知监听 SettingsViewModel 的视图
     _appSettings.addListener(notifyListeners);
     _storageService.addListener(notifyListeners);
+    _mcpServerController?.addListener(notifyListeners);
   }
 
   @override
   void dispose() {
     _appSettings.removeListener(notifyListeners);
     _storageService.removeListener(notifyListeners);
+    _mcpServerController?.removeListener(notifyListeners);
     super.dispose();
   }
 
@@ -38,6 +46,32 @@ class SettingsViewModel extends ChangeNotifier {
   bool get isDarkMode => _appSettings.isDarkMode;
   bool get showServerNamesInNotifications =>
       _appSettings.showServerNamesInNotifications;
+  bool get mcpServerEnabled => _appSettings.mcpServerEnabled;
+  String get mcpServerHost => _appSettings.mcpServerHost;
+  int get mcpServerPort => _appSettings.mcpServerPort;
+  String get mcpServerToken => _appSettings.mcpServerToken;
+  bool get mcpAllowWriteTools => _appSettings.mcpAllowWriteTools;
+  bool get mcpRequireApprovalForWriteTools =>
+      _appSettings.mcpRequireApprovalForWriteTools;
+  McpServerStatusSnapshot? get mcpServerStatus =>
+      _mcpServerController?.snapshot;
+  McpPortProbeResult? get mcpLastPortProbe =>
+      _mcpServerController?.lastPortProbeResult;
+  bool get mcpServerRunning => _mcpServerController?.running ?? false;
+  bool get mcpPortRequiresRestart {
+    final snapshot = _mcpServerController?.snapshot;
+    return snapshot?.running == true && snapshot!.port != mcpServerPort;
+  }
+
+  String get mcpCodexConfig => McpConfigTemplates.codex(
+        _appSettings.mcpSettings,
+      );
+  String get mcpClaudeCodeCommand => McpConfigTemplates.claudeCode(
+        _appSettings.mcpSettings,
+      );
+  String get mcpGeminiCliConfig => McpConfigTemplates.geminiCli(
+        _appSettings.mcpSettings,
+      );
 
   // 秘钥缓存设置暴露
   bool get secretCacheEnabled => _storageService.isSecretCacheEnabled;
@@ -87,6 +121,44 @@ class SettingsViewModel extends ChangeNotifier {
 
   Future<void> setShowServerNamesInNotifications(bool value) async {
     await _appSettings.setShowServerNamesInNotifications(value);
+  }
+
+  Future<void> setMcpServerEnabled(bool value) async {
+    await _appSettings.setMcpServerEnabled(value);
+    if (_mcpServerController == null) return;
+    if (value) {
+      await _mcpServerController.start();
+    } else {
+      await _mcpServerController.stop();
+    }
+  }
+
+  Future<void> setMcpServerPort(int port) async {
+    await _appSettings.setMcpServerPort(port);
+  }
+
+  Future<void> setMcpAllowWriteTools(bool value) async {
+    await _appSettings.setMcpAllowWriteTools(value);
+  }
+
+  Future<void> setMcpRequireApprovalForWriteTools(bool value) async {
+    await _appSettings.setMcpRequireApprovalForWriteTools(value);
+  }
+
+  Future<McpPortProbeResult?> checkMcpPort() async {
+    return _mcpServerController?.checkPort();
+  }
+
+  Future<void> restartMcpServer() async {
+    await _mcpServerController?.restart();
+  }
+
+  Future<void> regenerateMcpServerToken() async {
+    final wasRunning = _mcpServerController?.running ?? false;
+    await _appSettings.regenerateMcpServerToken();
+    if (wasRunning) {
+      await _mcpServerController?.restart();
+    }
   }
 
   Future<String> exportBackup() async {

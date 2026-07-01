@@ -27,3 +27,37 @@ jobs:
         run: flutter analyze
       - name: Test
         run: flutter test --reporter expanded
+
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Enable Windows desktop
+        run: flutter config --enable-windows-desktop
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Test
+        run: flutter test --reporter expanded
+      - name: Build Windows
+        run: flutter build windows
+
+  macos-build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Enable macOS desktop
+        run: flutter config --enable-macos-desktop
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Test
+        run: flutter test --reporter expanded
+      - name: Build macOS
+        run: flutter build macos

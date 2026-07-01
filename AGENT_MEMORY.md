@@ -19,6 +19,13 @@ across sessions.
 
 ## Notes
 
+- 2026-07-01: Local MCP Server is implemented in Flutter/Dart under
+  `lib/services/mcp/`, not native runners. It binds only to local hosts,
+  serves Streamable HTTP JSON-RPC at `POST /mcp`, stores its Bearer token in
+  secure storage, and exposes existing `AiToolService` tools through
+  `McpToolExposurePolicy`; write/destructive tools must not execute silently
+  from external MCP clients and should return `approval_required` until an app
+  approval queue exists.
 - 2026-06-16: On keyboard-heavy mobile flows, avoid `MediaQuery.of(context)`
   in large server/file list rows when only size/density is needed. Prefer
   narrow helpers such as `MediaQuery.sizeOf` +

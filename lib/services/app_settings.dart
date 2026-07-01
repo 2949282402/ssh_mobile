@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_log_service.dart';
+import 'mcp/mcp_server_settings.dart';
 
 enum AppLanguage {
   zh,
@@ -30,6 +34,14 @@ class AppSettings extends ChangeNotifier {
   static const _sftpTextPreviewLimitBytesKey = 'sftp_text_preview_limit_bytes';
   static const _sftpRichPreviewLimitBytesKey = 'sftp_rich_preview_limit_bytes';
   static const _sftpTextEditLimitBytesKey = 'sftp_text_edit_limit_bytes';
+  static const _mcpServerEnabledKey = 'mcp_server_enabled';
+  static const _mcpServerHostKey = 'mcp_server_host';
+  static const _mcpServerPortKey = 'mcp_server_port';
+  static const _mcpAllowWriteToolsKey = 'mcp_allow_write_tools';
+  static const _mcpRequireApprovalForWriteToolsKey =
+      'mcp_require_approval_for_write_tools';
+  static const _mcpEnableSseKey = 'mcp_enable_sse';
+  static const _mcpServerTokenSecureKey = 'mcp_server_token';
   static const int minSftpLimitBytes = 64 * 1024;
   static const int maxSftpLimitBytes = 2 * 1024 * 1024 * 1024;
   static const int defaultSftpDownloadLimitBytes = 512 * 1024 * 1024;
@@ -48,12 +60,24 @@ class AppSettings extends ChangeNotifier {
   String _ragSearchMode = 'bm25'; // 'bm25', 'vector', 'hybrid'
   int _ragTopN = 3;
   bool _showServerNamesInNotifications = false;
+  bool _mcpServerEnabled = false;
+  String _mcpServerHost = McpServerSettings.defaultHost;
+  int _mcpServerPort = McpServerSettings.defaultPort;
+  String _mcpServerToken = '';
+  bool _mcpAllowWriteTools = false;
+  bool _mcpRequireApprovalForWriteTools = true;
+  bool _mcpEnableSse = false;
   bool _initialized = false;
+  final Completer<void> _initCompleter = Completer<void>();
   Future<void> _themeWrite = Future.value();
+  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage(
+    mOptions: MacOsOptions(usesDataProtectionKeychain: false),
+  );
 
   AppLanguage get language => _language;
   ThemeMode get themeMode => _themeMode;
   bool get initialized => _initialized;
+  Future<void> get initFuture => _initCompleter.future;
   bool get isEnglish => _language == AppLanguage.en;
   bool get isDarkMode => _themeMode == ThemeMode.dark;
   bool get ragEnabled => _ragEnabled;
@@ -67,6 +91,22 @@ class AppSettings extends ChangeNotifier {
   int get sftpTextPreviewLimitBytes => _sftpTextPreviewLimitBytes;
   int get sftpRichPreviewLimitBytes => _sftpRichPreviewLimitBytes;
   int get sftpTextEditLimitBytes => _sftpTextEditLimitBytes;
+  bool get mcpServerEnabled => _mcpServerEnabled;
+  String get mcpServerHost => _mcpServerHost;
+  int get mcpServerPort => _mcpServerPort;
+  String get mcpServerToken => _mcpServerToken;
+  bool get mcpAllowWriteTools => _mcpAllowWriteTools;
+  bool get mcpRequireApprovalForWriteTools => _mcpRequireApprovalForWriteTools;
+  bool get mcpEnableSse => _mcpEnableSse;
+  McpServerSettings get mcpSettings => McpServerSettings(
+        enabled: _mcpServerEnabled,
+        host: _mcpServerHost,
+        port: _mcpServerPort,
+        token: _mcpServerToken,
+        allowWriteTools: _mcpAllowWriteTools,
+        requireApprovalForWriteTools: _mcpRequireApprovalForWriteTools,
+        enableSse: _mcpEnableSse,
+      );
 
   Future<void> init() async {
     try {
@@ -99,6 +139,19 @@ class AppSettings extends ChangeNotifier {
       _ragTopN = prefs.getInt(_ragTopNKey) ?? 3;
       _showServerNamesInNotifications =
           prefs.getBool(_showServerNamesInNotificationsKey) ?? false;
+      _mcpServerEnabled = prefs.getBool(_mcpServerEnabledKey) ?? false;
+      final host = prefs.getString(_mcpServerHostKey);
+      _mcpServerHost = McpServerSettings.isAllowedHost(host ?? '')
+          ? McpServerSettings.normalizeHost(host!)
+          : McpServerSettings.defaultHost;
+      _mcpServerPort = McpServerSettings.normalizePort(
+        prefs.getInt(_mcpServerPortKey),
+      );
+      _mcpAllowWriteTools = prefs.getBool(_mcpAllowWriteToolsKey) ?? false;
+      _mcpRequireApprovalForWriteTools =
+          prefs.getBool(_mcpRequireApprovalForWriteToolsKey) ?? true;
+      _mcpEnableSse = prefs.getBool(_mcpEnableSseKey) ?? false;
+      _mcpServerToken = await _readOrCreateMcpServerToken();
     } catch (e, stackTrace) {
       AppLogService.instance.error(
         'Failed to initialize AppSettings',
@@ -116,8 +169,18 @@ class AppSettings extends ChangeNotifier {
       _ragSearchMode = 'bm25';
       _ragTopN = 3;
       _showServerNamesInNotifications = false;
+      _mcpServerEnabled = false;
+      _mcpServerHost = McpServerSettings.defaultHost;
+      _mcpServerPort = McpServerSettings.defaultPort;
+      _mcpServerToken = '';
+      _mcpAllowWriteTools = false;
+      _mcpRequireApprovalForWriteTools = true;
+      _mcpEnableSse = false;
     } finally {
       _initialized = true;
+      if (!_initCompleter.isCompleted) {
+        _initCompleter.complete();
+      }
       notifyListeners();
     }
   }
@@ -180,6 +243,107 @@ class AppSettings extends ChangeNotifier {
       'Notification privacy setting updated',
       details: 'showServerNames=$value',
     );
+  }
+
+  Future<void> setMcpServerEnabled(bool value) async {
+    if (value) {
+      await ensureMcpServerToken();
+    }
+    if (_mcpServerEnabled == value) return;
+    _mcpServerEnabled = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_mcpServerEnabledKey, value);
+    AppLogService.instance.info(
+      'MCP server enabled setting updated',
+      details: 'enabled=$value',
+    );
+  }
+
+  Future<void> setMcpServerHost(String host) async {
+    final normalized = McpServerSettings.normalizeHost(host);
+    if (!McpServerSettings.isAllowedHost(normalized)) {
+      throw ArgumentError.value(host, 'host', 'Invalid MCP host');
+    }
+    if (_mcpServerHost == normalized) return;
+    _mcpServerHost = normalized;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_mcpServerHostKey, normalized);
+    AppLogService.instance.info(
+      'MCP server host setting updated',
+      details: 'host=$normalized',
+    );
+  }
+
+  Future<void> setMcpServerPort(int port) async {
+    if (!McpServerSettings.isValidPort(port)) {
+      throw ArgumentError.value(port, 'port', 'Invalid MCP port');
+    }
+    if (_mcpServerPort == port) return;
+    _mcpServerPort = port;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_mcpServerPortKey, port);
+    AppLogService.instance.info(
+      'MCP server port setting updated',
+      details: 'port=$port',
+    );
+  }
+
+  Future<void> setMcpAllowWriteTools(bool value) async {
+    if (_mcpAllowWriteTools == value) return;
+    _mcpAllowWriteTools = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_mcpAllowWriteToolsKey, value);
+    AppLogService.instance.info(
+      'MCP write-tool setting updated',
+      details: 'allowWriteTools=$value',
+    );
+  }
+
+  Future<void> setMcpRequireApprovalForWriteTools(bool value) async {
+    if (_mcpRequireApprovalForWriteTools == value) return;
+    _mcpRequireApprovalForWriteTools = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_mcpRequireApprovalForWriteToolsKey, value);
+    AppLogService.instance.info(
+      'MCP write-tool approval setting updated',
+      details: 'requireApproval=$value',
+    );
+  }
+
+  Future<void> setMcpEnableSse(bool value) async {
+    if (_mcpEnableSse == value) return;
+    _mcpEnableSse = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_mcpEnableSseKey, value);
+    AppLogService.instance.info(
+      'MCP SSE setting updated',
+      details: 'enableSse=$value',
+    );
+  }
+
+  Future<String> ensureMcpServerToken() async {
+    if (_mcpServerToken.trim().isNotEmpty) return _mcpServerToken;
+    final token = McpServerSettings.generateToken();
+    await _secureStorage.write(key: _mcpServerTokenSecureKey, value: token);
+    _mcpServerToken = token;
+    notifyListeners();
+    AppLogService.instance.info('MCP server token generated');
+    return token;
+  }
+
+  Future<String> regenerateMcpServerToken() async {
+    final token = McpServerSettings.generateToken();
+    await _secureStorage.write(key: _mcpServerTokenSecureKey, value: token);
+    _mcpServerToken = token;
+    notifyListeners();
+    AppLogService.instance.info('MCP server token regenerated');
+    return token;
   }
 
   void toggleTheme() {
@@ -309,6 +473,18 @@ class AppSettings extends ChangeNotifier {
       case ThemeMode.system:
         return 'system';
     }
+  }
+
+  Future<String> _readOrCreateMcpServerToken() async {
+    final saved =
+        (await _secureStorage.read(key: _mcpServerTokenSecureKey))?.trim();
+    if (saved != null && saved.isNotEmpty) {
+      return saved;
+    }
+    final token = McpServerSettings.generateToken();
+    await _secureStorage.write(key: _mcpServerTokenSecureKey, value: token);
+    AppLogService.instance.info('MCP server token generated');
+    return token;
   }
 }
 

@@ -22,6 +22,7 @@ SSH Mobile is a Flutter-based cross-platform SSH / SFTP client for long-running 
 - 性能监控：包含 Performance、Ports、Applications、Services 四个分区。
 - AI 聊天：支持流式输出、Markdown、聊天历史、消息编辑、重新生成、分支和上下文压缩。
 - AI tools：支持服务器诊断、SFTP 路径操作、客户端信息、WebView 搜索与读取、日志与备份操作。
+- 本地 MCP Server：Windows/macOS/desktop 端可在设置中开启 `127.0.0.1:<port>/mcp` Streamable HTTP + JSON-RPC 端点，并复制 Codex、Claude Code、Gemini CLI 配置。
 - 日志：集中记录 SSH、SFTP、LLM、AI tools 和异常信息，并统一脱敏常见凭据、令牌和私钥内容。
 - 设置与备份：支持语言、主题、字体、AI 设置、聊天和窗口历史导入导出，但不导出密码、私钥或 API Key，导入会做大小、数量和 schema 校验。
 - 附加页面：包含系统管理、Playbook、RAG 知识库、AI Skills、终端历史和客户端 WebView。
@@ -33,7 +34,7 @@ SSH Mobile is a Flutter-based cross-platform SSH / SFTP client for long-running 
 - `lib/main.dart`: 应用启动和 `MultiProvider` 装配入口，注册基础 service 与 feature ViewModel。
 - `lib/features/`: feature 自有目录。当前重点包括 `connection/models|viewmodels|views`、`ai_chat/viewmodels|services`、`settings/viewmodels`、`performance/viewmodels`、`sftp/viewmodels`、`terminal/viewmodels`。
 - `lib/screens/`: 导航壳、页面入口和基于 Dart `part` 的复合 UI 目录，例如 `home/`、`llm_chat/`、`performance_monitor/`、`sftp/`、`terminal/`。这些 screen 主要负责布局、路由和少量瞬时 UI 状态。
-- `lib/services/`: SSH、SFTP、LLM、AI tools、监控、存储等基础设施与 repository-style service，子目录包括 `ai_tool/`、`client_webview/`、`llm_chat/`、`ssh/`、`sftp/`、`storage/`。
+- `lib/services/`: SSH、SFTP、LLM、AI tools、监控、存储、MCP 等基础设施与 repository-style service，子目录包括 `ai_tool/`、`client_webview/`、`llm_chat/`、`mcp/`、`ssh/`、`sftp/`、`storage/`。
 - `lib/data/`: Drift 数据库、DAO 和 Drift-backed repository 实现。`StorageService` 仍作为兼容 facade 暴露现有接口。
 - `lib/core/services/`: 更底层的跨 feature 服务与工厂，例如 `ssh_client_factory.dart`、`data_protection_service.dart`。
 - `lib/models/`: 仍未迁入 feature 的共享模型。
@@ -234,7 +235,7 @@ AI tools 以能力分组维护在 `lib/services/ai_tool/` 中，而不是把逻�
 
 ### Logs, Settings, Backup
 
-日志页记录开发日志、SSH/SFTP 状态、LLM 请求、AI tool 调用和异常。应用设置从 AI 页顶部按钮打开，与 LLM 设置分离，并提供后台通知是否显示服务器名的隐私开关，默认隐藏。增长型结构化数据（AI 聊天、AgentRunMetrics、终端历史元数据、Playbook、SFTP 最近/收藏路径）由 Drift 持久化；小设置仍保留在 SharedPreferences，密码、私钥和 API Key 仍只放 secure storage。导出备份包含服务器、窗口恢复信息、终端历史、AI 设置、AI 聊天、Playbook、AgentRunMetrics、SFTP 路径记录和自定义 Skills，但密码、私钥和 API Key 会保持为空，导入后需要重新配置。
+日志页记录开发日志、SSH/SFTP 状态、LLM 请求、AI tool 调用和异常。应用设置从 AI 页顶部按钮打开，与 LLM 设置分离，并提供后台通知是否显示服务器名的隐私开关，默认隐藏。设置中的 MCP Server 区域可开启本地 `POST /mcp` 端点、选择端口、检查端口占用、重启服务、重新生成 Bearer token，并复制 Codex、Claude Code、Gemini CLI 配置；MVP 只绑定 `127.0.0.1`，拒绝未认证和非本地 Origin 请求，写入/危险 tools 默认只返回 `approval_required`。增长型结构化数据（AI 聊天、AgentRunMetrics、终端历史元数据、Playbook、SFTP 最近/收藏路径）由 Drift 持久化；小设置仍保留在 SharedPreferences，密码、私钥、API Key 和 MCP token 仍只放 secure storage。导出备份包含服务器、窗口恢复信息、终端历史、AI 设置、AI 聊天、Playbook、AgentRunMetrics、SFTP 路径记录和自定义 Skills，但密码、私钥和 API Key 会保持为空，导入后需要重新配置。
 
 Drift 仅用于增长型结构化数据。需要查询或排序的 metadata 可以保持明文，但 AI message 正文、context、attachments、tool traces、todoSteps 和 Playbook content 会在写入 SQLite 前做字段级加密；旧 SharedPreferences protected-pref 数据仍保留为迁移失败或回滚兼容路径。历史 Drift 明文敏感字段会通过 `drift_sensitive_fields_encrypted_v1` 启动迁移重加密，迁移完成后才视为存储安全边界完整。生产数据库打开失败时不会静默切换到内存 SQLite，避免新写入数据在重启后丢失。Startup re-encryption runs in retryable batches and logs row counts only, never sensitive field values.
 

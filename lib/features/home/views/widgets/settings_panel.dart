@@ -16,6 +16,21 @@ class _SettingsPanel extends StatefulWidget {
 }
 
 class _SettingsPanelState extends State<_SettingsPanel> {
+  final TextEditingController _mcpPortController = TextEditingController();
+  final FocusNode _mcpPortFocusNode = FocusNode();
+  Timer? _mcpPortDebounce;
+  bool _checkingMcpPort = false;
+  String? _mcpPortMessage;
+  int? _lastSyncedMcpPort;
+
+  @override
+  void dispose() {
+    _mcpPortDebounce?.cancel();
+    _mcpPortController.dispose();
+    _mcpPortFocusNode.dispose();
+    super.dispose();
+  }
+
   Future<void> _editSftpLimit({
     required String title,
     required int currentBytes,
@@ -104,6 +119,102 @@ class _SettingsPanelState extends State<_SettingsPanel> {
     await onChanged(bytes);
   }
 
+  void _syncMcpPortController(SettingsViewModel settings) {
+    if (_lastSyncedMcpPort == settings.mcpServerPort) return;
+    _lastSyncedMcpPort = settings.mcpServerPort;
+    if (!_mcpPortFocusNode.hasFocus) {
+      _mcpPortController.text = '${settings.mcpServerPort}';
+    }
+  }
+
+  void _onMcpPortChanged(SettingsViewModel settings, String value) {
+    _mcpPortDebounce?.cancel();
+    final port = int.tryParse(value.trim());
+    if (port == null || !McpServerSettings.isValidPort(port)) {
+      setState(() {
+        _mcpPortMessage = AppStrings(settings.language).mcpPortInvalidMessage;
+      });
+      return;
+    }
+    setState(() => _mcpPortMessage = null);
+    _mcpPortDebounce = Timer(const Duration(milliseconds: 300), () {
+      unawaited(_applyMcpPort(settings, port));
+    });
+  }
+
+  Future<void> _applyMcpPort(SettingsViewModel settings, int port) async {
+    try {
+      await settings.setMcpServerPort(port);
+      if (!mounted) return;
+      if (settings.mcpServerRunning) {
+        setState(() {
+          _mcpPortMessage = AppStrings(settings.language).mcpPortRestartNeeded;
+        });
+        return;
+      }
+      await _checkMcpPort(settings);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _mcpPortMessage = AppStrings(settings.language).mcpPortInvalidMessage;
+      });
+    }
+  }
+
+  Future<void> _checkMcpPort(SettingsViewModel settings) async {
+    setState(() => _checkingMcpPort = true);
+    try {
+      final result = await settings.checkMcpPort();
+      if (!mounted || result == null) return;
+      setState(() {
+        _mcpPortMessage = _mcpPortProbeMessage(
+          AppStrings(settings.language),
+          result,
+        );
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _checkingMcpPort = false);
+      }
+    }
+  }
+
+  String _mcpPortProbeMessage(AppStrings strings, McpPortProbeResult result) {
+    if (result.available) return strings.mcpPortAvailable;
+    if (result.reason == McpPortProbeReason.invalidHostOrPort) {
+      return strings.mcpPortInvalidMessage;
+    }
+    return strings.mcpPortOccupied;
+  }
+
+  String _mcpStatusText(AppStrings strings, SettingsViewModel settings) {
+    final snapshot = settings.mcpServerStatus;
+    final status = snapshot?.status ?? McpServerRunStatus.stopped;
+    switch (status) {
+      case McpServerRunStatus.checkingPort:
+        return strings.mcpCheckingPort;
+      case McpServerRunStatus.starting:
+        return strings.mcpStarting;
+      case McpServerRunStatus.running:
+        if (settings.mcpPortRequiresRestart) {
+          return '${strings.mcpRunningAt(snapshot!.url)}\n${strings.mcpPortRestartNeeded}';
+        }
+        return strings.mcpRunningAt(snapshot!.url);
+      case McpServerRunStatus.failed:
+        return snapshot?.lastError ?? strings.mcpFailed;
+      case McpServerRunStatus.stopped:
+        return strings.mcpStopped;
+    }
+  }
+
+  Future<void> _copyMcpText(String text, String message) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
   String _initialLimitMbText(int bytes) {
     final mb = bytes / 1024 / 1024;
     if (mb >= 1 && mb == mb.roundToDouble()) return mb.toStringAsFixed(0);
@@ -135,6 +246,9 @@ class _SettingsPanelState extends State<_SettingsPanel> {
         context.select<SettingsViewModel, _SettingsSecretSnapshot>(
       _SettingsSecretSnapshot.from,
     );
+    context.select<SettingsViewModel, _SettingsMcpSnapshot>(
+      _SettingsMcpSnapshot.from,
+    );
     final settings = context.read<SettingsViewModel>();
     final storage = context.read<SettingsViewModel>();
     final strings = AppStrings(appSnapshot.language);
@@ -142,6 +256,7 @@ class _SettingsPanelState extends State<_SettingsPanel> {
     final cacheEnabled = secretSnapshot.cacheEnabled;
     final cacheTimeoutMinutes = secretSnapshot.cacheTimeoutMinutes;
     final cacheOptions = secretSnapshot.cacheOptions;
+    _syncMcpPortController(settings);
 
     return ListTileTheme(
       dense: false,
@@ -243,6 +358,168 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                   onTap: () {
                     Navigator.pushNamed(context, '/ai-skills');
                   },
+                ),
+                const Divider(height: 18),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  secondary: const Icon(Icons.hub_outlined, size: 20),
+                  title: Text(
+                    strings.mcpServer,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  subtitle: Text(
+                    _mcpStatusText(strings, settings),
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  value: settings.mcpServerEnabled,
+                  onChanged: (value) async {
+                    await settings.setMcpServerEnabled(value);
+                    if (mounted) setState(() {});
+                  },
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(left: 30, bottom: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        strings.mcpServerHint,
+                        style: TextStyle(
+                          color: colorScheme.onSurfaceVariant,
+                          fontSize: 11,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '${strings.mcpHost}: ${settings.mcpServerHost}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: _mcpPortController,
+                        focusNode: _mcpPortFocusNode,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          isDense: true,
+                          labelText: strings.mcpPort,
+                          border: const OutlineInputBorder(),
+                          suffixIcon: _checkingMcpPort
+                              ? const Padding(
+                                  padding: EdgeInsets.all(12),
+                                  child: SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                )
+                              : IconButton(
+                                  tooltip: strings.mcpCheckPort,
+                                  icon: const Icon(Icons.search_rounded),
+                                  onPressed: () => _checkMcpPort(settings),
+                                ),
+                        ),
+                        onChanged: (value) =>
+                            _onMcpPortChanged(settings, value),
+                      ),
+                      if (_mcpPortMessage != null) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          _mcpPortMessage!,
+                          style: TextStyle(
+                            color: _mcpPortMessage == strings.mcpPortAvailable
+                                ? Colors.green
+                                : colorScheme.error,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: Text(
+                          strings.mcpAllowWriteTools,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        subtitle: Text(
+                          strings.mcpAllowWriteToolsHint,
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                        value: settings.mcpAllowWriteTools,
+                        onChanged: settings.setMcpAllowWriteTools,
+                      ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: Text(
+                          strings.mcpRequireApproval,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        value: settings.mcpRequireApprovalForWriteTools,
+                        onChanged: settings.setMcpRequireApprovalForWriteTools,
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            icon: const Icon(Icons.refresh_rounded, size: 16),
+                            label: Text(strings.mcpRestart),
+                            onPressed: () async {
+                              await settings.restartMcpServer();
+                              if (mounted) setState(() {});
+                            },
+                          ),
+                          OutlinedButton.icon(
+                            icon: const Icon(Icons.key_rounded, size: 16),
+                            label: Text(strings.mcpRegenerateToken),
+                            onPressed: () async {
+                              final messenger = ScaffoldMessenger.of(context);
+                              final message = strings.mcpTokenRegenerated;
+                              await settings.regenerateMcpServerToken();
+                              if (!mounted) return;
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  content: Text(message),
+                                ),
+                              );
+                            },
+                          ),
+                          OutlinedButton.icon(
+                            icon: const Icon(Icons.copy_rounded, size: 16),
+                            label: Text(strings.mcpCopyCodex),
+                            onPressed: () => _copyMcpText(
+                              settings.mcpCodexConfig,
+                              strings.mcpCopied,
+                            ),
+                          ),
+                          OutlinedButton.icon(
+                            icon: const Icon(Icons.copy_rounded, size: 16),
+                            label: Text(strings.mcpCopyClaude),
+                            onPressed: () => _copyMcpText(
+                              settings.mcpClaudeCodeCommand,
+                              strings.mcpCopied,
+                            ),
+                          ),
+                          OutlinedButton.icon(
+                            icon: const Icon(Icons.copy_rounded, size: 16),
+                            label: Text(strings.mcpCopyGemini),
+                            onPressed: () => _copyMcpText(
+                              settings.mcpGeminiCliConfig,
+                              strings.mcpCopied,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -520,6 +797,82 @@ class _SettingsSecretSnapshot {
         cacheTimeoutMinutes,
         Object.hashAll(cacheOptions),
         showServerNamesInNotifications,
+      );
+}
+
+class _SettingsMcpSnapshot {
+  final bool enabled;
+  final String host;
+  final int port;
+  final bool allowWriteTools;
+  final bool requireApprovalForWriteTools;
+  final bool running;
+  final bool portRequiresRestart;
+  final McpServerRunStatus status;
+  final String? lastError;
+  final bool? lastPortAvailable;
+  final String token;
+
+  const _SettingsMcpSnapshot({
+    required this.enabled,
+    required this.host,
+    required this.port,
+    required this.allowWriteTools,
+    required this.requireApprovalForWriteTools,
+    required this.running,
+    required this.portRequiresRestart,
+    required this.status,
+    required this.lastError,
+    required this.lastPortAvailable,
+    required this.token,
+  });
+
+  factory _SettingsMcpSnapshot.from(SettingsViewModel settings) {
+    final status = settings.mcpServerStatus;
+    return _SettingsMcpSnapshot(
+      enabled: settings.mcpServerEnabled,
+      host: settings.mcpServerHost,
+      port: settings.mcpServerPort,
+      allowWriteTools: settings.mcpAllowWriteTools,
+      requireApprovalForWriteTools: settings.mcpRequireApprovalForWriteTools,
+      running: settings.mcpServerRunning,
+      portRequiresRestart: settings.mcpPortRequiresRestart,
+      status: status?.status ?? McpServerRunStatus.stopped,
+      lastError: status?.lastError,
+      lastPortAvailable: settings.mcpLastPortProbe?.available,
+      token: settings.mcpServerToken,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is _SettingsMcpSnapshot &&
+        other.enabled == enabled &&
+        other.host == host &&
+        other.port == port &&
+        other.allowWriteTools == allowWriteTools &&
+        other.requireApprovalForWriteTools == requireApprovalForWriteTools &&
+        other.running == running &&
+        other.portRequiresRestart == portRequiresRestart &&
+        other.status == status &&
+        other.lastError == lastError &&
+        other.lastPortAvailable == lastPortAvailable &&
+        other.token == token;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        enabled,
+        host,
+        port,
+        allowWriteTools,
+        requireApprovalForWriteTools,
+        running,
+        portRequiresRestart,
+        status,
+        lastError,
+        lastPortAvailable,
+        token,
       );
 }
 
