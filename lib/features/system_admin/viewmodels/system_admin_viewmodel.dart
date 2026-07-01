@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../core/services/ssh_host_key_policy.dart';
 import '../../../services/system_admin_service.dart';
@@ -274,25 +275,66 @@ class SystemAdminViewModel extends ChangeNotifier {
     await fetchPorts(id, force: true);
   }
 
+  Duration debounceDuration = const Duration(milliseconds: 300);
+  Timer? _debounceTimer;
+
+  /// Cancel all active management commands and reset loading states
+  void cancelActiveCommands() {
+    _debounceTimer?.cancel();
+    _debounceTimer = null;
+
+    _adminService.cancelActiveCommands();
+    bool stateChanged = false;
+    if (_loadingAccounts) {
+      _loadingAccounts = false;
+      stateChanged = true;
+    }
+    if (_loadingSessions) {
+      _loadingSessions = false;
+      stateChanged = true;
+    }
+    if (_loadingServices) {
+      _loadingServices = false;
+      stateChanged = true;
+    }
+    if (_loadingPorts) {
+      _loadingPorts = false;
+      stateChanged = true;
+    }
+    if (stateChanged) {
+      notifyListeners();
+    }
+  }
+
   Future<void> fetchAccounts(String connId, {bool force = false}) async {
     if (!force && _accountsLoadedFor == connId) return;
     if (activeManagementConnectionId != connId) return;
 
+    cancelActiveCommands();
     _loadingAccounts = true;
     notifyListeners();
-    try {
-      final data = await _adminService.getUserAccounts(connId);
-      if (_selectedConnectionId != connId ||
-          activeManagementConnectionId != connId) {
-        return;
+
+    Future<void> performFetch() async {
+      try {
+        final data = await _adminService.getUserAccounts(connId);
+        if (_selectedConnectionId != connId ||
+            activeManagementConnectionId != connId) {
+          return;
+        }
+        _accounts = data;
+        _accountsLoadedFor = connId;
+      } finally {
+        if (_selectedConnectionId == connId) {
+          _loadingAccounts = false;
+          notifyListeners();
+        }
       }
-      _accounts = data;
-      _accountsLoadedFor = connId;
-    } finally {
-      if (_selectedConnectionId == connId) {
-        _loadingAccounts = false;
-        notifyListeners();
-      }
+    }
+
+    if (debounceDuration == Duration.zero) {
+      await performFetch();
+    } else {
+      _debounceTimer = Timer(debounceDuration, performFetch);
     }
   }
 
@@ -300,21 +342,31 @@ class SystemAdminViewModel extends ChangeNotifier {
     if (!force && _sessionsLoadedFor == connId) return;
     if (activeManagementConnectionId != connId) return;
 
+    cancelActiveCommands();
     _loadingSessions = true;
     notifyListeners();
-    try {
-      final data = await _adminService.getActiveSessions(connId);
-      if (_selectedConnectionId != connId ||
-          activeManagementConnectionId != connId) {
-        return;
+
+    Future<void> performFetch() async {
+      try {
+        final data = await _adminService.getActiveSessions(connId);
+        if (_selectedConnectionId != connId ||
+            activeManagementConnectionId != connId) {
+          return;
+        }
+        _sessions = data;
+        _sessionsLoadedFor = connId;
+      } finally {
+        if (_selectedConnectionId == connId) {
+          _loadingSessions = false;
+          notifyListeners();
+        }
       }
-      _sessions = data;
-      _sessionsLoadedFor = connId;
-    } finally {
-      if (_selectedConnectionId == connId) {
-        _loadingSessions = false;
-        notifyListeners();
-      }
+    }
+
+    if (debounceDuration == Duration.zero) {
+      await performFetch();
+    } else {
+      _debounceTimer = Timer(debounceDuration, performFetch);
     }
   }
 
@@ -322,21 +374,31 @@ class SystemAdminViewModel extends ChangeNotifier {
     if (!force && _servicesLoadedFor == connId) return;
     if (activeManagementConnectionId != connId) return;
 
+    cancelActiveCommands();
     _loadingServices = true;
     notifyListeners();
-    try {
-      final data = await _adminService.getSystemdServices(connId);
-      if (_selectedConnectionId != connId ||
-          activeManagementConnectionId != connId) {
-        return;
+
+    Future<void> performFetch() async {
+      try {
+        final data = await _adminService.getSystemdServices(connId);
+        if (_selectedConnectionId != connId ||
+            activeManagementConnectionId != connId) {
+          return;
+        }
+        _services = data;
+        _servicesLoadedFor = connId;
+      } finally {
+        if (_selectedConnectionId == connId) {
+          _loadingServices = false;
+          notifyListeners();
+        }
       }
-      _services = data;
-      _servicesLoadedFor = connId;
-    } finally {
-      if (_selectedConnectionId == connId) {
-        _loadingServices = false;
-        notifyListeners();
-      }
+    }
+
+    if (debounceDuration == Duration.zero) {
+      await performFetch();
+    } else {
+      _debounceTimer = Timer(debounceDuration, performFetch);
     }
   }
 
@@ -344,21 +406,31 @@ class SystemAdminViewModel extends ChangeNotifier {
     if (!force && _portsLoadedFor == connId) return;
     if (activeManagementConnectionId != connId) return;
 
+    cancelActiveCommands();
     _loadingPorts = true;
     notifyListeners();
-    try {
-      final data = await _adminService.getListeningPorts(connId);
-      if (_selectedConnectionId != connId ||
-          activeManagementConnectionId != connId) {
-        return;
+
+    Future<void> performFetch() async {
+      try {
+        final data = await _adminService.getListeningPorts(connId);
+        if (_selectedConnectionId != connId ||
+            activeManagementConnectionId != connId) {
+          return;
+        }
+        _ports = data;
+        _portsLoadedFor = connId;
+      } finally {
+        if (_selectedConnectionId == connId) {
+          _loadingPorts = false;
+          notifyListeners();
+        }
       }
-      _ports = data;
-      _portsLoadedFor = connId;
-    } finally {
-      if (_selectedConnectionId == connId) {
-        _loadingPorts = false;
-        notifyListeners();
-      }
+    }
+
+    if (debounceDuration == Duration.zero) {
+      await performFetch();
+    } else {
+      _debounceTimer = Timer(debounceDuration, performFetch);
     }
   }
 

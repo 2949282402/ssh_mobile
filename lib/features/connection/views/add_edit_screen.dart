@@ -34,7 +34,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   final _tmuxAutoDeleteController = TextEditingController(text: '10');
 
   AuthMethod _authMethod = AuthMethod.password;
-  TerminalLaunchMode _launchMode = TerminalLaunchMode.tmux;
+  TerminalLaunchMode _launchMode = TerminalLaunchMode.ssh;
   ServerPlatform _serverPlatform = ServerPlatform.linux;
   bool _keepAlive = true;
   bool _obscurePassword = true;

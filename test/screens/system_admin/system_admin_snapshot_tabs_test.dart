@@ -114,6 +114,12 @@ class StubSystemAdminViewModel extends ChangeNotifier
       selectedConnectionId != null && selectedConnection != null;
 
   @override
+  void cancelActiveCommands() {}
+
+  @override
+  Duration debounceDuration = Duration.zero;
+
+  @override
   ConnectionConfig? connectionById(String? id) {
     if (id == null || id.isEmpty) return null;
     for (final connection in connections) {

@@ -60,6 +60,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _aiHistoryVisible = false;
   bool _serverSelectionMode = false;
   final Set<String> _selectedServerIds = {};
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   @override
   void initState() {
@@ -119,12 +120,53 @@ class _HomeScreenState extends State<HomeScreen> {
             if (desktop || notification.metrics.axis != Axis.horizontal) {
               return false;
             }
+
+            // Check for horizontal overscroll (left-to-right at start, or right-to-left at end)
+            final double overscrollAmount;
+            if (notification is OverscrollNotification) {
+              overscrollAmount = notification.overscroll;
+            } else {
+              final metrics = notification.metrics;
+              if (metrics.pixels < 0.0) {
+                overscrollAmount = metrics.pixels;
+              } else if (metrics.pixels > metrics.maxScrollExtent) {
+                overscrollAmount = metrics.pixels - metrics.maxScrollExtent;
+              } else {
+                overscrollAmount = 0.0;
+              }
+            }
+
+            if (overscrollAmount < -20.0) {
+              if (_selectedIndex == _serverPage && notification.depth == 0) {
+                Future.microtask(() {
+                  if (context.mounted) _openSettings(context);
+                });
+                return true;
+              } else if (_selectedIndex == _adminPage &&
+                  notification.depth > 0) {
+                // Swipe left-to-right on first tab (Monitor) -> switch to AI Chat
+                Future.microtask(() {
+                  if (context.mounted) _switchPage(_aiPage);
+                });
+                return true;
+              }
+            } else if (overscrollAmount > 20.0) {
+              if (_selectedIndex == _adminPage && notification.depth > 0) {
+                // Swipe right-to-left on last tab (System Power) -> switch to Logs
+                Future.microtask(() {
+                  if (context.mounted) _switchPage(_logPage);
+                });
+                return true;
+              }
+            }
             return false;
           },
           child: PageView.builder(
             controller: _pageController,
             itemCount: _lastPage + 1,
-            physics: const BouncingScrollPhysics(),
+            physics: _selectedIndex == _adminPage
+                ? const NeverScrollableScrollPhysics()
+                : const BouncingScrollPhysics(),
             allowImplicitScrolling: false,
             onPageChanged: (index) {
               if (_selectedIndex != index) {
@@ -143,6 +185,11 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     return Scaffold(
+      key: _scaffoldKey,
+      drawer: _selectedIndex == _serverPage
+          ? _buildSettingsDrawer(context, strings)
+          : null,
+      drawerEnableOpenDragGesture: _selectedIndex == _serverPage,
       body: SafeArea(
         bottom: false,
         child: Stack(
@@ -166,9 +213,10 @@ class _HomeScreenState extends State<HomeScreen> {
               child: const Icon(Icons.add),
             )
           : null,
-      bottomNavigationBar: desktop || _aiHistoryVisible
-          ? null
-          : _buildBottomNavigation(context, strings),
+      bottomNavigationBar:
+          desktop || (_selectedIndex == _aiPage && _aiHistoryVisible)
+              ? null
+              : _buildBottomNavigation(context, strings),
     );
   }
 
@@ -253,7 +301,7 @@ class _HomeScreenState extends State<HomeScreen> {
         borderColor: colorScheme.outlineVariant.withValues(alpha: 0.5),
       ),
       child: Container(
-        height: 80 + mediaQuery.padding.bottom,
+        height: 64.0 + mediaQuery.padding.bottom,
         color: Colors.transparent,
         child: SafeArea(
           top: false,
@@ -320,7 +368,7 @@ class _HomeScreenState extends State<HomeScreen> {
             AnimatedContainer(
               duration: const Duration(milliseconds: 250),
               curve: Curves.easeOutCubic,
-              transform: Matrix4.translationValues(0, isSelected ? -6 : 0, 0),
+              transform: Matrix4.translationValues(0, isSelected ? -3 : 0, 0),
               child: Stack(
                 alignment: Alignment.center,
                 clipBehavior: Clip.none,
@@ -328,13 +376,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   AnimatedContainer(
                     duration: const Duration(milliseconds: 250),
                     curve: Curves.easeOutCubic,
-                    width: 64,
-                    height: 32,
+                    width: 56,
+                    height: 28,
                     decoration: BoxDecoration(
                       color: isSelected
                           ? colorScheme.primary.withValues(alpha: 0.08)
                           : Colors.transparent,
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(14),
                     ),
                   ),
                   IconTheme(
@@ -342,14 +390,14 @@ class _HomeScreenState extends State<HomeScreen> {
                       color: isSelected
                           ? colorScheme.primary
                           : colorScheme.onSurfaceVariant,
-                      size: 22,
+                      size: 20,
                     ),
                     child: isSelected ? selectedIcon : icon,
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 2),
             AnimatedDefaultTextStyle(
               duration: const Duration(milliseconds: 250),
               curve: Curves.easeOutCubic,
@@ -357,7 +405,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 color: isSelected
                     ? colorScheme.primary
                     : colorScheme.onSurfaceVariant,
-                fontSize: 12,
+                fontSize: 11,
                 fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
                 letterSpacing: 0,
               ),
@@ -388,7 +436,7 @@ class _HomeScreenState extends State<HomeScreen> {
             AnimatedContainer(
               duration: const Duration(milliseconds: 250),
               curve: Curves.easeOutCubic,
-              transform: Matrix4.translationValues(0, isSelected ? -6 : 0, 0),
+              transform: Matrix4.translationValues(0, isSelected ? -3 : 0, 0),
               child: Stack(
                 alignment: Alignment.center,
                 clipBehavior: Clip.none,
@@ -396,13 +444,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   AnimatedContainer(
                     duration: const Duration(milliseconds: 250),
                     curve: Curves.easeOutCubic,
-                    width: 64,
-                    height: 32,
+                    width: 56,
+                    height: 28,
                     decoration: BoxDecoration(
                       color: isSelected
                           ? colorScheme.primary.withValues(alpha: 0.08)
                           : Colors.transparent,
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(14),
                     ),
                   ),
                   IconTheme(
@@ -410,14 +458,14 @@ class _HomeScreenState extends State<HomeScreen> {
                       color: isSelected
                           ? colorScheme.primary
                           : colorScheme.onSurfaceVariant,
-                      size: 22,
+                      size: 20,
                     ),
                     child: isSelected ? selectedIcon : icon,
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 2),
             _buildAiLabel(context, isSelected),
           ],
         ),
@@ -510,28 +558,18 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openSettings(BuildContext context) {
-    final settings = context.read<AppSettings>();
-    final strings = AppStrings(settings.language);
-    Navigator.push(
-      context,
-      PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) => _SettingsPage(
+    _scaffoldKey.currentState?.openDrawer();
+  }
+
+  Widget _buildSettingsDrawer(BuildContext context, AppStrings strings) {
+    return SizedBox(
+      width: MediaQuery.sizeOf(context).width * 0.85,
+      child: Drawer(
+        child: _SettingsPage(
           appTitle: strings.appTitle,
           onExport: () => _exportAppData(context, strings),
           onImport: () => _importAppData(context, strings),
         ),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          const begin = Offset(-1.0, 0.0);
-          const end = Offset.zero;
-          const curve = Curves.easeOutCubic;
-          var tween =
-              Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
-          return SlideTransition(
-            position: animation.drive(tween),
-            child: child,
-          );
-        },
-        transitionDuration: const Duration(milliseconds: 260),
       ),
     );
   }
@@ -547,8 +585,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _DeferredNavPage(
         active: active,
         loading: _buildLoadingState(),
-        keepAliveAfterFirstBuild:
-            index == _aiPage || index == _sftpPage || index == _adminPage,
+        keepAliveAfterFirstBuild: true,
         builder: (context) {
           switch (index) {
             case _aiPage:
@@ -767,25 +804,7 @@ class _AnimatedPageFadeIn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TweenAnimationBuilder<double>(
-      key: ValueKey(active),
-      tween: Tween(begin: 0.0, end: active ? 1.0 : 0.0),
-      duration: const Duration(milliseconds: 320),
-      curve: Curves.easeOutCubic,
-      builder: (context, value, child) {
-        if (value == 0.0 && !active) {
-          return const SizedBox.shrink();
-        }
-        return Opacity(
-          opacity: value,
-          child: Transform.translate(
-            offset: Offset(0, 16 * (1 - value)),
-            child: child,
-          ),
-        );
-      },
-      child: child,
-    );
+    return child;
   }
 }
 
@@ -840,8 +859,8 @@ class BottomNavCurvePainter extends CustomPainter {
     required this.scrollPosition,
     required this.backgroundColor,
     required this.borderColor,
-    this.domeWidth = 75.0,
-    this.domeHeight = 10.0,
+    this.domeWidth = 100.0,
+    this.domeHeight = 5.0,
   });
 
   @override
@@ -850,74 +869,115 @@ class BottomNavCurvePainter extends CustomPainter {
       ..color = backgroundColor
       ..style = PaintingStyle.fill;
 
-    final borderPaint = Paint()
-      ..color = borderColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0;
-
     final double tabWidth = size.width / 5;
     final double centerX = (scrollPosition + 0.5) * tabWidth;
+
+    // Smoothly scale down dome height near the left/right boundaries
+    // to prevent overlapping with the edges.
+    final double threshold = domeWidth / 2;
+    double currentDomeHeight = domeHeight;
+
+    if (centerX < threshold) {
+      if (centerX <= 0) {
+        currentDomeHeight = 0.0;
+      } else {
+        final double t = centerX / threshold;
+        currentDomeHeight = domeHeight * (t * t); // Quadratic easing
+      }
+    } else if (size.width - centerX < threshold) {
+      final double distToRight = size.width - centerX;
+      if (distToRight <= 0) {
+        currentDomeHeight = 0.0;
+      } else {
+        final double t = distToRight / threshold;
+        currentDomeHeight = domeHeight * (t * t); // Quadratic easing
+      }
+    }
+
+    double domeStart = centerX - domeWidth / 2;
+    double domeEnd = centerX + domeWidth / 2;
+
+    if (domeStart < 0) {
+      domeStart = 0;
+    }
+    if (domeEnd > size.width) {
+      domeEnd = size.width;
+    }
 
     final path = Path();
     path.moveTo(0, 0);
 
-    final domeStart = centerX - domeWidth / 2;
-    final domeEnd = centerX + domeWidth / 2;
+    // Line to dome start
+    path.lineTo(domeStart, 0);
 
-    if (domeStart > 0) {
-      path.lineTo(domeStart, 0);
-    } else {
-      path.moveTo(0, 0);
+    // Draw the dome (only if height > 0)
+    if (currentDomeHeight > 0) {
+      path.cubicTo(
+        centerX - domeWidth * 0.35,
+        0,
+        centerX - domeWidth * 0.22,
+        -currentDomeHeight,
+        centerX,
+        -currentDomeHeight,
+      );
+      path.cubicTo(
+        centerX + domeWidth * 0.22,
+        -currentDomeHeight,
+        centerX + domeWidth * 0.35,
+        0,
+        domeEnd,
+        0,
+      );
     }
 
-    path.cubicTo(
-      centerX - domeWidth / 4,
-      0,
-      centerX - domeWidth / 4,
-      -domeHeight,
-      centerX,
-      -domeHeight,
-    );
-    path.cubicTo(
-      centerX + domeWidth / 4,
-      -domeHeight,
-      centerX + domeWidth / 4,
-      0,
-      domeEnd,
-      0,
-    );
-
+    // Line to top-right corner
     path.lineTo(size.width, 0);
     path.lineTo(size.width, size.height);
     path.lineTo(0, size.height);
     path.close();
 
+    // 1. Draw a very soft drop shadow under the top edge for elegant depth
+    final shadowPath = Path();
+    shadowPath.moveTo(0, 0);
+    if (domeStart > 0) {
+      shadowPath.lineTo(domeStart, 0);
+    }
+    if (currentDomeHeight > 0) {
+      shadowPath.cubicTo(
+        centerX - domeWidth * 0.35,
+        0,
+        centerX - domeWidth * 0.22,
+        -currentDomeHeight,
+        centerX,
+        -currentDomeHeight,
+      );
+      shadowPath.cubicTo(
+        centerX + domeWidth * 0.22,
+        -currentDomeHeight,
+        centerX + domeWidth * 0.35,
+        0,
+        domeEnd,
+        0,
+      );
+    }
+    shadowPath.lineTo(size.width, 0);
+
+    final shadowPaint = Paint()
+      ..color = Colors.black.withValues(alpha: 0.05)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0;
+    shadowPaint.maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.5);
+    canvas.drawPath(shadowPath, shadowPaint);
+
+    // 2. Draw the solid background
     canvas.drawPath(path, paint);
 
-    final borderPath = Path();
-    borderPath.moveTo(0, 0);
-    if (domeStart > 0) {
-      borderPath.lineTo(domeStart, 0);
-    }
-    borderPath.cubicTo(
-      centerX - domeWidth / 4,
-      0,
-      centerX - domeWidth / 4,
-      -domeHeight,
-      centerX,
-      -domeHeight,
-    );
-    borderPath.cubicTo(
-      centerX + domeWidth / 4,
-      -domeHeight,
-      centerX + domeWidth / 4,
-      0,
-      domeEnd,
-      0,
-    );
-    borderPath.lineTo(size.width, 0);
-
-    canvas.drawPath(borderPath, borderPaint);
+    // 3. Draw the top border line
+    final borderPaint = Paint()
+      ..color = borderColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+    canvas.drawPath(shadowPath, borderPaint);
   }
 
   @override

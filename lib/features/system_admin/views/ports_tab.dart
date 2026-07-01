@@ -1,4 +1,4 @@
-﻿part of 'system_admin_screen.dart';
+part of 'system_admin_screen.dart';
 
 class _PortsManageSnapshot {
   final bool isConnecting;
@@ -93,7 +93,12 @@ class _PortsTabState extends State<_PortsTab>
     final monitorViewModel = context.read<PerformanceMonitorViewModel>();
     if (force || _portsFuture == null || _portsSelectionKey != connectionId) {
       _portsSelectionKey = connectionId;
-      _portsFuture = _loadPorts(monitorViewModel, connectionId);
+      _portsFuture =
+          Future.delayed(const Duration(milliseconds: 300)).then((_) {
+        if (!mounted || !_isActive)
+          return <String, List<PortProcessSnapshot>>{};
+        return _loadPorts(monitorViewModel, connectionId);
+      });
     }
   }
 

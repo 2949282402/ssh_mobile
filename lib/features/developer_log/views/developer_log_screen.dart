@@ -6,7 +6,6 @@ import 'package:ssh_mobile/features/developer_log/viewmodels/developer_log_viewm
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
-import 'package:ssh_mobile/utils/responsive.dart';
 
 extension _DeveloperLogStrings on AppStrings {
   String get copySelectedLogs =>
@@ -143,12 +142,6 @@ class _DeveloperLogToolbar extends StatelessWidget {
                     viewModel.clearLogs();
                     onClearSuccess();
                   }
-                },
-              ),
-              IconButton(
-                icon: const Icon(Icons.settings_outlined),
-                onPressed: () {
-                  OpenSettingsNotification().dispatch(context);
                 },
               ),
             ],
