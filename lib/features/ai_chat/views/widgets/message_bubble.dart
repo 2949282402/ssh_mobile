@@ -182,7 +182,18 @@ class _MessageBubble extends StatelessWidget {
           ],
         ),
       ),
-    );
+    )
+        .animate(
+          key: ValueKey(
+              'msg-animate-${message.createdAt.microsecondsSinceEpoch}'),
+        )
+        .fade(duration: 200.ms)
+        .slideX(
+          begin: isUser ? 0.05 : -0.05,
+          end: 0,
+          duration: 200.ms,
+          curve: Curves.easeOutQuad,
+        );
   }
 
   Widget _buildApproveButton(BuildContext context) {

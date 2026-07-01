@@ -11,6 +11,7 @@ import 'package:flutter/rendering.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 
 import 'package:ssh_mobile/features/client_webview/views/client_webview_screen.dart';
 import 'package:ssh_mobile/features/ai_chat/pages/agent_trace_debug_page.dart';

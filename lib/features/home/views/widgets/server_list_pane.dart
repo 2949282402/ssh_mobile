@@ -244,231 +244,275 @@ extension _HomeScreenStateServerList on _HomeScreenState {
 
     final windowsExpanded = _expandedConnectionWindowIds.contains(conn.id);
 
-    return TactileFeedback(
-      onTap:
-          !_serverSelectionMode ? () => _openNewTerminal(context, conn) : null,
-      onLongPress: () {
-        if (!_serverSelectionMode) {
-          updateState(() {
-            _serverSelectionMode = true;
-            _selectedServerIds.add(conn.id);
-          });
-        }
-      },
-      child: Container(
-        margin: EdgeInsets.only(bottom: 10 * scale),
-        padding: EdgeInsets.all(14 * scale),
-        decoration: BoxDecoration(
-          color: cardBgColor,
-          borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-          border: Border.all(
-            color: activeBorderColor,
-            width: 1,
+    bool isHovered = false;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final extColors = Theme.of(context).extension<ExtendedColors>();
+
+    return StatefulBuilder(
+      builder: (context, setStateCard) {
+        return MouseRegion(
+          onEnter: (_) => setStateCard(() => isHovered = true),
+          onExit: (_) => setStateCard(() => isHovered = false),
+          child: AnimatedScale(
+            scale: isHovered ? 1.015 : 1.0,
+            duration: const Duration(milliseconds: 150),
+            curve: Curves.easeOutCubic,
+            child: TactileFeedback(
+              onTap: !_serverSelectionMode
+                  ? () => _openNewTerminal(context, conn)
+                  : null,
+              onLongPress: () {
+                if (!_serverSelectionMode) {
+                  updateState(() {
+                    _serverSelectionMode = true;
+                    _selectedServerIds.add(conn.id);
+                  });
+                }
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                curve: Curves.easeOutCubic,
+                margin: EdgeInsets.only(bottom: 10 * scale),
+                padding: EdgeInsets.all(14 * scale),
+                decoration: BoxDecoration(
+                  color: isHovered
+                      ? (isDark
+                          ? colorScheme.surfaceContainerHighest
+                              .withValues(alpha: 0.15)
+                          : colorScheme.surfaceContainerHighest
+                              .withValues(alpha: 0.40))
+                      : cardBgColor,
+                  borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+                  border: Border.all(
+                    color: isHovered
+                        ? (extColors?.cardHoverBorder ??
+                            colorScheme.primary.withValues(alpha: 0.40))
+                        : activeBorderColor,
+                    width: 1,
+                  ),
+                  boxShadow: isHovered
+                      ? [
+                          BoxShadow(
+                            color: colorScheme.primary
+                                .withValues(alpha: isDark ? 0.12 : 0.05),
+                            blurRadius: 8,
+                            offset: const Offset(0, 4),
+                          )
+                        ]
+                      : const [],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Layer 1: Status Icon, Name, and Connection Status Chip
+                    Row(
+                      children: [
+                        if (!_serverSelectionMode)
+                          ReorderableDragStartListener(
+                            index: connIndex,
+                            child: Padding(
+                              padding: EdgeInsets.only(right: 8 * scale),
+                              child: Icon(
+                                Icons.drag_handle,
+                                size: 20 * scale,
+                                color: mutedTextColor.withValues(alpha: 0.5),
+                              ),
+                            ),
+                          ),
+                        if (_serverSelectionMode)
+                          Checkbox(
+                            value: isSelected,
+                            onChanged: (_) => _toggleServerSelection(conn.id),
+                          ),
+                        Container(
+                          width: 36 * scale,
+                          height: 36 * scale,
+                          decoration: BoxDecoration(
+                            color: isActive
+                                ? success.withValues(alpha: 0.15)
+                                : primary.withValues(alpha: 0.1),
+                            borderRadius:
+                                BorderRadius.circular(AppTheme.radiusSmall),
+                          ),
+                          child: Icon(
+                            _getStatusIcon(conn, latestState),
+                            color: isActive ? success : primary,
+                            size: 20 * scale,
+                          ),
+                        ),
+                        SizedBox(width: 12 * scale),
+                        Expanded(
+                          child: OverflowScrollText(
+                            conn.name,
+                            selectable: false,
+                            maxLines: 1,
+                            style: TextStyle(
+                              color: textColor,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        if (latestState != null &&
+                            latestState != SshConnectionState.disconnected) ...[
+                          SizedBox(width: 8 * scale),
+                          _buildConnectionStatusChip(
+                              context, latestState, strings, scale),
+                        ],
+                      ],
+                    ),
+                    SizedBox(height: 8 * scale),
+                    // Layer 2: username@host:port, session count badge, and health chip
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.dns_outlined,
+                          size: 13 * scale,
+                          color: mutedTextColor.withValues(alpha: 0.72),
+                        ),
+                        SizedBox(width: 5 * scale),
+                        Flexible(
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Text(
+                              '${conn.username}@${conn.host}:${conn.port}',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: mutedTextColor,
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (sessionCount > 0) ...[
+                          SizedBox(width: 8 * scale),
+                          Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 6 * scale,
+                              vertical: 2 * scale,
+                            ),
+                            decoration: BoxDecoration(
+                              color: success.withValues(alpha: 0.1),
+                              borderRadius:
+                                  BorderRadius.circular(AppTheme.radiusPill),
+                            ),
+                            child: Text(
+                              strings.language == AppLanguage.en
+                                  ? '$sessionCount window${sessionCount == 1 ? "" : "s"}'
+                                  : '$sessionCount 个窗口',
+                              style: TextStyle(
+                                color: success,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    SizedBox(height: 6 * scale),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Selector<PerformanceMonitorService,
+                          ServerHealthSnapshot>(
+                        selector: (_, monitor) => monitor.healthFor(conn.id),
+                        builder: (context, health, _) =>
+                            _buildHealthChip(context, health, strings),
+                      ),
+                    ),
+                    SizedBox(height: 12 * scale),
+                    Divider(height: 1, color: colorScheme.outlineVariant),
+                    SizedBox(height: 8 * scale),
+                    // Layer 3: Action buttons (New Window, Window List Toggle, and More Menu)
+                    Row(
+                      children: [
+                        TextButton.icon(
+                          onPressed: () => _openNewTerminal(context, conn),
+                          icon: Icon(Icons.add_to_photos_outlined,
+                              size: 16 * scale),
+                          label: Text(strings.newWindow),
+                          style: TextButton.styleFrom(
+                            padding: EdgeInsets.symmetric(
+                                horizontal: 8 * scale, vertical: 4 * scale),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
+                        if (sessionCount > 0) ...[
+                          SizedBox(width: 8 * scale),
+                          TextButton.icon(
+                            onPressed: () => _toggleConnectionWindows(conn.id),
+                            icon: Icon(
+                              windowsExpanded
+                                  ? Icons.expand_less_rounded
+                                  : Icons.expand_more_rounded,
+                              size: 16 * scale,
+                            ),
+                            label: Text(
+                              strings.language == AppLanguage.en
+                                  ? 'Window List · $sessionCount'
+                                  : '窗口列表 · $sessionCount',
+                            ),
+                            style: TextButton.styleFrom(
+                              padding: EdgeInsets.symmetric(
+                                  horizontal: 8 * scale, vertical: 4 * scale),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          ),
+                        ],
+                        const Spacer(),
+                        if (!_serverSelectionMode)
+                          PopupMenuButton<String>(
+                            icon: Icon(Icons.more_vert,
+                                color: mutedTextColor, size: 20 * scale),
+                            onSelected: (action) =>
+                                _handleAction(context, conn, action),
+                            itemBuilder: (_) => [
+                              PopupMenuItem(
+                                value: 'edit',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.edit, size: 18 * scale),
+                                    SizedBox(width: 8 * scale),
+                                    Text(strings.edit),
+                                  ],
+                                ),
+                              ),
+                              PopupMenuItem(
+                                value: 'delete',
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.delete,
+                                      size: 18 * scale,
+                                      color: colorScheme.error,
+                                    ),
+                                    SizedBox(width: 8 * scale),
+                                    Text(
+                                      strings.delete,
+                                      style:
+                                          TextStyle(color: colorScheme.error),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                      ],
+                    ),
+                    if (windowsExpanded)
+                      TerminalWindowsPage(
+                        key:
+                            PageStorageKey<String>('server-windows-${conn.id}'),
+                        connectionId: conn.id,
+                        showHeader: false,
+                        embedded: true,
+                      ),
+                  ],
+                ),
+              ),
+            ),
           ),
-          boxShadow: const [],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Layer 1: Status Icon, Name, and Connection Status Chip
-            Row(
-              children: [
-                if (!_serverSelectionMode)
-                  ReorderableDragStartListener(
-                    index: connIndex,
-                    child: Padding(
-                      padding: EdgeInsets.only(right: 8 * scale),
-                      child: Icon(
-                        Icons.drag_handle,
-                        size: 20 * scale,
-                        color: mutedTextColor.withValues(alpha: 0.5),
-                      ),
-                    ),
-                  ),
-                if (_serverSelectionMode)
-                  Checkbox(
-                    value: isSelected,
-                    onChanged: (_) => _toggleServerSelection(conn.id),
-                  ),
-                Container(
-                  width: 36 * scale,
-                  height: 36 * scale,
-                  decoration: BoxDecoration(
-                    color: isActive
-                        ? success.withValues(alpha: 0.15)
-                        : primary.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                  ),
-                  child: Icon(
-                    _getStatusIcon(conn, latestState),
-                    color: isActive ? success : primary,
-                    size: 20 * scale,
-                  ),
-                ),
-                SizedBox(width: 12 * scale),
-                Expanded(
-                  child: OverflowScrollText(
-                    conn.name,
-                    selectable: false,
-                    maxLines: 1,
-                    style: TextStyle(
-                      color: textColor,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                if (latestState != null &&
-                    latestState != SshConnectionState.disconnected) ...[
-                  SizedBox(width: 8 * scale),
-                  _buildConnectionStatusChip(
-                      context, latestState, strings, scale),
-                ],
-              ],
-            ),
-            SizedBox(height: 8 * scale),
-            // Layer 2: username@host:port, session count badge, and health chip
-            Row(
-              children: [
-                Icon(
-                  Icons.dns_outlined,
-                  size: 13 * scale,
-                  color: mutedTextColor.withValues(alpha: 0.72),
-                ),
-                SizedBox(width: 5 * scale),
-                Flexible(
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Text(
-                      '${conn.username}@${conn.host}:${conn.port}',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: mutedTextColor,
-                      ),
-                    ),
-                  ),
-                ),
-                if (sessionCount > 0) ...[
-                  SizedBox(width: 8 * scale),
-                  Container(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: 6 * scale,
-                      vertical: 2 * scale,
-                    ),
-                    decoration: BoxDecoration(
-                      color: success.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(AppTheme.radiusPill),
-                    ),
-                    child: Text(
-                      strings.language == AppLanguage.en
-                          ? '$sessionCount window${sessionCount == 1 ? "" : "s"}'
-                          : '$sessionCount 个窗口',
-                      style: TextStyle(
-                        color: success,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            SizedBox(height: 6 * scale),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Selector<PerformanceMonitorService, ServerHealthSnapshot>(
-                selector: (_, monitor) => monitor.healthFor(conn.id),
-                builder: (context, health, _) =>
-                    _buildHealthChip(context, health, strings),
-              ),
-            ),
-            SizedBox(height: 12 * scale),
-            Divider(height: 1, color: colorScheme.outlineVariant),
-            SizedBox(height: 8 * scale),
-            // Layer 3: Action buttons (New Window, Window List Toggle, and More Menu)
-            Row(
-              children: [
-                TextButton.icon(
-                  onPressed: () => _openNewTerminal(context, conn),
-                  icon: Icon(Icons.add_to_photos_outlined, size: 16 * scale),
-                  label: Text(strings.newWindow),
-                  style: TextButton.styleFrom(
-                    padding: EdgeInsets.symmetric(
-                        horizontal: 8 * scale, vertical: 4 * scale),
-                    visualDensity: VisualDensity.compact,
-                  ),
-                ),
-                if (sessionCount > 0) ...[
-                  SizedBox(width: 8 * scale),
-                  TextButton.icon(
-                    onPressed: () => _toggleConnectionWindows(conn.id),
-                    icon: Icon(
-                      windowsExpanded
-                          ? Icons.expand_less_rounded
-                          : Icons.expand_more_rounded,
-                      size: 16 * scale,
-                    ),
-                    label: Text(
-                      strings.language == AppLanguage.en
-                          ? 'Window List · $sessionCount'
-                          : '窗口列表 · $sessionCount',
-                    ),
-                    style: TextButton.styleFrom(
-                      padding: EdgeInsets.symmetric(
-                          horizontal: 8 * scale, vertical: 4 * scale),
-                      visualDensity: VisualDensity.compact,
-                    ),
-                  ),
-                ],
-                const Spacer(),
-                if (!_serverSelectionMode)
-                  PopupMenuButton<String>(
-                    icon: Icon(Icons.more_vert,
-                        color: mutedTextColor, size: 20 * scale),
-                    onSelected: (action) =>
-                        _handleAction(context, conn, action),
-                    itemBuilder: (_) => [
-                      PopupMenuItem(
-                        value: 'edit',
-                        child: Row(
-                          children: [
-                            Icon(Icons.edit, size: 18 * scale),
-                            SizedBox(width: 8 * scale),
-                            Text(strings.edit),
-                          ],
-                        ),
-                      ),
-                      PopupMenuItem(
-                        value: 'delete',
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.delete,
-                              size: 18 * scale,
-                              color: colorScheme.error,
-                            ),
-                            SizedBox(width: 8 * scale),
-                            Text(
-                              strings.delete,
-                              style: TextStyle(color: colorScheme.error),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-              ],
-            ),
-            if (windowsExpanded)
-              TerminalWindowsPage(
-                key: PageStorageKey<String>('server-windows-${conn.id}'),
-                connectionId: conn.id,
-                showHeader: false,
-                embedded: true,
-              ),
-          ],
-        ),
-      ),
+        );
+      },
     ).animate().fade(duration: 250.ms).slideY(
           begin: 0.08,
           end: 0,

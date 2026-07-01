@@ -10,6 +10,9 @@ class ExtendedColors extends ThemeExtension<ExtendedColors> {
   final Color terminalCyan;
   final Color success;
   final Color warning;
+  final Color glassBg;
+  final Color glassBorder;
+  final Color cardHoverBorder;
 
   const ExtendedColors({
     required this.terminalBg,
@@ -18,6 +21,9 @@ class ExtendedColors extends ThemeExtension<ExtendedColors> {
     required this.terminalCyan,
     required this.success,
     required this.warning,
+    required this.glassBg,
+    required this.glassBorder,
+    required this.cardHoverBorder,
   });
 
   @override
@@ -28,6 +34,9 @@ class ExtendedColors extends ThemeExtension<ExtendedColors> {
     Color? terminalCyan,
     Color? success,
     Color? warning,
+    Color? glassBg,
+    Color? glassBorder,
+    Color? cardHoverBorder,
   }) {
     return ExtendedColors(
       terminalBg: terminalBg ?? this.terminalBg,
@@ -36,6 +45,9 @@ class ExtendedColors extends ThemeExtension<ExtendedColors> {
       terminalCyan: terminalCyan ?? this.terminalCyan,
       success: success ?? this.success,
       warning: warning ?? this.warning,
+      glassBg: glassBg ?? this.glassBg,
+      glassBorder: glassBorder ?? this.glassBorder,
+      cardHoverBorder: cardHoverBorder ?? this.cardHoverBorder,
     );
   }
 
@@ -49,6 +61,9 @@ class ExtendedColors extends ThemeExtension<ExtendedColors> {
       terminalCyan: Color.lerp(terminalCyan, other.terminalCyan, t)!,
       success: Color.lerp(success, other.success, t)!,
       warning: Color.lerp(warning, other.warning, t)!,
+      glassBg: Color.lerp(glassBg, other.glassBg, t)!,
+      glassBorder: Color.lerp(glassBorder, other.glassBorder, t)!,
+      cardHoverBorder: Color.lerp(cardHoverBorder, other.cardHoverBorder, t)!,
     );
   }
 }
@@ -132,6 +147,9 @@ class AppTheme {
         terminalCyan: Color(0xFF06B6D4),
         success: Color(0xFF10B981),
         warning: Color(0xFFF59E0B),
+        glassBg: Color(0x99FFFFFF),
+        glassBorder: Color(0x1FE2E8F0),
+        cardHoverBorder: Color(0x662563EB),
       ),
     ],
     textTheme: _textTheme(const Color(0xFF0F172A)),
@@ -231,6 +249,9 @@ class AppTheme {
         terminalCyan: Color(0xFF22D3EE),
         success: Color(0xFF34D399),
         warning: Color(0xFFFBBF24),
+        glassBg: Color(0x800B0F19),
+        glassBorder: Color(0x261F2937),
+        cardHoverBorder: Color(0x663B82F6),
       ),
     ],
     textTheme: _textTheme(const Color(0xFFF9FAFB)),

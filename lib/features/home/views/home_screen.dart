@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -297,55 +298,67 @@ class _HomeScreenState extends State<HomeScreen> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final mediaQuery = MediaQuery.of(context);
+    final extColors = theme.extension<ExtendedColors>();
+    final glassBg =
+        extColors?.glassBg ?? colorScheme.surface.withValues(alpha: 0.72);
+    final glassBorder = extColors?.glassBorder ??
+        colorScheme.outlineVariant.withValues(alpha: 0.3);
 
-    return CustomPaint(
-      painter: BottomNavCurvePainter(
-        scrollPosition: _scrollPosition,
-        backgroundColor: colorScheme.surface,
-        borderColor: colorScheme.outlineVariant.withValues(alpha: 0.5),
-      ),
-      child: Container(
-        height: 64.0 + mediaQuery.padding.bottom,
-        color: Colors.transparent,
-        child: SafeArea(
-          top: false,
-          child: Row(
-            children: [
-              _buildNavItem(
-                context: context,
-                icon: const Icon(Icons.dns_outlined),
-                selectedIcon: const Icon(Icons.dns_rounded),
-                label: strings.servers,
-                index: _serverPage,
+    return ClipPath(
+      clipper: BottomNavCurveClipper(scrollPosition: _scrollPosition),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 15.0, sigmaY: 15.0),
+        child: CustomPaint(
+          painter: BottomNavCurvePainter(
+            scrollPosition: _scrollPosition,
+            backgroundColor: glassBg,
+            borderColor: glassBorder,
+          ),
+          child: Container(
+            height: 64.0 + mediaQuery.padding.bottom,
+            color: Colors.transparent,
+            child: SafeArea(
+              top: false,
+              child: Row(
+                children: [
+                  _buildNavItem(
+                    context: context,
+                    icon: const Icon(Icons.dns_outlined),
+                    selectedIcon: const Icon(Icons.dns_rounded),
+                    label: strings.servers,
+                    index: _serverPage,
+                  ),
+                  _buildNavItem(
+                    context: context,
+                    icon: const Icon(Icons.folder_open_outlined),
+                    selectedIcon: const Icon(Icons.folder_open_rounded),
+                    label: strings.sftp,
+                    index: _sftpPage,
+                  ),
+                  _buildAiNavItem(
+                    context: context,
+                    icon: const Icon(Icons.smart_toy_outlined),
+                    selectedIcon: const Icon(Icons.smart_toy_rounded),
+                    index: _aiPage,
+                  ),
+                  _buildNavItem(
+                    context: context,
+                    icon: const Icon(Icons.admin_panel_settings_outlined),
+                    selectedIcon:
+                        const Icon(Icons.admin_panel_settings_rounded),
+                    label: strings.admin,
+                    index: _adminPage,
+                  ),
+                  _buildNavItem(
+                    context: context,
+                    icon: const Icon(Icons.terminal_outlined),
+                    selectedIcon: const Icon(Icons.terminal_rounded),
+                    label: strings.logs,
+                    index: _logPage,
+                  ),
+                ],
               ),
-              _buildNavItem(
-                context: context,
-                icon: const Icon(Icons.folder_open_outlined),
-                selectedIcon: const Icon(Icons.folder_open_rounded),
-                label: strings.sftp,
-                index: _sftpPage,
-              ),
-              _buildAiNavItem(
-                context: context,
-                icon: const Icon(Icons.smart_toy_outlined),
-                selectedIcon: const Icon(Icons.smart_toy_rounded),
-                index: _aiPage,
-              ),
-              _buildNavItem(
-                context: context,
-                icon: const Icon(Icons.admin_panel_settings_outlined),
-                selectedIcon: const Icon(Icons.admin_panel_settings_rounded),
-                label: strings.admin,
-                index: _adminPage,
-              ),
-              _buildNavItem(
-                context: context,
-                icon: const Icon(Icons.terminal_outlined),
-                selectedIcon: const Icon(Icons.terminal_rounded),
-                label: strings.logs,
-                index: _logPage,
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -989,5 +1002,85 @@ class BottomNavCurvePainter extends CustomPainter {
     return oldDelegate.scrollPosition != scrollPosition ||
         oldDelegate.backgroundColor != backgroundColor ||
         oldDelegate.borderColor != borderColor;
+  }
+}
+
+class BottomNavCurveClipper extends CustomClipper<Path> {
+  final double scrollPosition;
+  final double domeWidth;
+  final double domeHeight;
+
+  BottomNavCurveClipper({
+    required this.scrollPosition,
+    this.domeWidth = 100.0,
+    this.domeHeight = 5.0,
+  });
+
+  @override
+  Path getClip(Size size) {
+    final double tabWidth = size.width / 5;
+    final double centerX = (scrollPosition + 0.5) * tabWidth;
+
+    final double threshold = domeWidth / 2;
+    double currentDomeHeight = domeHeight;
+
+    if (centerX < threshold) {
+      if (centerX <= 0) {
+        currentDomeHeight = 0.0;
+      } else {
+        final double t = centerX / threshold;
+        currentDomeHeight = domeHeight * (t * t);
+      }
+    } else if (size.width - centerX < threshold) {
+      final double distToRight = size.width - centerX;
+      if (distToRight <= 0) {
+        currentDomeHeight = 0.0;
+      } else {
+        final double t = distToRight / threshold;
+        currentDomeHeight = domeHeight * (t * t);
+      }
+    }
+
+    double domeStart = centerX - domeWidth / 2;
+    double domeEnd = centerX + domeWidth / 2;
+
+    if (domeStart < 0) {
+      domeStart = 0;
+    }
+    if (domeEnd > size.width) {
+      domeEnd = size.width;
+    }
+
+    final path = Path();
+    path.moveTo(0, -10);
+    path.lineTo(domeStart, -10);
+    if (currentDomeHeight > 0) {
+      path.cubicTo(
+        centerX - domeWidth * 0.35,
+        -10,
+        centerX - domeWidth * 0.22,
+        -currentDomeHeight - 10,
+        centerX,
+        -currentDomeHeight - 10,
+      );
+      path.cubicTo(
+        centerX + domeWidth * 0.22,
+        -currentDomeHeight - 10,
+        centerX + domeWidth * 0.35,
+        -10,
+        domeEnd,
+        -10,
+      );
+    }
+    path.lineTo(size.width, -10);
+    path.lineTo(size.width, size.height);
+    path.lineTo(0, size.height);
+    path.close();
+    return path;
+  }
+
+  @override
+  bool shouldReclip(covariant BottomNavCurveClipper oldClipper) {
+    return oldClipper.scrollPosition != scrollPosition;
   }
 }
