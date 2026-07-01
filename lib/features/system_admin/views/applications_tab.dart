@@ -40,7 +40,12 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
     }
     if (force || _appsFuture == null || _appsSelectionKey != connectionId) {
       _appsSelectionKey = connectionId;
-      _appsFuture = _loadApplications(connectionId);
+      _appsFuture = Future.delayed(const Duration(milliseconds: 300)).then((_) {
+        if (!mounted || !_isActive) {
+          return <String, List<ApplicationMemorySnapshot>>{};
+        }
+        return _loadApplications(connectionId);
+      });
     }
   }
 

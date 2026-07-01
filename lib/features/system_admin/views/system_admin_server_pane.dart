@@ -226,28 +226,31 @@ class _AdminMobileServerStrip extends StatelessWidget {
 
     return SizedBox(
       height: stripHeight,
-      child: ListView.separated(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        scrollDirection: Axis.horizontal,
-        itemCount: connections.length + 1,
-        separatorBuilder: (_, __) => const SizedBox(width: 10),
-        itemBuilder: (context, index) {
-          if (index == 0) {
-            return _AdminMobileCollapseButton(
-              strings: strings,
-              onPressed: onCollapse,
+      child: NotificationListener<ScrollNotification>(
+        onNotification: (notification) => true,
+        child: ListView.separated(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          scrollDirection: Axis.horizontal,
+          itemCount: connections.length + 1,
+          separatorBuilder: (_, __) => const SizedBox(width: 10),
+          itemBuilder: (context, index) {
+            if (index == 0) {
+              return _AdminMobileCollapseButton(
+                strings: strings,
+                onPressed: onCollapse,
+              );
+            }
+            final connection = connections[index - 1];
+            return SizedBox(
+              width: 210,
+              child: _AdminServerTileBinding(
+                connection: connection,
+                compact: true,
+                isMonitorTab: isMonitorTab,
+              ),
             );
-          }
-          final connection = connections[index - 1];
-          return SizedBox(
-            width: 210,
-            child: _AdminServerTileBinding(
-              connection: connection,
-              compact: true,
-              isMonitorTab: isMonitorTab,
-            ),
-          );
-        },
+          },
+        ),
       ),
     );
   }
@@ -387,12 +390,6 @@ class _AdminCollapsedMobileServerBar extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.settings_outlined),
-                  onPressed: () {
-                    OpenSettingsNotification().dispatch(context);
-                  },
                 ),
               ],
             ),
@@ -594,7 +591,7 @@ class _AdminServerTile extends StatelessWidget {
         child: Container(
           padding: EdgeInsets.symmetric(
             horizontal: 10 * scale,
-            vertical: 8 * scale,
+            vertical: compact ? 3 * scale : 8 * scale,
           ),
           decoration: BoxDecoration(
             color: selected

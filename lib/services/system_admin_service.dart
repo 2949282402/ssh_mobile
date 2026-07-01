@@ -122,7 +122,20 @@ class SystemAdminService extends ChangeNotifier {
     notifyListeners();
   }
 
+  final List<SSHSession> _activeSessionsList = [];
+
+  /// Cancel all active commands running on the server
+  void cancelActiveCommands() {
+    for (final session in List<SSHSession>.from(_activeSessionsList)) {
+      try {
+        session.close();
+      } catch (_) {}
+    }
+    _activeSessionsList.clear();
+  }
+
   void _disconnectActive({bool clearError = true}) {
+    cancelActiveCommands();
     _activeClient?.close();
     _activeClient = null;
     _activeConnectionId = null;
@@ -146,12 +159,29 @@ class SystemAdminService extends ChangeNotifier {
     if (client == null) {
       throw StateError('Not connected to remote server');
     }
-    final result = await client.runWithResult(command).timeout(timeout);
-    return RemoteCommandResult(
-      exitCode: result.exitCode,
-      stdout: utf8.decode(result.stdout, allowMalformed: true),
-      stderr: utf8.decode(result.stderr, allowMalformed: true),
-    );
+
+    final session = await client.execute(command);
+    _activeSessionsList.add(session);
+
+    try {
+      final stdoutBytes = <int>[];
+      final stderrBytes = <int>[];
+
+      final stdoutFuture = session.stdout.forEach(stdoutBytes.addAll);
+      final stderrFuture = session.stderr.forEach(stderrBytes.addAll);
+
+      await Future.wait([stdoutFuture, stderrFuture]).timeout(timeout);
+      final exitCode = session.exitCode;
+
+      return RemoteCommandResult(
+        exitCode: exitCode ?? 0,
+        stdout: utf8.decode(stdoutBytes, allowMalformed: true),
+        stderr: utf8.decode(stderrBytes, allowMalformed: true),
+      );
+    } finally {
+      _activeSessionsList.remove(session);
+      session.close();
+    }
   }
 
   /// Check if the user has root privilege on the server

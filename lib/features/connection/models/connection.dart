@@ -37,7 +37,7 @@ class ConnectionConfig {
     this.terminalHeight = 24,
     this.keepAlive = true,
     this.keepAliveInterval = 3,
-    this.launchMode = TerminalLaunchMode.tmux,
+    this.launchMode = TerminalLaunchMode.ssh,
     this.serverPlatform = ServerPlatform.linux,
     this.tmuxAutoDeleteSeconds = 600,
     DateTime? createdAt,

@@ -57,7 +57,7 @@ void main() {
       final viewModel = SystemAdminViewModel(
         adminService: adminService,
         storageService: storageService,
-      );
+      )..debounceDuration = Duration.zero;
       viewModel.selectConnection('conn_123');
       await viewModel.connectIfNeeded('conn_123');
       expect(viewModel.activeManagementConnectionId, equals('conn_123'));

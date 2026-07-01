@@ -211,48 +211,63 @@ class _HealthBadge extends StatelessWidget {
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 260),
       child: Container(
-        padding: const EdgeInsets.fromLTRB(6, 8, 10, 8),
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.08),
           borderRadius: BorderRadius.circular(8),
-          border: Border(
-            left: BorderSide(color: seriesColor, width: 4),
-            top: BorderSide(color: color.withValues(alpha: 0.25)),
-            right: BorderSide(color: color.withValues(alpha: 0.25)),
-            bottom: BorderSide(color: color.withValues(alpha: 0.25)),
+          border: Border.all(
+            color: color.withValues(alpha: 0.25),
           ),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(width: 4),
-            Icon(_healthIcon(health.level), color: color, size: 17),
-            const SizedBox(width: 7),
-            Flexible(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  OverflowScrollText(
-                    '${connection.name} · ${health.score}',
-                    selectable: false,
-                    maxLines: 1,
-                    style: TextStyle(
-                      color: color,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 12,
-                    ),
-                  ),
-                  OverflowScrollText(
-                    detail,
-                    selectable: false,
-                    maxLines: 1,
-                    style: TextStyle(color: color, fontSize: 11),
-                  ),
-                ],
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(7),
+          child: Stack(
+            children: [
+              Positioned(
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: 4,
+                child: Container(
+                  color: seriesColor,
+                ),
               ),
-            ),
-          ],
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(width: 4),
+                    Icon(_healthIcon(health.level), color: color, size: 17),
+                    const SizedBox(width: 7),
+                    Flexible(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          OverflowScrollText(
+                            '${connection.name} · ${health.score}',
+                            selectable: false,
+                            maxLines: 1,
+                            style: TextStyle(
+                              color: color,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 12,
+                            ),
+                          ),
+                          OverflowScrollText(
+                            detail,
+                            selectable: false,
+                            maxLines: 1,
+                            style: TextStyle(color: color, fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -54,7 +54,7 @@ class _ChatHeader extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
               decoration: BoxDecoration(
-                color: colorScheme.surfaceContainer.withValues(alpha: 0.55),
+                color: Theme.of(context).scaffoldBackgroundColor,
                 border: Border(
                   bottom: BorderSide(
                     color: colorScheme.outlineVariant.withValues(alpha: 0.4),

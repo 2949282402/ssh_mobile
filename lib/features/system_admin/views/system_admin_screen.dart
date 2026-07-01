@@ -66,6 +66,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
     final index = _tabController.index;
     if (_activeTabIndex.value != index) {
       _activeTabIndex.value = index;
+      context.read<SystemAdminViewModel>().cancelActiveCommands();
     }
     _scheduleCurrentTabActivation();
   }
@@ -321,33 +322,36 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
         Row(
           children: [
             Expanded(
-              child: TabBar(
-                controller: _tabController,
-                isScrollable: true,
-                tabAlignment: TabAlignment.start,
-                tabs: [
-                  Tab(
-                      text: strings.monitor,
-                      icon: const Icon(Icons.monitor_heart_outlined)),
-                  Tab(
-                      text: strings.listeningPorts,
-                      icon: const Icon(Icons.lan)),
-                  Tab(
-                      text: strings.applications,
-                      icon: const Icon(Icons.apps_rounded)),
-                  Tab(
-                      text: strings.systemServices,
-                      icon: const Icon(Icons.settings_suggest)),
-                  Tab(
-                      text: strings.userAccounts,
-                      icon: const Icon(Icons.people)),
-                  Tab(
-                      text: strings.activeSessions,
-                      icon: const Icon(Icons.co_present)),
-                  Tab(
-                      text: strings.systemPower,
-                      icon: const Icon(Icons.power_settings_new)),
-                ],
+              child: NotificationListener<ScrollNotification>(
+                onNotification: (notification) => true,
+                child: TabBar(
+                  controller: _tabController,
+                  isScrollable: true,
+                  tabAlignment: TabAlignment.start,
+                  tabs: [
+                    Tab(
+                        text: strings.monitor,
+                        icon: const Icon(Icons.monitor_heart_outlined)),
+                    Tab(
+                        text: strings.listeningPorts,
+                        icon: const Icon(Icons.lan)),
+                    Tab(
+                        text: strings.applications,
+                        icon: const Icon(Icons.apps_rounded)),
+                    Tab(
+                        text: strings.systemServices,
+                        icon: const Icon(Icons.settings_suggest)),
+                    Tab(
+                        text: strings.userAccounts,
+                        icon: const Icon(Icons.people)),
+                    Tab(
+                        text: strings.activeSessions,
+                        icon: const Icon(Icons.co_present)),
+                    Tab(
+                        text: strings.systemPower,
+                        icon: const Icon(Icons.power_settings_new)),
+                  ],
+                ),
               ),
             ),
             ValueListenableBuilder<int>(
