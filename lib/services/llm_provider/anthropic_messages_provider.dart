@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'package:http/http.dart' as http;
 
 import '../app_log_service.dart';
 import '../llm_runtime/llm_runtime_types.dart';
@@ -30,23 +30,22 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
     _assertValidHeaderApiKey(apiKey);
 
     final endpoint = Uri.parse(_joinUrl(baseUrl, '/v1/models'));
-    final client = HttpClient();
+    final client = http.Client();
     final startedAt = DateTime.now();
     AppLogService.instance.info(
       'Anthropic models request sent',
       details: 'endpoint=$endpoint',
     );
     try {
-      final request = await client.getUrl(endpoint).timeout(
-            const Duration(seconds: 30),
-          );
-      request.headers
-        ..set('x-api-key', apiKey)
-        ..set('anthropic-version', '2023-06-01');
-      final response = await request.close().timeout(
-            const Duration(seconds: 30),
-          );
-      final body = await response.transform(utf8.decoder).join();
+      final response = await client.get(
+        endpoint,
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+      ).timeout(const Duration(seconds: 30));
+
+      final body = response.body;
       if (response.statusCode < 200 || response.statusCode >= 300) {
         AppLogService.instance.warning(
           'Anthropic models request failed',
@@ -87,7 +86,7 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
       );
       rethrow;
     } finally {
-      client.close(force: true);
+      client.close();
     }
   }
 
@@ -98,13 +97,9 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
     request.cancellationToken?.throwIfCancelled();
 
     for (var attempt = 0; attempt <= 3; attempt++) {
-      final client = HttpClient();
-      request.cancellationToken?.onCancel(() => client.close(force: true));
+      final client = http.Client();
+      request.cancellationToken?.onCancel(() => client.close());
       try {
-        final httpRequest = await client.postUrl(endpoint).timeout(
-              Duration(seconds: request.timeoutSeconds),
-            );
-
         String? systemPrompt;
         final convertedMessages = _convertOpenAiMessagesToAnthropic(
           request.messages,
@@ -120,18 +115,21 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
             'tools': _convertOpenAiToolsToAnthropic(request.tools),
         };
 
-        final bodyBytes = utf8.encode(jsonEncode(requestBody));
-        httpRequest.headers
-          ..set('x-api-key', request.apiKey)
-          ..set('anthropic-version', '2023-06-01')
-          ..contentType = ContentType.json;
-        httpRequest.contentLength = bodyBytes.length;
-        httpRequest.add(bodyBytes);
+        request.cancellationToken?.throwIfCancelled();
 
-        final response = await httpRequest.close().timeout(
-              Duration(seconds: request.timeoutSeconds),
-            );
-        final body = await response.transform(utf8.decoder).join();
+        final response = await client
+            .post(
+              endpoint,
+              headers: {
+                'x-api-key': request.apiKey,
+                'anthropic-version': '2023-06-01',
+                'Content-Type': 'application/json',
+              },
+              body: jsonEncode(requestBody),
+            )
+            .timeout(Duration(seconds: request.timeoutSeconds));
+
+        final body = response.body;
         if (response.statusCode < 200 || response.statusCode >= 300) {
           throw StateError(
             'Anthropic completion failed (${response.statusCode}): $body',
@@ -205,7 +203,7 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
         );
         rethrow;
       } finally {
-        client.close(force: true);
+        client.close();
       }
     }
     throw StateError('Anthropic completion failed after network retries.');
@@ -217,8 +215,8 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
     final endpoint = Uri.parse(_joinUrl(request.baseUrl, '/v1/messages'));
 
     for (var attempt = 0; attempt <= 3; attempt++) {
-      final client = HttpClient();
-      request.cancellationToken?.onCancel(() => client.close(force: true));
+      final client = http.Client();
+      request.cancellationToken?.onCancel(() => client.close());
       final startedAt = DateTime.now();
       final contentChunks = <String>[];
       final toolCalls = <int, _StreamingAnthropicToolCall>{};
@@ -234,8 +232,6 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
       );
 
       try {
-        request.cancellationToken?.throwIfCancelled();
-        final httpRequest = await client.postUrl(endpoint);
         request.cancellationToken?.throwIfCancelled();
 
         String? systemPrompt;
@@ -255,16 +251,23 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
         };
 
         final bodyBytes = utf8.encode(jsonEncode(requestBody));
-        httpRequest.headers
-          ..set('x-api-key', request.apiKey)
-          ..set('anthropic-version', '2023-06-01')
-          ..contentType = ContentType.json;
-        httpRequest.contentLength = bodyBytes.length;
-        httpRequest.add(bodyBytes);
 
-        final response = await httpRequest.close();
+        request.cancellationToken?.throwIfCancelled();
+
+        final httpRequest = http.Request('POST', endpoint);
+        httpRequest.headers.addAll({
+          'x-api-key': request.apiKey,
+          'anthropic-version': '2023-06-01',
+          'Content-Type': 'application/json',
+        });
+        httpRequest.bodyBytes = bodyBytes;
+
+        final response = await client.send(httpRequest).timeout(
+              Duration(seconds: request.timeoutSeconds),
+            );
+
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          final body = await response.transform(utf8.decoder).join();
+          final body = await response.stream.bytesToString();
           AppLogService.instance.warning(
             'Anthropic stream request failed',
             details:
@@ -275,9 +278,11 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
           );
         }
 
-        await for (final line in response
+        final lines = response.stream
             .transform(utf8.decoder)
-            .transform(const LineSplitter())) {
+            .transform(const LineSplitter());
+
+        await for (final line in lines) {
           request.cancellationToken?.throwIfCancelled();
           final trimmed = line.trim();
           if (!trimmed.startsWith('data:')) continue;
@@ -395,7 +400,7 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
         );
         rethrow;
       } finally {
-        client.close(force: true);
+        client.close();
       }
     }
     throw StateError('Anthropic stream failed after network retries.');
@@ -603,11 +608,13 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
   }
 
   bool _isRetryableNetworkError(Object error) {
-    return error is SocketException ||
-        error is HttpException ||
-        error is HandshakeException ||
-        error is TlsException ||
-        error is IOException;
+    final name = error.runtimeType.toString();
+    return name.contains('SocketException') ||
+        name.contains('HttpException') ||
+        name.contains('HandshakeException') ||
+        name.contains('TlsException') ||
+        name.contains('IOException') ||
+        name.contains('ClientException');
   }
 
   Future<void> _delayBeforeNetworkRetry(

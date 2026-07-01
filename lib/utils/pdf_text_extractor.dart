@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'dart:io';
+import 'package:archive/archive.dart';
 
 /// 纯 Dart 实现的轻量级 PDF 文本提取器。
 /// 无任何外部 Native 依赖，完全离线运行。
@@ -61,7 +61,7 @@ class PdfTextExtractor {
 
         // 尝试使用 ZLib (FlateDecode) 解压
         try {
-          decompressedBytes = zlib.decode(streamBytes);
+          decompressedBytes = ZLibDecoder().decodeBytes(streamBytes);
         } catch (_) {
           // 解压失败，说明可能不是 Flate 压缩流或是非文本流（如图片），忽略即可
         }

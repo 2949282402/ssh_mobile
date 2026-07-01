@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'dart:convert';
 
-import 'dart:io';
+import 'package:http/http.dart' as http;
 
 import '../app_log_service.dart';
 
@@ -32,7 +32,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
 
     final endpoint = Uri.parse(resolveOpenAiCompatibleUrl(baseUrl, '/models'));
 
-    final client = HttpClient();
+    final client = http.Client();
 
     final startedAt = DateTime.now();
 
@@ -42,20 +42,14 @@ class OpenAiChatProvider implements LlmProviderAdapter {
     );
 
     try {
-      final request = await client.getUrl(endpoint).timeout(
-            const Duration(seconds: 30),
-          );
+      final response = await client.get(
+        endpoint,
+        headers: {
+          'Authorization': 'Bearer $apiKey',
+        },
+      ).timeout(const Duration(seconds: 30));
 
-      request.headers.set(
-        HttpHeaders.authorizationHeader,
-        'Bearer $apiKey',
-      );
-
-      final response = await request.close().timeout(
-            const Duration(seconds: 30),
-          );
-
-      final body = await response.transform(utf8.decoder).join();
+      final body = response.body;
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         AppLogService.instance.warning(
@@ -103,7 +97,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
 
       throw StateError('Unexpected models response format.');
     } finally {
-      client.close(force: true);
+      client.close();
     }
   }
 
@@ -115,9 +109,9 @@ class OpenAiChatProvider implements LlmProviderAdapter {
         resolveOpenAiCompatibleUrl(request.baseUrl, '/chat/completions'));
 
     for (var attempt = 0; attempt <= 3; attempt++) {
-      final client = HttpClient();
+      final client = http.Client();
 
-      request.cancellationToken?.onCancel(() => client.close(force: true));
+      request.cancellationToken?.onCancel(() => client.close());
 
       final startedAt = DateTime.now();
 
@@ -128,10 +122,6 @@ class OpenAiChatProvider implements LlmProviderAdapter {
       );
 
       try {
-        request.cancellationToken?.throwIfCancelled();
-
-        final httpRequest = await client.postUrl(endpoint);
-
         request.cancellationToken?.throwIfCancelled();
 
         final useTools = request.includeTools && request.tools.isNotEmpty;
@@ -155,21 +145,20 @@ class OpenAiChatProvider implements LlmProviderAdapter {
             ),
         };
 
-        final bodyBytes = utf8.encode(jsonEncode(requestBody));
+        request.cancellationToken?.throwIfCancelled();
 
-        httpRequest.headers
-          ..set(HttpHeaders.authorizationHeader, 'Bearer ${request.apiKey}')
-          ..contentType = ContentType.json;
+        final response = await client
+            .post(
+              endpoint,
+              headers: {
+                'Authorization': 'Bearer ${request.apiKey}',
+                'Content-Type': 'application/json',
+              },
+              body: jsonEncode(requestBody),
+            )
+            .timeout(Duration(seconds: request.timeoutSeconds));
 
-        httpRequest.contentLength = bodyBytes.length;
-
-        httpRequest.add(bodyBytes);
-
-        final response = await httpRequest.close().timeout(
-              Duration(seconds: request.timeoutSeconds),
-            );
-
-        final body = await response.transform(utf8.decoder).join();
+        final body = response.body;
 
         if (response.statusCode < 200 || response.statusCode >= 300) {
           if (request.includeReasoningParams &&
@@ -328,7 +317,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
 
         rethrow;
       } finally {
-        client.close(force: true);
+        client.close();
       }
     }
 
@@ -343,9 +332,9 @@ class OpenAiChatProvider implements LlmProviderAdapter {
         resolveOpenAiCompatibleUrl(request.baseUrl, '/chat/completions'));
 
     for (var attempt = 0; attempt <= 3; attempt++) {
-      final client = HttpClient();
+      final client = http.Client();
 
-      request.cancellationToken?.onCancel(() => client.close(force: true));
+      request.cancellationToken?.onCancel(() => client.close());
 
       final startedAt = DateTime.now();
 
@@ -364,10 +353,6 @@ class OpenAiChatProvider implements LlmProviderAdapter {
       );
 
       try {
-        request.cancellationToken?.throwIfCancelled();
-
-        final httpRequest = await client.postUrl(endpoint);
-
         request.cancellationToken?.throwIfCancelled();
 
         final useTools = request.includeTools && request.tools.isNotEmpty;
@@ -398,20 +383,21 @@ class OpenAiChatProvider implements LlmProviderAdapter {
 
         final bodyBytes = utf8.encode(jsonEncode(requestBody));
 
-        httpRequest.headers
-          ..set(HttpHeaders.authorizationHeader, 'Bearer ${request.apiKey}')
-          ..contentType = ContentType.json;
+        request.cancellationToken?.throwIfCancelled();
 
-        httpRequest.contentLength = bodyBytes.length;
+        final httpRequest = http.Request('POST', endpoint);
+        httpRequest.headers.addAll({
+          'Authorization': 'Bearer ${request.apiKey}',
+          'Content-Type': 'application/json',
+        });
+        httpRequest.bodyBytes = bodyBytes;
 
-        httpRequest.add(bodyBytes);
-
-        final response = await httpRequest.close().timeout(
+        final response = await client.send(httpRequest).timeout(
               Duration(seconds: request.timeoutSeconds),
             );
 
         if (response.statusCode < 200 || response.statusCode >= 300) {
-          final body = await response.transform(utf8.decoder).join();
+          final body = await response.stream.bytesToString();
 
           if (request.includeUsage &&
               response.statusCode == 400 &&
@@ -505,8 +491,9 @@ class OpenAiChatProvider implements LlmProviderAdapter {
           );
         }
 
-        final lines =
-            response.transform(utf8.decoder).transform(const LineSplitter());
+        final lines = response.stream
+            .transform(utf8.decoder)
+            .transform(const LineSplitter());
 
         await for (final line in lines) {
           request.cancellationToken?.throwIfCancelled();
@@ -654,7 +641,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
 
         rethrow;
       } finally {
-        client.close(force: true);
+        client.close();
       }
     }
 
@@ -753,11 +740,13 @@ class OpenAiChatProvider implements LlmProviderAdapter {
   }
 
   bool _isRetryableNetworkError(Object error) {
-    return error is SocketException ||
-        error is HttpException ||
-        error is HandshakeException ||
-        error is TlsException ||
-        error is IOException;
+    final name = error.runtimeType.toString();
+    return name.contains('SocketException') ||
+        name.contains('HttpException') ||
+        name.contains('HandshakeException') ||
+        name.contains('TlsException') ||
+        name.contains('IOException') ||
+        name.contains('ClientException');
   }
 
   Future<void> _delayBeforeNetworkRetry(

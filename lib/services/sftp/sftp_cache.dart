@@ -1,4 +1,4 @@
-part of '../sftp_service.dart';
+part of 'sftp_service_io.dart';
 
 class SftpDirectoryCacheEntry {
   final List<SftpEntry> entries;

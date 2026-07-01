@@ -90,6 +90,15 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
 
   ClientSystemToolService._();
 
+  String get _platformLocaleName => kIsWeb ? 'en_US' : Platform.localeName;
+  String get _platformOS => kIsWeb ? 'web' : Platform.operatingSystem;
+  String get _platformOSVersion =>
+      kIsWeb ? 'web' : Platform.operatingSystemVersion;
+  String get _platformLocalHostname =>
+      kIsWeb ? 'localhost' : Platform.localHostname;
+  int get _platformNumberOfProcessors =>
+      kIsWeb ? 1 : Platform.numberOfProcessors;
+
   @override
   Map<String, dynamic> getClientTime() {
     final now = DateTime.now();
@@ -103,7 +112,7 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
       'timezoneName': now.timeZoneName,
       'timezoneOffsetMinutes': now.timeZoneOffset.inMinutes,
       'timezoneOffset': _formatOffset(now.timeZoneOffset),
-      'localeName': Platform.localeName,
+      'localeName': _platformLocaleName,
     };
   }
 
@@ -114,11 +123,11 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
       'execution': 'client',
       'target': 'client_device',
       'flutterPlatform': defaultTargetPlatform.name,
-      'dartOperatingSystem': Platform.operatingSystem,
-      'operatingSystemVersion': Platform.operatingSystemVersion,
-      'localeName': Platform.localeName,
-      'localHostname': Platform.localHostname,
-      'numberOfProcessors': Platform.numberOfProcessors,
+      'dartOperatingSystem': _platformOS,
+      'operatingSystemVersion': _platformOSVersion,
+      'localeName': _platformLocaleName,
+      'localHostname': _platformLocalHostname,
+      'numberOfProcessors': _platformNumberOfProcessors,
       'timezoneName': now.timeZoneName,
       'timezoneOffsetMinutes': now.timeZoneOffset.inMinutes,
       'supportsSystemAlarm':
@@ -135,7 +144,7 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
       'execution': 'client',
       'target': 'client_device',
       'flutterPlatform': defaultTargetPlatform.name,
-      'dartOperatingSystem': Platform.operatingSystem,
+      'dartOperatingSystem': _platformOS,
     };
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
       return {
@@ -169,7 +178,7 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
       'execution': 'client',
       'target': 'client_device',
       'flutterPlatform': defaultTargetPlatform.name,
-      'dartOperatingSystem': Platform.operatingSystem,
+      'dartOperatingSystem': _platformOS,
     };
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
       return {
@@ -223,7 +232,7 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
       'execution': 'client',
       'target': 'client_device',
       'flutterPlatform': defaultTargetPlatform.name,
-      'dartOperatingSystem': Platform.operatingSystem,
+      'dartOperatingSystem': _platformOS,
       'notificationPermission': notificationStatus.name,
       'notificationGranted': notificationStatus.isGranted,
       'supportsNativeBackgroundService': supportsBackgroundService,

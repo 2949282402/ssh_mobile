@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'dart:io';
+import 'package:http/http.dart' as http;
 
 import '../services/app_log_service.dart';
 
@@ -13,7 +13,7 @@ class AliyunEmbeddingClient {
 
   const AliyunEmbeddingClient({required this.apiKey});
 
-  /// 获取一组文本的 1024 维语义向量列表。
+  /// 获取一组文本 of 1024 维语义向量列表。
   /// [textType] 可为 'document'（用于建库分块）或 'query'（用于查询检索）
   Future<List<List<double>>> getEmbeddings(
     List<String> texts, {
@@ -21,35 +21,28 @@ class AliyunEmbeddingClient {
   }) async {
     if (texts.isEmpty) return const [];
 
-    final client = HttpClient();
     final startedAt = DateTime.now();
 
     try {
       final uri = Uri.parse(endpoint);
-      final request = await client.postUrl(uri).timeout(
-            const Duration(seconds: 30),
-          );
+      final response = await http
+          .post(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $apiKey',
+            },
+            body: jsonEncode({
+              'model': modelName,
+              'input': {'texts': texts},
+              'parameters': {
+                'text_type': textType,
+              }
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
 
-      // 设置请求头
-      request.headers
-        ..set(HttpHeaders.contentTypeHeader, 'application/json')
-        ..set(HttpHeaders.authorizationHeader, 'Bearer $apiKey');
-
-      // 设置请求体
-      final body = {
-        'model': modelName,
-        'input': {'texts': texts},
-        'parameters': {
-          'text_type': textType,
-        }
-      };
-
-      request.write(jsonEncode(body));
-      final response = await request.close().timeout(
-            const Duration(seconds: 30),
-          );
-
-      final responseBody = await response.transform(utf8.decoder).join();
+      final responseBody = response.body;
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         AppLogService.instance.warning(
@@ -70,7 +63,8 @@ class AliyunEmbeddingClient {
       final rawEmbeddings = output['embeddings'] as List<dynamic>?;
       if (rawEmbeddings == null) {
         throw StateError(
-            'Invalid DashScope response: missing "embeddings" list.');
+          'Invalid DashScope response: missing "embeddings" list.',
+        );
       }
 
       // 提取并转换向量（按原文本顺序 text_index 对应排列）
@@ -102,8 +96,6 @@ class AliyunEmbeddingClient {
         stackTrace: stackTrace,
       );
       rethrow;
-    } finally {
-      client.close(force: true);
     }
   }
 }

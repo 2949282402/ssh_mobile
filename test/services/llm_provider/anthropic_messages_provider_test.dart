@@ -38,10 +38,15 @@ class MockHttpClient implements HttpClient {
   }
 
   @override
+  Future<HttpClientRequest> openUrl(String method, Uri url) async {
+    return MockHttpClientRequest(getResponseBytes(url));
+  }
+
+  @override
   void close({bool force = false}) {}
 
   @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => null;
 }
 
 class MockHttpClientRequest implements HttpClientRequest {
@@ -62,12 +67,15 @@ class MockHttpClientRequest implements HttpClientRequest {
   void add(List<int> data) {}
 
   @override
+  Future<dynamic> addStream(Stream<List<int>> stream) async {}
+
+  @override
   Future<HttpClientResponse> close() async {
     return MockHttpClientResponse(responseBytes);
   }
 
   @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => null;
 }
 
 class MockHttpHeaders implements HttpHeaders {
@@ -82,7 +90,7 @@ class MockHttpHeaders implements HttpHeaders {
   }
 
   @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => null;
 }
 
 class MockHttpClientResponse extends Stream<List<int>>
@@ -93,6 +101,27 @@ class MockHttpClientResponse extends Stream<List<int>>
 
   @override
   int get statusCode => 200;
+
+  @override
+  final HttpHeaders headers = MockHttpHeaders();
+
+  @override
+  int get contentLength => -1;
+
+  @override
+  bool get isRedirect => false;
+
+  @override
+  bool get persistentConnection => false;
+
+  @override
+  String get reasonPhrase => '';
+
+  @override
+  List<RedirectInfo> get redirects => const [];
+
+  @override
+  List<Cookie> get cookies => const [];
 
   @override
   StreamSubscription<List<int>> listen(
@@ -110,7 +139,7 @@ class MockHttpClientResponse extends Stream<List<int>>
   }
 
   @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => null;
 }
 
 void main() {

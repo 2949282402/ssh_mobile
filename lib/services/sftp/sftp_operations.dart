@@ -1,4 +1,4 @@
-part of '../sftp_service.dart';
+part of 'sftp_service_io.dart';
 
 extension SftpServiceOperations on SftpService {
   Future<List<SftpEntry>> _listDirectoryForConnectionImpl(

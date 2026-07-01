@@ -102,6 +102,18 @@ class ConnectionViewModel extends ChangeNotifier {
     notifyListeners();
 
     try {
+      if (kIsWeb) {
+        _isVerifying = false;
+        notifyListeners();
+        if (isEditing) {
+          await _connectionRepository.updateConnection(config);
+        } else {
+          await _connectionRepository.addConnection(config);
+        }
+        _connections = _connectionRepository.connections;
+        return true;
+      }
+
       final clientConfig = ConnectionConfig(
         id: config.id,
         name: config.name,

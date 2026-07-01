@@ -326,6 +326,16 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     );
     _refreshSessionsView();
 
+    if (kIsWeb) {
+      _setSessionError(
+        id,
+        connectionId,
+        config.name,
+        'Web 浏览器由于沙盒安全限制，不支持直接建立原始 TCP 连接。如果您需要使用 SSH 功能，请下载并使用 Android 客户端或桌面端（Windows/macOS/Linux）应用。\n\nWeb browsers do not support direct TCP connections due to sandbox constraints. To use SSH, please download and run the Android or Desktop client.',
+      );
+      return;
+    }
+
     if (session.state == SshConnectionState.connecting &&
         _connectCompleters.containsKey(id)) {
       await _connectCompleters[id]!.future;

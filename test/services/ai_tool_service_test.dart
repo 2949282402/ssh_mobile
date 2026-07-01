@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/core/services/ssh_host_key_policy.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/features/playbook/models/playbook.dart';
 import 'package:ssh_mobile/services/ai_tool_service.dart';
@@ -1869,7 +1868,7 @@ class _FakeSftpClient implements SftpClientAdapter {
   @override
   Future<void> connect(
     String connectionId, {
-    SshHostKeyConfirmation? onUnknownHostKey,
+    dynamic onUnknownHostKey,
   }) async {}
 
   @override

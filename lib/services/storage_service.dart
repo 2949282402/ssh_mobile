@@ -618,7 +618,7 @@ class StorageService extends ChangeNotifier
       }
       notifyListeners();
 
-      if (Platform.environment.containsKey('FLUTTER_TEST')) {
+      if (!kIsWeb && Platform.environment.containsKey('FLUTTER_TEST')) {
         await _initializeDriftStorage();
       } else {
         // Asynchronously initialize Drift database in the background to not block cold start

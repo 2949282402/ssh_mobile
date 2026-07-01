@@ -17,6 +17,7 @@ dependencies:
   flutter_local_notifications: any
   flutter_secure_storage: any
   provider: any
+
   shared_preferences: any
   path_provider: any
   uuid: any
@@ -33,8 +34,10 @@ dependencies:
   drift: any
   drift_flutter: any
   sqlite3_flutter_libs: any
-  shadcn_ui: any
+  shadcn_ui: ^0.50.0
   flutter_animate: ^4.5.2
+  http: any
+  archive: any
 
 dev_dependencies:
   flutter_test:
