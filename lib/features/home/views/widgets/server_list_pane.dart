@@ -15,6 +15,7 @@ class _ServerListPaneState extends State<ServerListPane> {
   void _updateState(VoidCallback fn) {
     if (mounted) setState(fn);
   }
+
   @override
   Widget build(BuildContext context) {
     final language = context.select<AppSettings, AppLanguage>(
@@ -28,147 +29,16 @@ class _ServerListPaneState extends State<ServerListPane> {
         context.select<ConnectionViewModel, List<ConnectionConfig>>(
       (vm) => vm.connections,
     );
+
     return connections.isEmpty
         ? storageReady
-            ? _buildEmptyState(context, strings)
-            : _buildServerSkeletalLoader(context)
+            ? _ServerEmptyState(strings: strings)
+            : const _ServerSkeletalLoader()
         : _buildConnectionList(
             context,
             connections,
             strings,
           );
-  }
-
-  Widget _buildEmptyState(BuildContext context, AppStrings strings) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 84,
-              height: 84,
-              decoration: BoxDecoration(
-                color: colorScheme.primary.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                border: Border.all(
-                  color: colorScheme.primary.withValues(alpha: 0.18),
-                ),
-              ),
-              child: Icon(
-                Icons.terminal_rounded,
-                size: 42,
-                color: colorScheme.primary,
-              ),
-            ),
-            const SizedBox(height: 18),
-            Text(
-              strings.noConnections,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: colorScheme.onSurface,
-                fontSize: 17,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              strings.addHint,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: colorScheme.onSurface.withValues(alpha: 0.62),
-                fontSize: 14,
-                height: 1.35,
-              ),
-            ),
-            const SizedBox(height: 18),
-            ElevatedButton.icon(
-              onPressed: () => _addConnection(context),
-              icon: const Icon(Icons.add),
-              label: Text(strings.addConnection),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildServerSkeletalLoader(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final baseColor =
-        isDark ? const Color(0xFF1E293B) : const Color(0xFFE2E8F0);
-    final highlightColor =
-        isDark ? const Color(0xFF334155) : const Color(0xFFF1F5F9);
-
-    return ListView.builder(
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      itemCount: 3,
-      itemBuilder: (context, index) {
-        return Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: baseColor.withValues(alpha: 0.5),
-            borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-            border: Border.all(
-              color: isDark ? const Color(0xFF334155) : const Color(0xFFCBD5E1),
-              width: 1,
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: highlightColor,
-                      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Container(
-                    width: 140,
-                    height: 18,
-                    decoration: BoxDecoration(
-                      color: highlightColor,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Container(
-                width: 220,
-                height: 12,
-                decoration: BoxDecoration(
-                  color: highlightColor,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Container(
-                width: 100,
-                height: 12,
-                decoration: BoxDecoration(
-                  color: highlightColor,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-              ),
-            ],
-          ),
-        ).animate(onPlay: (controller) => controller.repeat()).shimmer(
-              duration: const Duration(milliseconds: 1200),
-              color: highlightColor.withValues(alpha: 0.35),
-            );
-      },
-    );
   }
 
   Widget _buildConnectionList(
@@ -264,54 +134,16 @@ class _ServerListPaneState extends State<ServerListPane> {
   }
 
   Widget _buildSelectionBar(BuildContext context, AppStrings strings) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final count = _selectedServerIds.length;
-    return SafeArea(
-      bottom: true,
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-        decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHigh,
-          border: Border(
-            top: BorderSide(color: colorScheme.outlineVariant),
-          ),
-        ),
-        child: Row(
-          children: [
-            Text(
-              strings.selectedServers(count),
-              style: TextStyle(
-                color: colorScheme.onSurface,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const Spacer(),
-            TextButton.icon(
-              icon: const Icon(Icons.close, size: 18),
-              label: Text(strings.cancel),
-              onPressed: () {
-                _updateState(() {
-                  _serverSelectionMode = false;
-                  _selectedServerIds.clear();
-                });
-              },
-            ),
-            const SizedBox(width: 8),
-            FilledButton.tonalIcon(
-              icon: const Icon(Icons.delete, size: 18),
-              label: Text(strings.delete),
-              style: FilledButton.styleFrom(
-                foregroundColor: colorScheme.error,
-                backgroundColor: colorScheme.errorContainer,
-              ),
-              onPressed: count > 0
-                  ? () => _confirmBatchDelete(context, strings)
-                  : null,
-            ),
-          ],
-        ),
-      ),
+    return _ServerSelectionBar(
+      strings: strings,
+      selectedServerIds: _selectedServerIds,
+      onCancel: () {
+        _updateState(() {
+          _serverSelectionMode = false;
+          _selectedServerIds.clear();
+        });
+      },
+      onDelete: () => _confirmBatchDelete(context, strings),
     );
   }
 
@@ -321,647 +153,44 @@ class _ServerListPaneState extends State<ServerListPane> {
     AppStrings strings, {
     int connIndex = 0,
   }) {
+    final windowsExpanded = _expandedConnectionWindowIds.contains(conn.id);
+    final isSelected = _selectedServerIds.contains(conn.id);
+    final layoutMode =
+        context.select<AppSettings, String>((s) => s.serverListLayoutMode);
+    final isGrid = layoutMode == 'grid';
+
     return RepaintBoundary(
       key: ValueKey('server-card-${conn.id}'),
       child: Selector<SshService, SshConnectionOverview>(
         key: ValueKey(conn.id),
         selector: (_, ssh) => ssh.serverOverviewSnapshot.forConnection(conn.id),
-        builder: (context, sessionSummary, _) => _buildConnectionCardBody(
-          context,
-          conn,
-          sessionSummary,
-          strings,
+        builder: (context, sessionSummary, _) => _ServerConnectionCard(
+          conn: conn,
+          sessionSummary: sessionSummary,
+          strings: strings,
           connIndex: connIndex,
+          isSelected: isSelected,
+          serverSelectionMode: _serverSelectionMode,
+          windowsExpanded: windowsExpanded,
+          isGrid: isGrid,
+          onTap: !_serverSelectionMode
+              ? () => _openNewTerminal(context, conn)
+              : () => _toggleServerSelection(conn.id),
+          onLongPress: () {
+            if (!_serverSelectionMode) {
+              _updateState(() {
+                _serverSelectionMode = true;
+                _selectedServerIds.add(conn.id);
+              });
+            }
+          },
+          onSelectedChanged: (_) => _toggleServerSelection(conn.id),
+          onOpenNewTerminal: () => _openNewTerminal(context, conn),
+          onToggleConnectionWindows: () => _toggleConnectionWindows(conn.id),
+          onAction: (action) => _handleAction(context, conn, action),
         ),
       ),
     );
-  }
-
-  Widget _buildConnectionCardBody(
-    BuildContext context,
-    ConnectionConfig conn,
-    SshConnectionOverview sessionSummary,
-    AppStrings strings, {
-    required int connIndex,
-  }) {
-    final scale = mobileUiScaleOf(context);
-    final isActive = sessionSummary.hasConnected;
-    final sessionCount = sessionSummary.count;
-    final latestState = sessionSummary.latestState;
-    final colorScheme = Theme.of(context).colorScheme;
-    final primary = colorScheme.primary;
-    final success = colorScheme.secondary;
-    final cardColor = _panelColor(context);
-    final textColor = _panelTextColor(context);
-    final mutedTextColor = _panelMutedTextColor(context);
-    final borderColor =
-        isActive ? success.withValues(alpha: 0.42) : _panelBorderColor(context);
-    final isSelected = _selectedServerIds.contains(conn.id);
-    final cardBgColor =
-        isSelected ? colorScheme.primary.withValues(alpha: 0.12) : cardColor;
-    final activeBorderColor =
-        isSelected ? colorScheme.primary.withValues(alpha: 0.54) : borderColor;
-
-    final windowsExpanded = _expandedConnectionWindowIds.contains(conn.id);
-    final layoutMode =
-        context.select<AppSettings, String>((s) => s.serverListLayoutMode);
-    final isGrid = layoutMode == 'grid';
-    final actualWindowsExpanded = windowsExpanded && !isGrid;
-
-    bool isHovered = false;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final extColors = Theme.of(context).extension<ExtendedColors>();
-
-    return StatefulBuilder(
-      builder: (context, setStateCard) {
-        return MouseRegion(
-          onEnter: (_) => setStateCard(() => isHovered = true),
-          onExit: (_) => setStateCard(() => isHovered = false),
-          child: AnimatedScale(
-            scale: isHovered ? 1.015 : 1.0,
-            duration: const Duration(milliseconds: 150),
-            curve: Curves.easeOutCubic,
-            child: TactileFeedback(
-              onTap: !_serverSelectionMode
-                  ? () => _openNewTerminal(context, conn)
-                  : null,
-              onLongPress: () {
-                if (!_serverSelectionMode) {
-                  _updateState(() {
-                    _serverSelectionMode = true;
-                    _selectedServerIds.add(conn.id);
-                  });
-                }
-              },
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                curve: Curves.easeOutCubic,
-                margin: EdgeInsets.only(bottom: isGrid ? 0 : (10 * scale)),
-                padding: EdgeInsets.all(isGrid ? 10 * scale : 14 * scale),
-                decoration: BoxDecoration(
-                  color: isHovered
-                      ? (isDark
-                          ? colorScheme.surfaceContainerHighest
-                              .withValues(alpha: 0.15)
-                          : colorScheme.surfaceContainerHighest
-                              .withValues(alpha: 0.40))
-                      : cardBgColor,
-                  borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-                  border: Border.all(
-                    color: isHovered
-                        ? (extColors?.cardHoverBorder ??
-                            colorScheme.primary.withValues(alpha: 0.40))
-                        : activeBorderColor,
-                    width: 1,
-                  ),
-                  boxShadow: isHovered
-                      ? [
-                          BoxShadow(
-                            color: colorScheme.primary
-                                .withValues(alpha: isDark ? 0.12 : 0.05),
-                            blurRadius: 8,
-                            offset: const Offset(0, 4),
-                          )
-                        ]
-                      : const [],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Layer 1: Status Icon, Name, and Connection Status Chip
-                    Row(
-                      children: [
-                        if (!_serverSelectionMode && !isGrid)
-                          ReorderableDragStartListener(
-                            index: connIndex,
-                            child: Padding(
-                              padding: EdgeInsets.only(right: 8 * scale),
-                              child: Icon(
-                                Icons.drag_handle,
-                                size: 20 * scale,
-                                color: mutedTextColor.withValues(alpha: 0.5),
-                              ),
-                            ),
-                          ),
-                        if (_serverSelectionMode)
-                          Checkbox(
-                            value: isSelected,
-                            onChanged: (_) => _toggleServerSelection(conn.id),
-                          ),
-                        Container(
-                          width: 36 * scale,
-                          height: 36 * scale,
-                          decoration: BoxDecoration(
-                            color: isActive
-                                ? success.withValues(alpha: 0.15)
-                                : primary.withValues(alpha: 0.1),
-                            borderRadius:
-                                BorderRadius.circular(AppTheme.radiusSmall),
-                          ),
-                          child: Icon(
-                            _getStatusIcon(conn, latestState),
-                            color: isActive ? success : primary,
-                            size: 20 * scale,
-                          ),
-                        ),
-                        SizedBox(width: 12 * scale),
-                        Expanded(
-                          child: OverflowScrollText(
-                            conn.name,
-                            selectable: false,
-                            maxLines: 1,
-                            style: TextStyle(
-                              color: textColor,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        if (latestState != null &&
-                            latestState != SshConnectionState.disconnected) ...[
-                          SizedBox(width: 8 * scale),
-                          _buildConnectionStatusChip(
-                              context, latestState, strings, scale),
-                        ],
-                      ],
-                    ),
-                    SizedBox(height: 8 * scale),
-                    // Layer 2: username@host:port, session count badge, and health chip
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.dns_outlined,
-                          size: 13 * scale,
-                          color: mutedTextColor.withValues(alpha: 0.72),
-                        ),
-                        SizedBox(width: 5 * scale),
-                        Flexible(
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Text(
-                              '${conn.username}@${conn.host}:${conn.port}',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: mutedTextColor,
-                              ),
-                            ),
-                          ),
-                        ),
-                        if (sessionCount > 0) ...[
-                          SizedBox(width: 8 * scale),
-                          Container(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 6 * scale,
-                              vertical: 2 * scale,
-                            ),
-                            decoration: BoxDecoration(
-                              color: success.withValues(alpha: 0.1),
-                              borderRadius:
-                                  BorderRadius.circular(AppTheme.radiusPill),
-                            ),
-                            child: Text(
-                              strings.language == AppLanguage.en
-                                  ? '$sessionCount window${sessionCount == 1 ? "" : "s"}'
-                                  : '$sessionCount 个窗口',
-                              style: TextStyle(
-                                color: success,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    SizedBox(height: 6 * scale),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Selector<PerformanceMonitorService,
-                          ServerHealthSnapshot>(
-                        selector: (_, monitor) => monitor.healthFor(conn.id),
-                        builder: (context, health, _) =>
-                            _buildHealthChip(context, health, strings),
-                      ),
-                    ),
-                    SizedBox(height: 12 * scale),
-                    Divider(height: 1, color: colorScheme.outlineVariant),
-                    SizedBox(height: 8 * scale),
-                    // Layer 3: Action buttons (New Window, Window List Toggle, and More Menu)
-                    Row(
-                      children: [
-                        if (isGrid) ...[
-                          IconButton(
-                            visualDensity: VisualDensity.compact,
-                            tooltip: strings.newWindow,
-                            icon: Icon(Icons.add_to_photos_outlined,
-                                size: 16 * scale),
-                            onPressed: () => _openNewTerminal(context, conn),
-                          ),
-                          if (sessionCount > 0) ...[
-                            const SizedBox(width: 4),
-                            IconButton(
-                              visualDensity: VisualDensity.compact,
-                              tooltip: strings.windows,
-                              icon: Icon(Icons.terminal_outlined,
-                                  size: 16 * scale),
-                              onPressed: () => Navigator.pushNamed(
-                                context,
-                                '/terminal-windows',
-                                arguments: conn.id,
-                              ),
-                            ),
-                          ],
-                        ] else ...[
-                          TextButton.icon(
-                            onPressed: () => _openNewTerminal(context, conn),
-                            icon: Icon(Icons.add_to_photos_outlined,
-                                size: 16 * scale),
-                            label: Text(strings.newWindow),
-                            style: TextButton.styleFrom(
-                              padding: EdgeInsets.symmetric(
-                                  horizontal: 8 * scale, vertical: 4 * scale),
-                              visualDensity: VisualDensity.compact,
-                            ),
-                          ),
-                          if (sessionCount > 0) ...[
-                            SizedBox(width: 8 * scale),
-                            TextButton.icon(
-                              onPressed: () =>
-                                  _toggleConnectionWindows(conn.id),
-                              icon: Icon(
-                                windowsExpanded
-                                    ? Icons.expand_less_rounded
-                                    : Icons.expand_more_rounded,
-                                size: 16 * scale,
-                              ),
-                              label: Text(
-                                strings.language == AppLanguage.en
-                                    ? 'Window List · $sessionCount'
-                                    : '窗口列表 · $sessionCount',
-                              ),
-                              style: TextButton.styleFrom(
-                                padding: EdgeInsets.symmetric(
-                                    horizontal: 8 * scale, vertical: 4 * scale),
-                                visualDensity: VisualDensity.compact,
-                              ),
-                            ),
-                          ],
-                        ],
-                        const Spacer(),
-                        if (!_serverSelectionMode)
-                          PopupMenuButton<String>(
-                            icon: Icon(Icons.more_vert,
-                                color: mutedTextColor, size: 20 * scale),
-                            onSelected: (action) =>
-                                _handleAction(context, conn, action),
-                            itemBuilder: (_) => [
-                              PopupMenuItem(
-                                value: 'edit',
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.edit, size: 18 * scale),
-                                    SizedBox(width: 8 * scale),
-                                    Text(strings.edit),
-                                  ],
-                                ),
-                              ),
-                              PopupMenuItem(
-                                value: 'delete',
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      Icons.delete,
-                                      size: 18 * scale,
-                                      color: colorScheme.error,
-                                    ),
-                                    SizedBox(width: 8 * scale),
-                                    Text(
-                                      strings.delete,
-                                      style:
-                                          TextStyle(color: colorScheme.error),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                      ],
-                    ),
-                    if (actualWindowsExpanded)
-                      TerminalWindowsPage(
-                        key:
-                            PageStorageKey<String>('server-windows-${conn.id}'),
-                        connectionId: conn.id,
-                        showHeader: false,
-                        embedded: true,
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    ).animate().fade(duration: 250.ms).slideY(
-          begin: 0.08,
-          end: 0,
-          duration: 250.ms,
-          curve: Curves.easeOutQuart,
-        );
-  }
-
-  Widget _buildConnectionStatusChip(
-    BuildContext context,
-    SshConnectionState state,
-    AppStrings strings,
-    double scale,
-  ) {
-    final colorScheme = Theme.of(context).colorScheme;
-    Color color;
-    String label;
-    switch (state) {
-      case SshConnectionState.connected:
-        color = colorScheme.secondary;
-        label = strings.connected;
-        break;
-      case SshConnectionState.connecting:
-        color = colorScheme.primary;
-        label = strings.connecting;
-        break;
-      case SshConnectionState.error:
-        color = colorScheme.error;
-        label = strings.connectionError;
-        break;
-      case SshConnectionState.disconnected:
-        color = colorScheme.onSurfaceVariant;
-        label = strings.disconnected;
-        break;
-    }
-
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: 8 * scale, vertical: 3 * scale),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(AppTheme.radiusPill),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: color,
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHealthChip(
-    BuildContext context,
-    ServerHealthSnapshot health,
-    AppStrings strings,
-  ) {
-    final color = _healthColor(context, health.level);
-    final label = _healthLabel(strings, health.level);
-    final detail = health.details.isEmpty ? label : health.details.join(' / ');
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(AppTheme.radiusPill),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(_healthIcon(health.level), size: 13, color: color),
-          const SizedBox(width: 5),
-          Flexible(
-            child: Text(
-              '${strings.language == AppLanguage.en ? 'Health' : '健康'} ${health.score} · $detail',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: color,
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildOverviewHeader(
-    BuildContext context,
-    List<ConnectionConfig> connections,
-    AppStrings strings,
-  ) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final textColor = _panelTextColor(context);
-    final mutedTextColor = _panelMutedTextColor(context);
-    final headerSnapshot = context.select<SshService, _ServerHeaderSnapshot>(
-      (ssh) =>
-          _ServerHeaderSnapshot.from(ssh.serverOverviewSnapshot, connections),
-    );
-    final activeCount = headerSnapshot.activeCount;
-    final windowCount = headerSnapshot.windowCount;
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(2, 0, 0, 8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        context.read<AppSettings>().isEnglish
-                            ? 'Server overview'
-                            : '服务器总览',
-                        style: TextStyle(
-                          color: textColor,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        context.read<AppSettings>().isEnglish
-                            ? 'Server information and terminal windows are managed together here.'
-                            : '服务器信息与终端窗口在这里统一管理。',
-                        style: TextStyle(
-                          color: mutedTextColor,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  tooltip: strings.connectionHistory,
-                  icon: const Icon(Icons.history_rounded),
-                  color: mutedTextColor,
-                  onPressed: () => Navigator.pushNamed(context, '/history'),
-                ),
-                IconButton(
-                  tooltip: strings.settings,
-                  icon: const Icon(Icons.settings_outlined),
-                  color: mutedTextColor,
-                  onPressed: () => const OpenSettingsNotification().dispatch(context),
-                ),
-              ],
-            ),
-          ),
-          ShadCard(
-            child: Row(
-              children: [
-                _summaryItem(
-                  context,
-                  icon: Icons.storage_rounded,
-                  label: strings.servers,
-                  value: '${connections.length}',
-                  textColor: textColor,
-                  mutedTextColor: mutedTextColor,
-                ),
-                const SizedBox(width: 10),
-                _summaryItem(
-                  context,
-                  icon: Icons.link_rounded,
-                  label: strings.active,
-                  value: '$activeCount',
-                  accent: colorScheme.secondary,
-                  textColor: textColor,
-                  mutedTextColor: mutedTextColor,
-                ),
-                const SizedBox(width: 10),
-                _summaryItem(
-                  context,
-                  icon: Icons.tab_rounded,
-                  label: strings.windows,
-                  value: '$windowCount',
-                  textColor: textColor,
-                  mutedTextColor: mutedTextColor,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _summaryItem(
-    BuildContext context, {
-    required IconData icon,
-    required String label,
-    required String value,
-    required Color textColor,
-    required Color mutedTextColor,
-    Color? accent,
-  }) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final color = accent ?? colorScheme.primary;
-    return Expanded(
-      child: Row(
-        children: [
-          Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-            ),
-            child: Icon(icon, size: 17, color: color),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  value,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                    color: textColor,
-                  ),
-                ),
-                Text(
-                  label,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: mutedTextColor,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Color _healthColor(BuildContext context, ServerHealthLevel level) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return switch (level) {
-      ServerHealthLevel.healthy => colorScheme.secondary,
-      ServerHealthLevel.warning => Colors.orangeAccent.shade700,
-      ServerHealthLevel.critical => colorScheme.error,
-      ServerHealthLevel.unknown => colorScheme.onSurfaceVariant,
-    };
-  }
-
-  IconData _healthIcon(ServerHealthLevel level) {
-    return switch (level) {
-      ServerHealthLevel.healthy => Icons.verified_rounded,
-      ServerHealthLevel.warning => Icons.warning_amber_rounded,
-      ServerHealthLevel.critical => Icons.error_rounded,
-      ServerHealthLevel.unknown => Icons.help_outline_rounded,
-    };
-  }
-
-  String _healthLabel(AppStrings strings, ServerHealthLevel level) {
-    final en = strings.language == AppLanguage.en;
-    return switch (level) {
-      ServerHealthLevel.healthy => en ? 'Healthy' : '正常',
-      ServerHealthLevel.warning => en ? 'Warning' : '警告',
-      ServerHealthLevel.critical => en ? 'Critical' : '危险',
-      ServerHealthLevel.unknown => en ? 'No samples' : '暂无采样',
-    };
-  }
-
-  Color _panelColor(BuildContext context) {
-    return Theme.of(context).colorScheme.surface;
-  }
-
-  Color _panelBorderColor(BuildContext context) {
-    return Theme.of(context).colorScheme.outlineVariant;
-  }
-
-  Color _panelTextColor(BuildContext context) {
-    return Theme.of(context).colorScheme.onSurface;
-  }
-
-  Color _panelMutedTextColor(BuildContext context) {
-    return Theme.of(context).colorScheme.onSurfaceVariant;
-  }
-
-  IconData _getStatusIcon(ConnectionConfig conn, SshConnectionState? state) {
-    if (state != null) {
-      if (state == SshConnectionState.connected) return Icons.link;
-      if (state == SshConnectionState.connecting) return Icons.sync;
-      return Icons.link_off;
-    }
-    return Icons.dns_outlined;
   }
 
   Future<void> _openNewTerminal(
@@ -1101,10 +330,6 @@ class _ServerListPaneState extends State<ServerListPane> {
     );
   }
 
-  void _addConnection(BuildContext context) {
-    Navigator.pushNamed(context, '/add');
-  }
-
   void _toggleServerSelection(String id) {
     _updateState(() {
       if (_selectedServerIds.contains(id)) {
@@ -1156,5 +381,51 @@ class _ServerListPaneState extends State<ServerListPane> {
       _serverSelectionMode = false;
       _selectedServerIds.clear();
     });
+  }
+
+  Widget _buildOverviewHeader(
+    BuildContext context,
+    List<ConnectionConfig> connections,
+    AppStrings strings,
+  ) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final activeCount = connections.length;
+
+    return Row(
+      children: [
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              strings.servers,
+              style: textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w800,
+                fontSize: 24,
+                letterSpacing: -0.5,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              strings.language == AppLanguage.en
+                  ? '$activeCount saved server${activeCount == 1 ? "" : "s"}'
+                  : '已保存 $activeCount 台服务器',
+              style: TextStyle(
+                color: colorScheme.onSurfaceVariant,
+                fontSize: 13,
+              ),
+            ),
+          ],
+        ),
+        const Spacer(),
+        if (!_serverSelectionMode) ...[
+          IconButton(
+            tooltip: strings.addConnection,
+            icon: const Icon(Icons.add_circle_outline_rounded),
+            onPressed: () => Navigator.pushNamed(context, '/add'),
+          ),
+        ],
+      ],
+    );
   }
 }

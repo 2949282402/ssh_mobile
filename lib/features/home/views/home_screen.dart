@@ -36,7 +36,9 @@ import 'package:ssh_mobile/services/mcp/mcp_server_settings.dart';
 
 part 'widgets/home_settings_strings.dart';
 part 'widgets/settings_panel.dart';
+part 'widgets/settings_sections.dart';
 part 'widgets/server_list_pane.dart';
+part 'widgets/server_connection_widgets.dart';
 
 class HomeScreen extends StatefulWidget {
   final int initialIndex;
@@ -820,42 +822,6 @@ class _AnimatedPageFadeIn extends StatelessWidget {
   Widget build(BuildContext context) {
     return child;
   }
-}
-
-class _ServerHeaderSnapshot {
-  final int activeCount;
-  final int windowCount;
-
-  const _ServerHeaderSnapshot({
-    required this.activeCount,
-    required this.windowCount,
-  });
-
-  factory _ServerHeaderSnapshot.from(
-    SshServerOverviewSnapshot sessions,
-    List<ConnectionConfig> connections,
-  ) {
-    var activeCount = 0;
-    for (final connection in connections) {
-      if (sessions.forConnection(connection.id).hasConnected) {
-        activeCount++;
-      }
-    }
-    return _ServerHeaderSnapshot(
-      activeCount: activeCount,
-      windowCount: sessions.windowCount,
-    );
-  }
-
-  @override
-  bool operator ==(Object other) {
-    return other is _ServerHeaderSnapshot &&
-        other.activeCount == activeCount &&
-        other.windowCount == windowCount;
-  }
-
-  @override
-  int get hashCode => Object.hash(activeCount, windowCount);
 }
 
 class SwitchToAiTabNotification extends Notification {

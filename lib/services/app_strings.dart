@@ -125,6 +125,20 @@ class AppStrings {
       : '应用会通过后台服务和 keep-alive 尽量维持 SSH 连接。';
   String saveFailed(Object error) =>
       _en ? 'Save failed: $error' : '保存失败: $error';
+  String get saveFailedGuidance => _en
+      ? 'Please check the host address, port, username, password or private key, then save again.'
+      : '请检查主机地址、端口、用户名、密码或私钥后重新保存。';
+  String get paste => _en ? 'Paste' : '粘贴';
+  String get serverSystem => _en ? 'Server system' : '服务器系统';
+  String get windowsTmuxUnavailable => _en
+      ? 'Windows OpenSSH uses a normal interactive shell. tmux is only available if you connect to Linux/WSL and tmux is installed.'
+      : 'Windows OpenSSH 使用普通交互式 shell。tmux 只适用于 Linux/WSL 且服务器已安装 tmux 的场景。';
+  String get windowsMonitoringDescription => _en
+      ? 'Windows monitoring uses PowerShell diagnostics; terminal mode stays plain SSH.'
+      : 'Windows 监控会使用 PowerShell 诊断命令；终端模式固定为普通 SSH。';
+  String get linuxMonitoringDescription => _en
+      ? 'Default. Supports normal SSH and SSH + tmux when tmux is installed on the server.'
+      : '默认选项。服务器安装 tmux 时支持普通 SSH 和 SSH + tmux。';
   String get saveWillCloseWindowsTitle =>
       _en ? 'Related windows will be closed' : '保存后将关闭相关窗口';
   String saveWillCloseWindowsContent(int count) => _en

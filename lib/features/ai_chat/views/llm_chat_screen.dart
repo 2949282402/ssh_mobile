@@ -37,6 +37,7 @@ import 'widgets/message_bubble.dart';
 
 part 'widgets/assistant_run_indicator.dart';
 part 'widgets/llm_settings_screen.dart';
+part 'widgets/llm_settings_widgets.dart';
 part 'widgets/history_panel.dart';
 part 'widgets/chat_tools_bar.dart';
 part 'widgets/tool_approval_panel.dart';

@@ -521,7 +521,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
             ),
             TextButton.icon(
               icon: const Icon(Icons.paste_rounded, size: 16),
-              label: Text(_text('Paste', '粘贴')),
+              label: Text(strings.paste),
               onPressed: () async {
                 final data = await Clipboard.getData(Clipboard.kTextPlain);
                 if (data?.text != null) {
@@ -624,10 +624,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
         const SizedBox(height: 6),
         Text(
           !supportsTmux
-              ? _text(
-                  'Windows OpenSSH uses a normal interactive shell. tmux is only available if you connect to Linux/WSL and tmux is installed.',
-                  'Windows OpenSSH 使用普通交互式 shell。tmux 只适用于 Linux/WSL 且服务器已安装 tmux 的场景。',
-                )
+              ? strings.windowsTmuxUnavailable
               : _launchMode == TerminalLaunchMode.tmux
                   ? strings.tmuxModeDescription
                   : strings.sshModeDescription,
@@ -642,12 +639,13 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   Widget _buildServerPlatformSelector() {
+    final strings = _strings(context);
     final isWindows = _serverPlatform == ServerPlatform.windows;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          _text('Server system', '服务器系统'),
+          strings.serverSystem,
           style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 8),
@@ -681,14 +679,8 @@ class _AddEditScreenState extends State<AddEditScreen> {
         const SizedBox(height: 6),
         Text(
           isWindows
-              ? _text(
-                  'Windows monitoring uses PowerShell diagnostics; terminal mode stays plain SSH.',
-                  'Windows 监控会使用 PowerShell 诊断命令；终端模式固定为普通 SSH。',
-                )
-              : _text(
-                  'Default. Supports normal SSH and SSH + tmux when tmux is installed on the server.',
-                  '默认选项。服务器安装 tmux 时支持普通 SSH 和 SSH + tmux。',
-                ),
+              ? strings.windowsMonitoringDescription
+              : strings.linuxMonitoringDescription,
           style: TextStyle(
             fontSize: 12,
             color:
@@ -810,15 +802,9 @@ class _AddEditScreenState extends State<AddEditScreen> {
     }
   }
 
-  String _text(String en, String zh) {
-    return context.read<AppSettings>().isEnglish ? en : zh;
-  }
-
   Future<void> _showSaveError(Object error) async {
     final strings = AppStrings(context.read<AppSettings>().language);
-    final guidance = context.read<AppSettings>().isEnglish
-        ? 'Please check the host address, port, username, password or private key, then save again.'
-        : '请检查主机地址、端口、用户名、密码或私钥后重新保存。';
+    final guidance = strings.saveFailedGuidance;
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
