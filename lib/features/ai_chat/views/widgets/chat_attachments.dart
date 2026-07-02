@@ -35,7 +35,7 @@ class _ChatAttachmentPreview extends StatelessWidget {
 }
 
 extension _ChatAttachments on _LlmChatScreenBodyState {
-  Future<void> _pickImage(_AiStrings strings) async {
+  Future<void> _pickImage(AiStrings strings) async {
     try {
       final result = await FilePicker.pickFiles(
         type: FileType.image,
@@ -81,7 +81,7 @@ extension _ChatAttachments on _LlmChatScreenBodyState {
     }
   }
 
-  Future<void> _pickFile(_AiStrings strings) async {
+  Future<void> _pickFile(AiStrings strings) async {
     try {
       final result = await FilePicker.pickFiles();
       if (result == null || result.files.isEmpty) return;

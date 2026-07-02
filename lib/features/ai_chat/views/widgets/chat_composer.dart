@@ -50,7 +50,7 @@ class _ChatComposerState extends State<_ChatComposer> {
     final language = context.select<AppSettings, AppLanguage>(
       (settings) => settings.language,
     );
-    final strings = _AiStrings(language);
+    final strings = AiStrings(language);
     final state = context.findAncestorStateOfType<_LlmChatScreenBodyState>()!;
 
     return Selector<AiChatViewModel, _ComposerSnapshot>(

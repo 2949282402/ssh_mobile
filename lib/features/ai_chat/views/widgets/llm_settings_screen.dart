@@ -264,7 +264,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     });
   }
 
-  Future<void> _openBaseUrlHistory(_AiStrings strings) async {
+  Future<void> _openBaseUrlHistory(AiStrings strings) async {
     final action = await showModalBottomSheet<_SettingsHistoryAction<String>>(
       context: context,
       showDragHandle: true,
@@ -304,7 +304,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     await _applyBaseUrlSelection(action.value);
   }
 
-  Future<void> _openApiKeyHistory(_AiStrings strings) async {
+  Future<void> _openApiKeyHistory(AiStrings strings) async {
     final action = await showModalBottomSheet<
         _SettingsHistoryAction<AiApiKeyHistoryEntry>>(
       context: context,
@@ -347,7 +347,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _selectApiKeyHistoryEntry(action.value.id);
   }
 
-  Future<void> _refreshModels(_AiStrings strings) async {
+  Future<void> _refreshModels(AiStrings strings) async {
     final viewModel = context.read<AiChatViewModel>();
     setState(() {
       _loadingModels = true;
@@ -378,7 +378,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     }
   }
 
-  Future<void> _save(_AiStrings strings) async {
+  Future<void> _save(AiStrings strings) async {
     FocusScope.of(context).unfocus();
     final viewModel = context.read<AiChatViewModel>();
     final appSettings = context.read<AppSettings>();
@@ -461,7 +461,7 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     final language = context.select<AppSettings, AppLanguage>(
       (settings) => settings.language,
     );
-    final strings = _AiStrings(language);
+    final strings = AiStrings(language);
     if (_showUnsupportedFormatWarning) {
       _showUnsupportedFormatWarning = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {

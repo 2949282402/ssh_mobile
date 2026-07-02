@@ -1,12 +1,13 @@
 part of '../llm_chat_screen.dart';
 
-final ValueNotifier<String> _emptyStringListenable = ValueNotifier<String>('');
+final ValueNotifier<String> emptyStringListenable = ValueNotifier<String>('');
 
-class _AssistantRunIndicator extends StatelessWidget {
+class AssistantRunIndicator extends StatelessWidget {
   final String label;
   final bool compact;
 
-  const _AssistantRunIndicator({
+  const AssistantRunIndicator({
+    super.key,
     required this.label,
     required this.compact,
   });

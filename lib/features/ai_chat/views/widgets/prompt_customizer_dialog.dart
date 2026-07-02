@@ -1,7 +1,7 @@
-﻿part of '../llm_chat_screen.dart';
+part of '../llm_chat_screen.dart';
 
 class _PromptCustomizerDialog extends StatefulWidget {
-  final _AiStrings strings;
+  final AiStrings strings;
 
   const _PromptCustomizerDialog({required this.strings});
 

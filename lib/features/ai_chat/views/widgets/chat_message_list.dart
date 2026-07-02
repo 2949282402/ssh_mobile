@@ -8,6 +8,9 @@ class _ChatMessageList extends StatelessWidget {
   final void Function(int index) onBranch;
   final VoidCallback onContinueTimeout;
 
+  final void Function(DateTime createdAt) onApprovePlanExecute;
+  final void Function(AiChatRecord chat) onRevisePlan;
+
   const _ChatMessageList({
     required this.scrollController,
     required this.onUserScroll,
@@ -15,6 +18,8 @@ class _ChatMessageList extends StatelessWidget {
     required this.onRegenerate,
     required this.onBranch,
     required this.onContinueTimeout,
+    required this.onApprovePlanExecute,
+    required this.onRevisePlan,
   });
 
   bool _isTimeoutError(String text) {
@@ -27,7 +32,7 @@ class _ChatMessageList extends StatelessWidget {
     final language = context.select<AppSettings, AppLanguage>(
       (settings) => settings.language,
     );
-    final strings = _AiStrings(language);
+    final strings = AiStrings(language);
 
     return Selector<AiChatViewModel, _ChatMessagesSnapshot>(
       selector: (context, vm) {
@@ -90,7 +95,7 @@ class _ChatMessageList extends StatelessWidget {
                   key: ValueKey(
                     '${message.role}-${message.createdAt.microsecondsSinceEpoch}',
                   ),
-                  child: _MessageBubble(
+                  child: MessageBubble(
                     chatId: snapshot.chatId,
                     index: index,
                     message: message,
@@ -111,6 +116,9 @@ class _ChatMessageList extends StatelessWidget {
                             _isTimeoutError(message.text)
                         ? onContinueTimeout
                         : null,
+                    onApproveExecute: () =>
+                        onApprovePlanExecute(message.createdAt),
+                    onRevisePlan: () => onRevisePlan(viewModel.activeChat!),
                   ),
                 );
               },

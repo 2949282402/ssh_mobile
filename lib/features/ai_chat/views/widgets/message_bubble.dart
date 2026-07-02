@@ -1,6 +1,25 @@
-part of '../llm_chat_screen.dart';
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import 'package:flutter_animate/flutter_animate.dart';
+import 'package:gpt_markdown/gpt_markdown.dart';
 
-class _MessageBubble extends StatelessWidget {
+import 'package:ssh_mobile/features/ai_chat/models/agent_trace_event.dart';
+import 'package:ssh_mobile/features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
+import 'package:ssh_mobile/features/playbook/models/playbook.dart';
+import 'package:ssh_mobile/services/app_settings.dart';
+import 'package:ssh_mobile/services/storage_service.dart';
+import 'package:ssh_mobile/services/agent/plan_execution_controller.dart';
+import 'package:ssh_mobile/theme/app_theme.dart';
+import 'package:ssh_mobile/features/ai_chat/pages/agent_trace_debug_page.dart';
+import 'trace_panel.dart';
+import 'message_attachments_wrap.dart';
+
+import '../llm_chat_screen.dart'; // For AiStrings/AiStrings extensions
+
+class MessageBubble extends StatelessWidget {
   final String chatId;
   final int index;
   final AiChatMessageRecord message;
@@ -11,8 +30,11 @@ class _MessageBubble extends StatelessWidget {
   final VoidCallback? onRegenerate;
   final VoidCallback? onBranch;
   final VoidCallback? onContinueTimeout;
+  final VoidCallback? onApproveExecute;
+  final VoidCallback? onRevisePlan;
 
-  const _MessageBubble({
+  const MessageBubble({
+    super.key,
     required this.chatId,
     required this.index,
     required this.message,
@@ -23,12 +45,14 @@ class _MessageBubble extends StatelessWidget {
     this.onRegenerate,
     this.onBranch,
     this.onContinueTimeout,
+    this.onApproveExecute,
+    this.onRevisePlan,
   });
 
   @override
   Widget build(BuildContext context) {
-    final state = context.findAncestorStateOfType<_LlmChatScreenBodyState>();
-    final activeChat = state?._activeChat;
+    final viewModel = context.watch<AiChatViewModel>();
+    final activeChat = viewModel.activeChat;
     final isLatestAssistant = activeChat != null &&
         activeChat.messages.lastIndexWhere((m) => m.role == 'assistant') ==
             index;
@@ -36,7 +60,7 @@ class _MessageBubble extends StatelessWidget {
     final language = context.select<AppSettings, AppLanguage>(
       (settings) => settings.language,
     );
-    final strings = _AiStrings(language);
+    final strings = AiStrings(language);
 
     final colorScheme = Theme.of(context).colorScheme;
     final isUser = message.role == 'user';
@@ -115,6 +139,7 @@ class _MessageBubble extends StatelessWidget {
                           _ChatTodoPanel(
                             chatId: chatId,
                             message: message,
+                            onRevisePlan: onRevisePlan,
                           ),
                           if (message.todoSteps.every(
                                   (s) => s.status == StepStatus.pending) &&
@@ -197,33 +222,23 @@ class _MessageBubble extends StatelessWidget {
   }
 
   Widget _buildApproveButton(BuildContext context) {
-    final isEn = context.read<AppSettings>().language == AppLanguage.en;
+    final settings = context.read<AppSettings>();
+    final strings = AiStrings(settings.language);
+    final theme = Theme.of(context);
+    final extColors = theme.extension<ExtendedColors>();
 
     return Padding(
       padding: const EdgeInsets.only(top: 8, bottom: 4),
       child: Center(
         child: FilledButton.icon(
-          onPressed: () {
-            final state =
-                context.findAncestorStateOfType<_LlmChatScreenBodyState>();
-            if (state == null) return;
-            state.approvePlanAndExecute(message.createdAt);
-            return;
-
-            /*
-            final command = isEn
-                ? 'I approve the operations plan. Please execute all planned task steps sequentially. Run the command for each step, and call client_task_update with its taskId to update status (success/failed) and write the logs after execution. Report back once finished.'
-                : '我同意此操作计划。请按顺序依次执行计划中的所有任务步骤，运行对应的命令，并在每一步执行完毕后自动调用 client_task_update 工具更新该步状态（成功/失败）并存入 stdout/stderr 回显日志，全部完成后向我报告。';
-            state.sendDirectCommand(command);
-            */
-          },
+          onPressed: onApproveExecute,
           icon: const Icon(Icons.verified_user_outlined, size: 16),
           label: Text(
-            isEn ? 'Approve & Execute Plan' : '同意并执行计划',
+            strings.approveAndExecutePlan,
             style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
           ),
           style: FilledButton.styleFrom(
-            backgroundColor: Colors.green,
+            backgroundColor: extColors?.success ?? theme.colorScheme.primary,
             foregroundColor: Colors.white,
             visualDensity: VisualDensity.compact,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -320,9 +335,13 @@ class _AgentRunInlineSummaryState extends State<_AgentRunInlineSummary> {
       builder: (context, snapshot) {
         final data = snapshot.data;
         if (data == null) return const SizedBox.shrink();
-        final colorScheme = Theme.of(context).colorScheme;
+        final theme = Theme.of(context);
+        final colorScheme = theme.colorScheme;
+        final extColors = theme.extension<ExtendedColors>();
         final isEn = context.read<AppSettings>().language == AppLanguage.en;
-        final statusColor = data.success ? Colors.green : colorScheme.error;
+        final statusColor = data.success
+            ? (extColors?.success ?? colorScheme.primary)
+            : colorScheme.error;
         return Padding(
           padding: const EdgeInsets.only(left: 4, bottom: 2),
           child: Wrap(
@@ -581,20 +600,21 @@ class _AgentTraceLink extends StatelessWidget {
   }
 }
 
-class _EditUserMessageDialog extends StatefulWidget {
+class EditUserMessageDialog extends StatefulWidget {
   final String initialText;
-  final _AiStrings strings;
+  final AiStrings strings;
 
-  const _EditUserMessageDialog({
+  const EditUserMessageDialog({
+    super.key,
     required this.initialText,
     required this.strings,
   });
 
   @override
-  State<_EditUserMessageDialog> createState() => _EditUserMessageDialogState();
+  State<EditUserMessageDialog> createState() => EditUserMessageDialogState();
 }
 
-class _EditUserMessageDialogState extends State<_EditUserMessageDialog> {
+class EditUserMessageDialogState extends State<EditUserMessageDialog> {
   late final TextEditingController _controller;
 
   @override
@@ -667,7 +687,7 @@ class _AssistantMarkdownBody extends StatelessWidget {
     return ValueListenableBuilder<String>(
       valueListenable: listenable,
       builder: (context, value, _) => ValueListenableBuilder<String>(
-        valueListenable: streamingStatusListenable ?? _emptyStringListenable,
+        valueListenable: streamingStatusListenable ?? emptyStringListenable,
         builder: (context, status, _) {
           final displayText = value.isEmpty ? text : value;
           final hasText = displayText.trim().isNotEmpty;
@@ -676,7 +696,7 @@ class _AssistantMarkdownBody extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (label.isNotEmpty || !hasText)
-                _AssistantRunIndicator(
+                AssistantRunIndicator(
                   label: label.isEmpty ? '...' : label,
                   compact: hasText,
                 ),
@@ -920,10 +940,12 @@ class _MessageActions extends StatelessWidget {
 class _ChatTodoPanel extends StatefulWidget {
   final String chatId;
   final AiChatMessageRecord message;
+  final VoidCallback? onRevisePlan;
 
   const _ChatTodoPanel({
     required this.chatId,
     required this.message,
+    this.onRevisePlan,
   });
 
   @override
@@ -1245,19 +1267,7 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                         ),
                       ),
                       OutlinedButton.icon(
-                        onPressed: () async {
-                          final state = context.findAncestorStateOfType<
-                              _LlmChatScreenBodyState>();
-                          final chat = state?._activeChat;
-                          if (state == null || chat == null) return;
-                          await state._setPlanModeFromUi(
-                            chat: chat,
-                            enabled: true,
-                            strings: _AiStrings(
-                              context.read<AppSettings>().language,
-                            ),
-                          );
-                        },
+                        onPressed: widget.onRevisePlan,
                         icon: const Icon(Icons.edit_note_outlined, size: 13),
                         label: Text(isEn ? 'Revise Plan' : '调整计划'),
                         style: OutlinedButton.styleFrom(
@@ -1318,10 +1328,11 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
           child: CircularProgressIndicator(strokeWidth: 2),
         );
       case StepStatus.success:
-        return const Icon(Icons.check_circle_rounded,
-            size: 16, color: Colors.green);
+        final extColors = Theme.of(context).extension<ExtendedColors>();
+        return Icon(Icons.check_circle_rounded,
+            size: 16, color: extColors?.success ?? colorScheme.primary);
       case StepStatus.failed:
-        return const Icon(Icons.cancel_rounded, size: 16, color: Colors.red);
+        return Icon(Icons.cancel_rounded, size: 16, color: colorScheme.error);
       case StepStatus.skipped:
         return Icon(Icons.next_plan_outlined,
             size: 16, color: colorScheme.onSurfaceVariant);

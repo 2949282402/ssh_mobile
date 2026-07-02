@@ -645,6 +645,23 @@ class AppStrings {
   String get unknown => _en ? 'Unknown' : '未知';
 
   String get addConnection => _en ? 'Add connection' : '添加连接';
+  String get verifyAndSave => _en ? 'Verify & Save' : '验证并保存';
+  String get deleteRemoteEntryConfirmPrompt =>
+      _en ? 'Type the exact name to confirm:' : '请输入完整名称确认：';
+  String get deleteRemoteEntryConfirmLabel => _en ? 'Entry name' : '文件或目录名称';
+  String get deleteRemoteEntryConfirmMismatch =>
+      _en ? 'Name does not match.' : '名称不匹配。';
+  String uploadFileTooLarge(String limit) =>
+      _en ? 'File is larger than $limit' : '文件大小超过了 $limit';
+  String get uploadFileNoAccess =>
+      _en ? 'Unable to access file path on this platform.' : '此平台无法访问文件路径。';
+  String get uploadCancelled => _en ? 'Upload cancelled' : '上传已取消';
+  String downloadFileTooLarge(String limit) =>
+      _en ? 'File is larger than $limit' : '文件大小超过了 $limit';
+  String get downloadCancelled => _en ? 'Download cancelled' : '下载已取消';
+  String uploadingFile(String name) => _en ? 'Uploading $name' : '正在上传 $name';
+  String downloadingFile(String name) =>
+      _en ? 'Downloading $name' : '正在下载 $name';
   String get editConnection => _en ? 'Edit connection' : '编辑连接';
   String get noConnections => _en ? 'No saved servers yet' : '还没有保存的服务器';
   String get addHint => _en ? 'Tap + to add a connection' : '点击右下角 + 添加连接';

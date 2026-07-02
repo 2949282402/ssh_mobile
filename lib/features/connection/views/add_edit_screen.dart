@@ -193,11 +193,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
                       Text(strings.saving),
                     ],
                   )
-                : Text(
-                    strings.language == AppLanguage.en
-                        ? 'Verify & Save'
-                        : '验证并保存',
-                  ),
+                : Text(strings.verifyAndSave),
           ),
         ),
       ),
@@ -855,7 +851,8 @@ class _AddEditScreenState extends State<AddEditScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+            style: TextButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.error),
             child: Text(strings.saveAndDisconnect),
           ),
         ],

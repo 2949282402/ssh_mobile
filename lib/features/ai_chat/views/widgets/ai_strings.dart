@@ -1,9 +1,9 @@
 part of '../llm_chat_screen.dart';
 
-class _AiStrings {
+class AiStrings {
   final AppLanguage language;
 
-  const _AiStrings(this.language);
+  const AiStrings(this.language);
 
   bool get _en => language == AppLanguage.en;
 
@@ -224,4 +224,6 @@ class _AiStrings {
   String get commandToolsSearch => _en ? 'Search tools' : '搜索工具';
   String get commandToolsNoResult =>
       _en ? 'No tools match the search.' : '未找到匹配的工具。';
+  String get approveAndExecutePlan =>
+      _en ? 'Approve & Execute Plan' : '同意并执行计划';
 }

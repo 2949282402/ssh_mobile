@@ -88,7 +88,7 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
         .toList();
   }
 
-  Widget _buildSlashCommandPanel(BuildContext context, _AiStrings strings) {
+  Widget _buildSlashCommandPanel(BuildContext context, AiStrings strings) {
     final suggestions = _filteredSlashCommands;
     if (suggestions.isEmpty) return const SizedBox.shrink();
     final colorScheme = Theme.of(context).colorScheme;
@@ -152,7 +152,7 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
     );
   }
 
-  Future<List<_ToolOption>?> _loadAvailableTools(_AiStrings strings) async {
+  Future<List<_ToolOption>?> _loadAvailableTools(AiStrings strings) async {
     if (!mounted || !context.mounted) {
       return null;
     }
@@ -186,7 +186,7 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
 
   Future<Set<String>?> _openToolsSelector({
     required BuildContext context,
-    required _AiStrings strings,
+    required AiStrings strings,
     required List<_ToolOption> availableTools,
     required Set<String> initialTools,
   }) async {
@@ -331,7 +331,7 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
   Future<bool> _setPlanModeFromUi({
     required AiChatRecord chat,
     required bool enabled,
-    required _AiStrings strings,
+    required AiStrings strings,
     bool showFeedback = true,
   }) async {
     if (!enabled && !canExitPlanMode(chat, actor: PlanModeExitActor.userUi)) {

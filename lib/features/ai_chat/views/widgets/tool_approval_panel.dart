@@ -2,7 +2,7 @@ part of '../llm_chat_screen.dart';
 
 class _ToolApprovalPanel extends StatelessWidget {
   final PendingToolApproval pending;
-  final _AiStrings strings;
+  final AiStrings strings;
   final VoidCallback onApprove;
   final VoidCallback onReject;
 

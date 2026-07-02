@@ -4,7 +4,7 @@ class _HistoryPanel extends StatefulWidget {
   final List<AiChatRecord> chats;
   final String? activeChatId;
   final bool loading;
-  final _AiStrings strings;
+  final AiStrings strings;
   final String Function(DateTime time) formatTime;
   final VoidCallback onClose;
   final VoidCallback onNewChat;
@@ -182,7 +182,7 @@ class _HistoryPanelState extends State<_HistoryPanel> {
 }
 
 extension _LlmChatScreenBodyStateHistory on _LlmChatScreenBodyState {
-  Future<void> _showHistory(BuildContext context, _AiStrings strings) async {
+  Future<void> _showHistory(BuildContext context, AiStrings strings) async {
     _openHistoryPanel(context);
     final viewModel = context.read<AiChatViewModel>();
     unawaited(viewModel.loadHistoryChatsIfNeeded());
