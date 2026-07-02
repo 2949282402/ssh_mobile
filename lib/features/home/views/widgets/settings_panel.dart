@@ -23,12 +23,27 @@ class _SettingsPanelState extends State<_SettingsPanel> {
   String? _mcpPortMessage;
   int? _lastSyncedMcpPort;
 
+  final TextEditingController _terminalFontController = TextEditingController();
+  final FocusNode _terminalFontFocusNode = FocusNode();
+  Timer? _terminalFontDebounce;
+  String? _lastSyncedTerminalFont;
+
   @override
   void dispose() {
     _mcpPortDebounce?.cancel();
     _mcpPortController.dispose();
     _mcpPortFocusNode.dispose();
+    _terminalFontDebounce?.cancel();
+    _terminalFontController.dispose();
+    _terminalFontFocusNode.dispose();
     super.dispose();
+  }
+
+  void _onTerminalFontChanged(SettingsViewModel settings, String value) {
+    _terminalFontDebounce?.cancel();
+    _terminalFontDebounce = Timer(const Duration(milliseconds: 400), () {
+      unawaited(settings.setTerminalFontFamily(value));
+    });
   }
 
   Future<void> _editSftpLimit({
@@ -258,6 +273,13 @@ class _SettingsPanelState extends State<_SettingsPanel> {
     final cacheOptions = secretSnapshot.cacheOptions;
     _syncMcpPortController(settings);
 
+    if (_lastSyncedTerminalFont != appSnapshot.terminalFontFamily) {
+      _lastSyncedTerminalFont = appSnapshot.terminalFontFamily;
+      if (!_terminalFontFocusNode.hasFocus) {
+        _terminalFontController.text = appSnapshot.terminalFontFamily;
+      }
+    }
+
     return ListTileTheme(
       dense: false,
       minLeadingWidth: 28,
@@ -334,6 +356,98 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                   value: appSnapshot.isDarkMode,
                   onChanged: (_) => settings.changeThemeMode(
                     settings.isDarkMode ? ThemeMode.light : ThemeMode.dark,
+                  ),
+                ),
+                if (appSnapshot.isDarkMode)
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    secondary: const Icon(Icons.brightness_2, size: 20),
+                    title: Text(
+                      strings.oledDarkMode,
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                    value: appSnapshot.oledDark,
+                    onChanged: (val) => settings.setOledDark(val),
+                  ),
+                const Divider(height: 18),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.palette_outlined, size: 20),
+                  title: Text(
+                    strings.terminalTheme,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  trailing: SizedBox(
+                    width: 140,
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        isDense: true,
+                        isExpanded: true,
+                        value: appSnapshot.terminalThemeId,
+                        items: const [
+                          DropdownMenuItem(
+                              value: 'default', child: Text('Default')),
+                          DropdownMenuItem(
+                              value: 'monokai', child: Text('Monokai')),
+                          DropdownMenuItem(value: 'nord', child: Text('Nord')),
+                          DropdownMenuItem(
+                              value: 'gruvbox', child: Text('Gruvbox')),
+                          DropdownMenuItem(
+                              value: 'solarized',
+                              child: Text('Solarized Dark')),
+                        ],
+                        onChanged: (val) {
+                          if (val != null) {
+                            settings.setTerminalThemeId(val);
+                          }
+                        },
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.only(left: 30, bottom: 8),
+                  child: TextField(
+                    controller: _terminalFontController,
+                    focusNode: _terminalFontFocusNode,
+                    decoration: InputDecoration(
+                      isDense: true,
+                      labelText: strings.customTerminalFont,
+                      helperText: strings.customTerminalFontHint,
+                      border: const OutlineInputBorder(),
+                    ),
+                    onChanged: (val) => _onTerminalFontChanged(settings, val),
+                  ),
+                ),
+                const Divider(height: 18),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.grid_view, size: 20),
+                  title: Text(
+                    strings.serverListLayout,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  trailing: SizedBox(
+                    width: 140,
+                    child: SegmentedButton<String>(
+                      segments: [
+                        ButtonSegment(
+                          value: 'list',
+                          label: Text(strings.layoutList),
+                          icon: const Icon(Icons.list, size: 16),
+                        ),
+                        ButtonSegment(
+                          value: 'grid',
+                          label: Text(strings.layoutGrid),
+                          icon: const Icon(Icons.grid_on, size: 16),
+                        ),
+                      ],
+                      selected: {appSnapshot.serverListLayoutMode},
+                      onSelectionChanged: (selection) {
+                        settings.setServerListLayoutMode(selection.first);
+                      },
+                    ),
                   ),
                 ),
               ],
@@ -713,6 +827,10 @@ class _SettingsAppSnapshot {
   final int sftpTextPreviewLimitBytes;
   final int sftpRichPreviewLimitBytes;
   final int sftpTextEditLimitBytes;
+  final bool oledDark;
+  final String terminalThemeId;
+  final String terminalFontFamily;
+  final String serverListLayoutMode;
 
   const _SettingsAppSnapshot({
     required this.language,
@@ -722,6 +840,10 @@ class _SettingsAppSnapshot {
     required this.sftpTextPreviewLimitBytes,
     required this.sftpRichPreviewLimitBytes,
     required this.sftpTextEditLimitBytes,
+    required this.oledDark,
+    required this.terminalThemeId,
+    required this.terminalFontFamily,
+    required this.serverListLayoutMode,
   });
 
   factory _SettingsAppSnapshot.from(SettingsViewModel settings) {
@@ -733,6 +855,10 @@ class _SettingsAppSnapshot {
       sftpTextPreviewLimitBytes: settings.sftpTextPreviewLimitBytes,
       sftpRichPreviewLimitBytes: settings.sftpRichPreviewLimitBytes,
       sftpTextEditLimitBytes: settings.sftpTextEditLimitBytes,
+      oledDark: settings.oledDark,
+      terminalThemeId: settings.terminalThemeId,
+      terminalFontFamily: settings.terminalFontFamily,
+      serverListLayoutMode: settings.serverListLayoutMode,
     );
   }
 
@@ -745,7 +871,11 @@ class _SettingsAppSnapshot {
         other.sftpDownloadLimitBytes == sftpDownloadLimitBytes &&
         other.sftpTextPreviewLimitBytes == sftpTextPreviewLimitBytes &&
         other.sftpRichPreviewLimitBytes == sftpRichPreviewLimitBytes &&
-        other.sftpTextEditLimitBytes == sftpTextEditLimitBytes;
+        other.sftpTextEditLimitBytes == sftpTextEditLimitBytes &&
+        other.oledDark == oledDark &&
+        other.terminalThemeId == terminalThemeId &&
+        other.terminalFontFamily == terminalFontFamily &&
+        other.serverListLayoutMode == serverListLayoutMode;
   }
 
   @override
@@ -757,6 +887,10 @@ class _SettingsAppSnapshot {
         sftpTextPreviewLimitBytes,
         sftpRichPreviewLimitBytes,
         sftpTextEditLimitBytes,
+        oledDark,
+        terminalThemeId,
+        terminalFontFamily,
+        serverListLayoutMode,
       );
 }
 

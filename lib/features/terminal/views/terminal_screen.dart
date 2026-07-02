@@ -55,6 +55,7 @@ class _TerminalScreenState extends State<TerminalScreen>
   TerminalTheme? _cachedTerminalTheme;
   bool? _cachedTerminalThemeIsDark;
   Color? _cachedTerminalThemeBackground;
+  String? _cachedTerminalThemeId;
 
   String? _serverName;
 
@@ -123,41 +124,173 @@ class _TerminalScreenState extends State<TerminalScreen>
     );
   }
 
-  TerminalTheme _terminalTheme(bool isDark, Color background) {
+  Color _getThemeBackground(String themeId, bool isDark) {
+    if (!isDark) return const Color(0xFFFAFAFA);
+    switch (themeId) {
+      case 'monokai':
+        return const Color(0xFF272822);
+      case 'nord':
+        return const Color(0xFF2E3440);
+      case 'gruvbox':
+        return const Color(0xFF282828);
+      case 'solarized':
+        return const Color(0xFF002B36);
+      case 'default':
+      default:
+        final oledDark = context.read<AppSettings>().oledDark;
+        return oledDark ? const Color(0xFF000000) : const Color(0xFF09090B);
+    }
+  }
+
+  TerminalTheme _terminalTheme(bool isDark, Color background, String themeId) {
     final cached = _cachedTerminalTheme;
     if (cached != null &&
         _cachedTerminalThemeIsDark == isDark &&
-        _cachedTerminalThemeBackground == background) {
+        _cachedTerminalThemeBackground == background &&
+        _cachedTerminalThemeId == themeId) {
       return cached;
     }
 
-    final theme = !isDark
-        ? TerminalTheme(
+    TerminalTheme theme;
+    if (!isDark) {
+      theme = TerminalTheme(
+        background: background,
+        foreground: const Color(0xFF24292F),
+        cursor: const Color(0xFF0969DA),
+        selection: const Color(0xFF0969DA).withValues(alpha: 0.22),
+        searchHitBackground: const Color(0xFFFFD33D),
+        searchHitBackgroundCurrent: const Color(0xFFFFAB00),
+        searchHitForeground: const Color(0xFF24292F),
+        black: const Color(0xFF24292F),
+        red: const Color(0xFFCF222E),
+        green: const Color(0xFF116329),
+        yellow: const Color(0xFF4D2D00),
+        blue: const Color(0xFF0969DA),
+        magenta: const Color(0xFF8250DF),
+        cyan: const Color(0xFF1B7C83),
+        white: const Color(0xFF6E7781),
+        brightBlack: const Color(0xFF57606A),
+        brightRed: const Color(0xFFA40E26),
+        brightGreen: const Color(0xFF1A7F37),
+        brightYellow: const Color(0xFF9A6700),
+        brightBlue: const Color(0xFF218BFF),
+        brightMagenta: const Color(0xFFA475F9),
+        brightCyan: const Color(0xFF3192AA),
+        brightWhite: const Color(0xFF24292F),
+      );
+    } else {
+      switch (themeId) {
+        case 'monokai':
+          theme = TerminalTheme(
             background: background,
-            foreground: const Color(0xFF24292F),
-            cursor: const Color(0xFF0969DA),
-            selection: const Color(0xFF0969DA).withValues(alpha: 0.22),
+            foreground: const Color(0xFFF8F8F2),
+            cursor: const Color(0xFFF8F8F0),
+            selection: const Color(0xFF49483E),
             searchHitBackground: const Color(0xFFFFD33D),
             searchHitBackgroundCurrent: const Color(0xFFFFAB00),
-            searchHitForeground: const Color(0xFF24292F),
-            black: const Color(0xFF24292F),
-            red: const Color(0xFFCF222E),
-            green: const Color(0xFF116329),
-            yellow: const Color(0xFF4D2D00),
-            blue: const Color(0xFF0969DA),
-            magenta: const Color(0xFF8250DF),
-            cyan: const Color(0xFF1B7C83),
-            white: const Color(0xFF6E7781),
-            brightBlack: const Color(0xFF57606A),
-            brightRed: const Color(0xFFA40E26),
-            brightGreen: const Color(0xFF1A7F37),
-            brightYellow: const Color(0xFF9A6700),
-            brightBlue: const Color(0xFF218BFF),
-            brightMagenta: const Color(0xFFA475F9),
-            brightCyan: const Color(0xFF3192AA),
-            brightWhite: const Color(0xFF24292F),
-          )
-        : TerminalTheme(
+            searchHitForeground: const Color(0xFF272822),
+            black: const Color(0xFF272822),
+            red: const Color(0xFFF92672),
+            green: const Color(0xFFA6E22E),
+            yellow: const Color(0xFFF4BF75),
+            blue: const Color(0xFF66D9EF),
+            magenta: const Color(0xFFAE81FF),
+            cyan: const Color(0xFFA1EFE4),
+            white: const Color(0xFFF8F8F2),
+            brightBlack: const Color(0xFF75715E),
+            brightRed: const Color(0xFFF92672),
+            brightGreen: const Color(0xFFA6E22E),
+            brightYellow: const Color(0xFFF4BF75),
+            brightBlue: const Color(0xFF66D9EF),
+            brightMagenta: const Color(0xFFAE81FF),
+            brightCyan: const Color(0xFFA1EFE4),
+            brightWhite: const Color(0xFFF9F8F5),
+          );
+          break;
+        case 'nord':
+          theme = TerminalTheme(
+            background: background,
+            foreground: const Color(0xFFD8DEE9),
+            cursor: const Color(0xFFD8DEE9),
+            selection: const Color(0xFF434C5E),
+            searchHitBackground: const Color(0xFFEBCB8B),
+            searchHitBackgroundCurrent: const Color(0xFFD08770),
+            searchHitForeground: const Color(0xFF2E3440),
+            black: const Color(0xFF3B4252),
+            red: const Color(0xFFBF616A),
+            green: const Color(0xFFA3BE8C),
+            yellow: const Color(0xFFEBCB8B),
+            blue: const Color(0xFF81A1C1),
+            magenta: const Color(0xFFB48EAD),
+            cyan: const Color(0xFF88C0D0),
+            white: const Color(0xFFE5E9F0),
+            brightBlack: const Color(0xFF4C566A),
+            brightRed: const Color(0xFFBF616A),
+            brightGreen: const Color(0xFFA3BE8C),
+            brightYellow: const Color(0xFFEBCB8B),
+            brightBlue: const Color(0xFF81A1C1),
+            brightMagenta: const Color(0xFFB48EAD),
+            brightCyan: const Color(0xFF8FBCBB),
+            brightWhite: const Color(0xFFECEFF4),
+          );
+          break;
+        case 'gruvbox':
+          theme = TerminalTheme(
+            background: background,
+            foreground: const Color(0xFFEBDBB2),
+            cursor: const Color(0xFFEBDBB2),
+            selection: const Color(0xFF504945),
+            searchHitBackground: const Color(0xFFFABD2F),
+            searchHitBackgroundCurrent: const Color(0xFFFE8019),
+            searchHitForeground: const Color(0xFF282828),
+            black: const Color(0xFF282828),
+            red: const Color(0xFFCC241D),
+            green: const Color(0xFF98971A),
+            yellow: const Color(0xFFD79921),
+            blue: const Color(0xFF458588),
+            magenta: const Color(0xFFB16286),
+            cyan: const Color(0xFF689D6A),
+            white: const Color(0xFFA89984),
+            brightBlack: const Color(0xFF928374),
+            brightRed: const Color(0xFFFB4934),
+            brightGreen: const Color(0xFFB8BB26),
+            brightYellow: const Color(0xFFFABD2F),
+            brightBlue: const Color(0xFF83A598),
+            brightMagenta: const Color(0xFFD3869B),
+            brightCyan: const Color(0xFF8EC07C),
+            brightWhite: const Color(0xFFFBF1C7),
+          );
+          break;
+        case 'solarized':
+          theme = TerminalTheme(
+            background: background,
+            foreground: const Color(0xFF839496),
+            cursor: const Color(0xFF93A1A1),
+            selection: const Color(0xFF073642),
+            searchHitBackground: const Color(0xFFB58900),
+            searchHitBackgroundCurrent: const Color(0xFFCB4B16),
+            searchHitForeground: const Color(0xFF002B36),
+            black: const Color(0xFF073642),
+            red: const Color(0xFFDC322F),
+            green: const Color(0xFF859900),
+            yellow: const Color(0xFFB58900),
+            blue: const Color(0xFF268BD2),
+            magenta: const Color(0xFFD33682),
+            cyan: const Color(0xFF2AA198),
+            white: const Color(0xFFEEE8D5),
+            brightBlack: const Color(0xFF002B36),
+            brightRed: const Color(0xFFCB4B16),
+            brightGreen: const Color(0xFF586E75),
+            brightYellow: const Color(0xFF657B83),
+            brightBlue: const Color(0xFF839496),
+            brightMagenta: const Color(0xFF6C71C4),
+            brightCyan: const Color(0xFF93A1A1),
+            brightWhite: const Color(0xFFFDF6E3),
+          );
+          break;
+        case 'default':
+        default:
+          theme = TerminalTheme(
             background: background,
             foreground: const Color(0xFFCCCCCC),
             cursor: const Color(0xFF58A6FF),
@@ -182,9 +315,13 @@ class _TerminalScreenState extends State<TerminalScreen>
             brightCyan: const Color(0xFF80EBFF),
             brightWhite: const Color(0xFFFFFFFF),
           );
+          break;
+      }
+    }
     _cachedTerminalTheme = theme;
     _cachedTerminalThemeIsDark = isDark;
     _cachedTerminalThemeBackground = background;
+    _cachedTerminalThemeId = themeId;
     return theme;
   }
 
@@ -215,10 +352,8 @@ class _TerminalScreenState extends State<TerminalScreen>
           final isConnected = viewModel.isConnected;
           final isDark = Theme.of(context).brightness == Brightness.dark;
           final terminalBackground =
-              isDark ? const Color(0xFF09090B) : const Color(0xFFFAFAFA);
-          final toolbarColor = isDark
-              ? const Color(0xFF09090B)
-              : Theme.of(context).colorScheme.surface;
+              _getThemeBackground(appSettings.terminalThemeId, isDark);
+          final toolbarColor = terminalBackground;
           final useWideDesktopSideShortcutPanel =
               !_useWindowsBottomShortcutPanel &&
                   MediaQuery.sizeOf(context).width >=
@@ -229,7 +364,8 @@ class _TerminalScreenState extends State<TerminalScreen>
             terminal: viewModel.terminal,
             controller: viewModel.terminalController,
             focusNode: viewModel.terminalFocusNode,
-            theme: _terminalTheme(isDark, terminalBackground),
+            theme: _terminalTheme(
+                isDark, terminalBackground, appSettings.terminalThemeId),
             fontSize: terminalFontSize,
             minFontSize: _minTerminalFontSize,
             maxFontSize: _maxTerminalFontSize,

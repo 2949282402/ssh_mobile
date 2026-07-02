@@ -42,6 +42,10 @@ class AppSettings extends ChangeNotifier {
       'mcp_require_approval_for_write_tools';
   static const _mcpEnableSseKey = 'mcp_enable_sse';
   static const _mcpServerTokenSecureKey = 'mcp_server_token';
+  static const _oledDarkKey = 'oled_dark';
+  static const _terminalThemeIdKey = 'terminal_theme_id';
+  static const _terminalFontFamilyKey = 'terminal_font_family';
+  static const _serverListLayoutModeKey = 'server_list_layout_mode';
   static const int minSftpLimitBytes = 64 * 1024;
   static const int maxSftpLimitBytes = 2 * 1024 * 1024 * 1024;
   static const int defaultSftpDownloadLimitBytes = 512 * 1024 * 1024;
@@ -67,6 +71,10 @@ class AppSettings extends ChangeNotifier {
   bool _mcpAllowWriteTools = false;
   bool _mcpRequireApprovalForWriteTools = true;
   bool _mcpEnableSse = false;
+  bool _oledDark = false;
+  String _terminalThemeId = 'default';
+  String _terminalFontFamily = '';
+  String _serverListLayoutMode = 'list';
   bool _initialized = false;
   final Completer<void> _initCompleter = Completer<void>();
   Future<void> _themeWrite = Future.value();
@@ -98,6 +106,10 @@ class AppSettings extends ChangeNotifier {
   bool get mcpAllowWriteTools => _mcpAllowWriteTools;
   bool get mcpRequireApprovalForWriteTools => _mcpRequireApprovalForWriteTools;
   bool get mcpEnableSse => _mcpEnableSse;
+  bool get oledDark => _oledDark;
+  String get terminalThemeId => _terminalThemeId;
+  String get terminalFontFamily => _terminalFontFamily;
+  String get serverListLayoutMode => _serverListLayoutMode;
   McpServerSettings get mcpSettings => McpServerSettings(
         enabled: _mcpServerEnabled,
         host: _mcpServerHost,
@@ -152,6 +164,11 @@ class AppSettings extends ChangeNotifier {
           prefs.getBool(_mcpRequireApprovalForWriteToolsKey) ?? true;
       _mcpEnableSse = prefs.getBool(_mcpEnableSseKey) ?? false;
       _mcpServerToken = await _readOrCreateMcpServerToken();
+      _oledDark = prefs.getBool(_oledDarkKey) ?? false;
+      _terminalThemeId = prefs.getString(_terminalThemeIdKey) ?? 'default';
+      _terminalFontFamily = prefs.getString(_terminalFontFamilyKey) ?? '';
+      _serverListLayoutMode =
+          prefs.getString(_serverListLayoutModeKey) ?? 'list';
     } catch (e, stackTrace) {
       AppLogService.instance.error(
         'Failed to initialize AppSettings',
@@ -176,6 +193,10 @@ class AppSettings extends ChangeNotifier {
       _mcpAllowWriteTools = false;
       _mcpRequireApprovalForWriteTools = true;
       _mcpEnableSse = false;
+      _oledDark = false;
+      _terminalThemeId = 'default';
+      _terminalFontFamily = '';
+      _serverListLayoutMode = 'list';
     } finally {
       _initialized = true;
       if (!_initCompleter.isCompleted) {
@@ -368,6 +389,55 @@ class AppSettings extends ChangeNotifier {
     });
   }
 
+  Future<void> setOledDark(bool value) async {
+    if (_oledDark == value) return;
+    _oledDark = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_oledDarkKey, value);
+    AppLogService.instance.info(
+      'OLED Dark setting updated',
+      details: 'oledDark=$value',
+    );
+  }
+
+  Future<void> setTerminalThemeId(String id) async {
+    if (_terminalThemeId == id) return;
+    _terminalThemeId = id;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_terminalThemeIdKey, id);
+    AppLogService.instance.info(
+      'Terminal Theme setting updated',
+      details: 'themeId=$id',
+    );
+  }
+
+  Future<void> setTerminalFontFamily(String family) async {
+    final trimmed = family.trim();
+    if (_terminalFontFamily == trimmed) return;
+    _terminalFontFamily = trimmed;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_terminalFontFamilyKey, trimmed);
+    AppLogService.instance.info(
+      'Terminal Font setting updated',
+      details: 'fontFamily=$trimmed',
+    );
+  }
+
+  Future<void> setServerListLayoutMode(String mode) async {
+    if (_serverListLayoutMode == mode) return;
+    _serverListLayoutMode = mode;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_serverListLayoutModeKey, mode);
+    AppLogService.instance.info(
+      'Server list layout mode updated',
+      details: 'mode=$mode',
+    );
+  }
+
   Future<void> setFontFamilyId(String id) async {
     final normalized = AppFontChoice.normalize(id);
     if (_fontFamilyId == normalized) return;
@@ -543,6 +613,15 @@ class AppStrings {
   String get switchToEnglish => 'EN';
   String get switchToLightMode => _en ? 'Switch to light mode' : '切换到浅色主题';
   String get switchToDarkMode => _en ? 'Switch to dark mode' : '切换到深色主题';
+  String get oledDarkMode => _en ? 'OLED Black Mode' : 'OLED 纯黑模式';
+  String get terminalTheme => _en ? 'Terminal Theme' : '终端配色方案';
+  String get customTerminalFont => _en ? 'Custom Terminal Font' : '自定义终端字体';
+  String get customTerminalFontHint => _en
+      ? 'System monospaced font family, e.g. Fira Code'
+      : '系统已安装的等宽字体名称，如 Fira Code';
+  String get serverListLayout => _en ? 'Server List Layout' : '服务器列表布局';
+  String get layoutList => _en ? 'List' : '列表';
+  String get layoutGrid => _en ? 'Grid' : '网格';
 
   String get servers => _en ? 'Servers' : '服务器';
   String get server => _en ? 'Server' : '服务器';

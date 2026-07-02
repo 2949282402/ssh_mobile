@@ -15,7 +15,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
     return connections.isEmpty
         ? storageReady
             ? _buildEmptyState(context, strings)
-            : _buildLoadingState()
+            : _buildServerSkeletalLoader(context)
         : _buildConnectionList(
             context,
             connections,
@@ -80,16 +80,96 @@ extension _HomeScreenStateServerList on _HomeScreenState {
     );
   }
 
+  Widget _buildServerSkeletalLoader(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final baseColor =
+        isDark ? const Color(0xFF1E293B) : const Color(0xFFE2E8F0);
+    final highlightColor =
+        isDark ? const Color(0xFF334155) : const Color(0xFFF1F5F9);
+
+    return ListView.builder(
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      itemCount: 3,
+      itemBuilder: (context, index) {
+        return Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: baseColor.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+            border: Border.all(
+              color: isDark ? const Color(0xFF334155) : const Color(0xFFCBD5E1),
+              width: 1,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: highlightColor,
+                      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Container(
+                    width: 140,
+                    height: 18,
+                    decoration: BoxDecoration(
+                      color: highlightColor,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Container(
+                width: 220,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: highlightColor,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                width: 100,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: highlightColor,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            ],
+          ),
+        ).animate(onPlay: (controller) => controller.repeat()).shimmer(
+              duration: const Duration(milliseconds: 1200),
+              color: highlightColor.withValues(alpha: 0.35),
+            );
+      },
+    );
+  }
+
   Widget _buildConnectionList(
     BuildContext context,
     List<ConnectionConfig> connections,
     AppStrings strings,
   ) {
+    final layoutMode = context.select<AppSettings, String>(
+      (settings) => settings.serverListLayoutMode,
+    );
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final desktop = constraints.maxWidth >= AppBreakpoints.desktop;
         final horizontalPadding = desktop ? 24.0 : 12.0;
         final maxContentWidth = desktop ? 1480.0 : double.infinity;
+        final isGrid = layoutMode == 'grid';
 
         return SizedBox(
           width: maxContentWidth.isInfinite
@@ -112,28 +192,52 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                 ),
               ),
               Expanded(
-                child: ReorderableListView.builder(
-                  buildDefaultDragHandles: false,
-                  scrollCacheExtent: const ScrollCacheExtent.pixels(700.0),
-                  padding: EdgeInsets.fromLTRB(
-                    horizontalPadding,
-                    0,
-                    horizontalPadding,
-                    88,
-                  ),
-                  itemCount: connections.length,
-                  itemBuilder: (context, index) => _buildConnectionCard(
-                    context,
-                    connections[index],
-                    strings,
-                    connIndex: index,
-                  ),
-                  onReorderItem: (oldIndex, newIndex) {
-                    context
-                        .read<ConnectionViewModel>()
-                        .reorderConnections(oldIndex, newIndex);
-                  },
-                ),
+                child: isGrid
+                    ? GridView.builder(
+                        padding: EdgeInsets.fromLTRB(
+                          horizontalPadding,
+                          0,
+                          horizontalPadding,
+                          88,
+                        ),
+                        gridDelegate:
+                            const SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: 340,
+                          crossAxisSpacing: 10,
+                          mainAxisSpacing: 10,
+                          mainAxisExtent: 172,
+                        ),
+                        itemCount: connections.length,
+                        itemBuilder: (context, index) => _buildConnectionCard(
+                          context,
+                          connections[index],
+                          strings,
+                          connIndex: index,
+                        ),
+                      )
+                    : ReorderableListView.builder(
+                        buildDefaultDragHandles: false,
+                        scrollCacheExtent:
+                            const ScrollCacheExtent.pixels(700.0),
+                        padding: EdgeInsets.fromLTRB(
+                          horizontalPadding,
+                          0,
+                          horizontalPadding,
+                          88,
+                        ),
+                        itemCount: connections.length,
+                        itemBuilder: (context, index) => _buildConnectionCard(
+                          context,
+                          connections[index],
+                          strings,
+                          connIndex: index,
+                        ),
+                        onReorderItem: (oldIndex, newIndex) {
+                          context
+                              .read<ConnectionViewModel>()
+                              .reorderConnections(oldIndex, newIndex);
+                        },
+                      ),
               ),
               if (_serverSelectionMode) _buildSelectionBar(context, strings),
             ],
@@ -243,6 +347,10 @@ extension _HomeScreenStateServerList on _HomeScreenState {
         isSelected ? colorScheme.primary.withValues(alpha: 0.54) : borderColor;
 
     final windowsExpanded = _expandedConnectionWindowIds.contains(conn.id);
+    final layoutMode =
+        context.select<AppSettings, String>((s) => s.serverListLayoutMode);
+    final isGrid = layoutMode == 'grid';
+    final actualWindowsExpanded = windowsExpanded && !isGrid;
 
     bool isHovered = false;
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -272,8 +380,8 @@ extension _HomeScreenStateServerList on _HomeScreenState {
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 150),
                 curve: Curves.easeOutCubic,
-                margin: EdgeInsets.only(bottom: 10 * scale),
-                padding: EdgeInsets.all(14 * scale),
+                margin: EdgeInsets.only(bottom: isGrid ? 0 : (10 * scale)),
+                padding: EdgeInsets.all(isGrid ? 10 * scale : 14 * scale),
                 decoration: BoxDecoration(
                   color: isHovered
                       ? (isDark
@@ -307,7 +415,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                     // Layer 1: Status Icon, Name, and Connection Status Chip
                     Row(
                       children: [
-                        if (!_serverSelectionMode)
+                        if (!_serverSelectionMode && !isGrid)
                           ReorderableDragStartListener(
                             index: connIndex,
                             child: Padding(
@@ -425,38 +533,63 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                     // Layer 3: Action buttons (New Window, Window List Toggle, and More Menu)
                     Row(
                       children: [
-                        TextButton.icon(
-                          onPressed: () => _openNewTerminal(context, conn),
-                          icon: Icon(Icons.add_to_photos_outlined,
-                              size: 16 * scale),
-                          label: Text(strings.newWindow),
-                          style: TextButton.styleFrom(
-                            padding: EdgeInsets.symmetric(
-                                horizontal: 8 * scale, vertical: 4 * scale),
+                        if (isGrid) ...[
+                          IconButton(
                             visualDensity: VisualDensity.compact,
+                            tooltip: strings.newWindow,
+                            icon: Icon(Icons.add_to_photos_outlined,
+                                size: 16 * scale),
+                            onPressed: () => _openNewTerminal(context, conn),
                           ),
-                        ),
-                        if (sessionCount > 0) ...[
-                          SizedBox(width: 8 * scale),
+                          if (sessionCount > 0) ...[
+                            const SizedBox(width: 4),
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              tooltip: strings.windows,
+                              icon: Icon(Icons.terminal_outlined,
+                                  size: 16 * scale),
+                              onPressed: () => Navigator.pushNamed(
+                                context,
+                                '/terminal-windows',
+                                arguments: conn.id,
+                              ),
+                            ),
+                          ],
+                        ] else ...[
                           TextButton.icon(
-                            onPressed: () => _toggleConnectionWindows(conn.id),
-                            icon: Icon(
-                              windowsExpanded
-                                  ? Icons.expand_less_rounded
-                                  : Icons.expand_more_rounded,
-                              size: 16 * scale,
-                            ),
-                            label: Text(
-                              strings.language == AppLanguage.en
-                                  ? 'Window List · $sessionCount'
-                                  : '窗口列表 · $sessionCount',
-                            ),
+                            onPressed: () => _openNewTerminal(context, conn),
+                            icon: Icon(Icons.add_to_photos_outlined,
+                                size: 16 * scale),
+                            label: Text(strings.newWindow),
                             style: TextButton.styleFrom(
                               padding: EdgeInsets.symmetric(
                                   horizontal: 8 * scale, vertical: 4 * scale),
                               visualDensity: VisualDensity.compact,
                             ),
                           ),
+                          if (sessionCount > 0) ...[
+                            SizedBox(width: 8 * scale),
+                            TextButton.icon(
+                              onPressed: () =>
+                                  _toggleConnectionWindows(conn.id),
+                              icon: Icon(
+                                windowsExpanded
+                                    ? Icons.expand_less_rounded
+                                    : Icons.expand_more_rounded,
+                                size: 16 * scale,
+                              ),
+                              label: Text(
+                                strings.language == AppLanguage.en
+                                    ? 'Window List · $sessionCount'
+                                    : '窗口列表 · $sessionCount',
+                              ),
+                              style: TextButton.styleFrom(
+                                padding: EdgeInsets.symmetric(
+                                    horizontal: 8 * scale, vertical: 4 * scale),
+                                visualDensity: VisualDensity.compact,
+                              ),
+                            ),
+                          ],
                         ],
                         const Spacer(),
                         if (!_serverSelectionMode)
@@ -498,7 +631,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                           ),
                       ],
                     ),
-                    if (windowsExpanded)
+                    if (actualWindowsExpanded)
                       TerminalWindowsPage(
                         key:
                             PageStorageKey<String>('server-windows-${conn.id}'),

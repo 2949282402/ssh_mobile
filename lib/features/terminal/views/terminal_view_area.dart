@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:xterm/xterm.dart';
 
 class TerminalViewArea extends StatefulWidget {
@@ -82,6 +84,10 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
   }
 
   String get _terminalFontFamily {
+    final customFont = context.read<AppSettings>().terminalFontFamily;
+    if (customFont.isNotEmpty) {
+      return customFont;
+    }
     if (_isWindowsTerminalTarget) {
       return 'Cascadia Mono';
     }
