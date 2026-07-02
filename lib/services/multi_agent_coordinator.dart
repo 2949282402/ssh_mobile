@@ -3,7 +3,7 @@ import 'dart:convert';
 
 import 'app_log_service.dart';
 import 'app_settings.dart';
-import 'llm_chat_service.dart';
+import '../features/ai_chat/services/llm_chat_service.dart';
 import 'tool_secret_policy.dart';
 
 class SubAgentThinkingSettings {

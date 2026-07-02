@@ -19,7 +19,7 @@ import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/client_health_advisor.dart';
 import 'package:ssh_mobile/services/client_system_tool_service.dart';
-import 'package:ssh_mobile/services/llm_chat_service.dart';
+import '../services/llm_chat_service.dart';
 import 'package:ssh_mobile/services/llm_provider/llm_api_format.dart';
 import 'package:ssh_mobile/services/multi_agent_coordinator.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
@@ -406,7 +406,9 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
                       onContinueTimeout: () => _continueAfterTimeout(strings),
                       onApprovePlanExecute: (createdAt) =>
                           approvePlanAndExecute(createdAt),
-                      onRevisePlan: (chat) => _setPlanModeFromUi(
+                      onRevisePlan: (chat) =>
+                          LlmChatCommandsHelper.setPlanModeFromUi(
+                        context: context,
                         chat: chat,
                         enabled: true,
                         strings: strings,
@@ -689,6 +691,57 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     final viewModel = context.read<AiChatViewModel>();
     await viewModel.deleteChat(chat.id);
     _scrollToBottom(jump: true);
+  }
+
+  Future<void> _showHistory(BuildContext context, AiStrings strings) async {
+    _openHistoryPanel(context);
+    final viewModel = context.read<AiChatViewModel>();
+    unawaited(viewModel.loadHistoryChatsIfNeeded());
+  }
+
+  double _historyPanelWidth(BuildContext context) {
+    return MediaQuery.sizeOf(context).width;
+  }
+
+  void _openHistoryPanel(BuildContext context) {
+    final viewModel = context.read<AiChatViewModel>();
+    _animateHistoryPanel(context, _historyPanelWidth(context));
+    unawaited(viewModel.loadHistoryChatsIfNeeded());
+  }
+
+  void _closeHistoryPanel(BuildContext context) {
+    _animateHistoryPanel(context, 0);
+  }
+
+  void _animateHistoryPanel(BuildContext context, double target) {
+    final width = _historyPanelWidth(context);
+    final safeTarget = target.clamp(0.0, width);
+    _historySlideAnimation = Tween<double>(
+      begin: _historyPanelExtent.value.clamp(0.0, width),
+      end: safeTarget,
+    ).animate(
+      CurvedAnimation(
+        parent: _historySlideController,
+        curve: Curves.easeOutCubic,
+        reverseCurve: Curves.easeInCubic,
+      ),
+    );
+    _historySlideController.forward(from: 0);
+  }
+
+  void _setHistoryPanelExtent(double extent) {
+    if ((_historyPanelExtent.value - extent).abs() < 0.5) return;
+    final wasVisible = _historyPanelExtent.value > 0.5;
+    _historyPanelExtent.value = extent;
+    final isVisible = extent > 0.5;
+    if (wasVisible != isVisible) {
+      widget.onHistoryVisibilityChanged?.call(isVisible);
+    }
+  }
+
+  String _formatTime(DateTime time) {
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${two(time.month)}-${two(time.day)} ${two(time.hour)}:${two(time.minute)}';
   }
 
   String _contextUsage(int used, int limit, double ratio) {

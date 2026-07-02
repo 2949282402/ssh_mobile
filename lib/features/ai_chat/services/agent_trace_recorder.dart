@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import '../../../services/llm_chat_service.dart';
+import 'llm_chat_service.dart';
 import '../../../services/storage_service.dart';
 import '../../../services/tool_secret_policy.dart';
 import '../models/agent_trace_event.dart';

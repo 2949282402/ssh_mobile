@@ -1,6 +1,6 @@
 part of '../llm_chat_screen.dart';
 
-class _HistoryPanel extends StatefulWidget {
+class HistoryPanel extends StatefulWidget {
   final List<AiChatRecord> chats;
   final String? activeChatId;
   final bool loading;
@@ -11,7 +11,8 @@ class _HistoryPanel extends StatefulWidget {
   final ValueChanged<String> onSelectChat;
   final Future<void> Function(AiChatRecord chat) onDeleteChat;
 
-  const _HistoryPanel({
+  const HistoryPanel({
+    super.key,
     required this.chats,
     required this.activeChatId,
     required this.loading,
@@ -24,10 +25,10 @@ class _HistoryPanel extends StatefulWidget {
   });
 
   @override
-  State<_HistoryPanel> createState() => _HistoryPanelState();
+  State<HistoryPanel> createState() => _HistoryPanelState();
 }
 
-class _HistoryPanelState extends State<_HistoryPanel> {
+class _HistoryPanelState extends State<HistoryPanel> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
@@ -144,7 +145,7 @@ class _HistoryPanelState extends State<_HistoryPanel> {
                         final chat = filtered[index];
                         final selected = chat.id == widget.activeChatId;
                         return ListTile(
-                          selected: selected,
+                           selected: selected,
                           leading: Icon(
                             selected
                                 ? Icons.chat_bubble_rounded
@@ -178,58 +179,5 @@ class _HistoryPanelState extends State<_HistoryPanel> {
         ),
       ],
     );
-  }
-}
-
-extension _LlmChatScreenBodyStateHistory on _LlmChatScreenBodyState {
-  Future<void> _showHistory(BuildContext context, AiStrings strings) async {
-    _openHistoryPanel(context);
-    final viewModel = context.read<AiChatViewModel>();
-    unawaited(viewModel.loadHistoryChatsIfNeeded());
-  }
-
-  double _historyPanelWidth(BuildContext context) {
-    return MediaQuery.sizeOf(context).width;
-  }
-
-  void _openHistoryPanel(BuildContext context) {
-    final viewModel = context.read<AiChatViewModel>();
-    _animateHistoryPanel(context, _historyPanelWidth(context));
-    unawaited(viewModel.loadHistoryChatsIfNeeded());
-  }
-
-  void _closeHistoryPanel(BuildContext context) {
-    _animateHistoryPanel(context, 0);
-  }
-
-  void _animateHistoryPanel(BuildContext context, double target) {
-    final width = _historyPanelWidth(context);
-    final safeTarget = target.clamp(0.0, width);
-    _historySlideAnimation = Tween<double>(
-      begin: _historyPanelExtent.value.clamp(0.0, width),
-      end: safeTarget,
-    ).animate(
-      CurvedAnimation(
-        parent: _historySlideController,
-        curve: Curves.easeOutCubic,
-        reverseCurve: Curves.easeInCubic,
-      ),
-    );
-    _historySlideController.forward(from: 0);
-  }
-
-  void _setHistoryPanelExtent(double extent) {
-    if ((_historyPanelExtent.value - extent).abs() < 0.5) return;
-    final wasVisible = _historyPanelExtent.value > 0.5;
-    _historyPanelExtent.value = extent;
-    final isVisible = extent > 0.5;
-    if (wasVisible != isVisible) {
-      widget.onHistoryVisibilityChanged?.call(isVisible);
-    }
-  }
-
-  String _formatTime(DateTime time) {
-    String two(int value) => value.toString().padLeft(2, '0');
-    return '${two(time.month)}-${two(time.day)} ${two(time.hour)}:${two(time.minute)}';
   }
 }

@@ -34,23 +34,25 @@ class _ChatAttachmentPreview extends StatelessWidget {
   }
 }
 
-extension _ChatAttachments on _LlmChatScreenBodyState {
-  Future<void> _pickImage(AiStrings strings) async {
+class ChatAttachmentPicker {
+  static Future<void> pickImage(
+    BuildContext context,
+    AiStrings strings,
+    AiChatViewModel viewModel,
+  ) async {
     try {
       final result = await FilePicker.pickFiles(
         type: FileType.image,
       );
       if (result == null || result.files.isEmpty) return;
-      if (!mounted) return;
 
-      final viewModel = context.read<AiChatViewModel>();
       final settings = await viewModel.loadAiConnectionSettings();
       final maxBytes = settings.maxImageSizeBytes;
 
       for (final file in result.files) {
         if (file.size == 0) continue;
         if (file.size > maxBytes) {
-          if (mounted) {
+          if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(strings.imageTooLarge(
@@ -81,20 +83,22 @@ extension _ChatAttachments on _LlmChatScreenBodyState {
     }
   }
 
-  Future<void> _pickFile(AiStrings strings) async {
+  static Future<void> pickFile(
+    BuildContext context,
+    AiStrings strings,
+    AiChatViewModel viewModel,
+  ) async {
     try {
       final result = await FilePicker.pickFiles();
       if (result == null || result.files.isEmpty) return;
-      if (!mounted) return;
 
-      final viewModel = context.read<AiChatViewModel>();
       final settings = await viewModel.loadAiConnectionSettings();
       final maxBytes = settings.maxFileSizeBytes;
 
       for (final file in result.files) {
         if (file.size == 0) continue;
         if (file.size > maxBytes) {
-          if (mounted) {
+          if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(strings.fileTooLarge(

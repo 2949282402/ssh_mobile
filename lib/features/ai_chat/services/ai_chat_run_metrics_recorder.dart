@@ -1,5 +1,5 @@
 import '../../../services/agent_model_profile.dart';
-import '../../../services/llm_chat_service.dart';
+import 'llm_chat_service.dart';
 import '../../../services/storage_service.dart';
 
 class AiChatRunMetricsRecorder {

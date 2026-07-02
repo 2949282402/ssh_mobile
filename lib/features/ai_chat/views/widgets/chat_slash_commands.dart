@@ -1,45 +1,45 @@
 // ignore_for_file: invalid_use_of_protected_member
 part of '../llm_chat_screen.dart';
 
-class _SlashCommandMeta {
+class SlashCommandMeta {
   final String command;
   final String summary;
   final String details;
 
-  const _SlashCommandMeta({
+  const SlashCommandMeta({
     required this.command,
     required this.summary,
     required this.details,
   });
 }
 
-class _ToolOption {
+class ToolOption {
   final String name;
   final String description;
 
-  const _ToolOption({
+  const ToolOption({
     required this.name,
     required this.description,
   });
 }
 
-const List<_SlashCommandMeta> _defaultSlashCommands = [
-  _SlashCommandMeta(
+const List<SlashCommandMeta> _defaultSlashCommands = [
+  SlashCommandMeta(
     command: '/compact',
     summary: 'Force compression on the next request.',
     details: 'The next AI request will compress context before sending.',
   ),
-  _SlashCommandMeta(
+  SlashCommandMeta(
     command: '/tools',
     summary: 'Limit tools for this chat.',
     details: 'Restrict which tools the model can call in the current chat.',
   ),
-  _SlashCommandMeta(
+  SlashCommandMeta(
     command: '/skills',
     summary: 'Open and manage local AI skills.',
     details: 'View saved Skills and enable or disable them.',
   ),
-  _SlashCommandMeta(
+  SlashCommandMeta(
     command: '/plan',
     summary: 'Enable Plan Mode and optionally submit a request.',
     details:
@@ -47,11 +47,20 @@ const List<_SlashCommandMeta> _defaultSlashCommands = [
   ),
 ];
 
-extension _ChatSlashCommands on _LlmChatScreenBodyState {
-  static const int _maxToolSelectorHeightPercent = 78;
+class ChatSlashCommandsPanel extends StatelessWidget {
+  final TextEditingController inputController;
+  final AiStrings strings;
+  final VoidCallback onStateChanged;
 
-  bool get _shouldShowSlashCommandPanel {
-    final text = _inputController.text;
+  const ChatSlashCommandsPanel({
+    super.key,
+    required this.inputController,
+    required this.strings,
+    required this.onStateChanged,
+  });
+
+  bool get _shouldShowPanel {
+    final text = inputController.text;
     if (!text.startsWith('/')) return false;
 
     final firstSpace = text.indexOf(' ');
@@ -59,7 +68,7 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
       return true;
     }
 
-    final selection = _inputController.selection;
+    final selection = inputController.selection;
     if (selection.isValid &&
         selection.isCollapsed &&
         selection.baseOffset <= firstSpace) {
@@ -71,8 +80,8 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
     return false;
   }
 
-  List<_SlashCommandMeta> get _filteredSlashCommands {
-    final text = _inputController.text;
+  List<SlashCommandMeta> get _filteredSlashCommands {
+    final text = inputController.text;
     if (text.isEmpty || !text.startsWith('/')) return const [];
 
     final firstSpace = text.indexOf(' ');
@@ -88,7 +97,9 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
         .toList();
   }
 
-  Widget _buildSlashCommandPanel(BuildContext context, AiStrings strings) {
+  @override
+  Widget build(BuildContext context) {
+    if (!_shouldShowPanel) return const SizedBox.shrink();
     final suggestions = _filteredSlashCommands;
     if (suggestions.isEmpty) return const SizedBox.shrink();
     final colorScheme = Theme.of(context).colorScheme;
@@ -123,7 +134,7 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
                     overflow: TextOverflow.ellipsis,
                   ),
                   onTap: () {
-                    final text = _inputController.text;
+                    final text = inputController.text;
                     final firstSpace = text.indexOf(' ');
                     final arguments =
                         firstSpace == -1 ? '' : text.substring(firstSpace + 1);
@@ -135,14 +146,15 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
                         : command.command;
 
                     final nextText = '$canonicalCmd$arguments';
-                    _inputController.text = nextText;
+                    inputController.text = nextText;
 
                     final nextCursorOffset = arguments.isEmpty
                         ? nextText.length
                         : canonicalCmd.length;
 
-                    setState(() => _inputController.selection =
-                        TextSelection.collapsed(offset: nextCursorOffset));
+                    inputController.selection =
+                        TextSelection.collapsed(offset: nextCursorOffset);
+                    onStateChanged();
                   },
                 ),
             ],
@@ -151,23 +163,27 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
       ),
     );
   }
+}
 
-  Future<List<_ToolOption>?> _loadAvailableTools(AiStrings strings) async {
-    if (!mounted || !context.mounted) {
-      return null;
-    }
+class LlmChatCommandsHelper {
+  static const int maxToolSelectorHeightPercent = 78;
+
+  static Future<List<ToolOption>?> loadAvailableTools(
+    BuildContext context,
+    AiStrings strings,
+  ) async {
     try {
       final viewModel = context.read<AiChatViewModel>();
       final definitions = await viewModel.loadToolDefinitions();
-      final tools = <_ToolOption>[];
+      final tools = <ToolOption>[];
       for (final definition in definitions) {
-        final name = _toolNameFromDefinition(definition);
+        final name = toolNameFromDefinition(definition);
         if (name == null) continue;
         final function = definition['function'];
         final description =
             function is Map<String, dynamic> ? function['description'] : null;
         tools.add(
-          _ToolOption(
+          ToolOption(
             name: name,
             description: description is String ? description : '',
           ),
@@ -176,34 +192,27 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
       tools.sort((a, b) => a.name.compareTo(b.name));
       return tools;
     } catch (error) {
-      if (!mounted || !context.mounted) {
-        return null;
+      if (context.mounted) {
+        showCommandFeedback(context, strings.commandToolsLoadFailed);
       }
-      _showCommandFeedback(strings.commandToolsLoadFailed, context);
       return null;
     }
   }
 
-  Future<Set<String>?> _openToolsSelector({
+  static Future<Set<String>?> openToolsSelector({
     required BuildContext context,
     required AiStrings strings,
-    required List<_ToolOption> availableTools,
+    required List<ToolOption> availableTools,
     required Set<String> initialTools,
   }) async {
     if (availableTools.isEmpty) {
-      _showCommandFeedback(strings.commandToolsNoTools, context);
-      return null;
-    }
-    if (!context.mounted) {
+      showCommandFeedback(context, strings.commandToolsNoTools);
       return null;
     }
     final selected = {...initialTools};
     final searchTextController = TextEditingController();
     Set<String>? selectedSet;
     try {
-      if (!context.mounted) {
-        return null;
-      }
       selectedSet = await showModalBottomSheet<Set<String>?>(
         context: context,
         isScrollControlled: true,
@@ -222,7 +231,7 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
               return SafeArea(
                 child: SizedBox(
                   height: MediaQuery.sizeOf(sheetContext).height *
-                      (_maxToolSelectorHeightPercent / 100),
+                      (maxToolSelectorHeightPercent / 100),
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
                     child: Column(
@@ -316,10 +325,7 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
     return selectedSet;
   }
 
-  void _showCommandFeedback(String message, BuildContext context) {
-    if (!context.mounted) {
-      return;
-    }
+  static void showCommandFeedback(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -328,7 +334,8 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
     );
   }
 
-  Future<bool> _setPlanModeFromUi({
+  static Future<bool> setPlanModeFromUi({
+    required BuildContext context,
     required AiChatRecord chat,
     required bool enabled,
     required AiStrings strings,
@@ -336,11 +343,11 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
   }) async {
     if (!enabled && !canExitPlanMode(chat, actor: PlanModeExitActor.userUi)) {
       if (showFeedback) {
-        _showCommandFeedback(
+        showCommandFeedback(
+          context,
           strings.language == AppLanguage.en
               ? 'Cannot exit Plan Mode until the latest assistant plan has persisted executable TODO steps.'
               : '最新一条助手计划还没有持久化可执行 TODO 步骤，暂时不能退出规划模式。',
-          context,
         );
       }
       return false;
@@ -354,16 +361,16 @@ extension _ChatSlashCommands on _LlmChatScreenBodyState {
     );
     await viewModel.updateActiveChat(updatedChat);
 
-    if (showFeedback && mounted && context.mounted) {
+    if (showFeedback && context.mounted) {
       final msg = strings.language == AppLanguage.en
           ? (enabled ? 'Plan Mode Enabled' : 'Plan Mode Disabled')
           : (enabled ? '规划模式已启用' : '规划模式已关闭');
-      _showCommandFeedback(msg, context);
+      showCommandFeedback(context, msg);
     }
     return true;
   }
 
-  String? _toolNameFromDefinition(Map<String, dynamic> definition) {
+  static String? toolNameFromDefinition(Map<String, dynamic> definition) {
     final function = definition['function'];
     if (function is! Map) return null;
     final name = function['name'];

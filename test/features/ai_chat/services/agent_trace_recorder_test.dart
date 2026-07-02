@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/features/ai_chat/models/agent_trace_event.dart';
 import 'package:ssh_mobile/features/ai_chat/services/agent_trace_recorder.dart';
-import 'package:ssh_mobile/services/llm_chat_service.dart';
+import 'package:ssh_mobile/features/ai_chat/services/llm_chat_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 
 void main() {

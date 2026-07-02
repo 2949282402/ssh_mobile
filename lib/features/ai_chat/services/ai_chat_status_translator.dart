@@ -1,5 +1,5 @@
 import '../../../services/app_settings.dart';
-import '../../../services/llm_chat_service.dart';
+import 'llm_chat_service.dart';
 
 enum AgentStatusString {
   preparing,

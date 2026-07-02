@@ -1,4 +1,4 @@
-import '../../../services/llm_chat_service.dart';
+import 'llm_chat_service.dart';
 import '../../../services/storage_service.dart';
 import 'ai_chat_message_mapper.dart';
 

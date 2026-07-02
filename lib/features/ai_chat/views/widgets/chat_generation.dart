@@ -20,33 +20,35 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
 
     final result =
         await viewModel.sendText(text: text, approvedPlanRef: approvedPlanRef);
-    if (!mounted) return;
+    if (!context.mounted) return;
 
     if (result is SendTextApiKeyMissing) {
-      await _showSettings(this.context, strings);
+      await _showSettings(context, strings);
     } else if (result is SendTextSlashCommandOpenSkills) {
-      await Navigator.of(this.context).pushNamed('/ai-skills');
-      if (mounted) {
-        _showCommandFeedback(strings.commandSkillsOpened, this.context);
+      await Navigator.of(context).pushNamed('/ai-skills');
+      if (context.mounted) {
+        LlmChatCommandsHelper.showCommandFeedback(
+            context, strings.commandSkillsOpened);
       }
     } else if (result is SendTextSlashCommandOpenToolsSelector) {
-      final availableTools = await _loadAvailableTools(strings);
-      if (!mounted || availableTools == null) return;
-      final next = await _openToolsSelector(
-        context: this.context,
+      final availableTools =
+          await LlmChatCommandsHelper.loadAvailableTools(context, strings);
+      if (!context.mounted || availableTools == null) return;
+      final next = await LlmChatCommandsHelper.openToolsSelector(
+        context: context,
         strings: strings,
         availableTools: availableTools,
         initialTools: result.currentAllowedTools,
       );
-      if (next != null && mounted) {
+      if (next != null && context.mounted) {
         viewModel.updateAllowedTools(viewModel.activeChatId!, next);
-        _showCommandFeedback(
+        LlmChatCommandsHelper.showCommandFeedback(
+          context,
           strings.commandToolsUpdated(next.length),
-          this.context,
         );
       }
     } else if (result is SendTextSlashCommandHandled) {
-      _showCommandFeedback(result.feedback, this.context);
+      LlmChatCommandsHelper.showCommandFeedback(context, result.feedback);
       if (clearInput) _inputController.clear();
       setState(() {
         _toolsExpanded = false;

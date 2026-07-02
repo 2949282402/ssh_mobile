@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/services/ai_tool_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/llm_chat_service.dart';
+import 'package:ssh_mobile/features/ai_chat/services/llm_chat_service.dart';
 import 'package:ssh_mobile/services/llm_runtime/llm_runtime_types.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/performance_monitor_tool_service.dart';

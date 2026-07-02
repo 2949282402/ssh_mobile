@@ -53,7 +53,7 @@ class _ChatHistoryOverlay extends StatelessWidget {
                               ),
                             ),
                           ),
-                          child: _HistoryPanel(
+                          child: HistoryPanel(
                             chats: snapshot.savedHistoryChats,
                             activeChatId: snapshot.activeChatId,
                             loading: snapshot.historyLoading,
