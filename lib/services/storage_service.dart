@@ -20,7 +20,9 @@ import '../core/services/data_protection_service.dart';
 import 'multi_agent_coordinator.dart';
 import 'llm_provider/llm_api_format.dart';
 
-part 'storage/storage_models.dart';
+part 'storage/storage_models_ai.dart';
+part 'storage/storage_models_terminal.dart';
+part 'storage/storage_models_sftp.dart';
 part 'storage/settings_ops.dart';
 part 'storage/connection_ops.dart';
 part 'storage/ai_chat_ops.dart';
