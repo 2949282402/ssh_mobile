@@ -61,10 +61,7 @@ class _HomeScreenState extends State<HomeScreen> {
   late int _selectedIndex;
   late int _settledIndex;
   double _scrollPosition = 0.0;
-  final Set<String> _expandedConnectionWindowIds = {};
   bool _aiHistoryVisible = false;
-  bool _serverSelectionMode = false;
-  final Set<String> _selectedServerIds = {};
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   @override
@@ -213,7 +210,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       floatingActionButton: _selectedIndex == _serverPage
           ? FloatingActionButton(
-              onPressed: () => _addConnection(context),
+              onPressed: () => Navigator.pushNamed(context, '/add'),
               tooltip: strings.addConnection,
               child: const Icon(Icons.add),
             )
@@ -615,7 +612,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 },
               );
             case _serverPage:
-              return _buildServerPage(context, strings);
+              return const ServerListPane();
             case _sftpPage:
               return const SftpScreen();
             case _adminPage:

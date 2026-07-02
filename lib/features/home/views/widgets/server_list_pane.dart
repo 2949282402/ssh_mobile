@@ -1,10 +1,26 @@
 part of '../home_screen.dart';
 
-extension _HomeScreenStateServerList on _HomeScreenState {
-  Widget _buildServerPage(
-    BuildContext context,
-    AppStrings strings,
-  ) {
+class ServerListPane extends StatefulWidget {
+  const ServerListPane({super.key});
+
+  @override
+  State<ServerListPane> createState() => _ServerListPaneState();
+}
+
+class _ServerListPaneState extends State<ServerListPane> {
+  bool _serverSelectionMode = false;
+  final Set<String> _selectedServerIds = {};
+  final Set<String> _expandedConnectionWindowIds = {};
+
+  void _updateState(VoidCallback fn) {
+    if (mounted) setState(fn);
+  }
+  @override
+  Widget build(BuildContext context) {
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
+    final strings = AppStrings(language);
     final storageReady = context.select<ConnectionViewModel, bool>(
       (vm) => vm.isLoading == false,
     );
@@ -275,7 +291,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
               icon: const Icon(Icons.close, size: 18),
               label: Text(strings.cancel),
               onPressed: () {
-                updateState(() {
+                _updateState(() {
                   _serverSelectionMode = false;
                   _selectedServerIds.clear();
                 });
@@ -371,7 +387,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                   : null,
               onLongPress: () {
                 if (!_serverSelectionMode) {
-                  updateState(() {
+                  _updateState(() {
                     _serverSelectionMode = true;
                     _selectedServerIds.add(conn.id);
                   });
@@ -799,7 +815,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
                   tooltip: strings.settings,
                   icon: const Icon(Icons.settings_outlined),
                   color: mutedTextColor,
-                  onPressed: () => _openSettings(context),
+                  onPressed: () => const OpenSettingsNotification().dispatch(context),
                 ),
               ],
             ),
@@ -1047,7 +1063,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
   }
 
   void _toggleConnectionWindows(String connectionId) {
-    updateState(() {
+    _updateState(() {
       if (_expandedConnectionWindowIds.contains(connectionId)) {
         _expandedConnectionWindowIds.remove(connectionId);
       } else {
@@ -1090,7 +1106,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
   }
 
   void _toggleServerSelection(String id) {
-    updateState(() {
+    _updateState(() {
       if (_selectedServerIds.contains(id)) {
         _selectedServerIds.remove(id);
         if (_selectedServerIds.isEmpty) {
@@ -1136,7 +1152,7 @@ extension _HomeScreenStateServerList on _HomeScreenState {
     final storage = context.read<ConnectionViewModel>();
     await storage.deleteConnectionsWithCleanup(ids);
     if (!mounted) return;
-    updateState(() {
+    _updateState(() {
       _serverSelectionMode = false;
       _selectedServerIds.clear();
     });
