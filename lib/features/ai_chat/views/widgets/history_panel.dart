@@ -145,7 +145,7 @@ class _HistoryPanelState extends State<HistoryPanel> {
                         final chat = filtered[index];
                         final selected = chat.id == widget.activeChatId;
                         return ListTile(
-                           selected: selected,
+                          selected: selected,
                           leading: Icon(
                             selected
                                 ? Icons.chat_bubble_rounded
