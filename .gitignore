@@ -44,3 +44,13 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Antigravity Exclusive Memory
+.agents/skills/apk-publish/
+.claude/skills/apk-publish/
+scripts/build_and_publish.sh
+scripts/nginx_ssh_mobile.conf
+
+
+
+

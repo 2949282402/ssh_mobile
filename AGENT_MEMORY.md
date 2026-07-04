@@ -19,6 +19,7 @@ across sessions.
 
 ## Notes
 
+- 2026-07-04: Fixed Windows compilation error in GitHub Actions (due to deprecation of C++ experimental coroutines in newer MSVC toolsets) by adding `_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS` to the global CMake definitions in [windows/CMakeLists.txt](file:///home/ubuntu/Documents/coding/ssh_mobile/windows/CMakeLists.txt).
 - 2026-07-01: Local MCP Server is implemented in Flutter/Dart under
   `lib/services/mcp/`, not native runners. It binds only to local hosts,
   serves Streamable HTTP JSON-RPC at `POST /mcp`, stores its Bearer token in
