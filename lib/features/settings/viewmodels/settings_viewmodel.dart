@@ -90,6 +90,27 @@ class SettingsViewModel extends ChangeNotifier {
     _appSettings.setThemeMode(mode);
   }
 
+  bool get oledDark => _appSettings.oledDark;
+  String get terminalThemeId => _appSettings.terminalThemeId;
+  String get terminalFontFamily => _appSettings.terminalFontFamily;
+  String get serverListLayoutMode => _appSettings.serverListLayoutMode;
+
+  Future<void> setOledDark(bool value) async {
+    await _appSettings.setOledDark(value);
+  }
+
+  Future<void> setTerminalThemeId(String id) async {
+    await _appSettings.setTerminalThemeId(id);
+  }
+
+  Future<void> setTerminalFontFamily(String family) async {
+    await _appSettings.setTerminalFontFamily(family);
+  }
+
+  Future<void> setServerListLayoutMode(String mode) async {
+    await _appSettings.setServerListLayoutMode(mode);
+  }
+
   Future<void> setSftpLimits({
     int? downloadLimit,
     int? textPreviewLimit,

@@ -254,7 +254,7 @@ class _SshMobileAppState extends State<SshMobileApp>
           title: 'SSH Mobile',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.lightThemeFor(),
-          darkTheme: AppTheme.darkThemeFor(),
+          darkTheme: AppTheme.darkThemeFor(oledDark: settings.oledDark),
           themeMode: settings.themeMode,
           builder: (context, child) {
             final mediaQuery = MediaQuery.of(context);

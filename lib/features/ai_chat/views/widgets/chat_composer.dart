@@ -50,7 +50,7 @@ class _ChatComposerState extends State<_ChatComposer> {
     final language = context.select<AppSettings, AppLanguage>(
       (settings) => settings.language,
     );
-    final strings = _AiStrings(language);
+    final strings = AiStrings(language);
     final state = context.findAncestorStateOfType<_LlmChatScreenBodyState>()!;
 
     return Selector<AiChatViewModel, _ComposerSnapshot>(
@@ -130,7 +130,8 @@ class _ChatComposerState extends State<_ChatComposer> {
                                 widget.inputController.clear();
                               }
                               if (snapshot.planMode) {
-                                await state._setPlanModeFromUi(
+                                await LlmChatCommandsHelper.setPlanModeFromUi(
+                                  context: context,
                                   chat: activeChat,
                                   enabled: false,
                                   strings: strings,
@@ -153,10 +154,13 @@ class _ChatComposerState extends State<_ChatComposer> {
                 ValueListenableBuilder<String>(
                   valueListenable: _textNotifier,
                   builder: (context, text, _) {
-                    if (!state._shouldShowSlashCommandPanel) {
-                      return const SizedBox.shrink();
-                    }
-                    return state._buildSlashCommandPanel(context, strings);
+                    return ChatSlashCommandsPanel(
+                      inputController: state._inputController,
+                      strings: strings,
+                      onStateChanged: () {
+                        _textNotifier.value = state._inputController.text;
+                      },
+                    );
                   },
                 ),
 
@@ -234,13 +238,16 @@ class _ChatComposerState extends State<_ChatComposer> {
                             },
                             onWebViewTap: () =>
                                 state._openClientWebView(snapshot.chatId),
-                            onImageTap: () => state._pickImage(strings),
-                            onFileTap: () => state._pickFile(strings),
-                            onRagTap: () =>
-                                state._showRagBottomSheet(context, strings),
+                            onImageTap: () => ChatAttachmentPicker.pickImage(
+                                context, strings, viewModel),
+                            onFileTap: () => ChatAttachmentPicker.pickFile(
+                                context, strings, viewModel),
+                            onRagTap: () => ChatRagSheet.show(context, strings),
                             onPromptTap: () =>
                                 state._showPromptCustomizer(strings),
-                            onPlanModeTap: () => state._setPlanModeFromUi(
+                            onPlanModeTap: () =>
+                                LlmChatCommandsHelper.setPlanModeFromUi(
+                              context: context,
                               chat: activeChat,
                               enabled: !snapshot.planMode,
                               strings: strings,

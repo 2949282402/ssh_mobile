@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:ssh_mobile/theme/app_theme.dart';
 
 /// 一个高档的毛玻璃效果容器（Glassmorphic Container）。
 /// 结合 BackdropFilter 模糊、半透明背景及微弱的高光边缘线条，带来极佳的视觉质感。
@@ -37,16 +38,19 @@ class GlassmorphicContainer extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final extColors = theme.extension<ExtendedColors>();
 
     // 默认的毛玻璃透明背景色，根据亮暗色主题适配
-    final defaultBgColor = isDark
-        ? theme.colorScheme.surface.withValues(alpha: 0.65)
-        : theme.colorScheme.surface.withValues(alpha: 0.70);
+    final defaultBgColor = extColors?.glassBg ??
+        (isDark
+            ? theme.colorScheme.surface.withValues(alpha: 0.65)
+            : theme.colorScheme.surface.withValues(alpha: 0.70));
 
     // 默认边缘反光线颜色
-    final defaultBorderColor = isDark
-        ? Colors.white.withValues(alpha: 0.08)
-        : theme.colorScheme.primary.withValues(alpha: 0.12);
+    final defaultBorderColor = extColors?.glassBorder ??
+        (isDark
+            ? Colors.white.withValues(alpha: 0.08)
+            : theme.colorScheme.primary.withValues(alpha: 0.12));
 
     return Container(
       width: width,

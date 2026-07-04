@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/features/ai_chat/services/ai_chat_status_translator.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/services/llm_chat_service.dart';
+import 'package:ssh_mobile/features/ai_chat/services/llm_chat_service.dart';
 
 void main() {
   group('AiChatStatusTranslator Chinese Tests', () {

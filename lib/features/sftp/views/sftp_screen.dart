@@ -55,10 +55,14 @@ class _SftpScreenState extends State<SftpScreen> {
       (settings) => settings.language,
     );
     final strings = AppStrings(language);
-    final connectionVm = context.watch<ConnectionViewModel>();
+    final storageReady = context.select<ConnectionViewModel, bool>(
+      (vm) => !vm.isLoading,
+    );
+    final connections =
+        context.select<ConnectionViewModel, List<ConnectionConfig>>(
+      (vm) => vm.connections,
+    );
     final sftp = context.read<SftpViewModel>();
-    final storageReady = !connectionVm.isLoading;
-    final connections = connectionVm.connections;
     final selectedConnectionId = context.select<SftpViewModel, String?>(
       (vm) => vm.connectionId,
     );

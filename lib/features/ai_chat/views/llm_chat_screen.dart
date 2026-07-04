@@ -8,41 +8,36 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:gpt_markdown/gpt_markdown.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'package:ssh_mobile/features/client_webview/views/client_webview_screen.dart';
-import 'package:ssh_mobile/features/ai_chat/pages/agent_trace_debug_page.dart';
-import 'package:ssh_mobile/features/ai_chat/models/agent_trace_event.dart';
 import 'package:ssh_mobile/features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
 import 'package:ssh_mobile/features/ai_chat/services/ai_chat_message_mapper.dart';
-import 'package:ssh_mobile/features/playbook/models/playbook.dart';
 import 'package:ssh_mobile/services/agent_model_profile.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/client_health_advisor.dart';
 import 'package:ssh_mobile/services/client_system_tool_service.dart';
-import 'package:ssh_mobile/services/llm_chat_service.dart';
+import '../services/llm_chat_service.dart';
 import 'package:ssh_mobile/services/llm_provider/llm_api_format.dart';
 import 'package:ssh_mobile/services/multi_agent_coordinator.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
-import 'package:ssh_mobile/services/agent/plan_execution_controller.dart';
 import 'package:ssh_mobile/services/playbook_service.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
 import 'package:ssh_mobile/widgets/destructive_confirm_dialog.dart';
 import 'package:ssh_mobile/theme/app_theme.dart';
-import 'widgets/trace_panel.dart';
-import 'widgets/message_attachments_wrap.dart';
 import 'widgets/history_action_sheet.dart';
+
+import 'widgets/message_bubble.dart';
 
 part 'widgets/assistant_run_indicator.dart';
 part 'widgets/llm_settings_screen.dart';
-part 'widgets/message_bubble.dart';
+part 'widgets/llm_settings_widgets.dart';
 part 'widgets/history_panel.dart';
 part 'widgets/chat_tools_bar.dart';
 part 'widgets/tool_approval_panel.dart';
@@ -186,7 +181,7 @@ class _LlmChatScreenBody extends StatefulWidget {
   State<_LlmChatScreenBody> createState() => _LlmChatScreenBodyState();
 }
 
-extension _AiMessageActionStrings on _AiStrings {
+extension AiMessageActionStrings on AiStrings {
   String get saveAndSend =>
       language == AppLanguage.en ? 'Save and send' : '保存并发送';
   String get editMessage =>
@@ -194,12 +189,12 @@ extension _AiMessageActionStrings on _AiStrings {
   String get branchSuffix => language == AppLanguage.en ? 'Branch' : '分支';
 }
 
-extension _AiToolBarStrings on _AiStrings {
+extension AiToolBarStrings on AiStrings {
   String get tools => language == AppLanguage.en ? 'Tools' : '工具';
   String get close => language == AppLanguage.en ? 'Close' : '关闭';
 }
 
-extension _AiSkillToolbarStrings on _AiStrings {
+extension AiSkillToolbarStrings on AiStrings {
   String get skills => language == AppLanguage.en ? 'Skills' : '技能';
   String get webView => language == AppLanguage.en ? 'WebView' : '网页';
   String get attachImage => language == AppLanguage.en ? 'Image' : '图片';
@@ -207,7 +202,7 @@ extension _AiSkillToolbarStrings on _AiStrings {
   String get promptLabel => language == AppLanguage.en ? 'Prompt' : '提示词';
 }
 
-extension _AiToolbarActionStrings on _AiStrings {
+extension AiToolbarActionStrings on AiStrings {
   String get serverTarget => language == AppLanguage.en ? 'Server' : '服务器';
   String get templates => language == AppLanguage.en ? 'Templates' : '模板';
   String get noDefaultServer =>
@@ -222,7 +217,7 @@ extension _AiToolbarActionStrings on _AiStrings {
       language == AppLanguage.en ? 'No custom skills yet' : '还没有自定义 Skills';
 }
 
-extension _AiRunStatusStrings on _AiStrings {
+extension AiRunStatusStrings on AiStrings {
   String get assistantPreparing =>
       language == AppLanguage.en ? 'Preparing response...' : '模型正在准备回答...';
   String get assistantThinking =>
@@ -340,7 +335,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
   void sendDirectCommand(String text) {
     final viewModel = context.read<AiChatViewModel>();
     if (viewModel.sending) return;
-    final strings = _AiStrings(context.read<AppSettings>().language);
+    final strings = AiStrings(context.read<AppSettings>().language);
     _sendText(context, strings, text: text, clearInput: true);
   }
 
@@ -374,7 +369,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     final language = context.select<AppSettings, AppLanguage>(
       (settings) => settings.language,
     );
-    final strings = _AiStrings(language);
+    final strings = AiStrings(language);
 
     return Selector<AiChatViewModel, _ChatShellSnapshot>(
       selector: (context, vm) => _ChatShellSnapshot(
@@ -410,6 +405,15 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
                       onBranch: (index) =>
                           _confirmBranchFromAssistant(index, strings),
                       onContinueTimeout: () => _continueAfterTimeout(strings),
+                      onApprovePlanExecute: (createdAt) =>
+                          approvePlanAndExecute(createdAt),
+                      onRevisePlan: (chat) =>
+                          LlmChatCommandsHelper.setPlanModeFromUi(
+                        context: context,
+                        chat: chat,
+                        enabled: true,
+                        strings: strings,
+                      ),
                     ),
                   ),
                   const _ChatToolApprovalArea(),
@@ -450,7 +454,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     );
   }
 
-  String _selectedServerLabel(_AiStrings strings) {
+  String _selectedServerLabel(AiStrings strings) {
     final viewModel = context.read<AiChatViewModel>();
     if (viewModel.selectedConnectionIds.isEmpty) return strings.serverTarget;
     if (viewModel.selectedConnectionIds.length == 1) {
@@ -463,7 +467,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
         : '${viewModel.selectedConnectionIds.length} 台服务器';
   }
 
-  Future<void> _selectTargetServer(_AiStrings strings) async {
+  Future<void> _selectTargetServer(AiStrings strings) async {
     final viewModel = context.read<AiChatViewModel>();
     if (viewModel.connections.isEmpty) {
       if (mounted) {
@@ -582,7 +586,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     );
   }
 
-  Future<void> _showPromptCustomizer(_AiStrings strings) async {
+  Future<void> _showPromptCustomizer(AiStrings strings) async {
     await showDialog(
       context: context,
       barrierDismissible: false,
@@ -601,7 +605,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     if (HardwareKeyboard.instance.isControlPressed) {
       _insertInputNewline();
     } else {
-      final strings = _AiStrings(context.read<AppSettings>().language);
+      final strings = AiStrings(context.read<AppSettings>().language);
       unawaited(_send(context, strings));
     }
     return KeyEventResult.handled;
@@ -630,7 +634,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     if (mounted) setState(fn);
   }
 
-  Future<void> _showSettings(BuildContext context, _AiStrings strings) async {
+  Future<void> _showSettings(BuildContext context, AiStrings strings) async {
     final viewModel = context.read<AiChatViewModel>();
     final settingsData = await viewModel.loadLlmSettingsData();
     final settings = settingsData['settings'] as AiConnectionSettings;
@@ -676,7 +680,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
   }
 
   Future<void> _deleteChat(AiChatRecord chat) async {
-    final strings = _AiStrings(context.read<AppSettings>().language);
+    final strings = AiStrings(context.read<AppSettings>().language);
     final confirmed = await DestructiveConfirmDialog.show(
       context,
       title: strings.deleteChatTitle,
@@ -688,6 +692,57 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     final viewModel = context.read<AiChatViewModel>();
     await viewModel.deleteChat(chat.id);
     _scrollToBottom(jump: true);
+  }
+
+  Future<void> _showHistory(BuildContext context, AiStrings strings) async {
+    _openHistoryPanel(context);
+    final viewModel = context.read<AiChatViewModel>();
+    unawaited(viewModel.loadHistoryChatsIfNeeded());
+  }
+
+  double _historyPanelWidth(BuildContext context) {
+    return MediaQuery.sizeOf(context).width;
+  }
+
+  void _openHistoryPanel(BuildContext context) {
+    final viewModel = context.read<AiChatViewModel>();
+    _animateHistoryPanel(context, _historyPanelWidth(context));
+    unawaited(viewModel.loadHistoryChatsIfNeeded());
+  }
+
+  void _closeHistoryPanel(BuildContext context) {
+    _animateHistoryPanel(context, 0);
+  }
+
+  void _animateHistoryPanel(BuildContext context, double target) {
+    final width = _historyPanelWidth(context);
+    final safeTarget = target.clamp(0.0, width);
+    _historySlideAnimation = Tween<double>(
+      begin: _historyPanelExtent.value.clamp(0.0, width),
+      end: safeTarget,
+    ).animate(
+      CurvedAnimation(
+        parent: _historySlideController,
+        curve: Curves.easeOutCubic,
+        reverseCurve: Curves.easeInCubic,
+      ),
+    );
+    _historySlideController.forward(from: 0);
+  }
+
+  void _setHistoryPanelExtent(double extent) {
+    if ((_historyPanelExtent.value - extent).abs() < 0.5) return;
+    final wasVisible = _historyPanelExtent.value > 0.5;
+    _historyPanelExtent.value = extent;
+    final isVisible = extent > 0.5;
+    if (wasVisible != isVisible) {
+      widget.onHistoryVisibilityChanged?.call(isVisible);
+    }
+  }
+
+  String _formatTime(DateTime time) {
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${two(time.month)}-${two(time.day)} ${two(time.hour)}:${two(time.minute)}';
   }
 
   String _contextUsage(int used, int limit, double ratio) {

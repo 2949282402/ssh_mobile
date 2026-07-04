@@ -1,8 +1,7 @@
 part of '../llm_chat_screen.dart';
 
-extension _ChatRagSheet on _LlmChatScreenBodyState {
-  Future<void> _showRagBottomSheet(
-      BuildContext context, _AiStrings strings) async {
+class ChatRagSheet {
+  static Future<void> show(BuildContext context, AiStrings strings) async {
     final appSettings = context.read<AppSettings>();
     final viewModel = context.read<AiChatViewModel>();
     final aliyunKey = await viewModel.getAliyunApiKey();

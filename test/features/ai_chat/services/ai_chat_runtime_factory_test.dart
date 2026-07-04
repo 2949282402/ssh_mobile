@@ -6,7 +6,7 @@ import 'package:ssh_mobile/features/ai_chat/services/ai_chat_runtime_factory.dar
 import 'package:ssh_mobile/services/ai_tool_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/chat_orchestrator.dart';
-import 'package:ssh_mobile/services/llm_chat_service.dart';
+import 'package:ssh_mobile/features/ai_chat/services/llm_chat_service.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/playbook_service.dart';
 import 'package:ssh_mobile/services/rag_service.dart';

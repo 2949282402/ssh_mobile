@@ -1,7 +1,7 @@
 import 'package:uuid/uuid.dart';
 
 import '../../../services/app_log_service.dart';
-import '../../../services/llm_chat_service.dart';
+import 'llm_chat_service.dart';
 import '../../../services/llm_runtime/llm_runtime_types.dart';
 import '../../../services/storage_service.dart';
 import '../../../services/ai_tool_service.dart';

@@ -10,6 +10,9 @@ class ExtendedColors extends ThemeExtension<ExtendedColors> {
   final Color terminalCyan;
   final Color success;
   final Color warning;
+  final Color glassBg;
+  final Color glassBorder;
+  final Color cardHoverBorder;
 
   const ExtendedColors({
     required this.terminalBg,
@@ -18,6 +21,9 @@ class ExtendedColors extends ThemeExtension<ExtendedColors> {
     required this.terminalCyan,
     required this.success,
     required this.warning,
+    required this.glassBg,
+    required this.glassBorder,
+    required this.cardHoverBorder,
   });
 
   @override
@@ -28,6 +34,9 @@ class ExtendedColors extends ThemeExtension<ExtendedColors> {
     Color? terminalCyan,
     Color? success,
     Color? warning,
+    Color? glassBg,
+    Color? glassBorder,
+    Color? cardHoverBorder,
   }) {
     return ExtendedColors(
       terminalBg: terminalBg ?? this.terminalBg,
@@ -36,6 +45,9 @@ class ExtendedColors extends ThemeExtension<ExtendedColors> {
       terminalCyan: terminalCyan ?? this.terminalCyan,
       success: success ?? this.success,
       warning: warning ?? this.warning,
+      glassBg: glassBg ?? this.glassBg,
+      glassBorder: glassBorder ?? this.glassBorder,
+      cardHoverBorder: cardHoverBorder ?? this.cardHoverBorder,
     );
   }
 
@@ -49,6 +61,9 @@ class ExtendedColors extends ThemeExtension<ExtendedColors> {
       terminalCyan: Color.lerp(terminalCyan, other.terminalCyan, t)!,
       success: Color.lerp(success, other.success, t)!,
       warning: Color.lerp(warning, other.warning, t)!,
+      glassBg: Color.lerp(glassBg, other.glassBg, t)!,
+      glassBorder: Color.lerp(glassBorder, other.glassBorder, t)!,
+      cardHoverBorder: Color.lerp(cardHoverBorder, other.cardHoverBorder, t)!,
     );
   }
 }
@@ -84,7 +99,8 @@ class AppTheme {
   ];
 
   static ThemeData lightThemeFor() => _applyFont(lightTheme);
-  static ThemeData darkThemeFor() => _applyFont(darkTheme);
+  static ThemeData darkThemeFor({bool oledDark = false}) =>
+      _applyFont(buildDarkTheme(oledDark: oledDark));
 
   static ThemeData _applyFont(ThemeData theme) {
     return theme.copyWith(
@@ -132,6 +148,9 @@ class AppTheme {
         terminalCyan: Color(0xFF06B6D4),
         success: Color(0xFF10B981),
         warning: Color(0xFFF59E0B),
+        glassBg: Color(0x99FFFFFF),
+        glassBorder: Color(0x1FE2E8F0),
+        cardHoverBorder: Color(0x662563EB),
       ),
     ],
     textTheme: _textTheme(const Color(0xFF0F172A)),
@@ -193,105 +212,125 @@ class AppTheme {
         color: Color(0xFFE2E8F0), thickness: 1, space: 1),
   );
 
-  static final darkTheme = ThemeData(
-    useMaterial3: true,
-    brightness: Brightness.dark,
-    scaffoldBackgroundColor: const Color(0xFF030712),
-    pageTransitionsTheme: const PageTransitionsTheme(
-      builders: {
-        TargetPlatform.android: FadeThroughPageTransitionsBuilder(),
-        TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
-        TargetPlatform.windows: FadeThroughPageTransitionsBuilder(),
-        TargetPlatform.macOS: FadeThroughPageTransitionsBuilder(),
-        TargetPlatform.linux: FadeThroughPageTransitionsBuilder(),
-      },
-    ),
-    colorScheme: const ColorScheme.dark(
-      primary: Color(0xFF3B82F6),
-      secondary: Color(0xFF14B8A6),
-      tertiary: Color(0xFFA78BFA),
-      surface: Color(0xFF0B0F19),
-      surfaceContainer: Color(0xFF111827),
-      surfaceContainerHighest: Color(0xFF1F2937),
-      outline: Color(0xFF1F2937),
-      outlineVariant: Color(0xFF374151),
-      error: Color(0xFFF87171),
-      onPrimary: Color(0xFF030712),
-      onSecondary: Color(0xFF030712),
-      onTertiary: Color(0xFF030712),
-      onSurface: Color(0xFFF9FAFB),
-      onSurfaceVariant: Color(0xFF94A3B8),
-      onError: Color(0xFF190A0A),
-    ),
-    extensions: const [
-      ExtendedColors(
-        terminalBg: Color(0xFF030712),
-        terminalGreen: Color(0xFF34D399),
-        terminalAmber: Color(0xFFFBBF24),
-        terminalCyan: Color(0xFF22D3EE),
-        success: Color(0xFF34D399),
-        warning: Color(0xFFFBBF24),
+  static ThemeData buildDarkTheme({bool oledDark = false}) {
+    final bgColor =
+        oledDark ? const Color(0xFF000000) : const Color(0xFF030712);
+    final surfaceColor =
+        oledDark ? const Color(0xFF000000) : const Color(0xFF0B0F19);
+    final surfaceContainerColor =
+        oledDark ? const Color(0xFF050505) : const Color(0xFF111827);
+    final outlineColor =
+        oledDark ? const Color(0xFF111111) : const Color(0xFF1F2937);
+
+    return ThemeData(
+      useMaterial3: true,
+      brightness: Brightness.dark,
+      scaffoldBackgroundColor: bgColor,
+      canvasColor: bgColor,
+      cardColor: surfaceColor,
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: FadeThroughPageTransitionsBuilder(),
+          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.windows: FadeThroughPageTransitionsBuilder(),
+          TargetPlatform.macOS: FadeThroughPageTransitionsBuilder(),
+          TargetPlatform.linux: FadeThroughPageTransitionsBuilder(),
+        },
       ),
-    ],
-    textTheme: _textTheme(const Color(0xFFF9FAFB)),
-    appBarTheme: _appBarTheme(
-        background: const Color(0xFF030712),
-        foreground: const Color(0xFFF9FAFB)),
-    cardTheme: _cardTheme(
-        surface: const Color(0xFF0B0F19), outline: const Color(0xFF1F2937)),
-    navigationBarTheme: _navigationBarTheme(
-        surface: const Color(0xFF0B0F19),
+      colorScheme: ColorScheme.dark(
         primary: const Color(0xFF3B82F6),
-        onSurfaceVariant: const Color(0xFF94A3B8)),
-    navigationRailTheme: _navigationRailTheme(
-        surface: const Color(0xFF0B0F19),
-        primary: const Color(0xFF3B82F6),
-        onSurfaceVariant: const Color(0xFF94A3B8)),
-    listTileTheme: _listTileTheme(
-        iconColor: const Color(0xFF94A3B8), textColor: const Color(0xFFF9FAFB)),
-    floatingActionButtonTheme: const FloatingActionButtonThemeData(
-      backgroundColor: Color(0xFF3B82F6),
-      foregroundColor: Color(0xFF030712),
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(Radius.circular(radiusSmall))),
-    ),
-    filledButtonTheme: _filledButtonTheme(),
-    outlinedButtonTheme: _outlinedButtonTheme(const Color(0xFF1F2937)),
-    textButtonTheme: _textButtonTheme(const Color(0xFF3B82F6)),
-    iconButtonTheme: _iconButtonTheme(const Color(0xFFCBD5E1)),
-    chipTheme: _chipTheme(
-        background: const Color(0xFF111827),
-        selected: const Color(0xFF1F2937),
-        outline: const Color(0xFF1F2937),
-        label: const Color(0xFFF9FAFB)),
-    inputDecorationTheme: _inputDecorationTheme(
-        fill: const Color(0xFF0B0F19),
-        outline: const Color(0xFF1F2937),
-        focused: const Color(0xFF3B82F6),
-        label: const Color(0xFF94A3B8)),
-    snackBarTheme: _snackBarTheme(
-        background: const Color(0xFFF9FAFB),
-        foreground: const Color(0xFF0B0F19)),
-    dialogTheme: _dialogTheme(const Color(0xFF0B0F19)),
-    popupMenuTheme: _popupMenuTheme(const Color(0xFF0B0F19)),
-    drawerTheme: _drawerTheme(const Color(0xFF0B0F19), const Color(0xFF1F2937)),
-    bottomSheetTheme: _bottomSheetTheme(
-        background: const Color(0xFF0B0F19), outline: const Color(0xFF1F2937)),
-    segmentedButtonTheme: _segmentedButtonTheme(
-        primary: const Color(0xFF3B82F6),
-        outline: const Color(0xFF1F2937),
-        surface: const Color(0xFF0B0F19),
-        foreground: const Color(0xFFF9FAFB)),
-    expansionTileTheme: _expansionTileTheme(
-        foreground: const Color(0xFFF9FAFB), muted: const Color(0xFF94A3B8)),
-    progressIndicatorTheme: _progressIndicatorTheme(
-        primary: const Color(0xFF3B82F6), track: const Color(0xFF1F2937)),
-    scrollbarTheme: _scrollbarTheme(
-        thumb: const Color(0xFF64748B), track: const Color(0xFF1F2937)),
-    dividerTheme: const DividerThemeData(
-        color: Color(0xFF1F2937), thickness: 1, space: 1),
-  );
+        secondary: const Color(0xFF14B8A6),
+        tertiary: const Color(0xFFA78BFA),
+        surface: surfaceColor,
+        surfaceContainer: surfaceContainerColor,
+        surfaceContainerHighest:
+            oledDark ? const Color(0xFF111111) : const Color(0xFF1F2937),
+        outline: outlineColor,
+        outlineVariant:
+            oledDark ? const Color(0xFF222222) : const Color(0xFF374151),
+        error: const Color(0xFFF87171),
+        onPrimary: const Color(0xFF030712),
+        onSecondary: const Color(0xFF030712),
+        onTertiary: const Color(0xFF030712),
+        onSurface: const Color(0xFFF9FAFB),
+        onSurfaceVariant: const Color(0xFF94A3B8),
+        onError: const Color(0xFF190A0A),
+      ),
+      extensions: [
+        ExtendedColors(
+          terminalBg: bgColor,
+          terminalGreen: const Color(0xFF34D399),
+          terminalAmber: const Color(0xFFFBBF24),
+          terminalCyan: const Color(0xFF22D3EE),
+          success: const Color(0xFF34D399),
+          warning: const Color(0xFFFBBF24),
+          glassBg: oledDark ? const Color(0xB3000000) : const Color(0x800B0F19),
+          glassBorder:
+              oledDark ? const Color(0x26111111) : const Color(0x261F2937),
+          cardHoverBorder: const Color(0x663B82F6),
+        ),
+      ],
+      textTheme: _textTheme(const Color(0xFFF9FAFB)),
+      appBarTheme: _appBarTheme(
+          background: bgColor, foreground: const Color(0xFFF9FAFB)),
+      cardTheme: _cardTheme(surface: surfaceColor, outline: outlineColor),
+      navigationBarTheme: _navigationBarTheme(
+          surface: surfaceColor,
+          primary: const Color(0xFF3B82F6),
+          onSurfaceVariant: const Color(0xFF94A3B8)),
+      navigationRailTheme: _navigationRailTheme(
+          surface: surfaceColor,
+          primary: const Color(0xFF3B82F6),
+          onSurfaceVariant: const Color(0xFF94A3B8)),
+      listTileTheme: _listTileTheme(
+          iconColor: const Color(0xFF94A3B8),
+          textColor: const Color(0xFFF9FAFB)),
+      floatingActionButtonTheme: const FloatingActionButtonThemeData(
+        backgroundColor: Color(0xFF3B82F6),
+        foregroundColor: Color(0xFF030712),
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(radiusSmall))),
+      ),
+      filledButtonTheme: _filledButtonTheme(),
+      outlinedButtonTheme: _outlinedButtonTheme(outlineColor),
+      textButtonTheme: _textButtonTheme(const Color(0xFF3B82F6)),
+      iconButtonTheme: _iconButtonTheme(const Color(0xFFCBD5E1)),
+      chipTheme: _chipTheme(
+          background:
+              oledDark ? const Color(0xFF050505) : const Color(0xFF111827),
+          selected:
+              oledDark ? const Color(0xFF111111) : const Color(0xFF1F2937),
+          outline: oledDark ? const Color(0xFF111111) : const Color(0xFF1F2937),
+          label: const Color(0xFFF9FAFB)),
+      inputDecorationTheme: _inputDecorationTheme(
+          fill: surfaceColor,
+          outline: outlineColor,
+          focused: const Color(0xFF3B82F6),
+          label: const Color(0xFF94A3B8)),
+      snackBarTheme: _snackBarTheme(
+          background: const Color(0xFFF9FAFB),
+          foreground: const Color(0xFF0B0F19)),
+      dialogTheme: _dialogTheme(surfaceColor),
+      popupMenuTheme: _popupMenuTheme(surfaceColor),
+      drawerTheme: _drawerTheme(surfaceColor, outlineColor),
+      bottomSheetTheme:
+          _bottomSheetTheme(background: surfaceColor, outline: outlineColor),
+      segmentedButtonTheme: _segmentedButtonTheme(
+          primary: const Color(0xFF3B82F6),
+          outline: outlineColor,
+          surface: surfaceColor,
+          foreground: const Color(0xFFF9FAFB)),
+      expansionTileTheme: _expansionTileTheme(
+          foreground: const Color(0xFFF9FAFB), muted: const Color(0xFF94A3B8)),
+      progressIndicatorTheme: _progressIndicatorTheme(
+          primary: const Color(0xFF3B82F6), track: outlineColor),
+      scrollbarTheme:
+          _scrollbarTheme(thumb: const Color(0xFF64748B), track: outlineColor),
+      dividerTheme:
+          DividerThemeData(color: outlineColor, thickness: 1, space: 1),
+    );
+  }
 
   static TextTheme _textTheme(Color color) {
     return TextTheme(

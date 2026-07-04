@@ -4,7 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:ssh_mobile/features/ai_chat/services/ai_chat_run_metrics_recorder.dart';
 import 'package:ssh_mobile/services/agent_model_profile.dart';
-import 'package:ssh_mobile/services/llm_chat_service.dart';
+import 'package:ssh_mobile/features/ai_chat/services/llm_chat_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 
 void main() {

@@ -30,7 +30,7 @@ class _ChatHeader extends StatelessWidget {
     final language = context.select<AppSettings, AppLanguage>(
       (settings) => settings.language,
     );
-    final strings = _AiStrings(language);
+    final strings = AiStrings(language);
 
     return Selector<AiChatViewModel, _ChatHeaderSnapshot>(
       selector: (context, vm) {

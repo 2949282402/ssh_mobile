@@ -2,14 +2,14 @@
 part of '../llm_chat_screen.dart';
 
 extension _ChatGeneration on _LlmChatScreenBodyState {
-  Future<void> _send(BuildContext context, _AiStrings strings) async {
+  Future<void> _send(BuildContext context, AiStrings strings) async {
     final text = _inputController.text.trim();
     await _sendText(context, strings, text: text, clearInput: true);
   }
 
   Future<void> _sendText(
     BuildContext context,
-    _AiStrings strings, {
+    AiStrings strings, {
     required String text,
     required bool clearInput,
     AiApprovedPlanRef? approvedPlanRef,
@@ -20,33 +20,35 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
 
     final result =
         await viewModel.sendText(text: text, approvedPlanRef: approvedPlanRef);
-    if (!mounted) return;
+    if (!context.mounted) return;
 
     if (result is SendTextApiKeyMissing) {
-      await _showSettings(this.context, strings);
+      await _showSettings(context, strings);
     } else if (result is SendTextSlashCommandOpenSkills) {
-      await Navigator.of(this.context).pushNamed('/ai-skills');
-      if (mounted) {
-        _showCommandFeedback(strings.commandSkillsOpened, this.context);
+      await Navigator.of(context).pushNamed('/ai-skills');
+      if (context.mounted) {
+        LlmChatCommandsHelper.showCommandFeedback(
+            context, strings.commandSkillsOpened);
       }
     } else if (result is SendTextSlashCommandOpenToolsSelector) {
-      final availableTools = await _loadAvailableTools(strings);
-      if (!mounted || availableTools == null) return;
-      final next = await _openToolsSelector(
-        context: this.context,
+      final availableTools =
+          await LlmChatCommandsHelper.loadAvailableTools(context, strings);
+      if (!context.mounted || availableTools == null) return;
+      final next = await LlmChatCommandsHelper.openToolsSelector(
+        context: context,
         strings: strings,
         availableTools: availableTools,
         initialTools: result.currentAllowedTools,
       );
-      if (next != null && mounted) {
+      if (next != null && context.mounted) {
         viewModel.updateAllowedTools(viewModel.activeChatId!, next);
-        _showCommandFeedback(
+        LlmChatCommandsHelper.showCommandFeedback(
+          context,
           strings.commandToolsUpdated(next.length),
-          this.context,
         );
       }
     } else if (result is SendTextSlashCommandHandled) {
-      _showCommandFeedback(result.feedback, this.context);
+      LlmChatCommandsHelper.showCommandFeedback(context, result.feedback);
       if (clearInput) _inputController.clear();
       setState(() {
         _toolsExpanded = false;
@@ -59,7 +61,7 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
     }
   }
 
-  void _continueAfterTimeout(_AiStrings strings) {
+  void _continueAfterTimeout(AiStrings strings) {
     _sendText(
       context,
       strings,
@@ -203,7 +205,7 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
     required String title,
     required String content,
     required String confirmLabel,
-    required _AiStrings strings,
+    required AiStrings strings,
   }) async {
     final bool? result = await showDialog<bool>(
       context: context,
@@ -227,7 +229,7 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
 
   Future<void> _confirmRegenerateAssistant(
     int messageIndex,
-    _AiStrings strings,
+    AiStrings strings,
   ) async {
     final en = strings.language == AppLanguage.en;
     final confirmed = await _confirmChatAction(
@@ -244,7 +246,7 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
 
   Future<void> _confirmBranchFromAssistant(
     int messageIndex,
-    _AiStrings strings,
+    AiStrings strings,
   ) async {
     final en = strings.language == AppLanguage.en;
     final confirmed = await _confirmChatAction(
@@ -264,7 +266,7 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
     await viewModel.regenerateAssistant(messageIndex);
   }
 
-  Future<void> _editUserMessage(int messageIndex, _AiStrings strings) async {
+  Future<void> _editUserMessage(int messageIndex, AiStrings strings) async {
     final activeChat = _activeChat;
     if (activeChat == null) return;
     if (messageIndex < 0 || messageIndex >= activeChat.messages.length) return;
@@ -282,11 +284,11 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
 
   Future<String?> _showEditUserDialog(
     String text,
-    _AiStrings strings,
+    AiStrings strings,
   ) async {
     return showDialog<String>(
       context: context,
-      builder: (_) => _EditUserMessageDialog(
+      builder: (_) => EditUserMessageDialog(
         initialText: text,
         strings: strings,
       ),
@@ -295,7 +297,7 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
 
   Future<void> _branchFromAssistant(
     int messageIndex,
-    _AiStrings strings,
+    AiStrings strings,
   ) async {
     final viewModel = context.read<AiChatViewModel>();
     viewModel.branchFromAssistant(messageIndex);

@@ -1,7 +1,7 @@
 part of '../llm_chat_screen.dart';
 
 class _ChatHistoryOverlay extends StatelessWidget {
-  final _AiStrings strings;
+  final AiStrings strings;
 
   const _ChatHistoryOverlay({required this.strings});
 
@@ -53,7 +53,7 @@ class _ChatHistoryOverlay extends StatelessWidget {
                               ),
                             ),
                           ),
-                          child: _HistoryPanel(
+                          child: HistoryPanel(
                             chats: snapshot.savedHistoryChats,
                             activeChatId: snapshot.activeChatId,
                             loading: snapshot.historyLoading,

@@ -227,9 +227,8 @@ class _FilePane extends StatelessWidget {
         SnackBar(
           content: Text(
             strings.uploadFailed(
-              settings.isEnglish
-                  ? 'File is larger than ${_formatBytes(SftpService.maxUploadBytes)}'
-                  : '文件大小超过了 ${_formatBytes(SftpService.maxUploadBytes)}',
+              strings
+                  .uploadFileTooLarge(_formatBytes(SftpService.maxUploadBytes)),
             ),
           ),
         ),
@@ -243,9 +242,7 @@ class _FilePane extends StatelessWidget {
         SnackBar(
           content: Text(
             strings.uploadFailed(
-              settings.isEnglish
-                  ? 'Unable to access file path on this platform.'
-                  : '此平台无法访问文件路径。',
+              strings.uploadFileNoAccess,
             ),
           ),
         ),
@@ -268,9 +265,7 @@ class _FilePane extends StatelessWidget {
       if (e is SftpTransferCancelledException) {
         messenger.showSnackBar(
           SnackBar(
-            content: Text(
-              settings.isEnglish ? 'Upload cancelled' : '上传已取消',
-            ),
+            content: Text(strings.uploadCancelled),
           ),
         );
         return;
@@ -330,9 +325,8 @@ class _FilePane extends StatelessWidget {
         SnackBar(
           content: Text(
             strings.downloadFailed(
-              settings.isEnglish
-                  ? 'File is larger than ${_formatBytes(settings.sftpDownloadLimitBytes)}'
-                  : '文件大小超过了 ${_formatBytes(settings.sftpDownloadLimitBytes)}',
+              strings.downloadFileTooLarge(
+                  _formatBytes(settings.sftpDownloadLimitBytes)),
             ),
           ),
         ),
@@ -362,9 +356,7 @@ class _FilePane extends StatelessWidget {
       if (e is SftpTransferCancelledException) {
         messenger.showSnackBar(
           SnackBar(
-            content: Text(
-              settings.isEnglish ? 'Download cancelled' : '下载已取消',
-            ),
+            content: Text(strings.downloadCancelled),
           ),
         );
         return;
@@ -394,9 +386,7 @@ class _FilePane extends StatelessWidget {
                 Text(strings.deleteRemoteEntryContent(entry.name)),
                 const SizedBox(height: 14),
                 Text(
-                  settings.isEnglish
-                      ? 'Type the exact name to confirm:'
-                      : '请输入完整名称确认：',
+                  strings.deleteRemoteEntryConfirmPrompt,
                   style: TextStyle(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                     fontSize: 12,
@@ -413,7 +403,7 @@ class _FilePane extends StatelessWidget {
                   controller: nameController,
                   autofocus: true,
                   decoration: InputDecoration(
-                    labelText: settings.isEnglish ? 'Entry name' : '文件或目录名称',
+                    labelText: strings.deleteRemoteEntryConfirmLabel,
                     errorText: errorText,
                   ),
                   onChanged: (_) {
@@ -435,8 +425,7 @@ class _FilePane extends StatelessWidget {
                 final typedName = nameController.text;
                 if (typedName != entry.name && typedName.trim() != entry.name) {
                   setDialogState(() {
-                    errorText =
-                        settings.isEnglish ? 'Name does not match.' : '名称不匹配。';
+                    errorText = strings.deleteRemoteEntryConfirmMismatch;
                   });
                   return;
                 }
@@ -1146,7 +1135,6 @@ class _SftpTransferBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final settings = context.read<AppSettings>();
     final colorScheme = Theme.of(context).colorScheme;
     final isUpload = activeTransfer.isUpload;
     final progress = activeTransfer.progress;
@@ -1154,12 +1142,8 @@ class _SftpTransferBanner extends StatelessWidget {
     final transferredBytes = activeTransfer.bytesTransferred;
 
     final title = isUpload
-        ? (settings.isEnglish
-            ? 'Uploading ${activeTransfer.name}'
-            : '正在上传 ${activeTransfer.name}')
-        : (settings.isEnglish
-            ? 'Downloading ${activeTransfer.name}'
-            : '正在下载 ${activeTransfer.name}');
+        ? strings.uploadingFile(activeTransfer.name)
+        : strings.downloadingFile(activeTransfer.name);
 
     final percentText =
         totalBytes > 0 ? ' ${(progress * 100).toStringAsFixed(0)}%' : '';
@@ -1229,7 +1213,7 @@ class _SftpTransferBanner extends StatelessWidget {
           const SizedBox(width: 12),
           IconButton(
             icon: Icon(Icons.close_rounded, color: colorScheme.error),
-            tooltip: settings.isEnglish ? 'Cancel' : '取消',
+            tooltip: strings.cancel,
             onPressed:
                 activeTransfer.isCancelled ? null : sftp.cancelActiveTransfer,
           ),

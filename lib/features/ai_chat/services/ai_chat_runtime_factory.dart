@@ -2,7 +2,7 @@ import '../../../services/ai_tool_service.dart';
 import '../../../services/app_settings.dart';
 import '../../../services/chat_context_assembler.dart';
 import '../../../services/chat_orchestrator.dart';
-import '../../../services/llm_chat_service.dart';
+import 'llm_chat_service.dart';
 import '../../../services/operational_memory_retriever.dart';
 import '../../../services/performance_monitor_service.dart';
 import '../../../services/performance_monitor_tool_service.dart';

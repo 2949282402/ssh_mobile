@@ -3,22 +3,22 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
-import '../features/playbook/models/playbook.dart';
-import 'ai_tool_service.dart';
-import 'agent_model_profile.dart';
-import 'app_log_service.dart';
-import 'app_settings.dart';
-import 'multi_agent_coordinator.dart';
-import 'storage_service.dart';
-import 'tool_exposure_router.dart';
-import 'tool_secret_policy.dart';
-import 'agent/plan_execution_controller.dart';
+import '../../playbook/models/playbook.dart';
+import '../../../services/ai_tool_service.dart';
+import '../../../services/agent_model_profile.dart';
+import '../../../services/app_log_service.dart';
+import '../../../services/app_settings.dart';
+import '../../../services/multi_agent_coordinator.dart';
+import '../../../services/storage_service.dart';
+import '../../../services/tool_exposure_router.dart';
+import '../../../services/tool_secret_policy.dart';
+import '../../../services/agent/plan_execution_controller.dart';
 import 'package:uuid/uuid.dart';
-import 'llm_runtime/llm_runtime_types.dart';
-import 'llm_provider/llm_provider_types.dart';
-import 'llm_provider/llm_provider_adapter.dart';
-import 'llm_provider/llm_provider_factory.dart';
-import 'llm_provider/llm_url_utils.dart';
+import '../../../services/llm_runtime/llm_runtime_types.dart';
+import '../../../services/llm_provider/llm_provider_types.dart';
+import '../../../services/llm_provider/llm_provider_adapter.dart';
+import '../../../services/llm_provider/llm_provider_factory.dart';
+import '../../../services/llm_provider/llm_url_utils.dart';
 
 part 'llm_chat/llm_chat_types.dart';
 part 'llm_chat/llm_system_prompt.dart';
