@@ -16,6 +16,62 @@ class AppBreakpoints {
   const AppBreakpoints._();
 }
 
+@immutable
+class MobileUiMetrics {
+  const MobileUiMetrics({
+    required this.controlScale,
+    required this.chromeScale,
+    required this.visualDensity,
+  });
+
+  const MobileUiMetrics.desktop()
+    : controlScale = 1,
+      chromeScale = 1,
+      visualDensity = VisualDensity.standard;
+
+  factory MobileUiMetrics.fromMetrics({
+    required Size size,
+    required double devicePixelRatio,
+    bool? mobileTargetOverride,
+  }) {
+    final mobileTarget = mobileTargetOverride ?? isMobileTargetPlatform();
+    if (!mobileTarget) return const MobileUiMetrics.desktop();
+
+    final physicalShortestSide = size.shortestSide * devicePixelRatio;
+    final resolutionProgress = ((physicalShortestSide - 1240) / (1440 - 1240))
+        .clamp(0.0, 1.0)
+        .toDouble();
+    final controlScale = 0.82 + resolutionProgress * 0.10;
+
+    // Logical dp already handles most device differences. Keep this correction
+    // deliberately narrow: 1.5K OEM density buckets need slightly tighter app
+    // chrome, while 2K-class devices retain the standard Material dimensions.
+    final chromeScale = 0.94 + resolutionProgress * 0.06;
+    final densityCorrection = -0.5 * (1 - resolutionProgress);
+
+    return MobileUiMetrics(
+      controlScale: controlScale,
+      chromeScale: chromeScale,
+      visualDensity: VisualDensity(
+        horizontal: densityCorrection,
+        vertical: densityCorrection,
+      ),
+    );
+  }
+
+  final double controlScale;
+  final double chromeScale;
+  final VisualDensity visualDensity;
+
+  double get navigationHeight => 68 * chromeScale;
+  double get navigationHorizontalInset => 10 * chromeScale;
+  double get navigationBottomInset => 10 * chromeScale;
+  double get navigationIconSize => 21 * chromeScale;
+  double get navigationIndicatorWidth => 48 * chromeScale;
+  double get navigationIndicatorHeight => 30 * chromeScale;
+  double get navigationLabelSize => 10.5 * chromeScale;
+}
+
 bool isDesktopLayout(BuildContext context) {
   final width = MediaQuery.sizeOf(context).width;
   return width >= AppBreakpoints.desktop ||
@@ -33,18 +89,13 @@ bool isMobileTargetPlatform() {
 double mobileUiScaleForMetrics({
   required Size size,
   required double devicePixelRatio,
+  bool? mobileTargetOverride,
 }) {
-  if (!isMobileTargetPlatform()) return 1.0;
-
-  final physicalShortestSide = size.shortestSide * devicePixelRatio;
-  // Android/iOS already normalize layout with dp/pt. This is only a narrow
-  // correction for 1.5K-class phones whose OEM density bucket makes app UI
-  // visibly larger than 2K-class phones of similar physical size.
-  if (physicalShortestSide <= 1240) return 0.82;
-  if (physicalShortestSide >= 1440) return 0.92;
-
-  final ratio = (physicalShortestSide - 1240) / (1440 - 1240);
-  return 0.82 + ratio * 0.10;
+  return MobileUiMetrics.fromMetrics(
+    size: size,
+    devicePixelRatio: devicePixelRatio,
+    mobileTargetOverride: mobileTargetOverride,
+  ).controlScale;
 }
 
 double mobileUiScaleFor(MediaQueryData mediaQuery) {
@@ -61,16 +112,26 @@ double mobileUiScaleOf(BuildContext context) {
   );
 }
 
+MobileUiMetrics mobileUiMetricsFor(MediaQueryData mediaQuery) {
+  return MobileUiMetrics.fromMetrics(
+    size: mediaQuery.size,
+    devicePixelRatio: mediaQuery.devicePixelRatio,
+  );
+}
+
+MobileUiMetrics mobileUiMetricsOf(BuildContext context) {
+  return MobileUiMetrics.fromMetrics(
+    size: MediaQuery.sizeOf(context),
+    devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
+  );
+}
+
 MediaQueryData adaptMobileMediaQuery(MediaQueryData mediaQuery) {
   return mediaQuery;
 }
 
 VisualDensity mobileVisualDensityFor(MediaQueryData mediaQuery) {
-  final uiScale = mobileUiScaleFor(mediaQuery);
-  if (uiScale >= 0.999) return VisualDensity.standard;
-
-  final density = ((uiScale - 1.0) * 10).clamp(-1.0, 0.0).toDouble();
-  return VisualDensity(horizontal: density, vertical: density);
+  return mobileUiMetricsFor(mediaQuery).visualDensity;
 }
 
 class OpenSettingsNotification extends Notification {

@@ -355,12 +355,18 @@ class _HomeScreenState extends State<HomeScreen> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
+    final mobileMetrics = mobileUiMetricsOf(context);
 
     return SafeArea(
       top: false,
-      minimum: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+      minimum: EdgeInsets.fromLTRB(
+        mobileMetrics.navigationHorizontalInset,
+        0,
+        mobileMetrics.navigationHorizontalInset,
+        mobileMetrics.navigationBottomInset,
+      ),
       child: Container(
-        height: 68,
+        height: mobileMetrics.navigationHeight,
         decoration: BoxDecoration(
           color: colorScheme.surface.withValues(alpha: isDark ? 0.94 : 0.97),
           borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
@@ -380,6 +386,7 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             _buildNavItem(
               context: context,
+              mobileMetrics: mobileMetrics,
               icon: const Icon(Icons.dns_outlined),
               selectedIcon: const Icon(Icons.dns_rounded),
               label: strings.servers,
@@ -387,6 +394,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             _buildNavItem(
               context: context,
+              mobileMetrics: mobileMetrics,
               icon: const Icon(Icons.folder_open_outlined),
               selectedIcon: const Icon(Icons.folder_open_rounded),
               label: strings.sftp,
@@ -394,6 +402,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             _buildNavItem(
               context: context,
+              mobileMetrics: mobileMetrics,
               icon: const Icon(Icons.auto_awesome_outlined),
               selectedIcon: const Icon(Icons.auto_awesome_rounded),
               label: 'AI',
@@ -401,6 +410,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             _buildNavItem(
               context: context,
+              mobileMetrics: mobileMetrics,
               icon: const Icon(Icons.monitor_heart_outlined),
               selectedIcon: const Icon(Icons.monitor_heart_rounded),
               label: strings.admin,
@@ -408,6 +418,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             _buildNavItem(
               context: context,
+              mobileMetrics: mobileMetrics,
               icon: const Icon(Icons.article_outlined),
               selectedIcon: const Icon(Icons.article_rounded),
               label: strings.logs,
@@ -421,6 +432,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildNavItem({
     required BuildContext context,
+    required MobileUiMetrics mobileMetrics,
     required Widget icon,
     required Widget selectedIcon,
     required String label,
@@ -450,8 +462,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     AnimatedContainer(
                       duration: const Duration(milliseconds: 200),
                       curve: Curves.easeOutCubic,
-                      width: 48,
-                      height: 30,
+                      width: mobileMetrics.navigationIndicatorWidth,
+                      height: mobileMetrics.navigationIndicatorHeight,
                       decoration: BoxDecoration(
                         color: isSelected
                             ? colorScheme.primary.withValues(alpha: 0.12)
@@ -466,7 +478,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         color: isSelected
                             ? colorScheme.primary
                             : colorScheme.onSurfaceVariant,
-                        size: 21,
+                        size: mobileMetrics.navigationIconSize,
                       ),
                       child: isSelected ? selectedIcon : icon,
                     ),
@@ -481,7 +493,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   color: isSelected
                       ? colorScheme.primary
                       : colorScheme.onSurfaceVariant,
-                  fontSize: 10.5,
+                  fontSize: mobileMetrics.navigationLabelSize,
                   fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
                   letterSpacing: 0,
                 ),

@@ -237,6 +237,10 @@ its child widgets.
 - Keep the AI chat page alive across page switches.
 - Keep custom mobile navigation items exposed as a single semantic button with
   a localized label and selected state; exclude duplicate icon/text semantics.
+- Use `MobileUiMetrics` from `lib/utils/responsive.dart` as the single source
+  for mobile chrome and control density. Its 1280-1440 px physical-short-edge
+  interpolation lightly tightens 1.5K layouts and reaches standard chrome at
+  2K; never use it to scale the user's system text setting.
 - Backup/import/export covers saved servers, restorable windows, terminal
   history, AI settings, AI chats, AgentRunMetrics, Playbooks, SFTP
   recent/favorite paths, and custom skills, but never passwords, private keys,

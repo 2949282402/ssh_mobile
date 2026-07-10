@@ -6,14 +6,17 @@ paths or emulator snapshots in the repository.
 
 ## Device matrix
 
-| Profile | Physical display | Density | Approx. logical display | `mobileUiScaleForMetrics` |
-| --- | ---: | ---: | ---: | ---: |
-| Pixel 9 Pro (`ssh_mobile_15k`) | 1280 × 2856 | 480 dpi | 426.7 × 952.0 dp | 0.84 |
-| Pixel 6 Pro (`ssh_mobile_2k`) | 1440 × 3120 | 560 dpi | 411.4 × 891.4 dp | 0.92 |
+| Profile | Physical display | Density | Approx. logical display | Control scale | Chrome scale |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Pixel 9 Pro (`ssh_mobile_15k`) | 1280 × 2856 | 480 dpi | 426.7 × 952.0 dp | 0.84 | 0.952 |
+| Pixel 6 Pro (`ssh_mobile_2k`) | 1440 × 3120 | 560 dpi | 411.4 × 891.4 dp | 0.92 | 1.0 |
 
 Both AVDs use the Android 35 Google Play x86_64 system image. The 1280 px and
 1440 px physical short edges exercise the interpolation range in
 `lib/utils/responsive.dart` instead of testing only one density bucket.
+`MobileUiMetrics` is the single source for these mobile control, chrome, and
+visual-density corrections. It deliberately leaves the system text scale
+unchanged for accessibility.
 
 ## Visual baseline
 
@@ -35,6 +38,10 @@ Both AVDs use the Android 35 Google Play x86_64 system image. The 1280 px and
 - The home screen's main proportions are close across 1280 px and 1440 px short
   edges, so the physical-short-edge interpolation remains the correct basis for
   the mobile correction.
+- The five mobile navigation targets remain fully visible, selectable, and
+  semantically labeled on both profiles after applying the shared metrics. The
+  1280 px profile uses slightly tighter chrome; the 1440 px profile keeps the
+  standard 68 dp navigation height.
 - The first-launch background-service guide and less common routes still need a
   consistency pass against the shared page-surface components.
 - Cold startup remained on the native black launch surface for a noticeable
