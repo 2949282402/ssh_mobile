@@ -261,10 +261,10 @@ packages:
     dependency: "direct dev"
     description:
       name: drift_dev
-      sha256: "042a5fb507ab5697f67eb55b75cfff2f665701f6606926136d6d4e85f81ff837"
+      sha256: c563e0ea24a1b4ad316f860a206220a74dd9c6324f0e7e02a961dd4808dba942
       url: "https://pub.dev"
     source: hosted
-    version: "2.34.1+1"
+    version: "2.34.2+1"
   drift_flutter:
     dependency: "direct main"
     description:
@@ -1150,10 +1150,10 @@ packages:
     dependency: transitive
     description:
       name: sqlparser
-      sha256: "40bdddb306a727be9ce510bd2d2b9a6c9db6c586d846ef7b22e3990a2b24f02d"
+      sha256: "772bb2f6f5bce0631a60f26b57d6e8882e1105c22345b05c163ee6ee5d7ba32d"
       url: "https://pub.dev"
     source: hosted
-    version: "0.44.5"
+    version: "0.45.0"
   stack_trace:
     dependency: transitive
     description:
