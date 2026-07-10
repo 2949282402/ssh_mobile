@@ -1,17 +1,69 @@
-# SSH Mobile
+<p align="center">
+  <img src="assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
+</p>
 
-SSH Mobile 是一个基于 Flutter 的跨平台 SSH / SFTP 客户端，面向移动端长时间终端会话、多窗口操作、文件管理和 AI 辅助运维场景。项目覆盖 Android、iOS、macOS 和 Windows，核心能力围绕 SSH、SFTP、性能监控、日志和 OpenAI-compatible 大模型工具化运维展开。
+<h1 align="center">SSH Mobile</h1>
 
-SSH Mobile is a Flutter-based cross-platform SSH / SFTP client for long-running terminal work, remote file management, server monitoring, logs, and AI-assisted operations through OpenAI-compatible models.
+<p align="center">
+  面向移动端长时间会话的跨平台 SSH / SFTP、服务器监控与 AI 辅助运维客户端
+</p>
+
+<p align="center">
+  <a href="https://github.com/2949282402/ssh_mobile/actions/workflows/flutter.yml"><img src="https://github.com/2949282402/ssh_mobile/actions/workflows/flutter.yml/badge.svg" alt="Flutter CI" /></a>
+</p>
+
+SSH Mobile 是一个基于 Flutter 的跨平台 SSH / SFTP 客户端，项目覆盖 Android、iOS、macOS、Windows 和 Web。它把 SSH 多窗口终端、远程文件管理、服务器监控、安全存储和 OpenAI-compatible AI tools 组合成一个完整的移动运维工作台。
+
+SSH Mobile is a Flutter-based cross-platform client for long-running terminal sessions, remote file management, server monitoring, and AI-assisted operations.
 
 > 后台网络连接仍会受到系统省电、网络切换和进程回收影响。需要尽量保留服务器端工作现场时，推荐使用 `SSH + tmux`。
 
+## Portfolio Snapshot
+
+| Area | Evidence in this repository |
+| --- | --- |
+| Mobile engineering | App lifecycle flushing, Android foreground service, battery/network/runtime health checks, adaptive mobile/desktop navigation |
+| Architecture | Feature-first MVVM with Provider/Selector, protocol adapters, repository seams, and centralized dependency composition |
+| Data and security | Secure Storage for credentials, encrypted Drift fields and caches, SSH Host Key TOFU, approval gates, and secret redaction |
+| Reliability | Unit/widget coverage for ViewModels, storage migrations, protocol parsing, LLM streaming, tool loops, and security policies |
+| Delivery | Pinned Flutter/dependency baseline, GitHub Actions quality gates, Android/Windows/macOS/iOS builds, and reproducible icon generation |
+
+### Verified Baseline
+
+Local verification on 2026-07-10 with Flutter 3.44.2 / Dart 3.12.2:
+
+- `flutter analyze`: no issues
+- `flutter test --coverage`: 568 tests passed
+- non-generated line coverage: 39.3% (`12690/32302`), with a 35% CI floor
+- Android debug and unsigned release APKs built successfully
+- Windows release build completed successfully
+- icon generation, Drift generation, shared-skill sync, formatting, and diff checks are deterministic
+
+See [docs/VALIDATION_REPORT.md](docs/VALIDATION_REPORT.md) for commands, scope,
+and the device-dependent checks that remain.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  Views[Feature views] --> ViewModels[Feature ViewModels]
+  ViewModels --> Services[SSH / SFTP / monitor / AI services]
+  Services --> Protocols[SSH, SFTP, HTTP and WebView adapters]
+  Services --> Storage[StorageService facade]
+  Storage --> Drift[Encrypted Drift repositories]
+  Storage --> Secure[Platform Secure Storage]
+  AI[AI orchestration] --> Services
+  AI --> Safety[Tool approval and secret policy]
+```
+
 ## Related Docs
 
-- [docs/ANDROID_NATIVE_REWRITE_GUIDE.md](docs/ANDROID_NATIVE_REWRITE_GUIDE.md)
+- [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
+- [docs/VALIDATION_REPORT.md](docs/VALIDATION_REPORT.md)
 - [docs/ADR_ENGINEERING_BASELINE.md](docs/ADR_ENGINEERING_BASELINE.md)
 - [docs/PERFORMANCE_ACCEPTANCE.md](docs/PERFORMANCE_ACCEPTANCE.md)
-- [AGENT_MEMORY.md](AGENT_MEMORY.md)
+- [docs/security_manual_regression.md](docs/security_manual_regression.md)
+- [docs/ANDROID_NATIVE_REWRITE_GUIDE.md](docs/ANDROID_NATIVE_REWRITE_GUIDE.md)
 
 ## Highlights
 
@@ -24,7 +76,7 @@ SSH Mobile is a Flutter-based cross-platform SSH / SFTP client for long-running 
 - AI tools：支持服务器诊断、SFTP 路径操作、客户端信息、WebView 搜索与读取、日志与备份操作。
 - 本地 MCP Server：Windows/macOS/desktop 端可在设置中开启 `127.0.0.1:<port>/mcp` Streamable HTTP + JSON-RPC 端点，并复制 Codex、Claude Code、Gemini CLI 配置。
 - 日志：集中记录 SSH、SFTP、LLM、AI tools 和异常信息，并统一脱敏常见凭据、令牌和私钥内容。
-- 设置与备份：支持语言、主题、字体、AI 设置、聊天和窗口历史导入导出，但不导出密码、私钥或 API Key，导入会做大小、数量和 schema 校验。
+- 设置与备份：支持语言、主题、AI 设置、聊天和窗口历史导入导出，但不导出密码、私钥或 API Key，导入会做大小、数量和 schema 校验。
 - 附加页面：包含系统管理、Playbook、RAG 知识库、AI Skills、终端历史和客户端 WebView。
 
 ## Project Structure
@@ -33,8 +85,8 @@ SSH Mobile is a Flutter-based cross-platform SSH / SFTP client for long-running 
 
 - `lib/main.dart`: 应用启动和 `MultiProvider` 装配入口，注册基础 service 与 feature ViewModel。
 - `lib/features/`: feature 自有目录。当前重点包括 `connection/models|viewmodels|views`、`ai_chat/viewmodels|services`、`settings/viewmodels`、`performance/viewmodels`、`sftp/viewmodels`、`terminal/viewmodels`。
-- `lib/screens/`: 导航壳、页面入口和基于 Dart `part` 的复合 UI 目录，例如 `home/`、`llm_chat/`、`performance_monitor/`、`sftp/`、`terminal/`。这些 screen 主要负责布局、路由和少量瞬时 UI 状态。
-- `lib/services/`: SSH、SFTP、LLM、AI tools、监控、存储、MCP 等基础设施与 repository-style service，子目录包括 `ai_tool/`、`client_webview/`、`llm_chat/`、`mcp/`、`ssh/`、`sftp/`、`storage/`。
+- `lib/features/*/views/`: 页面、导航壳、基于 Dart `part` 的复合 UI 和 feature 子组件，主要负责布局、路由和少量瞬时 UI 状态。
+- `lib/services/`: SSH、SFTP、LLM、AI tools、监控、存储、MCP 等基础设施与 repository-style service，子目录包括 `ai_tool/`、`client_webview/`、`mcp/`、`ssh/`、`sftp/`、`storage/`。
 - `lib/data/`: Drift 数据库、DAO 和 Drift-backed repository 实现。`StorageService` 仍作为兼容 facade 暴露现有接口。
 - `lib/core/services/`: 更底层的跨 feature 服务与工厂，例如 `ssh_client_factory.dart`、`data_protection_service.dart`。
 - `lib/models/`: 仍未迁入 feature 的共享模型。
@@ -60,8 +112,8 @@ Codex 使用 `.agents/skills/ssh-mobile-maintenance/SKILL.md`，Claude Code 使�
 
 ### Environment
 
-- Flutter 3.x
-- Dart SDK `>=3.2.0 <4.0.0`
+- Flutter `>=3.44.0`（CI 固定为 `3.44.2`）
+- Dart SDK `>=3.12.0 <4.0.0`
 - Android Studio / Android SDK 或对应平台工具链
 - Windows 桌面构建需要 Visual Studio 的 `Desktop development with C++`
 - iOS / macOS 构建需要 macOS 和 Xcode
@@ -77,14 +129,22 @@ flutter pub get
 
 ```powershell
 flutter pub get
-dart format lib test
+dart format lib test tool
 flutter analyze
 flutter test
+flutter test --coverage
+dart run tool/check_coverage.dart --minimum=35
 flutter devices
 flutter run -d <device-id>
 flutter build apk --debug
 flutter build windows
 powershell -ExecutionPolicy Bypass -File .\scripts\build_windows_msi.ps1
+```
+
+应用图标由仓库内脚本统一生成，修改品牌图形后运行：
+
+```powershell
+dart run tool/generate_app_icons.dart
 ```
 
 ### Run
@@ -297,3 +357,4 @@ sudo apk add tmux
 ## License
 
 当前仓库未声明开源许可证。公开发布前请补充明确的 `LICENSE` 文件。
+包名、正式签名、许可证、隐私联系信息和真机验收等发布前事项集中记录在 [发布清单](docs/RELEASE_CHECKLIST.md) 中。

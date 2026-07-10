@@ -11,10 +11,9 @@ class DeveloperLogViewModel extends ChangeNotifier {
   final Set<int> _selectedIds = {};
 
   DeveloperLogViewModel({
-    required AppLogService logService,
-    required AppSettings appSettings,
-  })  : _logService = logService,
-        _appSettings = appSettings {
+    required this._logService,
+    required this._appSettings,
+  }) {
     _logService.addListener(_onLogsChanged);
   }
 

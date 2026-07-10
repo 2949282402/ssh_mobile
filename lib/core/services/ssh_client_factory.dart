@@ -10,10 +10,7 @@ class SshCredentials {
   final String? password;
   final String? privateKey;
 
-  const SshCredentials({
-    required this.password,
-    required this.privateKey,
-  });
+  const SshCredentials({required this.password, required this.privateKey});
 }
 
 class SshClientAuthOptions {
@@ -87,10 +84,10 @@ class SshClientFactory {
         username: config.username,
         onVerifyHostKey: (algorithm, fingerprint) =>
             hostKeyPolicy.verifyHostKey(
-          config: config,
-          algorithm: algorithm,
-          md5Fingerprint: fingerprint,
-        ),
+              config: config,
+              algorithm: algorithm,
+              md5Fingerprint: fingerprint,
+            ),
         identities: authOptions.identities,
         onPasswordRequest: authOptions.onPasswordRequest,
         onUserInfoRequest: authOptions.onUserInfoRequest,
@@ -123,17 +120,16 @@ class SshClientFactory {
     required SshCredentials credentials,
     required List<SSHKeyPair>? identities,
   }) {
-    final password =
-        credentials.password?.isNotEmpty == true ? credentials.password : null;
+    final password = credentials.password?.isNotEmpty == true
+        ? credentials.password
+        : null;
     final usesPassword = config.authMethod != AuthMethod.privateKey;
     return SshClientAuthOptions(
       identities: identities,
       onPasswordRequest: usesPassword ? () => password : null,
       onUserInfoRequest: usesPassword && password != null
-          ? (request) => keyboardInteractiveResponsesForPassword(
-                request,
-                password,
-              )
+          ? (request) =>
+                keyboardInteractiveResponsesForPassword(request, password)
           : null,
     );
   }
@@ -148,7 +144,8 @@ class SshClientFactory {
     ConnectionConfig config,
     SshCredentials credentials,
   ) async {
-    final shouldUseKey = config.authMethod == AuthMethod.privateKey ||
+    final shouldUseKey =
+        config.authMethod == AuthMethod.privateKey ||
         config.authMethod == AuthMethod.both;
     if (!shouldUseKey || credentials.privateKey?.isNotEmpty != true) {
       return null;
@@ -193,10 +190,7 @@ class SshClientFactory {
           if (promptText is! String || echo is! bool) {
             return null;
           }
-          return _KeyboardInteractivePrompt(
-            promptText: promptText,
-            echo: echo,
-          );
+          return _KeyboardInteractivePrompt(promptText: promptText, echo: echo);
         })
         .whereType<_KeyboardInteractivePrompt>()
         .toList(growable: false);

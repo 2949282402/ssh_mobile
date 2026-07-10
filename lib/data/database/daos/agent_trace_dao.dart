@@ -27,10 +27,7 @@ class AgentTraceDao extends DatabaseAccessor<AppDatabase>
       'GROUP BY run_id '
       'ORDER BY MAX(created_at) DESC '
       'LIMIT ?',
-      variables: [
-        Variable.withString(chatId),
-        Variable.withInt(safeLimit),
-      ],
+      variables: [Variable.withString(chatId), Variable.withInt(safeLimit)],
       readsFrom: {agentTraceEventsTable},
     ).map((row) => row.read<String>('run_id')).get();
   }
@@ -49,15 +46,15 @@ class AgentTraceDao extends DatabaseAccessor<AppDatabase>
   }
 
   Future<void> deleteEventsForRun(String runId) {
-    return (delete(agentTraceEventsTable)
-          ..where((row) => row.runId.equals(runId)))
-        .go();
+    return (delete(
+      agentTraceEventsTable,
+    )..where((row) => row.runId.equals(runId))).go();
   }
 
   Future<void> deleteEventsForChat(String chatId) {
-    return (delete(agentTraceEventsTable)
-          ..where((row) => row.chatId.equals(chatId)))
-        .go();
+    return (delete(
+      agentTraceEventsTable,
+    )..where((row) => row.chatId.equals(chatId))).go();
   }
 
   Future<void> trimOldEvents({
@@ -77,39 +74,41 @@ class AgentTraceDao extends DatabaseAccessor<AppDatabase>
 
       final staleRunIds = runIds.skip(safeRunCount).toList(growable: false);
       if (staleRunIds.isNotEmpty) {
-        await (delete(agentTraceEventsTable)
-              ..where((row) => row.runId.isIn(staleRunIds)))
-            .go();
+        await (delete(
+          agentTraceEventsTable,
+        )..where((row) => row.runId.isIn(staleRunIds))).go();
       }
 
       final retainedRunIds = runIds.take(safeRunCount).toList(growable: false);
       for (final runId in retainedRunIds) {
-        final eventIds = await (selectOnly(agentTraceEventsTable)
-              ..addColumns([agentTraceEventsTable.id])
-              ..where(agentTraceEventsTable.runId.equals(runId))
-              ..orderBy([
-                OrderingTerm(
-                  expression: agentTraceEventsTable.sequence,
-                  mode: OrderingMode.asc,
-                ),
-                OrderingTerm(
-                  expression: agentTraceEventsTable.createdAt,
-                  mode: OrderingMode.asc,
-                ),
-                OrderingTerm(
-                  expression: agentTraceEventsTable.id,
-                  mode: OrderingMode.asc,
-                ),
-              ]))
-            .map((row) => row.read(agentTraceEventsTable.id))
-            .get()
-            .then((ids) => ids.whereType<String>().toList(growable: false));
-        final staleEventIds =
-            eventIds.skip(safeEventsPerRun).toList(growable: false);
+        final eventIds =
+            await (selectOnly(agentTraceEventsTable)
+                  ..addColumns([agentTraceEventsTable.id])
+                  ..where(agentTraceEventsTable.runId.equals(runId))
+                  ..orderBy([
+                    OrderingTerm(
+                      expression: agentTraceEventsTable.sequence,
+                      mode: OrderingMode.asc,
+                    ),
+                    OrderingTerm(
+                      expression: agentTraceEventsTable.createdAt,
+                      mode: OrderingMode.asc,
+                    ),
+                    OrderingTerm(
+                      expression: agentTraceEventsTable.id,
+                      mode: OrderingMode.asc,
+                    ),
+                  ]))
+                .map((row) => row.read(agentTraceEventsTable.id))
+                .get()
+                .then((ids) => ids.whereType<String>().toList(growable: false));
+        final staleEventIds = eventIds
+            .skip(safeEventsPerRun)
+            .toList(growable: false);
         if (staleEventIds.isNotEmpty) {
-          await (delete(agentTraceEventsTable)
-                ..where((row) => row.id.isIn(staleEventIds)))
-              .go();
+          await (delete(
+            agentTraceEventsTable,
+          )..where((row) => row.id.isIn(staleEventIds))).go();
         }
       }
     });

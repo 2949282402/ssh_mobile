@@ -11,10 +11,9 @@ class RagKnowledgeViewModel extends ChangeNotifier {
   bool _isProcessing = false;
 
   RagKnowledgeViewModel({
-    required RagService ragService,
-    required StorageService storageService,
-  })  : _ragService = ragService,
-        _storageService = storageService {
+    required this._ragService,
+    required this._storageService,
+  }) {
     _ragService.addListener(_onServiceChanged);
   }
 
@@ -47,7 +46,10 @@ class RagKnowledgeViewModel extends ChangeNotifier {
   }
 
   Future<void> addDocument(
-      String name, Uint8List bytes, String mimeType) async {
+    String name,
+    Uint8List bytes,
+    String mimeType,
+  ) async {
     _isProcessing = true;
     notifyListeners();
     try {

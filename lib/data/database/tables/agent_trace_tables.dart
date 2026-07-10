@@ -22,20 +22,20 @@ class AgentTraceEventsTable extends Table {
   Set<Column<Object>> get primaryKey => {id};
 
   List<Index> get indexes => [
-        Index(
-          'idx_agent_trace_run_sequence',
-          'CREATE INDEX idx_agent_trace_run_sequence '
-              'ON agent_trace_events(run_id, sequence ASC)',
-        ),
-        Index(
-          'idx_agent_trace_chat_created',
-          'CREATE INDEX idx_agent_trace_chat_created '
-              'ON agent_trace_events(chat_id, created_at DESC)',
-        ),
-        Index(
-          'idx_agent_trace_kind',
-          'CREATE INDEX idx_agent_trace_kind '
-              'ON agent_trace_events(kind)',
-        ),
-      ];
+    Index(
+      'idx_agent_trace_run_sequence',
+      'CREATE INDEX idx_agent_trace_run_sequence '
+          'ON agent_trace_events(run_id, sequence ASC)',
+    ),
+    Index(
+      'idx_agent_trace_chat_created',
+      'CREATE INDEX idx_agent_trace_chat_created '
+          'ON agent_trace_events(chat_id, created_at DESC)',
+    ),
+    Index(
+      'idx_agent_trace_kind',
+      'CREATE INDEX idx_agent_trace_kind '
+          'ON agent_trace_events(kind)',
+    ),
+  ];
 }

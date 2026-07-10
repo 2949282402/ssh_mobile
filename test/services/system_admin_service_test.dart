@@ -56,9 +56,10 @@ admin    pts/1        2026-06-03 08:31 (192.168.1.11)
     expect(lastCommand, 'who');
   });
 
-  test('getUserAccounts parses /etc/passwd and password status correctly',
-      () async {
-    nextStdout = '''
+  test(
+    'getUserAccounts parses /etc/passwd and password status correctly',
+    () async {
+      nextStdout = '''
 root:x:0:0:root:/root:/bin/bash
 bin:x:1:1:bin:/dev:
 admin:x:1000:1000:Admin User:/home/admin:/bin/bash
@@ -66,26 +67,27 @@ admin:x:1000:1000:Admin User:/home/admin:/bin/bash
 root P 06/03/2026 0 99999 7 -1
 admin L 06/03/2026 0 99999 7 -1
 ''';
-    nextExitCode = 0;
+      nextExitCode = 0;
 
-    final accounts = await service.getUserAccounts('conn1');
-    // Only root and admin should be returned (bin has empty/nologin-style shell and low UID)
-    expect(accounts, hasLength(2));
+      final accounts = await service.getUserAccounts('conn1');
+      // Only root and admin should be returned (bin has empty/nologin-style shell and low UID)
+      expect(accounts, hasLength(2));
 
-    expect(accounts[0].username, 'root');
-    expect(accounts[0].uid, 0);
-    expect(accounts[0].homeDir, '/root');
-    expect(accounts[0].shell, '/bin/bash');
-    expect(accounts[0].status, 'P');
-    expect(accounts[0].isLocked, isFalse);
+      expect(accounts[0].username, 'root');
+      expect(accounts[0].uid, 0);
+      expect(accounts[0].homeDir, '/root');
+      expect(accounts[0].shell, '/bin/bash');
+      expect(accounts[0].status, 'P');
+      expect(accounts[0].isLocked, isFalse);
 
-    expect(accounts[1].username, 'admin');
-    expect(accounts[1].uid, 1000);
-    expect(accounts[1].homeDir, '/home/admin');
-    expect(accounts[1].shell, '/bin/bash');
-    expect(accounts[1].status, 'L');
-    expect(accounts[1].isLocked, isTrue);
-  });
+      expect(accounts[1].username, 'admin');
+      expect(accounts[1].uid, 1000);
+      expect(accounts[1].homeDir, '/home/admin');
+      expect(accounts[1].shell, '/bin/bash');
+      expect(accounts[1].status, 'L');
+      expect(accounts[1].isLocked, isTrue);
+    },
+  );
 
   test('getSystemdServices parses running and stopped services', () async {
     nextStdout = '''
@@ -153,8 +155,11 @@ udp UNCONN 0 0 127.0.0.53:53 0.0.0.0:* users:(("systemd-resolve",pid=42,fd=12))
     nextExitCode = 0;
     nextStdout = '';
 
-    await service.createUser('conn1',
-        username: 'testuser', password: 'password123');
+    await service.createUser(
+      'conn1',
+      username: 'testuser',
+      password: 'password123',
+    );
     expect(lastCommand, contains('chpasswd'));
   });
 

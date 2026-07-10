@@ -41,10 +41,14 @@ void main() {
 
     sshService = SshService(storageService);
     sftpService = SftpService(storageService);
-    performanceMonitorService =
-        PerformanceMonitorService(sshService, storageService);
-    playbookService =
-        PlaybookService(storageService: storageService, sshService: sshService);
+    performanceMonitorService = PerformanceMonitorService(
+      sshService,
+      storageService,
+    );
+    playbookService = PlaybookService(
+      storageService: storageService,
+      sshService: sshService,
+    );
     ragService = RagService(storageService: storageService);
   });
 
@@ -94,23 +98,25 @@ void main() {
       expect(result, isA<SendTextEmptyText>());
     });
 
-    test('sendText returns SendTextApiKeyMissing if api key is missing',
-        () async {
-      final viewModel = AiChatViewModel(
-        storageService: storageService,
-        sshService: sshService,
-        sftpService: sftpService,
-        performanceMonitorService: performanceMonitorService,
-        playbookService: playbookService,
-        ragService: ragService,
-        appSettings: appSettings,
-      );
+    test(
+      'sendText returns SendTextApiKeyMissing if api key is missing',
+      () async {
+        final viewModel = AiChatViewModel(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+        );
 
-      await viewModel.loadInitialDraft();
+        await viewModel.loadInitialDraft();
 
-      final result = await viewModel.sendText(text: 'hello');
-      expect(result, isA<SendTextApiKeyMissing>());
-    });
+        final result = await viewModel.sendText(text: 'hello');
+        expect(result, isA<SendTextApiKeyMissing>());
+      },
+    );
 
     test('addAttachment and removeAttachment works correctly', () async {
       final viewModel = AiChatViewModel(
@@ -201,304 +207,316 @@ void main() {
       expect(viewModel.getConnection('non_existent'), isNull);
     });
 
-    test('checkPendingDiagnosticPrompt retrieves and clears pending prompt',
-        () async {
-      final viewModel = AiChatViewModel(
-        storageService: storageService,
-        sshService: sshService,
-        sftpService: sftpService,
-        performanceMonitorService: performanceMonitorService,
-        playbookService: playbookService,
-        ragService: ragService,
-        appSettings: appSettings,
-      );
+    test(
+      'checkPendingDiagnosticPrompt retrieves and clears pending prompt',
+      () async {
+        final viewModel = AiChatViewModel(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+        );
 
-      playbookService.pendingDiagnosticPrompt = 'diagnose_me';
-      expect(viewModel.checkPendingDiagnosticPrompt(), 'diagnose_me');
-      expect(playbookService.pendingDiagnosticPrompt, isNull);
-      expect(viewModel.checkPendingDiagnosticPrompt(), isNull);
-    });
-
-    test('loadLlmSettingsData and logLlmSettingsOpened works without errors',
-        () async {
-      final viewModel = AiChatViewModel(
-        storageService: storageService,
-        sshService: sshService,
-        sftpService: sftpService,
-        performanceMonitorService: performanceMonitorService,
-        playbookService: playbookService,
-        ragService: ragService,
-        appSettings: appSettings,
-      );
-
-      final data = await viewModel.loadLlmSettingsData();
-      expect(data, isNotNull);
-      expect(data['settings'], isNotNull);
-
-      // Verify that calling logLlmSettingsOpened runs without throwing
-      final settings = data['settings'] as AiConnectionSettings;
-      expect(() => viewModel.logLlmSettingsOpened(settings), returnsNormally);
-    });
+        playbookService.pendingDiagnosticPrompt = 'diagnose_me';
+        expect(viewModel.checkPendingDiagnosticPrompt(), 'diagnose_me');
+        expect(playbookService.pendingDiagnosticPrompt, isNull);
+        expect(viewModel.checkPendingDiagnosticPrompt(), isNull);
+      },
+    );
 
     test(
-        '/plan alone enables Plan Mode and returns slash-command handled feedback',
-        () async {
-      final viewModel = AiChatViewModel(
-        storageService: storageService,
-        sshService: sshService,
-        sftpService: sftpService,
-        performanceMonitorService: performanceMonitorService,
-        playbookService: playbookService,
-        ragService: ragService,
-        appSettings: appSettings,
-      );
+      'loadLlmSettingsData and logLlmSettingsOpened works without errors',
+      () async {
+        final viewModel = AiChatViewModel(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+        );
 
-      await viewModel.loadInitialDraft();
-      expect(viewModel.activeChat!.planMode, isFalse);
+        final data = await viewModel.loadLlmSettingsData();
+        expect(data, isNotNull);
+        expect(data['settings'], isNotNull);
 
-      final result = await viewModel.sendText(text: '/plan');
-      expect(result, isA<SendTextSlashCommandHandled>());
-      expect(viewModel.activeChat!.planMode, isTrue);
-    });
-
-    test(
-        '/plan <args> enables Plan Mode and proceeds into the normal send flow',
-        () async {
-      final factory = FakeSuccessRuntimeFactory(
-        storageService: storageService,
-        sshService: sshService,
-        sftpService: sftpService,
-        performanceMonitorService: performanceMonitorService,
-        playbookService: playbookService,
-        ragService: ragService,
-        appSettings: appSettings,
-      );
-
-      final viewModel = AiChatViewModel(
-        storageService: storageService,
-        sshService: sshService,
-        sftpService: sftpService,
-        performanceMonitorService: performanceMonitorService,
-        playbookService: playbookService,
-        ragService: ragService,
-        appSettings: appSettings,
-        runtimeFactory: factory,
-      );
-
-      await viewModel.loadInitialDraft();
-      expect(viewModel.activeChat!.planMode, isFalse);
-
-      await storageService.saveAiConnectionSettings(
-        baseUrl: 'https://api.example.com',
-        model: 'demo-model',
-        apiKey: 'dummy-key',
-      );
-
-      final result = await viewModel.sendText(text: '/plan diagnose nginx');
-      expect(result, isA<SendTextSuccess>());
-      expect(viewModel.activeChat!.planMode, isTrue);
-
-      // Wait for generation to finish to avoid unawaited async leaks
-      await waitUntil(
-        () => viewModel.sending == false,
-        description: 'generation finishes',
-      );
-
-      final messages = viewModel.activeChat!.messages;
-      final userMessage = messages.firstWhere((m) => m.role == 'user');
-      expect(userMessage.text, equals('diagnose nginx'));
-    });
-
-    test('approvePlanAndExecute blocks when runtime health is blocking',
-        () async {
-      final viewModel = AiChatViewModel(
-        storageService: storageService,
-        sshService: sshService,
-        sftpService: sftpService,
-        performanceMonitorService: performanceMonitorService,
-        playbookService: playbookService,
-        ragService: ragService,
-        appSettings: appSettings,
-        clientHealthAdvisor: const FakeHealthAdvisor(
-          ClientRuntimeHealthStatus.blocking,
-        ),
-      );
-
-      await viewModel.loadInitialDraft();
-      final assistantCreatedAt = DateTime.now();
-      await viewModel.updateActiveChat(
-        viewModel.activeChat!.copyWith(
-          planMode: true,
-          messages: [
-            AiChatMessageRecord(
-              role: 'assistant',
-              text: 'plan',
-              createdAt: assistantCreatedAt,
-              todoSteps: const [
-                AiTodoStep(
-                  id: 'task-1',
-                  name: 'Check service',
-                  command: 'systemctl status nginx',
-                  description: 'Check service status',
-                ),
-              ],
-            ),
-          ],
-        ),
-      );
-
-      final result = await viewModel.approvePlanAndExecute(assistantCreatedAt);
-
-      expect(result, isA<ApprovePlanExecutionBlocked>());
-      expect(viewModel.activeChat!.planMode, isTrue);
-      expect(viewModel.activeChat!.approvedPlan, isNull);
-      expect(viewModel.sending, isFalse);
-    });
-
-    test('approvePlanAndExecute warning requires explicit force to continue',
-        () async {
-      await storageService.saveAiConnectionSettings(
-        baseUrl: 'https://api.example.com',
-        model: 'demo-model',
-        apiKey: 'dummy-key',
-      );
-      final factory = FakeSuccessRuntimeFactory(
-        storageService: storageService,
-        sshService: sshService,
-        sftpService: sftpService,
-        performanceMonitorService: performanceMonitorService,
-        playbookService: playbookService,
-        ragService: ragService,
-        appSettings: appSettings,
-      );
-      final viewModel = AiChatViewModel(
-        storageService: storageService,
-        sshService: sshService,
-        sftpService: sftpService,
-        performanceMonitorService: performanceMonitorService,
-        playbookService: playbookService,
-        ragService: ragService,
-        appSettings: appSettings,
-        runtimeFactory: factory,
-        clientHealthAdvisor: const FakeHealthAdvisor(
-          ClientRuntimeHealthStatus.warning,
-        ),
-      );
-
-      await viewModel.loadInitialDraft();
-      final assistantCreatedAt = DateTime.now();
-      await viewModel.updateActiveChat(
-        viewModel.activeChat!.copyWith(
-          planMode: true,
-          messages: [
-            AiChatMessageRecord(
-              role: 'assistant',
-              text: 'plan',
-              createdAt: assistantCreatedAt,
-              todoSteps: const [
-                AiTodoStep(
-                  id: 'task-1',
-                  name: 'Check service',
-                  command: 'systemctl status nginx',
-                  description: 'Check service status',
-                ),
-              ],
-            ),
-          ],
-        ),
-      );
-
-      final warning = await viewModel.approvePlanAndExecute(assistantCreatedAt);
-      expect(warning, isA<ApprovePlanExecutionWarning>());
-      expect(viewModel.activeChat!.approvedPlan, isNull);
-
-      final started = await viewModel.approvePlanAndExecute(
-        assistantCreatedAt,
-        forceAfterWarning: true,
-      );
-      expect(started, isA<ApprovePlanExecutionStarted>());
-
-      await waitUntil(
-        () => viewModel.sending == false,
-        description: 'forced warning execution finishes',
-      );
-      expect(viewModel.activeChat!.approvedPlan, isNotNull);
-      expect(
-        viewModel.activeChat!.messages.any(
-          (message) => message.role == 'user' && message.text.contains('执行'),
-        ),
-        isTrue,
-      );
-    });
+        // Verify that calling logLlmSettingsOpened runs without throwing
+        final settings = data['settings'] as AiConnectionSettings;
+        expect(() => viewModel.logLlmSettingsOpened(settings), returnsNormally);
+      },
+    );
 
     test(
-        'generate assistant response failure with empty partialAnswer assigns agentRunId to error message',
-        () async {
-      await storageService.saveAiConnectionSettings(
-        baseUrl: 'https://api.example.com',
-        model: 'demo-model',
-        apiKey: 'dummy-key',
-      );
+      '/plan alone enables Plan Mode and returns slash-command handled feedback',
+      () async {
+        final viewModel = AiChatViewModel(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+        );
 
-      final factory = FakeFailureRuntimeFactory(
-        storageService: storageService,
-        sshService: sshService,
-        sftpService: sftpService,
-        performanceMonitorService: performanceMonitorService,
-        playbookService: playbookService,
-        ragService: ragService,
-        appSettings: appSettings,
-      );
+        await viewModel.loadInitialDraft();
+        expect(viewModel.activeChat!.planMode, isFalse);
 
-      final viewModel = AiChatViewModel(
-        storageService: storageService,
-        sshService: sshService,
-        sftpService: sftpService,
-        performanceMonitorService: performanceMonitorService,
-        playbookService: playbookService,
-        ragService: ragService,
-        appSettings: appSettings,
-        runtimeFactory: factory,
-      );
+        final result = await viewModel.sendText(text: '/plan');
+        expect(result, isA<SendTextSlashCommandHandled>());
+        expect(viewModel.activeChat!.planMode, isTrue);
+      },
+    );
 
-      await viewModel.loadInitialDraft();
-      final result = await viewModel.sendText(text: 'hello');
-      expect(result, isA<SendTextSuccess>());
+    test(
+      '/plan <args> enables Plan Mode and proceeds into the normal send flow',
+      () async {
+        final factory = FakeSuccessRuntimeFactory(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+        );
 
-      // Wait for async runner execution
-      await waitUntil(
-        () =>
-            viewModel.activeChat?.messages.any((m) => m.role == 'error') ==
-            true,
-        description: 'error message after failed generation',
-      );
-      await waitUntil(
-        () => viewModel.sending == false,
-        description: 'generation finishes after failure',
-      );
+        final viewModel = AiChatViewModel(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+          runtimeFactory: factory,
+        );
 
-      final messages = viewModel.activeChat!.messages;
-      expect(messages, isNotEmpty);
-      final errorMessage = messages.firstWhere((m) => m.role == 'error');
-      expect(errorMessage.agentRunId, isNotNull);
-      expect(errorMessage.agentRunId, isNotEmpty);
-    });
+        await viewModel.loadInitialDraft();
+        expect(viewModel.activeChat!.planMode, isFalse);
+
+        await storageService.saveAiConnectionSettings(
+          baseUrl: 'https://api.example.com',
+          model: 'demo-model',
+          apiKey: 'dummy-key',
+        );
+
+        final result = await viewModel.sendText(text: '/plan diagnose nginx');
+        expect(result, isA<SendTextSuccess>());
+        expect(viewModel.activeChat!.planMode, isTrue);
+
+        // Wait for generation to finish to avoid unawaited async leaks
+        await waitUntil(
+          () => viewModel.sending == false,
+          description: 'generation finishes',
+        );
+
+        final messages = viewModel.activeChat!.messages;
+        final userMessage = messages.firstWhere((m) => m.role == 'user');
+        expect(userMessage.text, equals('diagnose nginx'));
+      },
+    );
+
+    test(
+      'approvePlanAndExecute blocks when runtime health is blocking',
+      () async {
+        final viewModel = AiChatViewModel(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+          clientHealthAdvisor: const FakeHealthAdvisor(
+            ClientRuntimeHealthStatus.blocking,
+          ),
+        );
+
+        await viewModel.loadInitialDraft();
+        final assistantCreatedAt = DateTime.now();
+        await viewModel.updateActiveChat(
+          viewModel.activeChat!.copyWith(
+            planMode: true,
+            messages: [
+              AiChatMessageRecord(
+                role: 'assistant',
+                text: 'plan',
+                createdAt: assistantCreatedAt,
+                todoSteps: const [
+                  AiTodoStep(
+                    id: 'task-1',
+                    name: 'Check service',
+                    command: 'systemctl status nginx',
+                    description: 'Check service status',
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+
+        final result = await viewModel.approvePlanAndExecute(
+          assistantCreatedAt,
+        );
+
+        expect(result, isA<ApprovePlanExecutionBlocked>());
+        expect(viewModel.activeChat!.planMode, isTrue);
+        expect(viewModel.activeChat!.approvedPlan, isNull);
+        expect(viewModel.sending, isFalse);
+      },
+    );
+
+    test(
+      'approvePlanAndExecute warning requires explicit force to continue',
+      () async {
+        await storageService.saveAiConnectionSettings(
+          baseUrl: 'https://api.example.com',
+          model: 'demo-model',
+          apiKey: 'dummy-key',
+        );
+        final factory = FakeSuccessRuntimeFactory(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+        );
+        final viewModel = AiChatViewModel(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+          runtimeFactory: factory,
+          clientHealthAdvisor: const FakeHealthAdvisor(
+            ClientRuntimeHealthStatus.warning,
+          ),
+        );
+
+        await viewModel.loadInitialDraft();
+        final assistantCreatedAt = DateTime.now();
+        await viewModel.updateActiveChat(
+          viewModel.activeChat!.copyWith(
+            planMode: true,
+            messages: [
+              AiChatMessageRecord(
+                role: 'assistant',
+                text: 'plan',
+                createdAt: assistantCreatedAt,
+                todoSteps: const [
+                  AiTodoStep(
+                    id: 'task-1',
+                    name: 'Check service',
+                    command: 'systemctl status nginx',
+                    description: 'Check service status',
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+
+        final warning = await viewModel.approvePlanAndExecute(
+          assistantCreatedAt,
+        );
+        expect(warning, isA<ApprovePlanExecutionWarning>());
+        expect(viewModel.activeChat!.approvedPlan, isNull);
+
+        final started = await viewModel.approvePlanAndExecute(
+          assistantCreatedAt,
+          forceAfterWarning: true,
+        );
+        expect(started, isA<ApprovePlanExecutionStarted>());
+
+        await waitUntil(
+          () => viewModel.sending == false,
+          description: 'forced warning execution finishes',
+        );
+        expect(viewModel.activeChat!.approvedPlan, isNotNull);
+        expect(
+          viewModel.activeChat!.messages.any(
+            (message) => message.role == 'user' && message.text.contains('执行'),
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'generate assistant response failure with empty partialAnswer assigns agentRunId to error message',
+      () async {
+        await storageService.saveAiConnectionSettings(
+          baseUrl: 'https://api.example.com',
+          model: 'demo-model',
+          apiKey: 'dummy-key',
+        );
+
+        final factory = FakeFailureRuntimeFactory(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+        );
+
+        final viewModel = AiChatViewModel(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+          runtimeFactory: factory,
+        );
+
+        await viewModel.loadInitialDraft();
+        final result = await viewModel.sendText(text: 'hello');
+        expect(result, isA<SendTextSuccess>());
+
+        // Wait for async runner execution
+        await waitUntil(
+          () =>
+              viewModel.activeChat?.messages.any((m) => m.role == 'error') ==
+              true,
+          description: 'error message after failed generation',
+        );
+        await waitUntil(
+          () => viewModel.sending == false,
+          description: 'generation finishes after failure',
+        );
+
+        final messages = viewModel.activeChat!.messages;
+        expect(messages, isNotEmpty);
+        final errorMessage = messages.firstWhere((m) => m.role == 'error');
+        expect(errorMessage.agentRunId, isNotNull);
+        expect(errorMessage.agentRunId, isNotEmpty);
+      },
+    );
   });
 }
 
 class FailureLlmChatService extends LlmChatService {
-  FailureLlmChatService({
-    required super.storageService,
-  }) : super(
-          toolService: const _FakeAiToolExecutor(),
-        );
+  FailureLlmChatService({required super.storageService})
+    : super(toolService: const _FakeAiToolExecutor());
 
   @override
   Stream<String> stream({
     required List<Map<String, dynamic>> messages,
     String? modelOverride,
     Future<AiToolApprovalDecision> Function(AiToolApprovalRequest request)?
-        requestToolApproval,
+    requestToolApproval,
     void Function(LlmRunStats stats)? onStats,
     void Function(LlmTraceEvent event)? onTrace,
     LlmCancellationToken? cancellationToken,
@@ -518,18 +536,15 @@ class FailureLlmChatService extends LlmChatService {
 }
 
 class FakeSuccessLlmChatService extends LlmChatService {
-  FakeSuccessLlmChatService({
-    required super.storageService,
-  }) : super(
-          toolService: const _FakeAiToolExecutor(),
-        );
+  FakeSuccessLlmChatService({required super.storageService})
+    : super(toolService: const _FakeAiToolExecutor());
 
   @override
   Stream<String> stream({
     required List<Map<String, dynamic>> messages,
     String? modelOverride,
     Future<AiToolApprovalDecision> Function(AiToolApprovalRequest request)?
-        requestToolApproval,
+    requestToolApproval,
     void Function(LlmRunStats stats)? onStats,
     void Function(LlmTraceEvent event)? onTrace,
     LlmCancellationToken? cancellationToken,
@@ -545,23 +560,27 @@ class FakeSuccessLlmChatService extends LlmChatService {
     AiChatMessageRecord? approvedPlanMessage,
   }) async* {
     if (onTrace != null) {
-      onTrace(const LlmTraceEvent(
-        kind: 'agent_run_summary',
-        title: 'Run Summary',
-        content: '{"finalOutcome":"success","stepsCount":0,"durationMs":0}',
-      ));
+      onTrace(
+        const LlmTraceEvent(
+          kind: 'agent_run_summary',
+          title: 'Run Summary',
+          content: '{"finalOutcome":"success","stepsCount":0,"durationMs":0}',
+        ),
+      );
     }
     if (onStats != null) {
-      onStats(const LlmRunStats(
-        promptTokens: 10,
-        completionTokens: 20,
-        totalTokens: 30,
-        elapsedMs: 100,
-        usageFromProvider: true,
-        contextTokensBeforeCompression: 10,
-        contextWindowTokens: 259000,
-        compressed: false,
-      ));
+      onStats(
+        const LlmRunStats(
+          promptTokens: 10,
+          completionTokens: 20,
+          totalTokens: 30,
+          elapsedMs: 100,
+          usageFromProvider: true,
+          contextTokensBeforeCompression: 10,
+          contextWindowTokens: 259000,
+          compressed: false,
+        ),
+      );
     }
     yield 'ok';
   }

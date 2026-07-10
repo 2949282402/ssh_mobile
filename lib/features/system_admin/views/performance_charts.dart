@@ -91,7 +91,7 @@ class _MetricChart extends StatelessWidget {
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: latestLabels.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
               itemBuilder: (context, index) => latestLabels[index],
             ),
           ),
@@ -206,7 +206,7 @@ class _MetricChart extends StatelessWidget {
               ],
             ),
           ),
-          if (expandedContent != null) expandedContent,
+          ?expandedContent,
         ],
       ),
     );
@@ -257,13 +257,13 @@ class _ChartSeriesCacheKey {
 
   @override
   int get hashCode => Object.hash(
-        connectionId,
-        sampleLength,
-        firstTime,
-        lastTime,
-        metricKey,
-        startTime,
-      );
+    connectionId,
+    sampleLength,
+    firstTime,
+    lastTime,
+    metricKey,
+    startTime,
+  );
 }
 
 class _CachedChartSeries {
@@ -350,8 +350,8 @@ class _MetricChartSeriesCache {
 
   static List<PerformanceSample> _thinSamples(List<PerformanceSample> samples) {
     if (samples.length <= _MetricChart._maxChartPointsPerSeries) return samples;
-    final step =
-        (samples.length / (_MetricChart._maxChartPointsPerSeries - 1)).ceil();
+    final step = (samples.length / (_MetricChart._maxChartPointsPerSeries - 1))
+        .ceil();
     final thinned = <PerformanceSample>[];
     for (var index = 0; index < samples.length; index += step) {
       thinned.add(samples[index]);
@@ -380,10 +380,7 @@ class _LegendLabel extends StatelessWidget {
   final Color color;
   final String text;
 
-  const _LegendLabel({
-    required this.color,
-    required this.text,
-  });
+  const _LegendLabel({required this.color, required this.text});
 
   @override
   Widget build(BuildContext context) {

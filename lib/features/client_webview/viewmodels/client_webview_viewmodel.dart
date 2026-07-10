@@ -11,9 +11,7 @@ class ClientWebViewViewModel extends ChangeNotifier {
   late final TextEditingController urlController;
   late final FocusNode urlFocusNode;
 
-  ClientWebViewViewModel({
-    required AppSettings appSettings,
-  }) : _appSettings = appSettings;
+  ClientWebViewViewModel({required this._appSettings});
 
   void init(String id) {
     chatId = id;

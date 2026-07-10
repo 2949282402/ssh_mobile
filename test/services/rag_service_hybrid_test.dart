@@ -103,16 +103,18 @@ class MockHttpClientResponse extends Stream<List<int>>
     bool? cancelOnError,
   }) {
     // 模拟通义千问 Embedding API 向量数据 (1024 维，全 0.1 和 0.2 以对应测试)
-    final fakeVector =
-        List<double>.generate(1024, (idx) => idx % 2 == 0 ? 0.01 : -0.01);
+    final fakeVector = List<double>.generate(
+      1024,
+      (idx) => idx % 2 == 0 ? 0.01 : -0.01,
+    );
     final fakeResponse = {
       'output': {
         'embeddings': [
           {'embedding': fakeVector, 'text_index': 0},
-          {'embedding': fakeVector, 'text_index': 1}
-        ]
+          {'embedding': fakeVector, 'text_index': 1},
+        ],
       },
-      'usage': {'total_tokens': 10}
+      'usage': {'total_tokens': 10},
     };
     final bytes = utf8.encode(jsonEncode(fakeResponse));
     return Stream<List<int>>.fromIterable([bytes]).listen(
@@ -130,8 +132,9 @@ class MockHttpClientResponse extends Stream<List<int>>
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  const MethodChannel pathChannel =
-      MethodChannel('plugins.flutter.io/path_provider');
+  const MethodChannel pathChannel = MethodChannel(
+    'plugins.flutter.io/path_provider',
+  );
 
   late StorageService storage;
 
@@ -159,12 +162,10 @@ void main() {
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(pathChannel, (MethodCall methodCall) async {
-      return '.';
-    });
+          return '.';
+        });
 
-    SharedPreferences.setMockInitialValues({
-      'rag_search_mode': 'hybrid',
-    });
+    SharedPreferences.setMockInitialValues({'rag_search_mode': 'hybrid'});
     FlutterSecureStorage.setMockInitialValues({
       'ai_aliyun_api_key': 'aliyun-test-key-123',
     });
@@ -180,36 +181,42 @@ void main() {
   });
 
   group('RagService Hybrid Search Tests', () {
-    test('addDocument generates embeddings and retrieve uses RRF fusion',
-        () async {
-      final service = RagService(storageService: storage);
-      await service.init();
+    test(
+      'addDocument generates embeddings and retrieve uses RRF fusion',
+      () async {
+        final service = RagService(storageService: storage);
+        await service.init();
 
-      // 1. 添加带有阿里云向量的文档
-      const text = 'Use systemctl restart nginx to reboot server. '
-          'Use kubectl get pods to view pods.';
-      final metadata = await service.addDocument(
-        name: 'test_ops.txt',
-        bytes: text.codeUnits,
-        mimeType: 'text/plain',
-      );
+        // 1. 添加带有阿里云向量的文档
+        const text =
+            'Use systemctl restart nginx to reboot server. '
+            'Use kubectl get pods to view pods.';
+        final metadata = await service.addDocument(
+          name: 'test_ops.txt',
+          bytes: text.codeUnits,
+          mimeType: 'text/plain',
+        );
 
-      expect(metadata.chunkCount > 0, true);
+        expect(metadata.chunkCount > 0, true);
 
-      // 2. 向量检索模式验证
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('rag_search_mode', 'vector');
+        // 2. 向量检索模式验证
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('rag_search_mode', 'vector');
 
-      final vectorChunks = await service.retrieve('reboot nginx');
-      expect(vectorChunks.isNotEmpty, true);
-      expect(vectorChunks.first.text.contains('systemctl restart nginx'), true);
+        final vectorChunks = await service.retrieve('reboot nginx');
+        expect(vectorChunks.isNotEmpty, true);
+        expect(
+          vectorChunks.first.text.contains('systemctl restart nginx'),
+          true,
+        );
 
-      // 3. 混合检索模式验证
-      await prefs.setString('rag_search_mode', 'hybrid');
+        // 3. 混合检索模式验证
+        await prefs.setString('rag_search_mode', 'hybrid');
 
-      final hybridChunks = await service.retrieve('kubectl get pods');
-      expect(hybridChunks.isNotEmpty, true);
-      expect(hybridChunks.first.text.contains('kubectl get'), true);
-    });
+        final hybridChunks = await service.retrieve('kubectl get pods');
+        expect(hybridChunks.isNotEmpty, true);
+        expect(hybridChunks.first.text.contains('kubectl get'), true);
+      },
+    );
   });
 }

@@ -37,7 +37,8 @@ class AiChatRunMetricsRecorder {
         promptTokens: promptTokens,
         completionTokens: completionTokens,
         totalTokens: totalTokens,
-        elapsedMs: runStats?.elapsedMs ??
+        elapsedMs:
+            runStats?.elapsedMs ??
             finishedAt.difference(startedAt).inMilliseconds,
         toolCalls: runStats?.toolCalls ?? 0,
         cacheHits: runStats?.cacheHits ?? 0,

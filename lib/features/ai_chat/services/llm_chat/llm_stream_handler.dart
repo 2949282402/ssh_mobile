@@ -5,7 +5,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     required List<Map<String, dynamic>> messages,
     String? modelOverride,
     Future<AiToolApprovalDecision> Function(AiToolApprovalRequest request)?
-        requestToolApproval,
+    requestToolApproval,
     void Function(LlmRunStats stats)? onStats,
     void Function(LlmTraceEvent event)? onTrace,
     LlmCancellationToken? cancellationToken,
@@ -44,7 +44,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     required List<Map<String, dynamic>> messages,
     String? modelOverride,
     Future<AiToolApprovalDecision> Function(AiToolApprovalRequest request)?
-        requestToolApproval,
+    requestToolApproval,
     void Function(LlmRunStats stats)? onStats,
     void Function(LlmTraceEvent event)? onTrace,
     LlmCancellationToken? cancellationToken,
@@ -63,11 +63,13 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     final provider = LlmProviderFactory.fromSettings(settings);
     var planExecutionSnapshot = approvedPlanMessage == null
         ? null
-        : const PlanExecutionController()
-            .snapshot(approvedPlanMessage.todoSteps);
+        : const PlanExecutionController().snapshot(
+            approvedPlanMessage.todoSteps,
+          );
     final runStartedAt = DateTime.now();
-    final resolvedRunId =
-        runId?.trim().isNotEmpty == true ? runId!.trim() : const Uuid().v4();
+    final resolvedRunId = runId?.trim().isNotEmpty == true
+        ? runId!.trim()
+        : const Uuid().v4();
     var finalOutcome = AgentFinalOutcome.success;
     final agentLoopGuard = AgentLoopGuard(mode: settings.agentLoopMode);
     final modelProfile = _modelProfileForSettings(
@@ -110,14 +112,12 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     );
 
     var workingMessages = <Map<String, dynamic>>[
-      {
-        'role': 'system',
-        'content': systemPromptFor(planMode: planMode),
-      },
+      {'role': 'system', 'content': systemPromptFor(planMode: planMode)},
       ...messages,
     ];
-    final estimatedBeforeCompression =
-        LlmChatService.estimateMessagesTokens(workingMessages);
+    final estimatedBeforeCompression = LlmChatService.estimateMessagesTokens(
+      workingMessages,
+    );
     var compressed = false;
     final shouldCompressFromUsageThreshold =
         estimatedBeforeCompression >= settings.contextWindowTokens * 0.9;
@@ -194,8 +194,9 @@ extension LlmChatServiceStreamHandler on LlmChatService {
       );
       final visibleTools = toolSelection.tools;
 
-      final hiddenTools =
-          toolSelection.decisions.where((d) => !d.selected).toList();
+      final hiddenTools = toolSelection.decisions
+          .where((d) => !d.selected)
+          .toList();
       final hiddenReasons = hiddenTools.expand((d) => d.blockedBy).toList();
       final topHiddenReasons = <String, int>{};
       for (final reason in hiddenReasons) {
@@ -207,8 +208,9 @@ extension LlmChatServiceStreamHandler on LlmChatService {
           kind: 'tool_exposure',
           title: 'Tool exposure selection',
           content: _prettyJson({
-            'requestedCapabilities':
-                toolSelection.requestedCapabilities.map((c) => c.name).toList(),
+            'requestedCapabilities': toolSelection.requestedCapabilities
+                .map((c) => c.name)
+                .toList(),
             'selectedTools': visibleTools.map((t) => t.name).toList(),
             'hiddenToolsCount': hiddenTools.length,
             'topHiddenReasons': topHiddenReasons,
@@ -220,19 +222,17 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         ),
       );
 
-      selectedToolSet =
-          visibleTools.map((tool) => tool.name).toList(growable: false);
+      selectedToolSet = visibleTools
+          .map((tool) => tool.name)
+          .toList(growable: false);
       final visibleToolsByName = {
         for (final tool in visibleTools) tool.name: tool,
       };
-      var currentToolDefinitions =
-          visibleTools.map((tool) => tool.definitionFor(settings)).toList(
-                growable: false,
-              );
+      var currentToolDefinitions = visibleTools
+          .map((tool) => tool.definitionFor(settings))
+          .toList(growable: false);
       final readOnlyToolCache = <String, CachedToolResult>{};
-      toolBudget = LlmToolBudgetController(
-        baseBudget: settings.toolCallBudget,
-      );
+      toolBudget = LlmToolBudgetController(baseBudget: settings.toolCallBudget);
       toolLedger = <LlmToolLedgerEntry>[];
       toolLoopController = ToolLoopController(
         chatService: this,
@@ -273,31 +273,35 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         coordinatorPrompt: coordinatorPrompt,
         planMode: planMode,
         classify: (classificationMessages) async {
-          final response = await provider.complete(LlmProviderRequest(
-            baseUrl: settings.baseUrl,
-            apiKey: apiKey,
-            model: helperModel,
-            messages: classificationMessages,
-            deepSeekThinkingEnabled: false,
-            deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
-            openAiReasoningEffort: 'low',
-            cancellationToken: cancellationToken,
-            timeoutSeconds: settings.timeoutSeconds,
-          ));
+          final response = await provider.complete(
+            LlmProviderRequest(
+              baseUrl: settings.baseUrl,
+              apiKey: apiKey,
+              model: helperModel,
+              messages: classificationMessages,
+              deepSeekThinkingEnabled: false,
+              deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
+              openAiReasoningEffort: 'low',
+              cancellationToken: cancellationToken,
+              timeoutSeconds: settings.timeoutSeconds,
+            ),
+          );
           return response.text;
         },
         complete: (role, roleMessages, {required thinkingSettings}) async {
-          final response = await provider.complete(LlmProviderRequest(
-            baseUrl: settings.baseUrl,
-            apiKey: apiKey,
-            model: helperModel,
-            messages: roleMessages,
-            deepSeekThinkingEnabled: thinkingSettings.thinkingEnabled,
-            deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
-            openAiReasoningEffort: thinkingSettings.reasoningEffort,
-            cancellationToken: cancellationToken,
-            timeoutSeconds: settings.timeoutSeconds,
-          ));
+          final response = await provider.complete(
+            LlmProviderRequest(
+              baseUrl: settings.baseUrl,
+              apiKey: apiKey,
+              model: helperModel,
+              messages: roleMessages,
+              deepSeekThinkingEnabled: thinkingSettings.thinkingEnabled,
+              deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
+              openAiReasoningEffort: thinkingSettings.reasoningEffort,
+              cancellationToken: cancellationToken,
+              timeoutSeconds: settings.timeoutSeconds,
+            ),
+          );
           return response.text;
         },
       );
@@ -330,12 +334,15 @@ extension LlmChatServiceStreamHandler on LlmChatService {
           yield outcome.finalText;
           workingMessages.last['content'] = outcome.finalText;
 
-          final elapsedMs =
-              DateTime.now().difference(runStartedAt).inMilliseconds;
-          final promptTokens =
-              LlmChatService.estimateMessagesTokens(workingMessages);
-          final completionTokens =
-              LlmChatService.estimateTextTokens(outcome.finalText);
+          final elapsedMs = DateTime.now()
+              .difference(runStartedAt)
+              .inMilliseconds;
+          final promptTokens = LlmChatService.estimateMessagesTokens(
+            workingMessages,
+          );
+          final completionTokens = LlmChatService.estimateTextTokens(
+            outcome.finalText,
+          );
           onStats?.call(
             LlmRunStats(
               promptTokens: promptTokens,
@@ -374,8 +381,8 @@ extension LlmChatServiceStreamHandler on LlmChatService {
           if (!approved) {
             finalOutcome =
                 agentLoopGuard.loopStopReason == 'approval_unavailable'
-                    ? AgentFinalOutcome.approvalUnavailable
-                    : AgentFinalOutcome.agentLoopStopped;
+                ? AgentFinalOutcome.approvalUnavailable
+                : AgentFinalOutcome.agentLoopStopped;
             currentToolDefinitions = const [];
             workingMessages.add({
               'role': 'system',
@@ -407,33 +414,37 @@ extension LlmChatServiceStreamHandler on LlmChatService {
 
         Future<void> pumpStream() async {
           try {
-            final result = await provider.streamChat(LlmProviderRequest(
-              baseUrl: settings.baseUrl,
-              apiKey: apiKey,
-              model: model,
-              messages: workingMessages,
-              tools: currentToolDefinitions,
-              deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
-              deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
-              openAiReasoningEffort: settings.openAiReasoningEffort,
-              cancellationToken: cancellationToken,
-              includeTools: currentToolDefinitions.isNotEmpty,
-              onTextDelta: (chunk) {
-                cancellationToken?.throwIfCancelled();
-                content.write(chunk);
-                chunkController.add(chunk);
-              },
-              timeoutSeconds: settings.timeoutSeconds,
-            ));
+            final result = await provider.streamChat(
+              LlmProviderRequest(
+                baseUrl: settings.baseUrl,
+                apiKey: apiKey,
+                model: model,
+                messages: workingMessages,
+                tools: currentToolDefinitions,
+                deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
+                deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
+                openAiReasoningEffort: settings.openAiReasoningEffort,
+                cancellationToken: cancellationToken,
+                includeTools: currentToolDefinitions.isNotEmpty,
+                onTextDelta: (chunk) {
+                  cancellationToken?.throwIfCancelled();
+                  content.write(chunk);
+                  chunkController.add(chunk);
+                },
+                timeoutSeconds: settings.timeoutSeconds,
+              ),
+            );
             streamedResponse = _StreamChatResult(
               contentChunks: [result.text],
               reasoningContent: result.reasoningContent ?? '',
               toolCalls: result.toolCalls
-                  .map((c) => StreamingToolCall(
-                        id: c.id,
-                        name: c.name,
-                        arguments: c.argumentsJson,
-                      ))
+                  .map(
+                    (c) => StreamingToolCall(
+                      id: c.id,
+                      name: c.name,
+                      arguments: c.argumentsJson,
+                    ),
+                  )
                   .toList(),
               usage: result.usage,
             );
@@ -474,8 +485,9 @@ extension LlmChatServiceStreamHandler on LlmChatService {
               'contentChars': content.length,
               'toolCallCount': response.toolCalls.length,
               'agentLoop': agentLoopGuard.toJson(),
-              'elapsedMs':
-                  DateTime.now().difference(roundStartedAt).inMilliseconds,
+              'elapsedMs': DateTime.now()
+                  .difference(roundStartedAt)
+                  .inMilliseconds,
             }),
           ),
         );
@@ -512,17 +524,21 @@ extension LlmChatServiceStreamHandler on LlmChatService {
             'LLM chat completed',
             details: 'rounds=$roundNumber answerChars=${answer.length}',
           );
-          final elapsedMs =
-              DateTime.now().difference(runStartedAt).inMilliseconds;
-          final promptTokens = response.usage?.promptTokens ??
+          final elapsedMs = DateTime.now()
+              .difference(runStartedAt)
+              .inMilliseconds;
+          final promptTokens =
+              response.usage?.promptTokens ??
               LlmChatService.estimateMessagesTokens(workingMessages);
-          final completionTokens = response.usage?.completionTokens ??
+          final completionTokens =
+              response.usage?.completionTokens ??
               LlmChatService.estimateTextTokens(answer);
           onStats?.call(
             LlmRunStats(
               promptTokens: promptTokens,
               completionTokens: completionTokens,
-              totalTokens: response.usage?.totalTokens ??
+              totalTokens:
+                  response.usage?.totalTokens ??
                   promptTokens + completionTokens,
               elapsedMs: elapsedMs,
               usageFromProvider: response.usage != null,
@@ -559,11 +575,13 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         final assistantToolMessage = provider.buildAssistantToolCallMessage(
           text: content.toString(),
           toolCalls: response.toolCalls
-              .map((c) => LlmProviderToolCall(
-                    id: c.id,
-                    name: c.name,
-                    argumentsJson: c.arguments,
-                  ))
+              .map(
+                (c) => LlmProviderToolCall(
+                  id: c.id,
+                  name: c.name,
+                  argumentsJson: c.arguments,
+                ),
+              )
               .toList(),
           reasoningContent: response.reasoningContent.trim().isNotEmpty
               ? response.reasoningContent
@@ -586,31 +604,35 @@ extension LlmChatServiceStreamHandler on LlmChatService {
           settings: settings,
           planExecutionSnapshot: planExecutionSnapshot,
           complete: (role, roleMessages, {required thinkingSettings}) async {
-            final response = await provider.complete(LlmProviderRequest(
-              baseUrl: settings.baseUrl,
-              apiKey: apiKey,
-              model: helperModel,
-              messages: roleMessages,
-              deepSeekThinkingEnabled: thinkingSettings.thinkingEnabled,
-              deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
-              openAiReasoningEffort: thinkingSettings.reasoningEffort,
-              cancellationToken: cancellationToken,
-              timeoutSeconds: settings.timeoutSeconds,
-            ));
+            final response = await provider.complete(
+              LlmProviderRequest(
+                baseUrl: settings.baseUrl,
+                apiKey: apiKey,
+                model: helperModel,
+                messages: roleMessages,
+                deepSeekThinkingEnabled: thinkingSettings.thinkingEnabled,
+                deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
+                openAiReasoningEffort: thinkingSettings.reasoningEffort,
+                cancellationToken: cancellationToken,
+                timeoutSeconds: settings.timeoutSeconds,
+              ),
+            );
             return response.text;
           },
           classify: (classificationMessages) async {
-            final response = await provider.complete(LlmProviderRequest(
-              baseUrl: settings.baseUrl,
-              apiKey: apiKey,
-              model: helperModel,
-              messages: classificationMessages,
-              deepSeekThinkingEnabled: false,
-              deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
-              openAiReasoningEffort: 'low',
-              cancellationToken: cancellationToken,
-              timeoutSeconds: settings.timeoutSeconds,
-            ));
+            final response = await provider.complete(
+              LlmProviderRequest(
+                baseUrl: settings.baseUrl,
+                apiKey: apiKey,
+                model: helperModel,
+                messages: classificationMessages,
+                deepSeekThinkingEnabled: false,
+                deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
+                openAiReasoningEffort: 'low',
+                cancellationToken: cancellationToken,
+                timeoutSeconds: settings.timeoutSeconds,
+              ),
+            );
             return response.text;
           },
         );
@@ -660,8 +682,9 @@ extension LlmChatServiceStreamHandler on LlmChatService {
           auditModel: auditModel,
           planMode: planMode,
           promptTokens: LlmChatService.estimateMessagesTokens(workingMessages),
-          completionTokens:
-              LlmChatService.estimateTextTokens(visibleOutput.toString()),
+          completionTokens: LlmChatService.estimateTextTokens(
+            visibleOutput.toString(),
+          ),
           toolCalls: toolLedger.length,
           cacheHits: toolLoopController?.cacheHitCount ?? 0,
           dedupBlockedCalls: toolLoopController?.dedupBlockedCount ?? 0,
@@ -693,8 +716,9 @@ extension LlmChatServiceStreamHandler on LlmChatService {
   Future<bool> _requestAgentLoopRoundApproval({
     required AgentLoopGuard guard,
     required Future<AiToolApprovalDecision> Function(
-            AiToolApprovalRequest request)?
-        requestToolApproval,
+      AiToolApprovalRequest request,
+    )?
+    requestToolApproval,
     required void Function(LlmTraceEvent event)? onTrace,
   }) async {
     final currentLimit = guard.modelRoundLimit;
@@ -804,8 +828,9 @@ extension LlmChatServiceStreamHandler on LlmChatService {
       if (chatIndex == -1) return false;
       final chat = chats[chatIndex];
       if (chat.messages.isEmpty) return false;
-      final assistantMsg =
-          chat.messages.lastWhere((m) => m.role == 'assistant');
+      final assistantMsg = chat.messages.lastWhere(
+        (m) => m.role == 'assistant',
+      );
       return assistantMsg.todoSteps.isNotEmpty;
     } catch (_) {
       return false;
@@ -868,10 +893,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
 
     final repairMessages = [
       ...workingMessages,
-      {
-        'role': 'user',
-        'content': repairPrompt,
-      }
+      {'role': 'user', 'content': repairPrompt},
     ];
 
     final repairBuffer = StringBuffer();
@@ -953,23 +975,25 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     final provider = LlmProviderFactory.fromSettings(settings);
     Future<void> pumpStream() async {
       try {
-        await provider.streamChat(LlmProviderRequest(
-          baseUrl: settings.baseUrl,
-          apiKey: apiKey,
-          model: model,
-          messages: workingMessages,
-          tools: const [],
-          includeTools: false,
-          deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
-          deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
-          openAiReasoningEffort: settings.openAiReasoningEffort,
-          cancellationToken: cancellationToken,
-          onTextDelta: (chunk) {
-            cancellationToken?.throwIfCancelled();
-            chunkController.add(chunk);
-          },
-          timeoutSeconds: settings.timeoutSeconds,
-        ));
+        await provider.streamChat(
+          LlmProviderRequest(
+            baseUrl: settings.baseUrl,
+            apiKey: apiKey,
+            model: model,
+            messages: workingMessages,
+            tools: const [],
+            includeTools: false,
+            deepSeekThinkingEnabled: settings.deepSeekThinkingEnabled,
+            deepSeekReasoningEffort: settings.deepSeekReasoningEffort,
+            openAiReasoningEffort: settings.openAiReasoningEffort,
+            cancellationToken: cancellationToken,
+            onTextDelta: (chunk) {
+              cancellationToken?.throwIfCancelled();
+              chunkController.add(chunk);
+            },
+            timeoutSeconds: settings.timeoutSeconds,
+          ),
+        );
       } catch (e) {
         chunkController.addError(e);
       } finally {

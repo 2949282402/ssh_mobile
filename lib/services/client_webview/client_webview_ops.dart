@@ -247,7 +247,8 @@ extension ClientWebViewServiceOps on ClientWebViewService {
         }
         if (count > 0) {
           firstResultAt ??= DateTime.now();
-          final settled = DateTime.now().difference(firstResultAt) >=
+          final settled =
+              DateTime.now().difference(firstResultAt) >=
               const Duration(milliseconds: 1200);
           if (count >= desiredResults || settled) {
             return bestPayload ?? payload;

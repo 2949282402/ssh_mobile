@@ -64,9 +64,7 @@ class SshToolsProvider implements AiToolProvider {
         name: 'ssh_close_session',
         description:
             'Close one SSH terminal session. Returns session metadata only.',
-        properties: {
-          'sessionId': _string('Existing session id.'),
-        },
+        properties: {'sessionId': _string('Existing session id.')},
         required: const ['sessionId'],
         executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) =>
@@ -76,9 +74,7 @@ class SshToolsProvider implements AiToolProvider {
         name: 'ssh_close_server_sessions',
         description:
             'Close all SSH terminal sessions for one server connection id.',
-        properties: {
-          'connectionId': _string('Server connection id.'),
-        },
+        properties: {'connectionId': _string('Server connection id.')},
         required: const ['connectionId'],
         executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) =>
@@ -112,14 +108,14 @@ class SshToolsProvider implements AiToolProvider {
         name: 'ssh_delete_terminal_history_record',
         description:
             'Delete one saved terminal history record by session id. Does not access raw terminal output.',
-        properties: {
-          'sessionId': _string('Terminal history session id.'),
-        },
+        properties: {'sessionId': _string('Terminal history session id.')},
         required: const ['sessionId'],
         executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) => _sshDeleteTerminalHistoryRecord(
-            service, arguments,
-            approvedWrite: false),
+          service,
+          arguments,
+          approvedWrite: false,
+        ),
       ),
     ];
   }
@@ -135,35 +131,54 @@ class SshToolsProvider implements AiToolProvider {
       case 'ssh_list_sessions':
         return _sshListSessions(service, arguments);
       case 'ssh_open_session':
-        return _sshOpenSession(service, arguments,
-            approvedWrite: approvedWrite);
+        return _sshOpenSession(
+          service,
+          arguments,
+          approvedWrite: approvedWrite,
+        );
       case 'ssh_ensure_session_connected':
         return _sshEnsureSessionConnected(service, arguments);
       case 'ssh_rename_session':
         return _sshRenameSession(service, arguments);
       case 'ssh_close_session':
-        return _sshCloseSession(service, arguments,
-            approvedWrite: approvedWrite);
+        return _sshCloseSession(
+          service,
+          arguments,
+          approvedWrite: approvedWrite,
+        );
       case 'ssh_close_server_sessions':
-        return _sshCloseServerSessions(service, arguments,
-            approvedWrite: approvedWrite);
+        return _sshCloseServerSessions(
+          service,
+          arguments,
+          approvedWrite: approvedWrite,
+        );
       case 'ssh_restore_tmux_sessions':
-        return _sshRestoreTmuxSessions(service, arguments,
-            approvedWrite: approvedWrite);
+        return _sshRestoreTmuxSessions(
+          service,
+          arguments,
+          approvedWrite: approvedWrite,
+        );
       case 'ssh_list_terminal_history':
         return _sshListTerminalHistory(service, arguments);
       case 'ssh_delete_terminal_history_record':
-        return _sshDeleteTerminalHistoryRecord(service, arguments,
-            approvedWrite: approvedWrite);
+        return _sshDeleteTerminalHistoryRecord(
+          service,
+          arguments,
+          approvedWrite: approvedWrite,
+        );
       default:
         return null;
     }
   }
 
   Future<String> _sshListSessions(
-      AiToolService service, Map<String, dynamic> arguments) async {
-    final filterConnectionId =
-        service._optionalString(arguments, 'connectionId');
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
+    final filterConnectionId = service._optionalString(
+      arguments,
+      'connectionId',
+    );
     final sessions = sshService.sessions
         .where((session) {
           return filterConnectionId == null ||
@@ -215,7 +230,9 @@ class SshToolsProvider implements AiToolProvider {
   }
 
   Future<String> _sshEnsureSessionConnected(
-      AiToolService service, Map<String, dynamic> arguments) async {
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
     final sessionId = service._arg(arguments, 'sessionId');
     final connectionId = service._arg(arguments, 'connectionId');
     final connected = await sshService.ensureSessionConnected(
@@ -230,10 +247,14 @@ class SshToolsProvider implements AiToolProvider {
   }
 
   Future<String> _sshRenameSession(
-      AiToolService service, Map<String, dynamic> arguments) async {
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
     final sessionId = service._arg(arguments, 'sessionId');
-    final renamed =
-        sshService.renameSession(sessionId, service._arg(arguments, 'name'));
+    final renamed = sshService.renameSession(
+      sessionId,
+      service._arg(arguments, 'name'),
+    );
     final session = sshService.getSession(sessionId);
     return jsonEncode({
       'renamed': renamed,
@@ -254,10 +275,7 @@ class SshToolsProvider implements AiToolProvider {
       });
     }
     await sshService.disconnectSession(sessionId);
-    return jsonEncode({
-      'closed': true,
-      'sessionId': sessionId,
-    });
+    return jsonEncode({'closed': true, 'sessionId': sessionId});
   }
 
   Future<String> _sshCloseServerSessions(
@@ -274,10 +292,7 @@ class SshToolsProvider implements AiToolProvider {
       });
     }
     await sshService.disconnectSessionsForConnection(connectionId);
-    return jsonEncode({
-      'closed': true,
-      'connectionId': connectionId,
-    });
+    return jsonEncode({'closed': true, 'connectionId': connectionId});
   }
 
   Future<String> _sshRestoreTmuxSessions(
@@ -299,7 +314,9 @@ class SshToolsProvider implements AiToolProvider {
   }
 
   Future<String> _sshListTerminalHistory(
-      AiToolService service, Map<String, dynamic> arguments) async {
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
     final connectionId = service._optionalString(arguments, 'connectionId');
     final limit = service._optionalInt(arguments, 'limit') ?? 50;
     var records = await sshService.loadTerminalHistoryRecords();
@@ -330,10 +347,7 @@ class SshToolsProvider implements AiToolProvider {
       });
     }
     await sshService.removeTerminalHistoryRecord(sessionId);
-    return jsonEncode({
-      'deleted': true,
-      'sessionId': sessionId,
-    });
+    return jsonEncode({'deleted': true, 'sessionId': sessionId});
   }
 
   Map<String, dynamic> _sshSessionToJson(SshSession session) {

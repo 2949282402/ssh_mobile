@@ -115,8 +115,10 @@ void main() {
       engine2.loadFromJson(json);
 
       expect(engine2.totalDocs, 1);
-      expect(engine2.search('context').first.chunk.text,
-          'Hello test document context.');
+      expect(
+        engine2.search('context').first.chunk.text,
+        'Hello test document context.',
+      );
     });
   });
 

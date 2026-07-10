@@ -8,9 +8,7 @@ class TerminalHistoryViewModel extends ChangeNotifier {
 
   late Future<List<TerminalHistoryRecord>> recordsFuture;
 
-  TerminalHistoryViewModel({
-    required SshService sshService,
-  }) : _sshService = sshService {
+  TerminalHistoryViewModel({required this._sshService}) {
     reload();
   }
 

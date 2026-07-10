@@ -88,39 +88,41 @@ void main() {
       expect(metric.memorySources, contains('memory_key'));
     });
 
-    test('record handles success false and missing runStats gracefully',
-        () async {
-      final recorder = AiChatRunMetricsRecorder(storageService);
-      final modelProfile = AgentModelProfile(
-        mainModel: 'gpt-4o',
-        helperModel: 'gpt-4o',
-        auditModel: 'gpt-4o',
-      );
+    test(
+      'record handles success false and missing runStats gracefully',
+      () async {
+        final recorder = AiChatRunMetricsRecorder(storageService);
+        final modelProfile = AgentModelProfile(
+          mainModel: 'gpt-4o',
+          helperModel: 'gpt-4o',
+          auditModel: 'gpt-4o',
+        );
 
-      final startedAt = DateTime.now();
-      final finishedAt = startedAt.add(const Duration(seconds: 1));
+        final startedAt = DateTime.now();
+        final finishedAt = startedAt.add(const Duration(seconds: 1));
 
-      await recorder.record(
-        modelProfile: modelProfile,
-        model: 'gpt-4o',
-        startedAt: startedAt,
-        finishedAt: finishedAt,
-        ragHits: 0,
-        success: false,
-        runStats: null,
-      );
+        await recorder.record(
+          modelProfile: modelProfile,
+          model: 'gpt-4o',
+          startedAt: startedAt,
+          finishedAt: finishedAt,
+          ragHits: 0,
+          success: false,
+          runStats: null,
+        );
 
-      final metricsList = await storageService.loadAgentRunMetrics();
-      expect(metricsList, hasLength(1));
+        final metricsList = await storageService.loadAgentRunMetrics();
+        expect(metricsList, hasLength(1));
 
-      final metric = metricsList.first;
-      expect(metric.model, 'gpt-4o');
-      expect(metric.helperModel, ''); // 相同则为空串
-      expect(metric.auditModel, '');
-      expect(metric.promptTokens, 0);
-      expect(metric.completionTokens, 0);
-      expect(metric.success, isFalse);
-      expect(metric.elapsedMs, 1000); // 降级差值判定
-    });
+        final metric = metricsList.first;
+        expect(metric.model, 'gpt-4o');
+        expect(metric.helperModel, ''); // 相同则为空串
+        expect(metric.auditModel, '');
+        expect(metric.promptTokens, 0);
+        expect(metric.completionTokens, 0);
+        expect(metric.success, isFalse);
+        expect(metric.elapsedMs, 1000); // 降级差值判定
+      },
+    );
   });
 }

@@ -67,7 +67,12 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
           const Divider(height: 12),
           for (var i = 0; i < widget.message.todoSteps.length; i++) ...[
             _buildStepRow(
-                context, i, widget.message.todoSteps[i], colorScheme, isEn),
+              context,
+              i,
+              widget.message.todoSteps[i],
+              colorScheme,
+              isEn,
+            ),
             if (i < widget.message.todoSteps.length - 1)
               const SizedBox(height: 8),
           ],
@@ -87,8 +92,9 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
     final hasLogs =
         (step.stdout?.isNotEmpty == true || step.stderr?.isNotEmpty == true);
 
-    final snapshot =
-        const PlanExecutionController().snapshot(widget.message.todoSteps);
+    final snapshot = const PlanExecutionController().snapshot(
+      widget.message.todoSteps,
+    );
     final isCurrent = snapshot.currentStep?.id == step.id;
     final isFailed = step.status == StepStatus.failed;
     final isRunning = step.status == StepStatus.running;
@@ -112,20 +118,19 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
               color: isRunning
                   ? colorScheme.primary.withValues(alpha: 0.08)
                   : isFailed
-                      ? colorScheme.error.withValues(alpha: 0.08)
-                      : isCurrent && step.status == StepStatus.pending
-                          ? colorScheme.secondaryContainer
-                              .withValues(alpha: 0.3)
-                          : null,
+                  ? colorScheme.error.withValues(alpha: 0.08)
+                  : isCurrent && step.status == StepStatus.pending
+                  ? colorScheme.secondaryContainer.withValues(alpha: 0.3)
+                  : null,
               borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
               border: Border.all(
                 color: isRunning
                     ? colorScheme.primary.withValues(alpha: 0.24)
                     : isFailed
-                        ? colorScheme.error.withValues(alpha: 0.3)
-                        : isCurrent && step.status == StepStatus.pending
-                            ? colorScheme.secondary.withValues(alpha: 0.15)
-                            : Colors.transparent,
+                    ? colorScheme.error.withValues(alpha: 0.3)
+                    : isCurrent && step.status == StepStatus.pending
+                    ? colorScheme.secondary.withValues(alpha: 0.15)
+                    : Colors.transparent,
               ),
             ),
             padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
@@ -175,18 +180,25 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                     padding: const EdgeInsets.only(left: 6),
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 5, vertical: 2),
+                        horizontal: 5,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
-                        color: colorScheme.surfaceContainerHighest
-                            .withValues(alpha: 0.6),
-                        borderRadius:
-                            BorderRadius.circular(AppTheme.radiusSmall),
+                        color: colorScheme.surfaceContainerHighest.withValues(
+                          alpha: 0.6,
+                        ),
+                        borderRadius: BorderRadius.circular(
+                          AppTheme.radiusSmall,
+                        ),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.dns_outlined,
-                              size: 10, color: colorScheme.onSurfaceVariant),
+                          Icon(
+                            Icons.dns_outlined,
+                            size: 10,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
                           const SizedBox(width: 2),
                           Text(
                             _getServerDisplayName(context, step.connectionId)!,
@@ -216,8 +228,9 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                     width: double.infinity,
                     padding: const EdgeInsets.all(6),
                     decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainerHighest
-                          .withValues(alpha: 0.48),
+                      color: colorScheme.surfaceContainerHighest.withValues(
+                        alpha: 0.48,
+                      ),
                       borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                       border: Border.all(color: colorScheme.outlineVariant),
                     ),
@@ -229,7 +242,7 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                           'Consolas',
                           'Microsoft YaHei',
                           'PingFang SC',
-                          'sans-serif'
+                          'sans-serif',
                         ],
                         fontSize: 10.5,
                         color: colorScheme.primary,
@@ -255,18 +268,22 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                     children: [
                       ElevatedButton.icon(
                         onPressed: () {
-                          context
-                              .read<AiChatViewModel>()
-                              .retryTodoStep(step.id);
+                          context.read<AiChatViewModel>().retryTodoStep(
+                            step.id,
+                          );
                         },
                         icon: const Icon(Icons.refresh, size: 13),
                         label: Text(isEn ? 'Retry Step' : '重试此步骤'),
                         style: ElevatedButton.styleFrom(
                           visualDensity: VisualDensity.compact,
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 6),
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
                           textStyle: const TextStyle(
-                              fontSize: 11, fontWeight: FontWeight.bold),
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                       OutlinedButton.icon(
@@ -280,9 +297,11 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                                 mainAxisSize: MainAxisSize.min,
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(isEn
-                                      ? 'Provide a reason for skipping this task:'
-                                      : '请输入跳过此任务的原因：'),
+                                  Text(
+                                    isEn
+                                        ? 'Provide a reason for skipping this task:'
+                                        : '请输入跳过此任务的原因：',
+                                  ),
                                   const SizedBox(height: 8),
                                   TextField(
                                     controller: reasonController,
@@ -314,9 +333,9 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                               reasonController.text.trim().isNotEmpty) {
                             if (context.mounted) {
                               context.read<AiChatViewModel>().skipTodoStep(
-                                    step.id,
-                                    reasonController.text.trim(),
-                                  );
+                                step.id,
+                                reasonController.text.trim(),
+                              );
                             }
                           }
                         },
@@ -325,7 +344,9 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                         style: OutlinedButton.styleFrom(
                           visualDensity: VisualDensity.compact,
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 6),
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
                           textStyle: const TextStyle(fontSize: 11),
                         ),
                       ),
@@ -336,7 +357,9 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                         style: OutlinedButton.styleFrom(
                           visualDensity: VisualDensity.compact,
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 6),
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
                           textStyle: const TextStyle(fontSize: 11),
                         ),
                       ),
@@ -362,7 +385,7 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                             'Consolas',
                             'Microsoft YaHei',
                             'PingFang SC',
-                            'sans-serif'
+                            'sans-serif',
                           ],
                           fontSize: 10,
                           color: Colors.greenAccent,
@@ -381,9 +404,11 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
   Widget _buildStatusIcon(StepStatus status, ColorScheme colorScheme) {
     switch (status) {
       case StepStatus.pending:
-        return Icon(Icons.circle_outlined,
-            size: 16,
-            color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6));
+        return Icon(
+          Icons.circle_outlined,
+          size: 16,
+          color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+        );
       case StepStatus.running:
         return const SizedBox(
           width: 16,
@@ -392,13 +417,19 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
         );
       case StepStatus.success:
         final extColors = Theme.of(context).extension<ExtendedColors>();
-        return Icon(Icons.check_circle_rounded,
-            size: 16, color: extColors?.success ?? colorScheme.primary);
+        return Icon(
+          Icons.check_circle_rounded,
+          size: 16,
+          color: extColors?.success ?? colorScheme.primary,
+        );
       case StepStatus.failed:
         return Icon(Icons.cancel_rounded, size: 16, color: colorScheme.error);
       case StepStatus.skipped:
-        return Icon(Icons.next_plan_outlined,
-            size: 16, color: colorScheme.onSurfaceVariant);
+        return Icon(
+          Icons.next_plan_outlined,
+          size: 16,
+          color: colorScheme.onSurfaceVariant,
+        );
     }
   }
 }

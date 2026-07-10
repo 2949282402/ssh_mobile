@@ -70,8 +70,9 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                 ShadInput(
                   controller: controller,
                   autofocus: true,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   placeholder: const Text('MB'),
                 ),
                 if (errorText != null) ...[
@@ -118,10 +119,7 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                   setDialogState(() => errorText = strings.sftpLimitInvalid);
                   return;
                 }
-                Navigator.pop(
-                  dialogContext,
-                  (value * 1024 * 1024).round(),
-                );
+                Navigator.pop(dialogContext, (value * 1024 * 1024).round());
               },
               child: Text(strings.save),
             ),
@@ -225,9 +223,9 @@ class _SettingsPanelState extends State<_SettingsPanel> {
   Future<void> _copyMcpText(String text, String message) async {
     await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   String _initialLimitMbText(int bytes) {
@@ -257,10 +255,10 @@ class _SettingsPanelState extends State<_SettingsPanel> {
     final appSnapshot = context.select<SettingsViewModel, _SettingsAppSnapshot>(
       _SettingsAppSnapshot.from,
     );
-    final secretSnapshot =
-        context.select<SettingsViewModel, _SettingsSecretSnapshot>(
-      _SettingsSecretSnapshot.from,
-    );
+    final secretSnapshot = context
+        .select<SettingsViewModel, _SettingsSecretSnapshot>(
+          _SettingsSecretSnapshot.from,
+        );
     context.select<SettingsViewModel, _SettingsMcpSnapshot>(
       _SettingsMcpSnapshot.from,
     );
@@ -347,11 +345,7 @@ class _SettingsPanelState extends State<_SettingsPanel> {
                 final message = strings.mcpTokenRegenerated;
                 await settings.regenerateMcpServerToken();
                 if (!mounted) return;
-                messenger.showSnackBar(
-                  SnackBar(
-                    content: Text(message),
-                  ),
-                );
+                messenger.showSnackBar(SnackBar(content: Text(message)));
               },
               onCopyText: _copyMcpText,
               getMcpStatusText: _mcpStatusText,
@@ -444,18 +438,18 @@ class _SettingsAppSnapshot {
 
   @override
   int get hashCode => Object.hash(
-        language,
-        isEnglish,
-        isDarkMode,
-        sftpDownloadLimitBytes,
-        sftpTextPreviewLimitBytes,
-        sftpRichPreviewLimitBytes,
-        sftpTextEditLimitBytes,
-        oledDark,
-        terminalThemeId,
-        terminalFontFamily,
-        serverListLayoutMode,
-      );
+    language,
+    isEnglish,
+    isDarkMode,
+    sftpDownloadLimitBytes,
+    sftpTextPreviewLimitBytes,
+    sftpRichPreviewLimitBytes,
+    sftpTextEditLimitBytes,
+    oledDark,
+    terminalThemeId,
+    terminalFontFamily,
+    serverListLayoutMode,
+  );
 }
 
 class _SettingsSecretSnapshot {
@@ -491,11 +485,11 @@ class _SettingsSecretSnapshot {
 
   @override
   int get hashCode => Object.hash(
-        cacheEnabled,
-        cacheTimeoutMinutes,
-        Object.hashAll(cacheOptions),
-        showServerNamesInNotifications,
-      );
+    cacheEnabled,
+    cacheTimeoutMinutes,
+    Object.hashAll(cacheOptions),
+    showServerNamesInNotifications,
+  );
 }
 
 class _SettingsMcpSnapshot {
@@ -560,18 +554,18 @@ class _SettingsMcpSnapshot {
 
   @override
   int get hashCode => Object.hash(
-        enabled,
-        host,
-        port,
-        allowWriteTools,
-        requireApprovalForWriteTools,
-        running,
-        portRequiresRestart,
-        status,
-        lastError,
-        lastPortAvailable,
-        token,
-      );
+    enabled,
+    host,
+    port,
+    allowWriteTools,
+    requireApprovalForWriteTools,
+    running,
+    portRequiresRestart,
+    status,
+    lastError,
+    lastPortAvailable,
+    token,
+  );
 }
 
 class _SettingsPage extends StatelessWidget {

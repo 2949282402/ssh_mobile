@@ -41,10 +41,7 @@ class _SettingsSection extends StatelessWidget {
   final String title;
   final List<Widget> children;
 
-  const _SettingsSection({
-    required this.title,
-    required this.children,
-  });
+  const _SettingsSection({required this.title, required this.children});
 
   @override
   Widget build(BuildContext context) {
@@ -168,7 +165,9 @@ class _AppearanceSettingsSection extends StatelessWidget {
                   DropdownMenuItem(value: 'nord', child: Text('Nord')),
                   DropdownMenuItem(value: 'gruvbox', child: Text('Gruvbox')),
                   DropdownMenuItem(
-                      value: 'solarized', child: Text('Solarized Dark')),
+                    value: 'solarized',
+                    child: Text('Solarized Dark'),
+                  ),
                 ],
                 onChanged: (val) {
                   if (val != null) {
@@ -284,10 +283,7 @@ class _McpSettingsSection extends StatelessWidget {
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           secondary: const Icon(Icons.hub_outlined, size: 20),
-          title: Text(
-            strings.mcpServer,
-            style: const TextStyle(fontSize: 13),
-          ),
+          title: Text(strings.mcpServer, style: const TextStyle(fontSize: 13)),
           subtitle: Text(
             getMcpStatusText(strings, settings),
             style: const TextStyle(fontSize: 11),
@@ -332,9 +328,7 @@ class _McpSettingsSection extends StatelessWidget {
                           child: SizedBox(
                             width: 16,
                             height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                            ),
+                            child: CircularProgressIndicator(strokeWidth: 2),
                           ),
                         )
                       : IconButton(
@@ -401,10 +395,8 @@ class _McpSettingsSection extends StatelessWidget {
                   OutlinedButton.icon(
                     icon: const Icon(Icons.copy_rounded, size: 16),
                     label: Text(strings.mcpCopyCodex),
-                    onPressed: () => onCopyText(
-                      settings.mcpCodexConfig,
-                      strings.mcpCopied,
-                    ),
+                    onPressed: () =>
+                        onCopyText(settings.mcpCodexConfig, strings.mcpCopied),
                   ),
                   OutlinedButton.icon(
                     icon: const Icon(Icons.copy_rounded, size: 16),
@@ -441,7 +433,8 @@ class _SftpLimitsSettingsSection extends StatelessWidget {
     required String title,
     required int currentBytes,
     required Future<void> Function(int) onChanged,
-  }) editSftpLimit;
+  })
+  editSftpLimit;
 
   const _SftpLimitsSettingsSection({
     required this.appSnapshot,
@@ -462,10 +455,7 @@ class _SftpLimitsSettingsSection extends StatelessWidget {
           padding: const EdgeInsets.only(bottom: 6),
           child: Text(
             strings.sftpLimitsHint,
-            style: TextStyle(
-              color: colorScheme.onSurfaceVariant,
-              fontSize: 11,
-            ),
+            style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 11),
           ),
         ),
         _SftpLimitTile(
@@ -545,7 +535,9 @@ class _SecuritySettingsSection extends StatelessWidget {
           value: secretSnapshot.cacheEnabled,
           onChanged: (value) async {
             await settings.configureSecretCache(
-                value, secretSnapshot.cacheTimeoutMinutes);
+              value,
+              secretSnapshot.cacheTimeoutMinutes,
+            );
           },
         ),
         ListTile(
@@ -553,7 +545,8 @@ class _SecuritySettingsSection extends StatelessWidget {
           leading: const Icon(Icons.timer_outlined, size: 20),
           title: Text(
             strings.credentialCacheTimeoutLabel(
-                secretSnapshot.cacheTimeoutMinutes),
+              secretSnapshot.cacheTimeoutMinutes,
+            ),
             style: const TextStyle(fontSize: 13),
           ),
           trailing: SizedBox(
@@ -637,10 +630,7 @@ class _BackupSettingsSection extends StatelessWidget {
         ),
         ListTile(
           contentPadding: EdgeInsets.zero,
-          leading: const Icon(
-            Icons.download_for_offline_outlined,
-            size: 20,
-          ),
+          leading: const Icon(Icons.download_for_offline_outlined, size: 20),
           title: Text(
             strings.importAppData,
             style: const TextStyle(fontSize: 13),

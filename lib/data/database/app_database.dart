@@ -44,26 +44,26 @@ part 'daos/terminal_history_dao.dart';
 )
 class AppDatabase extends _$AppDatabase {
   AppDatabase({QueryExecutor? executor})
-      : super(_configureExecutor(executor ?? openDatabaseConnection()));
+    : super(_configureExecutor(executor ?? openDatabaseConnection()));
 
   AppDatabase.forTesting()
-      : super(_configureExecutor(openTestDatabaseConnection()));
+    : super(_configureExecutor(openTestDatabaseConnection()));
 
   @override
   int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
-        onUpgrade: (m, from, to) async {
-          if (from < 2) {
-            await m.createTable(agentTraceEventsTable);
-            await m.addColumn(aiChatMessages, aiChatMessages.agentRunId);
-          }
-        },
-        beforeOpen: (details) async {
-          await customStatement('PRAGMA foreign_keys = ON');
-        },
-      );
+    onUpgrade: (m, from, to) async {
+      if (from < 2) {
+        await m.createTable(agentTraceEventsTable);
+        await m.addColumn(aiChatMessages, aiChatMessages.agentRunId);
+      }
+    },
+    beforeOpen: (details) async {
+      await customStatement('PRAGMA foreign_keys = ON');
+    },
+  );
 
   static QueryExecutor _configureExecutor(QueryExecutor executor) {
     if (isFlutterTestEnvironment) {

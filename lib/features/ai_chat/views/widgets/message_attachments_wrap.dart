@@ -6,10 +6,7 @@ import 'package:ssh_mobile/theme/app_theme.dart';
 class MessageAttachmentsWrap extends StatelessWidget {
   final List<AiChatAttachment> attachments;
 
-  const MessageAttachmentsWrap({
-    super.key,
-    required this.attachments,
-  });
+  const MessageAttachmentsWrap({super.key, required this.attachments});
 
   @override
   Widget build(BuildContext context) {
@@ -32,7 +29,7 @@ class MessageAttachmentsWrap extends StatelessWidget {
                   width: 120,
                   height: 120,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
+                  errorBuilder: (_, _, _) => Container(
                     width: 120,
                     height: 40,
                     alignment: Alignment.center,
@@ -52,10 +49,7 @@ class MessageAttachmentsWrap extends StatelessWidget {
               )
             else
               Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 4,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: colorScheme.surfaceContainerHighest,
                   borderRadius: BorderRadius.circular(AppTheme.radiusSmall),

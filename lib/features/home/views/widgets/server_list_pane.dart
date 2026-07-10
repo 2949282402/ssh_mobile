@@ -25,20 +25,16 @@ class _ServerListPaneState extends State<ServerListPane> {
     final storageReady = context.select<ConnectionViewModel, bool>(
       (vm) => vm.isLoading == false,
     );
-    final connections =
-        context.select<ConnectionViewModel, List<ConnectionConfig>>(
-      (vm) => vm.connections,
-    );
+    final connections = context
+        .select<ConnectionViewModel, List<ConnectionConfig>>(
+          (vm) => vm.connections,
+        );
 
     return connections.isEmpty
         ? storageReady
-            ? _ServerEmptyState(strings: strings)
-            : const _ServerSkeletalLoader()
-        : _buildConnectionList(
-            context,
-            connections,
-            strings,
-          );
+              ? _ServerEmptyState(strings: strings)
+              : const _ServerSkeletalLoader()
+        : _buildConnectionList(context, connections, strings);
   }
 
   Widget _buildConnectionList(
@@ -71,11 +67,7 @@ class _ServerListPaneState extends State<ServerListPane> {
                   horizontalPadding,
                   12,
                 ),
-                child: _buildOverviewHeader(
-                  context,
-                  connections,
-                  strings,
-                ),
+                child: _buildOverviewHeader(context, connections, strings),
               ),
               Expanded(
                 child: isGrid
@@ -88,11 +80,11 @@ class _ServerListPaneState extends State<ServerListPane> {
                         ),
                         gridDelegate:
                             const SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: 340,
-                          crossAxisSpacing: 10,
-                          mainAxisSpacing: 10,
-                          mainAxisExtent: 172,
-                        ),
+                              maxCrossAxisExtent: 340,
+                              crossAxisSpacing: 10,
+                              mainAxisSpacing: 10,
+                              mainAxisExtent: 172,
+                            ),
                         itemCount: connections.length,
                         itemBuilder: (context, index) => _buildConnectionCard(
                           context,
@@ -103,8 +95,9 @@ class _ServerListPaneState extends State<ServerListPane> {
                       )
                     : ReorderableListView.builder(
                         buildDefaultDragHandles: false,
-                        scrollCacheExtent:
-                            const ScrollCacheExtent.pixels(700.0),
+                        scrollCacheExtent: const ScrollCacheExtent.pixels(
+                          700.0,
+                        ),
                         padding: EdgeInsets.fromLTRB(
                           horizontalPadding,
                           0,
@@ -155,8 +148,9 @@ class _ServerListPaneState extends State<ServerListPane> {
   }) {
     final windowsExpanded = _expandedConnectionWindowIds.contains(conn.id);
     final isSelected = _selectedServerIds.contains(conn.id);
-    final layoutMode =
-        context.select<AppSettings, String>((s) => s.serverListLayoutMode);
+    final layoutMode = context.select<AppSettings, String>(
+      (s) => s.serverListLayoutMode,
+    );
     final isGrid = layoutMode == 'grid';
 
     return RepaintBoundary(
@@ -236,10 +230,7 @@ class _ServerListPaneState extends State<ServerListPane> {
       Navigator.pushNamed(
         context,
         '/terminal',
-        arguments: {
-          'id': conn.id,
-          'sessionId': sessionId,
-        },
+        arguments: {'id': conn.id, 'sessionId': sessionId},
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(

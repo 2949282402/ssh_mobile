@@ -46,10 +46,7 @@ class ExceptionAiToolExecutor implements AiToolExecutor {
   }
 
   @override
-  AiCommandReview reviewCommand(
-    String command, {
-    ServerPlatform? platform,
-  }) {
+  AiCommandReview reviewCommand(String command, {ServerPlatform? platform}) {
     return const AiCommandReview.readOnly();
   }
 }
@@ -103,10 +100,14 @@ void main() {
 
     sshService = SshService(storageService);
     sftpService = SftpService(storageService);
-    performanceMonitorService =
-        PerformanceMonitorService(sshService, storageService);
-    playbookService =
-        PlaybookService(storageService: storageService, sshService: sshService);
+    performanceMonitorService = PerformanceMonitorService(
+      sshService,
+      storageService,
+    );
+    playbookService = PlaybookService(
+      storageService: storageService,
+      sshService: sshService,
+    );
     ragService = RagService(storageService: storageService);
   });
 
@@ -115,64 +116,70 @@ void main() {
     storageService.dispose();
   });
 
-  test('setup phase failure runs finally and flushes start/summary traces',
-      () async {
-    await storageService.saveAiConnectionSettings(
-      baseUrl: 'https://api.example.com',
-      model: 'demo-model',
-      apiKey: 'dummy-key',
-    );
-
-    final factory = FakeTraceRuntimeFactory(
-      storageService: storageService,
-      sshService: sshService,
-      sftpService: sftpService,
-      performanceMonitorService: performanceMonitorService,
-      playbookService: playbookService,
-      ragService: ragService,
-      appSettings: appSettings,
-    );
-
-    final runner = AiChatGenerationRunner(runtimeFactory: factory);
-    final result = await runner.run(
-      chatId: 'test_chat',
-      initialChat: AiChatRecord(
-        id: 'test_chat',
-        title: 'Title',
-        messages: const [],
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
+  test(
+    'setup phase failure runs finally and flushes start/summary traces',
+    () async {
+      await storageService.saveAiConnectionSettings(
+        baseUrl: 'https://api.example.com',
         model: 'demo-model',
-      ),
-      model: 'demo-model',
-      userRequest: 'hello',
-      memorySources: const [],
-      allowedTools: null,
-      forceContextCompression: false,
-      cancellationToken: LlmCancellationToken(),
-      selectedConnectionIds: const {},
-      requestMessagesJson: const [],
-      onTextChunk: (_) {},
-      onTrace: (_) {},
-      requestToolApproval: (req) async =>
-          const AiToolApprovalDecision.approved(),
-    );
+        apiKey: 'dummy-key',
+      );
 
-    expect(result, isA<AiChatRunFailed>());
-    final failed = result as AiChatRunFailed;
-    expect(failed.runId, isNotEmpty);
+      final factory = FakeTraceRuntimeFactory(
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+      );
 
-    final traceEvents = await storageService.loadAgentTraceEvents(failed.runId);
-    expect(traceEvents, isNotEmpty);
+      final runner = AiChatGenerationRunner(runtimeFactory: factory);
+      final result = await runner.run(
+        chatId: 'test_chat',
+        initialChat: AiChatRecord(
+          id: 'test_chat',
+          title: 'Title',
+          messages: const [],
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+          model: 'demo-model',
+        ),
+        model: 'demo-model',
+        userRequest: 'hello',
+        memorySources: const [],
+        allowedTools: null,
+        forceContextCompression: false,
+        cancellationToken: LlmCancellationToken(),
+        selectedConnectionIds: const {},
+        requestMessagesJson: const [],
+        onTextChunk: (_) {},
+        onTrace: (_) {},
+        requestToolApproval: (req) async =>
+            const AiToolApprovalDecision.approved(),
+      );
 
-    final started =
-        traceEvents.firstWhere((e) => e.kind == 'agent_run_started');
-    expect(started, isNotNull);
+      expect(result, isA<AiChatRunFailed>());
+      final failed = result as AiChatRunFailed;
+      expect(failed.runId, isNotEmpty);
 
-    final summary =
-        traceEvents.firstWhere((e) => e.kind == 'agent_run_summary');
-    expect(summary, isNotNull);
-    final summaryContent = jsonDecode(summary.content);
-    expect(summaryContent['finalOutcome'], 'modelError');
-  });
+      final traceEvents = await storageService.loadAgentTraceEvents(
+        failed.runId,
+      );
+      expect(traceEvents, isNotEmpty);
+
+      final started = traceEvents.firstWhere(
+        (e) => e.kind == 'agent_run_started',
+      );
+      expect(started, isNotNull);
+
+      final summary = traceEvents.firstWhere(
+        (e) => e.kind == 'agent_run_summary',
+      );
+      expect(summary, isNotNull);
+      final summaryContent = jsonDecode(summary.content);
+      expect(summaryContent['finalOutcome'], 'modelError');
+    },
+  );
 }

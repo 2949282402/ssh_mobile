@@ -5,8 +5,9 @@ extension TerminalOps on StorageService {
     if (!_initialized || _prefs == null) return [];
     final cached = _restorableTmuxSessionsCache;
     if (cached != null) return cached;
-    final jsonStr =
-        await _readProtectedPref(StorageService._restorableTmuxSessionsKey);
+    final jsonStr = await _readProtectedPref(
+      StorageService._restorableTmuxSessionsKey,
+    );
     if (jsonStr == null || jsonStr.isEmpty) {
       return _restorableTmuxSessionsCache = const [];
     }
@@ -14,8 +15,10 @@ extension TerminalOps on StorageService {
     try {
       final list = jsonDecode(jsonStr) as List<dynamic>;
       final sessions = list
-          .map((item) =>
-              RestorableTmuxSession.fromJson(item as Map<String, dynamic>))
+          .map(
+            (item) =>
+                RestorableTmuxSession.fromJson(item as Map<String, dynamic>),
+          )
           .where((item) => getConnection(item.connectionId) != null)
           .toList();
       return _restorableTmuxSessionsCache = List.unmodifiable(sessions);
@@ -68,19 +71,24 @@ extension TerminalOps on StorageService {
     }
     final cached = _terminalHistoryRecordsCache;
     if (cached != null) return cached;
-    final jsonStr =
-        await _readProtectedPref(StorageService._terminalHistoryRecordsKey);
+    final jsonStr = await _readProtectedPref(
+      StorageService._terminalHistoryRecordsKey,
+    );
     if (jsonStr == null || jsonStr.isEmpty) {
       return _terminalHistoryRecordsCache = const [];
     }
 
     try {
       final list = jsonDecode(jsonStr) as List<dynamic>;
-      final records = list
-          .map((item) =>
-              TerminalHistoryRecord.fromJson(item as Map<String, dynamic>))
-          .toList()
-        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      final records =
+          list
+              .map(
+                (item) => TerminalHistoryRecord.fromJson(
+                  item as Map<String, dynamic>,
+                ),
+              )
+              .toList()
+            ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       return _terminalHistoryRecordsCache = List.unmodifiable(records);
     } catch (e) {
       AppLogService.instance.error(

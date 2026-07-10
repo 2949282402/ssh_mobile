@@ -15,12 +15,11 @@ class AgentTraceRecorder {
   int _nextSequence = 0;
 
   AgentTraceRecorder({
-    required AgentTraceRepository repository,
+    required this._repository,
     required this.runId,
     required this.chatId,
-    ToolSecretPolicy secretPolicy = const ToolSecretPolicy(),
-  })  : _repository = repository,
-        _secretPolicy = secretPolicy;
+    this._secretPolicy = const ToolSecretPolicy(),
+  });
 
   List<AgentTraceEvent> get bufferedEvents => List.unmodifiable(_buffer);
 

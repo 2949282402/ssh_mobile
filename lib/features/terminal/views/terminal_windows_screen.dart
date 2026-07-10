@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'package:ssh_mobile/features/terminal/viewmodels/terminal_windows_viewmodel.dart';
@@ -11,17 +11,12 @@ import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
 class TerminalWindowsScreen extends StatelessWidget {
   final String? connectionId;
 
-  const TerminalWindowsScreen({
-    super.key,
-    this.connectionId,
-  });
+  const TerminalWindowsScreen({super.key, this.connectionId});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: SafeArea(
-        child: TerminalWindowsPage(connectionId: connectionId),
-      ),
+      body: SafeArea(child: TerminalWindowsPage(connectionId: connectionId)),
     );
   }
 }
@@ -82,8 +77,9 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
     AppStrings strings,
   ) {
     if (widget.embedded) {
-      final visibleSessions =
-          sessions.take(_embeddedPreviewLimit).toList(growable: false);
+      final visibleSessions = sessions
+          .take(_embeddedPreviewLimit)
+          .toList(growable: false);
       final hiddenCount = sessions.length - visibleSessions.length;
 
       return Padding(
@@ -125,8 +121,8 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
         final columns = constraints.maxWidth >= AppBreakpoints.wideDesktop
             ? 3
             : desktop
-                ? 2
-                : 1;
+            ? 2
+            : 1;
         final horizontalPadding = desktop ? 24.0 : 12.0;
 
         return Center(
@@ -143,7 +139,7 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
                       24,
                     ),
                     itemCount: sessions.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    separatorBuilder: (_, _) => const SizedBox(height: 10),
                     itemBuilder: (context, index) {
                       return _buildWindowItem(
                         context,
@@ -193,9 +189,7 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
       padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
       decoration: BoxDecoration(
         color: Theme.of(context).scaffoldBackgroundColor,
-        border: Border(
-          bottom: BorderSide(color: colorScheme.outlineVariant),
-        ),
+        border: Border(bottom: BorderSide(color: colorScheme.outlineVariant)),
       ),
       child: Row(
         children: [
@@ -348,7 +342,12 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
             child: Row(
               children: [
                 _buildLeadingIcon(
-                    context, viewModel, session, selected, statusColor),
+                  context,
+                  viewModel,
+                  session,
+                  selected,
+                  statusColor,
+                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -393,8 +392,9 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
                               maxLines: 1,
                               style: TextStyle(
                                 fontSize: 12,
-                                color: colorScheme.onSurface
-                                    .withValues(alpha: 0.68),
+                                color: colorScheme.onSurface.withValues(
+                                  alpha: 0.68,
+                                ),
                               ),
                             ),
                           ),
@@ -405,7 +405,11 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
                       if (cleanupCommand != null) ...[
                         const SizedBox(height: 8),
                         _buildCleanupCommand(
-                            context, viewModel, cleanupCommand, strings),
+                          context,
+                          viewModel,
+                          cleanupCommand,
+                          strings,
+                        ),
                       ],
                     ],
                   ),
@@ -488,7 +492,7 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
                     'Consolas',
                     'Microsoft YaHei',
                     'PingFang SC',
-                    'sans-serif'
+                    'sans-serif',
                   ],
                   fontSize: 11,
                   color: colorScheme.onSurface.withValues(alpha: 0.78),
@@ -545,10 +549,7 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
     );
   }
 
-  String _formatAutoDestroy(
-    SshSession session,
-    AppStrings strings,
-  ) {
+  String _formatAutoDestroy(SshSession session, AppStrings strings) {
     final seconds = session.tmuxAutoDeleteSeconds;
     if (session.tmuxSessionName == null || seconds == null) {
       return strings.notAvailable;
@@ -642,10 +643,7 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
       context,
       '/terminal',
       (route) => route.isFirst,
-      arguments: {
-        'id': session.connectionId,
-        'sessionId': session.id,
-      },
+      arguments: {'id': session.connectionId, 'sessionId': session.id},
     );
   }
 
@@ -672,14 +670,15 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
               SelectableText(
                 cleanupCommand,
                 style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontFamilyFallback: [
-                      'Consolas',
-                      'Microsoft YaHei',
-                      'PingFang SC',
-                      'sans-serif'
-                    ],
-                    fontSize: 12),
+                  fontFamily: 'monospace',
+                  fontFamilyFallback: [
+                    'Consolas',
+                    'Microsoft YaHei',
+                    'PingFang SC',
+                    'sans-serif',
+                  ],
+                  fontSize: 12,
+                ),
               ),
             ],
           ],
@@ -689,7 +688,11 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
             TextButton.icon(
               onPressed: () {
                 _copyCleanupCommand(
-                    context, viewModel, cleanupCommand, strings);
+                  context,
+                  viewModel,
+                  cleanupCommand,
+                  strings,
+                );
                 Navigator.pop(ctx, false);
               },
               icon: const Icon(Icons.content_copy_rounded),
@@ -721,13 +724,15 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
   ) async {
     await viewModel.copyCleanupCommand(command);
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(strings.copiedCleanupCommand)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(strings.copiedCleanupCommand)));
   }
 
   Future<void> _closeSelectedWindows(
-      BuildContext context, TerminalWindowsViewModel viewModel) async {
+    BuildContext context,
+    TerminalWindowsViewModel viewModel,
+  ) async {
     final count = viewModel.selectedSessionIds.length;
     final strings = AppStrings(viewModel.language);
     final confirmed = await showDialog<bool>(

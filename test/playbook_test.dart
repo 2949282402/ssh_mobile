@@ -26,14 +26,23 @@ class FakeSshService extends SshService {
 
     if (command == 'invalid_command') {
       return RemoteCommandResult(
-          stdout: '', stderr: 'command not found', exitCode: 127);
+        stdout: '',
+        stderr: 'command not found',
+        exitCode: 127,
+      );
     }
     if (command == 'regex_mismatch') {
       return RemoteCommandResult(
-          stdout: 'not what we want', stderr: '', exitCode: 0);
+        stdout: 'not what we want',
+        stderr: '',
+        exitCode: 0,
+      );
     }
     return RemoteCommandResult(
-        stdout: 'success_output', stderr: '', exitCode: 0);
+      stdout: 'success_output',
+      stderr: '',
+      exitCode: 0,
+    );
   }
 }
 
@@ -106,20 +115,20 @@ void main() {
       debugDefaultTargetPlatformOverride = TargetPlatform.windows;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(
-        const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
-        (MethodCall methodCall) async {
-          if (methodCall.method == 'read') {
-            return null;
-          }
-          if (methodCall.method == 'write') {
-            return true;
-          }
-          if (methodCall.method == 'delete') {
-            return true;
-          }
-          return null;
-        },
-      );
+            const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'),
+            (MethodCall methodCall) async {
+              if (methodCall.method == 'read') {
+                return null;
+              }
+              if (methodCall.method == 'write') {
+                return true;
+              }
+              if (methodCall.method == 'delete') {
+                return true;
+              }
+              return null;
+            },
+          );
       SharedPreferences.setMockInitialValues({});
       storage = StorageService();
       await storage.init();
@@ -139,10 +148,11 @@ void main() {
         description: 'Testing',
         steps: [
           PlaybookStep(
-              id: 's_test',
-              name: 'Step 1',
-              command: 'echo 1',
-              description: 's1')
+            id: 's_test',
+            name: 'Step 1',
+            command: 'echo 1',
+            description: 's1',
+          ),
         ],
         createdAt: now,
         updatedAt: now,
@@ -158,8 +168,10 @@ void main() {
       expect(service.activePlaybook?.id, 'p_test');
 
       // Update
-      final updated =
-          playbook.copyWith(name: 'Updated Name', updatedAt: DateTime.now());
+      final updated = playbook.copyWith(
+        name: 'Updated Name',
+        updatedAt: DateTime.now(),
+      );
       await service.updatePlaybook(updated);
       expect(service.playbooks.first.name, 'Updated Name');
       expect(service.activePlaybook?.name, 'Updated Name');
@@ -181,9 +193,17 @@ void main() {
         description: 'Run',
         steps: [
           PlaybookStep(
-              id: 's1', name: 'S1', command: 'echo 1', description: 's1'),
+            id: 's1',
+            name: 'S1',
+            command: 'echo 1',
+            description: 's1',
+          ),
           PlaybookStep(
-              id: 's2', name: 'S2', command: 'echo 2', description: 's2'),
+            id: 's2',
+            name: 'S2',
+            command: 'echo 2',
+            description: 's2',
+          ),
         ],
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
@@ -215,14 +235,23 @@ void main() {
         description: 'Run',
         steps: [
           PlaybookStep(
-              id: 's1', name: 'S1', command: 'echo 1', description: 's1'),
+            id: 's1',
+            name: 'S1',
+            command: 'echo 1',
+            description: 's1',
+          ),
           PlaybookStep(
-              id: 's2',
-              name: 'S2',
-              command: 'invalid_command',
-              description: 's2'),
+            id: 's2',
+            name: 'S2',
+            command: 'invalid_command',
+            description: 's2',
+          ),
           PlaybookStep(
-              id: 's3', name: 'S3', command: 'echo 3', description: 's3'),
+            id: 's3',
+            name: 'S3',
+            command: 'echo 3',
+            description: 's3',
+          ),
         ],
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
@@ -265,12 +294,17 @@ void main() {
         description: 'Run',
         steps: [
           PlaybookStep(
-              id: 's1',
-              name: 'S1',
-              command: 'invalid_command',
-              description: 's1'),
+            id: 's1',
+            name: 'S1',
+            command: 'invalid_command',
+            description: 's1',
+          ),
           PlaybookStep(
-              id: 's2', name: 'S2', command: 'echo 2', description: 's2'),
+            id: 's2',
+            name: 'S2',
+            command: 'echo 2',
+            description: 's2',
+          ),
         ],
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
@@ -337,9 +371,17 @@ void main() {
         description: 'Run',
         steps: [
           PlaybookStep(
-              id: 's1', name: 'S1', command: 'echo 1', description: 's1'),
+            id: 's1',
+            name: 'S1',
+            command: 'echo 1',
+            description: 's1',
+          ),
           PlaybookStep(
-              id: 's2', name: 'S2', command: 'echo 2', description: 's2'),
+            id: 's2',
+            name: 'S2',
+            command: 'echo 2',
+            description: 's2',
+          ),
         ],
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),

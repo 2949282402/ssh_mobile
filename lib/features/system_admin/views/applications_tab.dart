@@ -50,7 +50,8 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
   }
 
   Future<Map<String, List<ApplicationMemorySnapshot>>> _loadApplications(
-      String connectionId) async {
+    String connectionId,
+  ) async {
     final data = await widget.monitorViewModel.fetchApplications(
       connectionId,
       onUnknownHostKey: (request) =>
@@ -150,18 +151,22 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
       _scheduleApplicationsLoad();
     }
 
-    final connections =
-        context.select<SystemAdminViewModel, List<ConnectionConfig>>(
-      (vm) => vm.connections,
-    );
-    final currentConfigList =
-        connections.where((c) => c.id == connectionId).toList();
+    final connections = context
+        .select<SystemAdminViewModel, List<ConnectionConfig>>(
+          (vm) => vm.connections,
+        );
+    final currentConfigList = connections
+        .where((c) => c.id == connectionId)
+        .toList();
 
     return _ServerSnapshotTab<ApplicationMemorySnapshot>(
       strings: widget.strings,
       connections: currentConfigList,
-      emptyText:
-          _monitorText(widget.strings, 'No application data found', '未发现应用数据'),
+      emptyText: _monitorText(
+        widget.strings,
+        'No application data found',
+        '未发现应用数据',
+      ),
       future: _appsFuture,
       onRefresh: () => setState(() => _refreshApplicationsFuture(force: true)),
       itemBuilder: _buildApplicationItem,
@@ -176,11 +181,7 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
     return ListTile(
       dense: true,
       leading: const Icon(Icons.apps_rounded),
-      title: OverflowScrollText(
-        app.command,
-        selectable: false,
-        maxLines: 1,
-      ),
+      title: OverflowScrollText(app.command, selectable: false, maxLines: 1),
       subtitle: Text(
         'PID ${app.pid}  CPU ${app.cpuPercent.toStringAsFixed(1)}%',
         style: TextStyle(color: colorScheme.onSurfaceVariant),

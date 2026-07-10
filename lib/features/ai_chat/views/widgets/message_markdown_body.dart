@@ -45,11 +45,11 @@ class _AssistantMarkdownBody extends StatelessWidget {
                 ),
               if (hasText)
                 Padding(
-                  padding: EdgeInsets.only(
-                    top: label.isNotEmpty ? 8 : 0,
-                  ),
+                  padding: EdgeInsets.only(top: label.isNotEmpty ? 8 : 0),
                   child: _buildMarkdown(
-                      context, _cleanTextForMarkdown(displayText, context)),
+                    context,
+                    _cleanTextForMarkdown(displayText, context),
+                  ),
                 ),
             ],
           );
@@ -62,10 +62,7 @@ class _AssistantMarkdownBody extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     return GptMarkdown(
       value.isEmpty ? '...' : value,
-      style: TextStyle(
-        color: colorScheme.onSurface,
-        height: 1.35,
-      ),
+      style: TextStyle(color: colorScheme.onSurface, height: 1.35),
     );
   }
 }

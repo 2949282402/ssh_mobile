@@ -26,13 +26,9 @@ void main() {
         'prompt_tokens': 100,
         'completion_tokens': 200,
         'total_tokens': 300,
-        'prompt_tokens_details': {
-          'cached_tokens': 40,
-        },
+        'prompt_tokens_details': {'cached_tokens': 40},
         'prompt_cache_miss_tokens': 60,
-        'completion_tokens_details': {
-          'reasoning_tokens': 80,
-        },
+        'completion_tokens_details': {'reasoning_tokens': 80},
       });
 
       expect(usage.promptTokens, equals(100));
@@ -48,13 +44,9 @@ void main() {
         'prompt_tokens': '10',
         'completion_tokens': '20',
         'total_tokens': '30',
-        'prompt_tokens_details': {
-          'cached_tokens': '4',
-        },
+        'prompt_tokens_details': {'cached_tokens': '4'},
         'prompt_cache_miss_tokens': '6',
-        'completion_tokens_details': {
-          'reasoning_tokens': '8',
-        },
+        'completion_tokens_details': {'reasoning_tokens': '8'},
       });
 
       expect(usage.promptTokens, equals(10));

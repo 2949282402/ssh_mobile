@@ -74,8 +74,9 @@ class _TypedConfirmDialogState extends State<TypedConfirmDialog> {
           child: Text(widget.cancelLabel),
         ),
         ShadButton.destructive(
-          onPressed:
-              _matchesRequiredText ? () => Navigator.pop(context, true) : null,
+          onPressed: _matchesRequiredText
+              ? () => Navigator.pop(context, true)
+              : null,
           child: Text(widget.confirmLabel),
         ),
       ],

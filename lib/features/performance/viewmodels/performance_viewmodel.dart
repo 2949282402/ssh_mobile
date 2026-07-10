@@ -17,9 +17,7 @@ class PerformanceMonitorViewModel extends ChangeNotifier {
   bool _serversCollapsed = false;
   String? _activeConnectionId;
 
-  PerformanceMonitorViewModel({
-    required PerformanceMonitorService monitorService,
-  }) : _monitorService = monitorService {
+  PerformanceMonitorViewModel({required this._monitorService}) {
     _monitorService.addListener(notifyListeners);
   }
 
@@ -73,9 +71,7 @@ class PerformanceMonitorViewModel extends ChangeNotifier {
   Future<void> startMonitoring({
     SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
-    await _monitorService.startMonitoring(
-      onUnknownHostKey: onUnknownHostKey,
-    );
+    await _monitorService.startMonitoring(onUnknownHostKey: onUnknownHostKey);
   }
 
   void stopMonitoring() {

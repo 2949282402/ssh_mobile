@@ -12,19 +12,32 @@ class $MigrationMetaTable extends MigrationMeta
   static const VerificationMeta _keyMeta = const VerificationMeta('key');
   @override
   late final GeneratedColumn<String> key = GeneratedColumn<String>(
-      'key', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'key',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _valueMeta = const VerificationMeta('value');
   @override
   late final GeneratedColumn<String> value = GeneratedColumn<String>(
-      'value', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _updatedAtMeta =
-      const VerificationMeta('updatedAt');
+    'value',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
   @override
   late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
-      'updated_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
   @override
   List<GeneratedColumn> get $columns => [key, value, updatedAt];
   @override
@@ -33,25 +46,33 @@ class $MigrationMetaTable extends MigrationMeta
   String get actualTableName => $name;
   static const String $name = 'migration_meta';
   @override
-  VerificationContext validateIntegrity(Insertable<MigrationMetaData> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<MigrationMetaData> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('key')) {
       context.handle(
-          _keyMeta, key.isAcceptableOrUnknown(data['key']!, _keyMeta));
+        _keyMeta,
+        key.isAcceptableOrUnknown(data['key']!, _keyMeta),
+      );
     } else if (isInserting) {
       context.missing(_keyMeta);
     }
     if (data.containsKey('value')) {
       context.handle(
-          _valueMeta, value.isAcceptableOrUnknown(data['value']!, _valueMeta));
+        _valueMeta,
+        value.isAcceptableOrUnknown(data['value']!, _valueMeta),
+      );
     } else if (isInserting) {
       context.missing(_valueMeta);
     }
     if (data.containsKey('updated_at')) {
-      context.handle(_updatedAtMeta,
-          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_updatedAtMeta);
     }
@@ -64,12 +85,18 @@ class $MigrationMetaTable extends MigrationMeta
   MigrationMetaData map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return MigrationMetaData(
-      key: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}key'])!,
-      value: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}value'])!,
-      updatedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}updated_at'])!,
+      key: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}key'],
+      )!,
+      value: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}value'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}updated_at'],
+      )!,
     );
   }
 
@@ -84,8 +111,11 @@ class MigrationMetaData extends DataClass
   final String key;
   final String value;
   final int updatedAt;
-  const MigrationMetaData(
-      {required this.key, required this.value, required this.updatedAt});
+  const MigrationMetaData({
+    required this.key,
+    required this.value,
+    required this.updatedAt,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -103,8 +133,10 @@ class MigrationMetaData extends DataClass
     );
   }
 
-  factory MigrationMetaData.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory MigrationMetaData.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return MigrationMetaData(
       key: serializer.fromJson<String>(json['key']),
@@ -173,9 +205,9 @@ class MigrationMetaCompanion extends UpdateCompanion<MigrationMetaData> {
     required String value,
     required int updatedAt,
     this.rowid = const Value.absent(),
-  })  : key = Value(key),
-        value = Value(value),
-        updatedAt = Value(updatedAt);
+  }) : key = Value(key),
+       value = Value(value),
+       updatedAt = Value(updatedAt);
   static Insertable<MigrationMetaData> custom({
     Expression<String>? key,
     Expression<String>? value,
@@ -190,11 +222,12 @@ class MigrationMetaCompanion extends UpdateCompanion<MigrationMetaData> {
     });
   }
 
-  MigrationMetaCompanion copyWith(
-      {Value<String>? key,
-      Value<String>? value,
-      Value<int>? updatedAt,
-      Value<int>? rowid}) {
+  MigrationMetaCompanion copyWith({
+    Value<String>? key,
+    Value<String>? value,
+    Value<int>? updatedAt,
+    Value<int>? rowid,
+  }) {
     return MigrationMetaCompanion(
       key: key ?? this.key,
       value: value ?? this.value,
@@ -241,72 +274,109 @@ class $AiChatsTable extends AiChats with TableInfo<$AiChatsTable, AiChat> {
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
   late final GeneratedColumn<String> id = GeneratedColumn<String>(
-      'id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _titleMeta = const VerificationMeta('title');
   @override
   late final GeneratedColumn<String> title = GeneratedColumn<String>(
-      'title', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'title',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _modelMeta = const VerificationMeta('model');
   @override
   late final GeneratedColumn<String> model = GeneratedColumn<String>(
-      'model', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _createdAtMeta =
-      const VerificationMeta('createdAt');
+    'model',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
   @override
   late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
-      'created_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _updatedAtMeta =
-      const VerificationMeta('updatedAt');
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
   @override
   late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
-      'updated_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _planModeMeta =
-      const VerificationMeta('planMode');
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _planModeMeta = const VerificationMeta(
+    'planMode',
+  );
   @override
   late final GeneratedColumn<bool> planMode = GeneratedColumn<bool>(
-      'plan_mode', aliasedName, false,
-      type: DriftSqlType.bool,
-      requiredDuringInsert: false,
-      defaultConstraints:
-          GeneratedColumn.constraintIsAlways('CHECK ("plan_mode" IN (0, 1))'),
-      defaultValue: const Constant(false));
+    'plan_mode',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("plan_mode" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   static const VerificationMeta _approvedPlanAssistantCreatedAtMeta =
       const VerificationMeta('approvedPlanAssistantCreatedAt');
   @override
   late final GeneratedColumn<int> approvedPlanAssistantCreatedAt =
       GeneratedColumn<int>(
-          'approved_plan_assistant_created_at', aliasedName, true,
-          type: DriftSqlType.int, requiredDuringInsert: false);
+        'approved_plan_assistant_created_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.int,
+        requiredDuringInsert: false,
+      );
   static const VerificationMeta _approvedPlanApprovedAtMeta =
       const VerificationMeta('approvedPlanApprovedAt');
   @override
   late final GeneratedColumn<int> approvedPlanApprovedAt = GeneratedColumn<int>(
-      'approved_plan_approved_at', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
+    'approved_plan_approved_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
-        id,
-        title,
-        model,
-        createdAt,
-        updatedAt,
-        planMode,
-        approvedPlanAssistantCreatedAt,
-        approvedPlanApprovedAt
-      ];
+    id,
+    title,
+    model,
+    createdAt,
+    updatedAt,
+    planMode,
+    approvedPlanAssistantCreatedAt,
+    approvedPlanApprovedAt,
+  ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
   String get actualTableName => $name;
   static const String $name = 'ai_chats';
   @override
-  VerificationContext validateIntegrity(Insertable<AiChat> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<AiChat> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
@@ -316,44 +386,59 @@ class $AiChatsTable extends AiChats with TableInfo<$AiChatsTable, AiChat> {
     }
     if (data.containsKey('title')) {
       context.handle(
-          _titleMeta, title.isAcceptableOrUnknown(data['title']!, _titleMeta));
+        _titleMeta,
+        title.isAcceptableOrUnknown(data['title']!, _titleMeta),
+      );
     } else if (isInserting) {
       context.missing(_titleMeta);
     }
     if (data.containsKey('model')) {
       context.handle(
-          _modelMeta, model.isAcceptableOrUnknown(data['model']!, _modelMeta));
+        _modelMeta,
+        model.isAcceptableOrUnknown(data['model']!, _modelMeta),
+      );
     } else if (isInserting) {
       context.missing(_modelMeta);
     }
     if (data.containsKey('created_at')) {
-      context.handle(_createdAtMeta,
-          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_createdAtMeta);
     }
     if (data.containsKey('updated_at')) {
-      context.handle(_updatedAtMeta,
-          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_updatedAtMeta);
     }
     if (data.containsKey('plan_mode')) {
-      context.handle(_planModeMeta,
-          planMode.isAcceptableOrUnknown(data['plan_mode']!, _planModeMeta));
+      context.handle(
+        _planModeMeta,
+        planMode.isAcceptableOrUnknown(data['plan_mode']!, _planModeMeta),
+      );
     }
     if (data.containsKey('approved_plan_assistant_created_at')) {
       context.handle(
+        _approvedPlanAssistantCreatedAtMeta,
+        approvedPlanAssistantCreatedAt.isAcceptableOrUnknown(
+          data['approved_plan_assistant_created_at']!,
           _approvedPlanAssistantCreatedAtMeta,
-          approvedPlanAssistantCreatedAt.isAcceptableOrUnknown(
-              data['approved_plan_assistant_created_at']!,
-              _approvedPlanAssistantCreatedAtMeta));
+        ),
+      );
     }
     if (data.containsKey('approved_plan_approved_at')) {
       context.handle(
+        _approvedPlanApprovedAtMeta,
+        approvedPlanApprovedAt.isAcceptableOrUnknown(
+          data['approved_plan_approved_at']!,
           _approvedPlanApprovedAtMeta,
-          approvedPlanApprovedAt.isAcceptableOrUnknown(
-              data['approved_plan_approved_at']!, _approvedPlanApprovedAtMeta));
+        ),
+      );
     }
     return context;
   }
@@ -364,24 +449,38 @@ class $AiChatsTable extends AiChats with TableInfo<$AiChatsTable, AiChat> {
   AiChat map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return AiChat(
-      id: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
-      title: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}title'])!,
-      model: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}model'])!,
-      createdAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}created_at'])!,
-      updatedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}updated_at'])!,
-      planMode: attachedDatabase.typeMapping
-          .read(DriftSqlType.bool, data['${effectivePrefix}plan_mode'])!,
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      title: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}title'],
+      )!,
+      model: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}model'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}updated_at'],
+      )!,
+      planMode: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}plan_mode'],
+      )!,
       approvedPlanAssistantCreatedAt: attachedDatabase.typeMapping.read(
-          DriftSqlType.int,
-          data['${effectivePrefix}approved_plan_assistant_created_at']),
+        DriftSqlType.int,
+        data['${effectivePrefix}approved_plan_assistant_created_at'],
+      ),
       approvedPlanApprovedAt: attachedDatabase.typeMapping.read(
-          DriftSqlType.int,
-          data['${effectivePrefix}approved_plan_approved_at']),
+        DriftSqlType.int,
+        data['${effectivePrefix}approved_plan_approved_at'],
+      ),
     );
   }
 
@@ -400,15 +499,16 @@ class AiChat extends DataClass implements Insertable<AiChat> {
   final bool planMode;
   final int? approvedPlanAssistantCreatedAt;
   final int? approvedPlanApprovedAt;
-  const AiChat(
-      {required this.id,
-      required this.title,
-      required this.model,
-      required this.createdAt,
-      required this.updatedAt,
-      required this.planMode,
-      this.approvedPlanAssistantCreatedAt,
-      this.approvedPlanApprovedAt});
+  const AiChat({
+    required this.id,
+    required this.title,
+    required this.model,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.planMode,
+    this.approvedPlanAssistantCreatedAt,
+    this.approvedPlanApprovedAt,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -419,8 +519,9 @@ class AiChat extends DataClass implements Insertable<AiChat> {
     map['updated_at'] = Variable<int>(updatedAt);
     map['plan_mode'] = Variable<bool>(planMode);
     if (!nullToAbsent || approvedPlanAssistantCreatedAt != null) {
-      map['approved_plan_assistant_created_at'] =
-          Variable<int>(approvedPlanAssistantCreatedAt);
+      map['approved_plan_assistant_created_at'] = Variable<int>(
+        approvedPlanAssistantCreatedAt,
+      );
     }
     if (!nullToAbsent || approvedPlanApprovedAt != null) {
       map['approved_plan_approved_at'] = Variable<int>(approvedPlanApprovedAt);
@@ -438,16 +539,18 @@ class AiChat extends DataClass implements Insertable<AiChat> {
       planMode: Value(planMode),
       approvedPlanAssistantCreatedAt:
           approvedPlanAssistantCreatedAt == null && nullToAbsent
-              ? const Value.absent()
-              : Value(approvedPlanAssistantCreatedAt),
+          ? const Value.absent()
+          : Value(approvedPlanAssistantCreatedAt),
       approvedPlanApprovedAt: approvedPlanApprovedAt == null && nullToAbsent
           ? const Value.absent()
           : Value(approvedPlanApprovedAt),
     );
   }
 
-  factory AiChat.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory AiChat.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return AiChat(
       id: serializer.fromJson<String>(json['id']),
@@ -456,10 +559,12 @@ class AiChat extends DataClass implements Insertable<AiChat> {
       createdAt: serializer.fromJson<int>(json['createdAt']),
       updatedAt: serializer.fromJson<int>(json['updatedAt']),
       planMode: serializer.fromJson<bool>(json['planMode']),
-      approvedPlanAssistantCreatedAt:
-          serializer.fromJson<int?>(json['approvedPlanAssistantCreatedAt']),
-      approvedPlanApprovedAt:
-          serializer.fromJson<int?>(json['approvedPlanApprovedAt']),
+      approvedPlanAssistantCreatedAt: serializer.fromJson<int?>(
+        json['approvedPlanAssistantCreatedAt'],
+      ),
+      approvedPlanApprovedAt: serializer.fromJson<int?>(
+        json['approvedPlanApprovedAt'],
+      ),
     );
   }
   @override
@@ -472,35 +577,36 @@ class AiChat extends DataClass implements Insertable<AiChat> {
       'createdAt': serializer.toJson<int>(createdAt),
       'updatedAt': serializer.toJson<int>(updatedAt),
       'planMode': serializer.toJson<bool>(planMode),
-      'approvedPlanAssistantCreatedAt':
-          serializer.toJson<int?>(approvedPlanAssistantCreatedAt),
+      'approvedPlanAssistantCreatedAt': serializer.toJson<int?>(
+        approvedPlanAssistantCreatedAt,
+      ),
       'approvedPlanApprovedAt': serializer.toJson<int?>(approvedPlanApprovedAt),
     };
   }
 
-  AiChat copyWith(
-          {String? id,
-          String? title,
-          String? model,
-          int? createdAt,
-          int? updatedAt,
-          bool? planMode,
-          Value<int?> approvedPlanAssistantCreatedAt = const Value.absent(),
-          Value<int?> approvedPlanApprovedAt = const Value.absent()}) =>
-      AiChat(
-        id: id ?? this.id,
-        title: title ?? this.title,
-        model: model ?? this.model,
-        createdAt: createdAt ?? this.createdAt,
-        updatedAt: updatedAt ?? this.updatedAt,
-        planMode: planMode ?? this.planMode,
-        approvedPlanAssistantCreatedAt: approvedPlanAssistantCreatedAt.present
-            ? approvedPlanAssistantCreatedAt.value
-            : this.approvedPlanAssistantCreatedAt,
-        approvedPlanApprovedAt: approvedPlanApprovedAt.present
-            ? approvedPlanApprovedAt.value
-            : this.approvedPlanApprovedAt,
-      );
+  AiChat copyWith({
+    String? id,
+    String? title,
+    String? model,
+    int? createdAt,
+    int? updatedAt,
+    bool? planMode,
+    Value<int?> approvedPlanAssistantCreatedAt = const Value.absent(),
+    Value<int?> approvedPlanApprovedAt = const Value.absent(),
+  }) => AiChat(
+    id: id ?? this.id,
+    title: title ?? this.title,
+    model: model ?? this.model,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+    planMode: planMode ?? this.planMode,
+    approvedPlanAssistantCreatedAt: approvedPlanAssistantCreatedAt.present
+        ? approvedPlanAssistantCreatedAt.value
+        : this.approvedPlanAssistantCreatedAt,
+    approvedPlanApprovedAt: approvedPlanApprovedAt.present
+        ? approvedPlanApprovedAt.value
+        : this.approvedPlanApprovedAt,
+  );
   AiChat copyWithCompanion(AiChatsCompanion data) {
     return AiChat(
       id: data.id.present ? data.id.value : this.id,
@@ -511,8 +617,8 @@ class AiChat extends DataClass implements Insertable<AiChat> {
       planMode: data.planMode.present ? data.planMode.value : this.planMode,
       approvedPlanAssistantCreatedAt:
           data.approvedPlanAssistantCreatedAt.present
-              ? data.approvedPlanAssistantCreatedAt.value
-              : this.approvedPlanAssistantCreatedAt,
+          ? data.approvedPlanAssistantCreatedAt.value
+          : this.approvedPlanAssistantCreatedAt,
       approvedPlanApprovedAt: data.approvedPlanApprovedAt.present
           ? data.approvedPlanApprovedAt.value
           : this.approvedPlanApprovedAt,
@@ -529,15 +635,24 @@ class AiChat extends DataClass implements Insertable<AiChat> {
           ..write('updatedAt: $updatedAt, ')
           ..write('planMode: $planMode, ')
           ..write(
-              'approvedPlanAssistantCreatedAt: $approvedPlanAssistantCreatedAt, ')
+            'approvedPlanAssistantCreatedAt: $approvedPlanAssistantCreatedAt, ',
+          )
           ..write('approvedPlanApprovedAt: $approvedPlanApprovedAt')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(id, title, model, createdAt, updatedAt,
-      planMode, approvedPlanAssistantCreatedAt, approvedPlanApprovedAt);
+  int get hashCode => Object.hash(
+    id,
+    title,
+    model,
+    createdAt,
+    updatedAt,
+    planMode,
+    approvedPlanAssistantCreatedAt,
+    approvedPlanApprovedAt,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -584,11 +699,11 @@ class AiChatsCompanion extends UpdateCompanion<AiChat> {
     this.approvedPlanAssistantCreatedAt = const Value.absent(),
     this.approvedPlanApprovedAt = const Value.absent(),
     this.rowid = const Value.absent(),
-  })  : id = Value(id),
-        title = Value(title),
-        model = Value(model),
-        createdAt = Value(createdAt),
-        updatedAt = Value(updatedAt);
+  }) : id = Value(id),
+       title = Value(title),
+       model = Value(model),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
   static Insertable<AiChat> custom({
     Expression<String>? id,
     Expression<String>? title,
@@ -615,16 +730,17 @@ class AiChatsCompanion extends UpdateCompanion<AiChat> {
     });
   }
 
-  AiChatsCompanion copyWith(
-      {Value<String>? id,
-      Value<String>? title,
-      Value<String>? model,
-      Value<int>? createdAt,
-      Value<int>? updatedAt,
-      Value<bool>? planMode,
-      Value<int?>? approvedPlanAssistantCreatedAt,
-      Value<int?>? approvedPlanApprovedAt,
-      Value<int>? rowid}) {
+  AiChatsCompanion copyWith({
+    Value<String>? id,
+    Value<String>? title,
+    Value<String>? model,
+    Value<int>? createdAt,
+    Value<int>? updatedAt,
+    Value<bool>? planMode,
+    Value<int?>? approvedPlanAssistantCreatedAt,
+    Value<int?>? approvedPlanApprovedAt,
+    Value<int>? rowid,
+  }) {
     return AiChatsCompanion(
       id: id ?? this.id,
       title: title ?? this.title,
@@ -662,12 +778,14 @@ class AiChatsCompanion extends UpdateCompanion<AiChat> {
       map['plan_mode'] = Variable<bool>(planMode.value);
     }
     if (approvedPlanAssistantCreatedAt.present) {
-      map['approved_plan_assistant_created_at'] =
-          Variable<int>(approvedPlanAssistantCreatedAt.value);
+      map['approved_plan_assistant_created_at'] = Variable<int>(
+        approvedPlanAssistantCreatedAt.value,
+      );
     }
     if (approvedPlanApprovedAt.present) {
-      map['approved_plan_approved_at'] =
-          Variable<int>(approvedPlanApprovedAt.value);
+      map['approved_plan_approved_at'] = Variable<int>(
+        approvedPlanApprovedAt.value,
+      );
     }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
@@ -685,7 +803,8 @@ class AiChatsCompanion extends UpdateCompanion<AiChat> {
           ..write('updatedAt: $updatedAt, ')
           ..write('planMode: $planMode, ')
           ..write(
-              'approvedPlanAssistantCreatedAt: $approvedPlanAssistantCreatedAt, ')
+            'approvedPlanAssistantCreatedAt: $approvedPlanAssistantCreatedAt, ',
+          )
           ..write('approvedPlanApprovedAt: $approvedPlanApprovedAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
@@ -702,149 +821,232 @@ class $AiChatMessagesTable extends AiChatMessages
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
   late final GeneratedColumn<String> id = GeneratedColumn<String>(
-      'id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _chatIdMeta = const VerificationMeta('chatId');
   @override
   late final GeneratedColumn<String> chatId = GeneratedColumn<String>(
-      'chat_id', aliasedName, false,
-      type: DriftSqlType.string,
-      requiredDuringInsert: true,
-      defaultConstraints: GeneratedColumn.constraintIsAlways(
-          'REFERENCES ai_chats (id) ON DELETE CASCADE'));
+    'chat_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES ai_chats (id) ON DELETE CASCADE',
+    ),
+  );
   static const VerificationMeta _roleMeta = const VerificationMeta('role');
   @override
   late final GeneratedColumn<String> role = GeneratedColumn<String>(
-      'role', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _textContentMeta =
-      const VerificationMeta('textContent');
+    'role',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _textContentMeta = const VerificationMeta(
+    'textContent',
+  );
   @override
   late final GeneratedColumn<String> textContent = GeneratedColumn<String>(
-      'text', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _contextTextMeta =
-      const VerificationMeta('contextText');
+    'text',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _contextTextMeta = const VerificationMeta(
+    'contextText',
+  );
   @override
   late final GeneratedColumn<String> contextText = GeneratedColumn<String>(
-      'context_text', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
-  static const VerificationMeta _createdAtMeta =
-      const VerificationMeta('createdAt');
+    'context_text',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
   @override
   late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
-      'created_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _promptTokensMeta =
-      const VerificationMeta('promptTokens');
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _promptTokensMeta = const VerificationMeta(
+    'promptTokens',
+  );
   @override
   late final GeneratedColumn<int> promptTokens = GeneratedColumn<int>(
-      'prompt_tokens', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
-  static const VerificationMeta _completionTokensMeta =
-      const VerificationMeta('completionTokens');
+    'prompt_tokens',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _completionTokensMeta = const VerificationMeta(
+    'completionTokens',
+  );
   @override
   late final GeneratedColumn<int> completionTokens = GeneratedColumn<int>(
-      'completion_tokens', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
-  static const VerificationMeta _totalTokensMeta =
-      const VerificationMeta('totalTokens');
+    'completion_tokens',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _totalTokensMeta = const VerificationMeta(
+    'totalTokens',
+  );
   @override
   late final GeneratedColumn<int> totalTokens = GeneratedColumn<int>(
-      'total_tokens', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
-  static const VerificationMeta _elapsedMsMeta =
-      const VerificationMeta('elapsedMs');
+    'total_tokens',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _elapsedMsMeta = const VerificationMeta(
+    'elapsedMs',
+  );
   @override
   late final GeneratedColumn<int> elapsedMs = GeneratedColumn<int>(
-      'elapsed_ms', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
+    'elapsed_ms',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _tokenUsageEstimatedMeta =
       const VerificationMeta('tokenUsageEstimated');
   @override
   late final GeneratedColumn<bool> tokenUsageEstimated = GeneratedColumn<bool>(
-      'token_usage_estimated', aliasedName, true,
-      type: DriftSqlType.bool,
-      requiredDuringInsert: false,
-      defaultConstraints: GeneratedColumn.constraintIsAlways(
-          'CHECK ("token_usage_estimated" IN (0, 1))'));
+    'token_usage_estimated',
+    aliasedName,
+    true,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("token_usage_estimated" IN (0, 1))',
+    ),
+  );
   static const VerificationMeta _promptCacheHitTokensMeta =
       const VerificationMeta('promptCacheHitTokens');
   @override
   late final GeneratedColumn<int> promptCacheHitTokens = GeneratedColumn<int>(
-      'prompt_cache_hit_tokens', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
+    'prompt_cache_hit_tokens',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _promptCacheMissTokensMeta =
       const VerificationMeta('promptCacheMissTokens');
   @override
   late final GeneratedColumn<int> promptCacheMissTokens = GeneratedColumn<int>(
-      'prompt_cache_miss_tokens', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
-  static const VerificationMeta _reasoningTokensMeta =
-      const VerificationMeta('reasoningTokens');
+    'prompt_cache_miss_tokens',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _reasoningTokensMeta = const VerificationMeta(
+    'reasoningTokens',
+  );
   @override
   late final GeneratedColumn<int> reasoningTokens = GeneratedColumn<int>(
-      'reasoning_tokens', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
-  static const VerificationMeta _agentRunIdMeta =
-      const VerificationMeta('agentRunId');
+    'reasoning_tokens',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _agentRunIdMeta = const VerificationMeta(
+    'agentRunId',
+  );
   @override
   late final GeneratedColumn<String> agentRunId = GeneratedColumn<String>(
-      'agent_run_id', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
-  static const VerificationMeta _attachmentsJsonMeta =
-      const VerificationMeta('attachmentsJson');
+    'agent_run_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _attachmentsJsonMeta = const VerificationMeta(
+    'attachmentsJson',
+  );
   @override
   late final GeneratedColumn<String> attachmentsJson = GeneratedColumn<String>(
-      'attachments_json', aliasedName, false,
-      type: DriftSqlType.string,
-      requiredDuringInsert: false,
-      defaultValue: const Constant('[]'));
-  static const VerificationMeta _tracesJsonMeta =
-      const VerificationMeta('tracesJson');
+    'attachments_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('[]'),
+  );
+  static const VerificationMeta _tracesJsonMeta = const VerificationMeta(
+    'tracesJson',
+  );
   @override
   late final GeneratedColumn<String> tracesJson = GeneratedColumn<String>(
-      'traces_json', aliasedName, false,
-      type: DriftSqlType.string,
-      requiredDuringInsert: false,
-      defaultValue: const Constant('[]'));
-  static const VerificationMeta _todoStepsJsonMeta =
-      const VerificationMeta('todoStepsJson');
+    'traces_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('[]'),
+  );
+  static const VerificationMeta _todoStepsJsonMeta = const VerificationMeta(
+    'todoStepsJson',
+  );
   @override
   late final GeneratedColumn<String> todoStepsJson = GeneratedColumn<String>(
-      'todo_steps_json', aliasedName, false,
-      type: DriftSqlType.string,
-      requiredDuringInsert: false,
-      defaultValue: const Constant('[]'));
+    'todo_steps_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('[]'),
+  );
   @override
   List<GeneratedColumn> get $columns => [
-        id,
-        chatId,
-        role,
-        textContent,
-        contextText,
-        createdAt,
-        promptTokens,
-        completionTokens,
-        totalTokens,
-        elapsedMs,
-        tokenUsageEstimated,
-        promptCacheHitTokens,
-        promptCacheMissTokens,
-        reasoningTokens,
-        agentRunId,
-        attachmentsJson,
-        tracesJson,
-        todoStepsJson
-      ];
+    id,
+    chatId,
+    role,
+    textContent,
+    contextText,
+    createdAt,
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    elapsedMs,
+    tokenUsageEstimated,
+    promptCacheHitTokens,
+    promptCacheMissTokens,
+    reasoningTokens,
+    agentRunId,
+    attachmentsJson,
+    tracesJson,
+    todoStepsJson,
+  ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
   String get actualTableName => $name;
   static const String $name = 'ai_chat_messages';
   @override
-  VerificationContext validateIntegrity(Insertable<AiChatMessage> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<AiChatMessage> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
@@ -853,104 +1055,147 @@ class $AiChatMessagesTable extends AiChatMessages
       context.missing(_idMeta);
     }
     if (data.containsKey('chat_id')) {
-      context.handle(_chatIdMeta,
-          chatId.isAcceptableOrUnknown(data['chat_id']!, _chatIdMeta));
+      context.handle(
+        _chatIdMeta,
+        chatId.isAcceptableOrUnknown(data['chat_id']!, _chatIdMeta),
+      );
     } else if (isInserting) {
       context.missing(_chatIdMeta);
     }
     if (data.containsKey('role')) {
       context.handle(
-          _roleMeta, role.isAcceptableOrUnknown(data['role']!, _roleMeta));
+        _roleMeta,
+        role.isAcceptableOrUnknown(data['role']!, _roleMeta),
+      );
     } else if (isInserting) {
       context.missing(_roleMeta);
     }
     if (data.containsKey('text')) {
-      context.handle(_textContentMeta,
-          textContent.isAcceptableOrUnknown(data['text']!, _textContentMeta));
+      context.handle(
+        _textContentMeta,
+        textContent.isAcceptableOrUnknown(data['text']!, _textContentMeta),
+      );
     } else if (isInserting) {
       context.missing(_textContentMeta);
     }
     if (data.containsKey('context_text')) {
       context.handle(
+        _contextTextMeta,
+        contextText.isAcceptableOrUnknown(
+          data['context_text']!,
           _contextTextMeta,
-          contextText.isAcceptableOrUnknown(
-              data['context_text']!, _contextTextMeta));
+        ),
+      );
     }
     if (data.containsKey('created_at')) {
-      context.handle(_createdAtMeta,
-          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_createdAtMeta);
     }
     if (data.containsKey('prompt_tokens')) {
       context.handle(
+        _promptTokensMeta,
+        promptTokens.isAcceptableOrUnknown(
+          data['prompt_tokens']!,
           _promptTokensMeta,
-          promptTokens.isAcceptableOrUnknown(
-              data['prompt_tokens']!, _promptTokensMeta));
+        ),
+      );
     }
     if (data.containsKey('completion_tokens')) {
       context.handle(
+        _completionTokensMeta,
+        completionTokens.isAcceptableOrUnknown(
+          data['completion_tokens']!,
           _completionTokensMeta,
-          completionTokens.isAcceptableOrUnknown(
-              data['completion_tokens']!, _completionTokensMeta));
+        ),
+      );
     }
     if (data.containsKey('total_tokens')) {
       context.handle(
+        _totalTokensMeta,
+        totalTokens.isAcceptableOrUnknown(
+          data['total_tokens']!,
           _totalTokensMeta,
-          totalTokens.isAcceptableOrUnknown(
-              data['total_tokens']!, _totalTokensMeta));
+        ),
+      );
     }
     if (data.containsKey('elapsed_ms')) {
-      context.handle(_elapsedMsMeta,
-          elapsedMs.isAcceptableOrUnknown(data['elapsed_ms']!, _elapsedMsMeta));
+      context.handle(
+        _elapsedMsMeta,
+        elapsedMs.isAcceptableOrUnknown(data['elapsed_ms']!, _elapsedMsMeta),
+      );
     }
     if (data.containsKey('token_usage_estimated')) {
       context.handle(
+        _tokenUsageEstimatedMeta,
+        tokenUsageEstimated.isAcceptableOrUnknown(
+          data['token_usage_estimated']!,
           _tokenUsageEstimatedMeta,
-          tokenUsageEstimated.isAcceptableOrUnknown(
-              data['token_usage_estimated']!, _tokenUsageEstimatedMeta));
+        ),
+      );
     }
     if (data.containsKey('prompt_cache_hit_tokens')) {
       context.handle(
+        _promptCacheHitTokensMeta,
+        promptCacheHitTokens.isAcceptableOrUnknown(
+          data['prompt_cache_hit_tokens']!,
           _promptCacheHitTokensMeta,
-          promptCacheHitTokens.isAcceptableOrUnknown(
-              data['prompt_cache_hit_tokens']!, _promptCacheHitTokensMeta));
+        ),
+      );
     }
     if (data.containsKey('prompt_cache_miss_tokens')) {
       context.handle(
+        _promptCacheMissTokensMeta,
+        promptCacheMissTokens.isAcceptableOrUnknown(
+          data['prompt_cache_miss_tokens']!,
           _promptCacheMissTokensMeta,
-          promptCacheMissTokens.isAcceptableOrUnknown(
-              data['prompt_cache_miss_tokens']!, _promptCacheMissTokensMeta));
+        ),
+      );
     }
     if (data.containsKey('reasoning_tokens')) {
       context.handle(
+        _reasoningTokensMeta,
+        reasoningTokens.isAcceptableOrUnknown(
+          data['reasoning_tokens']!,
           _reasoningTokensMeta,
-          reasoningTokens.isAcceptableOrUnknown(
-              data['reasoning_tokens']!, _reasoningTokensMeta));
+        ),
+      );
     }
     if (data.containsKey('agent_run_id')) {
       context.handle(
+        _agentRunIdMeta,
+        agentRunId.isAcceptableOrUnknown(
+          data['agent_run_id']!,
           _agentRunIdMeta,
-          agentRunId.isAcceptableOrUnknown(
-              data['agent_run_id']!, _agentRunIdMeta));
+        ),
+      );
     }
     if (data.containsKey('attachments_json')) {
       context.handle(
+        _attachmentsJsonMeta,
+        attachmentsJson.isAcceptableOrUnknown(
+          data['attachments_json']!,
           _attachmentsJsonMeta,
-          attachmentsJson.isAcceptableOrUnknown(
-              data['attachments_json']!, _attachmentsJsonMeta));
+        ),
+      );
     }
     if (data.containsKey('traces_json')) {
       context.handle(
-          _tracesJsonMeta,
-          tracesJson.isAcceptableOrUnknown(
-              data['traces_json']!, _tracesJsonMeta));
+        _tracesJsonMeta,
+        tracesJson.isAcceptableOrUnknown(data['traces_json']!, _tracesJsonMeta),
+      );
     }
     if (data.containsKey('todo_steps_json')) {
       context.handle(
+        _todoStepsJsonMeta,
+        todoStepsJson.isAcceptableOrUnknown(
+          data['todo_steps_json']!,
           _todoStepsJsonMeta,
-          todoStepsJson.isAcceptableOrUnknown(
-              data['todo_steps_json']!, _todoStepsJsonMeta));
+        ),
+      );
     }
     return context;
   }
@@ -961,42 +1206,78 @@ class $AiChatMessagesTable extends AiChatMessages
   AiChatMessage map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return AiChatMessage(
-      id: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
-      chatId: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}chat_id'])!,
-      role: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}role'])!,
-      textContent: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}text'])!,
-      contextText: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}context_text']),
-      createdAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}created_at'])!,
-      promptTokens: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}prompt_tokens']),
-      completionTokens: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}completion_tokens']),
-      totalTokens: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}total_tokens']),
-      elapsedMs: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}elapsed_ms']),
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      chatId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}chat_id'],
+      )!,
+      role: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}role'],
+      )!,
+      textContent: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}text'],
+      )!,
+      contextText: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}context_text'],
+      ),
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}created_at'],
+      )!,
+      promptTokens: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}prompt_tokens'],
+      ),
+      completionTokens: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}completion_tokens'],
+      ),
+      totalTokens: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}total_tokens'],
+      ),
+      elapsedMs: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}elapsed_ms'],
+      ),
       tokenUsageEstimated: attachedDatabase.typeMapping.read(
-          DriftSqlType.bool, data['${effectivePrefix}token_usage_estimated']),
+        DriftSqlType.bool,
+        data['${effectivePrefix}token_usage_estimated'],
+      ),
       promptCacheHitTokens: attachedDatabase.typeMapping.read(
-          DriftSqlType.int, data['${effectivePrefix}prompt_cache_hit_tokens']),
+        DriftSqlType.int,
+        data['${effectivePrefix}prompt_cache_hit_tokens'],
+      ),
       promptCacheMissTokens: attachedDatabase.typeMapping.read(
-          DriftSqlType.int, data['${effectivePrefix}prompt_cache_miss_tokens']),
-      reasoningTokens: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}reasoning_tokens']),
-      agentRunId: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}agent_run_id']),
+        DriftSqlType.int,
+        data['${effectivePrefix}prompt_cache_miss_tokens'],
+      ),
+      reasoningTokens: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}reasoning_tokens'],
+      ),
+      agentRunId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}agent_run_id'],
+      ),
       attachmentsJson: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}attachments_json'])!,
-      tracesJson: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}traces_json'])!,
+        DriftSqlType.string,
+        data['${effectivePrefix}attachments_json'],
+      )!,
+      tracesJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}traces_json'],
+      )!,
       todoStepsJson: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}todo_steps_json'])!,
+        DriftSqlType.string,
+        data['${effectivePrefix}todo_steps_json'],
+      )!,
     );
   }
 
@@ -1025,25 +1306,26 @@ class AiChatMessage extends DataClass implements Insertable<AiChatMessage> {
   final String attachmentsJson;
   final String tracesJson;
   final String todoStepsJson;
-  const AiChatMessage(
-      {required this.id,
-      required this.chatId,
-      required this.role,
-      required this.textContent,
-      this.contextText,
-      required this.createdAt,
-      this.promptTokens,
-      this.completionTokens,
-      this.totalTokens,
-      this.elapsedMs,
-      this.tokenUsageEstimated,
-      this.promptCacheHitTokens,
-      this.promptCacheMissTokens,
-      this.reasoningTokens,
-      this.agentRunId,
-      required this.attachmentsJson,
-      required this.tracesJson,
-      required this.todoStepsJson});
+  const AiChatMessage({
+    required this.id,
+    required this.chatId,
+    required this.role,
+    required this.textContent,
+    this.contextText,
+    required this.createdAt,
+    this.promptTokens,
+    this.completionTokens,
+    this.totalTokens,
+    this.elapsedMs,
+    this.tokenUsageEstimated,
+    this.promptCacheHitTokens,
+    this.promptCacheMissTokens,
+    this.reasoningTokens,
+    this.agentRunId,
+    required this.attachmentsJson,
+    required this.tracesJson,
+    required this.todoStepsJson,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -1131,8 +1413,10 @@ class AiChatMessage extends DataClass implements Insertable<AiChatMessage> {
     );
   }
 
-  factory AiChatMessage.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory AiChatMessage.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return AiChatMessage(
       id: serializer.fromJson<String>(json['id']),
@@ -1145,12 +1429,15 @@ class AiChatMessage extends DataClass implements Insertable<AiChatMessage> {
       completionTokens: serializer.fromJson<int?>(json['completionTokens']),
       totalTokens: serializer.fromJson<int?>(json['totalTokens']),
       elapsedMs: serializer.fromJson<int?>(json['elapsedMs']),
-      tokenUsageEstimated:
-          serializer.fromJson<bool?>(json['tokenUsageEstimated']),
-      promptCacheHitTokens:
-          serializer.fromJson<int?>(json['promptCacheHitTokens']),
-      promptCacheMissTokens:
-          serializer.fromJson<int?>(json['promptCacheMissTokens']),
+      tokenUsageEstimated: serializer.fromJson<bool?>(
+        json['tokenUsageEstimated'],
+      ),
+      promptCacheHitTokens: serializer.fromJson<int?>(
+        json['promptCacheHitTokens'],
+      ),
+      promptCacheMissTokens: serializer.fromJson<int?>(
+        json['promptCacheMissTokens'],
+      ),
       reasoningTokens: serializer.fromJson<int?>(json['reasoningTokens']),
       agentRunId: serializer.fromJson<String?>(json['agentRunId']),
       attachmentsJson: serializer.fromJson<String>(json['attachmentsJson']),
@@ -1183,65 +1470,66 @@ class AiChatMessage extends DataClass implements Insertable<AiChatMessage> {
     };
   }
 
-  AiChatMessage copyWith(
-          {String? id,
-          String? chatId,
-          String? role,
-          String? textContent,
-          Value<String?> contextText = const Value.absent(),
-          int? createdAt,
-          Value<int?> promptTokens = const Value.absent(),
-          Value<int?> completionTokens = const Value.absent(),
-          Value<int?> totalTokens = const Value.absent(),
-          Value<int?> elapsedMs = const Value.absent(),
-          Value<bool?> tokenUsageEstimated = const Value.absent(),
-          Value<int?> promptCacheHitTokens = const Value.absent(),
-          Value<int?> promptCacheMissTokens = const Value.absent(),
-          Value<int?> reasoningTokens = const Value.absent(),
-          Value<String?> agentRunId = const Value.absent(),
-          String? attachmentsJson,
-          String? tracesJson,
-          String? todoStepsJson}) =>
-      AiChatMessage(
-        id: id ?? this.id,
-        chatId: chatId ?? this.chatId,
-        role: role ?? this.role,
-        textContent: textContent ?? this.textContent,
-        contextText: contextText.present ? contextText.value : this.contextText,
-        createdAt: createdAt ?? this.createdAt,
-        promptTokens:
-            promptTokens.present ? promptTokens.value : this.promptTokens,
-        completionTokens: completionTokens.present
-            ? completionTokens.value
-            : this.completionTokens,
-        totalTokens: totalTokens.present ? totalTokens.value : this.totalTokens,
-        elapsedMs: elapsedMs.present ? elapsedMs.value : this.elapsedMs,
-        tokenUsageEstimated: tokenUsageEstimated.present
-            ? tokenUsageEstimated.value
-            : this.tokenUsageEstimated,
-        promptCacheHitTokens: promptCacheHitTokens.present
-            ? promptCacheHitTokens.value
-            : this.promptCacheHitTokens,
-        promptCacheMissTokens: promptCacheMissTokens.present
-            ? promptCacheMissTokens.value
-            : this.promptCacheMissTokens,
-        reasoningTokens: reasoningTokens.present
-            ? reasoningTokens.value
-            : this.reasoningTokens,
-        agentRunId: agentRunId.present ? agentRunId.value : this.agentRunId,
-        attachmentsJson: attachmentsJson ?? this.attachmentsJson,
-        tracesJson: tracesJson ?? this.tracesJson,
-        todoStepsJson: todoStepsJson ?? this.todoStepsJson,
-      );
+  AiChatMessage copyWith({
+    String? id,
+    String? chatId,
+    String? role,
+    String? textContent,
+    Value<String?> contextText = const Value.absent(),
+    int? createdAt,
+    Value<int?> promptTokens = const Value.absent(),
+    Value<int?> completionTokens = const Value.absent(),
+    Value<int?> totalTokens = const Value.absent(),
+    Value<int?> elapsedMs = const Value.absent(),
+    Value<bool?> tokenUsageEstimated = const Value.absent(),
+    Value<int?> promptCacheHitTokens = const Value.absent(),
+    Value<int?> promptCacheMissTokens = const Value.absent(),
+    Value<int?> reasoningTokens = const Value.absent(),
+    Value<String?> agentRunId = const Value.absent(),
+    String? attachmentsJson,
+    String? tracesJson,
+    String? todoStepsJson,
+  }) => AiChatMessage(
+    id: id ?? this.id,
+    chatId: chatId ?? this.chatId,
+    role: role ?? this.role,
+    textContent: textContent ?? this.textContent,
+    contextText: contextText.present ? contextText.value : this.contextText,
+    createdAt: createdAt ?? this.createdAt,
+    promptTokens: promptTokens.present ? promptTokens.value : this.promptTokens,
+    completionTokens: completionTokens.present
+        ? completionTokens.value
+        : this.completionTokens,
+    totalTokens: totalTokens.present ? totalTokens.value : this.totalTokens,
+    elapsedMs: elapsedMs.present ? elapsedMs.value : this.elapsedMs,
+    tokenUsageEstimated: tokenUsageEstimated.present
+        ? tokenUsageEstimated.value
+        : this.tokenUsageEstimated,
+    promptCacheHitTokens: promptCacheHitTokens.present
+        ? promptCacheHitTokens.value
+        : this.promptCacheHitTokens,
+    promptCacheMissTokens: promptCacheMissTokens.present
+        ? promptCacheMissTokens.value
+        : this.promptCacheMissTokens,
+    reasoningTokens: reasoningTokens.present
+        ? reasoningTokens.value
+        : this.reasoningTokens,
+    agentRunId: agentRunId.present ? agentRunId.value : this.agentRunId,
+    attachmentsJson: attachmentsJson ?? this.attachmentsJson,
+    tracesJson: tracesJson ?? this.tracesJson,
+    todoStepsJson: todoStepsJson ?? this.todoStepsJson,
+  );
   AiChatMessage copyWithCompanion(AiChatMessagesCompanion data) {
     return AiChatMessage(
       id: data.id.present ? data.id.value : this.id,
       chatId: data.chatId.present ? data.chatId.value : this.chatId,
       role: data.role.present ? data.role.value : this.role,
-      textContent:
-          data.textContent.present ? data.textContent.value : this.textContent,
-      contextText:
-          data.contextText.present ? data.contextText.value : this.contextText,
+      textContent: data.textContent.present
+          ? data.textContent.value
+          : this.textContent,
+      contextText: data.contextText.present
+          ? data.contextText.value
+          : this.contextText,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       promptTokens: data.promptTokens.present
           ? data.promptTokens.value
@@ -1249,8 +1537,9 @@ class AiChatMessage extends DataClass implements Insertable<AiChatMessage> {
       completionTokens: data.completionTokens.present
           ? data.completionTokens.value
           : this.completionTokens,
-      totalTokens:
-          data.totalTokens.present ? data.totalTokens.value : this.totalTokens,
+      totalTokens: data.totalTokens.present
+          ? data.totalTokens.value
+          : this.totalTokens,
       elapsedMs: data.elapsedMs.present ? data.elapsedMs.value : this.elapsedMs,
       tokenUsageEstimated: data.tokenUsageEstimated.present
           ? data.tokenUsageEstimated.value
@@ -1264,13 +1553,15 @@ class AiChatMessage extends DataClass implements Insertable<AiChatMessage> {
       reasoningTokens: data.reasoningTokens.present
           ? data.reasoningTokens.value
           : this.reasoningTokens,
-      agentRunId:
-          data.agentRunId.present ? data.agentRunId.value : this.agentRunId,
+      agentRunId: data.agentRunId.present
+          ? data.agentRunId.value
+          : this.agentRunId,
       attachmentsJson: data.attachmentsJson.present
           ? data.attachmentsJson.value
           : this.attachmentsJson,
-      tracesJson:
-          data.tracesJson.present ? data.tracesJson.value : this.tracesJson,
+      tracesJson: data.tracesJson.present
+          ? data.tracesJson.value
+          : this.tracesJson,
       todoStepsJson: data.todoStepsJson.present
           ? data.todoStepsJson.value
           : this.todoStepsJson,
@@ -1304,24 +1595,25 @@ class AiChatMessage extends DataClass implements Insertable<AiChatMessage> {
 
   @override
   int get hashCode => Object.hash(
-      id,
-      chatId,
-      role,
-      textContent,
-      contextText,
-      createdAt,
-      promptTokens,
-      completionTokens,
-      totalTokens,
-      elapsedMs,
-      tokenUsageEstimated,
-      promptCacheHitTokens,
-      promptCacheMissTokens,
-      reasoningTokens,
-      agentRunId,
-      attachmentsJson,
-      tracesJson,
-      todoStepsJson);
+    id,
+    chatId,
+    role,
+    textContent,
+    contextText,
+    createdAt,
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    elapsedMs,
+    tokenUsageEstimated,
+    promptCacheHitTokens,
+    promptCacheMissTokens,
+    reasoningTokens,
+    agentRunId,
+    attachmentsJson,
+    tracesJson,
+    todoStepsJson,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -1407,11 +1699,11 @@ class AiChatMessagesCompanion extends UpdateCompanion<AiChatMessage> {
     this.tracesJson = const Value.absent(),
     this.todoStepsJson = const Value.absent(),
     this.rowid = const Value.absent(),
-  })  : id = Value(id),
-        chatId = Value(chatId),
-        role = Value(role),
-        textContent = Value(textContent),
-        createdAt = Value(createdAt);
+  }) : id = Value(id),
+       chatId = Value(chatId),
+       role = Value(role),
+       textContent = Value(textContent),
+       createdAt = Value(createdAt);
   static Insertable<AiChatMessage> custom({
     Expression<String>? id,
     Expression<String>? chatId,
@@ -1459,26 +1751,27 @@ class AiChatMessagesCompanion extends UpdateCompanion<AiChatMessage> {
     });
   }
 
-  AiChatMessagesCompanion copyWith(
-      {Value<String>? id,
-      Value<String>? chatId,
-      Value<String>? role,
-      Value<String>? textContent,
-      Value<String?>? contextText,
-      Value<int>? createdAt,
-      Value<int?>? promptTokens,
-      Value<int?>? completionTokens,
-      Value<int?>? totalTokens,
-      Value<int?>? elapsedMs,
-      Value<bool?>? tokenUsageEstimated,
-      Value<int?>? promptCacheHitTokens,
-      Value<int?>? promptCacheMissTokens,
-      Value<int?>? reasoningTokens,
-      Value<String?>? agentRunId,
-      Value<String>? attachmentsJson,
-      Value<String>? tracesJson,
-      Value<String>? todoStepsJson,
-      Value<int>? rowid}) {
+  AiChatMessagesCompanion copyWith({
+    Value<String>? id,
+    Value<String>? chatId,
+    Value<String>? role,
+    Value<String>? textContent,
+    Value<String?>? contextText,
+    Value<int>? createdAt,
+    Value<int?>? promptTokens,
+    Value<int?>? completionTokens,
+    Value<int?>? totalTokens,
+    Value<int?>? elapsedMs,
+    Value<bool?>? tokenUsageEstimated,
+    Value<int?>? promptCacheHitTokens,
+    Value<int?>? promptCacheMissTokens,
+    Value<int?>? reasoningTokens,
+    Value<String?>? agentRunId,
+    Value<String>? attachmentsJson,
+    Value<String>? tracesJson,
+    Value<String>? todoStepsJson,
+    Value<int>? rowid,
+  }) {
     return AiChatMessagesCompanion(
       id: id ?? this.id,
       chatId: chatId ?? this.chatId,
@@ -1540,12 +1833,14 @@ class AiChatMessagesCompanion extends UpdateCompanion<AiChatMessage> {
       map['token_usage_estimated'] = Variable<bool>(tokenUsageEstimated.value);
     }
     if (promptCacheHitTokens.present) {
-      map['prompt_cache_hit_tokens'] =
-          Variable<int>(promptCacheHitTokens.value);
+      map['prompt_cache_hit_tokens'] = Variable<int>(
+        promptCacheHitTokens.value,
+      );
     }
     if (promptCacheMissTokens.present) {
-      map['prompt_cache_miss_tokens'] =
-          Variable<int>(promptCacheMissTokens.value);
+      map['prompt_cache_miss_tokens'] = Variable<int>(
+        promptCacheMissTokens.value,
+      );
     }
     if (reasoningTokens.present) {
       map['reasoning_tokens'] = Variable<int>(reasoningTokens.value);
@@ -1604,195 +1899,285 @@ class $AgentRunMetricsTableTable extends AgentRunMetricsTable
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
   late final GeneratedColumn<String> id = GeneratedColumn<String>(
-      'id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _startedAtMeta =
-      const VerificationMeta('startedAt');
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _startedAtMeta = const VerificationMeta(
+    'startedAt',
+  );
   @override
   late final GeneratedColumn<int> startedAt = GeneratedColumn<int>(
-      'started_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _finishedAtMeta =
-      const VerificationMeta('finishedAt');
+    'started_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _finishedAtMeta = const VerificationMeta(
+    'finishedAt',
+  );
   @override
   late final GeneratedColumn<int> finishedAt = GeneratedColumn<int>(
-      'finished_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
+    'finished_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _modelMeta = const VerificationMeta('model');
   @override
   late final GeneratedColumn<String> model = GeneratedColumn<String>(
-      'model', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _helperModelMeta =
-      const VerificationMeta('helperModel');
+    'model',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _helperModelMeta = const VerificationMeta(
+    'helperModel',
+  );
   @override
   late final GeneratedColumn<String> helperModel = GeneratedColumn<String>(
-      'helper_model', aliasedName, false,
-      type: DriftSqlType.string,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(''));
-  static const VerificationMeta _auditModelMeta =
-      const VerificationMeta('auditModel');
+    'helper_model',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
+  );
+  static const VerificationMeta _auditModelMeta = const VerificationMeta(
+    'auditModel',
+  );
   @override
   late final GeneratedColumn<String> auditModel = GeneratedColumn<String>(
-      'audit_model', aliasedName, false,
-      type: DriftSqlType.string,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(''));
-  static const VerificationMeta _promptTokensMeta =
-      const VerificationMeta('promptTokens');
+    'audit_model',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
+  );
+  static const VerificationMeta _promptTokensMeta = const VerificationMeta(
+    'promptTokens',
+  );
   @override
   late final GeneratedColumn<int> promptTokens = GeneratedColumn<int>(
-      'prompt_tokens', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(0));
-  static const VerificationMeta _completionTokensMeta =
-      const VerificationMeta('completionTokens');
+    'prompt_tokens',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _completionTokensMeta = const VerificationMeta(
+    'completionTokens',
+  );
   @override
   late final GeneratedColumn<int> completionTokens = GeneratedColumn<int>(
-      'completion_tokens', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(0));
-  static const VerificationMeta _totalTokensMeta =
-      const VerificationMeta('totalTokens');
+    'completion_tokens',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _totalTokensMeta = const VerificationMeta(
+    'totalTokens',
+  );
   @override
   late final GeneratedColumn<int> totalTokens = GeneratedColumn<int>(
-      'total_tokens', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(0));
-  static const VerificationMeta _elapsedMsMeta =
-      const VerificationMeta('elapsedMs');
+    'total_tokens',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _elapsedMsMeta = const VerificationMeta(
+    'elapsedMs',
+  );
   @override
   late final GeneratedColumn<int> elapsedMs = GeneratedColumn<int>(
-      'elapsed_ms', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(0));
-  static const VerificationMeta _toolCallsMeta =
-      const VerificationMeta('toolCalls');
+    'elapsed_ms',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _toolCallsMeta = const VerificationMeta(
+    'toolCalls',
+  );
   @override
   late final GeneratedColumn<int> toolCalls = GeneratedColumn<int>(
-      'tool_calls', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(0));
-  static const VerificationMeta _cacheHitsMeta =
-      const VerificationMeta('cacheHits');
+    'tool_calls',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _cacheHitsMeta = const VerificationMeta(
+    'cacheHits',
+  );
   @override
   late final GeneratedColumn<int> cacheHits = GeneratedColumn<int>(
-      'cache_hits', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(0));
-  static const VerificationMeta _dedupBlockedCallsMeta =
-      const VerificationMeta('dedupBlockedCalls');
+    'cache_hits',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _dedupBlockedCallsMeta = const VerificationMeta(
+    'dedupBlockedCalls',
+  );
   @override
   late final GeneratedColumn<int> dedupBlockedCalls = GeneratedColumn<int>(
-      'dedup_blocked_calls', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(0));
-  static const VerificationMeta _ragHitsMeta =
-      const VerificationMeta('ragHits');
+    'dedup_blocked_calls',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _ragHitsMeta = const VerificationMeta(
+    'ragHits',
+  );
   @override
   late final GeneratedColumn<int> ragHits = GeneratedColumn<int>(
-      'rag_hits', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(0));
-  static const VerificationMeta _approvalCountMeta =
-      const VerificationMeta('approvalCount');
+    'rag_hits',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _approvalCountMeta = const VerificationMeta(
+    'approvalCount',
+  );
   @override
   late final GeneratedColumn<int> approvalCount = GeneratedColumn<int>(
-      'approval_count', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(0));
-  static const VerificationMeta _approvedCountMeta =
-      const VerificationMeta('approvedCount');
+    'approval_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _approvedCountMeta = const VerificationMeta(
+    'approvedCount',
+  );
   @override
   late final GeneratedColumn<int> approvedCount = GeneratedColumn<int>(
-      'approved_count', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(0));
-  static const VerificationMeta _auditCountMeta =
-      const VerificationMeta('auditCount');
+    'approved_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _auditCountMeta = const VerificationMeta(
+    'auditCount',
+  );
   @override
   late final GeneratedColumn<int> auditCount = GeneratedColumn<int>(
-      'audit_count', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(0));
-  static const VerificationMeta _helperFanoutMeta =
-      const VerificationMeta('helperFanout');
+    'audit_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _helperFanoutMeta = const VerificationMeta(
+    'helperFanout',
+  );
   @override
   late final GeneratedColumn<int> helperFanout = GeneratedColumn<int>(
-      'helper_fanout', aliasedName, false,
-      type: DriftSqlType.int,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(0));
-  static const VerificationMeta _successMeta =
-      const VerificationMeta('success');
+    'helper_fanout',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _successMeta = const VerificationMeta(
+    'success',
+  );
   @override
   late final GeneratedColumn<bool> success = GeneratedColumn<bool>(
-      'success', aliasedName, false,
-      type: DriftSqlType.bool,
-      requiredDuringInsert: false,
-      defaultConstraints:
-          GeneratedColumn.constraintIsAlways('CHECK ("success" IN (0, 1))'),
-      defaultValue: const Constant(true));
+    'success',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("success" IN (0, 1))',
+    ),
+    defaultValue: const Constant(true),
+  );
   static const VerificationMeta _selectedToolSetJsonMeta =
       const VerificationMeta('selectedToolSetJson');
   @override
   late final GeneratedColumn<String> selectedToolSetJson =
-      GeneratedColumn<String>('selected_tool_set_json', aliasedName, false,
-          type: DriftSqlType.string,
-          requiredDuringInsert: false,
-          defaultValue: const Constant('[]'));
-  static const VerificationMeta _memorySourcesJsonMeta =
-      const VerificationMeta('memorySourcesJson');
+      GeneratedColumn<String>(
+        'selected_tool_set_json',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+        defaultValue: const Constant('[]'),
+      );
+  static const VerificationMeta _memorySourcesJsonMeta = const VerificationMeta(
+    'memorySourcesJson',
+  );
   @override
   late final GeneratedColumn<String> memorySourcesJson =
-      GeneratedColumn<String>('memory_sources_json', aliasedName, false,
-          type: DriftSqlType.string,
-          requiredDuringInsert: false,
-          defaultValue: const Constant('[]'));
+      GeneratedColumn<String>(
+        'memory_sources_json',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+        defaultValue: const Constant('[]'),
+      );
   @override
   List<GeneratedColumn> get $columns => [
-        id,
-        startedAt,
-        finishedAt,
-        model,
-        helperModel,
-        auditModel,
-        promptTokens,
-        completionTokens,
-        totalTokens,
-        elapsedMs,
-        toolCalls,
-        cacheHits,
-        dedupBlockedCalls,
-        ragHits,
-        approvalCount,
-        approvedCount,
-        auditCount,
-        helperFanout,
-        success,
-        selectedToolSetJson,
-        memorySourcesJson
-      ];
+    id,
+    startedAt,
+    finishedAt,
+    model,
+    helperModel,
+    auditModel,
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    elapsedMs,
+    toolCalls,
+    cacheHits,
+    dedupBlockedCalls,
+    ragHits,
+    approvalCount,
+    approvedCount,
+    auditCount,
+    helperFanout,
+    success,
+    selectedToolSetJson,
+    memorySourcesJson,
+  ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
   String get actualTableName => $name;
   static const String $name = 'agent_run_metrics';
   @override
-  VerificationContext validateIntegrity(Insertable<AgentRunMetricRow> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<AgentRunMetricRow> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
@@ -1801,116 +2186,160 @@ class $AgentRunMetricsTableTable extends AgentRunMetricsTable
       context.missing(_idMeta);
     }
     if (data.containsKey('started_at')) {
-      context.handle(_startedAtMeta,
-          startedAt.isAcceptableOrUnknown(data['started_at']!, _startedAtMeta));
+      context.handle(
+        _startedAtMeta,
+        startedAt.isAcceptableOrUnknown(data['started_at']!, _startedAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_startedAtMeta);
     }
     if (data.containsKey('finished_at')) {
       context.handle(
-          _finishedAtMeta,
-          finishedAt.isAcceptableOrUnknown(
-              data['finished_at']!, _finishedAtMeta));
+        _finishedAtMeta,
+        finishedAt.isAcceptableOrUnknown(data['finished_at']!, _finishedAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_finishedAtMeta);
     }
     if (data.containsKey('model')) {
       context.handle(
-          _modelMeta, model.isAcceptableOrUnknown(data['model']!, _modelMeta));
+        _modelMeta,
+        model.isAcceptableOrUnknown(data['model']!, _modelMeta),
+      );
     } else if (isInserting) {
       context.missing(_modelMeta);
     }
     if (data.containsKey('helper_model')) {
       context.handle(
+        _helperModelMeta,
+        helperModel.isAcceptableOrUnknown(
+          data['helper_model']!,
           _helperModelMeta,
-          helperModel.isAcceptableOrUnknown(
-              data['helper_model']!, _helperModelMeta));
+        ),
+      );
     }
     if (data.containsKey('audit_model')) {
       context.handle(
-          _auditModelMeta,
-          auditModel.isAcceptableOrUnknown(
-              data['audit_model']!, _auditModelMeta));
+        _auditModelMeta,
+        auditModel.isAcceptableOrUnknown(data['audit_model']!, _auditModelMeta),
+      );
     }
     if (data.containsKey('prompt_tokens')) {
       context.handle(
+        _promptTokensMeta,
+        promptTokens.isAcceptableOrUnknown(
+          data['prompt_tokens']!,
           _promptTokensMeta,
-          promptTokens.isAcceptableOrUnknown(
-              data['prompt_tokens']!, _promptTokensMeta));
+        ),
+      );
     }
     if (data.containsKey('completion_tokens')) {
       context.handle(
+        _completionTokensMeta,
+        completionTokens.isAcceptableOrUnknown(
+          data['completion_tokens']!,
           _completionTokensMeta,
-          completionTokens.isAcceptableOrUnknown(
-              data['completion_tokens']!, _completionTokensMeta));
+        ),
+      );
     }
     if (data.containsKey('total_tokens')) {
       context.handle(
+        _totalTokensMeta,
+        totalTokens.isAcceptableOrUnknown(
+          data['total_tokens']!,
           _totalTokensMeta,
-          totalTokens.isAcceptableOrUnknown(
-              data['total_tokens']!, _totalTokensMeta));
+        ),
+      );
     }
     if (data.containsKey('elapsed_ms')) {
-      context.handle(_elapsedMsMeta,
-          elapsedMs.isAcceptableOrUnknown(data['elapsed_ms']!, _elapsedMsMeta));
+      context.handle(
+        _elapsedMsMeta,
+        elapsedMs.isAcceptableOrUnknown(data['elapsed_ms']!, _elapsedMsMeta),
+      );
     }
     if (data.containsKey('tool_calls')) {
-      context.handle(_toolCallsMeta,
-          toolCalls.isAcceptableOrUnknown(data['tool_calls']!, _toolCallsMeta));
+      context.handle(
+        _toolCallsMeta,
+        toolCalls.isAcceptableOrUnknown(data['tool_calls']!, _toolCallsMeta),
+      );
     }
     if (data.containsKey('cache_hits')) {
-      context.handle(_cacheHitsMeta,
-          cacheHits.isAcceptableOrUnknown(data['cache_hits']!, _cacheHitsMeta));
+      context.handle(
+        _cacheHitsMeta,
+        cacheHits.isAcceptableOrUnknown(data['cache_hits']!, _cacheHitsMeta),
+      );
     }
     if (data.containsKey('dedup_blocked_calls')) {
       context.handle(
+        _dedupBlockedCallsMeta,
+        dedupBlockedCalls.isAcceptableOrUnknown(
+          data['dedup_blocked_calls']!,
           _dedupBlockedCallsMeta,
-          dedupBlockedCalls.isAcceptableOrUnknown(
-              data['dedup_blocked_calls']!, _dedupBlockedCallsMeta));
+        ),
+      );
     }
     if (data.containsKey('rag_hits')) {
-      context.handle(_ragHitsMeta,
-          ragHits.isAcceptableOrUnknown(data['rag_hits']!, _ragHitsMeta));
+      context.handle(
+        _ragHitsMeta,
+        ragHits.isAcceptableOrUnknown(data['rag_hits']!, _ragHitsMeta),
+      );
     }
     if (data.containsKey('approval_count')) {
       context.handle(
+        _approvalCountMeta,
+        approvalCount.isAcceptableOrUnknown(
+          data['approval_count']!,
           _approvalCountMeta,
-          approvalCount.isAcceptableOrUnknown(
-              data['approval_count']!, _approvalCountMeta));
+        ),
+      );
     }
     if (data.containsKey('approved_count')) {
       context.handle(
+        _approvedCountMeta,
+        approvedCount.isAcceptableOrUnknown(
+          data['approved_count']!,
           _approvedCountMeta,
-          approvedCount.isAcceptableOrUnknown(
-              data['approved_count']!, _approvedCountMeta));
+        ),
+      );
     }
     if (data.containsKey('audit_count')) {
       context.handle(
-          _auditCountMeta,
-          auditCount.isAcceptableOrUnknown(
-              data['audit_count']!, _auditCountMeta));
+        _auditCountMeta,
+        auditCount.isAcceptableOrUnknown(data['audit_count']!, _auditCountMeta),
+      );
     }
     if (data.containsKey('helper_fanout')) {
       context.handle(
+        _helperFanoutMeta,
+        helperFanout.isAcceptableOrUnknown(
+          data['helper_fanout']!,
           _helperFanoutMeta,
-          helperFanout.isAcceptableOrUnknown(
-              data['helper_fanout']!, _helperFanoutMeta));
+        ),
+      );
     }
     if (data.containsKey('success')) {
-      context.handle(_successMeta,
-          success.isAcceptableOrUnknown(data['success']!, _successMeta));
+      context.handle(
+        _successMeta,
+        success.isAcceptableOrUnknown(data['success']!, _successMeta),
+      );
     }
     if (data.containsKey('selected_tool_set_json')) {
       context.handle(
+        _selectedToolSetJsonMeta,
+        selectedToolSetJson.isAcceptableOrUnknown(
+          data['selected_tool_set_json']!,
           _selectedToolSetJsonMeta,
-          selectedToolSetJson.isAcceptableOrUnknown(
-              data['selected_tool_set_json']!, _selectedToolSetJsonMeta));
+        ),
+      );
     }
     if (data.containsKey('memory_sources_json')) {
       context.handle(
+        _memorySourcesJsonMeta,
+        memorySourcesJson.isAcceptableOrUnknown(
+          data['memory_sources_json']!,
           _memorySourcesJsonMeta,
-          memorySourcesJson.isAcceptableOrUnknown(
-              data['memory_sources_json']!, _memorySourcesJsonMeta));
+        ),
+      );
     }
     return context;
   }
@@ -1921,49 +2350,90 @@ class $AgentRunMetricsTableTable extends AgentRunMetricsTable
   AgentRunMetricRow map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return AgentRunMetricRow(
-      id: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
-      startedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}started_at'])!,
-      finishedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}finished_at'])!,
-      model: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}model'])!,
-      helperModel: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}helper_model'])!,
-      auditModel: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}audit_model'])!,
-      promptTokens: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}prompt_tokens'])!,
-      completionTokens: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}completion_tokens'])!,
-      totalTokens: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}total_tokens'])!,
-      elapsedMs: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}elapsed_ms'])!,
-      toolCalls: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}tool_calls'])!,
-      cacheHits: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}cache_hits'])!,
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      startedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}started_at'],
+      )!,
+      finishedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}finished_at'],
+      )!,
+      model: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}model'],
+      )!,
+      helperModel: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}helper_model'],
+      )!,
+      auditModel: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}audit_model'],
+      )!,
+      promptTokens: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}prompt_tokens'],
+      )!,
+      completionTokens: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}completion_tokens'],
+      )!,
+      totalTokens: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}total_tokens'],
+      )!,
+      elapsedMs: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}elapsed_ms'],
+      )!,
+      toolCalls: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}tool_calls'],
+      )!,
+      cacheHits: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}cache_hits'],
+      )!,
       dedupBlockedCalls: attachedDatabase.typeMapping.read(
-          DriftSqlType.int, data['${effectivePrefix}dedup_blocked_calls'])!,
-      ragHits: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}rag_hits'])!,
-      approvalCount: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}approval_count'])!,
-      approvedCount: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}approved_count'])!,
-      auditCount: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}audit_count'])!,
-      helperFanout: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}helper_fanout'])!,
-      success: attachedDatabase.typeMapping
-          .read(DriftSqlType.bool, data['${effectivePrefix}success'])!,
+        DriftSqlType.int,
+        data['${effectivePrefix}dedup_blocked_calls'],
+      )!,
+      ragHits: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}rag_hits'],
+      )!,
+      approvalCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}approval_count'],
+      )!,
+      approvedCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}approved_count'],
+      )!,
+      auditCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}audit_count'],
+      )!,
+      helperFanout: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}helper_fanout'],
+      )!,
+      success: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}success'],
+      )!,
       selectedToolSetJson: attachedDatabase.typeMapping.read(
-          DriftSqlType.string,
-          data['${effectivePrefix}selected_tool_set_json'])!,
+        DriftSqlType.string,
+        data['${effectivePrefix}selected_tool_set_json'],
+      )!,
       memorySourcesJson: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}memory_sources_json'])!,
+        DriftSqlType.string,
+        data['${effectivePrefix}memory_sources_json'],
+      )!,
     );
   }
 
@@ -1996,28 +2466,29 @@ class AgentRunMetricRow extends DataClass
   final bool success;
   final String selectedToolSetJson;
   final String memorySourcesJson;
-  const AgentRunMetricRow(
-      {required this.id,
-      required this.startedAt,
-      required this.finishedAt,
-      required this.model,
-      required this.helperModel,
-      required this.auditModel,
-      required this.promptTokens,
-      required this.completionTokens,
-      required this.totalTokens,
-      required this.elapsedMs,
-      required this.toolCalls,
-      required this.cacheHits,
-      required this.dedupBlockedCalls,
-      required this.ragHits,
-      required this.approvalCount,
-      required this.approvedCount,
-      required this.auditCount,
-      required this.helperFanout,
-      required this.success,
-      required this.selectedToolSetJson,
-      required this.memorySourcesJson});
+  const AgentRunMetricRow({
+    required this.id,
+    required this.startedAt,
+    required this.finishedAt,
+    required this.model,
+    required this.helperModel,
+    required this.auditModel,
+    required this.promptTokens,
+    required this.completionTokens,
+    required this.totalTokens,
+    required this.elapsedMs,
+    required this.toolCalls,
+    required this.cacheHits,
+    required this.dedupBlockedCalls,
+    required this.ragHits,
+    required this.approvalCount,
+    required this.approvedCount,
+    required this.auditCount,
+    required this.helperFanout,
+    required this.success,
+    required this.selectedToolSetJson,
+    required this.memorySourcesJson,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -2071,8 +2542,10 @@ class AgentRunMetricRow extends DataClass
     );
   }
 
-  factory AgentRunMetricRow.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory AgentRunMetricRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return AgentRunMetricRow(
       id: serializer.fromJson<String>(json['id']),
@@ -2094,8 +2567,9 @@ class AgentRunMetricRow extends DataClass
       auditCount: serializer.fromJson<int>(json['auditCount']),
       helperFanout: serializer.fromJson<int>(json['helperFanout']),
       success: serializer.fromJson<bool>(json['success']),
-      selectedToolSetJson:
-          serializer.fromJson<String>(json['selectedToolSetJson']),
+      selectedToolSetJson: serializer.fromJson<String>(
+        json['selectedToolSetJson'],
+      ),
       memorySourcesJson: serializer.fromJson<String>(json['memorySourcesJson']),
     );
   }
@@ -2127,70 +2601,74 @@ class AgentRunMetricRow extends DataClass
     };
   }
 
-  AgentRunMetricRow copyWith(
-          {String? id,
-          int? startedAt,
-          int? finishedAt,
-          String? model,
-          String? helperModel,
-          String? auditModel,
-          int? promptTokens,
-          int? completionTokens,
-          int? totalTokens,
-          int? elapsedMs,
-          int? toolCalls,
-          int? cacheHits,
-          int? dedupBlockedCalls,
-          int? ragHits,
-          int? approvalCount,
-          int? approvedCount,
-          int? auditCount,
-          int? helperFanout,
-          bool? success,
-          String? selectedToolSetJson,
-          String? memorySourcesJson}) =>
-      AgentRunMetricRow(
-        id: id ?? this.id,
-        startedAt: startedAt ?? this.startedAt,
-        finishedAt: finishedAt ?? this.finishedAt,
-        model: model ?? this.model,
-        helperModel: helperModel ?? this.helperModel,
-        auditModel: auditModel ?? this.auditModel,
-        promptTokens: promptTokens ?? this.promptTokens,
-        completionTokens: completionTokens ?? this.completionTokens,
-        totalTokens: totalTokens ?? this.totalTokens,
-        elapsedMs: elapsedMs ?? this.elapsedMs,
-        toolCalls: toolCalls ?? this.toolCalls,
-        cacheHits: cacheHits ?? this.cacheHits,
-        dedupBlockedCalls: dedupBlockedCalls ?? this.dedupBlockedCalls,
-        ragHits: ragHits ?? this.ragHits,
-        approvalCount: approvalCount ?? this.approvalCount,
-        approvedCount: approvedCount ?? this.approvedCount,
-        auditCount: auditCount ?? this.auditCount,
-        helperFanout: helperFanout ?? this.helperFanout,
-        success: success ?? this.success,
-        selectedToolSetJson: selectedToolSetJson ?? this.selectedToolSetJson,
-        memorySourcesJson: memorySourcesJson ?? this.memorySourcesJson,
-      );
+  AgentRunMetricRow copyWith({
+    String? id,
+    int? startedAt,
+    int? finishedAt,
+    String? model,
+    String? helperModel,
+    String? auditModel,
+    int? promptTokens,
+    int? completionTokens,
+    int? totalTokens,
+    int? elapsedMs,
+    int? toolCalls,
+    int? cacheHits,
+    int? dedupBlockedCalls,
+    int? ragHits,
+    int? approvalCount,
+    int? approvedCount,
+    int? auditCount,
+    int? helperFanout,
+    bool? success,
+    String? selectedToolSetJson,
+    String? memorySourcesJson,
+  }) => AgentRunMetricRow(
+    id: id ?? this.id,
+    startedAt: startedAt ?? this.startedAt,
+    finishedAt: finishedAt ?? this.finishedAt,
+    model: model ?? this.model,
+    helperModel: helperModel ?? this.helperModel,
+    auditModel: auditModel ?? this.auditModel,
+    promptTokens: promptTokens ?? this.promptTokens,
+    completionTokens: completionTokens ?? this.completionTokens,
+    totalTokens: totalTokens ?? this.totalTokens,
+    elapsedMs: elapsedMs ?? this.elapsedMs,
+    toolCalls: toolCalls ?? this.toolCalls,
+    cacheHits: cacheHits ?? this.cacheHits,
+    dedupBlockedCalls: dedupBlockedCalls ?? this.dedupBlockedCalls,
+    ragHits: ragHits ?? this.ragHits,
+    approvalCount: approvalCount ?? this.approvalCount,
+    approvedCount: approvedCount ?? this.approvedCount,
+    auditCount: auditCount ?? this.auditCount,
+    helperFanout: helperFanout ?? this.helperFanout,
+    success: success ?? this.success,
+    selectedToolSetJson: selectedToolSetJson ?? this.selectedToolSetJson,
+    memorySourcesJson: memorySourcesJson ?? this.memorySourcesJson,
+  );
   AgentRunMetricRow copyWithCompanion(AgentRunMetricsTableCompanion data) {
     return AgentRunMetricRow(
       id: data.id.present ? data.id.value : this.id,
       startedAt: data.startedAt.present ? data.startedAt.value : this.startedAt,
-      finishedAt:
-          data.finishedAt.present ? data.finishedAt.value : this.finishedAt,
+      finishedAt: data.finishedAt.present
+          ? data.finishedAt.value
+          : this.finishedAt,
       model: data.model.present ? data.model.value : this.model,
-      helperModel:
-          data.helperModel.present ? data.helperModel.value : this.helperModel,
-      auditModel:
-          data.auditModel.present ? data.auditModel.value : this.auditModel,
+      helperModel: data.helperModel.present
+          ? data.helperModel.value
+          : this.helperModel,
+      auditModel: data.auditModel.present
+          ? data.auditModel.value
+          : this.auditModel,
       promptTokens: data.promptTokens.present
           ? data.promptTokens.value
           : this.promptTokens,
       completionTokens: data.completionTokens.present
           ? data.completionTokens.value
           : this.completionTokens,
-      totalTokens:
-          data.totalTokens.present ? data.totalTokens.value : this.totalTokens,
+      totalTokens: data.totalTokens.present
+          ? data.totalTokens.value
+          : this.totalTokens,
       elapsedMs: data.elapsedMs.present ? data.elapsedMs.value : this.elapsedMs,
       toolCalls: data.toolCalls.present ? data.toolCalls.value : this.toolCalls,
       cacheHits: data.cacheHits.present ? data.cacheHits.value : this.cacheHits,
@@ -2204,8 +2682,9 @@ class AgentRunMetricRow extends DataClass
       approvedCount: data.approvedCount.present
           ? data.approvedCount.value
           : this.approvedCount,
-      auditCount:
-          data.auditCount.present ? data.auditCount.value : this.auditCount,
+      auditCount: data.auditCount.present
+          ? data.auditCount.value
+          : this.auditCount,
       helperFanout: data.helperFanout.present
           ? data.helperFanout.value
           : this.helperFanout,
@@ -2249,28 +2728,28 @@ class AgentRunMetricRow extends DataClass
 
   @override
   int get hashCode => Object.hashAll([
-        id,
-        startedAt,
-        finishedAt,
-        model,
-        helperModel,
-        auditModel,
-        promptTokens,
-        completionTokens,
-        totalTokens,
-        elapsedMs,
-        toolCalls,
-        cacheHits,
-        dedupBlockedCalls,
-        ragHits,
-        approvalCount,
-        approvedCount,
-        auditCount,
-        helperFanout,
-        success,
-        selectedToolSetJson,
-        memorySourcesJson
-      ]);
+    id,
+    startedAt,
+    finishedAt,
+    model,
+    helperModel,
+    auditModel,
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    elapsedMs,
+    toolCalls,
+    cacheHits,
+    dedupBlockedCalls,
+    ragHits,
+    approvalCount,
+    approvedCount,
+    auditCount,
+    helperFanout,
+    success,
+    selectedToolSetJson,
+    memorySourcesJson,
+  ]);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -2368,10 +2847,10 @@ class AgentRunMetricsTableCompanion extends UpdateCompanion<AgentRunMetricRow> {
     this.selectedToolSetJson = const Value.absent(),
     this.memorySourcesJson = const Value.absent(),
     this.rowid = const Value.absent(),
-  })  : id = Value(id),
-        startedAt = Value(startedAt),
-        finishedAt = Value(finishedAt),
-        model = Value(model);
+  }) : id = Value(id),
+       startedAt = Value(startedAt),
+       finishedAt = Value(finishedAt),
+       model = Value(model);
   static Insertable<AgentRunMetricRow> custom({
     Expression<String>? id,
     Expression<int>? startedAt,
@@ -2423,29 +2902,30 @@ class AgentRunMetricsTableCompanion extends UpdateCompanion<AgentRunMetricRow> {
     });
   }
 
-  AgentRunMetricsTableCompanion copyWith(
-      {Value<String>? id,
-      Value<int>? startedAt,
-      Value<int>? finishedAt,
-      Value<String>? model,
-      Value<String>? helperModel,
-      Value<String>? auditModel,
-      Value<int>? promptTokens,
-      Value<int>? completionTokens,
-      Value<int>? totalTokens,
-      Value<int>? elapsedMs,
-      Value<int>? toolCalls,
-      Value<int>? cacheHits,
-      Value<int>? dedupBlockedCalls,
-      Value<int>? ragHits,
-      Value<int>? approvalCount,
-      Value<int>? approvedCount,
-      Value<int>? auditCount,
-      Value<int>? helperFanout,
-      Value<bool>? success,
-      Value<String>? selectedToolSetJson,
-      Value<String>? memorySourcesJson,
-      Value<int>? rowid}) {
+  AgentRunMetricsTableCompanion copyWith({
+    Value<String>? id,
+    Value<int>? startedAt,
+    Value<int>? finishedAt,
+    Value<String>? model,
+    Value<String>? helperModel,
+    Value<String>? auditModel,
+    Value<int>? promptTokens,
+    Value<int>? completionTokens,
+    Value<int>? totalTokens,
+    Value<int>? elapsedMs,
+    Value<int>? toolCalls,
+    Value<int>? cacheHits,
+    Value<int>? dedupBlockedCalls,
+    Value<int>? ragHits,
+    Value<int>? approvalCount,
+    Value<int>? approvedCount,
+    Value<int>? auditCount,
+    Value<int>? helperFanout,
+    Value<bool>? success,
+    Value<String>? selectedToolSetJson,
+    Value<String>? memorySourcesJson,
+    Value<int>? rowid,
+  }) {
     return AgentRunMetricsTableCompanion(
       id: id ?? this.id,
       startedAt: startedAt ?? this.startedAt,
@@ -2533,8 +3013,9 @@ class AgentRunMetricsTableCompanion extends UpdateCompanion<AgentRunMetricRow> {
       map['success'] = Variable<bool>(success.value);
     }
     if (selectedToolSetJson.present) {
-      map['selected_tool_set_json'] =
-          Variable<String>(selectedToolSetJson.value);
+      map['selected_tool_set_json'] = Variable<String>(
+        selectedToolSetJson.value,
+      );
     }
     if (memorySourcesJson.present) {
       map['memory_sources_json'] = Variable<String>(memorySourcesJson.value);
@@ -2584,94 +3065,149 @@ class $AgentTraceEventsTableTable extends AgentTraceEventsTable
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
   late final GeneratedColumn<String> id = GeneratedColumn<String>(
-      'id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _runIdMeta = const VerificationMeta('runId');
   @override
   late final GeneratedColumn<String> runId = GeneratedColumn<String>(
-      'run_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'run_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _chatIdMeta = const VerificationMeta('chatId');
   @override
   late final GeneratedColumn<String> chatId = GeneratedColumn<String>(
-      'chat_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _createdAtMeta =
-      const VerificationMeta('createdAt');
+    'chat_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
   @override
   late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
-      'created_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _sequenceMeta =
-      const VerificationMeta('sequence');
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _sequenceMeta = const VerificationMeta(
+    'sequence',
+  );
   @override
   late final GeneratedColumn<int> sequence = GeneratedColumn<int>(
-      'sequence', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
+    'sequence',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _kindMeta = const VerificationMeta('kind');
   @override
   late final GeneratedColumn<String> kind = GeneratedColumn<String>(
-      'kind', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'kind',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _titleMeta = const VerificationMeta('title');
   @override
   late final GeneratedColumn<String> title = GeneratedColumn<String>(
-      'title', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _contentJsonMeta =
-      const VerificationMeta('contentJson');
+    'title',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _contentJsonMeta = const VerificationMeta(
+    'contentJson',
+  );
   @override
   late final GeneratedColumn<String> contentJson = GeneratedColumn<String>(
-      'content_json', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _toolNameMeta =
-      const VerificationMeta('toolName');
+    'content_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _toolNameMeta = const VerificationMeta(
+    'toolName',
+  );
   @override
   late final GeneratedColumn<String> toolName = GeneratedColumn<String>(
-      'tool_name', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
+    'tool_name',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _statusMeta = const VerificationMeta('status');
   @override
   late final GeneratedColumn<String> status = GeneratedColumn<String>(
-      'status', aliasedName, false,
-      type: DriftSqlType.string,
-      requiredDuringInsert: false,
-      defaultValue: const Constant('info'));
-  static const VerificationMeta _durationMsMeta =
-      const VerificationMeta('durationMs');
+    'status',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('info'),
+  );
+  static const VerificationMeta _durationMsMeta = const VerificationMeta(
+    'durationMs',
+  );
   @override
   late final GeneratedColumn<int> durationMs = GeneratedColumn<int>(
-      'duration_ms', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
-  static const VerificationMeta _parentEventIdMeta =
-      const VerificationMeta('parentEventId');
+    'duration_ms',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _parentEventIdMeta = const VerificationMeta(
+    'parentEventId',
+  );
   @override
   late final GeneratedColumn<String> parentEventId = GeneratedColumn<String>(
-      'parent_event_id', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
+    'parent_event_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
-        id,
-        runId,
-        chatId,
-        createdAt,
-        sequence,
-        kind,
-        title,
-        contentJson,
-        toolName,
-        status,
-        durationMs,
-        parentEventId
-      ];
+    id,
+    runId,
+    chatId,
+    createdAt,
+    sequence,
+    kind,
+    title,
+    contentJson,
+    toolName,
+    status,
+    durationMs,
+    parentEventId,
+  ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
   String get actualTableName => $name;
   static const String $name = 'agent_trace_events';
   @override
-  VerificationContext validateIntegrity(Insertable<AgentTraceEventRow> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<AgentTraceEventRow> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
@@ -2681,67 +3217,89 @@ class $AgentTraceEventsTableTable extends AgentTraceEventsTable
     }
     if (data.containsKey('run_id')) {
       context.handle(
-          _runIdMeta, runId.isAcceptableOrUnknown(data['run_id']!, _runIdMeta));
+        _runIdMeta,
+        runId.isAcceptableOrUnknown(data['run_id']!, _runIdMeta),
+      );
     } else if (isInserting) {
       context.missing(_runIdMeta);
     }
     if (data.containsKey('chat_id')) {
-      context.handle(_chatIdMeta,
-          chatId.isAcceptableOrUnknown(data['chat_id']!, _chatIdMeta));
+      context.handle(
+        _chatIdMeta,
+        chatId.isAcceptableOrUnknown(data['chat_id']!, _chatIdMeta),
+      );
     } else if (isInserting) {
       context.missing(_chatIdMeta);
     }
     if (data.containsKey('created_at')) {
-      context.handle(_createdAtMeta,
-          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_createdAtMeta);
     }
     if (data.containsKey('sequence')) {
-      context.handle(_sequenceMeta,
-          sequence.isAcceptableOrUnknown(data['sequence']!, _sequenceMeta));
+      context.handle(
+        _sequenceMeta,
+        sequence.isAcceptableOrUnknown(data['sequence']!, _sequenceMeta),
+      );
     } else if (isInserting) {
       context.missing(_sequenceMeta);
     }
     if (data.containsKey('kind')) {
       context.handle(
-          _kindMeta, kind.isAcceptableOrUnknown(data['kind']!, _kindMeta));
+        _kindMeta,
+        kind.isAcceptableOrUnknown(data['kind']!, _kindMeta),
+      );
     } else if (isInserting) {
       context.missing(_kindMeta);
     }
     if (data.containsKey('title')) {
       context.handle(
-          _titleMeta, title.isAcceptableOrUnknown(data['title']!, _titleMeta));
+        _titleMeta,
+        title.isAcceptableOrUnknown(data['title']!, _titleMeta),
+      );
     } else if (isInserting) {
       context.missing(_titleMeta);
     }
     if (data.containsKey('content_json')) {
       context.handle(
+        _contentJsonMeta,
+        contentJson.isAcceptableOrUnknown(
+          data['content_json']!,
           _contentJsonMeta,
-          contentJson.isAcceptableOrUnknown(
-              data['content_json']!, _contentJsonMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_contentJsonMeta);
     }
     if (data.containsKey('tool_name')) {
-      context.handle(_toolNameMeta,
-          toolName.isAcceptableOrUnknown(data['tool_name']!, _toolNameMeta));
+      context.handle(
+        _toolNameMeta,
+        toolName.isAcceptableOrUnknown(data['tool_name']!, _toolNameMeta),
+      );
     }
     if (data.containsKey('status')) {
-      context.handle(_statusMeta,
-          status.isAcceptableOrUnknown(data['status']!, _statusMeta));
+      context.handle(
+        _statusMeta,
+        status.isAcceptableOrUnknown(data['status']!, _statusMeta),
+      );
     }
     if (data.containsKey('duration_ms')) {
       context.handle(
-          _durationMsMeta,
-          durationMs.isAcceptableOrUnknown(
-              data['duration_ms']!, _durationMsMeta));
+        _durationMsMeta,
+        durationMs.isAcceptableOrUnknown(data['duration_ms']!, _durationMsMeta),
+      );
     }
     if (data.containsKey('parent_event_id')) {
       context.handle(
+        _parentEventIdMeta,
+        parentEventId.isAcceptableOrUnknown(
+          data['parent_event_id']!,
           _parentEventIdMeta,
-          parentEventId.isAcceptableOrUnknown(
-              data['parent_event_id']!, _parentEventIdMeta));
+        ),
+      );
     }
     return context;
   }
@@ -2752,30 +3310,54 @@ class $AgentTraceEventsTableTable extends AgentTraceEventsTable
   AgentTraceEventRow map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return AgentTraceEventRow(
-      id: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
-      runId: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}run_id'])!,
-      chatId: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}chat_id'])!,
-      createdAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}created_at'])!,
-      sequence: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}sequence'])!,
-      kind: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}kind'])!,
-      title: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}title'])!,
-      contentJson: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}content_json'])!,
-      toolName: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}tool_name']),
-      status: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}status'])!,
-      durationMs: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}duration_ms']),
-      parentEventId: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}parent_event_id']),
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      runId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}run_id'],
+      )!,
+      chatId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}chat_id'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}created_at'],
+      )!,
+      sequence: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}sequence'],
+      )!,
+      kind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}kind'],
+      )!,
+      title: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}title'],
+      )!,
+      contentJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}content_json'],
+      )!,
+      toolName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}tool_name'],
+      ),
+      status: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}status'],
+      )!,
+      durationMs: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}duration_ms'],
+      ),
+      parentEventId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}parent_event_id'],
+      ),
     );
   }
 
@@ -2799,19 +3381,20 @@ class AgentTraceEventRow extends DataClass
   final String status;
   final int? durationMs;
   final String? parentEventId;
-  const AgentTraceEventRow(
-      {required this.id,
-      required this.runId,
-      required this.chatId,
-      required this.createdAt,
-      required this.sequence,
-      required this.kind,
-      required this.title,
-      required this.contentJson,
-      this.toolName,
-      required this.status,
-      this.durationMs,
-      this.parentEventId});
+  const AgentTraceEventRow({
+    required this.id,
+    required this.runId,
+    required this.chatId,
+    required this.createdAt,
+    required this.sequence,
+    required this.kind,
+    required this.title,
+    required this.contentJson,
+    this.toolName,
+    required this.status,
+    this.durationMs,
+    this.parentEventId,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -2859,8 +3442,10 @@ class AgentTraceEventRow extends DataClass
     );
   }
 
-  factory AgentTraceEventRow.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory AgentTraceEventRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return AgentTraceEventRow(
       id: serializer.fromJson<String>(json['id']),
@@ -2896,34 +3481,35 @@ class AgentTraceEventRow extends DataClass
     };
   }
 
-  AgentTraceEventRow copyWith(
-          {String? id,
-          String? runId,
-          String? chatId,
-          int? createdAt,
-          int? sequence,
-          String? kind,
-          String? title,
-          String? contentJson,
-          Value<String?> toolName = const Value.absent(),
-          String? status,
-          Value<int?> durationMs = const Value.absent(),
-          Value<String?> parentEventId = const Value.absent()}) =>
-      AgentTraceEventRow(
-        id: id ?? this.id,
-        runId: runId ?? this.runId,
-        chatId: chatId ?? this.chatId,
-        createdAt: createdAt ?? this.createdAt,
-        sequence: sequence ?? this.sequence,
-        kind: kind ?? this.kind,
-        title: title ?? this.title,
-        contentJson: contentJson ?? this.contentJson,
-        toolName: toolName.present ? toolName.value : this.toolName,
-        status: status ?? this.status,
-        durationMs: durationMs.present ? durationMs.value : this.durationMs,
-        parentEventId:
-            parentEventId.present ? parentEventId.value : this.parentEventId,
-      );
+  AgentTraceEventRow copyWith({
+    String? id,
+    String? runId,
+    String? chatId,
+    int? createdAt,
+    int? sequence,
+    String? kind,
+    String? title,
+    String? contentJson,
+    Value<String?> toolName = const Value.absent(),
+    String? status,
+    Value<int?> durationMs = const Value.absent(),
+    Value<String?> parentEventId = const Value.absent(),
+  }) => AgentTraceEventRow(
+    id: id ?? this.id,
+    runId: runId ?? this.runId,
+    chatId: chatId ?? this.chatId,
+    createdAt: createdAt ?? this.createdAt,
+    sequence: sequence ?? this.sequence,
+    kind: kind ?? this.kind,
+    title: title ?? this.title,
+    contentJson: contentJson ?? this.contentJson,
+    toolName: toolName.present ? toolName.value : this.toolName,
+    status: status ?? this.status,
+    durationMs: durationMs.present ? durationMs.value : this.durationMs,
+    parentEventId: parentEventId.present
+        ? parentEventId.value
+        : this.parentEventId,
+  );
   AgentTraceEventRow copyWithCompanion(AgentTraceEventsTableCompanion data) {
     return AgentTraceEventRow(
       id: data.id.present ? data.id.value : this.id,
@@ -2933,12 +3519,14 @@ class AgentTraceEventRow extends DataClass
       sequence: data.sequence.present ? data.sequence.value : this.sequence,
       kind: data.kind.present ? data.kind.value : this.kind,
       title: data.title.present ? data.title.value : this.title,
-      contentJson:
-          data.contentJson.present ? data.contentJson.value : this.contentJson,
+      contentJson: data.contentJson.present
+          ? data.contentJson.value
+          : this.contentJson,
       toolName: data.toolName.present ? data.toolName.value : this.toolName,
       status: data.status.present ? data.status.value : this.status,
-      durationMs:
-          data.durationMs.present ? data.durationMs.value : this.durationMs,
+      durationMs: data.durationMs.present
+          ? data.durationMs.value
+          : this.durationMs,
       parentEventId: data.parentEventId.present
           ? data.parentEventId.value
           : this.parentEventId,
@@ -2965,8 +3553,20 @@ class AgentTraceEventRow extends DataClass
   }
 
   @override
-  int get hashCode => Object.hash(id, runId, chatId, createdAt, sequence, kind,
-      title, contentJson, toolName, status, durationMs, parentEventId);
+  int get hashCode => Object.hash(
+    id,
+    runId,
+    chatId,
+    createdAt,
+    sequence,
+    kind,
+    title,
+    contentJson,
+    toolName,
+    status,
+    durationMs,
+    parentEventId,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -3029,14 +3629,14 @@ class AgentTraceEventsTableCompanion
     this.durationMs = const Value.absent(),
     this.parentEventId = const Value.absent(),
     this.rowid = const Value.absent(),
-  })  : id = Value(id),
-        runId = Value(runId),
-        chatId = Value(chatId),
-        createdAt = Value(createdAt),
-        sequence = Value(sequence),
-        kind = Value(kind),
-        title = Value(title),
-        contentJson = Value(contentJson);
+  }) : id = Value(id),
+       runId = Value(runId),
+       chatId = Value(chatId),
+       createdAt = Value(createdAt),
+       sequence = Value(sequence),
+       kind = Value(kind),
+       title = Value(title),
+       contentJson = Value(contentJson);
   static Insertable<AgentTraceEventRow> custom({
     Expression<String>? id,
     Expression<String>? runId,
@@ -3069,20 +3669,21 @@ class AgentTraceEventsTableCompanion
     });
   }
 
-  AgentTraceEventsTableCompanion copyWith(
-      {Value<String>? id,
-      Value<String>? runId,
-      Value<String>? chatId,
-      Value<int>? createdAt,
-      Value<int>? sequence,
-      Value<String>? kind,
-      Value<String>? title,
-      Value<String>? contentJson,
-      Value<String?>? toolName,
-      Value<String>? status,
-      Value<int?>? durationMs,
-      Value<String?>? parentEventId,
-      Value<int>? rowid}) {
+  AgentTraceEventsTableCompanion copyWith({
+    Value<String>? id,
+    Value<String>? runId,
+    Value<String>? chatId,
+    Value<int>? createdAt,
+    Value<int>? sequence,
+    Value<String>? kind,
+    Value<String>? title,
+    Value<String>? contentJson,
+    Value<String?>? toolName,
+    Value<String>? status,
+    Value<int?>? durationMs,
+    Value<String?>? parentEventId,
+    Value<int>? rowid,
+  }) {
     return AgentTraceEventsTableCompanion(
       id: id ?? this.id,
       runId: runId ?? this.runId,
@@ -3172,71 +3773,115 @@ class $TerminalHistoryRecordsTable extends TerminalHistoryRecords
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
   $TerminalHistoryRecordsTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _sessionIdMeta =
-      const VerificationMeta('sessionId');
+  static const VerificationMeta _sessionIdMeta = const VerificationMeta(
+    'sessionId',
+  );
   @override
   late final GeneratedColumn<String> sessionId = GeneratedColumn<String>(
-      'session_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _connectionIdMeta =
-      const VerificationMeta('connectionId');
+    'session_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _connectionIdMeta = const VerificationMeta(
+    'connectionId',
+  );
   @override
   late final GeneratedColumn<String> connectionId = GeneratedColumn<String>(
-      'connection_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _connectionNameMeta =
-      const VerificationMeta('connectionName');
+    'connection_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _connectionNameMeta = const VerificationMeta(
+    'connectionName',
+  );
   @override
   late final GeneratedColumn<String> connectionName = GeneratedColumn<String>(
-      'connection_name', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _displayNameMeta =
-      const VerificationMeta('displayName');
+    'connection_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _displayNameMeta = const VerificationMeta(
+    'displayName',
+  );
   @override
   late final GeneratedColumn<String> displayName = GeneratedColumn<String>(
-      'display_name', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _tmuxSessionNameMeta =
-      const VerificationMeta('tmuxSessionName');
+    'display_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _tmuxSessionNameMeta = const VerificationMeta(
+    'tmuxSessionName',
+  );
   @override
   late final GeneratedColumn<String> tmuxSessionName = GeneratedColumn<String>(
-      'tmux_session_name', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
+    'tmux_session_name',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _stateMeta = const VerificationMeta('state');
   @override
   late final GeneratedColumn<String> state = GeneratedColumn<String>(
-      'state', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _errorMessageMeta =
-      const VerificationMeta('errorMessage');
+    'state',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _errorMessageMeta = const VerificationMeta(
+    'errorMessage',
+  );
   @override
   late final GeneratedColumn<String> errorMessage = GeneratedColumn<String>(
-      'error_message', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
-  static const VerificationMeta _createdAtMeta =
-      const VerificationMeta('createdAt');
+    'error_message',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
   @override
   late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
-      'created_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _updatedAtMeta =
-      const VerificationMeta('updatedAt');
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
   @override
   late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
-      'updated_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
   @override
   List<GeneratedColumn> get $columns => [
-        sessionId,
-        connectionId,
-        connectionName,
-        displayName,
-        tmuxSessionName,
-        state,
-        errorMessage,
-        createdAt,
-        updatedAt
-      ];
+    sessionId,
+    connectionId,
+    connectionName,
+    displayName,
+    tmuxSessionName,
+    state,
+    errorMessage,
+    createdAt,
+    updatedAt,
+  ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -3244,67 +3889,91 @@ class $TerminalHistoryRecordsTable extends TerminalHistoryRecords
   static const String $name = 'terminal_history_records';
   @override
   VerificationContext validateIntegrity(
-      Insertable<TerminalHistoryRecord> instance,
-      {bool isInserting = false}) {
+    Insertable<TerminalHistoryRecord> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('session_id')) {
-      context.handle(_sessionIdMeta,
-          sessionId.isAcceptableOrUnknown(data['session_id']!, _sessionIdMeta));
+      context.handle(
+        _sessionIdMeta,
+        sessionId.isAcceptableOrUnknown(data['session_id']!, _sessionIdMeta),
+      );
     } else if (isInserting) {
       context.missing(_sessionIdMeta);
     }
     if (data.containsKey('connection_id')) {
       context.handle(
+        _connectionIdMeta,
+        connectionId.isAcceptableOrUnknown(
+          data['connection_id']!,
           _connectionIdMeta,
-          connectionId.isAcceptableOrUnknown(
-              data['connection_id']!, _connectionIdMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_connectionIdMeta);
     }
     if (data.containsKey('connection_name')) {
       context.handle(
+        _connectionNameMeta,
+        connectionName.isAcceptableOrUnknown(
+          data['connection_name']!,
           _connectionNameMeta,
-          connectionName.isAcceptableOrUnknown(
-              data['connection_name']!, _connectionNameMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_connectionNameMeta);
     }
     if (data.containsKey('display_name')) {
       context.handle(
+        _displayNameMeta,
+        displayName.isAcceptableOrUnknown(
+          data['display_name']!,
           _displayNameMeta,
-          displayName.isAcceptableOrUnknown(
-              data['display_name']!, _displayNameMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_displayNameMeta);
     }
     if (data.containsKey('tmux_session_name')) {
       context.handle(
+        _tmuxSessionNameMeta,
+        tmuxSessionName.isAcceptableOrUnknown(
+          data['tmux_session_name']!,
           _tmuxSessionNameMeta,
-          tmuxSessionName.isAcceptableOrUnknown(
-              data['tmux_session_name']!, _tmuxSessionNameMeta));
+        ),
+      );
     }
     if (data.containsKey('state')) {
       context.handle(
-          _stateMeta, state.isAcceptableOrUnknown(data['state']!, _stateMeta));
+        _stateMeta,
+        state.isAcceptableOrUnknown(data['state']!, _stateMeta),
+      );
     } else if (isInserting) {
       context.missing(_stateMeta);
     }
     if (data.containsKey('error_message')) {
       context.handle(
+        _errorMessageMeta,
+        errorMessage.isAcceptableOrUnknown(
+          data['error_message']!,
           _errorMessageMeta,
-          errorMessage.isAcceptableOrUnknown(
-              data['error_message']!, _errorMessageMeta));
+        ),
+      );
     }
     if (data.containsKey('created_at')) {
-      context.handle(_createdAtMeta,
-          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_createdAtMeta);
     }
     if (data.containsKey('updated_at')) {
-      context.handle(_updatedAtMeta,
-          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_updatedAtMeta);
     }
@@ -3317,24 +3986,42 @@ class $TerminalHistoryRecordsTable extends TerminalHistoryRecords
   TerminalHistoryRecord map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return TerminalHistoryRecord(
-      sessionId: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}session_id'])!,
-      connectionId: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}connection_id'])!,
+      sessionId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}session_id'],
+      )!,
+      connectionId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}connection_id'],
+      )!,
       connectionName: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}connection_name'])!,
-      displayName: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}display_name'])!,
+        DriftSqlType.string,
+        data['${effectivePrefix}connection_name'],
+      )!,
+      displayName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}display_name'],
+      )!,
       tmuxSessionName: attachedDatabase.typeMapping.read(
-          DriftSqlType.string, data['${effectivePrefix}tmux_session_name']),
-      state: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}state'])!,
-      errorMessage: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}error_message']),
-      createdAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}created_at'])!,
-      updatedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}updated_at'])!,
+        DriftSqlType.string,
+        data['${effectivePrefix}tmux_session_name'],
+      ),
+      state: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}state'],
+      )!,
+      errorMessage: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}error_message'],
+      ),
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}updated_at'],
+      )!,
     );
   }
 
@@ -3355,16 +4042,17 @@ class TerminalHistoryRecord extends DataClass
   final String? errorMessage;
   final int createdAt;
   final int updatedAt;
-  const TerminalHistoryRecord(
-      {required this.sessionId,
-      required this.connectionId,
-      required this.connectionName,
-      required this.displayName,
-      this.tmuxSessionName,
-      required this.state,
-      this.errorMessage,
-      required this.createdAt,
-      required this.updatedAt});
+  const TerminalHistoryRecord({
+    required this.sessionId,
+    required this.connectionId,
+    required this.connectionName,
+    required this.displayName,
+    this.tmuxSessionName,
+    required this.state,
+    this.errorMessage,
+    required this.createdAt,
+    required this.updatedAt,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -3402,8 +4090,10 @@ class TerminalHistoryRecord extends DataClass
     );
   }
 
-  factory TerminalHistoryRecord.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory TerminalHistoryRecord.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return TerminalHistoryRecord(
       sessionId: serializer.fromJson<String>(json['sessionId']),
@@ -3433,32 +4123,32 @@ class TerminalHistoryRecord extends DataClass
     };
   }
 
-  TerminalHistoryRecord copyWith(
-          {String? sessionId,
-          String? connectionId,
-          String? connectionName,
-          String? displayName,
-          Value<String?> tmuxSessionName = const Value.absent(),
-          String? state,
-          Value<String?> errorMessage = const Value.absent(),
-          int? createdAt,
-          int? updatedAt}) =>
-      TerminalHistoryRecord(
-        sessionId: sessionId ?? this.sessionId,
-        connectionId: connectionId ?? this.connectionId,
-        connectionName: connectionName ?? this.connectionName,
-        displayName: displayName ?? this.displayName,
-        tmuxSessionName: tmuxSessionName.present
-            ? tmuxSessionName.value
-            : this.tmuxSessionName,
-        state: state ?? this.state,
-        errorMessage:
-            errorMessage.present ? errorMessage.value : this.errorMessage,
-        createdAt: createdAt ?? this.createdAt,
-        updatedAt: updatedAt ?? this.updatedAt,
-      );
+  TerminalHistoryRecord copyWith({
+    String? sessionId,
+    String? connectionId,
+    String? connectionName,
+    String? displayName,
+    Value<String?> tmuxSessionName = const Value.absent(),
+    String? state,
+    Value<String?> errorMessage = const Value.absent(),
+    int? createdAt,
+    int? updatedAt,
+  }) => TerminalHistoryRecord(
+    sessionId: sessionId ?? this.sessionId,
+    connectionId: connectionId ?? this.connectionId,
+    connectionName: connectionName ?? this.connectionName,
+    displayName: displayName ?? this.displayName,
+    tmuxSessionName: tmuxSessionName.present
+        ? tmuxSessionName.value
+        : this.tmuxSessionName,
+    state: state ?? this.state,
+    errorMessage: errorMessage.present ? errorMessage.value : this.errorMessage,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
   TerminalHistoryRecord copyWithCompanion(
-      TerminalHistoryRecordsCompanion data) {
+    TerminalHistoryRecordsCompanion data,
+  ) {
     return TerminalHistoryRecord(
       sessionId: data.sessionId.present ? data.sessionId.value : this.sessionId,
       connectionId: data.connectionId.present
@@ -3467,8 +4157,9 @@ class TerminalHistoryRecord extends DataClass
       connectionName: data.connectionName.present
           ? data.connectionName.value
           : this.connectionName,
-      displayName:
-          data.displayName.present ? data.displayName.value : this.displayName,
+      displayName: data.displayName.present
+          ? data.displayName.value
+          : this.displayName,
       tmuxSessionName: data.tmuxSessionName.present
           ? data.tmuxSessionName.value
           : this.tmuxSessionName,
@@ -3498,8 +4189,17 @@ class TerminalHistoryRecord extends DataClass
   }
 
   @override
-  int get hashCode => Object.hash(sessionId, connectionId, connectionName,
-      displayName, tmuxSessionName, state, errorMessage, createdAt, updatedAt);
+  int get hashCode => Object.hash(
+    sessionId,
+    connectionId,
+    connectionName,
+    displayName,
+    tmuxSessionName,
+    state,
+    errorMessage,
+    createdAt,
+    updatedAt,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -3550,13 +4250,13 @@ class TerminalHistoryRecordsCompanion
     required int createdAt,
     required int updatedAt,
     this.rowid = const Value.absent(),
-  })  : sessionId = Value(sessionId),
-        connectionId = Value(connectionId),
-        connectionName = Value(connectionName),
-        displayName = Value(displayName),
-        state = Value(state),
-        createdAt = Value(createdAt),
-        updatedAt = Value(updatedAt);
+  }) : sessionId = Value(sessionId),
+       connectionId = Value(connectionId),
+       connectionName = Value(connectionName),
+       displayName = Value(displayName),
+       state = Value(state),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
   static Insertable<TerminalHistoryRecord> custom({
     Expression<String>? sessionId,
     Expression<String>? connectionId,
@@ -3583,17 +4283,18 @@ class TerminalHistoryRecordsCompanion
     });
   }
 
-  TerminalHistoryRecordsCompanion copyWith(
-      {Value<String>? sessionId,
-      Value<String>? connectionId,
-      Value<String>? connectionName,
-      Value<String>? displayName,
-      Value<String?>? tmuxSessionName,
-      Value<String>? state,
-      Value<String?>? errorMessage,
-      Value<int>? createdAt,
-      Value<int>? updatedAt,
-      Value<int>? rowid}) {
+  TerminalHistoryRecordsCompanion copyWith({
+    Value<String>? sessionId,
+    Value<String>? connectionId,
+    Value<String>? connectionName,
+    Value<String>? displayName,
+    Value<String?>? tmuxSessionName,
+    Value<String>? state,
+    Value<String?>? errorMessage,
+    Value<int>? createdAt,
+    Value<int>? updatedAt,
+    Value<int>? rowid,
+  }) {
     return TerminalHistoryRecordsCompanion(
       sessionId: sessionId ?? this.sessionId,
       connectionId: connectionId ?? this.connectionId,
@@ -3671,50 +4372,85 @@ class $PlaybooksTable extends Playbooks
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
   late final GeneratedColumn<String> id = GeneratedColumn<String>(
-      'id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _nameMeta = const VerificationMeta('name');
   @override
   late final GeneratedColumn<String> name = GeneratedColumn<String>(
-      'name', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _descriptionMeta =
-      const VerificationMeta('description');
+    'name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _descriptionMeta = const VerificationMeta(
+    'description',
+  );
   @override
   late final GeneratedColumn<String> description = GeneratedColumn<String>(
-      'description', aliasedName, false,
-      type: DriftSqlType.string,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(''));
-  static const VerificationMeta _contentJsonMeta =
-      const VerificationMeta('contentJson');
+    'description',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
+  );
+  static const VerificationMeta _contentJsonMeta = const VerificationMeta(
+    'contentJson',
+  );
   @override
   late final GeneratedColumn<String> contentJson = GeneratedColumn<String>(
-      'content_json', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _createdAtMeta =
-      const VerificationMeta('createdAt');
+    'content_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
   @override
   late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
-      'created_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _updatedAtMeta =
-      const VerificationMeta('updatedAt');
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
   @override
   late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
-      'updated_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
   @override
-  List<GeneratedColumn> get $columns =>
-      [id, name, description, contentJson, createdAt, updatedAt];
+  List<GeneratedColumn> get $columns => [
+    id,
+    name,
+    description,
+    contentJson,
+    createdAt,
+    updatedAt,
+  ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
   String get actualTableName => $name;
   static const String $name = 'playbooks';
   @override
-  VerificationContext validateIntegrity(Insertable<Playbook> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<Playbook> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
@@ -3724,33 +4460,45 @@ class $PlaybooksTable extends Playbooks
     }
     if (data.containsKey('name')) {
       context.handle(
-          _nameMeta, name.isAcceptableOrUnknown(data['name']!, _nameMeta));
+        _nameMeta,
+        name.isAcceptableOrUnknown(data['name']!, _nameMeta),
+      );
     } else if (isInserting) {
       context.missing(_nameMeta);
     }
     if (data.containsKey('description')) {
       context.handle(
+        _descriptionMeta,
+        description.isAcceptableOrUnknown(
+          data['description']!,
           _descriptionMeta,
-          description.isAcceptableOrUnknown(
-              data['description']!, _descriptionMeta));
+        ),
+      );
     }
     if (data.containsKey('content_json')) {
       context.handle(
+        _contentJsonMeta,
+        contentJson.isAcceptableOrUnknown(
+          data['content_json']!,
           _contentJsonMeta,
-          contentJson.isAcceptableOrUnknown(
-              data['content_json']!, _contentJsonMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_contentJsonMeta);
     }
     if (data.containsKey('created_at')) {
-      context.handle(_createdAtMeta,
-          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_createdAtMeta);
     }
     if (data.containsKey('updated_at')) {
-      context.handle(_updatedAtMeta,
-          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_updatedAtMeta);
     }
@@ -3763,18 +4511,30 @@ class $PlaybooksTable extends Playbooks
   Playbook map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return Playbook(
-      id: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
-      name: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}name'])!,
-      description: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}description'])!,
-      contentJson: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}content_json'])!,
-      createdAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}created_at'])!,
-      updatedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}updated_at'])!,
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      name: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}name'],
+      )!,
+      description: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}description'],
+      )!,
+      contentJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}content_json'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}updated_at'],
+      )!,
     );
   }
 
@@ -3791,13 +4551,14 @@ class Playbook extends DataClass implements Insertable<Playbook> {
   final String contentJson;
   final int createdAt;
   final int updatedAt;
-  const Playbook(
-      {required this.id,
-      required this.name,
-      required this.description,
-      required this.contentJson,
-      required this.createdAt,
-      required this.updatedAt});
+  const Playbook({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.contentJson,
+    required this.createdAt,
+    required this.updatedAt,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -3821,8 +4582,10 @@ class Playbook extends DataClass implements Insertable<Playbook> {
     );
   }
 
-  factory Playbook.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory Playbook.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return Playbook(
       id: serializer.fromJson<String>(json['id']),
@@ -3846,29 +4609,31 @@ class Playbook extends DataClass implements Insertable<Playbook> {
     };
   }
 
-  Playbook copyWith(
-          {String? id,
-          String? name,
-          String? description,
-          String? contentJson,
-          int? createdAt,
-          int? updatedAt}) =>
-      Playbook(
-        id: id ?? this.id,
-        name: name ?? this.name,
-        description: description ?? this.description,
-        contentJson: contentJson ?? this.contentJson,
-        createdAt: createdAt ?? this.createdAt,
-        updatedAt: updatedAt ?? this.updatedAt,
-      );
+  Playbook copyWith({
+    String? id,
+    String? name,
+    String? description,
+    String? contentJson,
+    int? createdAt,
+    int? updatedAt,
+  }) => Playbook(
+    id: id ?? this.id,
+    name: name ?? this.name,
+    description: description ?? this.description,
+    contentJson: contentJson ?? this.contentJson,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
   Playbook copyWithCompanion(PlaybooksCompanion data) {
     return Playbook(
       id: data.id.present ? data.id.value : this.id,
       name: data.name.present ? data.name.value : this.name,
-      description:
-          data.description.present ? data.description.value : this.description,
-      contentJson:
-          data.contentJson.present ? data.contentJson.value : this.contentJson,
+      description: data.description.present
+          ? data.description.value
+          : this.description,
+      contentJson: data.contentJson.present
+          ? data.contentJson.value
+          : this.contentJson,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -3927,11 +4692,11 @@ class PlaybooksCompanion extends UpdateCompanion<Playbook> {
     required int createdAt,
     required int updatedAt,
     this.rowid = const Value.absent(),
-  })  : id = Value(id),
-        name = Value(name),
-        contentJson = Value(contentJson),
-        createdAt = Value(createdAt),
-        updatedAt = Value(updatedAt);
+  }) : id = Value(id),
+       name = Value(name),
+       contentJson = Value(contentJson),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
   static Insertable<Playbook> custom({
     Expression<String>? id,
     Expression<String>? name,
@@ -3952,14 +4717,15 @@ class PlaybooksCompanion extends UpdateCompanion<Playbook> {
     });
   }
 
-  PlaybooksCompanion copyWith(
-      {Value<String>? id,
-      Value<String>? name,
-      Value<String>? description,
-      Value<String>? contentJson,
-      Value<int>? createdAt,
-      Value<int>? updatedAt,
-      Value<int>? rowid}) {
+  PlaybooksCompanion copyWith({
+    Value<String>? id,
+    Value<String>? name,
+    Value<String>? description,
+    Value<String>? contentJson,
+    Value<int>? createdAt,
+    Value<int>? updatedAt,
+    Value<int>? rowid,
+  }) {
     return PlaybooksCompanion(
       id: id ?? this.id,
       name: name ?? this.name,
@@ -4022,73 +4788,112 @@ class $PlaybookRunsTable extends PlaybookRuns
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
   late final GeneratedColumn<String> id = GeneratedColumn<String>(
-      'id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _playbookIdMeta =
-      const VerificationMeta('playbookId');
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _playbookIdMeta = const VerificationMeta(
+    'playbookId',
+  );
   @override
   late final GeneratedColumn<String> playbookId = GeneratedColumn<String>(
-      'playbook_id', aliasedName, false,
-      type: DriftSqlType.string,
-      requiredDuringInsert: true,
-      defaultConstraints: GeneratedColumn.constraintIsAlways(
-          'REFERENCES playbooks (id) ON DELETE CASCADE'));
-  static const VerificationMeta _connectionIdMeta =
-      const VerificationMeta('connectionId');
+    'playbook_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES playbooks (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _connectionIdMeta = const VerificationMeta(
+    'connectionId',
+  );
   @override
   late final GeneratedColumn<String> connectionId = GeneratedColumn<String>(
-      'connection_id', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
+    'connection_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _statusMeta = const VerificationMeta('status');
   @override
   late final GeneratedColumn<String> status = GeneratedColumn<String>(
-      'status', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _startedAtMeta =
-      const VerificationMeta('startedAt');
+    'status',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _startedAtMeta = const VerificationMeta(
+    'startedAt',
+  );
   @override
   late final GeneratedColumn<int> startedAt = GeneratedColumn<int>(
-      'started_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _finishedAtMeta =
-      const VerificationMeta('finishedAt');
+    'started_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _finishedAtMeta = const VerificationMeta(
+    'finishedAt',
+  );
   @override
   late final GeneratedColumn<int> finishedAt = GeneratedColumn<int>(
-      'finished_at', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
-  static const VerificationMeta _summaryMeta =
-      const VerificationMeta('summary');
+    'finished_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _summaryMeta = const VerificationMeta(
+    'summary',
+  );
   @override
   late final GeneratedColumn<String> summary = GeneratedColumn<String>(
-      'summary', aliasedName, false,
-      type: DriftSqlType.string,
-      requiredDuringInsert: false,
-      defaultValue: const Constant(''));
-  static const VerificationMeta _errorMessageMeta =
-      const VerificationMeta('errorMessage');
+    'summary',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
+  );
+  static const VerificationMeta _errorMessageMeta = const VerificationMeta(
+    'errorMessage',
+  );
   @override
   late final GeneratedColumn<String> errorMessage = GeneratedColumn<String>(
-      'error_message', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
+    'error_message',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
-        id,
-        playbookId,
-        connectionId,
-        status,
-        startedAt,
-        finishedAt,
-        summary,
-        errorMessage
-      ];
+    id,
+    playbookId,
+    connectionId,
+    status,
+    startedAt,
+    finishedAt,
+    summary,
+    errorMessage,
+  ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
   String get actualTableName => $name;
   static const String $name = 'playbook_runs';
   @override
-  VerificationContext validateIntegrity(Insertable<PlaybookRun> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<PlaybookRun> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
@@ -4098,45 +4903,57 @@ class $PlaybookRunsTable extends PlaybookRuns
     }
     if (data.containsKey('playbook_id')) {
       context.handle(
-          _playbookIdMeta,
-          playbookId.isAcceptableOrUnknown(
-              data['playbook_id']!, _playbookIdMeta));
+        _playbookIdMeta,
+        playbookId.isAcceptableOrUnknown(data['playbook_id']!, _playbookIdMeta),
+      );
     } else if (isInserting) {
       context.missing(_playbookIdMeta);
     }
     if (data.containsKey('connection_id')) {
       context.handle(
+        _connectionIdMeta,
+        connectionId.isAcceptableOrUnknown(
+          data['connection_id']!,
           _connectionIdMeta,
-          connectionId.isAcceptableOrUnknown(
-              data['connection_id']!, _connectionIdMeta));
+        ),
+      );
     }
     if (data.containsKey('status')) {
-      context.handle(_statusMeta,
-          status.isAcceptableOrUnknown(data['status']!, _statusMeta));
+      context.handle(
+        _statusMeta,
+        status.isAcceptableOrUnknown(data['status']!, _statusMeta),
+      );
     } else if (isInserting) {
       context.missing(_statusMeta);
     }
     if (data.containsKey('started_at')) {
-      context.handle(_startedAtMeta,
-          startedAt.isAcceptableOrUnknown(data['started_at']!, _startedAtMeta));
+      context.handle(
+        _startedAtMeta,
+        startedAt.isAcceptableOrUnknown(data['started_at']!, _startedAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_startedAtMeta);
     }
     if (data.containsKey('finished_at')) {
       context.handle(
-          _finishedAtMeta,
-          finishedAt.isAcceptableOrUnknown(
-              data['finished_at']!, _finishedAtMeta));
+        _finishedAtMeta,
+        finishedAt.isAcceptableOrUnknown(data['finished_at']!, _finishedAtMeta),
+      );
     }
     if (data.containsKey('summary')) {
-      context.handle(_summaryMeta,
-          summary.isAcceptableOrUnknown(data['summary']!, _summaryMeta));
+      context.handle(
+        _summaryMeta,
+        summary.isAcceptableOrUnknown(data['summary']!, _summaryMeta),
+      );
     }
     if (data.containsKey('error_message')) {
       context.handle(
+        _errorMessageMeta,
+        errorMessage.isAcceptableOrUnknown(
+          data['error_message']!,
           _errorMessageMeta,
-          errorMessage.isAcceptableOrUnknown(
-              data['error_message']!, _errorMessageMeta));
+        ),
+      );
     }
     return context;
   }
@@ -4147,22 +4964,38 @@ class $PlaybookRunsTable extends PlaybookRuns
   PlaybookRun map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return PlaybookRun(
-      id: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
-      playbookId: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}playbook_id'])!,
-      connectionId: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}connection_id']),
-      status: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}status'])!,
-      startedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}started_at'])!,
-      finishedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}finished_at']),
-      summary: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}summary'])!,
-      errorMessage: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}error_message']),
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      playbookId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}playbook_id'],
+      )!,
+      connectionId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}connection_id'],
+      ),
+      status: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}status'],
+      )!,
+      startedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}started_at'],
+      )!,
+      finishedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}finished_at'],
+      ),
+      summary: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}summary'],
+      )!,
+      errorMessage: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}error_message'],
+      ),
     );
   }
 
@@ -4181,15 +5014,16 @@ class PlaybookRun extends DataClass implements Insertable<PlaybookRun> {
   final int? finishedAt;
   final String summary;
   final String? errorMessage;
-  const PlaybookRun(
-      {required this.id,
-      required this.playbookId,
-      this.connectionId,
-      required this.status,
-      required this.startedAt,
-      this.finishedAt,
-      required this.summary,
-      this.errorMessage});
+  const PlaybookRun({
+    required this.id,
+    required this.playbookId,
+    this.connectionId,
+    required this.status,
+    required this.startedAt,
+    this.finishedAt,
+    required this.summary,
+    this.errorMessage,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -4229,8 +5063,10 @@ class PlaybookRun extends DataClass implements Insertable<PlaybookRun> {
     );
   }
 
-  factory PlaybookRun.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory PlaybookRun.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return PlaybookRun(
       id: serializer.fromJson<String>(json['id']),
@@ -4258,39 +5094,39 @@ class PlaybookRun extends DataClass implements Insertable<PlaybookRun> {
     };
   }
 
-  PlaybookRun copyWith(
-          {String? id,
-          String? playbookId,
-          Value<String?> connectionId = const Value.absent(),
-          String? status,
-          int? startedAt,
-          Value<int?> finishedAt = const Value.absent(),
-          String? summary,
-          Value<String?> errorMessage = const Value.absent()}) =>
-      PlaybookRun(
-        id: id ?? this.id,
-        playbookId: playbookId ?? this.playbookId,
-        connectionId:
-            connectionId.present ? connectionId.value : this.connectionId,
-        status: status ?? this.status,
-        startedAt: startedAt ?? this.startedAt,
-        finishedAt: finishedAt.present ? finishedAt.value : this.finishedAt,
-        summary: summary ?? this.summary,
-        errorMessage:
-            errorMessage.present ? errorMessage.value : this.errorMessage,
-      );
+  PlaybookRun copyWith({
+    String? id,
+    String? playbookId,
+    Value<String?> connectionId = const Value.absent(),
+    String? status,
+    int? startedAt,
+    Value<int?> finishedAt = const Value.absent(),
+    String? summary,
+    Value<String?> errorMessage = const Value.absent(),
+  }) => PlaybookRun(
+    id: id ?? this.id,
+    playbookId: playbookId ?? this.playbookId,
+    connectionId: connectionId.present ? connectionId.value : this.connectionId,
+    status: status ?? this.status,
+    startedAt: startedAt ?? this.startedAt,
+    finishedAt: finishedAt.present ? finishedAt.value : this.finishedAt,
+    summary: summary ?? this.summary,
+    errorMessage: errorMessage.present ? errorMessage.value : this.errorMessage,
+  );
   PlaybookRun copyWithCompanion(PlaybookRunsCompanion data) {
     return PlaybookRun(
       id: data.id.present ? data.id.value : this.id,
-      playbookId:
-          data.playbookId.present ? data.playbookId.value : this.playbookId,
+      playbookId: data.playbookId.present
+          ? data.playbookId.value
+          : this.playbookId,
       connectionId: data.connectionId.present
           ? data.connectionId.value
           : this.connectionId,
       status: data.status.present ? data.status.value : this.status,
       startedAt: data.startedAt.present ? data.startedAt.value : this.startedAt,
-      finishedAt:
-          data.finishedAt.present ? data.finishedAt.value : this.finishedAt,
+      finishedAt: data.finishedAt.present
+          ? data.finishedAt.value
+          : this.finishedAt,
       summary: data.summary.present ? data.summary.value : this.summary,
       errorMessage: data.errorMessage.present
           ? data.errorMessage.value
@@ -4314,8 +5150,16 @@ class PlaybookRun extends DataClass implements Insertable<PlaybookRun> {
   }
 
   @override
-  int get hashCode => Object.hash(id, playbookId, connectionId, status,
-      startedAt, finishedAt, summary, errorMessage);
+  int get hashCode => Object.hash(
+    id,
+    playbookId,
+    connectionId,
+    status,
+    startedAt,
+    finishedAt,
+    summary,
+    errorMessage,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -4361,10 +5205,10 @@ class PlaybookRunsCompanion extends UpdateCompanion<PlaybookRun> {
     this.summary = const Value.absent(),
     this.errorMessage = const Value.absent(),
     this.rowid = const Value.absent(),
-  })  : id = Value(id),
-        playbookId = Value(playbookId),
-        status = Value(status),
-        startedAt = Value(startedAt);
+  }) : id = Value(id),
+       playbookId = Value(playbookId),
+       status = Value(status),
+       startedAt = Value(startedAt);
   static Insertable<PlaybookRun> custom({
     Expression<String>? id,
     Expression<String>? playbookId,
@@ -4389,16 +5233,17 @@ class PlaybookRunsCompanion extends UpdateCompanion<PlaybookRun> {
     });
   }
 
-  PlaybookRunsCompanion copyWith(
-      {Value<String>? id,
-      Value<String>? playbookId,
-      Value<String?>? connectionId,
-      Value<String>? status,
-      Value<int>? startedAt,
-      Value<int?>? finishedAt,
-      Value<String>? summary,
-      Value<String?>? errorMessage,
-      Value<int>? rowid}) {
+  PlaybookRunsCompanion copyWith({
+    Value<String>? id,
+    Value<String>? playbookId,
+    Value<String?>? connectionId,
+    Value<String>? status,
+    Value<int>? startedAt,
+    Value<int?>? finishedAt,
+    Value<String>? summary,
+    Value<String?>? errorMessage,
+    Value<int>? rowid,
+  }) {
     return PlaybookRunsCompanion(
       id: id ?? this.id,
       playbookId: playbookId ?? this.playbookId,
@@ -4471,76 +5316,119 @@ class $PlaybookRunStepsTable extends PlaybookRunSteps
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
   late final GeneratedColumn<String> id = GeneratedColumn<String>(
-      'id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _runIdMeta = const VerificationMeta('runId');
   @override
   late final GeneratedColumn<String> runId = GeneratedColumn<String>(
-      'run_id', aliasedName, false,
-      type: DriftSqlType.string,
-      requiredDuringInsert: true,
-      defaultConstraints: GeneratedColumn.constraintIsAlways(
-          'REFERENCES playbook_runs (id) ON DELETE CASCADE'));
-  static const VerificationMeta _stepIndexMeta =
-      const VerificationMeta('stepIndex');
+    'run_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES playbook_runs (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _stepIndexMeta = const VerificationMeta(
+    'stepIndex',
+  );
   @override
   late final GeneratedColumn<int> stepIndex = GeneratedColumn<int>(
-      'step_index', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
+    'step_index',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _nameMeta = const VerificationMeta('name');
   @override
   late final GeneratedColumn<String> name = GeneratedColumn<String>(
-      'name', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _commandMeta =
-      const VerificationMeta('command');
+    'name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _commandMeta = const VerificationMeta(
+    'command',
+  );
   @override
   late final GeneratedColumn<String> command = GeneratedColumn<String>(
-      'command', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'command',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _statusMeta = const VerificationMeta('status');
   @override
   late final GeneratedColumn<String> status = GeneratedColumn<String>(
-      'status', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _stdoutPreviewMeta =
-      const VerificationMeta('stdoutPreview');
+    'status',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _stdoutPreviewMeta = const VerificationMeta(
+    'stdoutPreview',
+  );
   @override
   late final GeneratedColumn<String> stdoutPreview = GeneratedColumn<String>(
-      'stdout_preview', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
-  static const VerificationMeta _stderrPreviewMeta =
-      const VerificationMeta('stderrPreview');
+    'stdout_preview',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _stderrPreviewMeta = const VerificationMeta(
+    'stderrPreview',
+  );
   @override
   late final GeneratedColumn<String> stderrPreview = GeneratedColumn<String>(
-      'stderr_preview', aliasedName, true,
-      type: DriftSqlType.string, requiredDuringInsert: false);
-  static const VerificationMeta _exitCodeMeta =
-      const VerificationMeta('exitCode');
+    'stderr_preview',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _exitCodeMeta = const VerificationMeta(
+    'exitCode',
+  );
   @override
   late final GeneratedColumn<int> exitCode = GeneratedColumn<int>(
-      'exit_code', aliasedName, true,
-      type: DriftSqlType.int, requiredDuringInsert: false);
+    'exit_code',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
-        id,
-        runId,
-        stepIndex,
-        name,
-        command,
-        status,
-        stdoutPreview,
-        stderrPreview,
-        exitCode
-      ];
+    id,
+    runId,
+    stepIndex,
+    name,
+    command,
+    status,
+    stdoutPreview,
+    stderrPreview,
+    exitCode,
+  ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
   String get actualTableName => $name;
   static const String $name = 'playbook_run_steps';
   @override
-  VerificationContext validateIntegrity(Insertable<PlaybookRunStep> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<PlaybookRunStep> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
@@ -4550,49 +5438,67 @@ class $PlaybookRunStepsTable extends PlaybookRunSteps
     }
     if (data.containsKey('run_id')) {
       context.handle(
-          _runIdMeta, runId.isAcceptableOrUnknown(data['run_id']!, _runIdMeta));
+        _runIdMeta,
+        runId.isAcceptableOrUnknown(data['run_id']!, _runIdMeta),
+      );
     } else if (isInserting) {
       context.missing(_runIdMeta);
     }
     if (data.containsKey('step_index')) {
-      context.handle(_stepIndexMeta,
-          stepIndex.isAcceptableOrUnknown(data['step_index']!, _stepIndexMeta));
+      context.handle(
+        _stepIndexMeta,
+        stepIndex.isAcceptableOrUnknown(data['step_index']!, _stepIndexMeta),
+      );
     } else if (isInserting) {
       context.missing(_stepIndexMeta);
     }
     if (data.containsKey('name')) {
       context.handle(
-          _nameMeta, name.isAcceptableOrUnknown(data['name']!, _nameMeta));
+        _nameMeta,
+        name.isAcceptableOrUnknown(data['name']!, _nameMeta),
+      );
     } else if (isInserting) {
       context.missing(_nameMeta);
     }
     if (data.containsKey('command')) {
-      context.handle(_commandMeta,
-          command.isAcceptableOrUnknown(data['command']!, _commandMeta));
+      context.handle(
+        _commandMeta,
+        command.isAcceptableOrUnknown(data['command']!, _commandMeta),
+      );
     } else if (isInserting) {
       context.missing(_commandMeta);
     }
     if (data.containsKey('status')) {
-      context.handle(_statusMeta,
-          status.isAcceptableOrUnknown(data['status']!, _statusMeta));
+      context.handle(
+        _statusMeta,
+        status.isAcceptableOrUnknown(data['status']!, _statusMeta),
+      );
     } else if (isInserting) {
       context.missing(_statusMeta);
     }
     if (data.containsKey('stdout_preview')) {
       context.handle(
+        _stdoutPreviewMeta,
+        stdoutPreview.isAcceptableOrUnknown(
+          data['stdout_preview']!,
           _stdoutPreviewMeta,
-          stdoutPreview.isAcceptableOrUnknown(
-              data['stdout_preview']!, _stdoutPreviewMeta));
+        ),
+      );
     }
     if (data.containsKey('stderr_preview')) {
       context.handle(
+        _stderrPreviewMeta,
+        stderrPreview.isAcceptableOrUnknown(
+          data['stderr_preview']!,
           _stderrPreviewMeta,
-          stderrPreview.isAcceptableOrUnknown(
-              data['stderr_preview']!, _stderrPreviewMeta));
+        ),
+      );
     }
     if (data.containsKey('exit_code')) {
-      context.handle(_exitCodeMeta,
-          exitCode.isAcceptableOrUnknown(data['exit_code']!, _exitCodeMeta));
+      context.handle(
+        _exitCodeMeta,
+        exitCode.isAcceptableOrUnknown(data['exit_code']!, _exitCodeMeta),
+      );
     }
     return context;
   }
@@ -4603,24 +5509,42 @@ class $PlaybookRunStepsTable extends PlaybookRunSteps
   PlaybookRunStep map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return PlaybookRunStep(
-      id: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
-      runId: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}run_id'])!,
-      stepIndex: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}step_index'])!,
-      name: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}name'])!,
-      command: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}command'])!,
-      status: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}status'])!,
-      stdoutPreview: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}stdout_preview']),
-      stderrPreview: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}stderr_preview']),
-      exitCode: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}exit_code']),
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      runId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}run_id'],
+      )!,
+      stepIndex: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}step_index'],
+      )!,
+      name: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}name'],
+      )!,
+      command: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}command'],
+      )!,
+      status: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}status'],
+      )!,
+      stdoutPreview: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}stdout_preview'],
+      ),
+      stderrPreview: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}stderr_preview'],
+      ),
+      exitCode: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}exit_code'],
+      ),
     );
   }
 
@@ -4640,16 +5564,17 @@ class PlaybookRunStep extends DataClass implements Insertable<PlaybookRunStep> {
   final String? stdoutPreview;
   final String? stderrPreview;
   final int? exitCode;
-  const PlaybookRunStep(
-      {required this.id,
-      required this.runId,
-      required this.stepIndex,
-      required this.name,
-      required this.command,
-      required this.status,
-      this.stdoutPreview,
-      this.stderrPreview,
-      this.exitCode});
+  const PlaybookRunStep({
+    required this.id,
+    required this.runId,
+    required this.stepIndex,
+    required this.name,
+    required this.command,
+    required this.status,
+    this.stdoutPreview,
+    this.stderrPreview,
+    this.exitCode,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -4691,8 +5616,10 @@ class PlaybookRunStep extends DataClass implements Insertable<PlaybookRunStep> {
     );
   }
 
-  factory PlaybookRunStep.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory PlaybookRunStep.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return PlaybookRunStep(
       id: serializer.fromJson<String>(json['id']),
@@ -4722,29 +5649,31 @@ class PlaybookRunStep extends DataClass implements Insertable<PlaybookRunStep> {
     };
   }
 
-  PlaybookRunStep copyWith(
-          {String? id,
-          String? runId,
-          int? stepIndex,
-          String? name,
-          String? command,
-          String? status,
-          Value<String?> stdoutPreview = const Value.absent(),
-          Value<String?> stderrPreview = const Value.absent(),
-          Value<int?> exitCode = const Value.absent()}) =>
-      PlaybookRunStep(
-        id: id ?? this.id,
-        runId: runId ?? this.runId,
-        stepIndex: stepIndex ?? this.stepIndex,
-        name: name ?? this.name,
-        command: command ?? this.command,
-        status: status ?? this.status,
-        stdoutPreview:
-            stdoutPreview.present ? stdoutPreview.value : this.stdoutPreview,
-        stderrPreview:
-            stderrPreview.present ? stderrPreview.value : this.stderrPreview,
-        exitCode: exitCode.present ? exitCode.value : this.exitCode,
-      );
+  PlaybookRunStep copyWith({
+    String? id,
+    String? runId,
+    int? stepIndex,
+    String? name,
+    String? command,
+    String? status,
+    Value<String?> stdoutPreview = const Value.absent(),
+    Value<String?> stderrPreview = const Value.absent(),
+    Value<int?> exitCode = const Value.absent(),
+  }) => PlaybookRunStep(
+    id: id ?? this.id,
+    runId: runId ?? this.runId,
+    stepIndex: stepIndex ?? this.stepIndex,
+    name: name ?? this.name,
+    command: command ?? this.command,
+    status: status ?? this.status,
+    stdoutPreview: stdoutPreview.present
+        ? stdoutPreview.value
+        : this.stdoutPreview,
+    stderrPreview: stderrPreview.present
+        ? stderrPreview.value
+        : this.stderrPreview,
+    exitCode: exitCode.present ? exitCode.value : this.exitCode,
+  );
   PlaybookRunStep copyWithCompanion(PlaybookRunStepsCompanion data) {
     return PlaybookRunStep(
       id: data.id.present ? data.id.value : this.id,
@@ -4780,8 +5709,17 @@ class PlaybookRunStep extends DataClass implements Insertable<PlaybookRunStep> {
   }
 
   @override
-  int get hashCode => Object.hash(id, runId, stepIndex, name, command, status,
-      stdoutPreview, stderrPreview, exitCode);
+  int get hashCode => Object.hash(
+    id,
+    runId,
+    stepIndex,
+    name,
+    command,
+    status,
+    stdoutPreview,
+    stderrPreview,
+    exitCode,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -4831,12 +5769,12 @@ class PlaybookRunStepsCompanion extends UpdateCompanion<PlaybookRunStep> {
     this.stderrPreview = const Value.absent(),
     this.exitCode = const Value.absent(),
     this.rowid = const Value.absent(),
-  })  : id = Value(id),
-        runId = Value(runId),
-        stepIndex = Value(stepIndex),
-        name = Value(name),
-        command = Value(command),
-        status = Value(status);
+  }) : id = Value(id),
+       runId = Value(runId),
+       stepIndex = Value(stepIndex),
+       name = Value(name),
+       command = Value(command),
+       status = Value(status);
   static Insertable<PlaybookRunStep> custom({
     Expression<String>? id,
     Expression<String>? runId,
@@ -4863,17 +5801,18 @@ class PlaybookRunStepsCompanion extends UpdateCompanion<PlaybookRunStep> {
     });
   }
 
-  PlaybookRunStepsCompanion copyWith(
-      {Value<String>? id,
-      Value<String>? runId,
-      Value<int>? stepIndex,
-      Value<String>? name,
-      Value<String>? command,
-      Value<String>? status,
-      Value<String?>? stdoutPreview,
-      Value<String?>? stderrPreview,
-      Value<int?>? exitCode,
-      Value<int>? rowid}) {
+  PlaybookRunStepsCompanion copyWith({
+    Value<String>? id,
+    Value<String>? runId,
+    Value<int>? stepIndex,
+    Value<String>? name,
+    Value<String>? command,
+    Value<String>? status,
+    Value<String?>? stdoutPreview,
+    Value<String?>? stderrPreview,
+    Value<int?>? exitCode,
+    Value<int>? rowid,
+  }) {
     return PlaybookRunStepsCompanion(
       id: id ?? this.id,
       runId: runId ?? this.runId,
@@ -4951,25 +5890,43 @@ class $SftpRecentPathsTable extends SftpRecentPaths
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
   late final GeneratedColumn<String> id = GeneratedColumn<String>(
-      'id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _connectionIdMeta =
-      const VerificationMeta('connectionId');
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _connectionIdMeta = const VerificationMeta(
+    'connectionId',
+  );
   @override
   late final GeneratedColumn<String> connectionId = GeneratedColumn<String>(
-      'connection_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'connection_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _pathMeta = const VerificationMeta('path');
   @override
   late final GeneratedColumn<String> path = GeneratedColumn<String>(
-      'path', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _visitedAtMeta =
-      const VerificationMeta('visitedAt');
+    'path',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _visitedAtMeta = const VerificationMeta(
+    'visitedAt',
+  );
   @override
   late final GeneratedColumn<int> visitedAt = GeneratedColumn<int>(
-      'visited_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
+    'visited_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
   @override
   List<GeneratedColumn> get $columns => [id, connectionId, path, visitedAt];
   @override
@@ -4978,8 +5935,10 @@ class $SftpRecentPathsTable extends SftpRecentPaths
   String get actualTableName => $name;
   static const String $name = 'sftp_recent_paths';
   @override
-  VerificationContext validateIntegrity(Insertable<SftpRecentPath> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<SftpRecentPath> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
@@ -4989,21 +5948,28 @@ class $SftpRecentPathsTable extends SftpRecentPaths
     }
     if (data.containsKey('connection_id')) {
       context.handle(
+        _connectionIdMeta,
+        connectionId.isAcceptableOrUnknown(
+          data['connection_id']!,
           _connectionIdMeta,
-          connectionId.isAcceptableOrUnknown(
-              data['connection_id']!, _connectionIdMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_connectionIdMeta);
     }
     if (data.containsKey('path')) {
       context.handle(
-          _pathMeta, path.isAcceptableOrUnknown(data['path']!, _pathMeta));
+        _pathMeta,
+        path.isAcceptableOrUnknown(data['path']!, _pathMeta),
+      );
     } else if (isInserting) {
       context.missing(_pathMeta);
     }
     if (data.containsKey('visited_at')) {
-      context.handle(_visitedAtMeta,
-          visitedAt.isAcceptableOrUnknown(data['visited_at']!, _visitedAtMeta));
+      context.handle(
+        _visitedAtMeta,
+        visitedAt.isAcceptableOrUnknown(data['visited_at']!, _visitedAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_visitedAtMeta);
     }
@@ -5016,14 +5982,22 @@ class $SftpRecentPathsTable extends SftpRecentPaths
   SftpRecentPath map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return SftpRecentPath(
-      id: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
-      connectionId: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}connection_id'])!,
-      path: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}path'])!,
-      visitedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}visited_at'])!,
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      connectionId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}connection_id'],
+      )!,
+      path: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}path'],
+      )!,
+      visitedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}visited_at'],
+      )!,
     );
   }
 
@@ -5038,11 +6012,12 @@ class SftpRecentPath extends DataClass implements Insertable<SftpRecentPath> {
   final String connectionId;
   final String path;
   final int visitedAt;
-  const SftpRecentPath(
-      {required this.id,
-      required this.connectionId,
-      required this.path,
-      required this.visitedAt});
+  const SftpRecentPath({
+    required this.id,
+    required this.connectionId,
+    required this.path,
+    required this.visitedAt,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -5062,8 +6037,10 @@ class SftpRecentPath extends DataClass implements Insertable<SftpRecentPath> {
     );
   }
 
-  factory SftpRecentPath.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory SftpRecentPath.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return SftpRecentPath(
       id: serializer.fromJson<String>(json['id']),
@@ -5083,14 +6060,17 @@ class SftpRecentPath extends DataClass implements Insertable<SftpRecentPath> {
     };
   }
 
-  SftpRecentPath copyWith(
-          {String? id, String? connectionId, String? path, int? visitedAt}) =>
-      SftpRecentPath(
-        id: id ?? this.id,
-        connectionId: connectionId ?? this.connectionId,
-        path: path ?? this.path,
-        visitedAt: visitedAt ?? this.visitedAt,
-      );
+  SftpRecentPath copyWith({
+    String? id,
+    String? connectionId,
+    String? path,
+    int? visitedAt,
+  }) => SftpRecentPath(
+    id: id ?? this.id,
+    connectionId: connectionId ?? this.connectionId,
+    path: path ?? this.path,
+    visitedAt: visitedAt ?? this.visitedAt,
+  );
   SftpRecentPath copyWithCompanion(SftpRecentPathsCompanion data) {
     return SftpRecentPath(
       id: data.id.present ? data.id.value : this.id,
@@ -5144,10 +6124,10 @@ class SftpRecentPathsCompanion extends UpdateCompanion<SftpRecentPath> {
     required String path,
     required int visitedAt,
     this.rowid = const Value.absent(),
-  })  : id = Value(id),
-        connectionId = Value(connectionId),
-        path = Value(path),
-        visitedAt = Value(visitedAt);
+  }) : id = Value(id),
+       connectionId = Value(connectionId),
+       path = Value(path),
+       visitedAt = Value(visitedAt);
   static Insertable<SftpRecentPath> custom({
     Expression<String>? id,
     Expression<String>? connectionId,
@@ -5164,12 +6144,13 @@ class SftpRecentPathsCompanion extends UpdateCompanion<SftpRecentPath> {
     });
   }
 
-  SftpRecentPathsCompanion copyWith(
-      {Value<String>? id,
-      Value<String>? connectionId,
-      Value<String>? path,
-      Value<int>? visitedAt,
-      Value<int>? rowid}) {
+  SftpRecentPathsCompanion copyWith({
+    Value<String>? id,
+    Value<String>? connectionId,
+    Value<String>? path,
+    Value<int>? visitedAt,
+    Value<int>? rowid,
+  }) {
     return SftpRecentPathsCompanion(
       id: id ?? this.id,
       connectionId: connectionId ?? this.connectionId,
@@ -5222,47 +6203,82 @@ class $SftpFavoritePathsTable extends SftpFavoritePaths
   static const VerificationMeta _idMeta = const VerificationMeta('id');
   @override
   late final GeneratedColumn<String> id = GeneratedColumn<String>(
-      'id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _connectionIdMeta =
-      const VerificationMeta('connectionId');
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _connectionIdMeta = const VerificationMeta(
+    'connectionId',
+  );
   @override
   late final GeneratedColumn<String> connectionId = GeneratedColumn<String>(
-      'connection_id', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'connection_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _pathMeta = const VerificationMeta('path');
   @override
   late final GeneratedColumn<String> path = GeneratedColumn<String>(
-      'path', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
+    'path',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _nameMeta = const VerificationMeta('name');
   @override
   late final GeneratedColumn<String> name = GeneratedColumn<String>(
-      'name', aliasedName, false,
-      type: DriftSqlType.string, requiredDuringInsert: true);
-  static const VerificationMeta _createdAtMeta =
-      const VerificationMeta('createdAt');
+    'name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
   @override
   late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
-      'created_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
-  static const VerificationMeta _updatedAtMeta =
-      const VerificationMeta('updatedAt');
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
   @override
   late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
-      'updated_at', aliasedName, false,
-      type: DriftSqlType.int, requiredDuringInsert: true);
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
   @override
-  List<GeneratedColumn> get $columns =>
-      [id, connectionId, path, name, createdAt, updatedAt];
+  List<GeneratedColumn> get $columns => [
+    id,
+    connectionId,
+    path,
+    name,
+    createdAt,
+    updatedAt,
+  ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
   String get actualTableName => $name;
   static const String $name = 'sftp_favorite_paths';
   @override
-  VerificationContext validateIntegrity(Insertable<SftpFavoritePath> instance,
-      {bool isInserting = false}) {
+  VerificationContext validateIntegrity(
+    Insertable<SftpFavoritePath> instance, {
+    bool isInserting = false,
+  }) {
     final context = VerificationContext();
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
@@ -5272,33 +6288,44 @@ class $SftpFavoritePathsTable extends SftpFavoritePaths
     }
     if (data.containsKey('connection_id')) {
       context.handle(
+        _connectionIdMeta,
+        connectionId.isAcceptableOrUnknown(
+          data['connection_id']!,
           _connectionIdMeta,
-          connectionId.isAcceptableOrUnknown(
-              data['connection_id']!, _connectionIdMeta));
+        ),
+      );
     } else if (isInserting) {
       context.missing(_connectionIdMeta);
     }
     if (data.containsKey('path')) {
       context.handle(
-          _pathMeta, path.isAcceptableOrUnknown(data['path']!, _pathMeta));
+        _pathMeta,
+        path.isAcceptableOrUnknown(data['path']!, _pathMeta),
+      );
     } else if (isInserting) {
       context.missing(_pathMeta);
     }
     if (data.containsKey('name')) {
       context.handle(
-          _nameMeta, name.isAcceptableOrUnknown(data['name']!, _nameMeta));
+        _nameMeta,
+        name.isAcceptableOrUnknown(data['name']!, _nameMeta),
+      );
     } else if (isInserting) {
       context.missing(_nameMeta);
     }
     if (data.containsKey('created_at')) {
-      context.handle(_createdAtMeta,
-          createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta));
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_createdAtMeta);
     }
     if (data.containsKey('updated_at')) {
-      context.handle(_updatedAtMeta,
-          updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta));
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
     } else if (isInserting) {
       context.missing(_updatedAtMeta);
     }
@@ -5311,18 +6338,30 @@ class $SftpFavoritePathsTable extends SftpFavoritePaths
   SftpFavoritePath map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
     return SftpFavoritePath(
-      id: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}id'])!,
-      connectionId: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}connection_id'])!,
-      path: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}path'])!,
-      name: attachedDatabase.typeMapping
-          .read(DriftSqlType.string, data['${effectivePrefix}name'])!,
-      createdAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}created_at'])!,
-      updatedAt: attachedDatabase.typeMapping
-          .read(DriftSqlType.int, data['${effectivePrefix}updated_at'])!,
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      connectionId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}connection_id'],
+      )!,
+      path: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}path'],
+      )!,
+      name: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}name'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}updated_at'],
+      )!,
     );
   }
 
@@ -5340,13 +6379,14 @@ class SftpFavoritePath extends DataClass
   final String name;
   final int createdAt;
   final int updatedAt;
-  const SftpFavoritePath(
-      {required this.id,
-      required this.connectionId,
-      required this.path,
-      required this.name,
-      required this.createdAt,
-      required this.updatedAt});
+  const SftpFavoritePath({
+    required this.id,
+    required this.connectionId,
+    required this.path,
+    required this.name,
+    required this.createdAt,
+    required this.updatedAt,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -5370,8 +6410,10 @@ class SftpFavoritePath extends DataClass
     );
   }
 
-  factory SftpFavoritePath.fromJson(Map<String, dynamic> json,
-      {ValueSerializer? serializer}) {
+  factory SftpFavoritePath.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return SftpFavoritePath(
       id: serializer.fromJson<String>(json['id']),
@@ -5395,21 +6437,21 @@ class SftpFavoritePath extends DataClass
     };
   }
 
-  SftpFavoritePath copyWith(
-          {String? id,
-          String? connectionId,
-          String? path,
-          String? name,
-          int? createdAt,
-          int? updatedAt}) =>
-      SftpFavoritePath(
-        id: id ?? this.id,
-        connectionId: connectionId ?? this.connectionId,
-        path: path ?? this.path,
-        name: name ?? this.name,
-        createdAt: createdAt ?? this.createdAt,
-        updatedAt: updatedAt ?? this.updatedAt,
-      );
+  SftpFavoritePath copyWith({
+    String? id,
+    String? connectionId,
+    String? path,
+    String? name,
+    int? createdAt,
+    int? updatedAt,
+  }) => SftpFavoritePath(
+    id: id ?? this.id,
+    connectionId: connectionId ?? this.connectionId,
+    path: path ?? this.path,
+    name: name ?? this.name,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
   SftpFavoritePath copyWithCompanion(SftpFavoritePathsCompanion data) {
     return SftpFavoritePath(
       id: data.id.present ? data.id.value : this.id,
@@ -5476,12 +6518,12 @@ class SftpFavoritePathsCompanion extends UpdateCompanion<SftpFavoritePath> {
     required int createdAt,
     required int updatedAt,
     this.rowid = const Value.absent(),
-  })  : id = Value(id),
-        connectionId = Value(connectionId),
-        path = Value(path),
-        name = Value(name),
-        createdAt = Value(createdAt),
-        updatedAt = Value(updatedAt);
+  }) : id = Value(id),
+       connectionId = Value(connectionId),
+       path = Value(path),
+       name = Value(name),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
   static Insertable<SftpFavoritePath> custom({
     Expression<String>? id,
     Expression<String>? connectionId,
@@ -5502,14 +6544,15 @@ class SftpFavoritePathsCompanion extends UpdateCompanion<SftpFavoritePath> {
     });
   }
 
-  SftpFavoritePathsCompanion copyWith(
-      {Value<String>? id,
-      Value<String>? connectionId,
-      Value<String>? path,
-      Value<String>? name,
-      Value<int>? createdAt,
-      Value<int>? updatedAt,
-      Value<int>? rowid}) {
+  SftpFavoritePathsCompanion copyWith({
+    Value<String>? id,
+    Value<String>? connectionId,
+    Value<String>? path,
+    Value<String>? name,
+    Value<int>? createdAt,
+    Value<int>? updatedAt,
+    Value<int>? rowid,
+  }) {
     return SftpFavoritePathsCompanion(
       id: id ?? this.id,
       connectionId: connectionId ?? this.connectionId,
@@ -5577,82 +6620,86 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $TerminalHistoryRecordsTable(this);
   late final $PlaybooksTable playbooks = $PlaybooksTable(this);
   late final $PlaybookRunsTable playbookRuns = $PlaybookRunsTable(this);
-  late final $PlaybookRunStepsTable playbookRunSteps =
-      $PlaybookRunStepsTable(this);
-  late final $SftpRecentPathsTable sftpRecentPaths =
-      $SftpRecentPathsTable(this);
+  late final $PlaybookRunStepsTable playbookRunSteps = $PlaybookRunStepsTable(
+    this,
+  );
+  late final $SftpRecentPathsTable sftpRecentPaths = $SftpRecentPathsTable(
+    this,
+  );
   late final $SftpFavoritePathsTable sftpFavoritePaths =
       $SftpFavoritePathsTable(this);
-  late final MigrationMetaDao migrationMetaDao =
-      MigrationMetaDao(this as AppDatabase);
+  late final MigrationMetaDao migrationMetaDao = MigrationMetaDao(
+    this as AppDatabase,
+  );
   late final AiChatDao aiChatDao = AiChatDao(this as AppDatabase);
-  late final AgentMetricsDao agentMetricsDao =
-      AgentMetricsDao(this as AppDatabase);
+  late final AgentMetricsDao agentMetricsDao = AgentMetricsDao(
+    this as AppDatabase,
+  );
   late final AgentTraceDao agentTraceDao = AgentTraceDao(this as AppDatabase);
-  late final TerminalHistoryDao terminalHistoryDao =
-      TerminalHistoryDao(this as AppDatabase);
+  late final TerminalHistoryDao terminalHistoryDao = TerminalHistoryDao(
+    this as AppDatabase,
+  );
   late final PlaybookDao playbookDao = PlaybookDao(this as AppDatabase);
-  late final SftpHistoryDao sftpHistoryDao =
-      SftpHistoryDao(this as AppDatabase);
+  late final SftpHistoryDao sftpHistoryDao = SftpHistoryDao(
+    this as AppDatabase,
+  );
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
   @override
   List<DatabaseSchemaEntity> get allSchemaEntities => [
-        migrationMeta,
-        aiChats,
-        aiChatMessages,
-        agentRunMetricsTable,
-        agentTraceEventsTable,
-        terminalHistoryRecords,
-        playbooks,
-        playbookRuns,
-        playbookRunSteps,
-        sftpRecentPaths,
-        sftpFavoritePaths
-      ];
+    migrationMeta,
+    aiChats,
+    aiChatMessages,
+    agentRunMetricsTable,
+    agentTraceEventsTable,
+    terminalHistoryRecords,
+    playbooks,
+    playbookRuns,
+    playbookRunSteps,
+    sftpRecentPaths,
+    sftpFavoritePaths,
+  ];
   @override
-  StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules(
-        [
-          WritePropagation(
-            on: TableUpdateQuery.onTableName('ai_chats',
-                limitUpdateKind: UpdateKind.delete),
-            result: [
-              TableUpdate('ai_chat_messages', kind: UpdateKind.delete),
-            ],
-          ),
-          WritePropagation(
-            on: TableUpdateQuery.onTableName('playbooks',
-                limitUpdateKind: UpdateKind.delete),
-            result: [
-              TableUpdate('playbook_runs', kind: UpdateKind.delete),
-            ],
-          ),
-          WritePropagation(
-            on: TableUpdateQuery.onTableName('playbook_runs',
-                limitUpdateKind: UpdateKind.delete),
-            result: [
-              TableUpdate('playbook_run_steps', kind: UpdateKind.delete),
-            ],
-          ),
-        ],
-      );
+  StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'ai_chats',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('ai_chat_messages', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'playbooks',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('playbook_runs', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'playbook_runs',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('playbook_run_steps', kind: UpdateKind.delete)],
+    ),
+  ]);
 }
 
-typedef $$MigrationMetaTableCreateCompanionBuilder = MigrationMetaCompanion
-    Function({
-  required String key,
-  required String value,
-  required int updatedAt,
-  Value<int> rowid,
-});
-typedef $$MigrationMetaTableUpdateCompanionBuilder = MigrationMetaCompanion
-    Function({
-  Value<String> key,
-  Value<String> value,
-  Value<int> updatedAt,
-  Value<int> rowid,
-});
+typedef $$MigrationMetaTableCreateCompanionBuilder =
+    MigrationMetaCompanion Function({
+      required String key,
+      required String value,
+      required int updatedAt,
+      Value<int> rowid,
+    });
+typedef $$MigrationMetaTableUpdateCompanionBuilder =
+    MigrationMetaCompanion Function({
+      Value<String> key,
+      Value<String> value,
+      Value<int> updatedAt,
+      Value<int> rowid,
+    });
 
 class $$MigrationMetaTableFilterComposer
     extends Composer<_$AppDatabase, $MigrationMetaTable> {
@@ -5664,13 +6711,19 @@ class $$MigrationMetaTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get key => $composableBuilder(
-      column: $table.key, builder: (column) => ColumnFilters(column));
+    column: $table.key,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get value => $composableBuilder(
-      column: $table.value, builder: (column) => ColumnFilters(column));
+    column: $table.value,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
 }
 
 class $$MigrationMetaTableOrderingComposer
@@ -5683,13 +6736,19 @@ class $$MigrationMetaTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get key => $composableBuilder(
-      column: $table.key, builder: (column) => ColumnOrderings(column));
+    column: $table.key,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get value => $composableBuilder(
-      column: $table.value, builder: (column) => ColumnOrderings(column));
+    column: $table.value,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$MigrationMetaTableAnnotationComposer
@@ -5711,23 +6770,31 @@ class $$MigrationMetaTableAnnotationComposer
       $composableBuilder(column: $table.updatedAt, builder: (column) => column);
 }
 
-class $$MigrationMetaTableTableManager extends RootTableManager<
-    _$AppDatabase,
-    $MigrationMetaTable,
-    MigrationMetaData,
-    $$MigrationMetaTableFilterComposer,
-    $$MigrationMetaTableOrderingComposer,
-    $$MigrationMetaTableAnnotationComposer,
-    $$MigrationMetaTableCreateCompanionBuilder,
-    $$MigrationMetaTableUpdateCompanionBuilder,
-    (
-      MigrationMetaData,
-      BaseReferences<_$AppDatabase, $MigrationMetaTable, MigrationMetaData>
-    ),
-    MigrationMetaData,
-    PrefetchHooks Function()> {
+class $$MigrationMetaTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $MigrationMetaTable,
+          MigrationMetaData,
+          $$MigrationMetaTableFilterComposer,
+          $$MigrationMetaTableOrderingComposer,
+          $$MigrationMetaTableAnnotationComposer,
+          $$MigrationMetaTableCreateCompanionBuilder,
+          $$MigrationMetaTableUpdateCompanionBuilder,
+          (
+            MigrationMetaData,
+            BaseReferences<
+              _$AppDatabase,
+              $MigrationMetaTable,
+              MigrationMetaData
+            >,
+          ),
+          MigrationMetaData,
+          PrefetchHooks Function()
+        > {
   $$MigrationMetaTableTableManager(_$AppDatabase db, $MigrationMetaTable table)
-      : super(TableManagerState(
+    : super(
+        TableManagerState(
           db: db,
           table: table,
           createFilteringComposer: () =>
@@ -5736,91 +6803,100 @@ class $$MigrationMetaTableTableManager extends RootTableManager<
               $$MigrationMetaTableOrderingComposer($db: db, $table: table),
           createComputedFieldComposer: () =>
               $$MigrationMetaTableAnnotationComposer($db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> key = const Value.absent(),
-            Value<String> value = const Value.absent(),
-            Value<int> updatedAt = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              MigrationMetaCompanion(
-            key: key,
-            value: value,
-            updatedAt: updatedAt,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String key,
-            required String value,
-            required int updatedAt,
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              MigrationMetaCompanion.insert(
-            key: key,
-            value: value,
-            updatedAt: updatedAt,
-            rowid: rowid,
-          ),
+          updateCompanionCallback:
+              ({
+                Value<String> key = const Value.absent(),
+                Value<String> value = const Value.absent(),
+                Value<int> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => MigrationMetaCompanion(
+                key: key,
+                value: value,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String key,
+                required String value,
+                required int updatedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => MigrationMetaCompanion.insert(
+                key: key,
+                value: value,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
               .toList(),
           prefetchHooksCallback: null,
-        ));
+        ),
+      );
 }
 
-typedef $$MigrationMetaTableProcessedTableManager = ProcessedTableManager<
-    _$AppDatabase,
-    $MigrationMetaTable,
-    MigrationMetaData,
-    $$MigrationMetaTableFilterComposer,
-    $$MigrationMetaTableOrderingComposer,
-    $$MigrationMetaTableAnnotationComposer,
-    $$MigrationMetaTableCreateCompanionBuilder,
-    $$MigrationMetaTableUpdateCompanionBuilder,
-    (
+typedef $$MigrationMetaTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $MigrationMetaTable,
       MigrationMetaData,
-      BaseReferences<_$AppDatabase, $MigrationMetaTable, MigrationMetaData>
-    ),
-    MigrationMetaData,
-    PrefetchHooks Function()>;
-typedef $$AiChatsTableCreateCompanionBuilder = AiChatsCompanion Function({
-  required String id,
-  required String title,
-  required String model,
-  required int createdAt,
-  required int updatedAt,
-  Value<bool> planMode,
-  Value<int?> approvedPlanAssistantCreatedAt,
-  Value<int?> approvedPlanApprovedAt,
-  Value<int> rowid,
-});
-typedef $$AiChatsTableUpdateCompanionBuilder = AiChatsCompanion Function({
-  Value<String> id,
-  Value<String> title,
-  Value<String> model,
-  Value<int> createdAt,
-  Value<int> updatedAt,
-  Value<bool> planMode,
-  Value<int?> approvedPlanAssistantCreatedAt,
-  Value<int?> approvedPlanApprovedAt,
-  Value<int> rowid,
-});
+      $$MigrationMetaTableFilterComposer,
+      $$MigrationMetaTableOrderingComposer,
+      $$MigrationMetaTableAnnotationComposer,
+      $$MigrationMetaTableCreateCompanionBuilder,
+      $$MigrationMetaTableUpdateCompanionBuilder,
+      (
+        MigrationMetaData,
+        BaseReferences<_$AppDatabase, $MigrationMetaTable, MigrationMetaData>,
+      ),
+      MigrationMetaData,
+      PrefetchHooks Function()
+    >;
+typedef $$AiChatsTableCreateCompanionBuilder =
+    AiChatsCompanion Function({
+      required String id,
+      required String title,
+      required String model,
+      required int createdAt,
+      required int updatedAt,
+      Value<bool> planMode,
+      Value<int?> approvedPlanAssistantCreatedAt,
+      Value<int?> approvedPlanApprovedAt,
+      Value<int> rowid,
+    });
+typedef $$AiChatsTableUpdateCompanionBuilder =
+    AiChatsCompanion Function({
+      Value<String> id,
+      Value<String> title,
+      Value<String> model,
+      Value<int> createdAt,
+      Value<int> updatedAt,
+      Value<bool> planMode,
+      Value<int?> approvedPlanAssistantCreatedAt,
+      Value<int?> approvedPlanApprovedAt,
+      Value<int> rowid,
+    });
 
 final class $$AiChatsTableReferences
     extends BaseReferences<_$AppDatabase, $AiChatsTable, AiChat> {
   $$AiChatsTableReferences(super.$_db, super.$_table, super.$_typedResult);
 
   static MultiTypedResultKey<$AiChatMessagesTable, List<AiChatMessage>>
-      _aiChatMessagesRefsTable(_$AppDatabase db) =>
-          MultiTypedResultKey.fromTable(db.aiChatMessages,
-              aliasName: 'ai_chats__id__ai_chat_messages__chat_id');
+  _aiChatMessagesRefsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
+    db.aiChatMessages,
+    aliasName: 'ai_chats__id__ai_chat_messages__chat_id',
+  );
 
   $$AiChatMessagesTableProcessedTableManager get aiChatMessagesRefs {
-    final manager = $$AiChatMessagesTableTableManager($_db, $_db.aiChatMessages)
-        .filter((f) => f.chatId.id.sqlEquals($_itemColumn<String>('id')!));
+    final manager = $$AiChatMessagesTableTableManager(
+      $_db,
+      $_db.aiChatMessages,
+    ).filter((f) => f.chatId.id.sqlEquals($_itemColumn<String>('id')!));
 
     final cache = $_typedResult.readTableOrNull(_aiChatMessagesRefsTable($_db));
     return ProcessedTableManager(
-        manager.$state.copyWith(prefetchedData: cache));
+      manager.$state.copyWith(prefetchedData: cache),
+    );
   }
 }
 
@@ -5834,49 +6910,67 @@ class $$AiChatsTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnFilters(column));
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get title => $composableBuilder(
-      column: $table.title, builder: (column) => ColumnFilters(column));
+    column: $table.title,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get model => $composableBuilder(
-      column: $table.model, builder: (column) => ColumnFilters(column));
+    column: $table.model,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnFilters(column));
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<bool> get planMode => $composableBuilder(
-      column: $table.planMode, builder: (column) => ColumnFilters(column));
+    column: $table.planMode,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get approvedPlanAssistantCreatedAt => $composableBuilder(
-      column: $table.approvedPlanAssistantCreatedAt,
-      builder: (column) => ColumnFilters(column));
+    column: $table.approvedPlanAssistantCreatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get approvedPlanApprovedAt => $composableBuilder(
-      column: $table.approvedPlanApprovedAt,
-      builder: (column) => ColumnFilters(column));
+    column: $table.approvedPlanApprovedAt,
+    builder: (column) => ColumnFilters(column),
+  );
 
   Expression<bool> aiChatMessagesRefs(
-      Expression<bool> Function($$AiChatMessagesTableFilterComposer f) f) {
+    Expression<bool> Function($$AiChatMessagesTableFilterComposer f) f,
+  ) {
     final $$AiChatMessagesTableFilterComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.id,
-        referencedTable: $db.aiChatMessages,
-        getReferencedColumn: (t) => t.chatId,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$AiChatMessagesTableFilterComposer(
-              $db: $db,
-              $table: $db.aiChatMessages,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.aiChatMessages,
+      getReferencedColumn: (t) => t.chatId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$AiChatMessagesTableFilterComposer(
+            $db: $db,
+            $table: $db.aiChatMessages,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
     return f(composer);
   }
 }
@@ -5891,30 +6985,44 @@ class $$AiChatsTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnOrderings(column));
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get title => $composableBuilder(
-      column: $table.title, builder: (column) => ColumnOrderings(column));
+    column: $table.title,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get model => $composableBuilder(
-      column: $table.model, builder: (column) => ColumnOrderings(column));
+    column: $table.model,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<bool> get planMode => $composableBuilder(
-      column: $table.planMode, builder: (column) => ColumnOrderings(column));
+    column: $table.planMode,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get approvedPlanAssistantCreatedAt => $composableBuilder(
-      column: $table.approvedPlanAssistantCreatedAt,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.approvedPlanAssistantCreatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get approvedPlanApprovedAt => $composableBuilder(
-      column: $table.approvedPlanApprovedAt,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.approvedPlanApprovedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$AiChatsTableAnnotationComposer
@@ -5945,48 +7053,59 @@ class $$AiChatsTableAnnotationComposer
       $composableBuilder(column: $table.planMode, builder: (column) => column);
 
   GeneratedColumn<int> get approvedPlanAssistantCreatedAt => $composableBuilder(
-      column: $table.approvedPlanAssistantCreatedAt,
-      builder: (column) => column);
+    column: $table.approvedPlanAssistantCreatedAt,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<int> get approvedPlanApprovedAt => $composableBuilder(
-      column: $table.approvedPlanApprovedAt, builder: (column) => column);
+    column: $table.approvedPlanApprovedAt,
+    builder: (column) => column,
+  );
 
   Expression<T> aiChatMessagesRefs<T extends Object>(
-      Expression<T> Function($$AiChatMessagesTableAnnotationComposer a) f) {
+    Expression<T> Function($$AiChatMessagesTableAnnotationComposer a) f,
+  ) {
     final $$AiChatMessagesTableAnnotationComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.id,
-        referencedTable: $db.aiChatMessages,
-        getReferencedColumn: (t) => t.chatId,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$AiChatMessagesTableAnnotationComposer(
-              $db: $db,
-              $table: $db.aiChatMessages,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.aiChatMessages,
+      getReferencedColumn: (t) => t.chatId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$AiChatMessagesTableAnnotationComposer(
+            $db: $db,
+            $table: $db.aiChatMessages,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
     return f(composer);
   }
 }
 
-class $$AiChatsTableTableManager extends RootTableManager<
-    _$AppDatabase,
-    $AiChatsTable,
-    AiChat,
-    $$AiChatsTableFilterComposer,
-    $$AiChatsTableOrderingComposer,
-    $$AiChatsTableAnnotationComposer,
-    $$AiChatsTableCreateCompanionBuilder,
-    $$AiChatsTableUpdateCompanionBuilder,
-    (AiChat, $$AiChatsTableReferences),
-    AiChat,
-    PrefetchHooks Function({bool aiChatMessagesRefs})> {
+class $$AiChatsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $AiChatsTable,
+          AiChat,
+          $$AiChatsTableFilterComposer,
+          $$AiChatsTableOrderingComposer,
+          $$AiChatsTableAnnotationComposer,
+          $$AiChatsTableCreateCompanionBuilder,
+          $$AiChatsTableUpdateCompanionBuilder,
+          (AiChat, $$AiChatsTableReferences),
+          AiChat,
+          PrefetchHooks Function({bool aiChatMessagesRefs})
+        > {
   $$AiChatsTableTableManager(_$AppDatabase db, $AiChatsTable table)
-      : super(TableManagerState(
+    : super(
+        TableManagerState(
           db: db,
           table: table,
           createFilteringComposer: () =>
@@ -5995,144 +7114,161 @@ class $$AiChatsTableTableManager extends RootTableManager<
               $$AiChatsTableOrderingComposer($db: db, $table: table),
           createComputedFieldComposer: () =>
               $$AiChatsTableAnnotationComposer($db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> id = const Value.absent(),
-            Value<String> title = const Value.absent(),
-            Value<String> model = const Value.absent(),
-            Value<int> createdAt = const Value.absent(),
-            Value<int> updatedAt = const Value.absent(),
-            Value<bool> planMode = const Value.absent(),
-            Value<int?> approvedPlanAssistantCreatedAt = const Value.absent(),
-            Value<int?> approvedPlanApprovedAt = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              AiChatsCompanion(
-            id: id,
-            title: title,
-            model: model,
-            createdAt: createdAt,
-            updatedAt: updatedAt,
-            planMode: planMode,
-            approvedPlanAssistantCreatedAt: approvedPlanAssistantCreatedAt,
-            approvedPlanApprovedAt: approvedPlanApprovedAt,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String id,
-            required String title,
-            required String model,
-            required int createdAt,
-            required int updatedAt,
-            Value<bool> planMode = const Value.absent(),
-            Value<int?> approvedPlanAssistantCreatedAt = const Value.absent(),
-            Value<int?> approvedPlanApprovedAt = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              AiChatsCompanion.insert(
-            id: id,
-            title: title,
-            model: model,
-            createdAt: createdAt,
-            updatedAt: updatedAt,
-            planMode: planMode,
-            approvedPlanAssistantCreatedAt: approvedPlanAssistantCreatedAt,
-            approvedPlanApprovedAt: approvedPlanApprovedAt,
-            rowid: rowid,
-          ),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> title = const Value.absent(),
+                Value<String> model = const Value.absent(),
+                Value<int> createdAt = const Value.absent(),
+                Value<int> updatedAt = const Value.absent(),
+                Value<bool> planMode = const Value.absent(),
+                Value<int?> approvedPlanAssistantCreatedAt =
+                    const Value.absent(),
+                Value<int?> approvedPlanApprovedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => AiChatsCompanion(
+                id: id,
+                title: title,
+                model: model,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                planMode: planMode,
+                approvedPlanAssistantCreatedAt: approvedPlanAssistantCreatedAt,
+                approvedPlanApprovedAt: approvedPlanApprovedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String title,
+                required String model,
+                required int createdAt,
+                required int updatedAt,
+                Value<bool> planMode = const Value.absent(),
+                Value<int?> approvedPlanAssistantCreatedAt =
+                    const Value.absent(),
+                Value<int?> approvedPlanApprovedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => AiChatsCompanion.insert(
+                id: id,
+                title: title,
+                model: model,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                planMode: planMode,
+                approvedPlanAssistantCreatedAt: approvedPlanAssistantCreatedAt,
+                approvedPlanApprovedAt: approvedPlanApprovedAt,
+                rowid: rowid,
+              ),
           withReferenceMapper: (p0) => p0
-              .map((e) =>
-                  (e.readTable(table), $$AiChatsTableReferences(db, table, e)))
+              .map(
+                (e) => (
+                  e.readTable(table),
+                  $$AiChatsTableReferences(db, table, e),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: ({aiChatMessagesRefs = false}) {
             return PrefetchHooks(
               db: db,
               explicitlyWatchedTables: [
-                if (aiChatMessagesRefs) db.aiChatMessages
+                if (aiChatMessagesRefs) db.aiChatMessages,
               ],
               addJoins: null,
               getPrefetchedDataCallback: (items) async {
                 return [
                   if (aiChatMessagesRefs)
-                    await $_getPrefetchedData<AiChat, $AiChatsTable,
-                            AiChatMessage>(
-                        currentTable: table,
-                        referencedTable: $$AiChatsTableReferences
-                            ._aiChatMessagesRefsTable(db),
-                        managerFromTypedResult: (p0) =>
-                            $$AiChatsTableReferences(db, table, p0)
-                                .aiChatMessagesRefs,
-                        referencedItemsForCurrentItem: (item,
-                                referencedItems) =>
-                            referencedItems.where((e) => e.chatId == item.id),
-                        typedResults: items)
+                    await $_getPrefetchedData<
+                      AiChat,
+                      $AiChatsTable,
+                      AiChatMessage
+                    >(
+                      currentTable: table,
+                      referencedTable: $$AiChatsTableReferences
+                          ._aiChatMessagesRefsTable(db),
+                      managerFromTypedResult: (p0) => $$AiChatsTableReferences(
+                        db,
+                        table,
+                        p0,
+                      ).aiChatMessagesRefs,
+                      referencedItemsForCurrentItem: (item, referencedItems) =>
+                          referencedItems.where((e) => e.chatId == item.id),
+                      typedResults: items,
+                    ),
                 ];
               },
             );
           },
-        ));
+        ),
+      );
 }
 
-typedef $$AiChatsTableProcessedTableManager = ProcessedTableManager<
-    _$AppDatabase,
-    $AiChatsTable,
-    AiChat,
-    $$AiChatsTableFilterComposer,
-    $$AiChatsTableOrderingComposer,
-    $$AiChatsTableAnnotationComposer,
-    $$AiChatsTableCreateCompanionBuilder,
-    $$AiChatsTableUpdateCompanionBuilder,
-    (AiChat, $$AiChatsTableReferences),
-    AiChat,
-    PrefetchHooks Function({bool aiChatMessagesRefs})>;
-typedef $$AiChatMessagesTableCreateCompanionBuilder = AiChatMessagesCompanion
-    Function({
-  required String id,
-  required String chatId,
-  required String role,
-  required String textContent,
-  Value<String?> contextText,
-  required int createdAt,
-  Value<int?> promptTokens,
-  Value<int?> completionTokens,
-  Value<int?> totalTokens,
-  Value<int?> elapsedMs,
-  Value<bool?> tokenUsageEstimated,
-  Value<int?> promptCacheHitTokens,
-  Value<int?> promptCacheMissTokens,
-  Value<int?> reasoningTokens,
-  Value<String?> agentRunId,
-  Value<String> attachmentsJson,
-  Value<String> tracesJson,
-  Value<String> todoStepsJson,
-  Value<int> rowid,
-});
-typedef $$AiChatMessagesTableUpdateCompanionBuilder = AiChatMessagesCompanion
-    Function({
-  Value<String> id,
-  Value<String> chatId,
-  Value<String> role,
-  Value<String> textContent,
-  Value<String?> contextText,
-  Value<int> createdAt,
-  Value<int?> promptTokens,
-  Value<int?> completionTokens,
-  Value<int?> totalTokens,
-  Value<int?> elapsedMs,
-  Value<bool?> tokenUsageEstimated,
-  Value<int?> promptCacheHitTokens,
-  Value<int?> promptCacheMissTokens,
-  Value<int?> reasoningTokens,
-  Value<String?> agentRunId,
-  Value<String> attachmentsJson,
-  Value<String> tracesJson,
-  Value<String> todoStepsJson,
-  Value<int> rowid,
-});
+typedef $$AiChatsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $AiChatsTable,
+      AiChat,
+      $$AiChatsTableFilterComposer,
+      $$AiChatsTableOrderingComposer,
+      $$AiChatsTableAnnotationComposer,
+      $$AiChatsTableCreateCompanionBuilder,
+      $$AiChatsTableUpdateCompanionBuilder,
+      (AiChat, $$AiChatsTableReferences),
+      AiChat,
+      PrefetchHooks Function({bool aiChatMessagesRefs})
+    >;
+typedef $$AiChatMessagesTableCreateCompanionBuilder =
+    AiChatMessagesCompanion Function({
+      required String id,
+      required String chatId,
+      required String role,
+      required String textContent,
+      Value<String?> contextText,
+      required int createdAt,
+      Value<int?> promptTokens,
+      Value<int?> completionTokens,
+      Value<int?> totalTokens,
+      Value<int?> elapsedMs,
+      Value<bool?> tokenUsageEstimated,
+      Value<int?> promptCacheHitTokens,
+      Value<int?> promptCacheMissTokens,
+      Value<int?> reasoningTokens,
+      Value<String?> agentRunId,
+      Value<String> attachmentsJson,
+      Value<String> tracesJson,
+      Value<String> todoStepsJson,
+      Value<int> rowid,
+    });
+typedef $$AiChatMessagesTableUpdateCompanionBuilder =
+    AiChatMessagesCompanion Function({
+      Value<String> id,
+      Value<String> chatId,
+      Value<String> role,
+      Value<String> textContent,
+      Value<String?> contextText,
+      Value<int> createdAt,
+      Value<int?> promptTokens,
+      Value<int?> completionTokens,
+      Value<int?> totalTokens,
+      Value<int?> elapsedMs,
+      Value<bool?> tokenUsageEstimated,
+      Value<int?> promptCacheHitTokens,
+      Value<int?> promptCacheMissTokens,
+      Value<int?> reasoningTokens,
+      Value<String?> agentRunId,
+      Value<String> attachmentsJson,
+      Value<String> tracesJson,
+      Value<String> todoStepsJson,
+      Value<int> rowid,
+    });
 
 final class $$AiChatMessagesTableReferences
     extends BaseReferences<_$AppDatabase, $AiChatMessagesTable, AiChatMessage> {
   $$AiChatMessagesTableReferences(
-      super.$_db, super.$_table, super.$_typedResult);
+    super.$_db,
+    super.$_table,
+    super.$_typedResult,
+  );
 
   static $AiChatsTable _chatIdTable(_$AppDatabase db) =>
       db.aiChats.createAlias('ai_chat_messages__chat_id__ai_chats__id');
@@ -6140,12 +7276,15 @@ final class $$AiChatMessagesTableReferences
   $$AiChatsTableProcessedTableManager get chatId {
     final $_column = $_itemColumn<String>('chat_id')!;
 
-    final manager = $$AiChatsTableTableManager($_db, $_db.aiChats)
-        .filter((f) => f.id.sqlEquals($_column));
+    final manager = $$AiChatsTableTableManager(
+      $_db,
+      $_db.aiChats,
+    ).filter((f) => f.id.sqlEquals($_column));
     final item = $_typedResult.readTableOrNull(_chatIdTable($_db));
     if (item == null) return manager;
     return ProcessedTableManager(
-        manager.$state.copyWith(prefetchedData: [item]));
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
   }
 }
 
@@ -6159,79 +7298,110 @@ class $$AiChatMessagesTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnFilters(column));
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get role => $composableBuilder(
-      column: $table.role, builder: (column) => ColumnFilters(column));
+    column: $table.role,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get textContent => $composableBuilder(
-      column: $table.textContent, builder: (column) => ColumnFilters(column));
+    column: $table.textContent,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get contextText => $composableBuilder(
-      column: $table.contextText, builder: (column) => ColumnFilters(column));
+    column: $table.contextText,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnFilters(column));
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get promptTokens => $composableBuilder(
-      column: $table.promptTokens, builder: (column) => ColumnFilters(column));
+    column: $table.promptTokens,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get completionTokens => $composableBuilder(
-      column: $table.completionTokens,
-      builder: (column) => ColumnFilters(column));
+    column: $table.completionTokens,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get totalTokens => $composableBuilder(
-      column: $table.totalTokens, builder: (column) => ColumnFilters(column));
+    column: $table.totalTokens,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get elapsedMs => $composableBuilder(
-      column: $table.elapsedMs, builder: (column) => ColumnFilters(column));
+    column: $table.elapsedMs,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<bool> get tokenUsageEstimated => $composableBuilder(
-      column: $table.tokenUsageEstimated,
-      builder: (column) => ColumnFilters(column));
+    column: $table.tokenUsageEstimated,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get promptCacheHitTokens => $composableBuilder(
-      column: $table.promptCacheHitTokens,
-      builder: (column) => ColumnFilters(column));
+    column: $table.promptCacheHitTokens,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get promptCacheMissTokens => $composableBuilder(
-      column: $table.promptCacheMissTokens,
-      builder: (column) => ColumnFilters(column));
+    column: $table.promptCacheMissTokens,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get reasoningTokens => $composableBuilder(
-      column: $table.reasoningTokens,
-      builder: (column) => ColumnFilters(column));
+    column: $table.reasoningTokens,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get agentRunId => $composableBuilder(
-      column: $table.agentRunId, builder: (column) => ColumnFilters(column));
+    column: $table.agentRunId,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get attachmentsJson => $composableBuilder(
-      column: $table.attachmentsJson,
-      builder: (column) => ColumnFilters(column));
+    column: $table.attachmentsJson,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get tracesJson => $composableBuilder(
-      column: $table.tracesJson, builder: (column) => ColumnFilters(column));
+    column: $table.tracesJson,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get todoStepsJson => $composableBuilder(
-      column: $table.todoStepsJson, builder: (column) => ColumnFilters(column));
+    column: $table.todoStepsJson,
+    builder: (column) => ColumnFilters(column),
+  );
 
   $$AiChatsTableFilterComposer get chatId {
     final $$AiChatsTableFilterComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.chatId,
-        referencedTable: $db.aiChats,
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$AiChatsTableFilterComposer(
-              $db: $db,
-              $table: $db.aiChats,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
+      composer: this,
+      getCurrentColumn: (t) => t.chatId,
+      referencedTable: $db.aiChats,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$AiChatsTableFilterComposer(
+            $db: $db,
+            $table: $db.aiChats,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
     return composer;
   }
 }
@@ -6246,81 +7416,110 @@ class $$AiChatMessagesTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnOrderings(column));
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get role => $composableBuilder(
-      column: $table.role, builder: (column) => ColumnOrderings(column));
+    column: $table.role,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get textContent => $composableBuilder(
-      column: $table.textContent, builder: (column) => ColumnOrderings(column));
+    column: $table.textContent,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get contextText => $composableBuilder(
-      column: $table.contextText, builder: (column) => ColumnOrderings(column));
+    column: $table.contextText,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get promptTokens => $composableBuilder(
-      column: $table.promptTokens,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.promptTokens,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get completionTokens => $composableBuilder(
-      column: $table.completionTokens,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.completionTokens,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get totalTokens => $composableBuilder(
-      column: $table.totalTokens, builder: (column) => ColumnOrderings(column));
+    column: $table.totalTokens,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get elapsedMs => $composableBuilder(
-      column: $table.elapsedMs, builder: (column) => ColumnOrderings(column));
+    column: $table.elapsedMs,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<bool> get tokenUsageEstimated => $composableBuilder(
-      column: $table.tokenUsageEstimated,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.tokenUsageEstimated,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get promptCacheHitTokens => $composableBuilder(
-      column: $table.promptCacheHitTokens,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.promptCacheHitTokens,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get promptCacheMissTokens => $composableBuilder(
-      column: $table.promptCacheMissTokens,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.promptCacheMissTokens,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get reasoningTokens => $composableBuilder(
-      column: $table.reasoningTokens,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.reasoningTokens,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get agentRunId => $composableBuilder(
-      column: $table.agentRunId, builder: (column) => ColumnOrderings(column));
+    column: $table.agentRunId,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get attachmentsJson => $composableBuilder(
-      column: $table.attachmentsJson,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.attachmentsJson,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get tracesJson => $composableBuilder(
-      column: $table.tracesJson, builder: (column) => ColumnOrderings(column));
+    column: $table.tracesJson,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get todoStepsJson => $composableBuilder(
-      column: $table.todoStepsJson,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.todoStepsJson,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   $$AiChatsTableOrderingComposer get chatId {
     final $$AiChatsTableOrderingComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.chatId,
-        referencedTable: $db.aiChats,
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$AiChatsTableOrderingComposer(
-              $db: $db,
-              $table: $db.aiChats,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
+      composer: this,
+      getCurrentColumn: (t) => t.chatId,
+      referencedTable: $db.aiChats,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$AiChatsTableOrderingComposer(
+            $db: $db,
+            $table: $db.aiChats,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
     return composer;
   }
 }
@@ -6341,86 +7540,120 @@ class $$AiChatMessagesTableAnnotationComposer
       $composableBuilder(column: $table.role, builder: (column) => column);
 
   GeneratedColumn<String> get textContent => $composableBuilder(
-      column: $table.textContent, builder: (column) => column);
+    column: $table.textContent,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get contextText => $composableBuilder(
-      column: $table.contextText, builder: (column) => column);
+    column: $table.contextText,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<int> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
 
   GeneratedColumn<int> get promptTokens => $composableBuilder(
-      column: $table.promptTokens, builder: (column) => column);
+    column: $table.promptTokens,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<int> get completionTokens => $composableBuilder(
-      column: $table.completionTokens, builder: (column) => column);
+    column: $table.completionTokens,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<int> get totalTokens => $composableBuilder(
-      column: $table.totalTokens, builder: (column) => column);
+    column: $table.totalTokens,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<int> get elapsedMs =>
       $composableBuilder(column: $table.elapsedMs, builder: (column) => column);
 
   GeneratedColumn<bool> get tokenUsageEstimated => $composableBuilder(
-      column: $table.tokenUsageEstimated, builder: (column) => column);
+    column: $table.tokenUsageEstimated,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<int> get promptCacheHitTokens => $composableBuilder(
-      column: $table.promptCacheHitTokens, builder: (column) => column);
+    column: $table.promptCacheHitTokens,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<int> get promptCacheMissTokens => $composableBuilder(
-      column: $table.promptCacheMissTokens, builder: (column) => column);
+    column: $table.promptCacheMissTokens,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<int> get reasoningTokens => $composableBuilder(
-      column: $table.reasoningTokens, builder: (column) => column);
+    column: $table.reasoningTokens,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get agentRunId => $composableBuilder(
-      column: $table.agentRunId, builder: (column) => column);
+    column: $table.agentRunId,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get attachmentsJson => $composableBuilder(
-      column: $table.attachmentsJson, builder: (column) => column);
+    column: $table.attachmentsJson,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get tracesJson => $composableBuilder(
-      column: $table.tracesJson, builder: (column) => column);
+    column: $table.tracesJson,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get todoStepsJson => $composableBuilder(
-      column: $table.todoStepsJson, builder: (column) => column);
+    column: $table.todoStepsJson,
+    builder: (column) => column,
+  );
 
   $$AiChatsTableAnnotationComposer get chatId {
     final $$AiChatsTableAnnotationComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.chatId,
-        referencedTable: $db.aiChats,
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$AiChatsTableAnnotationComposer(
-              $db: $db,
-              $table: $db.aiChats,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
+      composer: this,
+      getCurrentColumn: (t) => t.chatId,
+      referencedTable: $db.aiChats,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$AiChatsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.aiChats,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
     return composer;
   }
 }
 
-class $$AiChatMessagesTableTableManager extends RootTableManager<
-    _$AppDatabase,
-    $AiChatMessagesTable,
-    AiChatMessage,
-    $$AiChatMessagesTableFilterComposer,
-    $$AiChatMessagesTableOrderingComposer,
-    $$AiChatMessagesTableAnnotationComposer,
-    $$AiChatMessagesTableCreateCompanionBuilder,
-    $$AiChatMessagesTableUpdateCompanionBuilder,
-    (AiChatMessage, $$AiChatMessagesTableReferences),
-    AiChatMessage,
-    PrefetchHooks Function({bool chatId})> {
+class $$AiChatMessagesTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $AiChatMessagesTable,
+          AiChatMessage,
+          $$AiChatMessagesTableFilterComposer,
+          $$AiChatMessagesTableOrderingComposer,
+          $$AiChatMessagesTableAnnotationComposer,
+          $$AiChatMessagesTableCreateCompanionBuilder,
+          $$AiChatMessagesTableUpdateCompanionBuilder,
+          (AiChatMessage, $$AiChatMessagesTableReferences),
+          AiChatMessage,
+          PrefetchHooks Function({bool chatId})
+        > {
   $$AiChatMessagesTableTableManager(
-      _$AppDatabase db, $AiChatMessagesTable table)
-      : super(TableManagerState(
+    _$AppDatabase db,
+    $AiChatMessagesTable table,
+  ) : super(
+        TableManagerState(
           db: db,
           table: table,
           createFilteringComposer: () =>
@@ -6429,102 +7662,105 @@ class $$AiChatMessagesTableTableManager extends RootTableManager<
               $$AiChatMessagesTableOrderingComposer($db: db, $table: table),
           createComputedFieldComposer: () =>
               $$AiChatMessagesTableAnnotationComposer($db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> id = const Value.absent(),
-            Value<String> chatId = const Value.absent(),
-            Value<String> role = const Value.absent(),
-            Value<String> textContent = const Value.absent(),
-            Value<String?> contextText = const Value.absent(),
-            Value<int> createdAt = const Value.absent(),
-            Value<int?> promptTokens = const Value.absent(),
-            Value<int?> completionTokens = const Value.absent(),
-            Value<int?> totalTokens = const Value.absent(),
-            Value<int?> elapsedMs = const Value.absent(),
-            Value<bool?> tokenUsageEstimated = const Value.absent(),
-            Value<int?> promptCacheHitTokens = const Value.absent(),
-            Value<int?> promptCacheMissTokens = const Value.absent(),
-            Value<int?> reasoningTokens = const Value.absent(),
-            Value<String?> agentRunId = const Value.absent(),
-            Value<String> attachmentsJson = const Value.absent(),
-            Value<String> tracesJson = const Value.absent(),
-            Value<String> todoStepsJson = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              AiChatMessagesCompanion(
-            id: id,
-            chatId: chatId,
-            role: role,
-            textContent: textContent,
-            contextText: contextText,
-            createdAt: createdAt,
-            promptTokens: promptTokens,
-            completionTokens: completionTokens,
-            totalTokens: totalTokens,
-            elapsedMs: elapsedMs,
-            tokenUsageEstimated: tokenUsageEstimated,
-            promptCacheHitTokens: promptCacheHitTokens,
-            promptCacheMissTokens: promptCacheMissTokens,
-            reasoningTokens: reasoningTokens,
-            agentRunId: agentRunId,
-            attachmentsJson: attachmentsJson,
-            tracesJson: tracesJson,
-            todoStepsJson: todoStepsJson,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String id,
-            required String chatId,
-            required String role,
-            required String textContent,
-            Value<String?> contextText = const Value.absent(),
-            required int createdAt,
-            Value<int?> promptTokens = const Value.absent(),
-            Value<int?> completionTokens = const Value.absent(),
-            Value<int?> totalTokens = const Value.absent(),
-            Value<int?> elapsedMs = const Value.absent(),
-            Value<bool?> tokenUsageEstimated = const Value.absent(),
-            Value<int?> promptCacheHitTokens = const Value.absent(),
-            Value<int?> promptCacheMissTokens = const Value.absent(),
-            Value<int?> reasoningTokens = const Value.absent(),
-            Value<String?> agentRunId = const Value.absent(),
-            Value<String> attachmentsJson = const Value.absent(),
-            Value<String> tracesJson = const Value.absent(),
-            Value<String> todoStepsJson = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              AiChatMessagesCompanion.insert(
-            id: id,
-            chatId: chatId,
-            role: role,
-            textContent: textContent,
-            contextText: contextText,
-            createdAt: createdAt,
-            promptTokens: promptTokens,
-            completionTokens: completionTokens,
-            totalTokens: totalTokens,
-            elapsedMs: elapsedMs,
-            tokenUsageEstimated: tokenUsageEstimated,
-            promptCacheHitTokens: promptCacheHitTokens,
-            promptCacheMissTokens: promptCacheMissTokens,
-            reasoningTokens: reasoningTokens,
-            agentRunId: agentRunId,
-            attachmentsJson: attachmentsJson,
-            tracesJson: tracesJson,
-            todoStepsJson: todoStepsJson,
-            rowid: rowid,
-          ),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> chatId = const Value.absent(),
+                Value<String> role = const Value.absent(),
+                Value<String> textContent = const Value.absent(),
+                Value<String?> contextText = const Value.absent(),
+                Value<int> createdAt = const Value.absent(),
+                Value<int?> promptTokens = const Value.absent(),
+                Value<int?> completionTokens = const Value.absent(),
+                Value<int?> totalTokens = const Value.absent(),
+                Value<int?> elapsedMs = const Value.absent(),
+                Value<bool?> tokenUsageEstimated = const Value.absent(),
+                Value<int?> promptCacheHitTokens = const Value.absent(),
+                Value<int?> promptCacheMissTokens = const Value.absent(),
+                Value<int?> reasoningTokens = const Value.absent(),
+                Value<String?> agentRunId = const Value.absent(),
+                Value<String> attachmentsJson = const Value.absent(),
+                Value<String> tracesJson = const Value.absent(),
+                Value<String> todoStepsJson = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => AiChatMessagesCompanion(
+                id: id,
+                chatId: chatId,
+                role: role,
+                textContent: textContent,
+                contextText: contextText,
+                createdAt: createdAt,
+                promptTokens: promptTokens,
+                completionTokens: completionTokens,
+                totalTokens: totalTokens,
+                elapsedMs: elapsedMs,
+                tokenUsageEstimated: tokenUsageEstimated,
+                promptCacheHitTokens: promptCacheHitTokens,
+                promptCacheMissTokens: promptCacheMissTokens,
+                reasoningTokens: reasoningTokens,
+                agentRunId: agentRunId,
+                attachmentsJson: attachmentsJson,
+                tracesJson: tracesJson,
+                todoStepsJson: todoStepsJson,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String chatId,
+                required String role,
+                required String textContent,
+                Value<String?> contextText = const Value.absent(),
+                required int createdAt,
+                Value<int?> promptTokens = const Value.absent(),
+                Value<int?> completionTokens = const Value.absent(),
+                Value<int?> totalTokens = const Value.absent(),
+                Value<int?> elapsedMs = const Value.absent(),
+                Value<bool?> tokenUsageEstimated = const Value.absent(),
+                Value<int?> promptCacheHitTokens = const Value.absent(),
+                Value<int?> promptCacheMissTokens = const Value.absent(),
+                Value<int?> reasoningTokens = const Value.absent(),
+                Value<String?> agentRunId = const Value.absent(),
+                Value<String> attachmentsJson = const Value.absent(),
+                Value<String> tracesJson = const Value.absent(),
+                Value<String> todoStepsJson = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => AiChatMessagesCompanion.insert(
+                id: id,
+                chatId: chatId,
+                role: role,
+                textContent: textContent,
+                contextText: contextText,
+                createdAt: createdAt,
+                promptTokens: promptTokens,
+                completionTokens: completionTokens,
+                totalTokens: totalTokens,
+                elapsedMs: elapsedMs,
+                tokenUsageEstimated: tokenUsageEstimated,
+                promptCacheHitTokens: promptCacheHitTokens,
+                promptCacheMissTokens: promptCacheMissTokens,
+                reasoningTokens: reasoningTokens,
+                agentRunId: agentRunId,
+                attachmentsJson: attachmentsJson,
+                tracesJson: tracesJson,
+                todoStepsJson: todoStepsJson,
+                rowid: rowid,
+              ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (
-                    e.readTable(table),
-                    $$AiChatMessagesTableReferences(db, table, e)
-                  ))
+              .map(
+                (e) => (
+                  e.readTable(table),
+                  $$AiChatMessagesTableReferences(db, table, e),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: ({chatId = false}) {
             return PrefetchHooks(
               db: db,
               explicitlyWatchedTables: [],
-              addJoins: <
-                  T extends TableManagerState<
+              addJoins:
+                  <
+                    T extends TableManagerState<
                       dynamic,
                       dynamic,
                       dynamic,
@@ -6535,90 +7771,99 @@ class $$AiChatMessagesTableTableManager extends RootTableManager<
                       dynamic,
                       dynamic,
                       dynamic,
-                      dynamic>>(state) {
-                if (chatId) {
-                  state = state.withJoin(
-                    currentTable: table,
-                    currentColumn: table.chatId,
-                    referencedTable:
-                        $$AiChatMessagesTableReferences._chatIdTable(db),
-                    referencedColumn:
-                        $$AiChatMessagesTableReferences._chatIdTable(db).id,
-                  ) as T;
-                }
+                      dynamic
+                    >
+                  >(state) {
+                    if (chatId) {
+                      state =
+                          state.withJoin(
+                                currentTable: table,
+                                currentColumn: table.chatId,
+                                referencedTable: $$AiChatMessagesTableReferences
+                                    ._chatIdTable(db),
+                                referencedColumn:
+                                    $$AiChatMessagesTableReferences
+                                        ._chatIdTable(db)
+                                        .id,
+                              )
+                              as T;
+                    }
 
-                return state;
-              },
+                    return state;
+                  },
               getPrefetchedDataCallback: (items) async {
                 return [];
               },
             );
           },
-        ));
+        ),
+      );
 }
 
-typedef $$AiChatMessagesTableProcessedTableManager = ProcessedTableManager<
-    _$AppDatabase,
-    $AiChatMessagesTable,
-    AiChatMessage,
-    $$AiChatMessagesTableFilterComposer,
-    $$AiChatMessagesTableOrderingComposer,
-    $$AiChatMessagesTableAnnotationComposer,
-    $$AiChatMessagesTableCreateCompanionBuilder,
-    $$AiChatMessagesTableUpdateCompanionBuilder,
-    (AiChatMessage, $$AiChatMessagesTableReferences),
-    AiChatMessage,
-    PrefetchHooks Function({bool chatId})>;
-typedef $$AgentRunMetricsTableTableCreateCompanionBuilder
-    = AgentRunMetricsTableCompanion Function({
-  required String id,
-  required int startedAt,
-  required int finishedAt,
-  required String model,
-  Value<String> helperModel,
-  Value<String> auditModel,
-  Value<int> promptTokens,
-  Value<int> completionTokens,
-  Value<int> totalTokens,
-  Value<int> elapsedMs,
-  Value<int> toolCalls,
-  Value<int> cacheHits,
-  Value<int> dedupBlockedCalls,
-  Value<int> ragHits,
-  Value<int> approvalCount,
-  Value<int> approvedCount,
-  Value<int> auditCount,
-  Value<int> helperFanout,
-  Value<bool> success,
-  Value<String> selectedToolSetJson,
-  Value<String> memorySourcesJson,
-  Value<int> rowid,
-});
-typedef $$AgentRunMetricsTableTableUpdateCompanionBuilder
-    = AgentRunMetricsTableCompanion Function({
-  Value<String> id,
-  Value<int> startedAt,
-  Value<int> finishedAt,
-  Value<String> model,
-  Value<String> helperModel,
-  Value<String> auditModel,
-  Value<int> promptTokens,
-  Value<int> completionTokens,
-  Value<int> totalTokens,
-  Value<int> elapsedMs,
-  Value<int> toolCalls,
-  Value<int> cacheHits,
-  Value<int> dedupBlockedCalls,
-  Value<int> ragHits,
-  Value<int> approvalCount,
-  Value<int> approvedCount,
-  Value<int> auditCount,
-  Value<int> helperFanout,
-  Value<bool> success,
-  Value<String> selectedToolSetJson,
-  Value<String> memorySourcesJson,
-  Value<int> rowid,
-});
+typedef $$AiChatMessagesTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $AiChatMessagesTable,
+      AiChatMessage,
+      $$AiChatMessagesTableFilterComposer,
+      $$AiChatMessagesTableOrderingComposer,
+      $$AiChatMessagesTableAnnotationComposer,
+      $$AiChatMessagesTableCreateCompanionBuilder,
+      $$AiChatMessagesTableUpdateCompanionBuilder,
+      (AiChatMessage, $$AiChatMessagesTableReferences),
+      AiChatMessage,
+      PrefetchHooks Function({bool chatId})
+    >;
+typedef $$AgentRunMetricsTableTableCreateCompanionBuilder =
+    AgentRunMetricsTableCompanion Function({
+      required String id,
+      required int startedAt,
+      required int finishedAt,
+      required String model,
+      Value<String> helperModel,
+      Value<String> auditModel,
+      Value<int> promptTokens,
+      Value<int> completionTokens,
+      Value<int> totalTokens,
+      Value<int> elapsedMs,
+      Value<int> toolCalls,
+      Value<int> cacheHits,
+      Value<int> dedupBlockedCalls,
+      Value<int> ragHits,
+      Value<int> approvalCount,
+      Value<int> approvedCount,
+      Value<int> auditCount,
+      Value<int> helperFanout,
+      Value<bool> success,
+      Value<String> selectedToolSetJson,
+      Value<String> memorySourcesJson,
+      Value<int> rowid,
+    });
+typedef $$AgentRunMetricsTableTableUpdateCompanionBuilder =
+    AgentRunMetricsTableCompanion Function({
+      Value<String> id,
+      Value<int> startedAt,
+      Value<int> finishedAt,
+      Value<String> model,
+      Value<String> helperModel,
+      Value<String> auditModel,
+      Value<int> promptTokens,
+      Value<int> completionTokens,
+      Value<int> totalTokens,
+      Value<int> elapsedMs,
+      Value<int> toolCalls,
+      Value<int> cacheHits,
+      Value<int> dedupBlockedCalls,
+      Value<int> ragHits,
+      Value<int> approvalCount,
+      Value<int> approvedCount,
+      Value<int> auditCount,
+      Value<int> helperFanout,
+      Value<bool> success,
+      Value<String> selectedToolSetJson,
+      Value<String> memorySourcesJson,
+      Value<int> rowid,
+    });
 
 class $$AgentRunMetricsTableTableFilterComposer
     extends Composer<_$AppDatabase, $AgentRunMetricsTableTable> {
@@ -6630,71 +7875,109 @@ class $$AgentRunMetricsTableTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnFilters(column));
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get startedAt => $composableBuilder(
-      column: $table.startedAt, builder: (column) => ColumnFilters(column));
+    column: $table.startedAt,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get finishedAt => $composableBuilder(
-      column: $table.finishedAt, builder: (column) => ColumnFilters(column));
+    column: $table.finishedAt,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get model => $composableBuilder(
-      column: $table.model, builder: (column) => ColumnFilters(column));
+    column: $table.model,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get helperModel => $composableBuilder(
-      column: $table.helperModel, builder: (column) => ColumnFilters(column));
+    column: $table.helperModel,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get auditModel => $composableBuilder(
-      column: $table.auditModel, builder: (column) => ColumnFilters(column));
+    column: $table.auditModel,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get promptTokens => $composableBuilder(
-      column: $table.promptTokens, builder: (column) => ColumnFilters(column));
+    column: $table.promptTokens,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get completionTokens => $composableBuilder(
-      column: $table.completionTokens,
-      builder: (column) => ColumnFilters(column));
+    column: $table.completionTokens,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get totalTokens => $composableBuilder(
-      column: $table.totalTokens, builder: (column) => ColumnFilters(column));
+    column: $table.totalTokens,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get elapsedMs => $composableBuilder(
-      column: $table.elapsedMs, builder: (column) => ColumnFilters(column));
+    column: $table.elapsedMs,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get toolCalls => $composableBuilder(
-      column: $table.toolCalls, builder: (column) => ColumnFilters(column));
+    column: $table.toolCalls,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get cacheHits => $composableBuilder(
-      column: $table.cacheHits, builder: (column) => ColumnFilters(column));
+    column: $table.cacheHits,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get dedupBlockedCalls => $composableBuilder(
-      column: $table.dedupBlockedCalls,
-      builder: (column) => ColumnFilters(column));
+    column: $table.dedupBlockedCalls,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get ragHits => $composableBuilder(
-      column: $table.ragHits, builder: (column) => ColumnFilters(column));
+    column: $table.ragHits,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get approvalCount => $composableBuilder(
-      column: $table.approvalCount, builder: (column) => ColumnFilters(column));
+    column: $table.approvalCount,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get approvedCount => $composableBuilder(
-      column: $table.approvedCount, builder: (column) => ColumnFilters(column));
+    column: $table.approvedCount,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get auditCount => $composableBuilder(
-      column: $table.auditCount, builder: (column) => ColumnFilters(column));
+    column: $table.auditCount,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get helperFanout => $composableBuilder(
-      column: $table.helperFanout, builder: (column) => ColumnFilters(column));
+    column: $table.helperFanout,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<bool> get success => $composableBuilder(
-      column: $table.success, builder: (column) => ColumnFilters(column));
+    column: $table.success,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get selectedToolSetJson => $composableBuilder(
-      column: $table.selectedToolSetJson,
-      builder: (column) => ColumnFilters(column));
+    column: $table.selectedToolSetJson,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get memorySourcesJson => $composableBuilder(
-      column: $table.memorySourcesJson,
-      builder: (column) => ColumnFilters(column));
+    column: $table.memorySourcesJson,
+    builder: (column) => ColumnFilters(column),
+  );
 }
 
 class $$AgentRunMetricsTableTableOrderingComposer
@@ -6707,75 +7990,109 @@ class $$AgentRunMetricsTableTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnOrderings(column));
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get startedAt => $composableBuilder(
-      column: $table.startedAt, builder: (column) => ColumnOrderings(column));
+    column: $table.startedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get finishedAt => $composableBuilder(
-      column: $table.finishedAt, builder: (column) => ColumnOrderings(column));
+    column: $table.finishedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get model => $composableBuilder(
-      column: $table.model, builder: (column) => ColumnOrderings(column));
+    column: $table.model,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get helperModel => $composableBuilder(
-      column: $table.helperModel, builder: (column) => ColumnOrderings(column));
+    column: $table.helperModel,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get auditModel => $composableBuilder(
-      column: $table.auditModel, builder: (column) => ColumnOrderings(column));
+    column: $table.auditModel,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get promptTokens => $composableBuilder(
-      column: $table.promptTokens,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.promptTokens,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get completionTokens => $composableBuilder(
-      column: $table.completionTokens,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.completionTokens,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get totalTokens => $composableBuilder(
-      column: $table.totalTokens, builder: (column) => ColumnOrderings(column));
+    column: $table.totalTokens,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get elapsedMs => $composableBuilder(
-      column: $table.elapsedMs, builder: (column) => ColumnOrderings(column));
+    column: $table.elapsedMs,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get toolCalls => $composableBuilder(
-      column: $table.toolCalls, builder: (column) => ColumnOrderings(column));
+    column: $table.toolCalls,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get cacheHits => $composableBuilder(
-      column: $table.cacheHits, builder: (column) => ColumnOrderings(column));
+    column: $table.cacheHits,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get dedupBlockedCalls => $composableBuilder(
-      column: $table.dedupBlockedCalls,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.dedupBlockedCalls,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get ragHits => $composableBuilder(
-      column: $table.ragHits, builder: (column) => ColumnOrderings(column));
+    column: $table.ragHits,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get approvalCount => $composableBuilder(
-      column: $table.approvalCount,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.approvalCount,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get approvedCount => $composableBuilder(
-      column: $table.approvedCount,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.approvedCount,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get auditCount => $composableBuilder(
-      column: $table.auditCount, builder: (column) => ColumnOrderings(column));
+    column: $table.auditCount,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get helperFanout => $composableBuilder(
-      column: $table.helperFanout,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.helperFanout,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<bool> get success => $composableBuilder(
-      column: $table.success, builder: (column) => ColumnOrderings(column));
+    column: $table.success,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get selectedToolSetJson => $composableBuilder(
-      column: $table.selectedToolSetJson,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.selectedToolSetJson,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get memorySourcesJson => $composableBuilder(
-      column: $table.memorySourcesJson,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.memorySourcesJson,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$AgentRunMetricsTableTableAnnotationComposer
@@ -6794,25 +8111,37 @@ class $$AgentRunMetricsTableTableAnnotationComposer
       $composableBuilder(column: $table.startedAt, builder: (column) => column);
 
   GeneratedColumn<int> get finishedAt => $composableBuilder(
-      column: $table.finishedAt, builder: (column) => column);
+    column: $table.finishedAt,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get model =>
       $composableBuilder(column: $table.model, builder: (column) => column);
 
   GeneratedColumn<String> get helperModel => $composableBuilder(
-      column: $table.helperModel, builder: (column) => column);
+    column: $table.helperModel,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get auditModel => $composableBuilder(
-      column: $table.auditModel, builder: (column) => column);
+    column: $table.auditModel,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<int> get promptTokens => $composableBuilder(
-      column: $table.promptTokens, builder: (column) => column);
+    column: $table.promptTokens,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<int> get completionTokens => $composableBuilder(
-      column: $table.completionTokens, builder: (column) => column);
+    column: $table.completionTokens,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<int> get totalTokens => $composableBuilder(
-      column: $table.totalTokens, builder: (column) => column);
+    column: $table.totalTokens,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<int> get elapsedMs =>
       $composableBuilder(column: $table.elapsedMs, builder: (column) => column);
@@ -6824,214 +8153,245 @@ class $$AgentRunMetricsTableTableAnnotationComposer
       $composableBuilder(column: $table.cacheHits, builder: (column) => column);
 
   GeneratedColumn<int> get dedupBlockedCalls => $composableBuilder(
-      column: $table.dedupBlockedCalls, builder: (column) => column);
+    column: $table.dedupBlockedCalls,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<int> get ragHits =>
       $composableBuilder(column: $table.ragHits, builder: (column) => column);
 
   GeneratedColumn<int> get approvalCount => $composableBuilder(
-      column: $table.approvalCount, builder: (column) => column);
+    column: $table.approvalCount,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<int> get approvedCount => $composableBuilder(
-      column: $table.approvedCount, builder: (column) => column);
+    column: $table.approvedCount,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<int> get auditCount => $composableBuilder(
-      column: $table.auditCount, builder: (column) => column);
+    column: $table.auditCount,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<int> get helperFanout => $composableBuilder(
-      column: $table.helperFanout, builder: (column) => column);
+    column: $table.helperFanout,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<bool> get success =>
       $composableBuilder(column: $table.success, builder: (column) => column);
 
   GeneratedColumn<String> get selectedToolSetJson => $composableBuilder(
-      column: $table.selectedToolSetJson, builder: (column) => column);
+    column: $table.selectedToolSetJson,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get memorySourcesJson => $composableBuilder(
-      column: $table.memorySourcesJson, builder: (column) => column);
+    column: $table.memorySourcesJson,
+    builder: (column) => column,
+  );
 }
 
-class $$AgentRunMetricsTableTableTableManager extends RootTableManager<
-    _$AppDatabase,
-    $AgentRunMetricsTableTable,
-    AgentRunMetricRow,
-    $$AgentRunMetricsTableTableFilterComposer,
-    $$AgentRunMetricsTableTableOrderingComposer,
-    $$AgentRunMetricsTableTableAnnotationComposer,
-    $$AgentRunMetricsTableTableCreateCompanionBuilder,
-    $$AgentRunMetricsTableTableUpdateCompanionBuilder,
-    (
-      AgentRunMetricRow,
-      BaseReferences<_$AppDatabase, $AgentRunMetricsTableTable,
-          AgentRunMetricRow>
-    ),
-    AgentRunMetricRow,
-    PrefetchHooks Function()> {
+class $$AgentRunMetricsTableTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $AgentRunMetricsTableTable,
+          AgentRunMetricRow,
+          $$AgentRunMetricsTableTableFilterComposer,
+          $$AgentRunMetricsTableTableOrderingComposer,
+          $$AgentRunMetricsTableTableAnnotationComposer,
+          $$AgentRunMetricsTableTableCreateCompanionBuilder,
+          $$AgentRunMetricsTableTableUpdateCompanionBuilder,
+          (
+            AgentRunMetricRow,
+            BaseReferences<
+              _$AppDatabase,
+              $AgentRunMetricsTableTable,
+              AgentRunMetricRow
+            >,
+          ),
+          AgentRunMetricRow,
+          PrefetchHooks Function()
+        > {
   $$AgentRunMetricsTableTableTableManager(
-      _$AppDatabase db, $AgentRunMetricsTableTable table)
-      : super(TableManagerState(
+    _$AppDatabase db,
+    $AgentRunMetricsTableTable table,
+  ) : super(
+        TableManagerState(
           db: db,
           table: table,
           createFilteringComposer: () =>
               $$AgentRunMetricsTableTableFilterComposer($db: db, $table: table),
           createOrderingComposer: () =>
               $$AgentRunMetricsTableTableOrderingComposer(
-                  $db: db, $table: table),
+                $db: db,
+                $table: table,
+              ),
           createComputedFieldComposer: () =>
               $$AgentRunMetricsTableTableAnnotationComposer(
-                  $db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> id = const Value.absent(),
-            Value<int> startedAt = const Value.absent(),
-            Value<int> finishedAt = const Value.absent(),
-            Value<String> model = const Value.absent(),
-            Value<String> helperModel = const Value.absent(),
-            Value<String> auditModel = const Value.absent(),
-            Value<int> promptTokens = const Value.absent(),
-            Value<int> completionTokens = const Value.absent(),
-            Value<int> totalTokens = const Value.absent(),
-            Value<int> elapsedMs = const Value.absent(),
-            Value<int> toolCalls = const Value.absent(),
-            Value<int> cacheHits = const Value.absent(),
-            Value<int> dedupBlockedCalls = const Value.absent(),
-            Value<int> ragHits = const Value.absent(),
-            Value<int> approvalCount = const Value.absent(),
-            Value<int> approvedCount = const Value.absent(),
-            Value<int> auditCount = const Value.absent(),
-            Value<int> helperFanout = const Value.absent(),
-            Value<bool> success = const Value.absent(),
-            Value<String> selectedToolSetJson = const Value.absent(),
-            Value<String> memorySourcesJson = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              AgentRunMetricsTableCompanion(
-            id: id,
-            startedAt: startedAt,
-            finishedAt: finishedAt,
-            model: model,
-            helperModel: helperModel,
-            auditModel: auditModel,
-            promptTokens: promptTokens,
-            completionTokens: completionTokens,
-            totalTokens: totalTokens,
-            elapsedMs: elapsedMs,
-            toolCalls: toolCalls,
-            cacheHits: cacheHits,
-            dedupBlockedCalls: dedupBlockedCalls,
-            ragHits: ragHits,
-            approvalCount: approvalCount,
-            approvedCount: approvedCount,
-            auditCount: auditCount,
-            helperFanout: helperFanout,
-            success: success,
-            selectedToolSetJson: selectedToolSetJson,
-            memorySourcesJson: memorySourcesJson,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String id,
-            required int startedAt,
-            required int finishedAt,
-            required String model,
-            Value<String> helperModel = const Value.absent(),
-            Value<String> auditModel = const Value.absent(),
-            Value<int> promptTokens = const Value.absent(),
-            Value<int> completionTokens = const Value.absent(),
-            Value<int> totalTokens = const Value.absent(),
-            Value<int> elapsedMs = const Value.absent(),
-            Value<int> toolCalls = const Value.absent(),
-            Value<int> cacheHits = const Value.absent(),
-            Value<int> dedupBlockedCalls = const Value.absent(),
-            Value<int> ragHits = const Value.absent(),
-            Value<int> approvalCount = const Value.absent(),
-            Value<int> approvedCount = const Value.absent(),
-            Value<int> auditCount = const Value.absent(),
-            Value<int> helperFanout = const Value.absent(),
-            Value<bool> success = const Value.absent(),
-            Value<String> selectedToolSetJson = const Value.absent(),
-            Value<String> memorySourcesJson = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              AgentRunMetricsTableCompanion.insert(
-            id: id,
-            startedAt: startedAt,
-            finishedAt: finishedAt,
-            model: model,
-            helperModel: helperModel,
-            auditModel: auditModel,
-            promptTokens: promptTokens,
-            completionTokens: completionTokens,
-            totalTokens: totalTokens,
-            elapsedMs: elapsedMs,
-            toolCalls: toolCalls,
-            cacheHits: cacheHits,
-            dedupBlockedCalls: dedupBlockedCalls,
-            ragHits: ragHits,
-            approvalCount: approvalCount,
-            approvedCount: approvedCount,
-            auditCount: auditCount,
-            helperFanout: helperFanout,
-            success: success,
-            selectedToolSetJson: selectedToolSetJson,
-            memorySourcesJson: memorySourcesJson,
-            rowid: rowid,
-          ),
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<int> startedAt = const Value.absent(),
+                Value<int> finishedAt = const Value.absent(),
+                Value<String> model = const Value.absent(),
+                Value<String> helperModel = const Value.absent(),
+                Value<String> auditModel = const Value.absent(),
+                Value<int> promptTokens = const Value.absent(),
+                Value<int> completionTokens = const Value.absent(),
+                Value<int> totalTokens = const Value.absent(),
+                Value<int> elapsedMs = const Value.absent(),
+                Value<int> toolCalls = const Value.absent(),
+                Value<int> cacheHits = const Value.absent(),
+                Value<int> dedupBlockedCalls = const Value.absent(),
+                Value<int> ragHits = const Value.absent(),
+                Value<int> approvalCount = const Value.absent(),
+                Value<int> approvedCount = const Value.absent(),
+                Value<int> auditCount = const Value.absent(),
+                Value<int> helperFanout = const Value.absent(),
+                Value<bool> success = const Value.absent(),
+                Value<String> selectedToolSetJson = const Value.absent(),
+                Value<String> memorySourcesJson = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => AgentRunMetricsTableCompanion(
+                id: id,
+                startedAt: startedAt,
+                finishedAt: finishedAt,
+                model: model,
+                helperModel: helperModel,
+                auditModel: auditModel,
+                promptTokens: promptTokens,
+                completionTokens: completionTokens,
+                totalTokens: totalTokens,
+                elapsedMs: elapsedMs,
+                toolCalls: toolCalls,
+                cacheHits: cacheHits,
+                dedupBlockedCalls: dedupBlockedCalls,
+                ragHits: ragHits,
+                approvalCount: approvalCount,
+                approvedCount: approvedCount,
+                auditCount: auditCount,
+                helperFanout: helperFanout,
+                success: success,
+                selectedToolSetJson: selectedToolSetJson,
+                memorySourcesJson: memorySourcesJson,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required int startedAt,
+                required int finishedAt,
+                required String model,
+                Value<String> helperModel = const Value.absent(),
+                Value<String> auditModel = const Value.absent(),
+                Value<int> promptTokens = const Value.absent(),
+                Value<int> completionTokens = const Value.absent(),
+                Value<int> totalTokens = const Value.absent(),
+                Value<int> elapsedMs = const Value.absent(),
+                Value<int> toolCalls = const Value.absent(),
+                Value<int> cacheHits = const Value.absent(),
+                Value<int> dedupBlockedCalls = const Value.absent(),
+                Value<int> ragHits = const Value.absent(),
+                Value<int> approvalCount = const Value.absent(),
+                Value<int> approvedCount = const Value.absent(),
+                Value<int> auditCount = const Value.absent(),
+                Value<int> helperFanout = const Value.absent(),
+                Value<bool> success = const Value.absent(),
+                Value<String> selectedToolSetJson = const Value.absent(),
+                Value<String> memorySourcesJson = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => AgentRunMetricsTableCompanion.insert(
+                id: id,
+                startedAt: startedAt,
+                finishedAt: finishedAt,
+                model: model,
+                helperModel: helperModel,
+                auditModel: auditModel,
+                promptTokens: promptTokens,
+                completionTokens: completionTokens,
+                totalTokens: totalTokens,
+                elapsedMs: elapsedMs,
+                toolCalls: toolCalls,
+                cacheHits: cacheHits,
+                dedupBlockedCalls: dedupBlockedCalls,
+                ragHits: ragHits,
+                approvalCount: approvalCount,
+                approvedCount: approvedCount,
+                auditCount: auditCount,
+                helperFanout: helperFanout,
+                success: success,
+                selectedToolSetJson: selectedToolSetJson,
+                memorySourcesJson: memorySourcesJson,
+                rowid: rowid,
+              ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
               .toList(),
           prefetchHooksCallback: null,
-        ));
+        ),
+      );
 }
 
-typedef $$AgentRunMetricsTableTableProcessedTableManager
-    = ProcessedTableManager<
-        _$AppDatabase,
-        $AgentRunMetricsTableTable,
+typedef $$AgentRunMetricsTableTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $AgentRunMetricsTableTable,
+      AgentRunMetricRow,
+      $$AgentRunMetricsTableTableFilterComposer,
+      $$AgentRunMetricsTableTableOrderingComposer,
+      $$AgentRunMetricsTableTableAnnotationComposer,
+      $$AgentRunMetricsTableTableCreateCompanionBuilder,
+      $$AgentRunMetricsTableTableUpdateCompanionBuilder,
+      (
         AgentRunMetricRow,
-        $$AgentRunMetricsTableTableFilterComposer,
-        $$AgentRunMetricsTableTableOrderingComposer,
-        $$AgentRunMetricsTableTableAnnotationComposer,
-        $$AgentRunMetricsTableTableCreateCompanionBuilder,
-        $$AgentRunMetricsTableTableUpdateCompanionBuilder,
-        (
-          AgentRunMetricRow,
-          BaseReferences<_$AppDatabase, $AgentRunMetricsTableTable,
-              AgentRunMetricRow>
-        ),
-        AgentRunMetricRow,
-        PrefetchHooks Function()>;
-typedef $$AgentTraceEventsTableTableCreateCompanionBuilder
-    = AgentTraceEventsTableCompanion Function({
-  required String id,
-  required String runId,
-  required String chatId,
-  required int createdAt,
-  required int sequence,
-  required String kind,
-  required String title,
-  required String contentJson,
-  Value<String?> toolName,
-  Value<String> status,
-  Value<int?> durationMs,
-  Value<String?> parentEventId,
-  Value<int> rowid,
-});
-typedef $$AgentTraceEventsTableTableUpdateCompanionBuilder
-    = AgentTraceEventsTableCompanion Function({
-  Value<String> id,
-  Value<String> runId,
-  Value<String> chatId,
-  Value<int> createdAt,
-  Value<int> sequence,
-  Value<String> kind,
-  Value<String> title,
-  Value<String> contentJson,
-  Value<String?> toolName,
-  Value<String> status,
-  Value<int?> durationMs,
-  Value<String?> parentEventId,
-  Value<int> rowid,
-});
+        BaseReferences<
+          _$AppDatabase,
+          $AgentRunMetricsTableTable,
+          AgentRunMetricRow
+        >,
+      ),
+      AgentRunMetricRow,
+      PrefetchHooks Function()
+    >;
+typedef $$AgentTraceEventsTableTableCreateCompanionBuilder =
+    AgentTraceEventsTableCompanion Function({
+      required String id,
+      required String runId,
+      required String chatId,
+      required int createdAt,
+      required int sequence,
+      required String kind,
+      required String title,
+      required String contentJson,
+      Value<String?> toolName,
+      Value<String> status,
+      Value<int?> durationMs,
+      Value<String?> parentEventId,
+      Value<int> rowid,
+    });
+typedef $$AgentTraceEventsTableTableUpdateCompanionBuilder =
+    AgentTraceEventsTableCompanion Function({
+      Value<String> id,
+      Value<String> runId,
+      Value<String> chatId,
+      Value<int> createdAt,
+      Value<int> sequence,
+      Value<String> kind,
+      Value<String> title,
+      Value<String> contentJson,
+      Value<String?> toolName,
+      Value<String> status,
+      Value<int?> durationMs,
+      Value<String?> parentEventId,
+      Value<int> rowid,
+    });
 
 class $$AgentTraceEventsTableTableFilterComposer
     extends Composer<_$AppDatabase, $AgentTraceEventsTableTable> {
@@ -7043,40 +8403,64 @@ class $$AgentTraceEventsTableTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnFilters(column));
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get runId => $composableBuilder(
-      column: $table.runId, builder: (column) => ColumnFilters(column));
+    column: $table.runId,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get chatId => $composableBuilder(
-      column: $table.chatId, builder: (column) => ColumnFilters(column));
+    column: $table.chatId,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnFilters(column));
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get sequence => $composableBuilder(
-      column: $table.sequence, builder: (column) => ColumnFilters(column));
+    column: $table.sequence,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get kind => $composableBuilder(
-      column: $table.kind, builder: (column) => ColumnFilters(column));
+    column: $table.kind,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get title => $composableBuilder(
-      column: $table.title, builder: (column) => ColumnFilters(column));
+    column: $table.title,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get contentJson => $composableBuilder(
-      column: $table.contentJson, builder: (column) => ColumnFilters(column));
+    column: $table.contentJson,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get toolName => $composableBuilder(
-      column: $table.toolName, builder: (column) => ColumnFilters(column));
+    column: $table.toolName,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get status => $composableBuilder(
-      column: $table.status, builder: (column) => ColumnFilters(column));
+    column: $table.status,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get durationMs => $composableBuilder(
-      column: $table.durationMs, builder: (column) => ColumnFilters(column));
+    column: $table.durationMs,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get parentEventId => $composableBuilder(
-      column: $table.parentEventId, builder: (column) => ColumnFilters(column));
+    column: $table.parentEventId,
+    builder: (column) => ColumnFilters(column),
+  );
 }
 
 class $$AgentTraceEventsTableTableOrderingComposer
@@ -7089,41 +8473,64 @@ class $$AgentTraceEventsTableTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnOrderings(column));
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get runId => $composableBuilder(
-      column: $table.runId, builder: (column) => ColumnOrderings(column));
+    column: $table.runId,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get chatId => $composableBuilder(
-      column: $table.chatId, builder: (column) => ColumnOrderings(column));
+    column: $table.chatId,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get sequence => $composableBuilder(
-      column: $table.sequence, builder: (column) => ColumnOrderings(column));
+    column: $table.sequence,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get kind => $composableBuilder(
-      column: $table.kind, builder: (column) => ColumnOrderings(column));
+    column: $table.kind,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get title => $composableBuilder(
-      column: $table.title, builder: (column) => ColumnOrderings(column));
+    column: $table.title,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get contentJson => $composableBuilder(
-      column: $table.contentJson, builder: (column) => ColumnOrderings(column));
+    column: $table.contentJson,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get toolName => $composableBuilder(
-      column: $table.toolName, builder: (column) => ColumnOrderings(column));
+    column: $table.toolName,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get status => $composableBuilder(
-      column: $table.status, builder: (column) => ColumnOrderings(column));
+    column: $table.status,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get durationMs => $composableBuilder(
-      column: $table.durationMs, builder: (column) => ColumnOrderings(column));
+    column: $table.durationMs,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get parentEventId => $composableBuilder(
-      column: $table.parentEventId,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.parentEventId,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$AgentTraceEventsTableTableAnnotationComposer
@@ -7157,7 +8564,9 @@ class $$AgentTraceEventsTableTableAnnotationComposer
       $composableBuilder(column: $table.title, builder: (column) => column);
 
   GeneratedColumn<String> get contentJson => $composableBuilder(
-      column: $table.contentJson, builder: (column) => column);
+    column: $table.contentJson,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get toolName =>
       $composableBuilder(column: $table.toolName, builder: (column) => column);
@@ -7166,152 +8575,175 @@ class $$AgentTraceEventsTableTableAnnotationComposer
       $composableBuilder(column: $table.status, builder: (column) => column);
 
   GeneratedColumn<int> get durationMs => $composableBuilder(
-      column: $table.durationMs, builder: (column) => column);
+    column: $table.durationMs,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get parentEventId => $composableBuilder(
-      column: $table.parentEventId, builder: (column) => column);
+    column: $table.parentEventId,
+    builder: (column) => column,
+  );
 }
 
-class $$AgentTraceEventsTableTableTableManager extends RootTableManager<
-    _$AppDatabase,
-    $AgentTraceEventsTableTable,
-    AgentTraceEventRow,
-    $$AgentTraceEventsTableTableFilterComposer,
-    $$AgentTraceEventsTableTableOrderingComposer,
-    $$AgentTraceEventsTableTableAnnotationComposer,
-    $$AgentTraceEventsTableTableCreateCompanionBuilder,
-    $$AgentTraceEventsTableTableUpdateCompanionBuilder,
-    (
-      AgentTraceEventRow,
-      BaseReferences<_$AppDatabase, $AgentTraceEventsTableTable,
-          AgentTraceEventRow>
-    ),
-    AgentTraceEventRow,
-    PrefetchHooks Function()> {
+class $$AgentTraceEventsTableTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $AgentTraceEventsTableTable,
+          AgentTraceEventRow,
+          $$AgentTraceEventsTableTableFilterComposer,
+          $$AgentTraceEventsTableTableOrderingComposer,
+          $$AgentTraceEventsTableTableAnnotationComposer,
+          $$AgentTraceEventsTableTableCreateCompanionBuilder,
+          $$AgentTraceEventsTableTableUpdateCompanionBuilder,
+          (
+            AgentTraceEventRow,
+            BaseReferences<
+              _$AppDatabase,
+              $AgentTraceEventsTableTable,
+              AgentTraceEventRow
+            >,
+          ),
+          AgentTraceEventRow,
+          PrefetchHooks Function()
+        > {
   $$AgentTraceEventsTableTableTableManager(
-      _$AppDatabase db, $AgentTraceEventsTableTable table)
-      : super(TableManagerState(
+    _$AppDatabase db,
+    $AgentTraceEventsTableTable table,
+  ) : super(
+        TableManagerState(
           db: db,
           table: table,
           createFilteringComposer: () =>
               $$AgentTraceEventsTableTableFilterComposer(
-                  $db: db, $table: table),
+                $db: db,
+                $table: table,
+              ),
           createOrderingComposer: () =>
               $$AgentTraceEventsTableTableOrderingComposer(
-                  $db: db, $table: table),
+                $db: db,
+                $table: table,
+              ),
           createComputedFieldComposer: () =>
               $$AgentTraceEventsTableTableAnnotationComposer(
-                  $db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> id = const Value.absent(),
-            Value<String> runId = const Value.absent(),
-            Value<String> chatId = const Value.absent(),
-            Value<int> createdAt = const Value.absent(),
-            Value<int> sequence = const Value.absent(),
-            Value<String> kind = const Value.absent(),
-            Value<String> title = const Value.absent(),
-            Value<String> contentJson = const Value.absent(),
-            Value<String?> toolName = const Value.absent(),
-            Value<String> status = const Value.absent(),
-            Value<int?> durationMs = const Value.absent(),
-            Value<String?> parentEventId = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              AgentTraceEventsTableCompanion(
-            id: id,
-            runId: runId,
-            chatId: chatId,
-            createdAt: createdAt,
-            sequence: sequence,
-            kind: kind,
-            title: title,
-            contentJson: contentJson,
-            toolName: toolName,
-            status: status,
-            durationMs: durationMs,
-            parentEventId: parentEventId,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String id,
-            required String runId,
-            required String chatId,
-            required int createdAt,
-            required int sequence,
-            required String kind,
-            required String title,
-            required String contentJson,
-            Value<String?> toolName = const Value.absent(),
-            Value<String> status = const Value.absent(),
-            Value<int?> durationMs = const Value.absent(),
-            Value<String?> parentEventId = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              AgentTraceEventsTableCompanion.insert(
-            id: id,
-            runId: runId,
-            chatId: chatId,
-            createdAt: createdAt,
-            sequence: sequence,
-            kind: kind,
-            title: title,
-            contentJson: contentJson,
-            toolName: toolName,
-            status: status,
-            durationMs: durationMs,
-            parentEventId: parentEventId,
-            rowid: rowid,
-          ),
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> runId = const Value.absent(),
+                Value<String> chatId = const Value.absent(),
+                Value<int> createdAt = const Value.absent(),
+                Value<int> sequence = const Value.absent(),
+                Value<String> kind = const Value.absent(),
+                Value<String> title = const Value.absent(),
+                Value<String> contentJson = const Value.absent(),
+                Value<String?> toolName = const Value.absent(),
+                Value<String> status = const Value.absent(),
+                Value<int?> durationMs = const Value.absent(),
+                Value<String?> parentEventId = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => AgentTraceEventsTableCompanion(
+                id: id,
+                runId: runId,
+                chatId: chatId,
+                createdAt: createdAt,
+                sequence: sequence,
+                kind: kind,
+                title: title,
+                contentJson: contentJson,
+                toolName: toolName,
+                status: status,
+                durationMs: durationMs,
+                parentEventId: parentEventId,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String runId,
+                required String chatId,
+                required int createdAt,
+                required int sequence,
+                required String kind,
+                required String title,
+                required String contentJson,
+                Value<String?> toolName = const Value.absent(),
+                Value<String> status = const Value.absent(),
+                Value<int?> durationMs = const Value.absent(),
+                Value<String?> parentEventId = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => AgentTraceEventsTableCompanion.insert(
+                id: id,
+                runId: runId,
+                chatId: chatId,
+                createdAt: createdAt,
+                sequence: sequence,
+                kind: kind,
+                title: title,
+                contentJson: contentJson,
+                toolName: toolName,
+                status: status,
+                durationMs: durationMs,
+                parentEventId: parentEventId,
+                rowid: rowid,
+              ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
               .toList(),
           prefetchHooksCallback: null,
-        ));
+        ),
+      );
 }
 
-typedef $$AgentTraceEventsTableTableProcessedTableManager
-    = ProcessedTableManager<
-        _$AppDatabase,
-        $AgentTraceEventsTableTable,
+typedef $$AgentTraceEventsTableTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $AgentTraceEventsTableTable,
+      AgentTraceEventRow,
+      $$AgentTraceEventsTableTableFilterComposer,
+      $$AgentTraceEventsTableTableOrderingComposer,
+      $$AgentTraceEventsTableTableAnnotationComposer,
+      $$AgentTraceEventsTableTableCreateCompanionBuilder,
+      $$AgentTraceEventsTableTableUpdateCompanionBuilder,
+      (
         AgentTraceEventRow,
-        $$AgentTraceEventsTableTableFilterComposer,
-        $$AgentTraceEventsTableTableOrderingComposer,
-        $$AgentTraceEventsTableTableAnnotationComposer,
-        $$AgentTraceEventsTableTableCreateCompanionBuilder,
-        $$AgentTraceEventsTableTableUpdateCompanionBuilder,
-        (
-          AgentTraceEventRow,
-          BaseReferences<_$AppDatabase, $AgentTraceEventsTableTable,
-              AgentTraceEventRow>
-        ),
-        AgentTraceEventRow,
-        PrefetchHooks Function()>;
-typedef $$TerminalHistoryRecordsTableCreateCompanionBuilder
-    = TerminalHistoryRecordsCompanion Function({
-  required String sessionId,
-  required String connectionId,
-  required String connectionName,
-  required String displayName,
-  Value<String?> tmuxSessionName,
-  required String state,
-  Value<String?> errorMessage,
-  required int createdAt,
-  required int updatedAt,
-  Value<int> rowid,
-});
-typedef $$TerminalHistoryRecordsTableUpdateCompanionBuilder
-    = TerminalHistoryRecordsCompanion Function({
-  Value<String> sessionId,
-  Value<String> connectionId,
-  Value<String> connectionName,
-  Value<String> displayName,
-  Value<String?> tmuxSessionName,
-  Value<String> state,
-  Value<String?> errorMessage,
-  Value<int> createdAt,
-  Value<int> updatedAt,
-  Value<int> rowid,
-});
+        BaseReferences<
+          _$AppDatabase,
+          $AgentTraceEventsTableTable,
+          AgentTraceEventRow
+        >,
+      ),
+      AgentTraceEventRow,
+      PrefetchHooks Function()
+    >;
+typedef $$TerminalHistoryRecordsTableCreateCompanionBuilder =
+    TerminalHistoryRecordsCompanion Function({
+      required String sessionId,
+      required String connectionId,
+      required String connectionName,
+      required String displayName,
+      Value<String?> tmuxSessionName,
+      required String state,
+      Value<String?> errorMessage,
+      required int createdAt,
+      required int updatedAt,
+      Value<int> rowid,
+    });
+typedef $$TerminalHistoryRecordsTableUpdateCompanionBuilder =
+    TerminalHistoryRecordsCompanion Function({
+      Value<String> sessionId,
+      Value<String> connectionId,
+      Value<String> connectionName,
+      Value<String> displayName,
+      Value<String?> tmuxSessionName,
+      Value<String> state,
+      Value<String?> errorMessage,
+      Value<int> createdAt,
+      Value<int> updatedAt,
+      Value<int> rowid,
+    });
 
 class $$TerminalHistoryRecordsTableFilterComposer
     extends Composer<_$AppDatabase, $TerminalHistoryRecordsTable> {
@@ -7323,33 +8755,49 @@ class $$TerminalHistoryRecordsTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get sessionId => $composableBuilder(
-      column: $table.sessionId, builder: (column) => ColumnFilters(column));
+    column: $table.sessionId,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get connectionId => $composableBuilder(
-      column: $table.connectionId, builder: (column) => ColumnFilters(column));
+    column: $table.connectionId,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get connectionName => $composableBuilder(
-      column: $table.connectionName,
-      builder: (column) => ColumnFilters(column));
+    column: $table.connectionName,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get displayName => $composableBuilder(
-      column: $table.displayName, builder: (column) => ColumnFilters(column));
+    column: $table.displayName,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get tmuxSessionName => $composableBuilder(
-      column: $table.tmuxSessionName,
-      builder: (column) => ColumnFilters(column));
+    column: $table.tmuxSessionName,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get state => $composableBuilder(
-      column: $table.state, builder: (column) => ColumnFilters(column));
+    column: $table.state,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get errorMessage => $composableBuilder(
-      column: $table.errorMessage, builder: (column) => ColumnFilters(column));
+    column: $table.errorMessage,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnFilters(column));
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
 }
 
 class $$TerminalHistoryRecordsTableOrderingComposer
@@ -7362,35 +8810,49 @@ class $$TerminalHistoryRecordsTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get sessionId => $composableBuilder(
-      column: $table.sessionId, builder: (column) => ColumnOrderings(column));
+    column: $table.sessionId,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get connectionId => $composableBuilder(
-      column: $table.connectionId,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.connectionId,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get connectionName => $composableBuilder(
-      column: $table.connectionName,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.connectionName,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get displayName => $composableBuilder(
-      column: $table.displayName, builder: (column) => ColumnOrderings(column));
+    column: $table.displayName,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get tmuxSessionName => $composableBuilder(
-      column: $table.tmuxSessionName,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.tmuxSessionName,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get state => $composableBuilder(
-      column: $table.state, builder: (column) => ColumnOrderings(column));
+    column: $table.state,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get errorMessage => $composableBuilder(
-      column: $table.errorMessage,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.errorMessage,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$TerminalHistoryRecordsTableAnnotationComposer
@@ -7406,22 +8868,32 @@ class $$TerminalHistoryRecordsTableAnnotationComposer
       $composableBuilder(column: $table.sessionId, builder: (column) => column);
 
   GeneratedColumn<String> get connectionId => $composableBuilder(
-      column: $table.connectionId, builder: (column) => column);
+    column: $table.connectionId,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get connectionName => $composableBuilder(
-      column: $table.connectionName, builder: (column) => column);
+    column: $table.connectionName,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get displayName => $composableBuilder(
-      column: $table.displayName, builder: (column) => column);
+    column: $table.displayName,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get tmuxSessionName => $composableBuilder(
-      column: $table.tmuxSessionName, builder: (column) => column);
+    column: $table.tmuxSessionName,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get state =>
       $composableBuilder(column: $table.state, builder: (column) => column);
 
   GeneratedColumn<String> get errorMessage => $composableBuilder(
-      column: $table.errorMessage, builder: (column) => column);
+    column: $table.errorMessage,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<int> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
@@ -7430,143 +8902,168 @@ class $$TerminalHistoryRecordsTableAnnotationComposer
       $composableBuilder(column: $table.updatedAt, builder: (column) => column);
 }
 
-class $$TerminalHistoryRecordsTableTableManager extends RootTableManager<
-    _$AppDatabase,
-    $TerminalHistoryRecordsTable,
-    TerminalHistoryRecord,
-    $$TerminalHistoryRecordsTableFilterComposer,
-    $$TerminalHistoryRecordsTableOrderingComposer,
-    $$TerminalHistoryRecordsTableAnnotationComposer,
-    $$TerminalHistoryRecordsTableCreateCompanionBuilder,
-    $$TerminalHistoryRecordsTableUpdateCompanionBuilder,
-    (
-      TerminalHistoryRecord,
-      BaseReferences<_$AppDatabase, $TerminalHistoryRecordsTable,
-          TerminalHistoryRecord>
-    ),
-    TerminalHistoryRecord,
-    PrefetchHooks Function()> {
+class $$TerminalHistoryRecordsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $TerminalHistoryRecordsTable,
+          TerminalHistoryRecord,
+          $$TerminalHistoryRecordsTableFilterComposer,
+          $$TerminalHistoryRecordsTableOrderingComposer,
+          $$TerminalHistoryRecordsTableAnnotationComposer,
+          $$TerminalHistoryRecordsTableCreateCompanionBuilder,
+          $$TerminalHistoryRecordsTableUpdateCompanionBuilder,
+          (
+            TerminalHistoryRecord,
+            BaseReferences<
+              _$AppDatabase,
+              $TerminalHistoryRecordsTable,
+              TerminalHistoryRecord
+            >,
+          ),
+          TerminalHistoryRecord,
+          PrefetchHooks Function()
+        > {
   $$TerminalHistoryRecordsTableTableManager(
-      _$AppDatabase db, $TerminalHistoryRecordsTable table)
-      : super(TableManagerState(
+    _$AppDatabase db,
+    $TerminalHistoryRecordsTable table,
+  ) : super(
+        TableManagerState(
           db: db,
           table: table,
           createFilteringComposer: () =>
               $$TerminalHistoryRecordsTableFilterComposer(
-                  $db: db, $table: table),
+                $db: db,
+                $table: table,
+              ),
           createOrderingComposer: () =>
               $$TerminalHistoryRecordsTableOrderingComposer(
-                  $db: db, $table: table),
+                $db: db,
+                $table: table,
+              ),
           createComputedFieldComposer: () =>
               $$TerminalHistoryRecordsTableAnnotationComposer(
-                  $db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> sessionId = const Value.absent(),
-            Value<String> connectionId = const Value.absent(),
-            Value<String> connectionName = const Value.absent(),
-            Value<String> displayName = const Value.absent(),
-            Value<String?> tmuxSessionName = const Value.absent(),
-            Value<String> state = const Value.absent(),
-            Value<String?> errorMessage = const Value.absent(),
-            Value<int> createdAt = const Value.absent(),
-            Value<int> updatedAt = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              TerminalHistoryRecordsCompanion(
-            sessionId: sessionId,
-            connectionId: connectionId,
-            connectionName: connectionName,
-            displayName: displayName,
-            tmuxSessionName: tmuxSessionName,
-            state: state,
-            errorMessage: errorMessage,
-            createdAt: createdAt,
-            updatedAt: updatedAt,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String sessionId,
-            required String connectionId,
-            required String connectionName,
-            required String displayName,
-            Value<String?> tmuxSessionName = const Value.absent(),
-            required String state,
-            Value<String?> errorMessage = const Value.absent(),
-            required int createdAt,
-            required int updatedAt,
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              TerminalHistoryRecordsCompanion.insert(
-            sessionId: sessionId,
-            connectionId: connectionId,
-            connectionName: connectionName,
-            displayName: displayName,
-            tmuxSessionName: tmuxSessionName,
-            state: state,
-            errorMessage: errorMessage,
-            createdAt: createdAt,
-            updatedAt: updatedAt,
-            rowid: rowid,
-          ),
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> sessionId = const Value.absent(),
+                Value<String> connectionId = const Value.absent(),
+                Value<String> connectionName = const Value.absent(),
+                Value<String> displayName = const Value.absent(),
+                Value<String?> tmuxSessionName = const Value.absent(),
+                Value<String> state = const Value.absent(),
+                Value<String?> errorMessage = const Value.absent(),
+                Value<int> createdAt = const Value.absent(),
+                Value<int> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => TerminalHistoryRecordsCompanion(
+                sessionId: sessionId,
+                connectionId: connectionId,
+                connectionName: connectionName,
+                displayName: displayName,
+                tmuxSessionName: tmuxSessionName,
+                state: state,
+                errorMessage: errorMessage,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String sessionId,
+                required String connectionId,
+                required String connectionName,
+                required String displayName,
+                Value<String?> tmuxSessionName = const Value.absent(),
+                required String state,
+                Value<String?> errorMessage = const Value.absent(),
+                required int createdAt,
+                required int updatedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => TerminalHistoryRecordsCompanion.insert(
+                sessionId: sessionId,
+                connectionId: connectionId,
+                connectionName: connectionName,
+                displayName: displayName,
+                tmuxSessionName: tmuxSessionName,
+                state: state,
+                errorMessage: errorMessage,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
               .toList(),
           prefetchHooksCallback: null,
-        ));
+        ),
+      );
 }
 
-typedef $$TerminalHistoryRecordsTableProcessedTableManager
-    = ProcessedTableManager<
-        _$AppDatabase,
-        $TerminalHistoryRecordsTable,
+typedef $$TerminalHistoryRecordsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $TerminalHistoryRecordsTable,
+      TerminalHistoryRecord,
+      $$TerminalHistoryRecordsTableFilterComposer,
+      $$TerminalHistoryRecordsTableOrderingComposer,
+      $$TerminalHistoryRecordsTableAnnotationComposer,
+      $$TerminalHistoryRecordsTableCreateCompanionBuilder,
+      $$TerminalHistoryRecordsTableUpdateCompanionBuilder,
+      (
         TerminalHistoryRecord,
-        $$TerminalHistoryRecordsTableFilterComposer,
-        $$TerminalHistoryRecordsTableOrderingComposer,
-        $$TerminalHistoryRecordsTableAnnotationComposer,
-        $$TerminalHistoryRecordsTableCreateCompanionBuilder,
-        $$TerminalHistoryRecordsTableUpdateCompanionBuilder,
-        (
-          TerminalHistoryRecord,
-          BaseReferences<_$AppDatabase, $TerminalHistoryRecordsTable,
-              TerminalHistoryRecord>
-        ),
-        TerminalHistoryRecord,
-        PrefetchHooks Function()>;
-typedef $$PlaybooksTableCreateCompanionBuilder = PlaybooksCompanion Function({
-  required String id,
-  required String name,
-  Value<String> description,
-  required String contentJson,
-  required int createdAt,
-  required int updatedAt,
-  Value<int> rowid,
-});
-typedef $$PlaybooksTableUpdateCompanionBuilder = PlaybooksCompanion Function({
-  Value<String> id,
-  Value<String> name,
-  Value<String> description,
-  Value<String> contentJson,
-  Value<int> createdAt,
-  Value<int> updatedAt,
-  Value<int> rowid,
-});
+        BaseReferences<
+          _$AppDatabase,
+          $TerminalHistoryRecordsTable,
+          TerminalHistoryRecord
+        >,
+      ),
+      TerminalHistoryRecord,
+      PrefetchHooks Function()
+    >;
+typedef $$PlaybooksTableCreateCompanionBuilder =
+    PlaybooksCompanion Function({
+      required String id,
+      required String name,
+      Value<String> description,
+      required String contentJson,
+      required int createdAt,
+      required int updatedAt,
+      Value<int> rowid,
+    });
+typedef $$PlaybooksTableUpdateCompanionBuilder =
+    PlaybooksCompanion Function({
+      Value<String> id,
+      Value<String> name,
+      Value<String> description,
+      Value<String> contentJson,
+      Value<int> createdAt,
+      Value<int> updatedAt,
+      Value<int> rowid,
+    });
 
 final class $$PlaybooksTableReferences
     extends BaseReferences<_$AppDatabase, $PlaybooksTable, Playbook> {
   $$PlaybooksTableReferences(super.$_db, super.$_table, super.$_typedResult);
 
   static MultiTypedResultKey<$PlaybookRunsTable, List<PlaybookRun>>
-      _playbookRunsRefsTable(_$AppDatabase db) =>
-          MultiTypedResultKey.fromTable(db.playbookRuns,
-              aliasName: 'playbooks__id__playbook_runs__playbook_id');
+  _playbookRunsRefsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
+    db.playbookRuns,
+    aliasName: 'playbooks__id__playbook_runs__playbook_id',
+  );
 
   $$PlaybookRunsTableProcessedTableManager get playbookRunsRefs {
-    final manager = $$PlaybookRunsTableTableManager($_db, $_db.playbookRuns)
-        .filter((f) => f.playbookId.id.sqlEquals($_itemColumn<String>('id')!));
+    final manager = $$PlaybookRunsTableTableManager(
+      $_db,
+      $_db.playbookRuns,
+    ).filter((f) => f.playbookId.id.sqlEquals($_itemColumn<String>('id')!));
 
     final cache = $_typedResult.readTableOrNull(_playbookRunsRefsTable($_db));
     return ProcessedTableManager(
-        manager.$state.copyWith(prefetchedData: cache));
+      manager.$state.copyWith(prefetchedData: cache),
+    );
   }
 }
 
@@ -7580,41 +9077,57 @@ class $$PlaybooksTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnFilters(column));
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get name => $composableBuilder(
-      column: $table.name, builder: (column) => ColumnFilters(column));
+    column: $table.name,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get description => $composableBuilder(
-      column: $table.description, builder: (column) => ColumnFilters(column));
+    column: $table.description,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get contentJson => $composableBuilder(
-      column: $table.contentJson, builder: (column) => ColumnFilters(column));
+    column: $table.contentJson,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnFilters(column));
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
 
   Expression<bool> playbookRunsRefs(
-      Expression<bool> Function($$PlaybookRunsTableFilterComposer f) f) {
+    Expression<bool> Function($$PlaybookRunsTableFilterComposer f) f,
+  ) {
     final $$PlaybookRunsTableFilterComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.id,
-        referencedTable: $db.playbookRuns,
-        getReferencedColumn: (t) => t.playbookId,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$PlaybookRunsTableFilterComposer(
-              $db: $db,
-              $table: $db.playbookRuns,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.playbookRuns,
+      getReferencedColumn: (t) => t.playbookId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$PlaybookRunsTableFilterComposer(
+            $db: $db,
+            $table: $db.playbookRuns,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
     return f(composer);
   }
 }
@@ -7629,22 +9142,34 @@ class $$PlaybooksTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnOrderings(column));
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get name => $composableBuilder(
-      column: $table.name, builder: (column) => ColumnOrderings(column));
+    column: $table.name,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get description => $composableBuilder(
-      column: $table.description, builder: (column) => ColumnOrderings(column));
+    column: $table.description,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get contentJson => $composableBuilder(
-      column: $table.contentJson, builder: (column) => ColumnOrderings(column));
+    column: $table.contentJson,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$PlaybooksTableAnnotationComposer
@@ -7663,10 +9188,14 @@ class $$PlaybooksTableAnnotationComposer
       $composableBuilder(column: $table.name, builder: (column) => column);
 
   GeneratedColumn<String> get description => $composableBuilder(
-      column: $table.description, builder: (column) => column);
+    column: $table.description,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get contentJson => $composableBuilder(
-      column: $table.contentJson, builder: (column) => column);
+    column: $table.contentJson,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<int> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
@@ -7675,41 +9204,49 @@ class $$PlaybooksTableAnnotationComposer
       $composableBuilder(column: $table.updatedAt, builder: (column) => column);
 
   Expression<T> playbookRunsRefs<T extends Object>(
-      Expression<T> Function($$PlaybookRunsTableAnnotationComposer a) f) {
+    Expression<T> Function($$PlaybookRunsTableAnnotationComposer a) f,
+  ) {
     final $$PlaybookRunsTableAnnotationComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.id,
-        referencedTable: $db.playbookRuns,
-        getReferencedColumn: (t) => t.playbookId,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$PlaybookRunsTableAnnotationComposer(
-              $db: $db,
-              $table: $db.playbookRuns,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.playbookRuns,
+      getReferencedColumn: (t) => t.playbookId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$PlaybookRunsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.playbookRuns,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
     return f(composer);
   }
 }
 
-class $$PlaybooksTableTableManager extends RootTableManager<
-    _$AppDatabase,
-    $PlaybooksTable,
-    Playbook,
-    $$PlaybooksTableFilterComposer,
-    $$PlaybooksTableOrderingComposer,
-    $$PlaybooksTableAnnotationComposer,
-    $$PlaybooksTableCreateCompanionBuilder,
-    $$PlaybooksTableUpdateCompanionBuilder,
-    (Playbook, $$PlaybooksTableReferences),
-    Playbook,
-    PrefetchHooks Function({bool playbookRunsRefs})> {
+class $$PlaybooksTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $PlaybooksTable,
+          Playbook,
+          $$PlaybooksTableFilterComposer,
+          $$PlaybooksTableOrderingComposer,
+          $$PlaybooksTableAnnotationComposer,
+          $$PlaybooksTableCreateCompanionBuilder,
+          $$PlaybooksTableUpdateCompanionBuilder,
+          (Playbook, $$PlaybooksTableReferences),
+          Playbook,
+          PrefetchHooks Function({bool playbookRunsRefs})
+        > {
   $$PlaybooksTableTableManager(_$AppDatabase db, $PlaybooksTable table)
-      : super(TableManagerState(
+    : super(
+        TableManagerState(
           db: db,
           table: table,
           createFilteringComposer: () =>
@@ -7718,47 +9255,49 @@ class $$PlaybooksTableTableManager extends RootTableManager<
               $$PlaybooksTableOrderingComposer($db: db, $table: table),
           createComputedFieldComposer: () =>
               $$PlaybooksTableAnnotationComposer($db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> id = const Value.absent(),
-            Value<String> name = const Value.absent(),
-            Value<String> description = const Value.absent(),
-            Value<String> contentJson = const Value.absent(),
-            Value<int> createdAt = const Value.absent(),
-            Value<int> updatedAt = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              PlaybooksCompanion(
-            id: id,
-            name: name,
-            description: description,
-            contentJson: contentJson,
-            createdAt: createdAt,
-            updatedAt: updatedAt,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String id,
-            required String name,
-            Value<String> description = const Value.absent(),
-            required String contentJson,
-            required int createdAt,
-            required int updatedAt,
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              PlaybooksCompanion.insert(
-            id: id,
-            name: name,
-            description: description,
-            contentJson: contentJson,
-            createdAt: createdAt,
-            updatedAt: updatedAt,
-            rowid: rowid,
-          ),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> name = const Value.absent(),
+                Value<String> description = const Value.absent(),
+                Value<String> contentJson = const Value.absent(),
+                Value<int> createdAt = const Value.absent(),
+                Value<int> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => PlaybooksCompanion(
+                id: id,
+                name: name,
+                description: description,
+                contentJson: contentJson,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String name,
+                Value<String> description = const Value.absent(),
+                required String contentJson,
+                required int createdAt,
+                required int updatedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => PlaybooksCompanion.insert(
+                id: id,
+                name: name,
+                description: description,
+                contentJson: contentJson,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (
-                    e.readTable(table),
-                    $$PlaybooksTableReferences(db, table, e)
-                  ))
+              .map(
+                (e) => (
+                  e.readTable(table),
+                  $$PlaybooksTableReferences(db, table, e),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: ({playbookRunsRefs = false}) {
             return PrefetchHooks(
@@ -7768,61 +9307,70 @@ class $$PlaybooksTableTableManager extends RootTableManager<
               getPrefetchedDataCallback: (items) async {
                 return [
                   if (playbookRunsRefs)
-                    await $_getPrefetchedData<Playbook, $PlaybooksTable,
-                            PlaybookRun>(
-                        currentTable: table,
-                        referencedTable: $$PlaybooksTableReferences
-                            ._playbookRunsRefsTable(db),
-                        managerFromTypedResult: (p0) =>
-                            $$PlaybooksTableReferences(db, table, p0)
-                                .playbookRunsRefs,
-                        referencedItemsForCurrentItem:
-                            (item, referencedItems) => referencedItems
-                                .where((e) => e.playbookId == item.id),
-                        typedResults: items)
+                    await $_getPrefetchedData<
+                      Playbook,
+                      $PlaybooksTable,
+                      PlaybookRun
+                    >(
+                      currentTable: table,
+                      referencedTable: $$PlaybooksTableReferences
+                          ._playbookRunsRefsTable(db),
+                      managerFromTypedResult: (p0) =>
+                          $$PlaybooksTableReferences(
+                            db,
+                            table,
+                            p0,
+                          ).playbookRunsRefs,
+                      referencedItemsForCurrentItem: (item, referencedItems) =>
+                          referencedItems.where((e) => e.playbookId == item.id),
+                      typedResults: items,
+                    ),
                 ];
               },
             );
           },
-        ));
+        ),
+      );
 }
 
-typedef $$PlaybooksTableProcessedTableManager = ProcessedTableManager<
-    _$AppDatabase,
-    $PlaybooksTable,
-    Playbook,
-    $$PlaybooksTableFilterComposer,
-    $$PlaybooksTableOrderingComposer,
-    $$PlaybooksTableAnnotationComposer,
-    $$PlaybooksTableCreateCompanionBuilder,
-    $$PlaybooksTableUpdateCompanionBuilder,
-    (Playbook, $$PlaybooksTableReferences),
-    Playbook,
-    PrefetchHooks Function({bool playbookRunsRefs})>;
-typedef $$PlaybookRunsTableCreateCompanionBuilder = PlaybookRunsCompanion
-    Function({
-  required String id,
-  required String playbookId,
-  Value<String?> connectionId,
-  required String status,
-  required int startedAt,
-  Value<int?> finishedAt,
-  Value<String> summary,
-  Value<String?> errorMessage,
-  Value<int> rowid,
-});
-typedef $$PlaybookRunsTableUpdateCompanionBuilder = PlaybookRunsCompanion
-    Function({
-  Value<String> id,
-  Value<String> playbookId,
-  Value<String?> connectionId,
-  Value<String> status,
-  Value<int> startedAt,
-  Value<int?> finishedAt,
-  Value<String> summary,
-  Value<String?> errorMessage,
-  Value<int> rowid,
-});
+typedef $$PlaybooksTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $PlaybooksTable,
+      Playbook,
+      $$PlaybooksTableFilterComposer,
+      $$PlaybooksTableOrderingComposer,
+      $$PlaybooksTableAnnotationComposer,
+      $$PlaybooksTableCreateCompanionBuilder,
+      $$PlaybooksTableUpdateCompanionBuilder,
+      (Playbook, $$PlaybooksTableReferences),
+      Playbook,
+      PrefetchHooks Function({bool playbookRunsRefs})
+    >;
+typedef $$PlaybookRunsTableCreateCompanionBuilder =
+    PlaybookRunsCompanion Function({
+      required String id,
+      required String playbookId,
+      Value<String?> connectionId,
+      required String status,
+      required int startedAt,
+      Value<int?> finishedAt,
+      Value<String> summary,
+      Value<String?> errorMessage,
+      Value<int> rowid,
+    });
+typedef $$PlaybookRunsTableUpdateCompanionBuilder =
+    PlaybookRunsCompanion Function({
+      Value<String> id,
+      Value<String> playbookId,
+      Value<String?> connectionId,
+      Value<String> status,
+      Value<int> startedAt,
+      Value<int?> finishedAt,
+      Value<String> summary,
+      Value<String?> errorMessage,
+      Value<int> rowid,
+    });
 
 final class $$PlaybookRunsTableReferences
     extends BaseReferences<_$AppDatabase, $PlaybookRunsTable, PlaybookRun> {
@@ -7834,28 +9382,35 @@ final class $$PlaybookRunsTableReferences
   $$PlaybooksTableProcessedTableManager get playbookId {
     final $_column = $_itemColumn<String>('playbook_id')!;
 
-    final manager = $$PlaybooksTableTableManager($_db, $_db.playbooks)
-        .filter((f) => f.id.sqlEquals($_column));
+    final manager = $$PlaybooksTableTableManager(
+      $_db,
+      $_db.playbooks,
+    ).filter((f) => f.id.sqlEquals($_column));
     final item = $_typedResult.readTableOrNull(_playbookIdTable($_db));
     if (item == null) return manager;
     return ProcessedTableManager(
-        manager.$state.copyWith(prefetchedData: [item]));
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
   }
 
   static MultiTypedResultKey<$PlaybookRunStepsTable, List<PlaybookRunStep>>
-      _playbookRunStepsRefsTable(_$AppDatabase db) =>
-          MultiTypedResultKey.fromTable(db.playbookRunSteps,
-              aliasName: 'playbook_runs__id__playbook_run_steps__run_id');
+  _playbookRunStepsRefsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
+    db.playbookRunSteps,
+    aliasName: 'playbook_runs__id__playbook_run_steps__run_id',
+  );
 
   $$PlaybookRunStepsTableProcessedTableManager get playbookRunStepsRefs {
-    final manager =
-        $$PlaybookRunStepsTableTableManager($_db, $_db.playbookRunSteps)
-            .filter((f) => f.runId.id.sqlEquals($_itemColumn<String>('id')!));
+    final manager = $$PlaybookRunStepsTableTableManager(
+      $_db,
+      $_db.playbookRunSteps,
+    ).filter((f) => f.runId.id.sqlEquals($_itemColumn<String>('id')!));
 
-    final cache =
-        $_typedResult.readTableOrNull(_playbookRunStepsRefsTable($_db));
+    final cache = $_typedResult.readTableOrNull(
+      _playbookRunStepsRefsTable($_db),
+    );
     return ProcessedTableManager(
-        manager.$state.copyWith(prefetchedData: cache));
+      manager.$state.copyWith(prefetchedData: cache),
+    );
   }
 }
 
@@ -7869,64 +9424,85 @@ class $$PlaybookRunsTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnFilters(column));
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get connectionId => $composableBuilder(
-      column: $table.connectionId, builder: (column) => ColumnFilters(column));
+    column: $table.connectionId,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get status => $composableBuilder(
-      column: $table.status, builder: (column) => ColumnFilters(column));
+    column: $table.status,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get startedAt => $composableBuilder(
-      column: $table.startedAt, builder: (column) => ColumnFilters(column));
+    column: $table.startedAt,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get finishedAt => $composableBuilder(
-      column: $table.finishedAt, builder: (column) => ColumnFilters(column));
+    column: $table.finishedAt,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get summary => $composableBuilder(
-      column: $table.summary, builder: (column) => ColumnFilters(column));
+    column: $table.summary,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get errorMessage => $composableBuilder(
-      column: $table.errorMessage, builder: (column) => ColumnFilters(column));
+    column: $table.errorMessage,
+    builder: (column) => ColumnFilters(column),
+  );
 
   $$PlaybooksTableFilterComposer get playbookId {
     final $$PlaybooksTableFilterComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.playbookId,
-        referencedTable: $db.playbooks,
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$PlaybooksTableFilterComposer(
-              $db: $db,
-              $table: $db.playbooks,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
+      composer: this,
+      getCurrentColumn: (t) => t.playbookId,
+      referencedTable: $db.playbooks,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$PlaybooksTableFilterComposer(
+            $db: $db,
+            $table: $db.playbooks,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
     return composer;
   }
 
   Expression<bool> playbookRunStepsRefs(
-      Expression<bool> Function($$PlaybookRunStepsTableFilterComposer f) f) {
+    Expression<bool> Function($$PlaybookRunStepsTableFilterComposer f) f,
+  ) {
     final $$PlaybookRunStepsTableFilterComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.id,
-        referencedTable: $db.playbookRunSteps,
-        getReferencedColumn: (t) => t.runId,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$PlaybookRunStepsTableFilterComposer(
-              $db: $db,
-              $table: $db.playbookRunSteps,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.playbookRunSteps,
+      getReferencedColumn: (t) => t.runId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$PlaybookRunStepsTableFilterComposer(
+            $db: $db,
+            $table: $db.playbookRunSteps,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
     return f(composer);
   }
 }
@@ -7941,45 +9517,60 @@ class $$PlaybookRunsTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnOrderings(column));
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get connectionId => $composableBuilder(
-      column: $table.connectionId,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.connectionId,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get status => $composableBuilder(
-      column: $table.status, builder: (column) => ColumnOrderings(column));
+    column: $table.status,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get startedAt => $composableBuilder(
-      column: $table.startedAt, builder: (column) => ColumnOrderings(column));
+    column: $table.startedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get finishedAt => $composableBuilder(
-      column: $table.finishedAt, builder: (column) => ColumnOrderings(column));
+    column: $table.finishedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get summary => $composableBuilder(
-      column: $table.summary, builder: (column) => ColumnOrderings(column));
+    column: $table.summary,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get errorMessage => $composableBuilder(
-      column: $table.errorMessage,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.errorMessage,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   $$PlaybooksTableOrderingComposer get playbookId {
     final $$PlaybooksTableOrderingComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.playbookId,
-        referencedTable: $db.playbooks,
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$PlaybooksTableOrderingComposer(
-              $db: $db,
-              $table: $db.playbooks,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
+      composer: this,
+      getCurrentColumn: (t) => t.playbookId,
+      referencedTable: $db.playbooks,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$PlaybooksTableOrderingComposer(
+            $db: $db,
+            $table: $db.playbooks,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
     return composer;
   }
 }
@@ -7997,7 +9588,9 @@ class $$PlaybookRunsTableAnnotationComposer
       $composableBuilder(column: $table.id, builder: (column) => column);
 
   GeneratedColumn<String> get connectionId => $composableBuilder(
-      column: $table.connectionId, builder: (column) => column);
+    column: $table.connectionId,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get status =>
       $composableBuilder(column: $table.status, builder: (column) => column);
@@ -8006,70 +9599,85 @@ class $$PlaybookRunsTableAnnotationComposer
       $composableBuilder(column: $table.startedAt, builder: (column) => column);
 
   GeneratedColumn<int> get finishedAt => $composableBuilder(
-      column: $table.finishedAt, builder: (column) => column);
+    column: $table.finishedAt,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get summary =>
       $composableBuilder(column: $table.summary, builder: (column) => column);
 
   GeneratedColumn<String> get errorMessage => $composableBuilder(
-      column: $table.errorMessage, builder: (column) => column);
+    column: $table.errorMessage,
+    builder: (column) => column,
+  );
 
   $$PlaybooksTableAnnotationComposer get playbookId {
     final $$PlaybooksTableAnnotationComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.playbookId,
-        referencedTable: $db.playbooks,
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$PlaybooksTableAnnotationComposer(
-              $db: $db,
-              $table: $db.playbooks,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
+      composer: this,
+      getCurrentColumn: (t) => t.playbookId,
+      referencedTable: $db.playbooks,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$PlaybooksTableAnnotationComposer(
+            $db: $db,
+            $table: $db.playbooks,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
     return composer;
   }
 
   Expression<T> playbookRunStepsRefs<T extends Object>(
-      Expression<T> Function($$PlaybookRunStepsTableAnnotationComposer a) f) {
+    Expression<T> Function($$PlaybookRunStepsTableAnnotationComposer a) f,
+  ) {
     final $$PlaybookRunStepsTableAnnotationComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.id,
-        referencedTable: $db.playbookRunSteps,
-        getReferencedColumn: (t) => t.runId,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$PlaybookRunStepsTableAnnotationComposer(
-              $db: $db,
-              $table: $db.playbookRunSteps,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.playbookRunSteps,
+      getReferencedColumn: (t) => t.runId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$PlaybookRunStepsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.playbookRunSteps,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
     return f(composer);
   }
 }
 
-class $$PlaybookRunsTableTableManager extends RootTableManager<
-    _$AppDatabase,
-    $PlaybookRunsTable,
-    PlaybookRun,
-    $$PlaybookRunsTableFilterComposer,
-    $$PlaybookRunsTableOrderingComposer,
-    $$PlaybookRunsTableAnnotationComposer,
-    $$PlaybookRunsTableCreateCompanionBuilder,
-    $$PlaybookRunsTableUpdateCompanionBuilder,
-    (PlaybookRun, $$PlaybookRunsTableReferences),
-    PlaybookRun,
-    PrefetchHooks Function({bool playbookId, bool playbookRunStepsRefs})> {
+class $$PlaybookRunsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $PlaybookRunsTable,
+          PlaybookRun,
+          $$PlaybookRunsTableFilterComposer,
+          $$PlaybookRunsTableOrderingComposer,
+          $$PlaybookRunsTableAnnotationComposer,
+          $$PlaybookRunsTableCreateCompanionBuilder,
+          $$PlaybookRunsTableUpdateCompanionBuilder,
+          (PlaybookRun, $$PlaybookRunsTableReferences),
+          PlaybookRun,
+          PrefetchHooks Function({bool playbookId, bool playbookRunStepsRefs})
+        > {
   $$PlaybookRunsTableTableManager(_$AppDatabase db, $PlaybookRunsTable table)
-      : super(TableManagerState(
+    : super(
+        TableManagerState(
           db: db,
           table: table,
           createFilteringComposer: () =>
@@ -8078,154 +9686,179 @@ class $$PlaybookRunsTableTableManager extends RootTableManager<
               $$PlaybookRunsTableOrderingComposer($db: db, $table: table),
           createComputedFieldComposer: () =>
               $$PlaybookRunsTableAnnotationComposer($db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> id = const Value.absent(),
-            Value<String> playbookId = const Value.absent(),
-            Value<String?> connectionId = const Value.absent(),
-            Value<String> status = const Value.absent(),
-            Value<int> startedAt = const Value.absent(),
-            Value<int?> finishedAt = const Value.absent(),
-            Value<String> summary = const Value.absent(),
-            Value<String?> errorMessage = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              PlaybookRunsCompanion(
-            id: id,
-            playbookId: playbookId,
-            connectionId: connectionId,
-            status: status,
-            startedAt: startedAt,
-            finishedAt: finishedAt,
-            summary: summary,
-            errorMessage: errorMessage,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String id,
-            required String playbookId,
-            Value<String?> connectionId = const Value.absent(),
-            required String status,
-            required int startedAt,
-            Value<int?> finishedAt = const Value.absent(),
-            Value<String> summary = const Value.absent(),
-            Value<String?> errorMessage = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              PlaybookRunsCompanion.insert(
-            id: id,
-            playbookId: playbookId,
-            connectionId: connectionId,
-            status: status,
-            startedAt: startedAt,
-            finishedAt: finishedAt,
-            summary: summary,
-            errorMessage: errorMessage,
-            rowid: rowid,
-          ),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> playbookId = const Value.absent(),
+                Value<String?> connectionId = const Value.absent(),
+                Value<String> status = const Value.absent(),
+                Value<int> startedAt = const Value.absent(),
+                Value<int?> finishedAt = const Value.absent(),
+                Value<String> summary = const Value.absent(),
+                Value<String?> errorMessage = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => PlaybookRunsCompanion(
+                id: id,
+                playbookId: playbookId,
+                connectionId: connectionId,
+                status: status,
+                startedAt: startedAt,
+                finishedAt: finishedAt,
+                summary: summary,
+                errorMessage: errorMessage,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String playbookId,
+                Value<String?> connectionId = const Value.absent(),
+                required String status,
+                required int startedAt,
+                Value<int?> finishedAt = const Value.absent(),
+                Value<String> summary = const Value.absent(),
+                Value<String?> errorMessage = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => PlaybookRunsCompanion.insert(
+                id: id,
+                playbookId: playbookId,
+                connectionId: connectionId,
+                status: status,
+                startedAt: startedAt,
+                finishedAt: finishedAt,
+                summary: summary,
+                errorMessage: errorMessage,
+                rowid: rowid,
+              ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (
-                    e.readTable(table),
-                    $$PlaybookRunsTableReferences(db, table, e)
-                  ))
+              .map(
+                (e) => (
+                  e.readTable(table),
+                  $$PlaybookRunsTableReferences(db, table, e),
+                ),
+              )
               .toList(),
-          prefetchHooksCallback: (
-              {playbookId = false, playbookRunStepsRefs = false}) {
-            return PrefetchHooks(
-              db: db,
-              explicitlyWatchedTables: [
-                if (playbookRunStepsRefs) db.playbookRunSteps
-              ],
-              addJoins: <
-                  T extends TableManagerState<
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic,
-                      dynamic>>(state) {
-                if (playbookId) {
-                  state = state.withJoin(
-                    currentTable: table,
-                    currentColumn: table.playbookId,
-                    referencedTable:
-                        $$PlaybookRunsTableReferences._playbookIdTable(db),
-                    referencedColumn:
-                        $$PlaybookRunsTableReferences._playbookIdTable(db).id,
-                  ) as T;
-                }
+          prefetchHooksCallback:
+              ({playbookId = false, playbookRunStepsRefs = false}) {
+                return PrefetchHooks(
+                  db: db,
+                  explicitlyWatchedTables: [
+                    if (playbookRunStepsRefs) db.playbookRunSteps,
+                  ],
+                  addJoins:
+                      <
+                        T extends TableManagerState<
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic,
+                          dynamic
+                        >
+                      >(state) {
+                        if (playbookId) {
+                          state =
+                              state.withJoin(
+                                    currentTable: table,
+                                    currentColumn: table.playbookId,
+                                    referencedTable:
+                                        $$PlaybookRunsTableReferences
+                                            ._playbookIdTable(db),
+                                    referencedColumn:
+                                        $$PlaybookRunsTableReferences
+                                            ._playbookIdTable(db)
+                                            .id,
+                                  )
+                                  as T;
+                        }
 
-                return state;
+                        return state;
+                      },
+                  getPrefetchedDataCallback: (items) async {
+                    return [
+                      if (playbookRunStepsRefs)
+                        await $_getPrefetchedData<
+                          PlaybookRun,
+                          $PlaybookRunsTable,
+                          PlaybookRunStep
+                        >(
+                          currentTable: table,
+                          referencedTable: $$PlaybookRunsTableReferences
+                              ._playbookRunStepsRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$PlaybookRunsTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).playbookRunStepsRefs,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.runId == item.id,
+                              ),
+                          typedResults: items,
+                        ),
+                    ];
+                  },
+                );
               },
-              getPrefetchedDataCallback: (items) async {
-                return [
-                  if (playbookRunStepsRefs)
-                    await $_getPrefetchedData<PlaybookRun, $PlaybookRunsTable,
-                            PlaybookRunStep>(
-                        currentTable: table,
-                        referencedTable: $$PlaybookRunsTableReferences
-                            ._playbookRunStepsRefsTable(db),
-                        managerFromTypedResult: (p0) =>
-                            $$PlaybookRunsTableReferences(db, table, p0)
-                                .playbookRunStepsRefs,
-                        referencedItemsForCurrentItem: (item,
-                                referencedItems) =>
-                            referencedItems.where((e) => e.runId == item.id),
-                        typedResults: items)
-                ];
-              },
-            );
-          },
-        ));
+        ),
+      );
 }
 
-typedef $$PlaybookRunsTableProcessedTableManager = ProcessedTableManager<
-    _$AppDatabase,
-    $PlaybookRunsTable,
-    PlaybookRun,
-    $$PlaybookRunsTableFilterComposer,
-    $$PlaybookRunsTableOrderingComposer,
-    $$PlaybookRunsTableAnnotationComposer,
-    $$PlaybookRunsTableCreateCompanionBuilder,
-    $$PlaybookRunsTableUpdateCompanionBuilder,
-    (PlaybookRun, $$PlaybookRunsTableReferences),
-    PlaybookRun,
-    PrefetchHooks Function({bool playbookId, bool playbookRunStepsRefs})>;
-typedef $$PlaybookRunStepsTableCreateCompanionBuilder
-    = PlaybookRunStepsCompanion Function({
-  required String id,
-  required String runId,
-  required int stepIndex,
-  required String name,
-  required String command,
-  required String status,
-  Value<String?> stdoutPreview,
-  Value<String?> stderrPreview,
-  Value<int?> exitCode,
-  Value<int> rowid,
-});
-typedef $$PlaybookRunStepsTableUpdateCompanionBuilder
-    = PlaybookRunStepsCompanion Function({
-  Value<String> id,
-  Value<String> runId,
-  Value<int> stepIndex,
-  Value<String> name,
-  Value<String> command,
-  Value<String> status,
-  Value<String?> stdoutPreview,
-  Value<String?> stderrPreview,
-  Value<int?> exitCode,
-  Value<int> rowid,
-});
+typedef $$PlaybookRunsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $PlaybookRunsTable,
+      PlaybookRun,
+      $$PlaybookRunsTableFilterComposer,
+      $$PlaybookRunsTableOrderingComposer,
+      $$PlaybookRunsTableAnnotationComposer,
+      $$PlaybookRunsTableCreateCompanionBuilder,
+      $$PlaybookRunsTableUpdateCompanionBuilder,
+      (PlaybookRun, $$PlaybookRunsTableReferences),
+      PlaybookRun,
+      PrefetchHooks Function({bool playbookId, bool playbookRunStepsRefs})
+    >;
+typedef $$PlaybookRunStepsTableCreateCompanionBuilder =
+    PlaybookRunStepsCompanion Function({
+      required String id,
+      required String runId,
+      required int stepIndex,
+      required String name,
+      required String command,
+      required String status,
+      Value<String?> stdoutPreview,
+      Value<String?> stderrPreview,
+      Value<int?> exitCode,
+      Value<int> rowid,
+    });
+typedef $$PlaybookRunStepsTableUpdateCompanionBuilder =
+    PlaybookRunStepsCompanion Function({
+      Value<String> id,
+      Value<String> runId,
+      Value<int> stepIndex,
+      Value<String> name,
+      Value<String> command,
+      Value<String> status,
+      Value<String?> stdoutPreview,
+      Value<String?> stderrPreview,
+      Value<int?> exitCode,
+      Value<int> rowid,
+    });
 
-final class $$PlaybookRunStepsTableReferences extends BaseReferences<
-    _$AppDatabase, $PlaybookRunStepsTable, PlaybookRunStep> {
+final class $$PlaybookRunStepsTableReferences
+    extends
+        BaseReferences<_$AppDatabase, $PlaybookRunStepsTable, PlaybookRunStep> {
   $$PlaybookRunStepsTableReferences(
-      super.$_db, super.$_table, super.$_typedResult);
+    super.$_db,
+    super.$_table,
+    super.$_typedResult,
+  );
 
   static $PlaybookRunsTable _runIdTable(_$AppDatabase db) => db.playbookRuns
       .createAlias('playbook_run_steps__run_id__playbook_runs__id');
@@ -8233,12 +9866,15 @@ final class $$PlaybookRunStepsTableReferences extends BaseReferences<
   $$PlaybookRunsTableProcessedTableManager get runId {
     final $_column = $_itemColumn<String>('run_id')!;
 
-    final manager = $$PlaybookRunsTableTableManager($_db, $_db.playbookRuns)
-        .filter((f) => f.id.sqlEquals($_column));
+    final manager = $$PlaybookRunsTableTableManager(
+      $_db,
+      $_db.playbookRuns,
+    ).filter((f) => f.id.sqlEquals($_column));
     final item = $_typedResult.readTableOrNull(_runIdTable($_db));
     if (item == null) return manager;
     return ProcessedTableManager(
-        manager.$state.copyWith(prefetchedData: [item]));
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
   }
 }
 
@@ -8252,46 +9888,65 @@ class $$PlaybookRunStepsTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnFilters(column));
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get stepIndex => $composableBuilder(
-      column: $table.stepIndex, builder: (column) => ColumnFilters(column));
+    column: $table.stepIndex,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get name => $composableBuilder(
-      column: $table.name, builder: (column) => ColumnFilters(column));
+    column: $table.name,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get command => $composableBuilder(
-      column: $table.command, builder: (column) => ColumnFilters(column));
+    column: $table.command,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get status => $composableBuilder(
-      column: $table.status, builder: (column) => ColumnFilters(column));
+    column: $table.status,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get stdoutPreview => $composableBuilder(
-      column: $table.stdoutPreview, builder: (column) => ColumnFilters(column));
+    column: $table.stdoutPreview,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get stderrPreview => $composableBuilder(
-      column: $table.stderrPreview, builder: (column) => ColumnFilters(column));
+    column: $table.stderrPreview,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get exitCode => $composableBuilder(
-      column: $table.exitCode, builder: (column) => ColumnFilters(column));
+    column: $table.exitCode,
+    builder: (column) => ColumnFilters(column),
+  );
 
   $$PlaybookRunsTableFilterComposer get runId {
     final $$PlaybookRunsTableFilterComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.runId,
-        referencedTable: $db.playbookRuns,
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$PlaybookRunsTableFilterComposer(
-              $db: $db,
-              $table: $db.playbookRuns,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
+      composer: this,
+      getCurrentColumn: (t) => t.runId,
+      referencedTable: $db.playbookRuns,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$PlaybookRunsTableFilterComposer(
+            $db: $db,
+            $table: $db.playbookRuns,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
     return composer;
   }
 }
@@ -8306,48 +9961,65 @@ class $$PlaybookRunStepsTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnOrderings(column));
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get stepIndex => $composableBuilder(
-      column: $table.stepIndex, builder: (column) => ColumnOrderings(column));
+    column: $table.stepIndex,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get name => $composableBuilder(
-      column: $table.name, builder: (column) => ColumnOrderings(column));
+    column: $table.name,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get command => $composableBuilder(
-      column: $table.command, builder: (column) => ColumnOrderings(column));
+    column: $table.command,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get status => $composableBuilder(
-      column: $table.status, builder: (column) => ColumnOrderings(column));
+    column: $table.status,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get stdoutPreview => $composableBuilder(
-      column: $table.stdoutPreview,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.stdoutPreview,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get stderrPreview => $composableBuilder(
-      column: $table.stderrPreview,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.stderrPreview,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get exitCode => $composableBuilder(
-      column: $table.exitCode, builder: (column) => ColumnOrderings(column));
+    column: $table.exitCode,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   $$PlaybookRunsTableOrderingComposer get runId {
     final $$PlaybookRunsTableOrderingComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.runId,
-        referencedTable: $db.playbookRuns,
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$PlaybookRunsTableOrderingComposer(
-              $db: $db,
-              $table: $db.playbookRuns,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
+      composer: this,
+      getCurrentColumn: (t) => t.runId,
+      referencedTable: $db.playbookRuns,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$PlaybookRunsTableOrderingComposer(
+            $db: $db,
+            $table: $db.playbookRuns,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
     return composer;
   }
 }
@@ -8377,50 +10049,62 @@ class $$PlaybookRunStepsTableAnnotationComposer
       $composableBuilder(column: $table.status, builder: (column) => column);
 
   GeneratedColumn<String> get stdoutPreview => $composableBuilder(
-      column: $table.stdoutPreview, builder: (column) => column);
+    column: $table.stdoutPreview,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get stderrPreview => $composableBuilder(
-      column: $table.stderrPreview, builder: (column) => column);
+    column: $table.stderrPreview,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<int> get exitCode =>
       $composableBuilder(column: $table.exitCode, builder: (column) => column);
 
   $$PlaybookRunsTableAnnotationComposer get runId {
     final $$PlaybookRunsTableAnnotationComposer composer = $composerBuilder(
-        composer: this,
-        getCurrentColumn: (t) => t.runId,
-        referencedTable: $db.playbookRuns,
-        getReferencedColumn: (t) => t.id,
-        builder: (joinBuilder,
-                {$addJoinBuilderToRootComposer,
-                $removeJoinBuilderFromRootComposer}) =>
-            $$PlaybookRunsTableAnnotationComposer(
-              $db: $db,
-              $table: $db.playbookRuns,
-              $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
-              joinBuilder: joinBuilder,
-              $removeJoinBuilderFromRootComposer:
-                  $removeJoinBuilderFromRootComposer,
-            ));
+      composer: this,
+      getCurrentColumn: (t) => t.runId,
+      referencedTable: $db.playbookRuns,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$PlaybookRunsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.playbookRuns,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
     return composer;
   }
 }
 
-class $$PlaybookRunStepsTableTableManager extends RootTableManager<
-    _$AppDatabase,
-    $PlaybookRunStepsTable,
-    PlaybookRunStep,
-    $$PlaybookRunStepsTableFilterComposer,
-    $$PlaybookRunStepsTableOrderingComposer,
-    $$PlaybookRunStepsTableAnnotationComposer,
-    $$PlaybookRunStepsTableCreateCompanionBuilder,
-    $$PlaybookRunStepsTableUpdateCompanionBuilder,
-    (PlaybookRunStep, $$PlaybookRunStepsTableReferences),
-    PlaybookRunStep,
-    PrefetchHooks Function({bool runId})> {
+class $$PlaybookRunStepsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $PlaybookRunStepsTable,
+          PlaybookRunStep,
+          $$PlaybookRunStepsTableFilterComposer,
+          $$PlaybookRunStepsTableOrderingComposer,
+          $$PlaybookRunStepsTableAnnotationComposer,
+          $$PlaybookRunStepsTableCreateCompanionBuilder,
+          $$PlaybookRunStepsTableUpdateCompanionBuilder,
+          (PlaybookRunStep, $$PlaybookRunStepsTableReferences),
+          PlaybookRunStep,
+          PrefetchHooks Function({bool runId})
+        > {
   $$PlaybookRunStepsTableTableManager(
-      _$AppDatabase db, $PlaybookRunStepsTable table)
-      : super(TableManagerState(
+    _$AppDatabase db,
+    $PlaybookRunStepsTable table,
+  ) : super(
+        TableManagerState(
           db: db,
           table: table,
           createFilteringComposer: () =>
@@ -8429,66 +10113,69 @@ class $$PlaybookRunStepsTableTableManager extends RootTableManager<
               $$PlaybookRunStepsTableOrderingComposer($db: db, $table: table),
           createComputedFieldComposer: () =>
               $$PlaybookRunStepsTableAnnotationComposer($db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> id = const Value.absent(),
-            Value<String> runId = const Value.absent(),
-            Value<int> stepIndex = const Value.absent(),
-            Value<String> name = const Value.absent(),
-            Value<String> command = const Value.absent(),
-            Value<String> status = const Value.absent(),
-            Value<String?> stdoutPreview = const Value.absent(),
-            Value<String?> stderrPreview = const Value.absent(),
-            Value<int?> exitCode = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              PlaybookRunStepsCompanion(
-            id: id,
-            runId: runId,
-            stepIndex: stepIndex,
-            name: name,
-            command: command,
-            status: status,
-            stdoutPreview: stdoutPreview,
-            stderrPreview: stderrPreview,
-            exitCode: exitCode,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String id,
-            required String runId,
-            required int stepIndex,
-            required String name,
-            required String command,
-            required String status,
-            Value<String?> stdoutPreview = const Value.absent(),
-            Value<String?> stderrPreview = const Value.absent(),
-            Value<int?> exitCode = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              PlaybookRunStepsCompanion.insert(
-            id: id,
-            runId: runId,
-            stepIndex: stepIndex,
-            name: name,
-            command: command,
-            status: status,
-            stdoutPreview: stdoutPreview,
-            stderrPreview: stderrPreview,
-            exitCode: exitCode,
-            rowid: rowid,
-          ),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> runId = const Value.absent(),
+                Value<int> stepIndex = const Value.absent(),
+                Value<String> name = const Value.absent(),
+                Value<String> command = const Value.absent(),
+                Value<String> status = const Value.absent(),
+                Value<String?> stdoutPreview = const Value.absent(),
+                Value<String?> stderrPreview = const Value.absent(),
+                Value<int?> exitCode = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => PlaybookRunStepsCompanion(
+                id: id,
+                runId: runId,
+                stepIndex: stepIndex,
+                name: name,
+                command: command,
+                status: status,
+                stdoutPreview: stdoutPreview,
+                stderrPreview: stderrPreview,
+                exitCode: exitCode,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String runId,
+                required int stepIndex,
+                required String name,
+                required String command,
+                required String status,
+                Value<String?> stdoutPreview = const Value.absent(),
+                Value<String?> stderrPreview = const Value.absent(),
+                Value<int?> exitCode = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => PlaybookRunStepsCompanion.insert(
+                id: id,
+                runId: runId,
+                stepIndex: stepIndex,
+                name: name,
+                command: command,
+                status: status,
+                stdoutPreview: stdoutPreview,
+                stderrPreview: stderrPreview,
+                exitCode: exitCode,
+                rowid: rowid,
+              ),
           withReferenceMapper: (p0) => p0
-              .map((e) => (
-                    e.readTable(table),
-                    $$PlaybookRunStepsTableReferences(db, table, e)
-                  ))
+              .map(
+                (e) => (
+                  e.readTable(table),
+                  $$PlaybookRunStepsTableReferences(db, table, e),
+                ),
+              )
               .toList(),
           prefetchHooksCallback: ({runId = false}) {
             return PrefetchHooks(
               db: db,
               explicitlyWatchedTables: [],
-              addJoins: <
-                  T extends TableManagerState<
+              addJoins:
+                  <
+                    T extends TableManagerState<
                       dynamic,
                       dynamic,
                       dynamic,
@@ -8499,56 +10186,66 @@ class $$PlaybookRunStepsTableTableManager extends RootTableManager<
                       dynamic,
                       dynamic,
                       dynamic,
-                      dynamic>>(state) {
-                if (runId) {
-                  state = state.withJoin(
-                    currentTable: table,
-                    currentColumn: table.runId,
-                    referencedTable:
-                        $$PlaybookRunStepsTableReferences._runIdTable(db),
-                    referencedColumn:
-                        $$PlaybookRunStepsTableReferences._runIdTable(db).id,
-                  ) as T;
-                }
+                      dynamic
+                    >
+                  >(state) {
+                    if (runId) {
+                      state =
+                          state.withJoin(
+                                currentTable: table,
+                                currentColumn: table.runId,
+                                referencedTable:
+                                    $$PlaybookRunStepsTableReferences
+                                        ._runIdTable(db),
+                                referencedColumn:
+                                    $$PlaybookRunStepsTableReferences
+                                        ._runIdTable(db)
+                                        .id,
+                              )
+                              as T;
+                    }
 
-                return state;
-              },
+                    return state;
+                  },
               getPrefetchedDataCallback: (items) async {
                 return [];
               },
             );
           },
-        ));
+        ),
+      );
 }
 
-typedef $$PlaybookRunStepsTableProcessedTableManager = ProcessedTableManager<
-    _$AppDatabase,
-    $PlaybookRunStepsTable,
-    PlaybookRunStep,
-    $$PlaybookRunStepsTableFilterComposer,
-    $$PlaybookRunStepsTableOrderingComposer,
-    $$PlaybookRunStepsTableAnnotationComposer,
-    $$PlaybookRunStepsTableCreateCompanionBuilder,
-    $$PlaybookRunStepsTableUpdateCompanionBuilder,
-    (PlaybookRunStep, $$PlaybookRunStepsTableReferences),
-    PlaybookRunStep,
-    PrefetchHooks Function({bool runId})>;
-typedef $$SftpRecentPathsTableCreateCompanionBuilder = SftpRecentPathsCompanion
-    Function({
-  required String id,
-  required String connectionId,
-  required String path,
-  required int visitedAt,
-  Value<int> rowid,
-});
-typedef $$SftpRecentPathsTableUpdateCompanionBuilder = SftpRecentPathsCompanion
-    Function({
-  Value<String> id,
-  Value<String> connectionId,
-  Value<String> path,
-  Value<int> visitedAt,
-  Value<int> rowid,
-});
+typedef $$PlaybookRunStepsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $PlaybookRunStepsTable,
+      PlaybookRunStep,
+      $$PlaybookRunStepsTableFilterComposer,
+      $$PlaybookRunStepsTableOrderingComposer,
+      $$PlaybookRunStepsTableAnnotationComposer,
+      $$PlaybookRunStepsTableCreateCompanionBuilder,
+      $$PlaybookRunStepsTableUpdateCompanionBuilder,
+      (PlaybookRunStep, $$PlaybookRunStepsTableReferences),
+      PlaybookRunStep,
+      PrefetchHooks Function({bool runId})
+    >;
+typedef $$SftpRecentPathsTableCreateCompanionBuilder =
+    SftpRecentPathsCompanion Function({
+      required String id,
+      required String connectionId,
+      required String path,
+      required int visitedAt,
+      Value<int> rowid,
+    });
+typedef $$SftpRecentPathsTableUpdateCompanionBuilder =
+    SftpRecentPathsCompanion Function({
+      Value<String> id,
+      Value<String> connectionId,
+      Value<String> path,
+      Value<int> visitedAt,
+      Value<int> rowid,
+    });
 
 class $$SftpRecentPathsTableFilterComposer
     extends Composer<_$AppDatabase, $SftpRecentPathsTable> {
@@ -8560,16 +10257,24 @@ class $$SftpRecentPathsTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnFilters(column));
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get connectionId => $composableBuilder(
-      column: $table.connectionId, builder: (column) => ColumnFilters(column));
+    column: $table.connectionId,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get path => $composableBuilder(
-      column: $table.path, builder: (column) => ColumnFilters(column));
+    column: $table.path,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get visitedAt => $composableBuilder(
-      column: $table.visitedAt, builder: (column) => ColumnFilters(column));
+    column: $table.visitedAt,
+    builder: (column) => ColumnFilters(column),
+  );
 }
 
 class $$SftpRecentPathsTableOrderingComposer
@@ -8582,17 +10287,24 @@ class $$SftpRecentPathsTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnOrderings(column));
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get connectionId => $composableBuilder(
-      column: $table.connectionId,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.connectionId,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get path => $composableBuilder(
-      column: $table.path, builder: (column) => ColumnOrderings(column));
+    column: $table.path,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get visitedAt => $composableBuilder(
-      column: $table.visitedAt, builder: (column) => ColumnOrderings(column));
+    column: $table.visitedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$SftpRecentPathsTableAnnotationComposer
@@ -8608,7 +10320,9 @@ class $$SftpRecentPathsTableAnnotationComposer
       $composableBuilder(column: $table.id, builder: (column) => column);
 
   GeneratedColumn<String> get connectionId => $composableBuilder(
-      column: $table.connectionId, builder: (column) => column);
+    column: $table.connectionId,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get path =>
       $composableBuilder(column: $table.path, builder: (column) => column);
@@ -8617,24 +10331,33 @@ class $$SftpRecentPathsTableAnnotationComposer
       $composableBuilder(column: $table.visitedAt, builder: (column) => column);
 }
 
-class $$SftpRecentPathsTableTableManager extends RootTableManager<
-    _$AppDatabase,
-    $SftpRecentPathsTable,
-    SftpRecentPath,
-    $$SftpRecentPathsTableFilterComposer,
-    $$SftpRecentPathsTableOrderingComposer,
-    $$SftpRecentPathsTableAnnotationComposer,
-    $$SftpRecentPathsTableCreateCompanionBuilder,
-    $$SftpRecentPathsTableUpdateCompanionBuilder,
-    (
-      SftpRecentPath,
-      BaseReferences<_$AppDatabase, $SftpRecentPathsTable, SftpRecentPath>
-    ),
-    SftpRecentPath,
-    PrefetchHooks Function()> {
+class $$SftpRecentPathsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $SftpRecentPathsTable,
+          SftpRecentPath,
+          $$SftpRecentPathsTableFilterComposer,
+          $$SftpRecentPathsTableOrderingComposer,
+          $$SftpRecentPathsTableAnnotationComposer,
+          $$SftpRecentPathsTableCreateCompanionBuilder,
+          $$SftpRecentPathsTableUpdateCompanionBuilder,
+          (
+            SftpRecentPath,
+            BaseReferences<
+              _$AppDatabase,
+              $SftpRecentPathsTable,
+              SftpRecentPath
+            >,
+          ),
+          SftpRecentPath,
+          PrefetchHooks Function()
+        > {
   $$SftpRecentPathsTableTableManager(
-      _$AppDatabase db, $SftpRecentPathsTable table)
-      : super(TableManagerState(
+    _$AppDatabase db,
+    $SftpRecentPathsTable table,
+  ) : super(
+        TableManagerState(
           db: db,
           table: table,
           createFilteringComposer: () =>
@@ -8643,76 +10366,79 @@ class $$SftpRecentPathsTableTableManager extends RootTableManager<
               $$SftpRecentPathsTableOrderingComposer($db: db, $table: table),
           createComputedFieldComposer: () =>
               $$SftpRecentPathsTableAnnotationComposer($db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> id = const Value.absent(),
-            Value<String> connectionId = const Value.absent(),
-            Value<String> path = const Value.absent(),
-            Value<int> visitedAt = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              SftpRecentPathsCompanion(
-            id: id,
-            connectionId: connectionId,
-            path: path,
-            visitedAt: visitedAt,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String id,
-            required String connectionId,
-            required String path,
-            required int visitedAt,
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              SftpRecentPathsCompanion.insert(
-            id: id,
-            connectionId: connectionId,
-            path: path,
-            visitedAt: visitedAt,
-            rowid: rowid,
-          ),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> connectionId = const Value.absent(),
+                Value<String> path = const Value.absent(),
+                Value<int> visitedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => SftpRecentPathsCompanion(
+                id: id,
+                connectionId: connectionId,
+                path: path,
+                visitedAt: visitedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String connectionId,
+                required String path,
+                required int visitedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => SftpRecentPathsCompanion.insert(
+                id: id,
+                connectionId: connectionId,
+                path: path,
+                visitedAt: visitedAt,
+                rowid: rowid,
+              ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
               .toList(),
           prefetchHooksCallback: null,
-        ));
+        ),
+      );
 }
 
-typedef $$SftpRecentPathsTableProcessedTableManager = ProcessedTableManager<
-    _$AppDatabase,
-    $SftpRecentPathsTable,
-    SftpRecentPath,
-    $$SftpRecentPathsTableFilterComposer,
-    $$SftpRecentPathsTableOrderingComposer,
-    $$SftpRecentPathsTableAnnotationComposer,
-    $$SftpRecentPathsTableCreateCompanionBuilder,
-    $$SftpRecentPathsTableUpdateCompanionBuilder,
-    (
+typedef $$SftpRecentPathsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $SftpRecentPathsTable,
       SftpRecentPath,
-      BaseReferences<_$AppDatabase, $SftpRecentPathsTable, SftpRecentPath>
-    ),
-    SftpRecentPath,
-    PrefetchHooks Function()>;
-typedef $$SftpFavoritePathsTableCreateCompanionBuilder
-    = SftpFavoritePathsCompanion Function({
-  required String id,
-  required String connectionId,
-  required String path,
-  required String name,
-  required int createdAt,
-  required int updatedAt,
-  Value<int> rowid,
-});
-typedef $$SftpFavoritePathsTableUpdateCompanionBuilder
-    = SftpFavoritePathsCompanion Function({
-  Value<String> id,
-  Value<String> connectionId,
-  Value<String> path,
-  Value<String> name,
-  Value<int> createdAt,
-  Value<int> updatedAt,
-  Value<int> rowid,
-});
+      $$SftpRecentPathsTableFilterComposer,
+      $$SftpRecentPathsTableOrderingComposer,
+      $$SftpRecentPathsTableAnnotationComposer,
+      $$SftpRecentPathsTableCreateCompanionBuilder,
+      $$SftpRecentPathsTableUpdateCompanionBuilder,
+      (
+        SftpRecentPath,
+        BaseReferences<_$AppDatabase, $SftpRecentPathsTable, SftpRecentPath>,
+      ),
+      SftpRecentPath,
+      PrefetchHooks Function()
+    >;
+typedef $$SftpFavoritePathsTableCreateCompanionBuilder =
+    SftpFavoritePathsCompanion Function({
+      required String id,
+      required String connectionId,
+      required String path,
+      required String name,
+      required int createdAt,
+      required int updatedAt,
+      Value<int> rowid,
+    });
+typedef $$SftpFavoritePathsTableUpdateCompanionBuilder =
+    SftpFavoritePathsCompanion Function({
+      Value<String> id,
+      Value<String> connectionId,
+      Value<String> path,
+      Value<String> name,
+      Value<int> createdAt,
+      Value<int> updatedAt,
+      Value<int> rowid,
+    });
 
 class $$SftpFavoritePathsTableFilterComposer
     extends Composer<_$AppDatabase, $SftpFavoritePathsTable> {
@@ -8724,22 +10450,34 @@ class $$SftpFavoritePathsTableFilterComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnFilters<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnFilters(column));
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get connectionId => $composableBuilder(
-      column: $table.connectionId, builder: (column) => ColumnFilters(column));
+    column: $table.connectionId,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get path => $composableBuilder(
-      column: $table.path, builder: (column) => ColumnFilters(column));
+    column: $table.path,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<String> get name => $composableBuilder(
-      column: $table.name, builder: (column) => ColumnFilters(column));
+    column: $table.name,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnFilters(column));
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
 
   ColumnFilters<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnFilters(column));
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
 }
 
 class $$SftpFavoritePathsTableOrderingComposer
@@ -8752,23 +10490,34 @@ class $$SftpFavoritePathsTableOrderingComposer
     super.$removeJoinBuilderFromRootComposer,
   });
   ColumnOrderings<String> get id => $composableBuilder(
-      column: $table.id, builder: (column) => ColumnOrderings(column));
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get connectionId => $composableBuilder(
-      column: $table.connectionId,
-      builder: (column) => ColumnOrderings(column));
+    column: $table.connectionId,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get path => $composableBuilder(
-      column: $table.path, builder: (column) => ColumnOrderings(column));
+    column: $table.path,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<String> get name => $composableBuilder(
-      column: $table.name, builder: (column) => ColumnOrderings(column));
+    column: $table.name,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get createdAt => $composableBuilder(
-      column: $table.createdAt, builder: (column) => ColumnOrderings(column));
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 
   ColumnOrderings<int> get updatedAt => $composableBuilder(
-      column: $table.updatedAt, builder: (column) => ColumnOrderings(column));
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$SftpFavoritePathsTableAnnotationComposer
@@ -8784,7 +10533,9 @@ class $$SftpFavoritePathsTableAnnotationComposer
       $composableBuilder(column: $table.id, builder: (column) => column);
 
   GeneratedColumn<String> get connectionId => $composableBuilder(
-      column: $table.connectionId, builder: (column) => column);
+    column: $table.connectionId,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get path =>
       $composableBuilder(column: $table.path, builder: (column) => column);
@@ -8799,24 +10550,33 @@ class $$SftpFavoritePathsTableAnnotationComposer
       $composableBuilder(column: $table.updatedAt, builder: (column) => column);
 }
 
-class $$SftpFavoritePathsTableTableManager extends RootTableManager<
-    _$AppDatabase,
-    $SftpFavoritePathsTable,
-    SftpFavoritePath,
-    $$SftpFavoritePathsTableFilterComposer,
-    $$SftpFavoritePathsTableOrderingComposer,
-    $$SftpFavoritePathsTableAnnotationComposer,
-    $$SftpFavoritePathsTableCreateCompanionBuilder,
-    $$SftpFavoritePathsTableUpdateCompanionBuilder,
-    (
-      SftpFavoritePath,
-      BaseReferences<_$AppDatabase, $SftpFavoritePathsTable, SftpFavoritePath>
-    ),
-    SftpFavoritePath,
-    PrefetchHooks Function()> {
+class $$SftpFavoritePathsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $SftpFavoritePathsTable,
+          SftpFavoritePath,
+          $$SftpFavoritePathsTableFilterComposer,
+          $$SftpFavoritePathsTableOrderingComposer,
+          $$SftpFavoritePathsTableAnnotationComposer,
+          $$SftpFavoritePathsTableCreateCompanionBuilder,
+          $$SftpFavoritePathsTableUpdateCompanionBuilder,
+          (
+            SftpFavoritePath,
+            BaseReferences<
+              _$AppDatabase,
+              $SftpFavoritePathsTable,
+              SftpFavoritePath
+            >,
+          ),
+          SftpFavoritePath,
+          PrefetchHooks Function()
+        > {
   $$SftpFavoritePathsTableTableManager(
-      _$AppDatabase db, $SftpFavoritePathsTable table)
-      : super(TableManagerState(
+    _$AppDatabase db,
+    $SftpFavoritePathsTable table,
+  ) : super(
+        TableManagerState(
           db: db,
           table: table,
           createFilteringComposer: () =>
@@ -8825,65 +10585,74 @@ class $$SftpFavoritePathsTableTableManager extends RootTableManager<
               $$SftpFavoritePathsTableOrderingComposer($db: db, $table: table),
           createComputedFieldComposer: () =>
               $$SftpFavoritePathsTableAnnotationComposer(
-                  $db: db, $table: table),
-          updateCompanionCallback: ({
-            Value<String> id = const Value.absent(),
-            Value<String> connectionId = const Value.absent(),
-            Value<String> path = const Value.absent(),
-            Value<String> name = const Value.absent(),
-            Value<int> createdAt = const Value.absent(),
-            Value<int> updatedAt = const Value.absent(),
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              SftpFavoritePathsCompanion(
-            id: id,
-            connectionId: connectionId,
-            path: path,
-            name: name,
-            createdAt: createdAt,
-            updatedAt: updatedAt,
-            rowid: rowid,
-          ),
-          createCompanionCallback: ({
-            required String id,
-            required String connectionId,
-            required String path,
-            required String name,
-            required int createdAt,
-            required int updatedAt,
-            Value<int> rowid = const Value.absent(),
-          }) =>
-              SftpFavoritePathsCompanion.insert(
-            id: id,
-            connectionId: connectionId,
-            path: path,
-            name: name,
-            createdAt: createdAt,
-            updatedAt: updatedAt,
-            rowid: rowid,
-          ),
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> connectionId = const Value.absent(),
+                Value<String> path = const Value.absent(),
+                Value<String> name = const Value.absent(),
+                Value<int> createdAt = const Value.absent(),
+                Value<int> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => SftpFavoritePathsCompanion(
+                id: id,
+                connectionId: connectionId,
+                path: path,
+                name: name,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String connectionId,
+                required String path,
+                required String name,
+                required int createdAt,
+                required int updatedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => SftpFavoritePathsCompanion.insert(
+                id: id,
+                connectionId: connectionId,
+                path: path,
+                name: name,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
               .toList(),
           prefetchHooksCallback: null,
-        ));
+        ),
+      );
 }
 
-typedef $$SftpFavoritePathsTableProcessedTableManager = ProcessedTableManager<
-    _$AppDatabase,
-    $SftpFavoritePathsTable,
-    SftpFavoritePath,
-    $$SftpFavoritePathsTableFilterComposer,
-    $$SftpFavoritePathsTableOrderingComposer,
-    $$SftpFavoritePathsTableAnnotationComposer,
-    $$SftpFavoritePathsTableCreateCompanionBuilder,
-    $$SftpFavoritePathsTableUpdateCompanionBuilder,
-    (
+typedef $$SftpFavoritePathsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $SftpFavoritePathsTable,
       SftpFavoritePath,
-      BaseReferences<_$AppDatabase, $SftpFavoritePathsTable, SftpFavoritePath>
-    ),
-    SftpFavoritePath,
-    PrefetchHooks Function()>;
+      $$SftpFavoritePathsTableFilterComposer,
+      $$SftpFavoritePathsTableOrderingComposer,
+      $$SftpFavoritePathsTableAnnotationComposer,
+      $$SftpFavoritePathsTableCreateCompanionBuilder,
+      $$SftpFavoritePathsTableUpdateCompanionBuilder,
+      (
+        SftpFavoritePath,
+        BaseReferences<
+          _$AppDatabase,
+          $SftpFavoritePathsTable,
+          SftpFavoritePath
+        >,
+      ),
+      SftpFavoritePath,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -8900,7 +10669,9 @@ class $AppDatabaseManager {
       $$AgentTraceEventsTableTableTableManager(_db, _db.agentTraceEventsTable);
   $$TerminalHistoryRecordsTableTableManager get terminalHistoryRecords =>
       $$TerminalHistoryRecordsTableTableManager(
-          _db, _db.terminalHistoryRecords);
+        _db,
+        _db.terminalHistoryRecords,
+      );
   $$PlaybooksTableTableManager get playbooks =>
       $$PlaybooksTableTableManager(_db, _db.playbooks);
   $$PlaybookRunsTableTableManager get playbookRuns =>
@@ -8938,7 +10709,9 @@ class AiChatDaoManager {
       $$AiChatsTableTableManager(_db.attachedDatabase, _db.aiChats);
   $$AiChatMessagesTableTableManager get aiChatMessages =>
       $$AiChatMessagesTableTableManager(
-          _db.attachedDatabase, _db.aiChatMessages);
+        _db.attachedDatabase,
+        _db.aiChatMessages,
+      );
 }
 
 mixin _$AgentMetricsDaoMixin on DatabaseAccessor<AppDatabase> {
@@ -8952,7 +10725,9 @@ class AgentMetricsDaoManager {
   AgentMetricsDaoManager(this._db);
   $$AgentRunMetricsTableTableTableManager get agentRunMetricsTable =>
       $$AgentRunMetricsTableTableTableManager(
-          _db.attachedDatabase, _db.agentRunMetricsTable);
+        _db.attachedDatabase,
+        _db.agentRunMetricsTable,
+      );
 }
 
 mixin _$AgentTraceDaoMixin on DatabaseAccessor<AppDatabase> {
@@ -8966,7 +10741,9 @@ class AgentTraceDaoManager {
   AgentTraceDaoManager(this._db);
   $$AgentTraceEventsTableTableTableManager get agentTraceEventsTable =>
       $$AgentTraceEventsTableTableTableManager(
-          _db.attachedDatabase, _db.agentTraceEventsTable);
+        _db.attachedDatabase,
+        _db.agentTraceEventsTable,
+      );
 }
 
 mixin _$TerminalHistoryDaoMixin on DatabaseAccessor<AppDatabase> {
@@ -8980,7 +10757,9 @@ class TerminalHistoryDaoManager {
   TerminalHistoryDaoManager(this._db);
   $$TerminalHistoryRecordsTableTableManager get terminalHistoryRecords =>
       $$TerminalHistoryRecordsTableTableManager(
-          _db.attachedDatabase, _db.terminalHistoryRecords);
+        _db.attachedDatabase,
+        _db.terminalHistoryRecords,
+      );
 }
 
 mixin _$PlaybookDaoMixin on DatabaseAccessor<AppDatabase> {
@@ -9000,7 +10779,9 @@ class PlaybookDaoManager {
       $$PlaybookRunsTableTableManager(_db.attachedDatabase, _db.playbookRuns);
   $$PlaybookRunStepsTableTableManager get playbookRunSteps =>
       $$PlaybookRunStepsTableTableManager(
-          _db.attachedDatabase, _db.playbookRunSteps);
+        _db.attachedDatabase,
+        _db.playbookRunSteps,
+      );
 }
 
 mixin _$SftpHistoryDaoMixin on DatabaseAccessor<AppDatabase> {
@@ -9015,8 +10796,12 @@ class SftpHistoryDaoManager {
   SftpHistoryDaoManager(this._db);
   $$SftpRecentPathsTableTableManager get sftpRecentPaths =>
       $$SftpRecentPathsTableTableManager(
-          _db.attachedDatabase, _db.sftpRecentPaths);
+        _db.attachedDatabase,
+        _db.sftpRecentPaths,
+      );
   $$SftpFavoritePathsTableTableManager get sftpFavoritePaths =>
       $$SftpFavoritePathsTableTableManager(
-          _db.attachedDatabase, _db.sftpFavoritePaths);
+        _db.attachedDatabase,
+        _db.sftpFavoritePaths,
+      );
 }

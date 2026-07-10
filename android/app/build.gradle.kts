@@ -4,6 +4,17 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val releaseStoreFile = providers.environmentVariable("SSH_MOBILE_KEYSTORE_FILE").orNull
+val releaseStorePassword = providers.environmentVariable("SSH_MOBILE_KEYSTORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("SSH_MOBILE_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("SSH_MOBILE_KEY_PASSWORD").orNull
+val hasReleaseSigning = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "com.example.ssh_mobile"
     compileSdk = flutter.compileSdkVersion
@@ -26,11 +37,26 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = rootProject.file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // Missing release credentials produce an unsigned artifact instead
+            // of silently publishing a build signed with the debug key.
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                null
+            }
         }
     }
 }

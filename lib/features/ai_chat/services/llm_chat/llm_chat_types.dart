@@ -90,14 +90,13 @@ class LlmToolBudgetController {
   bool _initialExtensionGranted;
   int _auditCount;
 
-  LlmToolBudgetController({
-    required int baseBudget,
-  })  : baseBudget = AiToolCallBudget.normalize(baseBudget),
-        extensionSize = AiToolCallBudget.normalize(baseBudget) ~/ 2,
-        _usedCalls = 0,
-        _currentLimit = AiToolCallBudget.normalize(baseBudget),
-        _initialExtensionGranted = false,
-        _auditCount = 0;
+  LlmToolBudgetController({required int baseBudget})
+    : baseBudget = AiToolCallBudget.normalize(baseBudget),
+      extensionSize = AiToolCallBudget.normalize(baseBudget) ~/ 2,
+      _usedCalls = 0,
+      _currentLimit = AiToolCallBudget.normalize(baseBudget),
+      _initialExtensionGranted = false,
+      _auditCount = 0;
 
   int get usedCalls => _usedCalls;
   int get currentLimit => _currentLimit;
@@ -188,16 +187,10 @@ class LlmToolBudgetCheck {
   });
 
   const LlmToolBudgetCheck.allowed()
-      : this._(
-          allowToolCall: true,
-          requiresAudit: false,
-        );
+    : this._(allowToolCall: true, requiresAudit: false);
 
   const LlmToolBudgetCheck.auditRequired()
-      : this._(
-          allowToolCall: false,
-          requiresAudit: true,
-        );
+    : this._(allowToolCall: false, requiresAudit: true);
 }
 
 class LlmToolBudgetEvent {
@@ -267,9 +260,7 @@ class LlmToolLedgerEntry {
   static Object? _canonicalize(Object? value) {
     if (value is Map) {
       final keys = value.keys.map((key) => '$key').toList()..sort();
-      return {
-        for (final key in keys) key: _canonicalize(value[key]),
-      };
+      return {for (final key in keys) key: _canonicalize(value[key])};
     }
     if (value is List) {
       return value.map(_canonicalize).toList(growable: false);
@@ -309,10 +300,10 @@ class AgentLoopGuard {
   String _loopStopReason = '';
 
   AgentLoopGuard({required String mode})
-      : mode = AiAgentLoopMode.normalize(mode),
-        initialRoundLimit = AiAgentLoopMode.initialRoundLimit(mode),
-        extensionSize = AiAgentLoopMode.extensionSize(mode),
-        _modelRoundLimit = AiAgentLoopMode.initialRoundLimit(mode);
+    : mode = AiAgentLoopMode.normalize(mode),
+      initialRoundLimit = AiAgentLoopMode.initialRoundLimit(mode),
+      extensionSize = AiAgentLoopMode.extensionSize(mode),
+      _modelRoundLimit = AiAgentLoopMode.initialRoundLimit(mode);
 
   int get modelRoundsUsed => _modelRoundsUsed;
   int? get modelRoundLimit => _modelRoundLimit;
@@ -467,10 +458,12 @@ class LlmToolUsageSignals {
       }
     }
 
-    final suspectedLoop = repeatedSignatureMaxStreak >= 3 ||
+    final suspectedLoop =
+        repeatedSignatureMaxStreak >= 3 ||
         alternatingPairMaxLength >= 4 ||
         (failedCalls >= 3 && ledger.length >= 4);
-    final likelyNotAdvancing = suspectedLoop ||
+    final likelyNotAdvancing =
+        suspectedLoop ||
         emptyResults >= 3 ||
         (failedCalls + emptyResults >= 4 && ledger.length >= 5);
 
@@ -519,9 +512,9 @@ class LlmToolSafetyAuditResult {
     final issuesValue = json['issues'];
     final issues = issuesValue is List
         ? issuesValue
-            .map((item) => '$item'.trim())
-            .where((item) => item.isNotEmpty)
-            .toList(growable: false)
+              .map((item) => '$item'.trim())
+              .where((item) => item.isNotEmpty)
+              .toList(growable: false)
         : const <String>[];
     return LlmToolSafetyAuditResult(
       shouldContinue: json['shouldContinue'] == true,
@@ -566,10 +559,7 @@ class CachedToolResult {
   final String result;
   final DateTime expiresAt;
 
-  const CachedToolResult({
-    required this.result,
-    required this.expiresAt,
-  });
+  const CachedToolResult({required this.result, required this.expiresAt});
 
   bool get isExpired => DateTime.now().isAfter(expiresAt);
 }

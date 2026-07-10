@@ -76,7 +76,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='
       final used = int.tryParse(fields[2]) ?? 0;
       final available = int.tryParse(fields[3]) ?? 0;
       final percentText = fields[4].replaceAll('%', '');
-      final percent = double.tryParse(percentText) ??
+      final percent =
+          double.tryParse(percentText) ??
           (total <= 0 ? 0 : used / total * 100).clamp(0, 100).toDouble();
       disks.add(
         DiskUsageSnapshot(
@@ -189,10 +190,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='
       cpuPercent: _asDouble(data['cpuPercent']).clamp(0, 100).toDouble(),
       memoryPercent: _asDouble(data['memoryPercent']).clamp(0, 100).toDouble(),
       diskBytesPerSecond: max(0.0, _asDouble(data['diskBytesPerSecond'])),
-      networkBytesPerSecond: max(
-        0.0,
-        _asDouble(data['networkBytesPerSecond']),
-      ),
+      networkBytesPerSecond: max(0.0, _asDouble(data['networkBytesPerSecond'])),
       diskUsage: diskUsage,
       ports: _parseWindowsPorts(data['ports']),
       applications: _parseWindowsApplications(data['applications']),
@@ -218,7 +216,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='
             .map((value) => int.tryParse(value) ?? 0)
             .toList();
         final total = values.fold<int>(0, (sum, value) => sum + value);
-        final idle = (values.length > 3 ? values[3] : 0) +
+        final idle =
+            (values.length > 3 ? values[3] : 0) +
             (values.length > 4 ? values[4] : 0);
         cpuTotal = total;
         cpuBusy = total - idle;
@@ -239,7 +238,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='
           if (_isPhysicalNetwork(name)) {
             final fields = parts.last.trim().split(RegExp(r'\s+'));
             if (fields.length >= 16) {
-              networkBytes += (int.tryParse(fields[0]) ?? 0) +
+              networkBytes +=
+                  (int.tryParse(fields[0]) ?? 0) +
                   (int.tryParse(fields[8]) ?? 0);
             }
           }
@@ -370,8 +370,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='
       final address = _asString(port['LocalAddress']);
       final normalizedAddress =
           address.contains(':') && !address.startsWith('[')
-              ? '[$address]:$portNumber'
-              : '$address:$portNumber';
+          ? '[$address]:$portNumber'
+          : '$address:$portNumber';
       final pid = _asInt(port['OwningProcess']);
       ports.add(
         PortProcessSnapshot(
@@ -499,10 +499,7 @@ class RawServerCounters {
   final RawPerformanceCounters counters;
   final List<DiskUsageSnapshot> diskUsage;
 
-  const RawServerCounters({
-    required this.counters,
-    required this.diskUsage,
-  });
+  const RawServerCounters({required this.counters, required this.diskUsage});
 }
 
 class WindowsStatusSnapshot {
@@ -563,13 +560,13 @@ class DiskUsageSnapshot {
   });
 
   Map<String, dynamic> toJson() => {
-        'filesystem': filesystem,
-        'mount': mount,
-        'totalBytes': totalBytes,
-        'usedBytes': usedBytes,
-        'availableBytes': availableBytes,
-        'usedPercent': usedPercent,
-      };
+    'filesystem': filesystem,
+    'mount': mount,
+    'totalBytes': totalBytes,
+    'usedBytes': usedBytes,
+    'availableBytes': availableBytes,
+    'usedPercent': usedPercent,
+  };
 }
 
 class PortProcessSnapshot {
@@ -588,12 +585,12 @@ class PortProcessSnapshot {
   });
 
   Map<String, dynamic> toJson() => {
-        'protocol': protocol,
-        'localAddress': localAddress,
-        'port': port,
-        'state': state,
-        'process': process,
-      };
+    'protocol': protocol,
+    'localAddress': localAddress,
+    'port': port,
+    'state': state,
+    'process': process,
+  };
 }
 
 class ApplicationMemorySnapshot {
@@ -612,12 +609,12 @@ class ApplicationMemorySnapshot {
   });
 
   Map<String, dynamic> toJson() => {
-        'pid': pid,
-        'command': command,
-        'rssBytes': rssBytes,
-        'memoryPercent': memoryPercent,
-        'cpuPercent': cpuPercent,
-      };
+    'pid': pid,
+    'command': command,
+    'rssBytes': rssBytes,
+    'memoryPercent': memoryPercent,
+    'cpuPercent': cpuPercent,
+  };
 }
 
 class ServiceStatusSnapshot {
@@ -636,10 +633,10 @@ class ServiceStatusSnapshot {
   });
 
   Map<String, dynamic> toJson() => {
-        'name': name,
-        'displayName': displayName,
-        'status': status,
-        'activeState': activeState,
-        'loadState': loadState,
-      };
+    'name': name,
+    'displayName': displayName,
+    'status': status,
+    'activeState': activeState,
+    'loadState': loadState,
+  };
 }

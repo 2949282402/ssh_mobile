@@ -163,48 +163,50 @@ void main() {
       model: 'demo-model',
     );
 
-    expect(
-      await storage.loadAiBaseUrlHistory(),
-      const ['https://api.example.com/v1', 'https://openai.example.com'],
-    );
-  });
-
-  test('API key history supports switching between multiple saved keys',
-      () async {
-    storage = await initializedStorage();
-
-    await storage.saveAiConnectionSettings(
-      baseUrl: 'https://api.example.com',
-      model: 'demo-model',
-      apiKey: 'sk-first-secret',
-    );
-    await storage.saveAiConnectionSettings(
-      baseUrl: 'https://api.example.com',
-      model: 'demo-model',
-      apiKey: 'sk-second-secret',
-    );
-
-    final history = await storage.loadAiApiKeyHistory();
-
-    expect(history.map((entry) => entry.maskedValue), [
-      maskAiApiKey('sk-second-secret'),
-      maskAiApiKey('sk-first-secret'),
+    expect(await storage.loadAiBaseUrlHistory(), const [
+      'https://api.example.com/v1',
+      'https://openai.example.com',
     ]);
-    expect(history.first.isSelected, isTrue);
-    expect(await storage.getAiApiKey(), 'sk-second-secret');
-
-    await storage.saveAiConnectionSettings(
-      baseUrl: 'https://api.example.com',
-      model: 'demo-model',
-      selectedApiKeyId: history.last.id,
-    );
-
-    expect(await storage.getAiApiKey(), 'sk-first-secret');
-    expect(
-      (await storage.loadAiConnectionSettings()).activeApiKeyMasked,
-      maskAiApiKey('sk-first-secret'),
-    );
   });
+
+  test(
+    'API key history supports switching between multiple saved keys',
+    () async {
+      storage = await initializedStorage();
+
+      await storage.saveAiConnectionSettings(
+        baseUrl: 'https://api.example.com',
+        model: 'demo-model',
+        apiKey: 'sk-first-secret',
+      );
+      await storage.saveAiConnectionSettings(
+        baseUrl: 'https://api.example.com',
+        model: 'demo-model',
+        apiKey: 'sk-second-secret',
+      );
+
+      final history = await storage.loadAiApiKeyHistory();
+
+      expect(history.map((entry) => entry.maskedValue), [
+        maskAiApiKey('sk-second-secret'),
+        maskAiApiKey('sk-first-secret'),
+      ]);
+      expect(history.first.isSelected, isTrue);
+      expect(await storage.getAiApiKey(), 'sk-second-secret');
+
+      await storage.saveAiConnectionSettings(
+        baseUrl: 'https://api.example.com',
+        model: 'demo-model',
+        selectedApiKeyId: history.last.id,
+      );
+
+      expect(await storage.getAiApiKey(), 'sk-first-secret');
+      expect(
+        (await storage.loadAiConnectionSettings()).activeApiKeyMasked,
+        maskAiApiKey('sk-first-secret'),
+      );
+    },
+  );
 
   test('AI model cache is stored per base URL', () async {
     storage = await initializedStorage();
@@ -288,8 +290,9 @@ void main() {
 
     final jsonText = await storage.exportAppDataJson();
     final decoded = jsonDecode(jsonText) as Map<String, dynamic>;
-    final connection = (decoded['connections'] as List<dynamic>).single
-        as Map<String, dynamic>;
+    final connection =
+        (decoded['connections'] as List<dynamic>).single
+            as Map<String, dynamic>;
     final aiSettings = decoded['aiSettings'] as Map<String, dynamic>;
 
     expect(jsonText, isNot(contains('server-password')));
@@ -326,37 +329,41 @@ void main() {
     expect(jsonText, isNot(contains('TRACE_BACKUP_SECRET_MARKER')));
   });
 
-  test('trustHostKey persists known host metadata without clearing secrets',
-      () async {
-    storage = await initializedStorage();
+  test(
+    'trustHostKey persists known host metadata without clearing secrets',
+    () async {
+      storage = await initializedStorage();
 
-    await storage.addConnection(
-      ConnectionConfig(
-        id: 'server-1',
-        name: 'Prod',
-        host: 'prod.example.com',
-        username: 'root',
-        password: 'server-password',
-        privateKey: 'private-key-body',
-        authMethod: AuthMethod.both,
-      ),
-    );
+      await storage.addConnection(
+        ConnectionConfig(
+          id: 'server-1',
+          name: 'Prod',
+          host: 'prod.example.com',
+          username: 'root',
+          password: 'server-password',
+          privateKey: 'private-key-body',
+          authMethod: AuthMethod.both,
+        ),
+      );
 
-    await storage.trustHostKey(
-      'server-1',
-      algorithm: 'ssh-ed25519',
-      fingerprint: 'MD5:00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f',
-      trustedAt: DateTime.utc(2026, 6, 18),
-    );
+      await storage.trustHostKey(
+        'server-1',
+        algorithm: 'ssh-ed25519',
+        fingerprint: 'MD5:00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f',
+        trustedAt: DateTime.utc(2026, 6, 18),
+      );
 
-    final config = storage.getConnection('server-1')!;
-    expect(config.hostKeyAlgorithm, 'ssh-ed25519');
-    expect(config.hostKeyFingerprint,
-        'MD5:00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f');
-    expect(config.hostKeyTrustedAt, DateTime.utc(2026, 6, 18));
-    expect(await storage.getPassword('server-1'), 'server-password');
-    expect(await storage.getPrivateKey('server-1'), 'private-key-body');
-  });
+      final config = storage.getConnection('server-1')!;
+      expect(config.hostKeyAlgorithm, 'ssh-ed25519');
+      expect(
+        config.hostKeyFingerprint,
+        'MD5:00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f',
+      );
+      expect(config.hostKeyTrustedAt, DateTime.utc(2026, 6, 18));
+      expect(await storage.getPassword('server-1'), 'server-password');
+      expect(await storage.getPrivateKey('server-1'), 'private-key-body');
+    },
+  );
 
   test('import ignores credential fields and clears existing AI key', () async {
     storage = await initializedStorage();
@@ -483,11 +490,11 @@ void main() {
               'role': 'user',
               'text': 'a' * 50001,
               'createdAt': DateTime.utc(2026, 6, 18).toIso8601String(),
-            }
+            },
           ],
           'createdAt': DateTime.utc(2026, 6, 18).toIso8601String(),
           'updatedAt': DateTime.utc(2026, 6, 18).toIso8601String(),
-        }
+        },
       ],
     });
 
@@ -549,176 +556,194 @@ void main() {
     expect(settings.webSearchEngine, 'bing');
   });
 
-  test('quark search settings and API key persist, export, and import',
-      () async {
-    storage = await initializedStorage();
+  test(
+    'quark search settings and API key persist, export, and import',
+    () async {
+      storage = await initializedStorage();
 
-    // 1. Verify default values
-    var settings = await storage.loadAiConnectionSettings();
-    expect(settings.quarkSearchEndpoint,
-        'https://dashscope.aliyuncs.com/api/v1/services/search/quark');
-    expect(settings.hasQuarkApiKey, isFalse);
-    expect(await storage.getQuarkApiKey(), isNull);
+      // 1. Verify default values
+      var settings = await storage.loadAiConnectionSettings();
+      expect(
+        settings.quarkSearchEndpoint,
+        'https://dashscope.aliyuncs.com/api/v1/services/search/quark',
+      );
+      expect(settings.hasQuarkApiKey, isFalse);
+      expect(await storage.getQuarkApiKey(), isNull);
 
-    // 2. Save custom endpoint and API Key
-    await storage.saveAiConnectionSettings(
-      baseUrl: 'https://api.example.com',
-      model: 'demo-model',
-      quarkSearchEndpoint: 'https://custom-quark.example.com/api',
-      quarkApiKey: 'quark-secret-key-123',
-    );
+      // 2. Save custom endpoint and API Key
+      await storage.saveAiConnectionSettings(
+        baseUrl: 'https://api.example.com',
+        model: 'demo-model',
+        quarkSearchEndpoint: 'https://custom-quark.example.com/api',
+        quarkApiKey: 'quark-secret-key-123',
+      );
 
-    settings = await storage.loadAiConnectionSettings();
-    expect(
-        settings.quarkSearchEndpoint, 'https://custom-quark.example.com/api');
-    expect(settings.hasQuarkApiKey, isTrue);
-    expect(await storage.getQuarkApiKey(), 'quark-secret-key-123');
+      settings = await storage.loadAiConnectionSettings();
+      expect(
+        settings.quarkSearchEndpoint,
+        'https://custom-quark.example.com/api',
+      );
+      expect(settings.hasQuarkApiKey, isTrue);
+      expect(await storage.getQuarkApiKey(), 'quark-secret-key-123');
 
-    // 3. Export verifies endpoint is present but key is omitted/empty
-    final jsonText = await storage.exportAppDataJson();
-    final decoded = jsonDecode(jsonText) as Map<String, dynamic>;
-    final aiSettings = decoded['aiSettings'] as Map<String, dynamic>;
-    expect(aiSettings['quarkSearchEndpoint'],
-        'https://custom-quark.example.com/api');
-    expect(jsonText, isNot(contains('quark-secret-key-123')));
+      // 3. Export verifies endpoint is present but key is omitted/empty
+      final jsonText = await storage.exportAppDataJson();
+      final decoded = jsonDecode(jsonText) as Map<String, dynamic>;
+      final aiSettings = decoded['aiSettings'] as Map<String, dynamic>;
+      expect(
+        aiSettings['quarkSearchEndpoint'],
+        'https://custom-quark.example.com/api',
+      );
+      expect(jsonText, isNot(contains('quark-secret-key-123')));
 
-    // 4. Import restores endpoint and clears existing key
-    final backup = jsonEncode({
-      'format': 'ssh_mobile_backup',
-      'version': 1,
-      'connections': const [],
-      'aiSettings': {
-        'baseUrl': 'https://api.example.com',
-        'model': 'demo-model',
-        'quarkSearchEndpoint': 'https://imported-quark.example.com',
-        'quarkApiKey': 'quark-secret-imported-should-be-ignored',
-      },
-    });
+      // 4. Import restores endpoint and clears existing key
+      final backup = jsonEncode({
+        'format': 'ssh_mobile_backup',
+        'version': 1,
+        'connections': const [],
+        'aiSettings': {
+          'baseUrl': 'https://api.example.com',
+          'model': 'demo-model',
+          'quarkSearchEndpoint': 'https://imported-quark.example.com',
+          'quarkApiKey': 'quark-secret-imported-should-be-ignored',
+        },
+      });
 
-    await storage.importAppDataJson(backup);
-    settings = await storage.loadAiConnectionSettings();
-    expect(settings.quarkSearchEndpoint, 'https://imported-quark.example.com');
-    // Secret key is ignored during import (should be null / cleared)
-    expect(settings.hasQuarkApiKey, isFalse);
-    expect(await storage.getQuarkApiKey(), isNull);
+      await storage.importAppDataJson(backup);
+      settings = await storage.loadAiConnectionSettings();
+      expect(
+        settings.quarkSearchEndpoint,
+        'https://imported-quark.example.com',
+      );
+      // Secret key is ignored during import (should be null / cleared)
+      expect(settings.hasQuarkApiKey, isFalse);
+      expect(await storage.getQuarkApiKey(), isNull);
 
-    // 5. Clear API key explicitly
-    await storage.saveAiConnectionSettings(
-      baseUrl: 'https://api.example.com',
-      model: 'demo-model',
-      quarkApiKey: 'quark-secret-key-456',
-    );
-    expect(await storage.getQuarkApiKey(), 'quark-secret-key-456');
+      // 5. Clear API key explicitly
+      await storage.saveAiConnectionSettings(
+        baseUrl: 'https://api.example.com',
+        model: 'demo-model',
+        quarkApiKey: 'quark-secret-key-456',
+      );
+      expect(await storage.getQuarkApiKey(), 'quark-secret-key-456');
 
-    await storage.saveAiConnectionSettings(
-      baseUrl: 'https://api.example.com',
-      model: 'demo-model',
-      clearQuarkApiKey: true,
-    );
-    expect(await storage.getQuarkApiKey(), isNull);
-  });
+      await storage.saveAiConnectionSettings(
+        baseUrl: 'https://api.example.com',
+        model: 'demo-model',
+        clearQuarkApiKey: true,
+      );
+      expect(await storage.getQuarkApiKey(), isNull);
+    },
+  );
 
   test(
-      'custom settings, shortcuts, and secret cache persist, export, and import',
-      () async {
-    storage = await initializedStorage();
+    'custom settings, shortcuts, and secret cache persist, export, and import',
+    () async {
+      storage = await initializedStorage();
 
-    // 1. Setup mock initial settings in SharedPreferences directly
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('app_language', 'en');
-    await prefs.setString('theme_mode', 'dark');
-    await prefs.setBool('dark_mode', true);
-    await prefs.setString('font_family', 'Roboto');
-    await prefs.setInt('sftp_download_limit_bytes', 1024 * 1024);
-    await prefs.setInt('sftp_text_preview_limit_bytes', 2048);
-    await prefs.setInt('sftp_rich_preview_limit_bytes', 4096);
-    await prefs.setInt('sftp_text_edit_limit_bytes', 512);
-    await prefs.setBool('show_server_names_in_notifications', true);
+      // 1. Setup mock initial settings in SharedPreferences directly
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('app_language', 'en');
+      await prefs.setString('theme_mode', 'dark');
+      await prefs.setBool('dark_mode', true);
+      await prefs.setString('font_family', 'Roboto');
+      await prefs.setInt('sftp_download_limit_bytes', 1024 * 1024);
+      await prefs.setInt('sftp_text_preview_limit_bytes', 2048);
+      await prefs.setInt('sftp_rich_preview_limit_bytes', 4096);
+      await prefs.setInt('sftp_text_edit_limit_bytes', 512);
+      await prefs.setBool('show_server_names_in_notifications', true);
 
-    await prefs.setString('shortcut_command_usage', '{"cmd1": 5}');
-    await prefs.setString('custom_shortcut_commands',
-        '[{"id":"c1","label":"Custom","code":"ls","custom":true}]');
-    await prefs.setString('shortcut_command_order', '["c1"]');
+      await prefs.setString('shortcut_command_usage', '{"cmd1": 5}');
+      await prefs.setString(
+        'custom_shortcut_commands',
+        '[{"id":"c1","label":"Custom","code":"ls","custom":true}]',
+      );
+      await prefs.setString('shortcut_command_order', '["c1"]');
 
-    await storage.setSecretCacheEnabled(false);
-    await storage.setSecretCacheTtl(const Duration(minutes: 5));
+      await storage.setSecretCacheEnabled(false);
+      await storage.setSecretCacheTtl(const Duration(minutes: 5));
 
-    await storage.saveAiConnectionSettings(
-      baseUrl: 'https://api.example.com',
-      model: 'demo-model',
-      maxImageSizeBytes: 5 * 1024 * 1024,
-      maxFileSizeBytes: 50 * 1024 * 1024,
-    );
+      await storage.saveAiConnectionSettings(
+        baseUrl: 'https://api.example.com',
+        model: 'demo-model',
+        maxImageSizeBytes: 5 * 1024 * 1024,
+        maxFileSizeBytes: 50 * 1024 * 1024,
+      );
 
-    // 2. Verify settings are correctly exported
-    final jsonText = await storage.exportAppDataJson();
-    final decoded = jsonDecode(jsonText) as Map<String, dynamic>;
+      // 2. Verify settings are correctly exported
+      final jsonText = await storage.exportAppDataJson();
+      final decoded = jsonDecode(jsonText) as Map<String, dynamic>;
 
-    expect(decoded['version'], 2);
+      expect(decoded['version'], 2);
 
-    final appSettings = decoded['appSettings'] as Map<String, dynamic>;
-    expect(appSettings['language'], 'en');
-    expect(appSettings['themeMode'], 'dark');
-    expect(appSettings['darkMode'], isTrue);
-    expect(appSettings['fontFamily'], 'Roboto');
-    expect(appSettings['sftpDownloadLimitBytes'], 1024 * 1024);
-    expect(appSettings['sftpTextPreviewLimitBytes'], 2048);
-    expect(appSettings['sftpRichPreviewLimitBytes'], 4096);
-    expect(appSettings['sftpTextEditLimitBytes'], 512);
-    expect(appSettings['showServerNamesInNotifications'], isTrue);
+      final appSettings = decoded['appSettings'] as Map<String, dynamic>;
+      expect(appSettings['language'], 'en');
+      expect(appSettings['themeMode'], 'dark');
+      expect(appSettings['darkMode'], isTrue);
+      expect(appSettings['fontFamily'], 'Roboto');
+      expect(appSettings['sftpDownloadLimitBytes'], 1024 * 1024);
+      expect(appSettings['sftpTextPreviewLimitBytes'], 2048);
+      expect(appSettings['sftpRichPreviewLimitBytes'], 4096);
+      expect(appSettings['sftpTextEditLimitBytes'], 512);
+      expect(appSettings['showServerNamesInNotifications'], isTrue);
 
-    final shortcutCommands =
-        decoded['shortcutCommands'] as Map<String, dynamic>;
-    expect(shortcutCommands['usage'], '{"cmd1": 5}');
-    expect(shortcutCommands['customCommands'],
-        '[{"id":"c1","label":"Custom","code":"ls","custom":true}]');
-    expect(shortcutCommands['order'], '["c1"]');
+      final shortcutCommands =
+          decoded['shortcutCommands'] as Map<String, dynamic>;
+      expect(shortcutCommands['usage'], '{"cmd1": 5}');
+      expect(
+        shortcutCommands['customCommands'],
+        '[{"id":"c1","label":"Custom","code":"ls","custom":true}]',
+      );
+      expect(shortcutCommands['order'], '["c1"]');
 
-    final secretCache = decoded['secretCache'] as Map<String, dynamic>;
-    expect(secretCache['enabled'], isFalse);
-    expect(secretCache['ttlSeconds'], 300);
+      final secretCache = decoded['secretCache'] as Map<String, dynamic>;
+      expect(secretCache['enabled'], isFalse);
+      expect(secretCache['ttlSeconds'], 300);
 
-    final aiSettings = decoded['aiSettings'] as Map<String, dynamic>;
-    expect(aiSettings['maxImageSizeBytes'], 5 * 1024 * 1024);
-    expect(aiSettings['maxFileSizeBytes'], 50 * 1024 * 1024);
+      final aiSettings = decoded['aiSettings'] as Map<String, dynamic>;
+      expect(aiSettings['maxImageSizeBytes'], 5 * 1024 * 1024);
+      expect(aiSettings['maxFileSizeBytes'], 50 * 1024 * 1024);
 
-    // 3. Clear settings/create a fresh storage and verify import and callback
-    final newStorage = await initializedStorage();
+      // 3. Clear settings/create a fresh storage and verify import and callback
+      final newStorage = await initializedStorage();
 
-    // Register import callback
-    var callbackTriggered = false;
-    newStorage.registerOnImportCallback(() {
-      callbackTriggered = true;
-    });
+      // Register import callback
+      var callbackTriggered = false;
+      newStorage.registerOnImportCallback(() {
+        callbackTriggered = true;
+      });
 
-    await newStorage.importAppDataJson(jsonText);
+      await newStorage.importAppDataJson(jsonText);
 
-    expect(callbackTriggered, isTrue);
+      expect(callbackTriggered, isTrue);
 
-    // Verify imported values in new storage
-    final newPrefs = await SharedPreferences.getInstance();
-    expect(newPrefs.getString('app_language'), 'en');
-    expect(newPrefs.getString('theme_mode'), 'dark');
-    expect(newPrefs.getBool('dark_mode'), isTrue);
-    expect(newPrefs.getString('font_family'), 'Roboto');
-    expect(newPrefs.getInt('sftp_download_limit_bytes'), 1024 * 1024);
-    expect(newPrefs.getInt('sftp_text_preview_limit_bytes'), 2048);
-    expect(newPrefs.getInt('sftp_rich_preview_limit_bytes'), 4096);
-    expect(newPrefs.getInt('sftp_text_edit_limit_bytes'), 512);
-    expect(newPrefs.getBool('show_server_names_in_notifications'), isTrue);
+      // Verify imported values in new storage
+      final newPrefs = await SharedPreferences.getInstance();
+      expect(newPrefs.getString('app_language'), 'en');
+      expect(newPrefs.getString('theme_mode'), 'dark');
+      expect(newPrefs.getBool('dark_mode'), isTrue);
+      expect(newPrefs.getString('font_family'), 'Roboto');
+      expect(newPrefs.getInt('sftp_download_limit_bytes'), 1024 * 1024);
+      expect(newPrefs.getInt('sftp_text_preview_limit_bytes'), 2048);
+      expect(newPrefs.getInt('sftp_rich_preview_limit_bytes'), 4096);
+      expect(newPrefs.getInt('sftp_text_edit_limit_bytes'), 512);
+      expect(newPrefs.getBool('show_server_names_in_notifications'), isTrue);
 
-    expect(newPrefs.getString('shortcut_command_usage'), '{"cmd1": 5}');
-    expect(newPrefs.getString('custom_shortcut_commands'),
-        '[{"id":"c1","label":"Custom","code":"ls","custom":true}]');
-    expect(newPrefs.getString('shortcut_command_order'), '["c1"]');
+      expect(newPrefs.getString('shortcut_command_usage'), '{"cmd1": 5}');
+      expect(
+        newPrefs.getString('custom_shortcut_commands'),
+        '[{"id":"c1","label":"Custom","code":"ls","custom":true}]',
+      );
+      expect(newPrefs.getString('shortcut_command_order'), '["c1"]');
 
-    expect(newStorage.isSecretCacheEnabled, isFalse);
-    expect(newStorage.secretCacheTtlMinutes, 5);
+      expect(newStorage.isSecretCacheEnabled, isFalse);
+      expect(newStorage.secretCacheTtlMinutes, 5);
 
-    final newAiSettings = await newStorage.loadAiConnectionSettings();
-    expect(newAiSettings.maxImageSizeBytes, 5 * 1024 * 1024);
-    expect(newAiSettings.maxFileSizeBytes, 50 * 1024 * 1024);
+      final newAiSettings = await newStorage.loadAiConnectionSettings();
+      expect(newAiSettings.maxImageSizeBytes, 5 * 1024 * 1024);
+      expect(newAiSettings.maxFileSizeBytes, 50 * 1024 * 1024);
 
-    newStorage.dispose();
-  });
+      newStorage.dispose();
+    },
+  );
 }

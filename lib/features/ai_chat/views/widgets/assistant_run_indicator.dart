@@ -16,9 +16,9 @@ class AssistantRunIndicator extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final textStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: colorScheme.onSurfaceVariant,
-          height: 1.2,
-        );
+      color: colorScheme.onSurfaceVariant,
+      height: 1.2,
+    );
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -31,12 +31,7 @@ class AssistantRunIndicator extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
-        Flexible(
-          child: Text(
-            label,
-            style: textStyle,
-          ),
-        ),
+        Flexible(child: Text(label, style: textStyle)),
       ],
     );
   }

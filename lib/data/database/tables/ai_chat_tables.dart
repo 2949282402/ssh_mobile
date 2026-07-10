@@ -14,21 +14,18 @@ class AiChats extends Table {
   Set<Column<Object>> get primaryKey => {id};
 
   List<Index> get indexes => [
-        Index(
-          'idx_ai_chats_updated_at',
-          'CREATE INDEX idx_ai_chats_updated_at '
-              'ON ai_chats(updated_at DESC)',
-        ),
-      ];
+    Index(
+      'idx_ai_chats_updated_at',
+      'CREATE INDEX idx_ai_chats_updated_at '
+          'ON ai_chats(updated_at DESC)',
+    ),
+  ];
 }
 
 class AiChatMessages extends Table {
   TextColumn get id => text()();
-  TextColumn get chatId => text().references(
-        AiChats,
-        #id,
-        onDelete: KeyAction.cascade,
-      )();
+  TextColumn get chatId =>
+      text().references(AiChats, #id, onDelete: KeyAction.cascade)();
   TextColumn get role => text()();
   TextColumn get textContent => text().named('text')();
   TextColumn get contextText => text().nullable()();
@@ -50,10 +47,10 @@ class AiChatMessages extends Table {
   Set<Column<Object>> get primaryKey => {id};
 
   List<Index> get indexes => [
-        Index(
-          'idx_ai_chat_messages_chat_created',
-          'CREATE INDEX idx_ai_chat_messages_chat_created '
-              'ON ai_chat_messages(chat_id, created_at ASC)',
-        ),
-      ];
+    Index(
+      'idx_ai_chat_messages_chat_created',
+      'CREATE INDEX idx_ai_chat_messages_chat_created '
+          'ON ai_chat_messages(chat_id, created_at ASC)',
+    ),
+  ];
 }

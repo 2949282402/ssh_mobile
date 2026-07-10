@@ -1,7 +1,10 @@
 part of '../../ai_tool_service.dart';
 
-Future<String> _webSearch(ClientToolsProvider provider, AiToolService service,
-    Map<String, dynamic> arguments) async {
+Future<String> _webSearch(
+  ClientToolsProvider provider,
+  AiToolService service,
+  Map<String, dynamic> arguments,
+) async {
   final settings = await provider.storageService.loadAiConnectionSettings();
   if (!settings.webSearchEnabled) {
     return jsonEncode({
@@ -72,9 +75,7 @@ Future<ClientWebViewSearchResult> _executeQuarkCloudSearch(
 
     final body = jsonEncode({
       'query': query,
-      'parameter': {
-        'top_k': limit,
-      }
+      'parameter': {'top_k': limit},
     });
     request.write(body);
 
@@ -101,18 +102,22 @@ Future<ClientWebViewSearchResult> _executeQuarkCloudSearch(
         for (final item in rawResults) {
           if (item is Map) {
             final title = (item['title'] as String?)?.trim() ?? '';
-            final url = (item['link'] as String?)?.trim() ??
+            final url =
+                (item['link'] as String?)?.trim() ??
                 (item['url'] as String?)?.trim() ??
                 '';
-            final snippet = (item['snippet'] as String?)?.trim() ??
+            final snippet =
+                (item['snippet'] as String?)?.trim() ??
                 (item['description'] as String?)?.trim() ??
                 '';
             if (title.isNotEmpty && url.isNotEmpty) {
-              results.add(ClientWebViewSearchItem(
-                title: title,
-                url: url,
-                snippet: snippet,
-              ));
+              results.add(
+                ClientWebViewSearchItem(
+                  title: title,
+                  url: url,
+                  snippet: snippet,
+                ),
+              );
             }
           }
         }
@@ -150,8 +155,11 @@ Future<ClientWebViewSearchResult> _executeQuarkCloudSearch(
   }
 }
 
-int _webSearchLimit(ClientToolsProvider provider, Object? requestedLimit,
-    AiConnectionSettings settings) {
+int _webSearchLimit(
+  ClientToolsProvider provider,
+  Object? requestedLimit,
+  AiConnectionSettings settings,
+) {
   final configuredLimit = AiWebSearchMaxResults.normalize(
     settings.webSearchMaxResults,
   );
@@ -163,8 +171,11 @@ int _webSearchLimit(ClientToolsProvider provider, Object? requestedLimit,
   return (parsedLimit ?? configuredLimit).clamp(1, configuredLimit).toInt();
 }
 
-Future<String> _clientSetAlarm(ClientToolsProvider provider,
-    AiToolService service, Map<String, dynamic> arguments) async {
+Future<String> _clientSetAlarm(
+  ClientToolsProvider provider,
+  AiToolService service,
+  Map<String, dynamic> arguments,
+) async {
   final result = await provider.clientSystemToolService.setAlarm(
     triggerAt: service._optionalString(arguments, 'triggerAt'),
     delaySeconds: service._optionalInt(arguments, 'delaySeconds'),
@@ -175,19 +186,27 @@ Future<String> _clientSetAlarm(ClientToolsProvider provider,
   return jsonEncode(result);
 }
 
-Future<String> _clientCancelAlarm(ClientToolsProvider provider,
-    AiToolService service, Map<String, dynamic> arguments) async {
+Future<String> _clientCancelAlarm(
+  ClientToolsProvider provider,
+  AiToolService service,
+  Map<String, dynamic> arguments,
+) async {
   return jsonEncode(
-    await provider.clientSystemToolService
-        .cancelAlarm(service._arg(arguments, 'alarmId')),
+    await provider.clientSystemToolService.cancelAlarm(
+      service._arg(arguments, 'alarmId'),
+    ),
   );
 }
 
-Future<String> _clientSetClipboard(ClientToolsProvider provider,
-    AiToolService service, Map<String, dynamic> arguments) async {
+Future<String> _clientSetClipboard(
+  ClientToolsProvider provider,
+  AiToolService service,
+  Map<String, dynamic> arguments,
+) async {
   return jsonEncode(
-    await provider.clientSystemToolService
-        .setClipboard(service._arg(arguments, 'text')),
+    await provider.clientSystemToolService.setClipboard(
+      service._arg(arguments, 'text'),
+    ),
   );
 }
 
@@ -318,9 +337,7 @@ Future<String> _clientUpdateSkill(
   final skills = await provider.storageService.loadAiSkills();
   final idx = skills.indexWhere((s) => s.id == skillId);
   if (idx == -1) {
-    return jsonEncode({
-      'error': 'Skill not found with id: $skillId',
-    });
+    return jsonEncode({'error': 'Skill not found with id: $skillId'});
   }
 
   final current = skills[idx];
@@ -367,8 +384,11 @@ Future<String> _clientUpdateSkill(
   });
 }
 
-Future<String> _clientQueryLogs(ClientToolsProvider provider,
-    AiToolService service, Map<String, dynamic> arguments) async {
+Future<String> _clientQueryLogs(
+  ClientToolsProvider provider,
+  AiToolService service,
+  Map<String, dynamic> arguments,
+) async {
   final result = await provider.clientSystemToolService.queryLogs(
     level: service._optionalString(arguments, 'level'),
     contains: service._optionalString(arguments, 'contains'),
@@ -390,7 +410,8 @@ Future<String> _clientDeleteLogEntries(
   }
   final ids = service._intList(arguments['ids']);
   return jsonEncode(
-      await provider.clientSystemToolService.deleteLogEntries(ids));
+    await provider.clientSystemToolService.deleteLogEntries(ids),
+  );
 }
 
 Future<String> _clientClearLogs(
@@ -407,8 +428,11 @@ Future<String> _clientClearLogs(
   return jsonEncode(await provider.clientSystemToolService.clearLogs());
 }
 
-Future<String> _clientExportAppBackup(ClientToolsProvider provider,
-    AiToolService service, Map<String, dynamic> arguments) async {
+Future<String> _clientExportAppBackup(
+  ClientToolsProvider provider,
+  AiToolService service,
+  Map<String, dynamic> arguments,
+) async {
   final jsonText = await provider.storageService.exportAppDataJson();
   final now = DateTime.now();
   final fileName =
@@ -471,7 +495,8 @@ Future<String> _clientWebViewGetPageText(
   Map<String, dynamic> arguments,
 ) async {
   final chatId = provider.clientWebViewSessionId;
-  final maxChars = service._optionalInt(arguments, 'maxChars') ??
+  final maxChars =
+      service._optionalInt(arguments, 'maxChars') ??
       ClientWebViewService.defaultMaxChars;
   if (chatId == null || chatId.trim().isEmpty) {
     return jsonEncode(_missingChatSessionPayload(provider));
@@ -483,18 +508,25 @@ Future<String> _clientWebViewGetPageText(
   return jsonEncode(result.toJson());
 }
 
-Future<String> _clientWebViewGetState(ClientToolsProvider provider,
-    AiToolService service, Map<String, dynamic> arguments) async {
+Future<String> _clientWebViewGetState(
+  ClientToolsProvider provider,
+  AiToolService service,
+  Map<String, dynamic> arguments,
+) async {
   final chatId = provider.clientWebViewSessionId;
   if (chatId == null || chatId.trim().isEmpty) {
     return jsonEncode(_missingChatSessionPayload(provider));
   }
   return jsonEncode(
-      (await provider.clientWebViewService.getState(chatId)).toJson());
+    (await provider.clientWebViewService.getState(chatId)).toJson(),
+  );
 }
 
-Future<String> _clientWebViewNavigate(ClientToolsProvider provider,
-    AiToolService service, Map<String, dynamic> arguments) async {
+Future<String> _clientWebViewNavigate(
+  ClientToolsProvider provider,
+  AiToolService service,
+  Map<String, dynamic> arguments,
+) async {
   final chatId = provider.clientWebViewSessionId;
   if (chatId == null || chatId.trim().isEmpty) {
     return jsonEncode(_missingChatSessionPayload(provider));
@@ -507,9 +539,7 @@ Future<String> _clientWebViewNavigate(ClientToolsProvider provider,
   return jsonEncode(result.toJson());
 }
 
-Map<String, dynamic> _missingChatSessionPayload(
-  ClientToolsProvider provider,
-) {
+Map<String, dynamic> _missingChatSessionPayload(ClientToolsProvider provider) {
   return {
     'execution': 'client',
     'target': 'client_webview',
@@ -521,7 +551,9 @@ Map<String, dynamic> _missingChatSessionPayload(
 }
 
 Map<String, dynamic> _summarizeBackupJson(
-    ClientToolsProvider provider, String jsonText) {
+  ClientToolsProvider provider,
+  String jsonText,
+) {
   final decoded = jsonDecode(jsonText);
   if (decoded is! Map<String, dynamic> ||
       decoded['format'] != 'ssh_mobile_backup') {
@@ -529,11 +561,12 @@ Map<String, dynamic> _summarizeBackupJson(
   }
   final connections = (decoded['connections'] as List<dynamic>? ?? const []);
   final aiSettings = decoded['aiSettings'] as Map<String, dynamic>?;
-  final hasCredentialFields = connections.whereType<Map<String, dynamic>>().any(
-            (item) =>
-                (item['password'] as String?)?.isNotEmpty == true ||
-                (item['privateKey'] as String?)?.isNotEmpty == true,
-          ) ||
+  final hasCredentialFields =
+      connections.whereType<Map<String, dynamic>>().any(
+        (item) =>
+            (item['password'] as String?)?.isNotEmpty == true ||
+            (item['privateKey'] as String?)?.isNotEmpty == true,
+      ) ||
       ((aiSettings?['apiKey'] as String?)?.isNotEmpty == true);
   return {
     'format': decoded['format'],
@@ -556,7 +589,9 @@ Map<String, dynamic> _summarizeBackupJson(
 }
 
 List<String> _backupHighRiskSections(
-    ClientToolsProvider provider, Map<String, dynamic> decoded) {
+  ClientToolsProvider provider,
+  Map<String, dynamic> decoded,
+) {
   final sections = <String>[];
   if ((decoded['playbooks'] as List<dynamic>? ?? const []).isNotEmpty) {
     sections.add('playbooks');
@@ -601,9 +636,11 @@ Future<String> _appGetOperationalSettings(
 ) async {
   final settings = await provider.storageService.loadAiConnectionSettings();
   return jsonEncode({
-    'sftpDownloadLimitBytes': service.appSettings?.sftpDownloadLimitBytes ??
+    'sftpDownloadLimitBytes':
+        service.appSettings?.sftpDownloadLimitBytes ??
         AppSettings.defaultSftpDownloadLimitBytes,
-    'sftpTextEditLimitBytes': service.appSettings?.sftpTextEditLimitBytes ??
+    'sftpTextEditLimitBytes':
+        service.appSettings?.sftpTextEditLimitBytes ??
         AppSettings.defaultSftpTextEditLimitBytes,
     'secretCacheEnabled': provider.storageService.isSecretCacheEnabled,
     'secretCacheTtlMinutes': provider.storageService.secretCacheTtlMinutes,
@@ -633,42 +670,60 @@ Future<String> _appUpdateOperationalSettings(
   }
 
   final current = await provider.storageService.loadAiConnectionSettings();
-  final nextDownloadLimit =
-      service._optionalInt(arguments, 'sftpDownloadLimitBytes');
+  final nextDownloadLimit = service._optionalInt(
+    arguments,
+    'sftpDownloadLimitBytes',
+  );
   if (nextDownloadLimit != null && service.appSettings != null) {
     await service.appSettings!.setSftpDownloadLimitBytes(nextDownloadLimit);
   }
-  final nextEditLimit =
-      service._optionalInt(arguments, 'sftpTextEditLimitBytes');
+  final nextEditLimit = service._optionalInt(
+    arguments,
+    'sftpTextEditLimitBytes',
+  );
   if (nextEditLimit != null && service.appSettings != null) {
     await service.appSettings!.setSftpTextEditLimitBytes(nextEditLimit);
   }
 
-  final secretCacheEnabled =
-      service._optionalBool(arguments, 'secretCacheEnabled');
+  final secretCacheEnabled = service._optionalBool(
+    arguments,
+    'secretCacheEnabled',
+  );
   if (secretCacheEnabled != null) {
     await provider.storageService.setSecretCacheEnabled(secretCacheEnabled);
   }
 
-  final secretCacheTtlMinutes =
-      service._optionalInt(arguments, 'secretCacheTtlMinutes');
+  final secretCacheTtlMinutes = service._optionalInt(
+    arguments,
+    'secretCacheTtlMinutes',
+  );
   if (secretCacheTtlMinutes != null) {
     await provider.storageService.setSecretCacheTtl(
       Duration(minutes: secretCacheTtlMinutes),
     );
   }
 
-  final aiRequestTimeoutSeconds =
-      service._optionalInt(arguments, 'aiRequestTimeoutSeconds');
+  final aiRequestTimeoutSeconds = service._optionalInt(
+    arguments,
+    'aiRequestTimeoutSeconds',
+  );
   final webSearchEnabled = service._optionalBool(arguments, 'webSearchEnabled');
-  final webSearchMaxResults =
-      service._optionalInt(arguments, 'webSearchMaxResults');
-  final multiAgentEnabled =
-      service._optionalBool(arguments, 'multiAgentEnabled');
-  final multiAgentMaxAgents =
-      service._optionalInt(arguments, 'multiAgentMaxAgents');
-  final postToolReviewEnabled =
-      service._optionalBool(arguments, 'postToolReviewEnabled');
+  final webSearchMaxResults = service._optionalInt(
+    arguments,
+    'webSearchMaxResults',
+  );
+  final multiAgentEnabled = service._optionalBool(
+    arguments,
+    'multiAgentEnabled',
+  );
+  final multiAgentMaxAgents = service._optionalInt(
+    arguments,
+    'multiAgentMaxAgents',
+  );
+  final postToolReviewEnabled = service._optionalBool(
+    arguments,
+    'postToolReviewEnabled',
+  );
   final toolCallBudget = service._optionalInt(arguments, 'toolCallBudget');
 
   await provider.storageService.saveAiConnectionSettings(
@@ -732,9 +787,7 @@ Future<String> _clientSetPlanMode(
     final errorMsg = isZh
         ? '无法退出规划模式。当前聊天没有可执行的 TODO 步骤。请先在最新的回复中输出包含 steps 的 ```playbook JSON 代码块，或使用 client_task_create 创建计划步骤。'
         : 'Cannot exit Plan Mode. This plan has no executable steps. Generate a valid ```playbook JSON block with steps in your latest reply, or create steps with client_task_create first.';
-    return jsonEncode({
-      'error': errorMsg,
-    });
+    return jsonEncode({'error': errorMsg});
   }
 
   final updatedChat = currentChat.copyWith(
@@ -789,8 +842,9 @@ Future<String> _clientTaskCreate(
 
   final assistantIndex = messages.lastIndexWhere((m) => m.role == 'assistant');
   if (assistantIndex == -1) {
-    return jsonEncode(
-        {'error': 'No assistant message found to bind the task.'});
+    return jsonEncode({
+      'error': 'No assistant message found to bind the task.',
+    });
   }
 
   final targetMsg = messages[assistantIndex];
@@ -857,13 +911,13 @@ Future<String> _clientTaskUpdate(
     'in_progress',
     'success',
     'failed',
-    'skipped'
+    'skipped',
   ];
   if (!allowedStatuses.contains(rawStatus.toLowerCase())) {
     return jsonEncode({
       'error': 'Unknown task status.',
       'code': 'invalid_task_status',
-      'allowed': ['pending', 'running', 'success', 'failed', 'skipped']
+      'allowed': ['pending', 'running', 'success', 'failed', 'skipped'],
     });
   }
 
@@ -873,7 +927,7 @@ Future<String> _clientTaskUpdate(
     if (reason == null || reason.trim().isEmpty) {
       return jsonEncode({
         'error': 'Skipping a task requires a reason.',
-        'code': 'skip_reason_required'
+        'code': 'skip_reason_required',
       });
     }
   }
@@ -958,8 +1012,8 @@ Future<String> _clientTaskUpdate(
     if (nextStatus == StepStatus.failed) ...{
       'nextAction':
           'Stop execution and ask the user whether to retry, skip, or revise the plan.',
-      'options': ['retry_current_step', 'skip_current_step', 'ask_user']
-    }
+      'options': ['retry_current_step', 'skip_current_step', 'ask_user'],
+    },
   });
 }
 
@@ -1032,9 +1086,7 @@ Future<String> _clientTaskRetry(
   }
 
   if (!foundAndUpdated) {
-    return jsonEncode({
-      'error': 'Task step not found: $taskId',
-    });
+    return jsonEncode({'error': 'Task step not found: $taskId'});
   }
 
   final updatedChat = currentChat.copyWith(
@@ -1059,9 +1111,7 @@ Future<String> _clientTaskSkip(
   required bool approvedWrite,
 }) async {
   if (!approvedWrite) {
-    return jsonEncode({
-      'error': 'Skipping a task requires user approval.',
-    });
+    return jsonEncode({'error': 'Skipping a task requires user approval.'});
   }
   final chatId = provider.clientWebViewSessionId;
   if (chatId == null || chatId.trim().isEmpty) {
@@ -1124,9 +1174,7 @@ Future<String> _clientTaskSkip(
   }
 
   if (!foundAndUpdated) {
-    return jsonEncode({
-      'error': 'Task step not found: $taskId',
-    });
+    return jsonEncode({'error': 'Task step not found: $taskId'});
   }
 
   final updatedChat = currentChat.copyWith(

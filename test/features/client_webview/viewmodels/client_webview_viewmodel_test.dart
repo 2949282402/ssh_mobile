@@ -19,9 +19,7 @@ void main() {
 
   group('ClientWebViewViewModel Tests', () {
     test('Initialization attributes checks without platform controllers', () {
-      final viewModel = ClientWebViewViewModel(
-        appSettings: appSettings,
-      );
+      final viewModel = ClientWebViewViewModel(appSettings: appSettings);
 
       // Verify basic settings proxying
       expect(viewModel.language, equals(AppLanguage.zh));

@@ -11,22 +11,12 @@ import 'package:ssh_mobile/features/sftp/viewmodels/sftp_viewmodel.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 
-enum _PreviewKind {
-  image,
-  pdf,
-  markdown,
-  html,
-  text,
-  unsupported,
-}
+enum _PreviewKind { image, pdf, markdown, html, text, unsupported }
 
 class SftpFileViewerScreen extends StatefulWidget {
   final SftpEntry entry;
 
-  const SftpFileViewerScreen({
-    super.key,
-    required this.entry,
-  });
+  const SftpFileViewerScreen({super.key, required this.entry});
 
   @override
   State<SftpFileViewerScreen> createState() => _SftpFileViewerScreenState();
@@ -52,9 +42,9 @@ class _SftpFileViewerScreenState extends State<SftpFileViewerScreen> {
       final settings = context.read<AppSettings>();
       final limit = _previewLimitFor(_kind, settings);
       final download = context.read<SftpViewModel>().downloadBytes(
-            widget.entry,
-            maxBytes: limit,
-          );
+        widget.entry,
+        maxBytes: limit,
+      );
       if (_isTextPreview) {
         _textFuture = _decodeTextAsync(download);
       } else {
@@ -103,10 +93,9 @@ class _SftpFileViewerScreenState extends State<SftpFileViewerScreen> {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: Theme.of(context)
-                    .colorScheme
-                    .onSurface
-                    .withValues(alpha: 0.62),
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurface.withValues(alpha: 0.62),
                 fontSize: 11,
               ),
             ),
@@ -117,53 +106,54 @@ class _SftpFileViewerScreenState extends State<SftpFileViewerScreen> {
             IconButton(
               tooltip: _showSource ? strings.preview : strings.source,
               icon: Icon(
-                  _showSource ? Icons.visibility_rounded : Icons.code_rounded),
+                _showSource ? Icons.visibility_rounded : Icons.code_rounded,
+              ),
               onPressed: () => setState(() => _showSource = !_showSource),
             ),
         ],
       ),
       body: !_isTextPreview
           ? (_bytesFuture == null
-              ? _UnsupportedPreview(strings: strings)
-              : FutureBuilder<Uint8List>(
-                  future: _bytesFuture,
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState != ConnectionState.done) {
-                      return const Center(
-                        child: SizedBox(
-                          width: 28,
-                          height: 28,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      );
-                    }
-                    if (snapshot.hasError) {
-                      return Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Text(strings.previewFailed(snapshot.error!)),
-                        ),
-                      );
-                    }
-
-                    final bytes = snapshot.data!;
-                    switch (_kind) {
-                      case _PreviewKind.image:
-                        return _ImagePreview(bytes: bytes);
-                      case _PreviewKind.pdf:
-                        return PdfPreview(
-                          build: (_) async => bytes,
-                          allowPrinting: false,
-                          allowSharing: false,
-                          canChangeOrientation: false,
-                          canChangePageFormat: false,
-                          canDebug: false,
+                ? _UnsupportedPreview(strings: strings)
+                : FutureBuilder<Uint8List>(
+                    future: _bytesFuture,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState != ConnectionState.done) {
+                        return const Center(
+                          child: SizedBox(
+                            width: 28,
+                            height: 28,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
                         );
-                      default:
-                        return _UnsupportedPreview(strings: strings);
-                    }
-                  },
-                ))
+                      }
+                      if (snapshot.hasError) {
+                        return Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Text(strings.previewFailed(snapshot.error!)),
+                          ),
+                        );
+                      }
+
+                      final bytes = snapshot.data!;
+                      switch (_kind) {
+                        case _PreviewKind.image:
+                          return _ImagePreview(bytes: bytes);
+                        case _PreviewKind.pdf:
+                          return PdfPreview(
+                            build: (_) async => bytes,
+                            allowPrinting: false,
+                            allowSharing: false,
+                            canChangeOrientation: false,
+                            canChangePageFormat: false,
+                            canDebug: false,
+                          );
+                        default:
+                          return _UnsupportedPreview(strings: strings);
+                      }
+                    },
+                  ))
           : FutureBuilder<String>(
               future: _textFuture,
               builder: (context, snapshot) {
@@ -275,10 +265,7 @@ class _UnsupportedPreview extends StatelessWidget {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
-        child: Text(
-          strings.unsupportedPreview,
-          textAlign: TextAlign.center,
-        ),
+        child: Text(strings.unsupportedPreview, textAlign: TextAlign.center),
       ),
     );
   }
@@ -294,9 +281,7 @@ class _ImagePreview extends StatelessWidget {
     return InteractiveViewer(
       minScale: 0.5,
       maxScale: 5,
-      child: Center(
-        child: Image.memory(bytes),
-      ),
+      child: Center(child: Image.memory(bytes)),
     );
   }
 }
@@ -305,10 +290,7 @@ class _HtmlPreview extends StatefulWidget {
   final String html;
   final String fallbackLabel;
 
-  const _HtmlPreview({
-    required this.html,
-    required this.fallbackLabel,
-  });
+  const _HtmlPreview({required this.html, required this.fallbackLabel});
 
   @override
   State<_HtmlPreview> createState() => _HtmlPreviewState();
@@ -355,7 +337,7 @@ class _TextPreview extends StatelessWidget {
               'Consolas',
               'Microsoft YaHei',
               'PingFang SC',
-              'sans-serif'
+              'sans-serif',
             ],
             fontSize: 13,
             height: 1.35,

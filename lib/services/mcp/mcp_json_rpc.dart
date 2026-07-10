@@ -18,12 +18,7 @@ class McpJsonRpcException implements Exception {
   final Object? data;
   final Object? id;
 
-  const McpJsonRpcException(
-    this.code,
-    this.message, {
-    this.data,
-    this.id,
-  });
+  const McpJsonRpcException(this.code, this.message, {this.data, this.id});
 
   @override
   String toString() => 'McpJsonRpcException($code, $message)';
@@ -50,9 +45,7 @@ class McpJsonRpcHandlerResult {
   final bool noResponse;
 
   const McpJsonRpcHandlerResult.result(this.result) : noResponse = false;
-  const McpJsonRpcHandlerResult.noResponse()
-      : result = null,
-        noResponse = true;
+  const McpJsonRpcHandlerResult.noResponse() : result = null, noResponse = true;
 }
 
 class McpJsonRpcHttpResult {
@@ -149,11 +142,7 @@ class McpJsonRpc {
     return {
       'jsonrpc': '2.0',
       'id': id,
-      'error': {
-        'code': code,
-        'message': message,
-        if (data != null) 'data': data,
-      },
+      'error': {'code': code, 'message': message, 'data': ?data},
     };
   }
 }
@@ -233,9 +222,7 @@ class McpJsonRpcRouter {
     }
   }
 
-  Future<McpJsonRpcHandlerResult> _dispatch(
-    McpJsonRpcRequest request,
-  ) async {
+  Future<McpJsonRpcHandlerResult> _dispatch(McpJsonRpcRequest request) async {
     if (lifecycleHandler.canHandle(request.method)) {
       return lifecycleHandler.handle(request);
     }

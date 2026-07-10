@@ -37,9 +37,9 @@ class _DeveloperLogPageState extends State<DeveloperLogPage> {
           strings: strings,
           viewModel: viewModel,
           onCopySuccess: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(strings.copiedFilteredLogs)),
-            );
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(strings.copiedFilteredLogs)));
           },
           onDeleteSuccess: (count) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -47,9 +47,9 @@ class _DeveloperLogPageState extends State<DeveloperLogPage> {
             );
           },
           onClearSuccess: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(strings.logsCleared)),
-            );
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(strings.logsCleared)));
           },
         ),
         Expanded(
@@ -57,9 +57,9 @@ class _DeveloperLogPageState extends State<DeveloperLogPage> {
             strings: strings,
             viewModel: viewModel,
             onCopySingleSuccess: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(strings.copiedSingleLog)),
-              );
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text(strings.copiedSingleLog)));
             },
           ),
         ),
@@ -90,9 +90,7 @@ class _DeveloperLogToolbar extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 8, 8, 10),
       decoration: BoxDecoration(
         color: Theme.of(context).scaffoldBackgroundColor,
-        border: Border(
-          bottom: BorderSide(color: colorScheme.outlineVariant),
-        ),
+        border: Border(bottom: BorderSide(color: colorScheme.outlineVariant)),
       ),
       child: Column(
         children: [
@@ -149,16 +147,15 @@ class _DeveloperLogToolbar extends StatelessWidget {
           const SizedBox(height: 6),
           Builder(
             builder: (context) {
-              final textScale = MediaQuery.textScalerOf(context)
-                  .scale(1)
-                  .clamp(1.0, 1.6)
-                  .toDouble();
+              final textScale = MediaQuery.textScalerOf(
+                context,
+              ).scale(1).clamp(1.0, 1.6).toDouble();
               return SizedBox(
                 height: 36 + (textScale - 1.0) * 18,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemCount: AppLogLevel.values.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  separatorBuilder: (_, _) => const SizedBox(width: 8),
                   itemBuilder: (context, index) {
                     final level = AppLogLevel.values[index];
                     final count = viewModel.levelCounts[level] ?? 0;
@@ -202,13 +199,11 @@ class _DeveloperLogList extends StatelessWidget {
       scrollCacheExtent: const ScrollCacheExtent.pixels(900.0),
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
       itemCount: entries.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      separatorBuilder: (_, _) => const SizedBox(height: 8),
       itemBuilder: (context, index) {
         final entry = entries[index];
         return RepaintBoundary(
-          key: ValueKey(
-            '${entry.time.microsecondsSinceEpoch}-${entry.level}',
-          ),
+          key: ValueKey('${entry.time.microsecondsSinceEpoch}-${entry.level}'),
           child: _LogEntryTile(
             entry: entry,
             strings: strings,
@@ -268,8 +263,8 @@ class _LogEntryTileState extends State<_LogEntryTile> {
       onTap: widget.selectionMode
           ? widget.onTap
           : isLong
-              ? () => setState(() => _expanded = !_expanded)
-              : null,
+          ? () => setState(() => _expanded = !_expanded)
+          : null,
       onLongPress: widget.onLongPress,
       child: Container(
         padding: const EdgeInsets.all(10),
@@ -300,13 +295,16 @@ class _LogEntryTileState extends State<_LogEntryTile> {
                   const SizedBox(width: 8),
                 ],
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 3,
+                  ),
                   decoration: BoxDecoration(
                     color: levelColor.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(999),
-                    border:
-                        Border.all(color: levelColor.withValues(alpha: 0.35)),
+                    border: Border.all(
+                      color: levelColor.withValues(alpha: 0.35),
+                    ),
                   ),
                   child: Text(
                     level.labelFor(strings.language),
@@ -349,7 +347,7 @@ class _LogEntryTileState extends State<_LogEntryTile> {
                   'Consolas',
                   'Microsoft YaHei',
                   'PingFang SC',
-                  'sans-serif'
+                  'sans-serif',
                 ],
                 fontSize: 11,
                 height: 1.35,

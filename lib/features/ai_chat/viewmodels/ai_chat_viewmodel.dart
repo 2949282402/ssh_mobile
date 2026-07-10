@@ -105,12 +105,12 @@ class ApprovePlanExecutionStarted extends ApprovePlanExecutionResult {
 
 class ApprovePlanExecutionBlocked extends ApprovePlanExecutionResult {
   const ApprovePlanExecutionBlocked(ClientRuntimeHealthReport report)
-      : super(healthReport: report);
+    : super(healthReport: report);
 }
 
 class ApprovePlanExecutionWarning extends ApprovePlanExecutionResult {
   const ApprovePlanExecutionWarning(ClientRuntimeHealthReport report)
-      : super(healthReport: report);
+    : super(healthReport: report);
 }
 
 class ApprovePlanExecutionNoPlan extends ApprovePlanExecutionResult {
@@ -148,12 +148,13 @@ class AiChatViewModel extends ChangeNotifier {
     required Iterable<String> fetchedModels,
     required Iterable<String> fallbackModels,
   }) {
-    final normalizedFetched = fetchedModels
-        .map((model) => model.trim())
-        .where((model) => model.isNotEmpty)
-        .toSet()
-        .toList()
-      ..sort();
+    final normalizedFetched =
+        fetchedModels
+            .map((model) => model.trim())
+            .where((model) => model.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
     if (normalizedFetched.isNotEmpty) {
       return normalizedFetched;
     }
@@ -204,10 +205,12 @@ class AiChatViewModel extends ChangeNotifier {
   int _contextWindowTokens = AiContextWindowSize.k259;
 
   // 流式输出ValueNotifier
-  final ValueNotifier<String> streamingAssistantText =
-      ValueNotifier<String>('');
-  final ValueNotifier<String> streamingAssistantStatus =
-      ValueNotifier<String>('');
+  final ValueNotifier<String> streamingAssistantText = ValueNotifier<String>(
+    '',
+  );
+  final ValueNotifier<String> streamingAssistantStatus = ValueNotifier<String>(
+    '',
+  );
   _StreamingAssistantTarget? _streamingAssistantTarget;
 
   // 通知UI滚动的流
@@ -227,31 +230,35 @@ class AiChatViewModel extends ChangeNotifier {
     AiChatContextBuilder? contextBuilder,
     AiChatMessageMapper? messageMapper,
     AiChatTokenEstimator? tokenEstimator,
-  })  : _storageService = storageService,
-        _playbookService = playbookService,
-        _appSettings = appSettings,
-        _runtimeFactory = runtimeFactory ??
-            AiChatRuntimeFactory(
-              storageService: storageService,
-              sshService: sshService,
-              sftpService: sftpService,
-              performanceMonitorService: performanceMonitorService,
-              playbookService: playbookService,
-              ragService: ragService,
-              appSettings: appSettings,
-            ),
-        _clientHealthAdvisor = clientHealthAdvisor ??
-            ClientHealthAdvisor(
-              clientSystemToolService: ClientSystemToolService.instance,
-            ) {
+  }) : _storageService = storageService,
+       _playbookService = playbookService,
+       _appSettings = appSettings,
+       _runtimeFactory =
+           runtimeFactory ??
+           AiChatRuntimeFactory(
+             storageService: storageService,
+             sshService: sshService,
+             sftpService: sftpService,
+             performanceMonitorService: performanceMonitorService,
+             playbookService: playbookService,
+             ragService: ragService,
+             appSettings: appSettings,
+           ),
+       _clientHealthAdvisor =
+           clientHealthAdvisor ??
+           ClientHealthAdvisor(
+             clientSystemToolService: ClientSystemToolService.instance,
+           ) {
     final resolvedContextBuilder =
         contextBuilder ?? const AiChatContextBuilder();
-    final resolvedMessageMapper = messageMapper ??
+    final resolvedMessageMapper =
+        messageMapper ??
         AiChatMessageMapper(contextBuilder: resolvedContextBuilder);
 
     _contextBuilder = resolvedContextBuilder;
     _messageMapper = resolvedMessageMapper;
-    _tokenEstimator = tokenEstimator ??
+    _tokenEstimator =
+        tokenEstimator ??
         AiChatTokenEstimator(messageMapper: resolvedMessageMapper);
   }
 
@@ -330,10 +337,7 @@ class AiChatViewModel extends ChangeNotifier {
 
     final drafts = _chats.where((chat) => chat.messages.isEmpty).toList();
     final draftIds = drafts.map((chat) => chat.id).toSet();
-    _chats = [
-      ...drafts,
-      ...chats.where((chat) => !draftIds.contains(chat.id)),
-    ];
+    _chats = [...drafts, ...chats.where((chat) => !draftIds.contains(chat.id))];
     _activeChatId ??= _chats.isEmpty ? null : _chats.first.id;
     notifyListeners();
   }
@@ -346,10 +350,7 @@ class AiChatViewModel extends ChangeNotifier {
 
   void createChat(String model) {
     final chat = _newChatRecord(model);
-    _chats = [
-      chat,
-      ..._chats.where((item) => item.messages.isNotEmpty),
-    ];
+    _chats = [chat, ..._chats.where((item) => item.messages.isNotEmpty)];
     _activeChatId = chat.id;
     notifyListeners();
     _triggerScroll();
@@ -373,8 +374,9 @@ class AiChatViewModel extends ChangeNotifier {
       nextChats.add(_newChatRecord(settings.model));
     }
     _chats = nextChats;
-    _savedHistoryChats =
-        _savedHistoryChats.where((chat) => chat.id != id).toList();
+    _savedHistoryChats = _savedHistoryChats
+        .where((chat) => chat.id != id)
+        .toList();
     if (_activeChatId == id || _activeChatId == null) {
       _activeChatId = nextChats.first.id;
     }
@@ -433,8 +435,9 @@ class AiChatViewModel extends ChangeNotifier {
 
   Future<Map<String, dynamic>> loadLlmSettingsData() async {
     final settings = await _storageService.loadAiConnectionSettings();
-    final cachedModels =
-        await _storageService.loadCachedAiModels(baseUrl: settings.baseUrl);
+    final cachedModels = await _storageService.loadCachedAiModels(
+      baseUrl: settings.baseUrl,
+    );
     final baseUrlHistory = await _storageService.loadAiBaseUrlHistory();
     final apiKeyHistory = await _storageService.loadAiApiKeyHistory();
     return {
@@ -585,8 +588,8 @@ class AiChatViewModel extends ChangeNotifier {
     final resolvedApiKey = typedApiKey?.trim().isNotEmpty == true
         ? typedApiKey!.trim()
         : (selectedApiKeyId == null
-            ? null
-            : await _storageService.getAiApiKeyById(selectedApiKeyId));
+              ? null
+              : await _storageService.getAiApiKeyById(selectedApiKeyId));
 
     final service = _runtimeFactory.createLlmChatService(
       settings: settings,
@@ -686,26 +689,31 @@ class AiChatViewModel extends ChangeNotifier {
     final ragChunks = const <RagChunk>[];
 
     // RAG Traces
-    final assistantTraces =
-        List<AiMessageTrace>.from(preparedTurn.assistantMessage.traces);
+    final assistantTraces = List<AiMessageTrace>.from(
+      preparedTurn.assistantMessage.traces,
+    );
     if (ragChunks.isNotEmpty) {
       final traceContent = StringBuffer();
       final isEn = _appSettings.isEnglish;
       for (final chunk in ragChunks) {
-        traceContent.writeln(isEn
-            ? 'Source: [${chunk.documentName}] (Chunk #${chunk.metadata['chunkIndex'] ?? 0})'
-            : '来源: [${chunk.documentName}] (分块 #${chunk.metadata['chunkIndex'] ?? 0})');
+        traceContent.writeln(
+          isEn
+              ? 'Source: [${chunk.documentName}] (Chunk #${chunk.metadata['chunkIndex'] ?? 0})'
+              : '来源: [${chunk.documentName}] (分块 #${chunk.metadata['chunkIndex'] ?? 0})',
+        );
         traceContent.writeln('---');
         traceContent.writeln(chunk.text);
         traceContent.writeln('========================================\n');
       }
-      assistantTraces.add(AiMessageTrace(
-        id: 'rag-${now.microsecondsSinceEpoch}',
-        kind: 'rag_context',
-        title: isEn ? 'Knowledge Base Retrieval (RAG)' : '知识库检索 (RAG)',
-        content: traceContent.toString(),
-        createdAt: now,
-      ));
+      assistantTraces.add(
+        AiMessageTrace(
+          id: 'rag-${now.microsecondsSinceEpoch}',
+          kind: 'rag_context',
+          title: isEn ? 'Knowledge Base Retrieval (RAG)' : '知识库检索 (RAG)',
+          content: traceContent.toString(),
+          createdAt: now,
+        ),
+      );
     }
 
     final assistantMessage = AiChatMessageRecord(
@@ -735,16 +743,18 @@ class AiChatViewModel extends ChangeNotifier {
 
     await _storageService.saveAiChat(nextChat);
 
-    unawaited(_generateAssistantResponse(
-      chatId: chatId,
-      initialChat: nextChat,
-      assistantMessage: assistantMessage,
-      model: currentModel.isNotEmpty ? currentModel : nextChat.model,
-      requestMessages: nextMessages,
-      userRequest: targetText,
-      memorySources: preparedTurn.memorySources,
-      ragHits: preparedTurn.ragHits,
-    ));
+    unawaited(
+      _generateAssistantResponse(
+        chatId: chatId,
+        initialChat: nextChat,
+        assistantMessage: assistantMessage,
+        model: currentModel.isNotEmpty ? currentModel : nextChat.model,
+        requestMessages: nextMessages,
+        userRequest: targetText,
+        memorySources: preparedTurn.memorySources,
+        ragHits: preparedTurn.ragHits,
+      ),
+    );
 
     return const SendTextSuccess();
   }
@@ -756,8 +766,10 @@ class AiChatViewModel extends ChangeNotifier {
     if (_sending) return const ApprovePlanExecutionAlreadySending();
     final activeChat = this.activeChat;
     if (activeChat == null) return const ApprovePlanExecutionNoPlan();
-    final planMessage =
-        chatAssistantMessageByCreatedAt(activeChat, assistantCreatedAt);
+    final planMessage = chatAssistantMessageByCreatedAt(
+      activeChat,
+      assistantCreatedAt,
+    );
     if (planMessage == null || planMessage.todoSteps.isEmpty) {
       return const ApprovePlanExecutionNoPlan();
     }
@@ -904,8 +916,9 @@ class AiChatViewModel extends ChangeNotifier {
       createdAt: now,
     );
     final nextMessages = [...prefix, assistantMessage];
-    final nextModel =
-        settings.model.trim().isNotEmpty ? settings.model : activeChat.model;
+    final nextModel = settings.model.trim().isNotEmpty
+        ? settings.model
+        : activeChat.model;
     final nextChat = activeChat.copyWith(
       model: nextModel,
       messages: nextMessages,
@@ -932,7 +945,9 @@ class AiChatViewModel extends ChangeNotifier {
   }
 
   Future<void> editUserMessage(
-      int messageIndex, String trimmedEditedText) async {
+    int messageIndex,
+    String trimmedEditedText,
+  ) async {
     final activeChat = this.activeChat;
     if (_sending || activeChat == null) return;
     if (messageIndex < 0 || messageIndex >= activeChat.messages.length) return;
@@ -971,8 +986,9 @@ class AiChatViewModel extends ChangeNotifier {
       editedUser,
       assistantMessage,
     ];
-    final nextModel =
-        settings.model.trim().isNotEmpty ? settings.model : activeChat.model;
+    final nextModel = settings.model.trim().isNotEmpty
+        ? settings.model
+        : activeChat.model;
     final nextChat = activeChat.copyWith(
       title: targetIndex == 0 ? _titleFrom(trimmedEditedText) : null,
       model: nextModel,
@@ -1040,13 +1056,15 @@ class AiChatViewModel extends ChangeNotifier {
     for (final id in _selectedConnectionIds) {
       final conn = _storageService.getConnection(id);
       if (conn != null) {
-        selected.add(AiChatSelectedConnectionContext(
-          id: conn.id,
-          name: conn.name,
-          username: conn.username,
-          host: conn.host,
-          port: conn.port,
-        ));
+        selected.add(
+          AiChatSelectedConnectionContext(
+            id: conn.id,
+            name: conn.name,
+            username: conn.username,
+            host: conn.host,
+            port: conn.port,
+          ),
+        );
       }
     }
     return _contextBuilder.buildUserContextText(
@@ -1162,8 +1180,10 @@ class AiChatViewModel extends ChangeNotifier {
     List<AiChatMessageRecord> messages, {
     AiChatMessageRecord? placeholder,
   }) {
-    return _messageMapper.messagesForRequest(messages,
-        placeholder: placeholder);
+    return _messageMapper.messagesForRequest(
+      messages,
+      placeholder: placeholder,
+    );
   }
 
   static List<Map<String, dynamic>> buildMultipartContent(
@@ -1228,7 +1248,8 @@ class AiChatViewModel extends ChangeNotifier {
         onTextChunk: (chunk) {
           answer.write(chunk);
           _updateStreamingAssistantStatus(
-              translator.translateStatus(AgentStatusString.responding));
+            translator.translateStatus(AgentStatusString.responding),
+          );
 
           final now = DateTime.now();
           if (now.difference(lastStreamUiUpdate) >=
@@ -1273,26 +1294,28 @@ class AiChatViewModel extends ChangeNotifier {
             answerText: runResult.answer,
             traces: [...completedMessages[assistantIndex].traces],
           );
-          completedMessages[assistantIndex] =
-              completion.assistantMessage.copyWith(
-            promptTokens: runResult.runStats?.promptTokens,
-            completionTokens: runResult.runStats?.completionTokens,
-            totalTokens: runResult.runStats?.totalTokens,
-            elapsedMs: runResult.runStats?.elapsedMs,
-            tokenUsageEstimated: runResult.runStats == null
-                ? null
-                : !runResult.runStats!.usageFromProvider,
-            promptCacheHitTokens: runResult.runStats?.promptCacheHitTokens,
-            promptCacheMissTokens: runResult.runStats?.promptCacheMissTokens,
-            reasoningTokens: runResult.runStats?.reasoningTokens,
-            agentRunId: runResult.runId,
-          );
+          completedMessages[assistantIndex] = completion.assistantMessage
+              .copyWith(
+                promptTokens: runResult.runStats?.promptTokens,
+                completionTokens: runResult.runStats?.completionTokens,
+                totalTokens: runResult.runStats?.totalTokens,
+                elapsedMs: runResult.runStats?.elapsedMs,
+                tokenUsageEstimated: runResult.runStats == null
+                    ? null
+                    : !runResult.runStats!.usageFromProvider,
+                promptCacheHitTokens: runResult.runStats?.promptCacheHitTokens,
+                promptCacheMissTokens:
+                    runResult.runStats?.promptCacheMissTokens,
+                reasoningTokens: runResult.runStats?.reasoningTokens,
+                agentRunId: runResult.runId,
+              );
         }
 
         final latestAssistant = latestAssistantMessageForChat(
           currentChat.copyWith(messages: completedMessages),
         );
-        final shouldExitPlanMode = initialChat.planMode &&
+        final shouldExitPlanMode =
+            initialChat.planMode &&
             latestAssistant?.todoSteps.isNotEmpty == true;
         final answeredChat = currentChat.copyWith(
           messages: completedMessages,
@@ -1344,13 +1367,16 @@ class AiChatViewModel extends ChangeNotifier {
               content: stopStr,
             ),
           ];
-          cancelledMessages[assistantIndex] =
-              cancelledMessages[assistantIndex].copyWith(
-            text: stoppedText,
-            traces: traces,
-            contextText: _contextTextForAssistant(stoppedText, traces: traces),
-            agentRunId: runResult.runId,
-          );
+          cancelledMessages[assistantIndex] = cancelledMessages[assistantIndex]
+              .copyWith(
+                text: stoppedText,
+                traces: traces,
+                contextText: _contextTextForAssistant(
+                  stoppedText,
+                  traces: traces,
+                ),
+                agentRunId: runResult.runId,
+              );
         }
         final cancelledChat = currentChat.copyWith(
           messages: cancelledMessages,
@@ -1389,20 +1415,18 @@ class AiChatViewModel extends ChangeNotifier {
               errorMessages[assistantIndex].text.isEmpty) {
             errorMessages.removeAt(assistantIndex);
           } else if (partialText.isNotEmpty) {
-            errorMessages[assistantIndex] =
-                errorMessages[assistantIndex].copyWith(
-              text: partialText,
-              contextText: _contextTextForAssistant(
-                partialText,
-                traces: errorMessages[assistantIndex].traces,
-              ),
-              agentRunId: runResult.runId,
-            );
+            errorMessages[assistantIndex] = errorMessages[assistantIndex]
+                .copyWith(
+                  text: partialText,
+                  contextText: _contextTextForAssistant(
+                    partialText,
+                    traces: errorMessages[assistantIndex].traces,
+                  ),
+                  agentRunId: runResult.runId,
+                );
           } else {
-            errorMessages[assistantIndex] =
-                errorMessages[assistantIndex].copyWith(
-              agentRunId: runResult.runId,
-            );
+            errorMessages[assistantIndex] = errorMessages[assistantIndex]
+                .copyWith(agentRunId: runResult.runId);
           }
         }
         final errorChat = currentChat.copyWith(
@@ -1529,10 +1553,7 @@ class AiChatViewModel extends ChangeNotifier {
       ],
     );
     _replaceChat(
-      currentChat.copyWith(
-        messages: messages,
-        updatedAt: DateTime.now(),
-      ),
+      currentChat.copyWith(messages: messages, updatedAt: DateTime.now()),
       sort: false,
     );
     notifyListeners();

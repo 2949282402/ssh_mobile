@@ -136,9 +136,7 @@ extension _SecurityPolicy on AiToolService {
       RegExp(
         r'(^|[\s;&|()])(docker|podman|kubectl|git)\s+(rm|rmi|delete)([\s;&|()]|$)',
       ),
-      RegExp(
-        r'(^|[\s;&|()])(sc|reg|schtasks|netsh)\s+delete([\s;&|()]|$)',
-      ),
+      RegExp(r'(^|[\s;&|()])(sc|reg|schtasks|netsh)\s+delete([\s;&|()]|$)'),
     ];
     if (deletePatterns.any((pattern) => pattern.hasMatch(text))) {
       return 'Delete or remove commands are blocked for AI tools.';

@@ -154,8 +154,11 @@ class _HealthAlertPanel extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.health_and_safety_outlined,
-                  size: 18, color: colorScheme.primary),
+              Icon(
+                Icons.health_and_safety_outlined,
+                size: 18,
+                color: colorScheme.primary,
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -204,7 +207,8 @@ class _HealthBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = _healthColor(context, health.level);
-    final detail = alert?.message ??
+    final detail =
+        alert?.message ??
         (health.details.isEmpty
             ? _healthLabel(strings, health.level)
             : health.details.join(' / '));
@@ -214,9 +218,7 @@ class _HealthBadge extends StatelessWidget {
         decoration: BoxDecoration(
           color: color.withValues(alpha: 0.08),
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: color.withValues(alpha: 0.25),
-          ),
+          border: Border.all(color: color.withValues(alpha: 0.25)),
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(7),
@@ -227,9 +229,7 @@ class _HealthBadge extends StatelessWidget {
                 top: 0,
                 bottom: 0,
                 width: 4,
-                child: Container(
-                  color: seriesColor,
-                ),
+                child: Container(color: seriesColor),
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),

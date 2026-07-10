@@ -64,14 +64,11 @@ void main() {
     });
 
     test('builds success response', () {
-      expect(
-        McpJsonRpc.successResponse('abc', {'ok': true}),
-        {
-          'jsonrpc': '2.0',
-          'id': 'abc',
-          'result': {'ok': true},
-        },
-      );
+      expect(McpJsonRpc.successResponse('abc', {'ok': true}), {
+        'jsonrpc': '2.0',
+        'id': 'abc',
+        'result': {'ok': true},
+      });
     });
 
     test('builds error response', () {

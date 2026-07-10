@@ -29,14 +29,16 @@ class AiChatContextBuilder {
   }) {
     final isEn = language == AppLanguage.en;
     final steps = planMessage.todoSteps
-        .map((step) => {
-              'taskId': step.id,
-              'name': step.name,
-              'command': step.command,
-              'description': step.description,
-              if (step.connectionId?.trim().isNotEmpty == true)
-                'connectionId': step.connectionId,
-            })
+        .map(
+          (step) => {
+            'taskId': step.id,
+            'name': step.name,
+            'command': step.command,
+            'description': step.description,
+            if (step.connectionId?.trim().isNotEmpty == true)
+              'connectionId': step.connectionId,
+          },
+        )
         .toList(growable: false);
     return [
       isEn ? 'Approved execution plan:' : '已批准执行计划：',
@@ -77,14 +79,18 @@ class AiChatContextBuilder {
 
     if (ragChunks.isNotEmpty) {
       final ragLines = <String>[];
-      ragLines.add(isEnglish
-          ? '【Ops Knowledge Base Reference Information】:'
-          : '【运维知识库参考信息】：');
+      ragLines.add(
+        isEnglish
+            ? '【Ops Knowledge Base Reference Information】:'
+            : '【运维知识库参考信息】：',
+      );
       for (final chunk in ragChunks) {
         ragLines.add('---');
-        ragLines.add(isEnglish
-            ? 'Source: [${chunk.documentName}] (Chunk #${chunk.metadata['chunkIndex'] ?? 0})'
-            : '来源: [${chunk.documentName}] (分块 #${chunk.metadata['chunkIndex'] ?? 0})');
+        ragLines.add(
+          isEnglish
+              ? 'Source: [${chunk.documentName}] (Chunk #${chunk.metadata['chunkIndex'] ?? 0})'
+              : '来源: [${chunk.documentName}] (分块 #${chunk.metadata['chunkIndex'] ?? 0})',
+        );
         ragLines.add('${isEnglish ? 'Content' : '内容'}:\n${chunk.text}');
       }
       ragLines.add('---');
@@ -93,12 +99,12 @@ class AiChatContextBuilder {
 
     final requestBlock =
         approvedPlanMessage != null && approvedPlanMessage.todoSteps.isNotEmpty
-            ? buildApprovedPlanExecutionContext(
-                userText: text,
-                planMessage: approvedPlanMessage,
-                language: language,
-              )
-            : 'User request:\n$text';
+        ? buildApprovedPlanExecutionContext(
+            userText: text,
+            planMessage: approvedPlanMessage,
+            language: language,
+          )
+        : 'User request:\n$text';
     if (lines.isEmpty) return requestBlock;
     return '${lines.join('\n\n')}\n\n$requestBlock';
   }
@@ -111,8 +117,8 @@ class AiChatContextBuilder {
     final body = trimmed.isEmpty
         ? trimmed
         : !_shouldOmitAssistantBody(trimmed)
-            ? trimmed
-            : _slimAssistantBody(trimmed);
+        ? trimmed
+        : _slimAssistantBody(trimmed);
     if (traces.isEmpty) return body;
 
     final buffer = StringBuffer();
@@ -133,8 +139,11 @@ class AiChatContextBuilder {
   String _traceMemoryContent(AiMessageTrace trace) {
     final trimmed = trace.content.trim();
     if (trimmed.length <= 2500) return trimmed;
-    final preview =
-        trimmed.replaceAll(RegExp(r'\s+'), ' ').trim().runes.take(900);
+    final preview = trimmed
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim()
+        .runes
+        .take(900);
     return '[Large ${trace.kind} output omitted from future context. '
         'The full trace remains visible in chat history. '
         'Length: ${trimmed.length} chars. '
@@ -142,8 +151,11 @@ class AiChatContextBuilder {
   }
 
   String _slimAssistantBody(String trimmed) {
-    final preview =
-        trimmed.replaceAll(RegExp(r'\s+'), ' ').trim().runes.take(420);
+    final preview = trimmed
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim()
+        .runes
+        .take(420);
     final type = _largeAssistantBodyType(trimmed);
     return '[Large $type output omitted from future context. '
         'The full content remains visible in chat history. '

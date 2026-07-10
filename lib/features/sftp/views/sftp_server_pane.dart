@@ -50,24 +50,24 @@ class _ServerPane extends StatelessWidget {
                           child: Icon(
                             Icons.drag_handle,
                             size: 20,
-                            color: colorScheme.onSurfaceVariant
-                                .withValues(alpha: 0.5),
+                            color: colorScheme.onSurfaceVariant.withValues(
+                              alpha: 0.5,
+                            ),
                           ),
                         ),
                       ),
                       Expanded(
-                        child: _SftpServerTileBinding(
-                          connection: connection,
-                        ),
+                        child: _SftpServerTileBinding(connection: connection),
                       ),
                     ],
                   ),
                 );
               },
               onReorderItem: (oldIndex, newIndex) {
-                context
-                    .read<ConnectionViewModel>()
-                    .reorderConnections(oldIndex, newIndex);
+                context.read<ConnectionViewModel>().reorderConnections(
+                  oldIndex,
+                  newIndex,
+                );
               },
             ),
           ),
@@ -116,8 +116,9 @@ class _MobileServerStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textScale =
-        MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.8).toDouble();
+    final textScale = MediaQuery.textScalerOf(
+      context,
+    ).scale(1).clamp(1.0, 1.8).toDouble();
     final stripHeight = 72.0 + (textScale - 1.0) * 18.0;
     if (connections.isEmpty) {
       return SizedBox(
@@ -132,7 +133,7 @@ class _MobileServerStrip extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         scrollDirection: Axis.horizontal,
         itemCount: connections.length + 1,
-        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        separatorBuilder: (_, _) => const SizedBox(width: 10),
         itemBuilder: (context, index) {
           if (index == 0) {
             return _MobileCollapseButton(
@@ -158,10 +159,7 @@ class _MobileCollapseButton extends StatelessWidget {
   final AppStrings strings;
   final VoidCallback onPressed;
 
-  const _MobileCollapseButton({
-    required this.strings,
-    required this.onPressed,
-  });
+  const _MobileCollapseButton({required this.strings, required this.onPressed});
 
   @override
   Widget build(BuildContext context) {
@@ -451,10 +449,10 @@ class _SftpServerTileBinding extends StatelessWidget {
         connected: status.connected,
         compact: compact,
         onTap: () => context.read<SftpViewModel>().connect(
-              connection.id,
-              onUnknownHostKey: (request) =>
-                  showSshHostKeyTrustDialog(context, request),
-            ),
+          connection.id,
+          onUnknownHostKey: (request) =>
+              showSshHostKeyTrustDialog(context, request),
+        ),
       ),
     );
   }

@@ -108,8 +108,9 @@ extension DriftSftpHistoryRepositoryOps on StorageService {
     final database = _database;
     if (!_driftSftpHistoryActive || database == null) return;
     await database.sftpHistoryDao.replaceAll(
-      recentPaths:
-          recentPaths.map(_sftpRecentPathToCompanion).toList(growable: false),
+      recentPaths: recentPaths
+          .map(_sftpRecentPathToCompanion)
+          .toList(growable: false),
       favoritePaths: favoritePaths
           .map(_sftpFavoritePathToCompanion)
           .toList(growable: false),

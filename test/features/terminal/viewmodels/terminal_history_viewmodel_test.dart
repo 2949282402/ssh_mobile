@@ -30,9 +30,7 @@ void main() {
 
   group('TerminalHistoryViewModel Tests', () {
     test('Initialization queries historical records', () {
-      final viewModel = TerminalHistoryViewModel(
-        sshService: sshService,
-      );
+      final viewModel = TerminalHistoryViewModel(sshService: sshService);
 
       expect(viewModel.recordsFuture, isNotNull);
     });

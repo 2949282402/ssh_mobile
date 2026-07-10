@@ -82,8 +82,8 @@ class PerformanceMonitorService extends ChangeNotifier {
   PerformanceMonitorService(
     this._sshService,
     this._storageService, {
-    AppSettings? appSettings,
-  }) : _appSettings = appSettings;
+    this._appSettings,
+  });
 
   bool get isRunning => _running;
   bool get isSampling => _samplingConnectionIds.isNotEmpty;
@@ -129,8 +129,9 @@ class PerformanceMonitorService extends ChangeNotifier {
   ServerHealthSnapshot healthFor(String connectionId) {
     final cached = _healthByConnectionView?[connectionId];
     if (cached != null) return cached;
-    return _healthByConnectionEntryCache[connectionId] ??=
-        _buildHealthFor(connectionId);
+    return _healthByConnectionEntryCache[connectionId] ??= _buildHealthFor(
+      connectionId,
+    );
   }
 
   ServerHealthSnapshot _buildHealthFor(String connectionId) {
@@ -164,8 +165,9 @@ class PerformanceMonitorService extends ChangeNotifier {
     final cpuPenalty = _thresholdPenalty(sample.cpuPercent, 70, 95, 35);
     final memoryPenalty = _thresholdPenalty(sample.memoryPercent, 70, 95, 35);
     final diskPenalty = _thresholdPenalty(diskMax, 75, 95, 30);
-    final score =
-        (100 - cpuPenalty - memoryPenalty - diskPenalty).clamp(0, 100).round();
+    final score = (100 - cpuPenalty - memoryPenalty - diskPenalty)
+        .clamp(0, 100)
+        .round();
     if (sample.cpuPercent >= 85) {
       details.add('CPU ${sample.cpuPercent.toStringAsFixed(1)}%');
     }
@@ -175,17 +177,18 @@ class PerformanceMonitorService extends ChangeNotifier {
     if (diskMax >= 85) {
       details.add('Disk ${diskMax.toStringAsFixed(1)}%');
     }
-    final level = score < 45 ||
+    final level =
+        score < 45 ||
             sample.cpuPercent >= 95 ||
             sample.memoryPercent >= 95 ||
             diskMax >= 95
         ? ServerHealthLevel.critical
         : score < 75 ||
-                sample.cpuPercent >= 85 ||
-                sample.memoryPercent >= 85 ||
-                diskMax >= 85
-            ? ServerHealthLevel.warning
-            : ServerHealthLevel.healthy;
+              sample.cpuPercent >= 85 ||
+              sample.memoryPercent >= 85 ||
+              diskMax >= 85
+        ? ServerHealthLevel.warning
+        : ServerHealthLevel.healthy;
     return ServerHealthSnapshot(
       connectionId: connectionId,
       level: level,
@@ -215,8 +218,9 @@ class PerformanceMonitorService extends ChangeNotifier {
     }
     final activeCutoff = _visibleSamplesCutoff ?? cutoff;
     return _visibleSamplesByConnection[connectionId] ??= List.unmodifiable(
-      (_samplesByConnection[connectionId] ?? const <PerformanceSample>[])
-          .where((sample) => !sample.time.isBefore(activeCutoff)),
+      (_samplesByConnection[connectionId] ?? const <PerformanceSample>[]).where(
+        (sample) => !sample.time.isBefore(activeCutoff),
+      ),
     );
   }
 
@@ -295,8 +299,9 @@ class PerformanceMonitorService extends ChangeNotifier {
     _samplesByConnection
       ..clear()
       ..addEntries(
-        _monitoringConnectionIds
-            .map((id) => MapEntry(id, <PerformanceSample>[])),
+        _monitoringConnectionIds.map(
+          (id) => MapEntry(id, <PerformanceSample>[]),
+        ),
       );
     _errorsByConnection.clear();
     _failureCountsByConnection.clear();
@@ -335,7 +340,8 @@ class PerformanceMonitorService extends ChangeNotifier {
   }
 
   void stopForConnection(String connectionId) {
-    final changed = _selectedConnectionIds.remove(connectionId) |
+    final changed =
+        _selectedConnectionIds.remove(connectionId) |
         _monitoringConnectionIds.remove(connectionId);
     _samplingConnectionIds.remove(connectionId);
     _samplesByConnection.remove(connectionId);
@@ -372,9 +378,7 @@ class PerformanceMonitorService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> sampleNow({
-    SshHostKeyConfirmation? onUnknownHostKey,
-  }) async {
+  Future<void> sampleNow({SshHostKeyConfirmation? onUnknownHostKey}) async {
     if (!_running || _monitoringConnectionIds.isEmpty) return;
     final targets = _monitoringConnectionIds
         .where((id) => !_samplingConnectionIds.contains(id))
@@ -505,10 +509,7 @@ class PerformanceMonitorService extends ChangeNotifier {
 
   void _restartTimer() {
     _timer?.cancel();
-    _timer = Timer.periodic(
-      _effectiveInterval,
-      (_) => unawaited(sampleNow()),
-    );
+    _timer = Timer.periodic(_effectiveInterval, (_) => unawaited(sampleNow()));
   }
 
   Duration get _effectiveInterval {
@@ -536,8 +537,7 @@ class PerformanceMonitorService extends ChangeNotifier {
         connectionId,
         const Duration(seconds: 20),
         onUnknownHostKey: onUnknownHostKey,
-      ))
-          .ports;
+      )).ports;
     }
     final result = await _runOneShotWithRetry(
       connectionId: connectionId,
@@ -560,8 +560,7 @@ class PerformanceMonitorService extends ChangeNotifier {
         connectionId,
         const Duration(seconds: 20),
         onUnknownHostKey: onUnknownHostKey,
-      ))
-          .applications;
+      )).applications;
     }
     final result = await _runOneShotWithRetry(
       connectionId: connectionId,
@@ -584,8 +583,7 @@ class PerformanceMonitorService extends ChangeNotifier {
         connectionId,
         const Duration(seconds: 20),
         onUnknownHostKey: onUnknownHostKey,
-      ))
-          .services;
+      )).services;
     }
     final result = await _runOneShotWithRetry(
       connectionId: connectionId,
@@ -925,21 +923,21 @@ class ServerHealthSnapshot {
   });
 
   Map<String, dynamic> toJson() => {
-        'connectionId': connectionId,
-        'level': level.name,
-        'score': score,
-        'summary': summary,
-        'details': details,
-        'updatedAt': updatedAt.toIso8601String(),
-        'maxDiskUsedPercent': maxDiskUsedPercent,
-        if (latestSample != null)
-          'latestSample': {
-            'cpuPercent': latestSample!.cpuPercent,
-            'memoryPercent': latestSample!.memoryPercent,
-            'diskBytesPerSecond': latestSample!.diskBytesPerSecond,
-            'networkBytesPerSecond': latestSample!.networkBytesPerSecond,
-          },
-      };
+    'connectionId': connectionId,
+    'level': level.name,
+    'score': score,
+    'summary': summary,
+    'details': details,
+    'updatedAt': updatedAt.toIso8601String(),
+    'maxDiskUsedPercent': maxDiskUsedPercent,
+    if (latestSample != null)
+      'latestSample': {
+        'cpuPercent': latestSample!.cpuPercent,
+        'memoryPercent': latestSample!.memoryPercent,
+        'diskBytesPerSecond': latestSample!.diskBytesPerSecond,
+        'networkBytesPerSecond': latestSample!.networkBytesPerSecond,
+      },
+  };
 
   @override
   bool operator ==(Object other) {
@@ -957,15 +955,15 @@ class ServerHealthSnapshot {
 
   @override
   int get hashCode => Object.hash(
-        connectionId,
-        level,
-        score,
-        summary,
-        Object.hashAll(details),
-        updatedAt,
-        latestSample,
-        maxDiskUsedPercent,
-      );
+    connectionId,
+    level,
+    score,
+    summary,
+    Object.hashAll(details),
+    updatedAt,
+    latestSample,
+    maxDiskUsedPercent,
+  );
 }
 
 class MonitorAlert {
@@ -986,13 +984,13 @@ class MonitorAlert {
   });
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'connectionId': connectionId,
-        'metric': metric,
-        'level': level.name,
-        'message': message,
-        'createdAt': createdAt.toIso8601String(),
-      };
+    'id': id,
+    'connectionId': connectionId,
+    'metric': metric,
+    'level': level.name,
+    'message': message,
+    'createdAt': createdAt.toIso8601String(),
+  };
 }
 
 class PerformanceSample {

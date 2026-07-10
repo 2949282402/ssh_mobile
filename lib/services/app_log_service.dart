@@ -157,8 +157,9 @@ class AppLogService extends ChangeNotifier {
   }) {
     final safeMessage = _redact(message);
     final safeDetails = details == null ? null : _redact(details);
-    final safeStackTrace =
-        stackTrace == null ? null : _redact(stackTrace.toString());
+    final safeStackTrace = stackTrace == null
+        ? null
+        : _redact(stackTrace.toString());
     final entry = AppLogEntry(
       id: _nextEntryId++,
       time: DateTime.now(),
@@ -233,8 +234,11 @@ class AppLogService extends ChangeNotifier {
           }
         }
 
-        await _logFile!
-            .writeAsString('$line\n', mode: FileMode.append, flush: true);
+        await _logFile!.writeAsString(
+          '$line\n',
+          mode: FileMode.append,
+          flush: true,
+        );
       } catch (e) {
         // Ignore log file write errors to prevent infinite error logging loops
       }

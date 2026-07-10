@@ -106,9 +106,10 @@ class ServerCatalogService implements ServerCatalogAdapter {
           : current.launchMode,
       tmuxAutoDeleteSeconds:
           _readOptionalInt(changes, 'tmuxAutoDeleteSeconds') ??
-              current.tmuxAutoDeleteSeconds,
+          current.tmuxAutoDeleteSeconds,
       keepAlive: _readOptionalBool(changes, 'keepAlive') ?? current.keepAlive,
-      keepAliveInterval: _readOptionalInt(changes, 'keepAliveInterval') ??
+      keepAliveInterval:
+          _readOptionalInt(changes, 'keepAliveInterval') ??
           current.keepAliveInterval,
       terminalWidth:
           _readOptionalInt(changes, 'terminalWidth') ?? current.terminalWidth,
@@ -130,10 +131,7 @@ class ServerCatalogService implements ServerCatalogAdapter {
     );
     client.close();
     await storageService.updateConnection(next);
-    return {
-      'updated': true,
-      'server': _buildServerDetails(next),
-    };
+    return {'updated': true, 'server': _buildServerDetails(next)};
   }
 
   @override
@@ -149,11 +147,7 @@ class ServerCatalogService implements ServerCatalogAdapter {
       forgetPath: true,
     );
     await storageService.deleteConnection(connectionId);
-    return {
-      'deleted': true,
-      'connectionId': connectionId,
-      'name': config.name,
-    };
+    return {'deleted': true, 'connectionId': connectionId, 'name': config.name};
   }
 
   @override
@@ -174,10 +168,7 @@ class ServerCatalogService implements ServerCatalogAdapter {
       if (currentIndex == -1 || currentIndex == targetIndex) continue;
       await storageService.reorderConnections(currentIndex, targetIndex);
     }
-    return {
-      'reordered': true,
-      'orderedIds': orderedIds,
-    };
+    return {'reordered': true, 'orderedIds': orderedIds};
   }
 
   Map<String, dynamic> _buildServerSummary(ConnectionConfig config) {

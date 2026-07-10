@@ -106,27 +106,30 @@ class ToolResultClassifier {
   }
 
   static String? getSystemHint(
-      String toolName, ToolResultQuality quality, AppLanguage language) {
+    String toolName,
+    ToolResultQuality quality,
+    AppLanguage language,
+  ) {
     final isEn = language == AppLanguage.en;
     switch (quality) {
       case ToolResultQuality.empty:
         return isEn
             ? 'System Hint: The tool "$toolName" returned an empty result or output. '
-                'If this was a diagnostic command, verify parameters or check the target status. '
-                'Please try a different query parameter or verify state before continuing.'
+                  'If this was a diagnostic command, verify parameters or check the target status. '
+                  'Please try a different query parameter or verify state before continuing.'
             : '系统提示：工具 "$toolName" 返回了空结果。请核对查询参数或检查目标状态。 '
-                '请在继续之前尝试不同的查询条件，避免重复无意义的调用。';
+                  '请在继续之前尝试不同的查询条件，避免重复无意义的调用。';
       case ToolResultQuality.error:
         return isEn
             ? 'System Hint: The tool "$toolName" execution failed with an error. '
-                'Check parameters, inspect diagnostic logs, and resolve the root cause. '
-                'Do not repeat the exact same failing command without modifications.'
+                  'Check parameters, inspect diagnostic logs, and resolve the root cause. '
+                  'Do not repeat the exact same failing command without modifications.'
             : '系统提示：工具 "$toolName" 执行发生错误。请检查参数、核对诊断日志并排查根本原因。 '
-                '在调整方案之前，请勿重复执行完全相同的失败命令。';
+                  '在调整方案之前，请勿重复执行完全相同的失败命令。';
       case ToolResultQuality.permissionDenied:
         return isEn
             ? 'System Hint: Permission denied for tool "$toolName". '
-                'Inform the user about the restriction and request selecting a different server or checking privileges.'
+                  'Inform the user about the restriction and request selecting a different server or checking privileges.'
             : '系统提示：工具 "$toolName" 权限不足。请告知用户此权限限制，并引导用户检查权限或选择其他可用的服务器。';
       case ToolResultQuality.approvalRejected:
         return isEn

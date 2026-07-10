@@ -66,7 +66,9 @@ docker.service                         loaded active running Docker Application 
     expect(services.first.loadState, 'loaded');
     expect(services.first.activeState, 'active');
     expect(services.first.status, 'running');
-    expect(services.first.displayName,
-        'Regular background program processing daemon');
+    expect(
+      services.first.displayName,
+      'Regular background program processing daemon',
+    );
   });
 }

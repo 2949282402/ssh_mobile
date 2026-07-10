@@ -100,7 +100,7 @@ class _TerminalScreenState extends State<TerminalScreen>
     return PageRouteBuilder<void>(
       transitionDuration: Duration.zero,
       reverseTransitionDuration: Duration.zero,
-      pageBuilder: (_, __, ___) => TerminalScreen(
+      pageBuilder: (_, _, _) => TerminalScreen(
         connectionId: session.connectionId,
         sessionId: session.id,
       ),
@@ -113,14 +113,14 @@ class _TerminalScreenState extends State<TerminalScreen>
       reverseTransitionDuration: const Duration(milliseconds: 200),
       pageBuilder: (context, animation, secondaryAnimation) =>
           SharedAxisTransition(
-        animation: animation,
-        secondaryAnimation: secondaryAnimation,
-        transitionType: SharedAxisTransitionType.scaled,
-        child: TerminalScreen(
-          connectionId: session.connectionId,
-          sessionId: session.id,
-        ),
-      ),
+            animation: animation,
+            secondaryAnimation: secondaryAnimation,
+            transitionType: SharedAxisTransitionType.scaled,
+            child: TerminalScreen(
+              connectionId: session.connectionId,
+              sessionId: session.id,
+            ),
+          ),
     );
   }
 
@@ -344,20 +344,21 @@ class _TerminalScreenState extends State<TerminalScreen>
           final altActive = viewModel.altActive;
           final terminalFontSize = viewModel.fontSize;
 
-          final appSettings =
-              context.select<AppSettings, _TerminalSettingsSnapshot>(
-            _TerminalSettingsSnapshot.from,
-          );
+          final appSettings = context
+              .select<AppSettings, _TerminalSettingsSnapshot>(
+                _TerminalSettingsSnapshot.from,
+              );
           final strings = TerminalStrings(appSettings.language);
           final isConnected = viewModel.isConnected;
           final isDark = Theme.of(context).brightness == Brightness.dark;
-          final terminalBackground =
-              _getThemeBackground(appSettings.terminalThemeId, isDark);
+          final terminalBackground = _getThemeBackground(
+            appSettings.terminalThemeId,
+            isDark,
+          );
           final toolbarColor = terminalBackground;
           final useWideDesktopSideShortcutPanel =
               !_useWindowsBottomShortcutPanel &&
-                  MediaQuery.sizeOf(context).width >=
-                      AppBreakpoints.wideDesktop;
+              MediaQuery.sizeOf(context).width >= AppBreakpoints.wideDesktop;
 
           final terminalView = TerminalViewArea(
             terminalViewKey: _terminalViewKey,
@@ -365,7 +366,10 @@ class _TerminalScreenState extends State<TerminalScreen>
             controller: viewModel.terminalController,
             focusNode: viewModel.terminalFocusNode,
             theme: _terminalTheme(
-                isDark, terminalBackground, appSettings.terminalThemeId),
+              isDark,
+              terminalBackground,
+              appSettings.terminalThemeId,
+            ),
             fontSize: terminalFontSize,
             minFontSize: _minTerminalFontSize,
             maxFontSize: _maxTerminalFontSize,
@@ -494,7 +498,9 @@ class _TerminalScreenState extends State<TerminalScreen>
   }
 
   void _handleTerminalPointerDown(
-      PointerDownEvent event, TerminalSessionViewModel viewModel) {
+    PointerDownEvent event,
+    TerminalSessionViewModel viewModel,
+  ) {
     _activePointers += 1;
     _lastLongPressPosition = event.position;
     _requestWindowsAwareTerminalFocus(viewModel);

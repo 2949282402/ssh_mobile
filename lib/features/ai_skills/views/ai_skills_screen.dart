@@ -55,8 +55,11 @@ class _AiSkillsScreenState extends State<AiSkillsScreen> {
     );
   }
 
-  Widget _buildSkillList(AiSkillsViewModel viewModel, _SkillStrings strings,
-      ColorScheme colorScheme) {
+  Widget _buildSkillList(
+    AiSkillsViewModel viewModel,
+    _SkillStrings strings,
+    ColorScheme colorScheme,
+  ) {
     final skills = viewModel.skills;
 
     if (skills.isEmpty) {
@@ -91,7 +94,7 @@ class _AiSkillsScreenState extends State<AiSkillsScreen> {
     return ListView.separated(
       padding: const EdgeInsets.all(8),
       itemCount: skills.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 4),
+      separatorBuilder: (_, _) => const SizedBox(height: 4),
       itemBuilder: (context, index) {
         final skill = skills[index];
         final selected = skill.id == viewModel.selectedId;

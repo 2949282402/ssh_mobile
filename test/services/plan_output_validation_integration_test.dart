@@ -29,8 +29,9 @@ class MockHttpOverrides extends HttpOverrides {
 
   @override
   HttpClient createHttpClient(SecurityContext? context) {
-    final resp =
-        requestCount < responses.length ? responses[requestCount] : <String>[];
+    final resp = requestCount < responses.length
+        ? responses[requestCount]
+        : <String>[];
     requestCount++;
     return MockHttpClient(resp);
   }
@@ -147,9 +148,9 @@ class MockHttpClientResponse extends Stream<List<int>>
       final payload = jsonEncode({
         'choices': [
           {
-            'delta': {'content': text}
-          }
-        ]
+            'delta': {'content': text},
+          },
+        ],
       });
       chunks.add(utf8.encode('data: $payload\n\n'));
     }
@@ -227,8 +228,10 @@ void main() {
       storageService: storageService,
       sshService: sshService,
     );
-    performanceMonitorService =
-        PerformanceMonitorService(sshService, storageService);
+    performanceMonitorService = PerformanceMonitorService(
+      sshService,
+      storageService,
+    );
 
     await storageService.saveAiConnectionSettings(
       baseUrl: 'https://api.example.com',
@@ -241,8 +244,9 @@ void main() {
       sshService: sshService,
       sftpService: sftpService,
       serverDiagnosticsService: serverDiagnosticsService,
-      performanceMonitorToolService:
-          PerformanceMonitorToolService(performanceMonitorService),
+      performanceMonitorToolService: PerformanceMonitorToolService(
+        performanceMonitorService,
+      ),
       appSettings: appSettings,
       clientWebViewSessionId: testChatId,
     );
@@ -266,11 +270,7 @@ void main() {
           text: 'Pls plan restart',
           createdAt: now.subtract(const Duration(seconds: 1)),
         ),
-        AiChatMessageRecord(
-          role: 'assistant',
-          text: '',
-          createdAt: now,
-        ),
+        AiChatMessageRecord(role: 'assistant', text: '', createdAt: now),
       ],
       createdAt: now.subtract(const Duration(seconds: 2)),
       updatedAt: now,
@@ -286,11 +286,12 @@ void main() {
   });
 
   group(
-      'LlmChatService Plan Mode Output Validation Integration Tests (Single LLM Path)',
-      () {
-    test('plan mode valid playbook passes without repair, yielding only once',
+    'LlmChatService Plan Mode Output Validation Integration Tests (Single LLM Path)',
+    () {
+      test(
+        'plan mode valid playbook passes without repair, yielding only once',
         () async {
-      const validPlaybook = '''
+          const validPlaybook = '''
 Context: We need to restart nginx.
 Proposal:
 ```playbook
@@ -304,57 +305,59 @@ Proposal:
 ```
 Verification: check port 80.
 ''';
-      HttpOverrides.global = MockHttpOverrides([
-        [validPlaybook]
-      ]);
+          HttpOverrides.global = MockHttpOverrides([
+            [validPlaybook],
+          ]);
 
-      final llm = LlmChatService(
-        storageService: storageService,
-        toolService: aiToolService,
-        language: AppLanguage.en,
-        multiAgentCoordinator: FakeMultiAgentCoordinator(null),
+          final llm = LlmChatService(
+            storageService: storageService,
+            toolService: aiToolService,
+            language: AppLanguage.en,
+            multiAgentCoordinator: FakeMultiAgentCoordinator(null),
+          );
+
+          final chunks = <String>[];
+          await for (final chunk in llm.stream(
+            messages: const [
+              {'role': 'user', 'content': 'Pls plan restart'},
+            ],
+            planMode: true,
+          )) {
+            chunks.add(chunk);
+          }
+
+          // In Plan Mode, chunks are buffered, so we should get exactly 1 unified chunk containing the final validated output.
+          expect(chunks, hasLength(1));
+          final fullOutput = chunks.first;
+          expect(fullOutput, contains('Nginx restart'));
+          expect(fullOutput, isNot(contains('Format validation failed')));
+
+          // LlmChatService does not write directly to DB todoSteps anymore
+          final chats = await storageService.loadAiChats();
+          final chat = chats.firstWhere((c) => c.id == testChatId);
+          final assistantMsg = chat.messages.lastWhere(
+            (m) => m.role == 'assistant',
+          );
+          expect(assistantMsg.todoSteps, isEmpty);
+
+          // ChatOrchestrator parses it correctly
+          final completion = orchestrator.finalizeAssistantTurn(
+            initialChat: activeChat,
+            assistantMessage: assistantMsg,
+            answerText: fullOutput,
+            traces: const [],
+          );
+          final steps = completion.assistantMessage.todoSteps;
+          expect(steps, hasLength(1));
+          expect(steps[0].name, 'Check status');
+          expect(steps[0].command, 'systemctl status nginx');
+        },
       );
 
-      final chunks = <String>[];
-      await for (final chunk in llm.stream(
-        messages: const [
-          {'role': 'user', 'content': 'Pls plan restart'}
-        ],
-        planMode: true,
-      )) {
-        chunks.add(chunk);
-      }
-
-      // In Plan Mode, chunks are buffered, so we should get exactly 1 unified chunk containing the final validated output.
-      expect(chunks, hasLength(1));
-      final fullOutput = chunks.first;
-      expect(fullOutput, contains('Nginx restart'));
-      expect(fullOutput, isNot(contains('Format validation failed')));
-
-      // LlmChatService does not write directly to DB todoSteps anymore
-      final chats = await storageService.loadAiChats();
-      final chat = chats.firstWhere((c) => c.id == testChatId);
-      final assistantMsg =
-          chat.messages.lastWhere((m) => m.role == 'assistant');
-      expect(assistantMsg.todoSteps, isEmpty);
-
-      // ChatOrchestrator parses it correctly
-      final completion = orchestrator.finalizeAssistantTurn(
-        initialChat: activeChat,
-        assistantMessage: assistantMsg,
-        answerText: fullOutput,
-        traces: const [],
-      );
-      final steps = completion.assistantMessage.todoSteps;
-      expect(steps, hasLength(1));
-      expect(steps[0].name, 'Check status');
-      expect(steps[0].command, 'systemctl status nginx');
-    });
-
-    test(
+      test(
         'plan mode invalid output triggers one repair and returns repaired text only, buffering original',
         () async {
-      const invalidPlaybook = '''
+          const invalidPlaybook = '''
 Context: We need to restart nginx.
 Proposal:
 ```playbook
@@ -364,7 +367,7 @@ Proposal:
 }
 ```
 ''';
-      const repairedPlaybook = '''
+          const repairedPlaybook = '''
 Proposal:
 ```playbook
 {
@@ -377,122 +380,132 @@ Proposal:
 ```
 ''';
 
-      HttpOverrides.global = MockHttpOverrides([
-        [invalidPlaybook],
-        [repairedPlaybook]
-      ]);
+          HttpOverrides.global = MockHttpOverrides([
+            [invalidPlaybook],
+            [repairedPlaybook],
+          ]);
 
-      final llm = LlmChatService(
-        storageService: storageService,
-        toolService: aiToolService,
-        language: AppLanguage.en,
-        multiAgentCoordinator: FakeMultiAgentCoordinator(null),
+          final llm = LlmChatService(
+            storageService: storageService,
+            toolService: aiToolService,
+            language: AppLanguage.en,
+            multiAgentCoordinator: FakeMultiAgentCoordinator(null),
+          );
+
+          final chunks = <String>[];
+          await for (final chunk in llm.stream(
+            messages: const [
+              {'role': 'user', 'content': 'Pls plan restart'},
+            ],
+            planMode: true,
+          )) {
+            chunks.add(chunk);
+          }
+
+          // Expected chunks:
+          // In planMode, the invalid output is buffered and NOT yielded.
+          // Then validation fails, so it yields nothing of the first attempt.
+          // Then it yields only the repaired text!
+          // So the yielded chunks should only contain the repaired playbook.
+          final fullOutput = chunks.join();
+          expect(fullOutput, isNot(contains('Invalid Playbook JSON')));
+          expect(fullOutput, contains('Repaired Nginx restart'));
+          expect(
+            fullOutput,
+            isNot(contains('[Format validation failed. Repairing...]')),
+          );
+
+          // Verify ChatOrchestrator parses the repaired text correctly
+          final assistantMsg = activeChat.messages.lastWhere(
+            (m) => m.role == 'assistant',
+          );
+          final completion = orchestrator.finalizeAssistantTurn(
+            initialChat: activeChat,
+            assistantMessage: assistantMsg,
+            answerText: fullOutput,
+            traces: const [],
+          );
+          final steps = completion.assistantMessage.todoSteps;
+          expect(steps, hasLength(1));
+          expect(steps[0].name, 'Check status');
+        },
       );
 
-      final chunks = <String>[];
-      await for (final chunk in llm.stream(
-        messages: const [
-          {'role': 'user', 'content': 'Pls plan restart'}
-        ],
-        planMode: true,
-      )) {
-        chunks.add(chunk);
-      }
-
-      // Expected chunks:
-      // In planMode, the invalid output is buffered and NOT yielded.
-      // Then validation fails, so it yields nothing of the first attempt.
-      // Then it yields only the repaired text!
-      // So the yielded chunks should only contain the repaired playbook.
-      final fullOutput = chunks.join();
-      expect(fullOutput, isNot(contains('Invalid Playbook JSON')));
-      expect(fullOutput, contains('Repaired Nginx restart'));
-      expect(fullOutput,
-          isNot(contains('[Format validation failed. Repairing...]')));
-
-      // Verify ChatOrchestrator parses the repaired text correctly
-      final assistantMsg =
-          activeChat.messages.lastWhere((m) => m.role == 'assistant');
-      final completion = orchestrator.finalizeAssistantTurn(
-        initialChat: activeChat,
-        assistantMessage: assistantMsg,
-        answerText: fullOutput,
-        traces: const [],
-      );
-      final steps = completion.assistantMessage.todoSteps;
-      expect(steps, hasLength(1));
-      expect(steps[0].name, 'Check status');
-    });
-
-    test(
+      test(
         'plan mode repair failure returns explicit failure note and original text without looping',
         () async {
-      const invalidPlaybook = 'Plain text plan with no playbook block at all.';
-      const repairedPlaybook = 'Still no playbook block here.';
+          const invalidPlaybook =
+              'Plain text plan with no playbook block at all.';
+          const repairedPlaybook = 'Still no playbook block here.';
 
-      HttpOverrides.global = MockHttpOverrides([
-        [invalidPlaybook],
-        [repairedPlaybook]
-      ]);
+          HttpOverrides.global = MockHttpOverrides([
+            [invalidPlaybook],
+            [repairedPlaybook],
+          ]);
 
-      final llm = LlmChatService(
-        storageService: storageService,
-        toolService: aiToolService,
-        language: AppLanguage.en,
-        multiAgentCoordinator: FakeMultiAgentCoordinator(null),
+          final llm = LlmChatService(
+            storageService: storageService,
+            toolService: aiToolService,
+            language: AppLanguage.en,
+            multiAgentCoordinator: FakeMultiAgentCoordinator(null),
+          );
+
+          final chunks = <String>[];
+          await for (final chunk in llm.stream(
+            messages: const [
+              {'role': 'user', 'content': 'Pls plan restart'},
+            ],
+            planMode: true,
+          )) {
+            chunks.add(chunk);
+          }
+
+          final fullOutput = chunks.join();
+          // It returns the combined output to let the user see it
+          expect(fullOutput, contains('Plan output validation still failed.'));
+          expect(fullOutput, contains('Plain text plan'));
+          expect(fullOutput, contains('Still no playbook block here'));
+        },
       );
 
-      final chunks = <String>[];
-      await for (final chunk in llm.stream(
-        messages: const [
-          {'role': 'user', 'content': 'Pls plan restart'}
-        ],
-        planMode: true,
-      )) {
-        chunks.add(chunk);
-      }
-
-      final fullOutput = chunks.join();
-      // It returns the combined output to let the user see it
-      expect(fullOutput, contains('Plan output validation still failed.'));
-      expect(fullOutput, contains('Plain text plan'));
-      expect(fullOutput, contains('Still no playbook block here'));
-    });
-
-    test('non plan mode streams chunks immediately and does not validate',
+      test(
+        'non plan mode streams chunks immediately and does not validate',
         () async {
-      HttpOverrides.global = MockHttpOverrides([
-        ['Hello', ' world!']
-      ]);
+          HttpOverrides.global = MockHttpOverrides([
+            ['Hello', ' world!'],
+          ]);
 
-      final llm = LlmChatService(
-        storageService: storageService,
-        toolService: aiToolService,
-        language: AppLanguage.en,
-        multiAgentCoordinator: FakeMultiAgentCoordinator(null),
+          final llm = LlmChatService(
+            storageService: storageService,
+            toolService: aiToolService,
+            language: AppLanguage.en,
+            multiAgentCoordinator: FakeMultiAgentCoordinator(null),
+          );
+
+          final chunks = <String>[];
+          await for (final chunk in llm.stream(
+            messages: const [
+              {'role': 'user', 'content': 'Hi'},
+            ],
+            planMode: false,
+          )) {
+            chunks.add(chunk);
+          }
+
+          expect(chunks, hasLength(2));
+          expect(chunks, ['Hello', ' world!']);
+        },
       );
-
-      final chunks = <String>[];
-      await for (final chunk in llm.stream(
-        messages: const [
-          {'role': 'user', 'content': 'Hi'}
-        ],
-        planMode: false,
-      )) {
-        chunks.add(chunk);
-      }
-
-      expect(chunks, hasLength(2));
-      expect(chunks, ['Hello', ' world!']);
-    });
-  });
+    },
+  );
 
   group(
-      'LlmChatService Plan Mode Output Validation Integration Tests (Multi-Agent Path)',
-      () {
-    test('valid agent playbook JSON skips repair and returns plan content',
+    'LlmChatService Plan Mode Output Validation Integration Tests (Multi-Agent Path)',
+    () {
+      test(
+        'valid agent playbook JSON skips repair and returns plan content',
         () async {
-      const validPlaybook = '''
+          const validPlaybook = '''
 ```playbook
 {
   "name": "Agent Nginx restart",
@@ -503,51 +516,53 @@ Proposal:
 }
 ```
 ''';
-      final llm = LlmChatService(
-        storageService: storageService,
-        toolService: aiToolService,
-        language: AppLanguage.en,
-        multiAgentCoordinator: FakeMultiAgentCoordinator(
-          const MultiAgentRunResult(
-            agentCount: 3,
-            memoryContent: validPlaybook,
-            traceContent: 'Trace details',
-          ),
-        ),
+          final llm = LlmChatService(
+            storageService: storageService,
+            toolService: aiToolService,
+            language: AppLanguage.en,
+            multiAgentCoordinator: FakeMultiAgentCoordinator(
+              const MultiAgentRunResult(
+                agentCount: 3,
+                memoryContent: validPlaybook,
+                traceContent: 'Trace details',
+              ),
+            ),
+          );
+
+          final chunks = <String>[];
+          await for (final chunk in llm.stream(
+            messages: const [
+              {'role': 'user', 'content': 'Pls plan restart'},
+            ],
+            planMode: true,
+          )) {
+            chunks.add(chunk);
+          }
+
+          final fullOutput = chunks.join();
+          expect(fullOutput, contains('Agent Nginx restart'));
+          expect(fullOutput, isNot(contains('Format validation failed')));
+
+          final assistantMsg = activeChat.messages.lastWhere(
+            (m) => m.role == 'assistant',
+          );
+          final completion = orchestrator.finalizeAssistantTurn(
+            initialChat: activeChat,
+            assistantMessage: assistantMsg,
+            answerText: fullOutput,
+            traces: const [],
+          );
+          final steps = completion.assistantMessage.todoSteps;
+          expect(steps, hasLength(1));
+          expect(steps[0].name, 'Check status');
+        },
       );
 
-      final chunks = <String>[];
-      await for (final chunk in llm.stream(
-        messages: const [
-          {'role': 'user', 'content': 'Pls plan restart'}
-        ],
-        planMode: true,
-      )) {
-        chunks.add(chunk);
-      }
-
-      final fullOutput = chunks.join();
-      expect(fullOutput, contains('Agent Nginx restart'));
-      expect(fullOutput, isNot(contains('Format validation failed')));
-
-      final assistantMsg =
-          activeChat.messages.lastWhere((m) => m.role == 'assistant');
-      final completion = orchestrator.finalizeAssistantTurn(
-        initialChat: activeChat,
-        assistantMessage: assistantMsg,
-        answerText: fullOutput,
-        traces: const [],
-      );
-      final steps = completion.assistantMessage.todoSteps;
-      expect(steps, hasLength(1));
-      expect(steps[0].name, 'Check status');
-    });
-
-    test(
+      test(
         'invalid agent playbook triggers repair, succeeds and returns repaired text',
         () async {
-      const invalidPlaybook = 'Plaintext output from agents';
-      const repairedPlaybook = '''
+          const invalidPlaybook = 'Plaintext output from agents';
+          const repairedPlaybook = '''
 ```playbook
 {
   "name": "Repaired Agent Playbook",
@@ -558,48 +573,51 @@ Proposal:
 }
 ```
 ''';
-      HttpOverrides.global = MockHttpOverrides([
-        [repairedPlaybook]
-      ]);
+          HttpOverrides.global = MockHttpOverrides([
+            [repairedPlaybook],
+          ]);
 
-      final llm = LlmChatService(
-        storageService: storageService,
-        toolService: aiToolService,
-        language: AppLanguage.en,
-        multiAgentCoordinator: FakeMultiAgentCoordinator(
-          const MultiAgentRunResult(
-            agentCount: 3,
-            memoryContent: invalidPlaybook,
-            traceContent: 'Trace details',
-          ),
-        ),
+          final llm = LlmChatService(
+            storageService: storageService,
+            toolService: aiToolService,
+            language: AppLanguage.en,
+            multiAgentCoordinator: FakeMultiAgentCoordinator(
+              const MultiAgentRunResult(
+                agentCount: 3,
+                memoryContent: invalidPlaybook,
+                traceContent: 'Trace details',
+              ),
+            ),
+          );
+
+          final chunks = <String>[];
+          await for (final chunk in llm.stream(
+            messages: const [
+              {'role': 'user', 'content': 'Pls plan restart'},
+            ],
+            planMode: true,
+          )) {
+            chunks.add(chunk);
+          }
+
+          final fullOutput = chunks.join();
+          expect(fullOutput, isNot(contains('Plaintext output')));
+          expect(fullOutput, contains('Repaired Agent Playbook'));
+
+          final assistantMsg = activeChat.messages.lastWhere(
+            (m) => m.role == 'assistant',
+          );
+          final completion = orchestrator.finalizeAssistantTurn(
+            initialChat: activeChat,
+            assistantMessage: assistantMsg,
+            answerText: fullOutput,
+            traces: const [],
+          );
+          final steps = completion.assistantMessage.todoSteps;
+          expect(steps, hasLength(1));
+          expect(steps[0].name, 'Check status');
+        },
       );
-
-      final chunks = <String>[];
-      await for (final chunk in llm.stream(
-        messages: const [
-          {'role': 'user', 'content': 'Pls plan restart'}
-        ],
-        planMode: true,
-      )) {
-        chunks.add(chunk);
-      }
-
-      final fullOutput = chunks.join();
-      expect(fullOutput, isNot(contains('Plaintext output')));
-      expect(fullOutput, contains('Repaired Agent Playbook'));
-
-      final assistantMsg =
-          activeChat.messages.lastWhere((m) => m.role == 'assistant');
-      final completion = orchestrator.finalizeAssistantTurn(
-        initialChat: activeChat,
-        assistantMessage: assistantMsg,
-        answerText: fullOutput,
-        traces: const [],
-      );
-      final steps = completion.assistantMessage.todoSteps;
-      expect(steps, hasLength(1));
-      expect(steps[0].name, 'Check status');
-    });
-  });
+    },
+  );
 }

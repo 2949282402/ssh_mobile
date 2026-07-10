@@ -16,10 +16,7 @@ extension DriftAiChatRepositoryOps on StorageService {
     final database = _database;
     if (!_driftAiChatsActive || database == null) return;
     final messages = await _aiChatMessagesToCompanions(chat);
-    await database.aiChatDao.saveChat(
-      _aiChatToCompanion(chat),
-      messages,
-    );
+    await database.aiChatDao.saveChat(_aiChatToCompanion(chat), messages);
     final chats = upsertAiChatRecordsByUpdatedAt(
       _aiChatsCache ?? const <AiChatRecord>[],
       chat,
@@ -49,8 +46,9 @@ extension DriftAiChatRepositoryOps on StorageService {
     if (!_driftReady || database == null) return;
     final ordered = [...chats]
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-    final retained =
-        ordered.take(_aiChatRetentionLimit).toList(growable: false);
+    final retained = ordered
+        .take(_aiChatRetentionLimit)
+        .toList(growable: false);
     final companions = retained.map(_aiChatToCompanion).toList(growable: false);
     final messagesByChatId = <String, List<db.AiChatMessagesCompanion>>{};
     for (final chat in retained) {
@@ -68,12 +66,16 @@ extension DriftAiChatRepositoryOps on StorageService {
       createdAt: drift.Value(_toDbMillis(chat.createdAt)),
       updatedAt: drift.Value(_toDbMillis(chat.updatedAt)),
       planMode: drift.Value(chat.planMode),
-      approvedPlanAssistantCreatedAt: drift.Value(chat.approvedPlan == null
-          ? null
-          : _toDbMillis(chat.approvedPlan!.assistantCreatedAt)),
-      approvedPlanApprovedAt: drift.Value(chat.approvedPlan == null
-          ? null
-          : _toDbMillis(chat.approvedPlan!.approvedAt)),
+      approvedPlanAssistantCreatedAt: drift.Value(
+        chat.approvedPlan == null
+            ? null
+            : _toDbMillis(chat.approvedPlan!.assistantCreatedAt),
+      ),
+      approvedPlanApprovedAt: drift.Value(
+        chat.approvedPlan == null
+            ? null
+            : _toDbMillis(chat.approvedPlan!.approvedAt),
+      ),
     );
   }
 
@@ -82,11 +84,9 @@ extension DriftAiChatRepositoryOps on StorageService {
   ) async {
     final result = <db.AiChatMessagesCompanion>[];
     for (var index = 0; index < chat.messages.length; index++) {
-      result.add(await _aiChatMessageToCompanion(
-        chat.id,
-        chat.messages[index],
-        index,
-      ));
+      result.add(
+        await _aiChatMessageToCompanion(chat.id, chat.messages[index], index),
+      );
     }
     return result;
   }
@@ -110,9 +110,11 @@ extension DriftAiChatRepositoryOps on StorageService {
       chatId: drift.Value(chatId),
       role: drift.Value(message.role),
       textContent: drift.Value(await _encryptDriftText(message.text)),
-      contextText: drift.Value(message.contextText == null
-          ? null
-          : await _encryptDriftText(message.contextText!)),
+      contextText: drift.Value(
+        message.contextText == null
+            ? null
+            : await _encryptDriftText(message.contextText!),
+      ),
       createdAt: drift.Value(_toDbMillis(message.createdAt)),
       promptTokens: drift.Value(message.promptTokens),
       completionTokens: drift.Value(message.completionTokens),

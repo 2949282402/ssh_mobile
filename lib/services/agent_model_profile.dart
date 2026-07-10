@@ -1,18 +1,11 @@
-enum AgentModelRole {
-  main,
-  helper,
-  audit,
-}
+enum AgentModelRole { main, helper, audit }
 
 class AgentModelFallbackPolicy {
   static const String fallbackToMain = 'fallback_to_main';
   static const String mainOnly = 'main_only';
 
   static const String defaultValue = fallbackToMain;
-  static const List<String> values = [
-    fallbackToMain,
-    mainOnly,
-  ];
+  static const List<String> values = [fallbackToMain, mainOnly];
 
   static String normalize(String? value) {
     final normalized = value?.trim().toLowerCase();

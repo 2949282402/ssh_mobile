@@ -6,13 +6,11 @@ import 'package:dartssh2/dartssh2.dart';
 import '../../features/connection/models/connection.dart';
 import '../../services/app_log_service.dart';
 
-typedef SshHostKeyConfirmation = FutureOr<bool> Function(
-  SshHostKeyPromptRequest request,
-);
+typedef SshHostKeyConfirmation =
+    FutureOr<bool> Function(SshHostKeyPromptRequest request);
 
-typedef SshHostKeyTrustPersister = Future<void> Function(
-  ConnectionConfig config,
-);
+typedef SshHostKeyTrustPersister =
+    Future<void> Function(ConnectionConfig config);
 
 class SshHostKeyPromptRequest {
   final String connectionId;
@@ -63,7 +61,8 @@ class SshHostKeyPolicy {
 
       AppLogService.instance.warning(
         'SSH host key verification blocked changed fingerprint',
-        details: 'connection=${config.name} host=${config.host}:${config.port} '
+        details:
+            'connection=${config.name} host=${config.host}:${config.port} '
             'algorithm=$algorithm trustedAlgorithm=$trustedAlgorithm',
       );
       throw SshHostKeyMismatchException(
@@ -81,7 +80,8 @@ class SshHostKeyPolicy {
     if (confirm == null) {
       AppLogService.instance.warning(
         'SSH host key verification blocked untrusted host',
-        details: 'connection=${config.name} host=${config.host}:${config.port} '
+        details:
+            'connection=${config.name} host=${config.host}:${config.port} '
             'algorithm=$algorithm',
       );
       throw SshHostKeyUntrustedException(
@@ -120,7 +120,8 @@ class SshHostKeyPolicy {
     await persistTrust?.call(config);
     AppLogService.instance.info(
       'SSH host key trusted',
-      details: 'connection=${config.name} host=${config.host}:${config.port} '
+      details:
+          'connection=${config.name} host=${config.host}:${config.port} '
           'algorithm=$algorithm',
     );
     return true;

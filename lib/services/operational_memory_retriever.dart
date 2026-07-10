@@ -29,9 +29,9 @@ class OperationalMemoryBundle {
   });
 
   List<String> get sourceTypes => {
-        if (ragChunks.isNotEmpty) 'rag',
-        ...hits.map((hit) => hit.sourceType),
-      }.toList(growable: false);
+    if (ragChunks.isNotEmpty) 'rag',
+    ...hits.map((hit) => hit.sourceType),
+  }.toList(growable: false);
 }
 
 class OperationalMemoryRetriever {
@@ -61,8 +61,9 @@ class OperationalMemoryRetriever {
     final ragChunks = <RagChunk>[];
     if (ragEnabled && ragService != null) {
       try {
-        ragChunks
-            .addAll(await ragService!.retrieve(trimmedQuery, limit: ragLimit));
+        ragChunks.addAll(
+          await ragService!.retrieve(trimmedQuery, limit: ragLimit),
+        );
       } catch (e) {
         AppLogService.instance.warning(
           'Operational memory RAG retrieval failed',
@@ -88,10 +89,7 @@ class OperationalMemoryRetriever {
       if (deduped.length >= hitLimit) break;
     }
 
-    return OperationalMemoryBundle(
-      ragChunks: ragChunks,
-      hits: deduped,
-    );
+    return OperationalMemoryBundle(ragChunks: ragChunks, hits: deduped);
   }
 
   Future<List<OperationalMemoryHit>> _skillHits(Set<String> keywords) async {
@@ -122,7 +120,8 @@ class OperationalMemoryRetriever {
           finalContent = _clip(limitRefs);
         } else {
           finalContent = _clip(
-              skill.content.isNotEmpty ? skill.content : skill.description);
+            skill.content.isNotEmpty ? skill.content : skill.description,
+          );
         }
 
         hits.add(
@@ -148,7 +147,8 @@ class OperationalMemoryRetriever {
   }
 
   Future<List<OperationalMemoryHit>> _skillHitsLegacyFallback(
-      Set<String> keywords) async {
+    Set<String> keywords,
+  ) async {
     final hits = <OperationalMemoryHit>[];
     for (final skill in await storageService.loadAiSkills()) {
       if (!skill.enabled) continue;
@@ -184,8 +184,9 @@ class OperationalMemoryRetriever {
         final limitRefs = matchedRefs.take(3).join('\n\n');
         finalContent = _clip(limitRefs);
       } else {
-        finalContent =
-            _clip(skill.content.isNotEmpty ? skill.content : skill.description);
+        finalContent = _clip(
+          skill.content.isNotEmpty ? skill.content : skill.description,
+        );
       }
 
       hits.add(

@@ -56,20 +56,27 @@ class _SessionsTabState extends State<_SessionsTab>
               leading: const CircleAvatar(child: Icon(Icons.computer)),
               title: Row(
                 children: [
-                  Text(s.username,
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                  Text(
+                    s.username,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   const SizedBox(width: 12),
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: widget.colorScheme.secondaryContainer,
                       borderRadius: BorderRadius.circular(4),
                     ),
-                    child: Text(s.tty,
-                        style: TextStyle(
-                            color: widget.colorScheme.onSecondaryContainer,
-                            fontSize: 11)),
+                    child: Text(
+                      s.tty,
+                      style: TextStyle(
+                        color: widget.colorScheme.onSecondaryContainer,
+                        fontSize: 11,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -124,8 +131,9 @@ class _SessionsTabState extends State<_SessionsTab>
         await widget.viewModel.killActiveSession(session.tty);
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Failed: $e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed: $e')));
       }
     }
   }

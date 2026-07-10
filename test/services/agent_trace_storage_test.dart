@@ -151,8 +151,10 @@ void main() {
       for (var i = 0; i < 3; i++) _event(runId: 'dense-b', sequence: i),
     ]);
 
-    expect(await storage.loadAgentTraceEvents('dense-a'),
-        hasLength(agentTraceEventsPerRunLimit));
+    expect(
+      await storage.loadAgentTraceEvents('dense-a'),
+      hasLength(agentTraceEventsPerRunLimit),
+    );
     expect(await storage.loadAgentTraceEvents('dense-b'), hasLength(3));
   });
 
@@ -193,8 +195,10 @@ void main() {
         .customSelect('SELECT content_json FROM agent_trace_events')
         .getSingle();
     expect(raw.read<String>('content_json'), isNot(contains(marker)));
-    expect((await storage.loadAgentTraceEvents('run-secret')).single.content,
-        contains(marker));
+    expect(
+      (await storage.loadAgentTraceEvents('run-secret')).single.content,
+      contains(marker),
+    );
 
     await storage.deleteAgentTraceEvents('run-secret');
     expect(await storage.loadAgentTraceEvents('run-secret'), isEmpty);

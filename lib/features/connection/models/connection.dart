@@ -49,8 +49,8 @@ class ConnectionConfig {
     this.jumpPort,
     this.jumpUsername,
     this.group,
-  })  : createdAt = createdAt ?? DateTime.now(),
-        updatedAt = updatedAt ?? DateTime.now();
+  }) : createdAt = createdAt ?? DateTime.now(),
+       updatedAt = updatedAt ?? DateTime.now();
 
   Map<String, dynamic> toJson() {
     return {
@@ -97,7 +97,8 @@ class ConnectionConfig {
       terminalHeight: (json['terminalHeight'] as num?)?.toInt() ?? 24,
       keepAlive: json['keepAlive'] as bool? ?? true,
       keepAliveInterval: (json['keepAliveInterval'] as num?)?.toInt() ?? 3,
-      launchMode: serverPlatform == ServerPlatform.windows &&
+      launchMode:
+          serverPlatform == ServerPlatform.windows &&
               launchMode == TerminalLaunchMode.tmux
           ? TerminalLaunchMode.ssh
           : launchMode,
@@ -106,11 +107,14 @@ class ConnectionConfig {
           (json['tmuxAutoDeleteSeconds'] as num?)?.toInt() ?? 600,
       hostKeyFingerprint: json['hostKeyFingerprint'] as String?,
       hostKeyAlgorithm: json['hostKeyAlgorithm'] as String?,
-      hostKeyTrustedAt:
-          DateTime.tryParse(json['hostKeyTrustedAt'] as String? ?? ''),
-      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+      hostKeyTrustedAt: DateTime.tryParse(
+        json['hostKeyTrustedAt'] as String? ?? '',
+      ),
+      createdAt:
+          DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
-      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
+      updatedAt:
+          DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
           DateTime.now(),
       jumpHost: json['jumpHost'] as String?,
       jumpPort: (json['jumpPort'] as num?)?.toInt(),
@@ -161,18 +165,22 @@ class ConnectionConfig {
       terminalHeight: terminalHeight ?? this.terminalHeight,
       keepAlive: keepAlive ?? this.keepAlive,
       keepAliveInterval: keepAliveInterval ?? this.keepAliveInterval,
-      launchMode: nextPlatform == ServerPlatform.windows &&
+      launchMode:
+          nextPlatform == ServerPlatform.windows &&
               nextLaunchMode == TerminalLaunchMode.tmux
           ? TerminalLaunchMode.ssh
           : nextLaunchMode,
       serverPlatform: nextPlatform,
       tmuxAutoDeleteSeconds:
           tmuxAutoDeleteSeconds ?? this.tmuxAutoDeleteSeconds,
-      hostKeyFingerprint: hostKeyFingerprint ??
+      hostKeyFingerprint:
+          hostKeyFingerprint ??
           (endpointUnchanged ? this.hostKeyFingerprint : null),
-      hostKeyAlgorithm: hostKeyAlgorithm ??
+      hostKeyAlgorithm:
+          hostKeyAlgorithm ??
           (endpointUnchanged ? this.hostKeyAlgorithm : null),
-      hostKeyTrustedAt: hostKeyTrustedAt ??
+      hostKeyTrustedAt:
+          hostKeyTrustedAt ??
           (endpointUnchanged ? this.hostKeyTrustedAt : null),
       createdAt: createdAt,
       updatedAt: DateTime.now(),

@@ -35,9 +35,7 @@ class AliyunEmbeddingClient {
             body: jsonEncode({
               'model': modelName,
               'input': {'texts': texts},
-              'parameters': {
-                'text_type': textType,
-              }
+              'parameters': {'text_type': textType},
             }),
           )
           .timeout(const Duration(seconds: 30));
@@ -73,8 +71,9 @@ class AliyunEmbeddingClient {
         if (item is Map<String, dynamic>) {
           final textIndex = item['text_index'] as int? ?? 0;
           final rawVector = item['embedding'] as List<dynamic>? ?? [];
-          final vector =
-              rawVector.map((val) => (val as num).toDouble()).toList();
+          final vector = rawVector
+              .map((val) => (val as num).toDouble())
+              .toList();
 
           if (textIndex >= 0 && textIndex < embeddings.length) {
             embeddings[textIndex] = vector;

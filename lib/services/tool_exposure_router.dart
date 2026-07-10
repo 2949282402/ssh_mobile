@@ -115,7 +115,8 @@ class ToolExposureRouter {
           !_isServerRelevantRequest(context.userRequest, requestedCaps)) {
         blockedBy.add('server_selection_missing');
       }
-      final hasCapabilityMismatch = requestedCaps.isNotEmpty &&
+      final hasCapabilityMismatch =
+          requestedCaps.isNotEmpty &&
           tool.effectiveCapabilities.isNotEmpty &&
           requestedCaps.intersection(tool.effectiveCapabilities).isEmpty &&
           !_isBaselineTool(tool, context);
@@ -141,13 +142,15 @@ class ToolExposureRouter {
         }
       }
 
-      decisions.add(ToolExposureDecision(
-        toolName: tool.name,
-        selected: isSelected,
-        reasons: reasons,
-        blockedBy: blockedBy,
-        toolCapabilities: tool.effectiveCapabilities,
-      ));
+      decisions.add(
+        ToolExposureDecision(
+          toolName: tool.name,
+          selected: isSelected,
+          reasons: reasons,
+          blockedBy: blockedBy,
+          toolCapabilities: tool.effectiveCapabilities,
+        ),
+      );
     }
 
     return ToolExposureSelection(
@@ -184,12 +187,7 @@ class ToolExposureRouter {
     ])) {
       caps.add(AiToolCapability.web);
     }
-    if (_containsAny(request, const [
-      'log',
-      'trace',
-      '日志',
-      '报错',
-    ])) {
+    if (_containsAny(request, const ['log', 'trace', '日志', '报错'])) {
       caps.add(AiToolCapability.logs);
       caps.add(AiToolCapability.diagnostics);
     }

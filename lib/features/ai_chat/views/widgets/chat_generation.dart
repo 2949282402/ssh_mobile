@@ -18,8 +18,10 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
     final viewModel = context.read<AiChatViewModel>();
     if (viewModel.sending) return;
 
-    final result =
-        await viewModel.sendText(text: text, approvedPlanRef: approvedPlanRef);
+    final result = await viewModel.sendText(
+      text: text,
+      approvedPlanRef: approvedPlanRef,
+    );
     if (!context.mounted) return;
 
     if (result is SendTextApiKeyMissing) {
@@ -28,11 +30,15 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
       await Navigator.of(context).pushNamed('/ai-skills');
       if (context.mounted) {
         LlmChatCommandsHelper.showCommandFeedback(
-            context, strings.commandSkillsOpened);
+          context,
+          strings.commandSkillsOpened,
+        );
       }
     } else if (result is SendTextSlashCommandOpenToolsSelector) {
-      final availableTools =
-          await LlmChatCommandsHelper.loadAvailableTools(context, strings);
+      final availableTools = await LlmChatCommandsHelper.loadAvailableTools(
+        context,
+        strings,
+      );
       if (!context.mounted || availableTools == null) return;
       final next = await LlmChatCommandsHelper.openToolsSelector(
         context: context,
@@ -122,11 +128,11 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
                 Text(
                   allowContinue
                       ? (isEn
-                          ? 'The plan can run, but the client device has conditions that may interrupt long agent work.'
-                          : '计划可以继续执行，但客户端设备存在可能影响长时间 Agent 任务的风险。')
+                            ? 'The plan can run, but the client device has conditions that may interrupt long agent work.'
+                            : '计划可以继续执行，但客户端设备存在可能影响长时间 Agent 任务的风险。')
                       : (isEn
-                          ? 'Fix the following client-side issues before running this plan.'
-                          : '请先处理以下客户端问题，再执行此计划。'),
+                            ? 'Fix the following client-side issues before running this plan.'
+                            : '请先处理以下客户端问题，再执行此计划。'),
                 ),
                 const SizedBox(height: 12),
                 for (final issue in issues) ...[
@@ -140,8 +146,8 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
                         size: 18,
                         color:
                             issue.severity == ClientRuntimeHealthStatus.blocking
-                                ? colorScheme.error
-                                : colorScheme.tertiary,
+                            ? colorScheme.error
+                            : colorScheme.tertiary,
                       ),
                       const SizedBox(width: 8),
                       Expanded(
@@ -150,8 +156,9 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
                           children: [
                             Text(
                               issue.title,
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w700),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                             const SizedBox(height: 2),
                             Text(issue.detail),
@@ -282,23 +289,15 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
     await viewModel.editUserMessage(messageIndex, trimmedEditedText);
   }
 
-  Future<String?> _showEditUserDialog(
-    String text,
-    AiStrings strings,
-  ) async {
+  Future<String?> _showEditUserDialog(String text, AiStrings strings) async {
     return showDialog<String>(
       context: context,
-      builder: (_) => EditUserMessageDialog(
-        initialText: text,
-        strings: strings,
-      ),
+      builder: (_) =>
+          EditUserMessageDialog(initialText: text, strings: strings),
     );
   }
 
-  Future<void> _branchFromAssistant(
-    int messageIndex,
-    AiStrings strings,
-  ) async {
+  Future<void> _branchFromAssistant(int messageIndex, AiStrings strings) async {
     final viewModel = context.read<AiChatViewModel>();
     viewModel.branchFromAssistant(messageIndex);
   }

@@ -253,43 +253,46 @@ void main() {
       expect(result!.memoryContent, contains('resolved advice'));
     });
 
-    test('preserves long playbook output in plan mode summarizer results',
-        () async {
-      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
-      final longCommand = 'echo ${'x' * 2200}';
-      final playbook = '''
+    test(
+      'preserves long playbook output in plan mode summarizer results',
+      () async {
+        const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
+        final longCommand = 'echo ${'x' * 2200}';
+        final playbook =
+            '''
 ```playbook
 {"steps":[{"name":"Long step","command":"$longCommand","description":"Preserve the full command in plan mode."}]}
 ```
 ''';
 
-      final result = await coordinator.run(
-        enabled: true,
-        maxAgents: 5,
-        planMode: true,
-        messages: const [
-          {'role': 'user', 'content': 'Plan a long maintenance workflow'},
-        ],
-        classify: (messages) async => jsonEncode({
-          'shouldCollaborate': true,
-          'reason': 'complex plan',
-          'thinkingEnabled': false,
-          'reasoningEffort': 'low',
-          'agentCount': 5,
-        }),
-        complete: (role, messages, {required thinkingSettings}) async {
-          if (role.name == 'summarizer') {
-            return playbook;
-          }
-          return 'helper output from ${role.name}';
-        },
-      );
+        final result = await coordinator.run(
+          enabled: true,
+          maxAgents: 5,
+          planMode: true,
+          messages: const [
+            {'role': 'user', 'content': 'Plan a long maintenance workflow'},
+          ],
+          classify: (messages) async => jsonEncode({
+            'shouldCollaborate': true,
+            'reason': 'complex plan',
+            'thinkingEnabled': false,
+            'reasoningEffort': 'low',
+            'agentCount': 5,
+          }),
+          complete: (role, messages, {required thinkingSettings}) async {
+            if (role.name == 'summarizer') {
+              return playbook;
+            }
+            return 'helper output from ${role.name}';
+          },
+        );
 
-      expect(result, isNotNull);
-      expect(result!.memoryContent, contains('```playbook'));
-      expect(result.memoryContent, contains(longCommand));
-      expect(result.memoryContent, isNot(contains('[truncated]')));
-    });
+        expect(result, isNotNull);
+        expect(result!.memoryContent, contains('```playbook'));
+        expect(result.memoryContent, contains(longCommand));
+        expect(result.memoryContent, isNot(contains('[truncated]')));
+      },
+    );
 
     test('cancellation exits immediately without retrying', () async {
       const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
@@ -362,62 +365,64 @@ void main() {
       expect(propagatedEffort, 'medium');
     });
 
-    test('propagates intermediate analysis contexts through DAG phases',
-        () async {
-      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
-      final roleReceivedMessages = <String, List<Map<String, dynamic>>>{};
+    test(
+      'propagates intermediate analysis contexts through DAG phases',
+      () async {
+        const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
+        final roleReceivedMessages = <String, List<Map<String, dynamic>>>{};
 
-      final result = await coordinator.run(
-        enabled: true,
-        maxAgents: 5,
-        messages: const [
-          {'role': 'user', 'content': 'inspect logs and fix system'},
-        ],
-        classify: (messages) async => jsonEncode({
-          'shouldCollaborate': true,
-          'reason': 'multi-phase troubleshooting',
-          'thinkingEnabled': false,
-          'reasoningEffort': 'low',
-          'agentCount': 5,
-        }),
-        complete: (role, messages, {required thinkingSettings}) async {
-          roleReceivedMessages[role.name] = messages;
-          if (role.name == 'summarizer') {
-            return jsonEncode({
-              'summary': 'merged findings',
-              'recommendedActions': ['apply operator fix'],
-              'risks': ['needs reviewer sign-off'],
-              'openQuestions': [],
-            });
-          }
-          return 'mock output from ${role.label}';
-        },
-      );
+        final result = await coordinator.run(
+          enabled: true,
+          maxAgents: 5,
+          messages: const [
+            {'role': 'user', 'content': 'inspect logs and fix system'},
+          ],
+          classify: (messages) async => jsonEncode({
+            'shouldCollaborate': true,
+            'reason': 'multi-phase troubleshooting',
+            'thinkingEnabled': false,
+            'reasoningEffort': 'low',
+            'agentCount': 5,
+          }),
+          complete: (role, messages, {required thinkingSettings}) async {
+            roleReceivedMessages[role.name] = messages;
+            if (role.name == 'summarizer') {
+              return jsonEncode({
+                'summary': 'merged findings',
+                'recommendedActions': ['apply operator fix'],
+                'risks': ['needs reviewer sign-off'],
+                'openQuestions': [],
+              });
+            }
+            return 'mock output from ${role.label}';
+          },
+        );
 
-      expect(result, isNotNull);
-      expect(result!.agentCount, 5);
+        expect(result, isNotNull);
+        expect(result!.agentCount, 5);
 
-      final exploreContent =
-          roleReceivedMessages['explore']!.last['content'] as String;
-      final plannerContent =
-          roleReceivedMessages['planner']!.last['content'] as String;
-      final operatorContent =
-          roleReceivedMessages['operator']!.last['content'] as String;
-      final reviewerContent =
-          roleReceivedMessages['reviewer']!.last['content'] as String;
-      final summarizerContent =
-          roleReceivedMessages['summarizer']!.last['content'] as String;
+        final exploreContent =
+            roleReceivedMessages['explore']!.last['content'] as String;
+        final plannerContent =
+            roleReceivedMessages['planner']!.last['content'] as String;
+        final operatorContent =
+            roleReceivedMessages['operator']!.last['content'] as String;
+        final reviewerContent =
+            roleReceivedMessages['reviewer']!.last['content'] as String;
+        final summarizerContent =
+            roleReceivedMessages['summarizer']!.last['content'] as String;
 
-      expect(exploreContent, isNot(contains('mock output from Planner')));
-      expect(plannerContent, isNot(contains('mock output from Explore')));
-      expect(operatorContent, contains('mock output from Explore'));
-      expect(operatorContent, contains('mock output from Planner'));
-      expect(reviewerContent, isNot(contains('mock output from Explore')));
-      expect(reviewerContent, contains('mock output from Planner'));
-      expect(reviewerContent, contains('mock output from Operator'));
-      expect(summarizerContent, contains('mock output from Explore'));
-      expect(summarizerContent, contains('mock output from Reviewer'));
-    });
+        expect(exploreContent, isNot(contains('mock output from Planner')));
+        expect(plannerContent, isNot(contains('mock output from Explore')));
+        expect(operatorContent, contains('mock output from Explore'));
+        expect(operatorContent, contains('mock output from Planner'));
+        expect(reviewerContent, isNot(contains('mock output from Explore')));
+        expect(reviewerContent, contains('mock output from Planner'));
+        expect(reviewerContent, contains('mock output from Operator'));
+        expect(summarizerContent, contains('mock output from Explore'));
+        expect(summarizerContent, contains('mock output from Reviewer'));
+      },
+    );
 
     test('returns structured summarizer memory as JSON', () async {
       const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
@@ -456,67 +461,71 @@ void main() {
       expect(decoded['openQuestions'], ['which shard goes first']);
     });
 
-    test('gracefully falls back when classification returns invalid JSON',
-        () async {
-      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
-      var completeCalled = false;
+    test(
+      'gracefully falls back when classification returns invalid JSON',
+      () async {
+        const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
+        var completeCalled = false;
 
-      final result = await coordinator.run(
-        enabled: true,
-        maxAgents: 3,
-        messages: const [
-          {'role': 'user', 'content': 'debug logs and fix the server'},
-        ],
-        classify: (messages) async =>
-            'invalid markdown json ```json {invalid} ```',
-        complete: (role, messages, {required thinkingSettings}) async {
-          completeCalled = true;
-          return 'advice';
-        },
-      );
-
-      expect(result, isNull);
-      expect(completeCalled, isFalse);
-    });
-
-    test('cancellation inside classification phase is propagated immediately',
-        () async {
-      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
-      var checkCancelledCalled = 0;
-      var completeCalled = false;
-
-      try {
-        await coordinator.run(
+        final result = await coordinator.run(
           enabled: true,
           maxAgents: 3,
           messages: const [
             {'role': 'user', 'content': 'debug logs and fix the server'},
           ],
-          classify: (messages) async {
-            throw StateError('cancelled exception during classify');
-          },
-          checkCancelled: () {
-            checkCancelledCalled++;
-            if (checkCancelledCalled >= 2) {
-              throw StateError('cancelled');
-            }
-          },
+          classify: (messages) async =>
+              'invalid markdown json ```json {invalid} ```',
           complete: (role, messages, {required thinkingSettings}) async {
             completeCalled = true;
             return 'advice';
           },
         );
-        fail('Should have thrown cancellation exception');
-      } catch (e) {
-        expect(e.toString(), contains('cancelled'));
-        expect(
-          e.toString(),
-          isNot(contains('cancelled exception during classify')),
-        );
-      }
 
-      expect(completeCalled, isFalse);
-    });
+        expect(result, isNull);
+        expect(completeCalled, isFalse);
+      },
+    );
+
+    test(
+      'cancellation inside classification phase is propagated immediately',
+      () async {
+        const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
+        var checkCancelledCalled = 0;
+        var completeCalled = false;
+
+        try {
+          await coordinator.run(
+            enabled: true,
+            maxAgents: 3,
+            messages: const [
+              {'role': 'user', 'content': 'debug logs and fix the server'},
+            ],
+            classify: (messages) async {
+              throw StateError('cancelled exception during classify');
+            },
+            checkCancelled: () {
+              checkCancelledCalled++;
+              if (checkCancelledCalled >= 2) {
+                throw StateError('cancelled');
+              }
+            },
+            complete: (role, messages, {required thinkingSettings}) async {
+              completeCalled = true;
+              return 'advice';
+            },
+          );
+          fail('Should have thrown cancellation exception');
+        } catch (e) {
+          expect(e.toString(), contains('cancelled'));
+          expect(
+            e.toString(),
+            isNot(contains('cancelled exception during classify')),
+          );
+        }
+
+        expect(completeCalled, isFalse);
+      },
+    );
     test('triggers reviewer for high-risk Chinese requests', () async {
       const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
       final roles = <String>[];
@@ -588,87 +597,93 @@ void main() {
     });
 
     test(
-        'postToolFailure trigger runs only reviewer and summarizer with postToolContext',
-        () async {
-      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
-      final roles = <String>[];
-      var summarizerReceivedContext = '';
+      'postToolFailure trigger runs only reviewer and summarizer with postToolContext',
+      () async {
+        const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
+        final roles = <String>[];
+        var summarizerReceivedContext = '';
 
-      final result = await coordinator.run(
-        enabled: true,
-        maxAgents: 5,
-        trigger: MultiAgentTrigger.postToolFailure,
-        postToolContext: 'Failed tool: run_command with exit code 127',
-        messages: const [
-          {'role': 'user', 'content': 'inspect logs and fix system'},
-        ],
-        classify: (messages) async => '{}', // 因为是非 preflight，这不会被调用
-        complete: (role, messages, {required thinkingSettings}) async {
-          roles.add(role.name);
-          if (role.name == 'summarizer') {
-            summarizerReceivedContext = messages.last['content'] as String;
-            return jsonEncode({
-              'summary': 'fixed',
-              'recommendedActions': [],
-              'risks': [],
-              'openQuestions': [],
-            });
-          }
-          return 'reviewer advice';
-        },
-      );
+        final result = await coordinator.run(
+          enabled: true,
+          maxAgents: 5,
+          trigger: MultiAgentTrigger.postToolFailure,
+          postToolContext: 'Failed tool: run_command with exit code 127',
+          messages: const [
+            {'role': 'user', 'content': 'inspect logs and fix system'},
+          ],
+          classify: (messages) async => '{}', // 因为是非 preflight，这不会被调用
+          complete: (role, messages, {required thinkingSettings}) async {
+            roles.add(role.name);
+            if (role.name == 'summarizer') {
+              summarizerReceivedContext = messages.last['content'] as String;
+              return jsonEncode({
+                'summary': 'fixed',
+                'recommendedActions': [],
+                'risks': [],
+                'openQuestions': [],
+              });
+            }
+            return 'reviewer advice';
+          },
+        );
 
-      expect(result, isNotNull);
-      // 确认只执行了 reviewer 和 summarizer
-      expect(roles, containsAll(['reviewer', 'summarizer']));
-      expect(roles, isNot(contains('explore')));
-      expect(roles, isNot(contains('planner')));
-      expect(roles, isNot(contains('operator')));
+        expect(result, isNotNull);
+        // 确认只执行了 reviewer 和 summarizer
+        expect(roles, containsAll(['reviewer', 'summarizer']));
+        expect(roles, isNot(contains('explore')));
+        expect(roles, isNot(contains('planner')));
+        expect(roles, isNot(contains('operator')));
 
-      // 确认 postToolContext 传给了 summarizer
-      expect(summarizerReceivedContext,
-          contains('Failed tool: run_command with exit code 127'));
-    });
+        // 确认 postToolContext 传给了 summarizer
+        expect(
+          summarizerReceivedContext,
+          contains('Failed tool: run_command with exit code 127'),
+        );
+      },
+    );
 
     test(
-        'postBudgetAudit trigger runs only reviewer and summarizer with postToolContext',
-        () async {
-      const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
-      final roles = <String>[];
-      var summarizerReceivedContext = '';
+      'postBudgetAudit trigger runs only reviewer and summarizer with postToolContext',
+      () async {
+        const coordinator = MultiAgentCoordinator(retryBackoffMultiplierMs: 0);
+        final roles = <String>[];
+        var summarizerReceivedContext = '';
 
-      final result = await coordinator.run(
-        enabled: true,
-        maxAgents: 5,
-        trigger: MultiAgentTrigger.postBudgetAudit,
-        postToolContext: 'Budget audit rejected context info',
-        messages: const [
-          {'role': 'user', 'content': 'inspect logs and fix system'},
-        ],
-        classify: (messages) async => '{}',
-        complete: (role, messages, {required thinkingSettings}) async {
-          roles.add(role.name);
-          if (role.name == 'summarizer') {
-            summarizerReceivedContext = messages.last['content'] as String;
-            return jsonEncode({
-              'summary': 'fixed',
-              'recommendedActions': [],
-              'risks': [],
-              'openQuestions': [],
-            });
-          }
-          return 'reviewer advice';
-        },
-      );
+        final result = await coordinator.run(
+          enabled: true,
+          maxAgents: 5,
+          trigger: MultiAgentTrigger.postBudgetAudit,
+          postToolContext: 'Budget audit rejected context info',
+          messages: const [
+            {'role': 'user', 'content': 'inspect logs and fix system'},
+          ],
+          classify: (messages) async => '{}',
+          complete: (role, messages, {required thinkingSettings}) async {
+            roles.add(role.name);
+            if (role.name == 'summarizer') {
+              summarizerReceivedContext = messages.last['content'] as String;
+              return jsonEncode({
+                'summary': 'fixed',
+                'recommendedActions': [],
+                'risks': [],
+                'openQuestions': [],
+              });
+            }
+            return 'reviewer advice';
+          },
+        );
 
-      expect(result, isNotNull);
-      expect(roles, containsAll(['reviewer', 'summarizer']));
-      expect(roles, isNot(contains('explore')));
-      expect(roles, isNot(contains('planner')));
-      expect(roles, isNot(contains('operator')));
-      expect(summarizerReceivedContext,
-          contains('Budget audit rejected context info'));
-    });
+        expect(result, isNotNull);
+        expect(roles, containsAll(['reviewer', 'summarizer']));
+        expect(roles, isNot(contains('explore')));
+        expect(roles, isNot(contains('planner')));
+        expect(roles, isNot(contains('operator')));
+        expect(
+          summarizerReceivedContext,
+          contains('Budget audit rejected context info'),
+        );
+      },
+    );
   });
 
   test('normalizes max agent count', () {

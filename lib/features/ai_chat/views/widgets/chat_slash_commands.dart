@@ -17,10 +17,7 @@ class ToolOption {
   final String name;
   final String description;
 
-  const ToolOption({
-    required this.name,
-    required this.description,
-  });
+  const ToolOption({required this.name, required this.description});
 }
 
 const List<SlashCommandMeta> _defaultSlashCommands = [
@@ -136,10 +133,12 @@ class ChatSlashCommandsPanel extends StatelessWidget {
                   onTap: () {
                     final text = inputController.text;
                     final firstSpace = text.indexOf(' ');
-                    final arguments =
-                        firstSpace == -1 ? '' : text.substring(firstSpace + 1);
+                    final arguments = firstSpace == -1
+                        ? ''
+                        : text.substring(firstSpace + 1);
 
-                    final bool needsSpaceSuffix = command.command == '/tools' ||
+                    final bool needsSpaceSuffix =
+                        command.command == '/tools' ||
                         command.command == '/plan';
                     final canonicalCmd = needsSpaceSuffix
                         ? '${command.command} '
@@ -152,8 +151,9 @@ class ChatSlashCommandsPanel extends StatelessWidget {
                         ? nextText.length
                         : canonicalCmd.length;
 
-                    inputController.selection =
-                        TextSelection.collapsed(offset: nextCursorOffset);
+                    inputController.selection = TextSelection.collapsed(
+                      offset: nextCursorOffset,
+                    );
                     onStateChanged();
                   },
                 ),
@@ -180,8 +180,9 @@ class LlmChatCommandsHelper {
         final name = toolNameFromDefinition(definition);
         if (name == null) continue;
         final function = definition['function'];
-        final description =
-            function is Map<String, dynamic> ? function['description'] : null;
+        final description = function is Map<String, dynamic>
+            ? function['description']
+            : null;
         tools.add(
           ToolOption(
             name: name,
@@ -230,7 +231,8 @@ class LlmChatCommandsHelper {
                   .toList();
               return SafeArea(
                 child: SizedBox(
-                  height: MediaQuery.sizeOf(sheetContext).height *
+                  height:
+                      MediaQuery.sizeOf(sheetContext).height *
                       (maxToolSelectorHeightPercent / 100),
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
@@ -256,9 +258,9 @@ class LlmChatCommandsHelper {
                                   child: Text(
                                     strings.commandToolsNoResult,
                                     style: TextStyle(
-                                      color: Theme.of(sheetContext)
-                                          .colorScheme
-                                          .onSurfaceVariant,
+                                      color: Theme.of(
+                                        sheetContext,
+                                      ).colorScheme.onSurfaceVariant,
                                     ),
                                   ),
                                 )
@@ -266,24 +268,23 @@ class LlmChatCommandsHelper {
                                   itemCount: filteredTools.length,
                                   itemBuilder: (ctx, index) {
                                     final tool = filteredTools[index];
-                                    final isSelected =
-                                        selected.contains(tool.name);
+                                    final isSelected = selected.contains(
+                                      tool.name,
+                                    );
                                     return CheckboxListTile(
                                       value: isSelected,
                                       title: Text(tool.name),
                                       subtitle: Text(tool.description),
-                                      onChanged: (value) => setSheetState(
-                                        () {
-                                          if (!sheetContext.mounted) {
-                                            return;
-                                          }
-                                          if (value == true) {
-                                            selected.add(tool.name);
-                                          } else {
-                                            selected.remove(tool.name);
-                                          }
-                                        },
-                                      ),
+                                      onChanged: (value) => setSheetState(() {
+                                        if (!sheetContext.mounted) {
+                                          return;
+                                        }
+                                        if (value == true) {
+                                          selected.add(tool.name);
+                                        } else {
+                                          selected.remove(tool.name);
+                                        }
+                                      }),
                                     );
                                   },
                                 ),
@@ -303,8 +304,9 @@ class LlmChatCommandsHelper {
                             FilledButton(
                               onPressed: () {
                                 if (!sheetContext.mounted) return;
-                                Navigator.of(sheetContext)
-                                    .pop(Set.from(selected));
+                                Navigator.of(
+                                  sheetContext,
+                                ).pop(Set.from(selected));
                               },
                               child: Text(strings.save),
                             ),
@@ -327,10 +329,7 @@ class LlmChatCommandsHelper {
 
   static void showCommandFeedback(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        duration: const Duration(seconds: 2),
-      ),
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
     );
   }
 

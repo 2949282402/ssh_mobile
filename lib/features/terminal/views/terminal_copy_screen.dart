@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 class TerminalCopyScreen extends StatefulWidget {
@@ -76,7 +76,7 @@ class _TerminalCopyScreenState extends State<TerminalCopyScreen> {
                 'Consolas',
                 'Microsoft YaHei',
                 'PingFang SC',
-                'sans-serif'
+                'sans-serif',
               ],
               fontSize: 13,
               height: 1.35,

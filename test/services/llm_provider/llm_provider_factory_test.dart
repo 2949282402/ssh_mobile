@@ -49,12 +49,14 @@ void main() {
       expect(provider, isA<OpenAiChatProvider>());
     });
 
-    test('returns GeminiOpenAiCompatibleProvider for geminiOpenAiCompatible',
-        () {
-      final settings = buildSettings(LlmApiFormat.geminiOpenAiCompatible);
-      final provider = LlmProviderFactory.fromSettings(settings);
-      expect(provider, isA<GeminiOpenAiCompatibleProvider>());
-    });
+    test(
+      'returns GeminiOpenAiCompatibleProvider for geminiOpenAiCompatible',
+      () {
+        final settings = buildSettings(LlmApiFormat.geminiOpenAiCompatible);
+        final provider = LlmProviderFactory.fromSettings(settings);
+        expect(provider, isA<GeminiOpenAiCompatibleProvider>());
+      },
+    );
 
     test('returns AnthropicMessagesProvider for anthropicMessages', () {
       final settings = buildSettings(LlmApiFormat.anthropicMessages);
@@ -62,12 +64,14 @@ void main() {
       expect(provider, isA<AnthropicMessagesProvider>());
     });
 
-    test('falls back to OpenAiChatProvider for unimplemented openAiResponses',
-        () {
-      final settings = buildSettings(LlmApiFormat.openAiResponses);
-      final provider = LlmProviderFactory.fromSettings(settings);
-      expect(provider, isA<OpenAiChatProvider>());
-    });
+    test(
+      'falls back to OpenAiChatProvider for unimplemented openAiResponses',
+      () {
+        final settings = buildSettings(LlmApiFormat.openAiResponses);
+        final provider = LlmProviderFactory.fromSettings(settings);
+        expect(provider, isA<OpenAiChatProvider>());
+      },
+    );
 
     test('falls back to OpenAiChatProvider for unimplemented geminiNative', () {
       final settings = buildSettings(LlmApiFormat.geminiNative);

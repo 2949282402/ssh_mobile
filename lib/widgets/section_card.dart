@@ -33,19 +33,18 @@ class SectionCard extends StatelessWidget {
       ),
       trailing: isCollapsible && onToggle != null
           ? IconButton(
-              icon: Icon(isExpanded
-                  ? Icons.expand_less_rounded
-                  : Icons.expand_more_rounded),
+              icon: Icon(
+                isExpanded
+                    ? Icons.expand_less_rounded
+                    : Icons.expand_more_rounded,
+              ),
               onPressed: onToggle,
             )
           : trailing,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (isExpanded) ...[
-            const SizedBox(height: 8),
-            ...children,
-          ],
+          if (isExpanded) ...[const SizedBox(height: 8), ...children],
         ],
       ),
     );

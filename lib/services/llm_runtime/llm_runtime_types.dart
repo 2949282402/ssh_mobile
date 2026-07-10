@@ -77,11 +77,11 @@ class LlmTokenUsage {
       totalTokens: readInt('total_tokens'),
       promptCacheHitTokens:
           readNestedInt('prompt_tokens_details', 'cached_tokens') ??
-              readInt('prompt_cache_hit_tokens'),
+          readInt('prompt_cache_hit_tokens'),
       promptCacheMissTokens: readInt('prompt_cache_miss_tokens'),
       reasoningTokens:
           readNestedInt('completion_tokens_details', 'reasoning_tokens') ??
-              readInt('reasoning_tokens'),
+          readInt('reasoning_tokens'),
     );
   }
 

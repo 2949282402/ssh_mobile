@@ -20,14 +20,8 @@ class ToolSecretPolicy {
       r'\bAuthorization\s*:\s*(Bearer|Basic)\s+[^\r\n,;]+',
       caseSensitive: false,
     ),
-    RegExp(
-      r'\b(x-api-key|api-key)\s*:\s*[^\r\n,;]+',
-      caseSensitive: false,
-    ),
-    RegExp(
-      r'\b(Cookie|Set-Cookie)\s*:\s*[^\r\n]+',
-      caseSensitive: false,
-    ),
+    RegExp(r'\b(x-api-key|api-key)\s*:\s*[^\r\n,;]+', caseSensitive: false),
+    RegExp(r'\b(Cookie|Set-Cookie)\s*:\s*[^\r\n]+', caseSensitive: false),
   ];
   static final RegExp _urlSecretQueryPattern = RegExp(
     r'([?&](?:access_token|refresh_token|client_secret|api[_-]?key|x-api-key|token)=)[^&#\s]+',
@@ -266,12 +260,14 @@ class ToolSecretPolicy {
         return 'Environment variable dumps are blocked by the tool secret policy.';
       }
     }
-    if (_metadataEndpointPatterns
-        .any((pattern) => pattern.hasMatch(normalized))) {
+    if (_metadataEndpointPatterns.any(
+      (pattern) => pattern.hasMatch(normalized),
+    )) {
       return 'Cloud instance metadata endpoints are blocked by the tool secret policy.';
     }
-    if (_suspiciousPathPatterns
-        .any((pattern) => pattern.hasMatch(normalized))) {
+    if (_suspiciousPathPatterns.any(
+      (pattern) => pattern.hasMatch(normalized),
+    )) {
       return 'Commands that reference secret-bearing paths are blocked by the tool secret policy.';
     }
     return null;

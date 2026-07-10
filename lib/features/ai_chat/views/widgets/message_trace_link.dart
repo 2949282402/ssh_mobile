@@ -16,8 +16,9 @@ class _AgentTraceLink extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final String label;
     if (message.traces.isNotEmpty) {
-      final tools =
-          message.traces.where((trace) => trace.kind.contains('tool')).length;
+      final tools = message.traces
+          .where((trace) => trace.kind.contains('tool'))
+          .length;
       final approvals = message.traces
           .where((trace) => trace.kind.contains('approval'))
           .length;
@@ -29,11 +30,12 @@ class _AgentTraceLink extends StatelessWidget {
         '${message.traces.length} events',
         if (tools > 0) '$tools tools',
         if (approvals > 0) '$approvals approvals',
-        if (elapsed != null) elapsed,
+        ?elapsed,
       ].join(' · ');
     } else {
-      final shortRunId =
-          runId.length > 8 ? runId.substring(runId.length - 8) : runId;
+      final shortRunId = runId.length > 8
+          ? runId.substring(runId.length - 8)
+          : runId;
       label = 'Trace · $shortRunId';
     }
 
@@ -44,10 +46,7 @@ class _AgentTraceLink extends StatelessWidget {
         onTap: () {
           Navigator.of(context).push(
             MaterialPageRoute(
-              builder: (_) => AgentTraceDebugPage(
-                chatId: chatId,
-                runId: runId,
-              ),
+              builder: (_) => AgentTraceDebugPage(chatId: chatId, runId: runId),
             ),
           );
         },

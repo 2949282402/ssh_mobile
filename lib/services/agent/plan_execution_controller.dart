@@ -7,11 +7,11 @@ class PlanExecutionValidationResult {
   final String? code;
 
   const PlanExecutionValidationResult.allowed()
-      : allowed = true,
-        errorMessage = null,
-        code = null;
+    : allowed = true,
+      errorMessage = null,
+      code = null;
   const PlanExecutionValidationResult.denied(this.errorMessage, [this.code])
-      : allowed = false;
+    : allowed = false;
 }
 
 class PlanExecutionGateResult {
@@ -30,13 +30,7 @@ class PlanExecutionGateResult {
   });
 }
 
-enum PlanExecutionPhase {
-  none,
-  pending,
-  running,
-  blockedByFailure,
-  completed,
-}
+enum PlanExecutionPhase { none, pending, running, blockedByFailure, completed }
 
 class PlanExecutionSnapshot {
   final PlanExecutionPhase phase;
@@ -60,7 +54,8 @@ class PlanExecutionController {
   const PlanExecutionController();
 
   bool isStepScopedTool(String toolName) {
-    final isClientOrAppOrSearch = toolName.startsWith('client_') ||
+    final isClientOrAppOrSearch =
+        toolName.startsWith('client_') ||
         toolName.startsWith('app_') ||
         toolName == 'web_search' ||
         toolName.startsWith('client_webview_');
@@ -149,10 +144,7 @@ class PlanExecutionController {
         );
       }
 
-      return PlanExecutionGateResult(
-        allowed: true,
-        currentStep: currentStep,
-      );
+      return PlanExecutionGateResult(allowed: true, currentStep: currentStep);
     }
 
     return PlanExecutionGateResult(
@@ -181,14 +173,16 @@ class PlanExecutionController {
     int? currentStepIndex;
     AiTodoStep? currentStep;
 
-    final runningIndex =
-        steps.indexWhere((s) => s.status == StepStatus.running);
+    final runningIndex = steps.indexWhere(
+      (s) => s.status == StepStatus.running,
+    );
     if (runningIndex != -1) {
       currentStepIndex = runningIndex;
       currentStep = steps[runningIndex];
     } else {
-      final pendingIndex =
-          steps.indexWhere((s) => s.status == StepStatus.pending);
+      final pendingIndex = steps.indexWhere(
+        (s) => s.status == StepStatus.pending,
+      );
       if (pendingIndex != -1) {
         currentStepIndex = pendingIndex;
         currentStep = steps[pendingIndex];
@@ -196,8 +190,9 @@ class PlanExecutionController {
     }
 
     final hasFailedStep = steps.any((s) => s.status == StepStatus.failed);
-    final hasActiveSteps = steps.any((s) =>
-        s.status == StepStatus.pending || s.status == StepStatus.running);
+    final hasActiveSteps = steps.any(
+      (s) => s.status == StepStatus.pending || s.status == StepStatus.running,
+    );
     final isCompleted = !hasActiveSteps;
 
     final PlanExecutionPhase phase;
@@ -276,8 +271,9 @@ class PlanExecutionController {
     if (nextStatus == StepStatus.running || nextStatus == StepStatus.skipped) {
       // Check if any other task is currently running (only for nextStatus == running)
       if (nextStatus == StepStatus.running) {
-        final runningIndex =
-            steps.indexWhere((s) => s.status == StepStatus.running);
+        final runningIndex = steps.indexWhere(
+          (s) => s.status == StepStatus.running,
+        );
         if (runningIndex != -1 && runningIndex != targetIndex) {
           return PlanExecutionValidationResult.denied(
             'Order violation: cannot start task "${currentStep.name}" because task '
@@ -292,8 +288,9 @@ class PlanExecutionController {
         final priorStep = steps[i];
         if (priorStep.status == StepStatus.pending ||
             priorStep.status == StepStatus.running) {
-          final actionName =
-              nextStatus == StepStatus.running ? 'start' : 'skip';
+          final actionName = nextStatus == StepStatus.running
+              ? 'start'
+              : 'skip';
           return PlanExecutionValidationResult.denied(
             'Order violation: cannot $actionName task "${currentStep.name}" because a preceding task '
                 '"${priorStep.name}" is in state ${priorStep.status.name}. Execute tasks in order.',

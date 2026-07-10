@@ -19,10 +19,13 @@ extension AiChatOps on StorageService {
 
     try {
       final list = jsonDecode(jsonStr) as List<dynamic>;
-      final chats = list
-          .map((item) => AiChatRecord.fromJson(item as Map<String, dynamic>))
-          .toList()
-        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      final chats =
+          list
+              .map(
+                (item) => AiChatRecord.fromJson(item as Map<String, dynamic>),
+              )
+              .toList()
+            ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       return _aiChatsCache = List.unmodifiable(chats);
     } catch (e) {
       AppLogService.instance.error('Failed to load AI chats', error: e);
@@ -90,22 +93,29 @@ extension AiChatOps on StorageService {
     }
     final cached = _agentRunMetricsCache;
     if (cached != null) return cached;
-    final jsonStr =
-        await _readProtectedPref(StorageService._agentRunMetricsKey);
+    final jsonStr = await _readProtectedPref(
+      StorageService._agentRunMetricsKey,
+    );
     if (jsonStr == null || jsonStr.isEmpty) {
       return _agentRunMetricsCache = const [];
     }
 
     try {
       final list = jsonDecode(jsonStr) as List<dynamic>;
-      final metrics = list
-          .map((item) => AgentRunMetrics.fromJson(item as Map<String, dynamic>))
-          .toList()
-        ..sort((a, b) => b.finishedAt.compareTo(a.finishedAt));
+      final metrics =
+          list
+              .map(
+                (item) =>
+                    AgentRunMetrics.fromJson(item as Map<String, dynamic>),
+              )
+              .toList()
+            ..sort((a, b) => b.finishedAt.compareTo(a.finishedAt));
       return _agentRunMetricsCache = List.unmodifiable(metrics);
     } catch (e) {
-      AppLogService.instance
-          .error('Failed to load agent run metrics', error: e);
+      AppLogService.instance.error(
+        'Failed to load agent run metrics',
+        error: e,
+      );
       return _agentRunMetricsCache = const [];
     }
   }

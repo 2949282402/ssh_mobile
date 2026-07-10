@@ -16,24 +16,26 @@ void main() {
   }
 
   test('upsertAiChatRecordsByUpdatedAt inserts by latest updatedAt', () {
-    final result = upsertAiChatRecordsByUpdatedAt(
-      [chat('old', 1), chat('older', 0)],
-      chat('new', 2),
-    );
+    final result = upsertAiChatRecordsByUpdatedAt([
+      chat('old', 1),
+      chat('older', 0),
+    ], chat('new', 2));
 
     expect(result.map((item) => item.id), ['new', 'old', 'older']);
   });
 
-  test('upsertAiChatRecordsByUpdatedAt replaces existing record and limits',
-      () {
-    final result = upsertAiChatRecordsByUpdatedAt(
-      [chat('a', 3), chat('b', 2), chat('c', 1)],
-      chat('b', 4),
-      limit: 2,
-    );
+  test(
+    'upsertAiChatRecordsByUpdatedAt replaces existing record and limits',
+    () {
+      final result = upsertAiChatRecordsByUpdatedAt(
+        [chat('a', 3), chat('b', 2), chat('c', 1)],
+        chat('b', 4),
+        limit: 2,
+      );
 
-    expect(result.map((item) => item.id), ['b', 'a']);
-  });
+      expect(result.map((item) => item.id), ['b', 'a']);
+    },
+  );
 
   test('AiChatMessageRecord round-trips context, traces, and token stats', () {
     final createdAt = DateTime.utc(2026, 1, 2, 3, 4, 5);
@@ -87,65 +89,82 @@ void main() {
   });
 
   test(
-      'AiChatMessageRecord round-trips attachments and supports backward compatibility',
-      () {
-    final createdAt = DateTime.utc(2026, 1, 2, 3, 4, 5);
-    final attachment = AiChatAttachment(
-      fileName: 'notes.txt',
-      mimeType: 'text/plain',
-      sizeBytes: 15,
-      dataBase64: 'aGVsbG8gd29ybGQ=',
-    );
-    final message = AiChatMessageRecord(
-      role: 'user',
-      text: 'hello',
-      createdAt: createdAt,
-      attachments: [attachment],
-    );
+    'AiChatMessageRecord round-trips attachments and supports backward compatibility',
+    () {
+      final createdAt = DateTime.utc(2026, 1, 2, 3, 4, 5);
+      final attachment = AiChatAttachment(
+        fileName: 'notes.txt',
+        mimeType: 'text/plain',
+        sizeBytes: 15,
+        dataBase64: 'aGVsbG8gd29ybGQ=',
+      );
+      final message = AiChatMessageRecord(
+        role: 'user',
+        text: 'hello',
+        createdAt: createdAt,
+        attachments: [attachment],
+      );
 
-    // 1. Verify serialization round-trip with attachments
-    final decoded = AiChatMessageRecord.fromJson(message.toJson());
-    expect(decoded.attachments.length, 1);
-    expect(decoded.attachments[0].fileName, 'notes.txt');
-    expect(decoded.attachments[0].isTextFile, isTrue);
+      // 1. Verify serialization round-trip with attachments
+      final decoded = AiChatMessageRecord.fromJson(message.toJson());
+      expect(decoded.attachments.length, 1);
+      expect(decoded.attachments[0].fileName, 'notes.txt');
+      expect(decoded.attachments[0].isTextFile, isTrue);
 
-    // 2. Verify backward compatibility: old JSON without attachments field
-    final oldJson = {
-      'role': 'user',
-      'text': 'hello legacy',
-      'createdAt': createdAt.toIso8601String(),
-    };
-    final legacyDecoded = AiChatMessageRecord.fromJson(oldJson);
-    expect(legacyDecoded.text, 'hello legacy');
-    expect(legacyDecoded.attachments, isEmpty);
-  });
+      // 2. Verify backward compatibility: old JSON without attachments field
+      final oldJson = {
+        'role': 'user',
+        'text': 'hello legacy',
+        'createdAt': createdAt.toIso8601String(),
+      };
+      final legacyDecoded = AiChatMessageRecord.fromJson(oldJson);
+      expect(legacyDecoded.text, 'hello legacy');
+      expect(legacyDecoded.attachments, isEmpty);
+    },
+  );
 
   test('AiUploadSizeLimit.normalize clamps and defaults correctly', () {
     // Test default limits when null is passed
-    expect(AiUploadSizeLimit.normalizeImage(null),
-        AiUploadSizeLimit.defaultImageSizeBytes);
-    expect(AiUploadSizeLimit.normalizeFile(null),
-        AiUploadSizeLimit.defaultFileSizeBytes);
+    expect(
+      AiUploadSizeLimit.normalizeImage(null),
+      AiUploadSizeLimit.defaultImageSizeBytes,
+    );
+    expect(
+      AiUploadSizeLimit.normalizeFile(null),
+      AiUploadSizeLimit.defaultFileSizeBytes,
+    );
 
     // Test values inside the allowed ranges
     expect(AiUploadSizeLimit.normalizeImage(2 * 1024 * 1024), 2 * 1024 * 1024);
     expect(AiUploadSizeLimit.normalizeFile(20 * 1024 * 1024), 20 * 1024 * 1024);
 
     // Test values below the minimum range (clamp to first value)
-    expect(AiUploadSizeLimit.normalizeImage(0),
-        AiUploadSizeLimit.imageValues.first);
-    expect(AiUploadSizeLimit.normalizeImage(-100),
-        AiUploadSizeLimit.imageValues.first);
     expect(
-        AiUploadSizeLimit.normalizeFile(0), AiUploadSizeLimit.fileValues.first);
-    expect(AiUploadSizeLimit.normalizeFile(-500),
-        AiUploadSizeLimit.fileValues.first);
+      AiUploadSizeLimit.normalizeImage(0),
+      AiUploadSizeLimit.imageValues.first,
+    );
+    expect(
+      AiUploadSizeLimit.normalizeImage(-100),
+      AiUploadSizeLimit.imageValues.first,
+    );
+    expect(
+      AiUploadSizeLimit.normalizeFile(0),
+      AiUploadSizeLimit.fileValues.first,
+    );
+    expect(
+      AiUploadSizeLimit.normalizeFile(-500),
+      AiUploadSizeLimit.fileValues.first,
+    );
 
     // Test values above the maximum range (clamp to last value)
-    expect(AiUploadSizeLimit.normalizeImage(100 * 1024 * 1024),
-        AiUploadSizeLimit.imageValues.last);
-    expect(AiUploadSizeLimit.normalizeFile(500 * 1024 * 1024),
-        AiUploadSizeLimit.fileValues.last);
+    expect(
+      AiUploadSizeLimit.normalizeImage(100 * 1024 * 1024),
+      AiUploadSizeLimit.imageValues.last,
+    );
+    expect(
+      AiUploadSizeLimit.normalizeFile(500 * 1024 * 1024),
+      AiUploadSizeLimit.fileValues.last,
+    );
 
     // Test label helper
     expect(AiUploadSizeLimit.label(5 * 1024 * 1024), '5 MB');
@@ -177,8 +196,10 @@ void main() {
       final decoded = AiChatRecord.fromJson(json);
       expect(decoded.planMode, isTrue);
       expect(decoded.title, 'Plan Chat');
-      expect(decoded.approvedPlan?.assistantCreatedAt,
-          approvedPlan.assistantCreatedAt);
+      expect(
+        decoded.approvedPlan?.assistantCreatedAt,
+        approvedPlan.assistantCreatedAt,
+      );
       expect(decoded.approvedPlan?.approvedAt, approvedPlan.approvedAt);
     });
 
@@ -239,56 +260,57 @@ void main() {
     });
 
     test(
-        'canExitPlanMode only accepts persisted todoSteps on the latest assistant message',
-        () {
-      final base = DateTime.utc(2026, 1, 1, 12, 0);
-      final oldPlan = AiChatMessageRecord(
-        role: 'assistant',
-        text: 'Old plan',
-        createdAt: base,
-        todoSteps: const [
-          AiTodoStep(
-            id: 'task-old',
-            name: 'Old',
-            command: 'echo old',
-            description: 'old',
-          ),
-        ],
-      );
-      final latestWithoutSteps = AiChatMessageRecord(
-        role: 'assistant',
-        text: 'Broken plan',
-        createdAt: base.add(const Duration(minutes: 1)),
-      );
+      'canExitPlanMode only accepts persisted todoSteps on the latest assistant message',
+      () {
+        final base = DateTime.utc(2026, 1, 1, 12, 0);
+        final oldPlan = AiChatMessageRecord(
+          role: 'assistant',
+          text: 'Old plan',
+          createdAt: base,
+          todoSteps: const [
+            AiTodoStep(
+              id: 'task-old',
+              name: 'Old',
+              command: 'echo old',
+              description: 'old',
+            ),
+          ],
+        );
+        final latestWithoutSteps = AiChatMessageRecord(
+          role: 'assistant',
+          text: 'Broken plan',
+          createdAt: base.add(const Duration(minutes: 1)),
+        );
 
-      final blockedChat = AiChatRecord(
-        id: 'chat-blocked',
-        title: 'Blocked',
-        model: 'model',
-        messages: [oldPlan, latestWithoutSteps],
-        createdAt: base,
-        updatedAt: base.add(const Duration(minutes: 1)),
-        planMode: true,
-      );
-      expect(canExitPlanMode(blockedChat), isFalse);
+        final blockedChat = AiChatRecord(
+          id: 'chat-blocked',
+          title: 'Blocked',
+          model: 'model',
+          messages: [oldPlan, latestWithoutSteps],
+          createdAt: base,
+          updatedAt: base.add(const Duration(minutes: 1)),
+          planMode: true,
+        );
+        expect(canExitPlanMode(blockedChat), isFalse);
 
-      final allowedChat = blockedChat.copyWith(
-        messages: [
-          oldPlan,
-          latestWithoutSteps.copyWith(
-            todoSteps: const [
-              AiTodoStep(
-                id: 'task-new',
-                name: 'New',
-                command: 'echo new',
-                description: 'new',
-              ),
-            ],
-          ),
-        ],
-      );
-      expect(canExitPlanMode(allowedChat), isTrue);
-    });
+        final allowedChat = blockedChat.copyWith(
+          messages: [
+            oldPlan,
+            latestWithoutSteps.copyWith(
+              todoSteps: const [
+                AiTodoStep(
+                  id: 'task-new',
+                  name: 'New',
+                  command: 'echo new',
+                  description: 'new',
+                ),
+              ],
+            ),
+          ],
+        );
+        expect(canExitPlanMode(allowedChat), isTrue);
+      },
+    );
 
     test('canExitPlanMode respects PlanModeExitActor settings', () {
       final base = DateTime.utc(2026, 1, 1, 12, 0);
@@ -308,10 +330,14 @@ void main() {
         planMode: true,
       );
 
-      expect(canExitPlanMode(blockedChat, actor: PlanModeExitActor.llmTool),
-          isFalse);
-      expect(canExitPlanMode(blockedChat, actor: PlanModeExitActor.userUi),
-          isTrue);
+      expect(
+        canExitPlanMode(blockedChat, actor: PlanModeExitActor.llmTool),
+        isFalse,
+      );
+      expect(
+        canExitPlanMode(blockedChat, actor: PlanModeExitActor.userUi),
+        isTrue,
+      );
     });
   });
 
@@ -351,17 +377,19 @@ void main() {
       expect(decodedStep.exitCode, 0);
     });
 
-    test('backward compatibility: defaults todoSteps to empty list when absent',
-        () {
-      final time = DateTime.utc(2026, 1, 1, 12, 0);
-      final oldJson = {
-        'role': 'assistant',
-        'text': 'Hello world',
-        'createdAt': time.toIso8601String(),
-      };
+    test(
+      'backward compatibility: defaults todoSteps to empty list when absent',
+      () {
+        final time = DateTime.utc(2026, 1, 1, 12, 0);
+        final oldJson = {
+          'role': 'assistant',
+          'text': 'Hello world',
+          'createdAt': time.toIso8601String(),
+        };
 
-      final decoded = AiChatMessageRecord.fromJson(oldJson);
-      expect(decoded.todoSteps, isEmpty);
-    });
+        final decoded = AiChatMessageRecord.fromJson(oldJson);
+        expect(decoded.todoSteps, isEmpty);
+      },
+    );
   });
 }

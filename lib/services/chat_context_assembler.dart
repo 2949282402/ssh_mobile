@@ -7,9 +7,7 @@ import '../utils/text_chunker.dart';
 class ChatContextAssembler {
   final StorageService storageService;
 
-  const ChatContextAssembler({
-    required this.storageService,
-  });
+  const ChatContextAssembler({required this.storageService});
 
   Future<String?> buildUserContext({
     required String userText,
@@ -67,12 +65,12 @@ class ChatContextAssembler {
 
     final requestBlock =
         approvedPlanMessage != null && approvedPlanMessage.todoSteps.isNotEmpty
-            ? buildApprovedPlanExecutionContext(
-                userText: userText,
-                planMessage: approvedPlanMessage,
-                language: language,
-              )
-            : 'User request:\n$userText';
+        ? buildApprovedPlanExecutionContext(
+            userText: userText,
+            planMessage: approvedPlanMessage,
+            language: language,
+          )
+        : 'User request:\n$userText';
     if (lines.isEmpty) return requestBlock;
     return '${lines.join('\n\n')}\n\n$requestBlock';
   }
@@ -85,8 +83,8 @@ class ChatContextAssembler {
     final body = trimmed.isEmpty
         ? trimmed
         : !_shouldOmitAssistantBody(trimmed)
-            ? trimmed
-            : _slimAssistantBody(trimmed);
+        ? trimmed
+        : _slimAssistantBody(trimmed);
     if (traces.isEmpty) return body;
 
     final buffer = StringBuffer();
@@ -107,8 +105,11 @@ class ChatContextAssembler {
   String _traceMemoryContent(AiMessageTrace trace) {
     final trimmed = trace.content.trim();
     if (trimmed.length <= 2500) return trimmed;
-    final preview =
-        trimmed.replaceAll(RegExp(r'\s+'), ' ').trim().runes.take(900);
+    final preview = trimmed
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim()
+        .runes
+        .take(900);
     return '[Large ${trace.kind} output omitted from future context. '
         'The full trace remains visible in chat history. '
         'Length: ${trimmed.length} chars. '
@@ -116,8 +117,11 @@ class ChatContextAssembler {
   }
 
   String _slimAssistantBody(String trimmed) {
-    final preview =
-        trimmed.replaceAll(RegExp(r'\s+'), ' ').trim().runes.take(420);
+    final preview = trimmed
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim()
+        .runes
+        .take(420);
     final type = _largeAssistantBodyType(trimmed);
     return '[Large $type output omitted from future context. '
         'The full content remains visible in chat history. '

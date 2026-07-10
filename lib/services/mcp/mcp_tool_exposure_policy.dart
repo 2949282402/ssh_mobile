@@ -2,12 +2,7 @@ import '../ai_tool_service.dart';
 import 'mcp_ai_tool_adapter.dart';
 import 'mcp_server_settings.dart';
 
-enum McpToolPolicyResult {
-  exposed,
-  hidden,
-  approvalRequired,
-  blocked,
-}
+enum McpToolPolicyResult { exposed, hidden, approvalRequired, blocked }
 
 class McpToolPolicyDecision {
   final McpToolPolicyResult result;
@@ -74,9 +69,7 @@ class McpToolExposurePolicy {
 
   final McpAiToolAdapter adapter;
 
-  const McpToolExposurePolicy({
-    this.adapter = const McpAiToolAdapter(),
-  });
+  const McpToolExposurePolicy({this.adapter = const McpAiToolAdapter()});
 
   McpToolPolicyDecision evaluate(
     AiTool tool, {
@@ -100,7 +93,8 @@ class McpToolExposurePolicy {
     }
 
     final destructive = _isDestructive(tool);
-    final writeLike = _isWriteLike(tool) ||
+    final writeLike =
+        _isWriteLike(tool) ||
         destructive ||
         defaultRequireApprovalTools.contains(tool.name);
     if (writeLike) {

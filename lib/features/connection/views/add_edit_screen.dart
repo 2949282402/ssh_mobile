@@ -83,15 +83,17 @@ class _AddEditScreenState extends State<AddEditScreen> {
       _launchMode = TerminalLaunchMode.ssh;
     }
     _keepAlive = config.keepAlive;
-    _tmuxAutoDeleteController.text =
-        _secondsToDisplayMinutes(config.tmuxAutoDeleteSeconds).toString();
+    _tmuxAutoDeleteController.text = _secondsToDisplayMinutes(
+      config.tmuxAutoDeleteSeconds,
+    ).toString();
     _jumpHostController.text = config.jumpHost ?? '';
     _jumpPortController.text = config.jumpPort?.toString() ?? '22';
     _jumpUsernameController.text = config.jumpUsername ?? '';
 
     _jumpHostExpanded = config.jumpHost != null && config.jumpHost!.isNotEmpty;
     final minutes = _secondsToDisplayMinutes(config.tmuxAutoDeleteSeconds);
-    _advancedOptionsExpanded = config.serverPlatform != ServerPlatform.linux ||
+    _advancedOptionsExpanded =
+        config.serverPlatform != ServerPlatform.linux ||
         config.launchMode != TerminalLaunchMode.tmux ||
         !config.keepAlive ||
         minutes != 10;
@@ -130,8 +132,9 @@ class _AddEditScreenState extends State<AddEditScreen> {
   @override
   Widget build(BuildContext context) {
     final strings = _strings(context);
-    final isSaving =
-        context.select<ConnectionViewModel, bool>((vm) => vm.isSaving);
+    final isSaving = context.select<ConnectionViewModel, bool>(
+      (vm) => vm.isSaving,
+    );
 
     final isDesktop = isDesktopLayout(context);
 
@@ -216,8 +219,9 @@ class _AddEditScreenState extends State<AddEditScreen> {
           ),
         ],
       ),
-      bottomNavigationBar:
-          MediaQuery.viewInsetsOf(context).bottom > 0 ? null : stickyActionBar,
+      bottomNavigationBar: MediaQuery.viewInsetsOf(context).bottom > 0
+          ? null
+          : stickyActionBar,
       body: _isLoadingSecrets
           ? const Center(
               child: SizedBox(
@@ -298,11 +302,14 @@ class _AddEditScreenState extends State<AddEditScreen> {
                         children: [
                           _section(strings.jumpHostOptional),
                           IconButton(
-                            icon: Icon(_jumpHostExpanded
-                                ? Icons.expand_less_rounded
-                                : Icons.expand_more_rounded),
+                            icon: Icon(
+                              _jumpHostExpanded
+                                  ? Icons.expand_less_rounded
+                                  : Icons.expand_more_rounded,
+                            ),
                             onPressed: () => setState(
-                                () => _jumpHostExpanded = !_jumpHostExpanded),
+                              () => _jumpHostExpanded = !_jumpHostExpanded,
+                            ),
                           ),
                         ],
                       ),
@@ -329,12 +336,15 @@ class _AddEditScreenState extends State<AddEditScreen> {
                         children: [
                           _section(strings.advancedOptions),
                           IconButton(
-                            icon: Icon(_advancedOptionsExpanded
-                                ? Icons.expand_less_rounded
-                                : Icons.expand_more_rounded),
-                            onPressed: () => setState(() =>
-                                _advancedOptionsExpanded =
-                                    !_advancedOptionsExpanded),
+                            icon: Icon(
+                              _advancedOptionsExpanded
+                                  ? Icons.expand_less_rounded
+                                  : Icons.expand_more_rounded,
+                            ),
+                            onPressed: () => setState(
+                              () => _advancedOptionsExpanded =
+                                  !_advancedOptionsExpanded,
+                            ),
                           ),
                         ],
                       ),
@@ -594,8 +604,9 @@ class _AddEditScreenState extends State<AddEditScreen> {
   Widget _buildLaunchModeSelector() {
     final strings = _strings(context);
     final supportsTmux = _serverPlatform == ServerPlatform.linux;
-    final selectedLaunchMode =
-        supportsTmux ? _launchMode : TerminalLaunchMode.ssh;
+    final selectedLaunchMode = supportsTmux
+        ? _launchMode
+        : TerminalLaunchMode.ssh;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -626,12 +637,13 @@ class _AddEditScreenState extends State<AddEditScreen> {
           !supportsTmux
               ? strings.windowsTmuxUnavailable
               : _launchMode == TerminalLaunchMode.tmux
-                  ? strings.tmuxModeDescription
-                  : strings.sshModeDescription,
+              ? strings.tmuxModeDescription
+              : strings.sshModeDescription,
           style: TextStyle(
             fontSize: 12,
-            color:
-                Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.62),
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurface.withValues(alpha: 0.62),
           ),
         ),
       ],
@@ -683,8 +695,9 @@ class _AddEditScreenState extends State<AddEditScreen> {
               : strings.linuxMonitoringDescription,
           style: TextStyle(
             fontSize: 12,
-            color:
-                Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.62),
+            color: Theme.of(
+              context,
+            ).colorScheme.onSurface.withValues(alpha: 0.62),
           ),
         ),
       ],
@@ -721,8 +734,10 @@ class _AddEditScreenState extends State<AddEditScreen> {
       child: SwitchListTile(
         contentPadding: EdgeInsets.zero,
         title: Text(strings.keepAliveTitle),
-        subtitle: Text(strings.keepAliveSubtitle,
-            style: const TextStyle(fontSize: 12)),
+        subtitle: Text(
+          strings.keepAliveSubtitle,
+          style: const TextStyle(fontSize: 12),
+        ),
         value: _keepAlive,
         activeThumbColor: Theme.of(context).colorScheme.secondary,
         onChanged: (value) => setState(() => _keepAlive = value),
@@ -740,8 +755,9 @@ class _AddEditScreenState extends State<AddEditScreen> {
       final effectiveLaunchMode = _serverPlatform == ServerPlatform.windows
           ? TerminalLaunchMode.ssh
           : _launchMode;
-      final existing =
-          isEditing ? connectionViewModel.getConnection(widget.editId!) : null;
+      final existing = isEditing
+          ? connectionViewModel.getConnection(widget.editId!)
+          : null;
       final host = _hostController.text.trim();
       final port = int.parse(_portController.text.trim());
       final keepHostKeyTrust =
@@ -759,8 +775,9 @@ class _AddEditScreenState extends State<AddEditScreen> {
         serverPlatform: _serverPlatform,
         tmuxAutoDeleteSeconds: _tmuxAutoDeleteSecondsFromInput(),
         keepAlive: _keepAlive,
-        hostKeyFingerprint:
-            keepHostKeyTrust ? existing.hostKeyFingerprint : null,
+        hostKeyFingerprint: keepHostKeyTrust
+            ? existing.hostKeyFingerprint
+            : null,
         hostKeyAlgorithm: keepHostKeyTrust ? existing.hostKeyAlgorithm : null,
         hostKeyTrustedAt: keepHostKeyTrust ? existing.hostKeyTrustedAt : null,
         jumpHost: _jumpHostController.text.isNotEmpty
@@ -838,7 +855,8 @@ class _AddEditScreenState extends State<AddEditScreen> {
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: TextButton.styleFrom(
-                foregroundColor: Theme.of(context).colorScheme.error),
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
             child: Text(strings.saveAndDisconnect),
           ),
         ],

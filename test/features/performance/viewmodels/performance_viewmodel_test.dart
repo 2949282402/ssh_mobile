@@ -33,8 +33,9 @@ void main() {
 
   group('PerformanceMonitorViewModel Tests', () {
     test('Initialization values', () {
-      final viewModel =
-          PerformanceMonitorViewModel(monitorService: monitorService);
+      final viewModel = PerformanceMonitorViewModel(
+        monitorService: monitorService,
+      );
 
       expect(viewModel.activeTabIndex, equals(0));
       expect(viewModel.serversCollapsed, isFalse);
@@ -45,34 +46,38 @@ void main() {
       expect(viewModel.monitoringConnectionIds, isEmpty);
     });
 
-    test('TabIndex, serversCollapsed, and activeConnection state modifications',
-        () {
-      final viewModel =
-          PerformanceMonitorViewModel(monitorService: monitorService);
+    test(
+      'TabIndex, serversCollapsed, and activeConnection state modifications',
+      () {
+        final viewModel = PerformanceMonitorViewModel(
+          monitorService: monitorService,
+        );
 
-      bool notified = false;
-      viewModel.addListener(() {
-        notified = true;
-      });
+        bool notified = false;
+        viewModel.addListener(() {
+          notified = true;
+        });
 
-      viewModel.setTabIndex(2);
-      expect(viewModel.activeTabIndex, equals(2));
-      expect(notified, isTrue);
+        viewModel.setTabIndex(2);
+        expect(viewModel.activeTabIndex, equals(2));
+        expect(notified, isTrue);
 
-      notified = false;
-      viewModel.setServersCollapsed(true);
-      expect(viewModel.serversCollapsed, isTrue);
-      expect(notified, isTrue);
+        notified = false;
+        viewModel.setServersCollapsed(true);
+        expect(viewModel.serversCollapsed, isTrue);
+        expect(notified, isTrue);
 
-      notified = false;
-      viewModel.setActiveConnection('conn_123');
-      expect(viewModel.activeConnectionId, equals('conn_123'));
-      expect(notified, isTrue);
-    });
+        notified = false;
+        viewModel.setActiveConnection('conn_123');
+        expect(viewModel.activeConnectionId, equals('conn_123'));
+        expect(notified, isTrue);
+      },
+    );
 
     test('startMonitoring and stopMonitoring calls correctly', () {
-      final viewModel =
-          PerformanceMonitorViewModel(monitorService: monitorService);
+      final viewModel = PerformanceMonitorViewModel(
+        monitorService: monitorService,
+      );
 
       expect(viewModel.isRunning, isFalse);
       viewModel.stopMonitoring();

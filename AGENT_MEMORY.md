@@ -19,6 +19,12 @@ across sessions.
 
 ## Notes
 
+- 2026-07-10: Portfolio hardening pins the Dart/Flutter dependency baseline,
+  adds CI formatting/coverage/Android/iOS gates, ignores generated coverage,
+  and replaces default platform icons through `tool/generate_app_icons.dart`.
+  Custom mobile home navigation items expose one labeled semantic button with
+  selected state; keep icon/text descendants excluded to avoid duplicate
+  screen-reader announcements.
 - 2026-07-04: Fixed Windows compilation error in GitHub Actions (due to deprecation of C++ experimental coroutines in newer MSVC toolsets) by adding `_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS` to the global CMake definitions in [windows/CMakeLists.txt](file:///home/ubuntu/Documents/coding/ssh_mobile/windows/CMakeLists.txt).
 - 2026-07-01: Local MCP Server is implemented in Flutter/Dart under
   `lib/services/mcp/`, not native runners. It binds only to local hosts,

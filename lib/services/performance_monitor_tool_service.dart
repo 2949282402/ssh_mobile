@@ -120,9 +120,7 @@ class PerformanceMonitorToolService implements PerformanceMonitorToolAdapter {
         ? service.healthByConnection.keys.toList()
         : connectionIds;
     return {
-      'health': {
-        for (final id in ids) id: service.healthFor(id).toJson(),
-      },
+      'health': {for (final id in ids) id: service.healthFor(id).toJson()},
     };
   }
 
@@ -150,14 +148,13 @@ class PerformanceMonitorToolService implements PerformanceMonitorToolAdapter {
 
   @override
   Map<String, dynamic> getAlerts({int limit = 50}) {
-    final alerts = service.alerts.reversed.take(limit).map((item) {
-      return item.toJson();
-    }).toList(growable: false);
-    return {
-      'alerts': alerts,
-      'returned': alerts.length,
-      'limit': limit,
-    };
+    final alerts = service.alerts.reversed
+        .take(limit)
+        .map((item) {
+          return item.toJson();
+        })
+        .toList(growable: false);
+    return {'alerts': alerts, 'returned': alerts.length, 'limit': limit};
   }
 
   @override

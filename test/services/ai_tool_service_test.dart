@@ -96,10 +96,7 @@ void main() {
   });
 
   test('allows Linux read-only diagnostics', () {
-    final review = tools.reviewCommand(
-      'df -h',
-      platform: ServerPlatform.linux,
-    );
+    final review = tools.reviewCommand('df -h', platform: ServerPlatform.linux);
 
     expect(review.blocked, isFalse);
     expect(review.requiresApproval, isFalse);
@@ -180,10 +177,7 @@ void main() {
   });
 
   test('requires explicit shell prefix for Windows commands', () {
-    final review = tools.reviewCommand(
-      'dir',
-      platform: ServerPlatform.windows,
-    );
+    final review = tools.reviewCommand('dir', platform: ServerPlatform.windows);
 
     expect(review.blocked, isTrue);
     expect(review.reason, contains('explicit'));
@@ -220,92 +214,93 @@ void main() {
     expect(limit['description'], contains('8 results'));
   });
 
-  test('OpenAI strict tool definition strips unsupported schema keywords',
-      () async {
-    final settings = (await storage.loadAiConnectionSettings()).copyWith(
-      baseUrl: 'https://api.openai.com/v1',
-      model: 'gpt-4o-2024-08-06',
-    );
-    final tool = AiTool(
-      name: 'demo_tool',
-      description: 'Demo tool',
-      properties: {
-        'limit': {
-          'type': 'integer',
-          'description': 'Optional limit.',
-          'minimum': 1,
-          'maximum': 10,
-          'default': 5,
-        },
-        'tags': {
-          'type': 'array',
-          'description': 'Optional tags.',
-          'items': {
-            'type': 'string',
-            'minLength': 2,
+  test(
+    'OpenAI strict tool definition strips unsupported schema keywords',
+    () async {
+      final settings = (await storage.loadAiConnectionSettings()).copyWith(
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-4o-2024-08-06',
+      );
+      final tool = AiTool(
+        name: 'demo_tool',
+        description: 'Demo tool',
+        properties: {
+          'limit': {
+            'type': 'integer',
+            'description': 'Optional limit.',
+            'minimum': 1,
+            'maximum': 10,
+            'default': 5,
           },
-          'minItems': 1,
+          'tags': {
+            'type': 'array',
+            'description': 'Optional tags.',
+            'items': {'type': 'string', 'minLength': 2},
+            'minItems': 1,
+          },
+          'mode': {
+            'type': 'string',
+            'description': 'Required mode.',
+            'enum': ['fast', 'safe'],
+          },
         },
-        'mode': {
-          'type': 'string',
-          'description': 'Required mode.',
-          'enum': ['fast', 'safe'],
+        required: const ['mode'],
+        handler: (args) async => '{}',
+      );
+
+      final definition = tool.definitionFor(settings);
+      final function = definition['function'] as Map<String, dynamic>;
+      final parameters = function['parameters'] as Map<String, dynamic>;
+      final properties = parameters['properties'] as Map<String, dynamic>;
+      final limit = properties['limit'] as Map<String, dynamic>;
+      final tags = properties['tags'] as Map<String, dynamic>;
+      final tagItems = tags['items'] as Map<String, dynamic>;
+      final mode = properties['mode'] as Map<String, dynamic>;
+
+      expect(function['strict'], isTrue);
+      expect(parameters['required'], ['limit', 'tags', 'mode']);
+      expect(limit.keys, isNot(contains('minimum')));
+      expect(limit.keys, isNot(contains('maximum')));
+      expect(limit.keys, isNot(contains('default')));
+      expect(limit['type'], contains('null'));
+      expect(tags.keys, isNot(contains('minItems')));
+      expect(tagItems.keys, isNot(contains('minLength')));
+      expect(tags['type'], contains('null'));
+      expect(mode['type'], 'string');
+      expect(mode['enum'], ['fast', 'safe']);
+    },
+  );
+
+  test(
+    'OpenAI strict tool definition is disabled for fine-tuned models',
+    () async {
+      final settings = (await storage.loadAiConnectionSettings()).copyWith(
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'ft:gpt-4o-mini:org:suffix:id',
+      );
+      final tool = AiTool(
+        name: 'demo_tool',
+        description: 'Demo tool',
+        properties: {
+          'limit': {
+            'type': 'integer',
+            'description': 'Optional limit.',
+            'minimum': 1,
+          },
         },
-      },
-      required: const ['mode'],
-      handler: (args) async => '{}',
-    );
+        handler: (args) async => '{}',
+      );
 
-    final definition = tool.definitionFor(settings);
-    final function = definition['function'] as Map<String, dynamic>;
-    final parameters = function['parameters'] as Map<String, dynamic>;
-    final properties = parameters['properties'] as Map<String, dynamic>;
-    final limit = properties['limit'] as Map<String, dynamic>;
-    final tags = properties['tags'] as Map<String, dynamic>;
-    final tagItems = tags['items'] as Map<String, dynamic>;
-    final mode = properties['mode'] as Map<String, dynamic>;
+      final definition = tool.definitionFor(settings);
+      final function = definition['function'] as Map<String, dynamic>;
+      final parameters = function['parameters'] as Map<String, dynamic>;
+      final properties = parameters['properties'] as Map<String, dynamic>;
+      final limit = properties['limit'] as Map<String, dynamic>;
 
-    expect(function['strict'], isTrue);
-    expect(parameters['required'], ['limit', 'tags', 'mode']);
-    expect(limit.keys, isNot(contains('minimum')));
-    expect(limit.keys, isNot(contains('maximum')));
-    expect(limit.keys, isNot(contains('default')));
-    expect(limit['type'], contains('null'));
-    expect(tags.keys, isNot(contains('minItems')));
-    expect(tagItems.keys, isNot(contains('minLength')));
-    expect(tags['type'], contains('null'));
-    expect(mode['type'], 'string');
-    expect(mode['enum'], ['fast', 'safe']);
-  });
-
-  test('OpenAI strict tool definition is disabled for fine-tuned models',
-      () async {
-    final settings = (await storage.loadAiConnectionSettings()).copyWith(
-      baseUrl: 'https://api.openai.com/v1',
-      model: 'ft:gpt-4o-mini:org:suffix:id',
-    );
-    final tool = AiTool(
-      name: 'demo_tool',
-      description: 'Demo tool',
-      properties: {
-        'limit': {
-          'type': 'integer',
-          'description': 'Optional limit.',
-          'minimum': 1,
-        },
-      },
-      handler: (args) async => '{}',
-    );
-
-    final definition = tool.definitionFor(settings);
-    final function = definition['function'] as Map<String, dynamic>;
-    final parameters = function['parameters'] as Map<String, dynamic>;
-    final properties = parameters['properties'] as Map<String, dynamic>;
-    final limit = properties['limit'] as Map<String, dynamic>;
-
-    expect(function.containsKey('strict'), isFalse);
-    expect(limit['minimum'], 1);
-  });
+      expect(function.containsKey('strict'), isFalse);
+      expect(limit['minimum'], 1);
+    },
+  );
 
   test('hides local web search when disabled by the user', () async {
     await storage.saveAiConnectionSettings(
@@ -320,10 +315,9 @@ void main() {
   });
 
   test('local web search reports missing chat session', () async {
-    final raw = await toolsWithoutChatSession.execute(
-      'web_search',
-      {'query': 'flutter'},
-    );
+    final raw = await toolsWithoutChatSession.execute('web_search', {
+      'query': 'flutter',
+    });
     final decoded = jsonDecode(raw) as Map<String, dynamic>;
 
     expect(decoded['provider'], 'local_webview');
@@ -346,8 +340,9 @@ void main() {
     final definitions = await tools.toolDefinitions();
     final names = definitions
         .map(
-          (definition) => (definition['function']
-              as Map<String, dynamic>)['name'] as String,
+          (definition) =>
+              (definition['function'] as Map<String, dynamic>)['name']
+                  as String,
         )
         .toList();
 
@@ -392,8 +387,9 @@ void main() {
           (definition['function'] as Map<String, dynamic>)['name'] ==
           'client_query_logs',
     );
-    final queryLogsParams = (queryLogs['function']
-        as Map<String, dynamic>)['parameters'] as Map<String, dynamic>;
+    final queryLogsParams =
+        (queryLogs['function'] as Map<String, dynamic>)['parameters']
+            as Map<String, dynamic>;
     final queryLogsProps =
         queryLogsParams['properties'] as Map<String, dynamic>;
     expect((queryLogsProps['limit'] as Map<String, dynamic>)['default'], 50);
@@ -404,93 +400,101 @@ void main() {
           (definition['function'] as Map<String, dynamic>)['name'] ==
           'client_webview_navigate',
     );
-    final navigateParams = (navigate['function']
-        as Map<String, dynamic>)['parameters'] as Map<String, dynamic>;
+    final navigateParams =
+        (navigate['function'] as Map<String, dynamic>)['parameters']
+            as Map<String, dynamic>;
     final navigateProps = navigateParams['properties'] as Map<String, dynamic>;
     expect(navigateParams['required'], ['action']);
-    expect(
-      (navigateProps['action'] as Map<String, dynamic>)['enum'],
-      ['open', 'back', 'forward', 'refresh'],
-    );
+    expect((navigateProps['action'] as Map<String, dynamic>)['enum'], [
+      'open',
+      'back',
+      'forward',
+      'refresh',
+    ]);
   });
 
-  test('update server metadata ignores strict-schema null optional fields',
-      () async {
-    final arguments = {
-      'connectionId': 'server-1',
-      'name': 'Renamed Server',
-      'serverPlatform': null,
-      'launchMode': null,
-      'jumpHost': null,
-      'jumpPort': null,
-      'jumpUsername': null,
-    };
-    final approval = await tools.approvalRequestFor(
-      'update_server_metadata',
-      arguments,
-    );
-    final result = await tools.execute(
-      'update_server_metadata',
-      arguments,
-      approvedWrite: true,
-    );
+  test(
+    'update server metadata ignores strict-schema null optional fields',
+    () async {
+      final arguments = {
+        'connectionId': 'server-1',
+        'name': 'Renamed Server',
+        'serverPlatform': null,
+        'launchMode': null,
+        'jumpHost': null,
+        'jumpPort': null,
+        'jumpUsername': null,
+      };
+      final approval = await tools.approvalRequestFor(
+        'update_server_metadata',
+        arguments,
+      );
+      final result = await tools.execute(
+        'update_server_metadata',
+        arguments,
+        approvedWrite: true,
+      );
 
-    final decoded = jsonDecode(result) as Map<String, dynamic>;
-    final changes = serverCatalog.lastMetadataChanges!;
+      final decoded = jsonDecode(result) as Map<String, dynamic>;
+      final changes = serverCatalog.lastMetadataChanges!;
 
-    expect(approval?.command, 'UPDATE SERVER METADATA (name)');
-    expect(approval?.contentPreview, 'name');
-    expect(decoded['updated'], isTrue);
-    expect(changes, {'name': 'Renamed Server'});
-    expect(changes.containsKey('serverPlatform'), isFalse);
-    expect(changes.containsKey('launchMode'), isFalse);
-  });
+      expect(approval?.command, 'UPDATE SERVER METADATA (name)');
+      expect(approval?.contentPreview, 'name');
+      expect(decoded['updated'], isTrue);
+      expect(changes, {'name': 'Renamed Server'});
+      expect(changes.containsKey('serverPlatform'), isFalse);
+      expect(changes.containsKey('launchMode'), isFalse);
+    },
+  );
 
-  test('client permission tool delegates to the client system adapter',
-      () async {
-    final raw = await tools.execute('client_get_permission_status', {});
-    final decoded = jsonDecode(raw) as Map<String, dynamic>;
+  test(
+    'client permission tool delegates to the client system adapter',
+    () async {
+      final raw = await tools.execute('client_get_permission_status', {});
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
 
-    expect(decoded['execution'], 'client');
-    expect(decoded['notificationGranted'], isTrue);
-  });
+      expect(decoded['execution'], 'client');
+      expect(decoded['notificationGranted'], isTrue);
+    },
+  );
 
-  test('client runtime health tool exposes schema and blocking result',
-      () async {
-    final definitions = await tools.toolDefinitions();
-    final names = definitions
-        .map((definition) => (definition['function'] as Map)['name'])
-        .toList();
-    expect(names, contains('client_check_runtime_health'));
+  test(
+    'client runtime health tool exposes schema and blocking result',
+    () async {
+      final definitions = await tools.toolDefinitions();
+      final names = definitions
+          .map((definition) => (definition['function'] as Map)['name'])
+          .toList();
+      expect(names, contains('client_check_runtime_health'));
 
-    clientSystem.networkInfo = {
-      'execution': 'client',
-      'target': 'client_device',
-      'supported': true,
-      'connected': true,
-      'validated': false,
-    };
-    final raw = await tools.execute(
-      'client_check_runtime_health',
-      {'profile': 'agent_execution'},
-    );
-    final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      clientSystem.networkInfo = {
+        'execution': 'client',
+        'target': 'client_device',
+        'supported': true,
+        'connected': true,
+        'validated': false,
+      };
+      final raw = await tools.execute('client_check_runtime_health', {
+        'profile': 'agent_execution',
+      });
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
 
-    expect(decoded['status'], 'blocking');
-    expect(decoded['canProceed'], isFalse);
-    final issues = decoded['issues'] as List<dynamic>;
-    expect(
-      issues.map((issue) => (issue as Map)['code']),
-      contains('network_not_validated'),
-    );
-    expect(decoded['raw'], isA<Map<String, dynamic>>());
-  });
+      expect(decoded['status'], 'blocking');
+      expect(decoded['canProceed'], isFalse);
+      final issues = decoded['issues'] as List<dynamic>;
+      expect(
+        issues.map((issue) => (issue as Map)['code']),
+        contains('network_not_validated'),
+      );
+      expect(decoded['raw'], isA<Map<String, dynamic>>());
+    },
+  );
 
   test('client log query uses default limit and passes filters', () async {
-    final raw = await tools.execute(
-      'client_query_logs',
-      {'level': 'warning', 'contains': 'ssh'},
-    );
+    final raw = await tools.execute('client_query_logs', {
+      'level': 'warning',
+      'contains': 'ssh',
+    });
     final decoded = jsonDecode(raw) as Map<String, dynamic>;
 
     expect(clientSystem.lastQueryLevel, 'warning');
@@ -499,14 +503,16 @@ void main() {
     expect(decoded['limit'], 50);
   });
 
-  test('client log count tool delegates to the client system adapter',
-      () async {
-    final raw = await tools.execute('client_get_log_counts', {});
-    final decoded = jsonDecode(raw) as Map<String, dynamic>;
+  test(
+    'client log count tool delegates to the client system adapter',
+    () async {
+      final raw = await tools.execute('client_get_log_counts', {});
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
 
-    expect(clientSystem.getLogCountsCalled, isTrue);
-    expect((decoded['counts'] as Map<String, dynamic>)['warning'], 2);
-  });
+      expect(clientSystem.getLogCountsCalled, isTrue);
+      expect((decoded['counts'] as Map<String, dynamic>)['warning'], 2);
+    },
+  );
 
   test('webview state tool requires a bound chat session', () async {
     final raw = await toolsWithoutChatSession.execute(
@@ -542,137 +548,136 @@ void main() {
     expect(decoded['canGoBack'], isTrue);
   });
 
-  test('webview navigate tool preserves blocked AI browsing responses',
-      () async {
-    clientWebView.navigationResult = ClientWebViewNavigationResult(
-      chatId: 'chat-1',
-      supported: true,
-      action: 'back',
-      navigated: false,
-      blocked: true,
-      error: 'AI WebView browsing is active.',
-    );
+  test(
+    'webview navigate tool preserves blocked AI browsing responses',
+    () async {
+      clientWebView.navigationResult = ClientWebViewNavigationResult(
+        chatId: 'chat-1',
+        supported: true,
+        action: 'back',
+        navigated: false,
+        blocked: true,
+        error: 'AI WebView browsing is active.',
+      );
 
-    final raw = await tools.execute(
-      'client_webview_navigate',
-      {'action': 'back'},
-    );
-    final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      final raw = await tools.execute('client_webview_navigate', {
+        'action': 'back',
+      });
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
 
-    expect(clientWebView.lastNavigateChatId, 'chat-1');
-    expect(clientWebView.lastNavigateAction, 'back');
-    expect(decoded['blocked'], isTrue);
-    expect(decoded['error'], contains('AI WebView browsing'));
-  });
+      expect(clientWebView.lastNavigateChatId, 'chat-1');
+      expect(clientWebView.lastNavigateAction, 'back');
+      expect(decoded['blocked'], isTrue);
+      expect(decoded['error'], contains('AI WebView browsing'));
+    },
+  );
 
   group('AI Experience Skills tools management', () {
     test(
-        'client_save_experience_skill, client_list_skills, and client_update_skill tools CRUD flow',
-        () async {
-      final rawSave = await tools.execute(
-          'client_save_experience_skill',
-          {
-            'summary': 'Short summary rule of deployment',
-            'title': 'Deploy Skill',
-            'content': 'Check server state first',
-            'references': [
-              {'title': 'Nginx restart', 'content': 'systemctl restart nginx'},
-              {'title': 'Service check', 'content': 'systemctl status nginx'}
-            ]
-          },
-          approvedWrite: true);
-      final decodedSave = jsonDecode(rawSave) as Map<String, dynamic>;
-      expect(decodedSave['saved'], isTrue);
-      final skillId = decodedSave['skillId'] as String;
+      'client_save_experience_skill, client_list_skills, and client_update_skill tools CRUD flow',
+      () async {
+        final rawSave = await tools.execute('client_save_experience_skill', {
+          'summary': 'Short summary rule of deployment',
+          'title': 'Deploy Skill',
+          'content': 'Check server state first',
+          'references': [
+            {'title': 'Nginx restart', 'content': 'systemctl restart nginx'},
+            {'title': 'Service check', 'content': 'systemctl status nginx'},
+          ],
+        }, approvedWrite: true);
+        final decodedSave = jsonDecode(rawSave) as Map<String, dynamic>;
+        expect(decodedSave['saved'], isTrue);
+        final skillId = decodedSave['skillId'] as String;
 
-      final savedSkills = await storage.loadAiSkills();
-      expect(savedSkills, hasLength(1));
-      final skill = savedSkills.first;
-      expect(skill.id, skillId);
-      expect(skill.name, 'Deploy Skill');
-      expect(skill.references, hasLength(2));
-      expect(skill.references[0].title, equals('Nginx restart'));
-      expect(skill.references[0].content, equals('systemctl restart nginx'));
+        final savedSkills = await storage.loadAiSkills();
+        expect(savedSkills, hasLength(1));
+        final skill = savedSkills.first;
+        expect(skill.id, skillId);
+        expect(skill.name, 'Deploy Skill');
+        expect(skill.references, hasLength(2));
+        expect(skill.references[0].title, equals('Nginx restart'));
+        expect(skill.references[0].content, equals('systemctl restart nginx'));
 
-      final rawList = await tools.execute('client_list_skills', {});
-      final decodedList = jsonDecode(rawList) as Map<String, dynamic>;
-      final skillItems = decodedList['skills'] as List<dynamic>;
-      expect(skillItems, hasLength(1));
-      expect(skillItems.first['id'], skillId);
+        final rawList = await tools.execute('client_list_skills', {});
+        final decodedList = jsonDecode(rawList) as Map<String, dynamic>;
+        final skillItems = decodedList['skills'] as List<dynamic>;
+        expect(skillItems, hasLength(1));
+        expect(skillItems.first['id'], skillId);
 
-      final rawUpdate = await tools.execute(
-        'client_update_skill',
-        {
+        final rawUpdate = await tools.execute('client_update_skill', {
           'skillId': skillId,
           'name': 'Updated Deploy Title',
           'enabled': false,
           'references': [
             {
               'title': 'New backup step',
-              'content': 'tar -czf backup.tar.gz /var/www'
-            }
-          ]
-        },
-        approvedWrite: true,
-      );
-      final decodedUpdate = jsonDecode(rawUpdate) as Map<String, dynamic>;
-      expect(decodedUpdate['updated'], isTrue);
+              'content': 'tar -czf backup.tar.gz /var/www',
+            },
+          ],
+        }, approvedWrite: true);
+        final decodedUpdate = jsonDecode(rawUpdate) as Map<String, dynamic>;
+        expect(decodedUpdate['updated'], isTrue);
 
-      final updatedSkills = await storage.loadAiSkills();
-      expect(updatedSkills, hasLength(1));
-      final updatedSkill = updatedSkills.first;
-      expect(updatedSkill.name, 'Updated Deploy Title');
-      expect(updatedSkill.enabled, isFalse);
-      expect(updatedSkill.references, hasLength(1));
-      expect(updatedSkill.references.first.title, equals('New backup step'));
-    });
-  });
-
-  test('sftp write approval request includes path, bytes, and preview',
-      () async {
-    final request = await tools.approvalRequestFor('sftp_write_text', {
-      'connectionId': 'server-1',
-      'path': '/etc/nginx/nginx.conf',
-      'content': 'worker_processes auto;',
-    });
-
-    expect(request, isNotNull);
-    expect(request!.command, 'SFTP WRITE /etc/nginx/nginx.conf (22 bytes)');
-    expect(request.targetPath, '/etc/nginx/nginx.conf');
-    expect(request.byteLength, 22);
-    expect(request.contentPreview, 'worker_processes auto;');
-  });
-
-  test('ssh session and terminal history tools require approval metadata',
-      () async {
-    final openRequest = await tools.approvalRequestFor('ssh_open_session', {
-      'connectionId': 'server-1',
-      'displayName': 'Ops Shell',
-    });
-    final closeAllRequest = await tools.approvalRequestFor(
-      'ssh_close_server_sessions',
-      {
-        'connectionId': 'server-1',
+        final updatedSkills = await storage.loadAiSkills();
+        expect(updatedSkills, hasLength(1));
+        final updatedSkill = updatedSkills.first;
+        expect(updatedSkill.name, 'Updated Deploy Title');
+        expect(updatedSkill.enabled, isFalse);
+        expect(updatedSkill.references, hasLength(1));
+        expect(updatedSkill.references.first.title, equals('New backup step'));
       },
     );
-    final restoreRequest =
-        await tools.approvalRequestFor('ssh_restore_tmux_sessions', {});
-    final deleteHistoryRequest =
-        await tools.approvalRequestFor('ssh_delete_terminal_history_record', {
-      'sessionId': 'session-1',
-    });
-
-    expect(openRequest, isNotNull);
-    expect(openRequest!.approvalType, 'ssh_session_change');
-    expect(openRequest.contentPreview, 'Ops Shell');
-    expect(closeAllRequest, isNotNull);
-    expect(closeAllRequest!.approvalType, 'ssh_session_change');
-    expect(restoreRequest, isNotNull);
-    expect(restoreRequest!.approvalType, 'ssh_session_change');
-    expect(deleteHistoryRequest, isNotNull);
-    expect(deleteHistoryRequest!.approvalType, 'terminal_history_change');
-    expect(deleteHistoryRequest.destructive, isTrue);
   });
+
+  test(
+    'sftp write approval request includes path, bytes, and preview',
+    () async {
+      final request = await tools.approvalRequestFor('sftp_write_text', {
+        'connectionId': 'server-1',
+        'path': '/etc/nginx/nginx.conf',
+        'content': 'worker_processes auto;',
+      });
+
+      expect(request, isNotNull);
+      expect(request!.command, 'SFTP WRITE /etc/nginx/nginx.conf (22 bytes)');
+      expect(request.targetPath, '/etc/nginx/nginx.conf');
+      expect(request.byteLength, 22);
+      expect(request.contentPreview, 'worker_processes auto;');
+    },
+  );
+
+  test(
+    'ssh session and terminal history tools require approval metadata',
+    () async {
+      final openRequest = await tools.approvalRequestFor('ssh_open_session', {
+        'connectionId': 'server-1',
+        'displayName': 'Ops Shell',
+      });
+      final closeAllRequest = await tools.approvalRequestFor(
+        'ssh_close_server_sessions',
+        {'connectionId': 'server-1'},
+      );
+      final restoreRequest = await tools.approvalRequestFor(
+        'ssh_restore_tmux_sessions',
+        {},
+      );
+      final deleteHistoryRequest = await tools.approvalRequestFor(
+        'ssh_delete_terminal_history_record',
+        {'sessionId': 'session-1'},
+      );
+
+      expect(openRequest, isNotNull);
+      expect(openRequest!.approvalType, 'ssh_session_change');
+      expect(openRequest.contentPreview, 'Ops Shell');
+      expect(closeAllRequest, isNotNull);
+      expect(closeAllRequest!.approvalType, 'ssh_session_change');
+      expect(restoreRequest, isNotNull);
+      expect(restoreRequest!.approvalType, 'ssh_session_change');
+      expect(deleteHistoryRequest, isNotNull);
+      expect(deleteHistoryRequest!.approvalType, 'terminal_history_change');
+      expect(deleteHistoryRequest.destructive, isTrue);
+    },
+  );
 
   test('ssh session tool refuses execution without approval', () async {
     final raw = await tools.execute('ssh_open_session', {
@@ -728,52 +733,42 @@ void main() {
     expect(sftp.lastWritePath, isNull);
   });
 
-  test('sftp write executes after approval and uses app settings limit',
-      () async {
-    final raw = await tools.execute(
-      'sftp_write_text',
-      {
+  test(
+    'sftp write executes after approval and uses app settings limit',
+    () async {
+      final raw = await tools.execute('sftp_write_text', {
         'connectionId': 'server-1',
         'path': '/tmp/demo.txt',
         'content': 'abcd',
-      },
-      approvedWrite: true,
-    );
-    final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      }, approvedWrite: true);
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
 
-    expect(decoded['written'], isTrue);
-    expect(decoded['bytes'], 4);
-    expect(sftp.lastWriteConnectionId, 'server-1');
-    expect(sftp.lastWritePath, '/tmp/demo.txt');
-    expect(sftp.lastWriteText, 'abcd');
-    expect(sftp.lastWriteMaxBytes, AppSettings.minSftpLimitBytes);
-  });
+      expect(decoded['written'], isTrue);
+      expect(decoded['bytes'], 4);
+      expect(sftp.lastWriteConnectionId, 'server-1');
+      expect(sftp.lastWritePath, '/tmp/demo.txt');
+      expect(sftp.lastWriteText, 'abcd');
+      expect(sftp.lastWriteMaxBytes, AppSettings.minSftpLimitBytes);
+    },
+  );
 
   test('sftp write fails when content exceeds the edit limit', () async {
     final oversizedText = 'a' * (AppSettings.minSftpLimitBytes + 1);
     await expectLater(
-      () => tools.execute(
-        'sftp_write_text',
-        {
-          'connectionId': 'server-1',
-          'path': '/tmp/demo.txt',
-          'content': oversizedText,
-        },
-        approvedWrite: true,
-      ),
+      () => tools.execute('sftp_write_text', {
+        'connectionId': 'server-1',
+        'path': '/tmp/demo.txt',
+        'content': oversizedText,
+      }, approvedWrite: true),
       throwsA(isA<StateError>()),
     );
   });
 
   test('sftp download saves file metadata on the client device', () async {
-    final raw = await tools.execute(
-      'sftp_download_file',
-      {
-        'connectionId': 'server-1',
-        'path': '/var/log/app.log',
-      },
-      approvedWrite: true,
-    );
+    final raw = await tools.execute('sftp_download_file', {
+      'connectionId': 'server-1',
+      'path': '/var/log/app.log',
+    }, approvedWrite: true);
     final decoded = jsonDecode(raw) as Map<String, dynamic>;
 
     expect(sftp.lastDownloadConnectionId, 'server-1');
@@ -787,14 +782,10 @@ void main() {
   test('tool result redacts secret-like output content', () async {
     sftp.readTextResult = 'password=supersecret';
 
-    final raw = await tools.execute(
-      'sftp_read_text',
-      {
-        'connectionId': 'server-1',
-        'path': '/tmp/demo.txt',
-      },
-      approvedWrite: true,
-    );
+    final raw = await tools.execute('sftp_read_text', {
+      'connectionId': 'server-1',
+      'path': '/tmp/demo.txt',
+    }, approvedWrite: true);
     final decoded = jsonDecode(raw) as Map<String, dynamic>;
 
     expect(decoded['content'], contains('[REDACTED]'));
@@ -804,14 +795,10 @@ void main() {
   test('sftp download treats user cancel as a normal result', () async {
     clientSystem.cancelNextSave = true;
 
-    final raw = await tools.execute(
-      'sftp_download_file',
-      {
-        'connectionId': 'server-1',
-        'path': '/var/log/app.log',
-      },
-      approvedWrite: true,
-    );
+    final raw = await tools.execute('sftp_download_file', {
+      'connectionId': 'server-1',
+      'path': '/var/log/app.log',
+    }, approvedWrite: true);
     final decoded = jsonDecode(raw) as Map<String, dynamic>;
 
     expect(decoded['saved'], isFalse);
@@ -825,36 +812,34 @@ void main() {
     );
 
     await expectLater(
-      () => tools.execute(
-        'sftp_download_file',
-        {
-          'connectionId': 'server-1',
-          'path': '/var/log/app.log',
-        },
-        approvedWrite: true,
-      ),
+      () => tools.execute('sftp_download_file', {
+        'connectionId': 'server-1',
+        'path': '/var/log/app.log',
+      }, approvedWrite: true),
       throwsA(isA<StateError>()),
     );
   });
 
-  test('server status and ops report keep their public names and delegate',
-      () async {
-    final statusRaw = await tools.execute('get_server_status', {
-      'connectionId': 'server-1',
-      'mode': 'performance',
-    });
-    final reportRaw = await tools.execute('generate_ops_report', {
-      'connectionId': 'server-1',
-    });
-    final status = jsonDecode(statusRaw) as Map<String, dynamic>;
-    final report = jsonDecode(reportRaw) as Map<String, dynamic>;
+  test(
+    'server status and ops report keep their public names and delegate',
+    () async {
+      final statusRaw = await tools.execute('get_server_status', {
+        'connectionId': 'server-1',
+        'mode': 'performance',
+      });
+      final reportRaw = await tools.execute('generate_ops_report', {
+        'connectionId': 'server-1',
+      });
+      final status = jsonDecode(statusRaw) as Map<String, dynamic>;
+      final report = jsonDecode(reportRaw) as Map<String, dynamic>;
 
-    expect(diagnostics.lastStatusConnectionId, 'server-1');
-    expect(diagnostics.lastStatusMode, 'performance');
-    expect(status['performance']['memoryPercent'], 32.0);
-    expect(diagnostics.lastReportConnectionId, 'server-1');
-    expect(report['health']['level'], 'healthy');
-  });
+      expect(diagnostics.lastStatusConnectionId, 'server-1');
+      expect(diagnostics.lastStatusMode, 'performance');
+      expect(status['performance']['memoryPercent'], 32.0);
+      expect(diagnostics.lastReportConnectionId, 'server-1');
+      expect(report['health']['level'], 'healthy');
+    },
+  );
 
   test('composite diagnostic tools return structured JSON payloads', () async {
     final incidentRaw = await tools.execute('collect_incident_context', {
@@ -907,135 +892,136 @@ void main() {
     expect(decoded['toolCallBudget'], 20);
   });
 
-  test('app settings tool updates postToolReviewEnabled setting with approval',
-      () async {
-    final raw = await tools.execute(
-      'app_update_operational_settings',
-      {
+  test(
+    'app settings tool updates postToolReviewEnabled setting with approval',
+    () async {
+      final raw = await tools.execute('app_update_operational_settings', {
         'postToolReviewEnabled': false,
-      },
-      approvedWrite: true,
-    );
-    final decoded = jsonDecode(raw) as Map<String, dynamic>;
-    final settings = await storage.loadAiConnectionSettings();
+      }, approvedWrite: true);
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      final settings = await storage.loadAiConnectionSettings();
 
-    expect(decoded['postToolReviewEnabled'], isFalse);
-    expect(settings.postToolReviewEnabled, isFalse);
-  });
+      expect(decoded['postToolReviewEnabled'], isFalse);
+      expect(settings.postToolReviewEnabled, isFalse);
+    },
+  );
 
-  test('app settings tool updates multi-agent settings with approval',
-      () async {
-    final raw = await tools.execute(
-      'app_update_operational_settings',
-      {
+  test(
+    'app settings tool updates multi-agent settings with approval',
+    () async {
+      final raw = await tools.execute('app_update_operational_settings', {
         'multiAgentEnabled': false,
         'multiAgentMaxAgents': 4,
         'toolCallBudget': 40,
-      },
-      approvedWrite: true,
-    );
-    final decoded = jsonDecode(raw) as Map<String, dynamic>;
-    final settings = await storage.loadAiConnectionSettings();
+      }, approvedWrite: true);
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      final settings = await storage.loadAiConnectionSettings();
 
-    expect(decoded['multiAgentEnabled'], isFalse);
-    expect(decoded['multiAgentMaxAgents'], 4);
-    expect(decoded['toolCallBudget'], 40);
-    expect(settings.multiAgentEnabled, isFalse);
-    expect(settings.multiAgentMaxAgents, 4);
-    expect(settings.toolCallBudget, 40);
-  });
+      expect(decoded['multiAgentEnabled'], isFalse);
+      expect(decoded['multiAgentMaxAgents'], 4);
+      expect(decoded['toolCallBudget'], 40);
+      expect(settings.multiAgentEnabled, isFalse);
+      expect(settings.multiAgentMaxAgents, 4);
+      expect(settings.toolCallBudget, 40);
+    },
+  );
 
   group('client_set_plan_mode tool', () {
     test(
-        'switches planMode to true, clears approved plan, and exits only with persisted latest todo steps',
-        () async {
-      final now = DateTime.now();
-      var chat = AiChatRecord(
-        id: 'chat-1',
-        title: 'Draft',
-        model: 'deepseek-v4-flash',
-        messages: const [],
-        createdAt: now,
-        updatedAt: now,
-        planMode: false,
-        approvedPlan: AiApprovedPlanRef(
-          assistantCreatedAt: now,
-          approvedAt: now,
-        ),
-      );
-      await storage.saveAiChat(chat);
+      'switches planMode to true, clears approved plan, and exits only with persisted latest todo steps',
+      () async {
+        final now = DateTime.now();
+        var chat = AiChatRecord(
+          id: 'chat-1',
+          title: 'Draft',
+          model: 'deepseek-v4-flash',
+          messages: const [],
+          createdAt: now,
+          updatedAt: now,
+          planMode: false,
+          approvedPlan: AiApprovedPlanRef(
+            assistantCreatedAt: now,
+            approvedAt: now,
+          ),
+        );
+        await storage.saveAiChat(chat);
 
-      // 1. 开启 planMode
-      final rawTrue =
-          await tools.execute('client_set_plan_mode', {'enabled': true});
-      final decodedTrue = jsonDecode(rawTrue) as Map<String, dynamic>;
-      expect(decodedTrue['status'], 'success');
-      expect(decodedTrue['planMode'], isTrue);
+        // 1. 开启 planMode
+        final rawTrue = await tools.execute('client_set_plan_mode', {
+          'enabled': true,
+        });
+        final decodedTrue = jsonDecode(rawTrue) as Map<String, dynamic>;
+        expect(decodedTrue['status'], 'success');
+        expect(decodedTrue['planMode'], isTrue);
 
-      final chatTrue =
-          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
-      expect(chatTrue.planMode, isTrue);
-      expect(chatTrue.approvedPlan, isNull);
+        final chatTrue = (await storage.loadAiChats()).firstWhere(
+          (c) => c.id == 'chat-1',
+        );
+        expect(chatTrue.planMode, isTrue);
+        expect(chatTrue.approvedPlan, isNull);
 
-      // 2. 尝试关闭 planMode（因为没有任何 playbook 计划，应该被拦截报错）
-      final rawFalse =
-          await tools.execute('client_set_plan_mode', {'enabled': false});
-      final decodedFalse = jsonDecode(rawFalse) as Map<String, dynamic>;
-      expect(
+        // 2. 尝试关闭 planMode（因为没有任何 playbook 计划，应该被拦截报错）
+        final rawFalse = await tools.execute('client_set_plan_mode', {
+          'enabled': false,
+        });
+        final decodedFalse = jsonDecode(rawFalse) as Map<String, dynamic>;
+        expect(
           decodedFalse['error'],
-          anyOf(
-            contains('Cannot exit Plan Mode'),
-            contains('无法退出规划模式'),
-          ));
+          anyOf(contains('Cannot exit Plan Mode'), contains('无法退出规划模式')),
+        );
 
-      final chatStillTrue =
-          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
-      expect(chatStillTrue.planMode, isTrue);
+        final chatStillTrue = (await storage.loadAiChats()).firstWhere(
+          (c) => c.id == 'chat-1',
+        );
+        expect(chatStillTrue.planMode, isTrue);
 
-      // 3. 往会话中添加一条带有 playbook 计划步骤的消息
-      final updatedChat = chatStillTrue.copyWith(
-        messages: [
-          AiChatMessageRecord(
-            role: 'assistant',
-            text: 'Earlier valid plan',
-            createdAt: now.subtract(const Duration(minutes: 1)),
-            todoSteps: const [
-              AiTodoStep(
-                id: 'task-old',
-                name: 'Earlier plan',
-                command: 'echo old',
-                description: 'old',
-              ),
-            ],
-          ),
-          AiChatMessageRecord(
-            role: 'assistant',
-            text: 'Latest executable plan',
-            createdAt: now,
-            todoSteps: const [
-              AiTodoStep(
-                id: 'task-new',
-                name: 'Step 1',
-                command: 'echo ok',
-                description: 'Persisted plan step',
-              ),
-            ],
-          ),
-        ],
-      );
-      await storage.saveAiChat(updatedChat);
+        // 3. 往会话中添加一条带有 playbook 计划步骤的消息
+        final updatedChat = chatStillTrue.copyWith(
+          messages: [
+            AiChatMessageRecord(
+              role: 'assistant',
+              text: 'Earlier valid plan',
+              createdAt: now.subtract(const Duration(minutes: 1)),
+              todoSteps: const [
+                AiTodoStep(
+                  id: 'task-old',
+                  name: 'Earlier plan',
+                  command: 'echo old',
+                  description: 'old',
+                ),
+              ],
+            ),
+            AiChatMessageRecord(
+              role: 'assistant',
+              text: 'Latest executable plan',
+              createdAt: now,
+              todoSteps: const [
+                AiTodoStep(
+                  id: 'task-new',
+                  name: 'Step 1',
+                  command: 'echo ok',
+                  description: 'Persisted plan step',
+                ),
+              ],
+            ),
+          ],
+        );
+        await storage.saveAiChat(updatedChat);
 
-      // 4. 再次尝试关闭 planMode（此时符合条件，应允许退出）
-      final rawExit =
-          await tools.execute('client_set_plan_mode', {'enabled': false});
-      final decodedExit = jsonDecode(rawExit) as Map<String, dynamic>;
-      expect(decodedExit['status'], 'success');
-      expect(decodedExit['planMode'], isFalse);
+        // 4. 再次尝试关闭 planMode（此时符合条件，应允许退出）
+        final rawExit = await tools.execute('client_set_plan_mode', {
+          'enabled': false,
+        });
+        final decodedExit = jsonDecode(rawExit) as Map<String, dynamic>;
+        expect(decodedExit['status'], 'success');
+        expect(decodedExit['planMode'], isFalse);
 
-      final chatFalse =
-          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
-      expect(chatFalse.planMode, isFalse);
-    });
+        final chatFalse = (await storage.loadAiChats()).firstWhere(
+          (c) => c.id == 'chat-1',
+        );
+        expect(chatFalse.planMode, isFalse);
+      },
+    );
   });
 
   group('client_task_create and client_task_update flow and constraints', () {
@@ -1072,8 +1058,9 @@ void main() {
       expect(taskId, startsWith('task-'));
 
       // 验证是否已存入助理消息的 todoSteps
-      final chatAfterCreate =
-          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      final chatAfterCreate = (await storage.loadAiChats()).firstWhere(
+        (c) => c.id == 'chat-1',
+      );
       expect(chatAfterCreate.messages.last.todoSteps.length, 1);
       expect(chatAfterCreate.messages.last.todoSteps.first.id, taskId);
 
@@ -1085,9 +1072,9 @@ void main() {
       final decodedUpdateInPlan =
           jsonDecode(rawUpdateInPlan) as Map<String, dynamic>;
       expect(
-          decodedUpdateInPlan['error'],
-          contains(
-              'client_task_update can ONLY be called during Execution Mode'));
+        decodedUpdateInPlan['error'],
+        contains('client_task_update can ONLY be called during Execution Mode'),
+      );
 
       // 4. 将 Chat 设为 planMode = false (执行模式)
       final chatExecution = chatAfterCreate.copyWith(planMode: false);
@@ -1099,8 +1086,10 @@ void main() {
       });
       final decodedCreateInExec =
           jsonDecode(rawCreateInExec) as Map<String, dynamic>;
-      expect(decodedCreateInExec['error'],
-          contains('client_task_create can ONLY be called during Plan Mode'));
+      expect(
+        decodedCreateInExec['error'],
+        contains('client_task_create can ONLY be called during Plan Mode'),
+      );
 
       // 6. 处于 Execution Mode，调用 TaskUpdate 应该成功并更新状态
       final rawRunningAlias = await tools.execute('client_task_update', {
@@ -1112,10 +1101,13 @@ void main() {
       expect(decodedRunningAlias['status'], 'success');
       expect(decodedRunningAlias['newStatus'], 'running');
 
-      final chatAfterAlias =
-          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      final chatAfterAlias = (await storage.loadAiChats()).firstWhere(
+        (c) => c.id == 'chat-1',
+      );
       expect(
-          chatAfterAlias.messages.last.todoSteps.first.status.name, 'running');
+        chatAfterAlias.messages.last.todoSteps.first.status.name,
+        'running',
+      );
 
       final rawUpdate = await tools.execute('client_task_update', {
         'taskId': taskId,
@@ -1126,8 +1118,9 @@ void main() {
       expect(decodedUpdate['status'], 'success');
       expect(decodedUpdate['newStatus'], 'success');
 
-      final chatAfterUpdate =
-          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
+      final chatAfterUpdate = (await storage.loadAiChats()).firstWhere(
+        (c) => c.id == 'chat-1',
+      );
       final updatedStep = chatAfterUpdate.messages.last.todoSteps.first;
       expect(updatedStep.status.name, 'success');
       expect(updatedStep.stdout, 'Docker version 24.0.7');
@@ -1143,383 +1136,414 @@ void main() {
     });
 
     test(
-        'enforces strict status validations and expected commands for task updates',
-        () async {
-      final now = DateTime.now();
-      var chat = AiChatRecord(
-        id: 'chat-1',
-        title: 'Draft',
-        model: 'deepseek-v4-flash',
-        messages: [
-          AiChatMessageRecord(
-            role: 'assistant',
-            text: 'plan',
-            createdAt: now,
-            todoSteps: [
-              AiTodoStep(
-                id: 'task-1',
-                name: 'Step 1',
-                command: 'echo ok',
-                description: 'Persisted plan step',
-                status: StepStatus.pending,
-                connectionId: 'server-1',
-              ),
-            ],
-          ),
-        ],
-        createdAt: now,
-        updatedAt: now,
-        planMode: false,
-      );
-      await storage.saveAiChat(chat);
+      'enforces strict status validations and expected commands for task updates',
+      () async {
+        final now = DateTime.now();
+        var chat = AiChatRecord(
+          id: 'chat-1',
+          title: 'Draft',
+          model: 'deepseek-v4-flash',
+          messages: [
+            AiChatMessageRecord(
+              role: 'assistant',
+              text: 'plan',
+              createdAt: now,
+              todoSteps: [
+                AiTodoStep(
+                  id: 'task-1',
+                  name: 'Step 1',
+                  command: 'echo ok',
+                  description: 'Persisted plan step',
+                  status: StepStatus.pending,
+                  connectionId: 'server-1',
+                ),
+              ],
+            ),
+          ],
+          createdAt: now,
+          updatedAt: now,
+          planMode: false,
+        );
+        await storage.saveAiChat(chat);
 
-      // 1. Invalid status
-      final rawInvalid = await tools.execute('client_task_update', {
-        'taskId': 'task-1',
-        'status': 'unknown_status',
-      });
-      final decodedInvalid = jsonDecode(rawInvalid) as Map<String, dynamic>;
-      expect(decodedInvalid['code'], 'invalid_task_status');
-      expect(decodedInvalid['allowed'], contains('running'));
+        // 1. Invalid status
+        final rawInvalid = await tools.execute('client_task_update', {
+          'taskId': 'task-1',
+          'status': 'unknown_status',
+        });
+        final decodedInvalid = jsonDecode(rawInvalid) as Map<String, dynamic>;
+        expect(decodedInvalid['code'], 'invalid_task_status');
+        expect(decodedInvalid['allowed'], contains('running'));
 
-      // 2. Skipped status requires reason
-      final rawSkippedNoReason = await tools.execute('client_task_update', {
-        'taskId': 'task-1',
-        'status': 'skipped',
-      });
-      final decodedSkippedNoReason =
-          jsonDecode(rawSkippedNoReason) as Map<String, dynamic>;
-      expect(decodedSkippedNoReason['code'], 'skip_reason_required');
+        // 2. Skipped status requires reason
+        final rawSkippedNoReason = await tools.execute('client_task_update', {
+          'taskId': 'task-1',
+          'status': 'skipped',
+        });
+        final decodedSkippedNoReason =
+            jsonDecode(rawSkippedNoReason) as Map<String, dynamic>;
+        expect(decodedSkippedNoReason['code'], 'skip_reason_required');
 
-      // 3. Skipped with reason succeeds
-      final rawSkippedWithReason = await tools.execute('client_task_update', {
-        'taskId': 'task-1',
-        'status': 'skipped',
-        'reason': 'not needed',
-      });
-      final decodedSkippedWithReason =
-          jsonDecode(rawSkippedWithReason) as Map<String, dynamic>;
-      expect(decodedSkippedWithReason['status'], 'success');
+        // 3. Skipped with reason succeeds
+        final rawSkippedWithReason = await tools.execute('client_task_update', {
+          'taskId': 'task-1',
+          'status': 'skipped',
+          'reason': 'not needed',
+        });
+        final decodedSkippedWithReason =
+            jsonDecode(rawSkippedWithReason) as Map<String, dynamic>;
+        expect(decodedSkippedWithReason['status'], 'success');
 
-      // Reset step to pending and running to test running output payload
-      final resetChat = chat.copyWith(
-        messages: [
-          AiChatMessageRecord(
-            role: 'assistant',
-            text: 'plan',
-            createdAt: now,
-            todoSteps: [
-              AiTodoStep(
-                id: 'task-1',
-                name: 'Step 1',
-                command: 'echo ok',
-                description: 'Persisted plan step',
-                status: StepStatus.pending,
-                connectionId: 'server-1',
-              ),
-            ],
-          ),
-        ],
-      );
-      await storage.saveAiChat(resetChat);
+        // Reset step to pending and running to test running output payload
+        final resetChat = chat.copyWith(
+          messages: [
+            AiChatMessageRecord(
+              role: 'assistant',
+              text: 'plan',
+              createdAt: now,
+              todoSteps: [
+                AiTodoStep(
+                  id: 'task-1',
+                  name: 'Step 1',
+                  command: 'echo ok',
+                  description: 'Persisted plan step',
+                  status: StepStatus.pending,
+                  connectionId: 'server-1',
+                ),
+              ],
+            ),
+          ],
+        );
+        await storage.saveAiChat(resetChat);
 
-      final rawRunning = await tools.execute('client_task_update', {
-        'taskId': 'task-1',
-        'status': 'running',
-      });
-      final decodedRunning = jsonDecode(rawRunning) as Map<String, dynamic>;
-      expect(decodedRunning['status'], 'success');
-      expect(decodedRunning['expectedCommand'], 'echo ok');
-      expect(decodedRunning['expectedConnectionId'], 'server-1');
+        final rawRunning = await tools.execute('client_task_update', {
+          'taskId': 'task-1',
+          'status': 'running',
+        });
+        final decodedRunning = jsonDecode(rawRunning) as Map<String, dynamic>;
+        expect(decodedRunning['status'], 'success');
+        expect(decodedRunning['expectedCommand'], 'echo ok');
+        expect(decodedRunning['expectedConnectionId'], 'server-1');
 
-      // Update to failed
-      final rawFailed = await tools.execute('client_task_update', {
-        'taskId': 'task-1',
-        'status': 'failed',
-        'errorSummary': 'failed execution',
-      });
-      final decodedFailed = jsonDecode(rawFailed) as Map<String, dynamic>;
-      expect(decodedFailed['status'], 'success');
-      expect(decodedFailed['newStatus'], 'failed');
-      expect(decodedFailed['nextAction'], contains('Stop execution'));
+        // Update to failed
+        final rawFailed = await tools.execute('client_task_update', {
+          'taskId': 'task-1',
+          'status': 'failed',
+          'errorSummary': 'failed execution',
+        });
+        final decodedFailed = jsonDecode(rawFailed) as Map<String, dynamic>;
+        expect(decodedFailed['status'], 'success');
+        expect(decodedFailed['newStatus'], 'failed');
+        expect(decodedFailed['nextAction'], contains('Stop execution'));
 
-      final chatFailed =
-          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
-      expect(chatFailed.messages.last.todoSteps.first.stderr,
-          contains('Error Summary: failed execution'));
-    });
+        final chatFailed = (await storage.loadAiChats()).firstWhere(
+          (c) => c.id == 'chat-1',
+        );
+        expect(
+          chatFailed.messages.last.todoSteps.first.stderr,
+          contains('Error Summary: failed execution'),
+        );
+      },
+    );
 
-    test('client_task_retry and client_task_skip control execution step flows',
-        () async {
-      final now = DateTime.now();
-      var chat = AiChatRecord(
-        id: 'chat-1',
-        title: 'Draft',
-        model: 'deepseek-v4-flash',
-        messages: [
-          AiChatMessageRecord(
-            role: 'assistant',
-            text: 'plan',
-            createdAt: now,
-            todoSteps: [
-              AiTodoStep(
-                id: 'task-1',
-                name: 'Step 1',
-                command: 'echo ok',
-                description: 'Persisted plan step',
-                status: StepStatus.failed,
-              ),
-            ],
-          ),
-        ],
-        createdAt: now,
-        updatedAt: now,
-        planMode: false,
-      );
-      await storage.saveAiChat(chat);
+    test(
+      'client_task_retry and client_task_skip control execution step flows',
+      () async {
+        final now = DateTime.now();
+        var chat = AiChatRecord(
+          id: 'chat-1',
+          title: 'Draft',
+          model: 'deepseek-v4-flash',
+          messages: [
+            AiChatMessageRecord(
+              role: 'assistant',
+              text: 'plan',
+              createdAt: now,
+              todoSteps: [
+                AiTodoStep(
+                  id: 'task-1',
+                  name: 'Step 1',
+                  command: 'echo ok',
+                  description: 'Persisted plan step',
+                  status: StepStatus.failed,
+                ),
+              ],
+            ),
+          ],
+          createdAt: now,
+          updatedAt: now,
+          planMode: false,
+        );
+        await storage.saveAiChat(chat);
 
-      // 1. Retry failed step -> should reset to pending
-      final rawRetry = await tools.execute('client_task_retry', {
-        'taskId': 'task-1',
-        'reason': 'retrying for correction',
-      });
-      final decodedRetry = jsonDecode(rawRetry) as Map<String, dynamic>;
-      expect(decodedRetry['status'], 'success');
-      expect(decodedRetry['newStatus'], 'pending');
-      expect(decodedRetry['reason'], 'retrying for correction');
+        // 1. Retry failed step -> should reset to pending
+        final rawRetry = await tools.execute('client_task_retry', {
+          'taskId': 'task-1',
+          'reason': 'retrying for correction',
+        });
+        final decodedRetry = jsonDecode(rawRetry) as Map<String, dynamic>;
+        expect(decodedRetry['status'], 'success');
+        expect(decodedRetry['newStatus'], 'pending');
+        expect(decodedRetry['reason'], 'retrying for correction');
 
-      final chatAfterRetry =
-          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
-      expect(chatAfterRetry.messages.last.todoSteps.first.status,
-          StepStatus.pending);
+        final chatAfterRetry = (await storage.loadAiChats()).firstWhere(
+          (c) => c.id == 'chat-1',
+        );
+        expect(
+          chatAfterRetry.messages.last.todoSteps.first.status,
+          StepStatus.pending,
+        );
 
-      // 2. Retry non-failed step -> should fail
-      final rawRetryPending = await tools.execute('client_task_retry', {
-        'taskId': 'task-1',
-      });
-      final decodedRetryPending =
-          jsonDecode(rawRetryPending) as Map<String, dynamic>;
-      expect(decodedRetryPending['error'],
-          contains('Only failed tasks can be retried'));
+        // 2. Retry non-failed step -> should fail
+        final rawRetryPending = await tools.execute('client_task_retry', {
+          'taskId': 'task-1',
+        });
+        final decodedRetryPending =
+            jsonDecode(rawRetryPending) as Map<String, dynamic>;
+        expect(
+          decodedRetryPending['error'],
+          contains('Only failed tasks can be retried'),
+        );
 
-      // 3. Skip pending step without approval -> should fail
-      final rawSkipNoApproval = await tools.execute('client_task_skip', {
-        'taskId': 'task-1',
-        'reason': 'manual override',
-      });
-      expect(jsonDecode(rawSkipNoApproval)['error'],
-          contains('requires user approval'));
+        // 3. Skip pending step without approval -> should fail
+        final rawSkipNoApproval = await tools.execute('client_task_skip', {
+          'taskId': 'task-1',
+          'reason': 'manual override',
+        });
+        expect(
+          jsonDecode(rawSkipNoApproval)['error'],
+          contains('requires user approval'),
+        );
 
-      // 4. Skip pending step with approval -> should mark skipped with reason in stdout
-      final rawSkip = await tools.execute(
-          'client_task_skip',
-          {
-            'taskId': 'task-1',
-            'reason': 'manual override',
-          },
-          approvedWrite: true);
-      final decodedSkip = jsonDecode(rawSkip) as Map<String, dynamic>;
-      expect(decodedSkip['status'], 'success');
-      expect(decodedSkip['newStatus'], 'skipped');
+        // 4. Skip pending step with approval -> should mark skipped with reason in stdout
+        final rawSkip = await tools.execute('client_task_skip', {
+          'taskId': 'task-1',
+          'reason': 'manual override',
+        }, approvedWrite: true);
+        final decodedSkip = jsonDecode(rawSkip) as Map<String, dynamic>;
+        expect(decodedSkip['status'], 'success');
+        expect(decodedSkip['newStatus'], 'skipped');
 
-      final chatAfterSkip =
-          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
-      final skippedStep = chatAfterSkip.messages.last.todoSteps.first;
-      expect(skippedStep.status, StepStatus.skipped);
-      expect(skippedStep.stdout, contains('Skipped: manual override'));
+        final chatAfterSkip = (await storage.loadAiChats()).firstWhere(
+          (c) => c.id == 'chat-1',
+        );
+        final skippedStep = chatAfterSkip.messages.last.todoSteps.first;
+        expect(skippedStep.status, StepStatus.skipped);
+        expect(skippedStep.stdout, contains('Skipped: manual override'));
 
-      // 5. Try to skip a running task -> should fail
-      final chatRunning = chat.copyWith(
-        messages: [
-          AiChatMessageRecord(
-            role: 'assistant',
-            text: 'plan',
-            createdAt: now,
-            todoSteps: [
-              AiTodoStep(
-                id: 'task-1',
-                name: 'Step 1',
-                command: 'echo ok',
-                description: 'Persisted plan step',
-                status: StepStatus.running,
-              ),
-            ],
-          ),
-        ],
-      );
-      await storage.saveAiChat(chatRunning);
+        // 5. Try to skip a running task -> should fail
+        final chatRunning = chat.copyWith(
+          messages: [
+            AiChatMessageRecord(
+              role: 'assistant',
+              text: 'plan',
+              createdAt: now,
+              todoSteps: [
+                AiTodoStep(
+                  id: 'task-1',
+                  name: 'Step 1',
+                  command: 'echo ok',
+                  description: 'Persisted plan step',
+                  status: StepStatus.running,
+                ),
+              ],
+            ),
+          ],
+        );
+        await storage.saveAiChat(chatRunning);
 
-      final rawSkipRunning = await tools.execute(
-          'client_task_skip',
-          {
-            'taskId': 'task-1',
-            'reason': 'manual override',
-          },
-          approvedWrite: true);
-      final decodedSkipRunning =
-          jsonDecode(rawSkipRunning) as Map<String, dynamic>;
-      expect(decodedSkipRunning['error'],
-          contains('Only pending or failed tasks can be skipped'));
-      expect(decodedSkipRunning['code'], 'invalid_skip_state');
+        final rawSkipRunning = await tools.execute('client_task_skip', {
+          'taskId': 'task-1',
+          'reason': 'manual override',
+        }, approvedWrite: true);
+        final decodedSkipRunning =
+            jsonDecode(rawSkipRunning) as Map<String, dynamic>;
+        expect(
+          decodedSkipRunning['error'],
+          contains('Only pending or failed tasks can be skipped'),
+        );
+        expect(decodedSkipRunning['code'], 'invalid_skip_state');
 
-      // 6. Verify approvalRequestFor generates correct request for client_task_skip
-      final skipRequest = await tools.approvalRequestFor('client_task_skip', {
-        'taskId': 'task-1',
-        'reason': 'manual override',
-      });
-      expect(skipRequest, isNotNull);
-      expect(skipRequest!.approvalType, 'plan_task_change');
-      expect(skipRequest.command, contains('SKIP PLAN TASK task-1'));
-      expect(skipRequest.contentPreview, contains('Reason: manual override'));
-    });
+        // 6. Verify approvalRequestFor generates correct request for client_task_skip
+        final skipRequest = await tools.approvalRequestFor('client_task_skip', {
+          'taskId': 'task-1',
+          'reason': 'manual override',
+        });
+        expect(skipRequest, isNotNull);
+        expect(skipRequest!.approvalType, 'plan_task_change');
+        expect(skipRequest.command, contains('SKIP PLAN TASK task-1'));
+        expect(skipRequest.contentPreview, contains('Reason: manual override'));
+      },
+    );
   });
 
   group('client_update_skill approval and security flow', () {
-    test('requires approval before execution and succeeds after approved',
-        () async {
-      final now = DateTime.now();
-      final skill = AiSkillRecord(
-        id: 'skill-test-1',
-        name: 'Original Name',
-        description: 'Original Desc',
-        content: 'Original Content',
-        enabled: true,
-        createdAt: now,
-        updatedAt: now,
-      );
-      await storage.saveAiSkill(skill);
+    test(
+      'requires approval before execution and succeeds after approved',
+      () async {
+        final now = DateTime.now();
+        final skill = AiSkillRecord(
+          id: 'skill-test-1',
+          name: 'Original Name',
+          description: 'Original Desc',
+          content: 'Original Content',
+          enabled: true,
+          createdAt: now,
+          updatedAt: now,
+        );
+        await storage.saveAiSkill(skill);
 
-      // 1. 验证 approvalRequestFor 能生成正确的 local_skill_change 请求
-      final request = await tools.approvalRequestFor('client_update_skill', {
-        'skillId': 'skill-test-1',
-        'name': 'Updated Name',
-        'description': 'Updated Desc',
-      });
-      expect(request, isNotNull);
-      expect(request!.approvalType, equals('local_skill_change'));
-      expect(request.connectionName, contains('client'));
-      expect(request.contentPreview, contains('Updated Name'));
-
-      // 2. 未通过审批执行，应当返回报错
-      final rawBlocked = await tools.execute('client_update_skill', {
-        'skillId': 'skill-test-1',
-        'name': 'Updated Name',
-      });
-      final decodedBlocked = jsonDecode(rawBlocked) as Map<String, dynamic>;
-      expect(decodedBlocked['error'], contains('requires user approval'));
-
-      // 3. 审批通过后执行，应当修改成功
-      final rawSuccess = await tools.execute(
-        'client_update_skill',
-        {
+        // 1. 验证 approvalRequestFor 能生成正确的 local_skill_change 请求
+        final request = await tools.approvalRequestFor('client_update_skill', {
           'skillId': 'skill-test-1',
           'name': 'Updated Name',
-        },
-        approvedWrite: true,
-      );
-      final decodedSuccess = jsonDecode(rawSuccess) as Map<String, dynamic>;
-      expect(decodedSuccess['updated'], isTrue);
+          'description': 'Updated Desc',
+        });
+        expect(request, isNotNull);
+        expect(request!.approvalType, equals('local_skill_change'));
+        expect(request.connectionName, contains('client'));
+        expect(request.contentPreview, contains('Updated Name'));
 
-      final updated = (await storage.loadAiSkills())
-          .firstWhere((s) => s.id == 'skill-test-1');
-      expect(updated.name, equals('Updated Name'));
+        // 2. 未通过审批执行，应当返回报错
+        final rawBlocked = await tools.execute('client_update_skill', {
+          'skillId': 'skill-test-1',
+          'name': 'Updated Name',
+        });
+        final decodedBlocked = jsonDecode(rawBlocked) as Map<String, dynamic>;
+        expect(decodedBlocked['error'], contains('requires user approval'));
 
-      // 4. 验证 client_save_experience_skill 也需要审批且未审批报错
-      final saveRequest =
-          await tools.approvalRequestFor('client_save_experience_skill', {
-        'summary': 'New Exp Summary',
-        'content': 'Details here',
-      });
-      expect(saveRequest, isNotNull);
-      expect(saveRequest!.approvalType, equals('local_skill_change'));
-      expect(saveRequest.contentPreview, contains('New Exp Summary'));
+        // 3. 审批通过后执行，应当修改成功
+        final rawSuccess = await tools.execute('client_update_skill', {
+          'skillId': 'skill-test-1',
+          'name': 'Updated Name',
+        }, approvedWrite: true);
+        final decodedSuccess = jsonDecode(rawSuccess) as Map<String, dynamic>;
+        expect(decodedSuccess['updated'], isTrue);
 
-      final rawSaveBlocked =
-          await tools.execute('client_save_experience_skill', {
-        'summary': 'New Exp Summary',
-      });
-      expect(jsonDecode(rawSaveBlocked)['error'],
-          contains('requires user approval'));
+        final updated = (await storage.loadAiSkills()).firstWhere(
+          (s) => s.id == 'skill-test-1',
+        );
+        expect(updated.name, equals('Updated Name'));
 
-      final rawSaveSuccess = await tools.execute(
+        // 4. 验证 client_save_experience_skill 也需要审批且未审批报错
+        final saveRequest = await tools.approvalRequestFor(
+          'client_save_experience_skill',
+          {'summary': 'New Exp Summary', 'content': 'Details here'},
+        );
+        expect(saveRequest, isNotNull);
+        expect(saveRequest!.approvalType, equals('local_skill_change'));
+        expect(saveRequest.contentPreview, contains('New Exp Summary'));
+
+        final rawSaveBlocked = await tools.execute(
+          'client_save_experience_skill',
+          {'summary': 'New Exp Summary'},
+        );
+        expect(
+          jsonDecode(rawSaveBlocked)['error'],
+          contains('requires user approval'),
+        );
+
+        final rawSaveSuccess = await tools.execute(
+          'client_save_experience_skill',
+          {'summary': 'New Exp Summary'},
+          approvedWrite: true,
+        );
+        expect(jsonDecode(rawSaveSuccess)['saved'], isTrue);
+
+        // 5. 验证 client_list_skills 仍然不需要审批
+        final rawList = await tools.execute('client_list_skills', {});
+        expect(jsonDecode(rawList)['skills'], isNotNull);
+      },
+    );
+
+    test(
+      'client_save_experience_skill approval preview redacts secrets',
+      () async {
+        final request = await tools.approvalRequestFor(
           'client_save_experience_skill',
           {
-            'summary': 'New Exp Summary',
+            'summary': 'Add password config',
+            'content':
+                'Use secret admin password: "my-super-secret-password-123" to login, and check Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ token.',
           },
-          approvedWrite: true);
-      expect(jsonDecode(rawSaveSuccess)['saved'], isTrue);
+        );
 
-      // 5. 验证 client_list_skills 仍然不需要审批
-      final rawList = await tools.execute('client_list_skills', {});
-      expect(jsonDecode(rawList)['skills'], isNotNull);
-    });
-
-    test('client_save_experience_skill approval preview redacts secrets',
-        () async {
-      final request =
-          await tools.approvalRequestFor('client_save_experience_skill', {
-        'summary': 'Add password config',
-        'content':
-            'Use secret admin password: "my-super-secret-password-123" to login, and check Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ token.',
-      });
-
-      expect(request, isNotNull);
-      expect(request!.contentPreview,
-          isNot(contains('my-super-secret-password-123')));
-      expect(request.contentPreview,
-          isNot(contains('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9')));
-      expect(request.contentPreview, contains('password=[REDACTED]'));
-    });
+        expect(request, isNotNull);
+        expect(
+          request!.contentPreview,
+          isNot(contains('my-super-secret-password-123')),
+        );
+        expect(
+          request.contentPreview,
+          isNot(contains('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9')),
+        );
+        expect(request.contentPreview, contains('password=[REDACTED]'));
+      },
+    );
   });
 
   group('needsServerSelection tools connectionId boundary check tests', () {
-    test('server tool without connectionId returns connection_required',
-        () async {
-      final raw = await tools.execute('get_server_details', {});
-      final decoded = jsonDecode(raw) as Map<String, dynamic>;
-      expect(
-          decoded['error'], contains('requires a selected server connection'));
-      expect(decoded['code'], 'connection_required');
-      expect(decoded['tool'], 'get_server_details');
-    });
+    test(
+      'server tool without connectionId returns connection_required',
+      () async {
+        final raw = await tools.execute('get_server_details', {});
+        final decoded = jsonDecode(raw) as Map<String, dynamic>;
+        expect(
+          decoded['error'],
+          contains('requires a selected server connection'),
+        );
+        expect(decoded['code'], 'connection_required');
+        expect(decoded['tool'], 'get_server_details');
+      },
+    );
 
-    test('sftp write without connectionId returns connection_required',
-        () async {
-      final raw = await tools.execute('sftp_write_text', {
-        'path': '/tmp/test.txt',
-        'content': 'hello',
-      });
-      final decoded = jsonDecode(raw) as Map<String, dynamic>;
-      expect(
-          decoded['error'], contains('requires a selected server connection'));
-      expect(decoded['code'], 'connection_required');
-      expect(decoded['tool'], 'sftp_write_text');
-    });
+    test(
+      'sftp write without connectionId returns connection_required',
+      () async {
+        final raw = await tools.execute('sftp_write_text', {
+          'path': '/tmp/test.txt',
+          'content': 'hello',
+        });
+        final decoded = jsonDecode(raw) as Map<String, dynamic>;
+        expect(
+          decoded['error'],
+          contains('requires a selected server connection'),
+        );
+        expect(decoded['code'], 'connection_required');
+        expect(decoded['tool'], 'sftp_write_text');
+      },
+    );
 
-    test('ssh run_command without connectionId returns connection_required',
-        () async {
-      final raw = await tools.execute('run_command', {
-        'command': 'ls -la',
-      });
-      final decoded = jsonDecode(raw) as Map<String, dynamic>;
-      expect(
-          decoded['error'], contains('requires a selected server connection'));
-      expect(decoded['code'], 'connection_required');
-      expect(decoded['tool'], 'run_command');
-    });
+    test(
+      'ssh run_command without connectionId returns connection_required',
+      () async {
+        final raw = await tools.execute('run_command', {'command': 'ls -la'});
+        final decoded = jsonDecode(raw) as Map<String, dynamic>;
+        expect(
+          decoded['error'],
+          contains('requires a selected server connection'),
+        );
+        expect(decoded['code'], 'connection_required');
+        expect(decoded['tool'], 'run_command');
+      },
+    );
 
-    test('ssh run_command with local connectionId returns connection_required',
-        () async {
-      final raw = await tools.execute('run_command', {
-        'connectionId': 'local',
-        'command': 'ls -la',
-      });
-      final decoded = jsonDecode(raw) as Map<String, dynamic>;
-      expect(
-          decoded['error'], contains('requires a selected server connection'));
-      expect(decoded['code'], 'connection_required');
-      expect(decoded['tool'], 'run_command');
-    });
+    test(
+      'ssh run_command with local connectionId returns connection_required',
+      () async {
+        final raw = await tools.execute('run_command', {
+          'connectionId': 'local',
+          'command': 'ls -la',
+        });
+        final decoded = jsonDecode(raw) as Map<String, dynamic>;
+        expect(
+          decoded['error'],
+          contains('requires a selected server connection'),
+        );
+        expect(decoded['code'], 'connection_required');
+        expect(decoded['tool'], 'run_command');
+      },
+    );
 
     test('monitor汇总工具不需要选中服务器连接就可以执行', () async {
       // monitor_get_state
@@ -1543,7 +1567,7 @@ void main() {
         'monitor_get_samples',
         'monitor_get_ports',
         'monitor_get_applications',
-        'monitor_stop_for_connection'
+        'monitor_stop_for_connection',
       ];
       for (final toolName in toolsToTest) {
         final raw = await tools.execute(toolName, {});
@@ -1632,11 +1656,7 @@ class _FakeClientSystemToolService implements ClientSystemToolAdapter {
         'batteryPercent': 80,
         'powerSaveMode': false,
         'ignoringBatteryOptimizations': true,
-        'plugged': {
-          'ac': false,
-          'usb': false,
-          'wireless': false,
-        },
+        'plugged': {'ac': false, 'usb': false, 'wireless': false},
       };
 
   @override
@@ -1653,16 +1673,16 @@ class _FakeClientSystemToolService implements ClientSystemToolAdapter {
 
   @override
   Future<Map<String, dynamic>> openAppSettings() async => {
-        'execution': 'client',
-        'opened': true,
-      };
+    'execution': 'client',
+    'opened': true,
+  };
 
   @override
   Future<Map<String, dynamic>> setClipboard(String text) async => {
-        'execution': 'client',
-        'updated': true,
-        'textLength': text.length,
-      };
+    'execution': 'client',
+    'updated': true,
+    'textLength': text.length,
+  };
 
   @override
   Future<Map<String, dynamic>> setAlarm({
@@ -1671,21 +1691,20 @@ class _FakeClientSystemToolService implements ClientSystemToolAdapter {
     int? delayMinutes,
     String? label,
     bool useSystemAlarm = true,
-  }) async =>
-      {'execution': 'client', 'created': true};
+  }) async => {'execution': 'client', 'created': true};
 
   @override
   Future<Map<String, dynamic>> listAlarms() async => {
-        'execution': 'client',
-        'alarms': const [],
-      };
+    'execution': 'client',
+    'alarms': const [],
+  };
 
   @override
   Future<Map<String, dynamic>> cancelAlarm(String alarmId) async => {
-        'execution': 'client',
-        'cancelled': true,
-        'alarmId': alarmId,
-      };
+    'execution': 'client',
+    'cancelled': true,
+    'alarmId': alarmId,
+  };
 
   @override
   Future<Map<String, dynamic>> queryLogs({
@@ -1716,11 +1735,7 @@ class _FakeClientSystemToolService implements ClientSystemToolAdapter {
     return {
       'execution': 'client',
       'target': 'client_logs',
-      'counts': {
-        'all': 3,
-        'warning': 2,
-        'error': 1,
-      },
+      'counts': {'all': 3, 'warning': 2, 'error': 1},
     };
   }
 
@@ -1920,10 +1935,7 @@ class _FakeSftpClient implements SftpClientAdapter {
   bool isConnectionOpen(String connectionId) => false;
 
   @override
-  Future<void> connect(
-    String connectionId, {
-    dynamic onUnknownHostKey,
-  }) async {}
+  Future<void> connect(String connectionId, {dynamic onUnknownHostKey}) async {}
 
   @override
   Future<void> refresh() async {}
@@ -2094,9 +2106,9 @@ class _FakeServerDiagnosticsService implements ServerDiagnosticsAdapter {
 
   @override
   Future<Map<String, dynamic>> detectOs(String connectionId) async => {
-        'os': 'linux',
-        'method': 'saved_server_platform',
-      };
+    'os': 'linux',
+    'method': 'saved_server_platform',
+  };
 
   @override
   Future<Map<String, dynamic>> getStatus({
@@ -2116,10 +2128,7 @@ class _FakeServerDiagnosticsService implements ServerDiagnosticsAdapter {
     lastReportConnectionId = connectionId;
     return {
       'connectionId': connectionId,
-      'health': {
-        'score': 92,
-        'level': 'healthy',
-      },
+      'health': {'score': 92, 'level': 'healthy'},
     };
   }
 }
@@ -2130,9 +2139,9 @@ class _FakeServerCatalogService implements ServerCatalogAdapter {
 
   @override
   Future<Map<String, dynamic>> deleteServer(String connectionId) async => {
-        'deleted': true,
-        'connectionId': connectionId,
-      };
+    'deleted': true,
+    'connectionId': connectionId,
+  };
 
   @override
   Map<String, dynamic>? getServerDetails(String connectionId) {
@@ -2148,19 +2157,12 @@ class _FakeServerCatalogService implements ServerCatalogAdapter {
 
   @override
   List<Map<String, dynamic>> listServerSummaries() => const [
-        {
-          'id': 'server-1',
-          'name': 'Demo Server',
-          'host': 'example.com',
-        },
-      ];
+    {'id': 'server-1', 'name': 'Demo Server', 'host': 'example.com'},
+  ];
 
   @override
   Future<Map<String, dynamic>> reorderServers(List<String> orderedIds) async =>
-      {
-        'reordered': true,
-        'orderedIds': orderedIds,
-      };
+      {'reordered': true, 'orderedIds': orderedIds};
 
   @override
   Future<Map<String, dynamic>> updateServerMetadata({
@@ -2170,10 +2172,7 @@ class _FakeServerCatalogService implements ServerCatalogAdapter {
     lastMetadataChanges = Map<String, dynamic>.from(changes);
     return {
       'updated': true,
-      'server': {
-        'id': connectionId,
-        ...changes,
-      },
+      'server': {'id': connectionId, ...changes},
     };
   }
 }
@@ -2186,33 +2185,39 @@ class _FakePerformanceMonitorToolService
   Map<String, dynamic> clearSelection() => getState();
 
   @override
-  Future<Map<String, dynamic>> getApplications(String connectionId) async =>
-      {'connectionId': connectionId, 'applications': const []};
+  Future<Map<String, dynamic>> getApplications(String connectionId) async => {
+    'connectionId': connectionId,
+    'applications': const [],
+  };
 
   @override
-  Map<String, dynamic> getAlerts({int limit = 50}) =>
-      {'alerts': const [], 'limit': limit};
+  Map<String, dynamic> getAlerts({int limit = 50}) => {
+    'alerts': const [],
+    'limit': limit,
+  };
 
   @override
-  Map<String, dynamic> getHealth({List<String>? connectionIds}) =>
-      {'health': const {}};
+  Map<String, dynamic> getHealth({List<String>? connectionIds}) => {
+    'health': const {},
+  };
 
   @override
-  Future<Map<String, dynamic>> getPorts(String connectionId) async =>
-      {'connectionId': connectionId, 'ports': const []};
+  Future<Map<String, dynamic>> getPorts(String connectionId) async => {
+    'connectionId': connectionId,
+    'ports': const [],
+  };
 
   @override
   Map<String, dynamic> getSamples(
     String connectionId, {
     bool visibleOnly = true,
     int limit = 100,
-  }) =>
-      {
-        'connectionId': connectionId,
-        'visibleOnly': visibleOnly,
-        'limit': limit,
-        'samples': const [],
-      };
+  }) => {
+    'connectionId': connectionId,
+    'visibleOnly': visibleOnly,
+    'limit': limit,
+    'samples': const [],
+  };
 
   @override
   Map<String, dynamic> getState() {

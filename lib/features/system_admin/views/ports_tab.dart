@@ -19,8 +19,9 @@ class _PortsManageSnapshot {
     return _PortsManageSnapshot(
       isConnecting: vm.isConnectingSelectedConnection,
       isManageModeAvailable: vm.canManageSelectedConnection,
-      errorMessage:
-          vm.hasManagementErrorForSelectedConnection ? vm.errorMessage : null,
+      errorMessage: vm.hasManagementErrorForSelectedConnection
+          ? vm.errorMessage
+          : null,
       loadingPorts: vm.loadingPorts,
       ports: vm.ports,
     );
@@ -38,12 +39,12 @@ class _PortsManageSnapshot {
 
   @override
   int get hashCode => Object.hash(
-        isConnecting,
-        isManageModeAvailable,
-        errorMessage,
-        loadingPorts,
-        Object.hashAll(ports),
-      );
+    isConnecting,
+    isManageModeAvailable,
+    errorMessage,
+    loadingPorts,
+    Object.hashAll(ports),
+  );
 }
 
 class _PortsTab extends StatefulWidget {
@@ -93,8 +94,9 @@ class _PortsTabState extends State<_PortsTab>
     final monitorViewModel = context.read<PerformanceMonitorViewModel>();
     if (force || _portsFuture == null || _portsSelectionKey != connectionId) {
       _portsSelectionKey = connectionId;
-      _portsFuture =
-          Future.delayed(const Duration(milliseconds: 300)).then((_) {
+      _portsFuture = Future.delayed(const Duration(milliseconds: 300)).then((
+        _,
+      ) {
         if (!mounted || !_isActive) {
           return <String, List<PortProcessSnapshot>>{};
         }
@@ -104,7 +106,9 @@ class _PortsTabState extends State<_PortsTab>
   }
 
   Future<Map<String, List<PortProcessSnapshot>>> _loadPorts(
-      PerformanceMonitorViewModel monitorViewModel, String connectionId) async {
+    PerformanceMonitorViewModel monitorViewModel,
+    String connectionId,
+  ) async {
     final data = await monitorViewModel.fetchPorts(
       connectionId,
       onUnknownHostKey: (request) =>
@@ -241,14 +245,16 @@ class _PortsTabState extends State<_PortsTab>
                 ButtonSegment(
                   value: true,
                   icon: const Icon(Icons.admin_panel_settings_rounded),
-                  label:
-                      Text(_monitorText(widget.strings, 'Manage Mode', '管理模式')),
+                  label: Text(
+                    _monitorText(widget.strings, 'Manage Mode', '管理模式'),
+                  ),
                 ),
                 ButtonSegment(
                   value: false,
                   icon: const Icon(Icons.analytics_rounded),
                   label: Text(
-                      _monitorText(widget.strings, 'Snapshot Mode', '快照模式')),
+                    _monitorText(widget.strings, 'Snapshot Mode', '快照模式'),
+                  ),
                 ),
               ],
               selected: {_isManageMode},
@@ -263,9 +269,10 @@ class _PortsTabState extends State<_PortsTab>
           ),
         ],
         Expanded(
-            child: _isManageMode && _isLinux
-                ? _buildManageView(id)
-                : _buildSnapshotView(id)),
+          child: _isManageMode && _isLinux
+              ? _buildManageView(id)
+              : _buildSnapshotView(id),
+        ),
       ],
     );
   }
@@ -323,15 +330,19 @@ class _PortsTabState extends State<_PortsTab>
                   ),
                   title: Row(
                     children: [
-                      Text('${p.protocol.toUpperCase()}  :${p.localPort}',
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                      Text(
+                        '${p.protocol.toUpperCase()}  :${p.localPort}',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Align(
                           alignment: Alignment.centerRight,
                           child: Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
                             decoration: BoxDecoration(
                               color: widget.colorScheme.surfaceContainerHighest,
                               borderRadius: BorderRadius.circular(4),
@@ -341,15 +352,16 @@ class _PortsTabState extends State<_PortsTab>
                               selectable: false,
                               maxLines: 1,
                               style: const TextStyle(
-                                  fontFamily: 'monospace',
-                                  fontFamilyFallback: [
-                                    'Consolas',
-                                    'Microsoft YaHei',
-                                    'PingFang SC',
-                                    'sans-serif'
-                                  ],
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12),
+                                fontFamily: 'monospace',
+                                fontFamilyFallback: [
+                                  'Consolas',
+                                  'Microsoft YaHei',
+                                  'PingFang SC',
+                                  'sans-serif',
+                                ],
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                              ),
                             ),
                           ),
                         ),
@@ -362,8 +374,9 @@ class _PortsTabState extends State<_PortsTab>
                     maxLines: 1,
                     style: TextStyle(
                       fontSize: 12,
-                      color:
-                          widget.colorScheme.onSurface.withValues(alpha: 0.58),
+                      color: widget.colorScheme.onSurface.withValues(
+                        alpha: 0.58,
+                      ),
                     ),
                   ),
                 ),
@@ -376,21 +389,22 @@ class _PortsTabState extends State<_PortsTab>
   }
 
   Widget _buildSnapshotView(String id) {
-    final currentConfigList =
-        widget.viewModel.connections.where((c) => c.id == id).toList();
+    final currentConfigList = widget.viewModel.connections
+        .where((c) => c.id == id)
+        .toList();
 
     return _ServerSnapshotTab<PortProcessSnapshot>(
       strings: widget.strings,
       connections: currentConfigList,
-      emptyText:
-          _monitorText(widget.strings, 'No listening ports found', '未发现监听端口'),
+      emptyText: _monitorText(
+        widget.strings,
+        'No listening ports found',
+        '未发现监听端口',
+      ),
       future: _portsFuture,
       onRefresh: () => setState(() => _refreshPortsFuture(force: true)),
       itemBuilder: (context, port) {
-        return _PortProcessTile(
-          strings: widget.strings,
-          port: port,
-        );
+        return _PortProcessTile(strings: widget.strings, port: port);
       },
     );
   }

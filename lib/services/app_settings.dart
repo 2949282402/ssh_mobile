@@ -9,10 +9,7 @@ import 'mcp/mcp_server_settings.dart';
 
 part 'app_strings.dart';
 
-enum AppLanguage {
-  zh,
-  en,
-}
+enum AppLanguage { zh, en }
 
 /// 应用设置 + 国际化字符串服务。
 ///
@@ -108,14 +105,14 @@ class AppSettings extends ChangeNotifier {
   String get terminalFontFamily => _terminalFontFamily;
   String get serverListLayoutMode => _serverListLayoutMode;
   McpServerSettings get mcpSettings => McpServerSettings(
-        enabled: _mcpServerEnabled,
-        host: _mcpServerHost,
-        port: _mcpServerPort,
-        token: _mcpServerToken,
-        allowWriteTools: _mcpAllowWriteTools,
-        requireApprovalForWriteTools: _mcpRequireApprovalForWriteTools,
-        enableSse: _mcpEnableSse,
-      );
+    enabled: _mcpServerEnabled,
+    host: _mcpServerHost,
+    port: _mcpServerPort,
+    token: _mcpServerToken,
+    allowWriteTools: _mcpAllowWriteTools,
+    requireApprovalForWriteTools: _mcpRequireApprovalForWriteTools,
+    enableSse: _mcpEnableSse,
+  );
 
   Future<void> init() async {
     try {
@@ -123,8 +120,9 @@ class AppSettings extends ChangeNotifier {
         const Duration(seconds: 3),
       );
       final languageName = prefs.getString(_languageKey);
-      _language =
-          languageName == AppLanguage.en.name ? AppLanguage.en : AppLanguage.zh;
+      _language = languageName == AppLanguage.en.name
+          ? AppLanguage.en
+          : AppLanguage.zh;
       _themeMode = _themeModeFromPrefs(prefs);
       _sftpDownloadLimitBytes = _normalizeSftpLimit(
         prefs.getInt(_sftpDownloadLimitBytesKey),
@@ -363,8 +361,9 @@ class AppSettings extends ChangeNotifier {
   }
 
   void toggleTheme() {
-    final nextMode =
-        _themeMode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
+    final nextMode = _themeMode == ThemeMode.dark
+        ? ThemeMode.light
+        : ThemeMode.dark;
     setThemeMode(nextMode);
   }
 
@@ -527,8 +526,9 @@ class AppSettings extends ChangeNotifier {
   }
 
   Future<String> _readOrCreateMcpServerToken() async {
-    final saved =
-        (await _secureStorage.read(key: _mcpServerTokenSecureKey))?.trim();
+    final saved = (await _secureStorage.read(
+      key: _mcpServerTokenSecureKey,
+    ))?.trim();
     if (saved != null && saved.isNotEmpty) {
       return saved;
     }

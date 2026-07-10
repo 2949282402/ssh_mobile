@@ -57,46 +57,56 @@ This is the main body that mentions proxying.''',
     expect(resultName.hits.first.title, equals('Nginx Deploy Guide'));
   });
 
-  test('Skill hits recall with references title or content and clips matches',
-      () async {
-    final skill = AiSkillRecord(
-      id: 'skill-ref-test',
-      name: 'Docker Management',
-      description: 'How to manage docker containers',
-      content: 'Main docker instructions...',
-      enabled: true,
-      references: const [
-        SkillReferenceItem(
-          title: 'Docker Prune Command',
-          content: 'Run docker system prune -a to clean up resources.',
-        ),
-        SkillReferenceItem(
-          title: 'Kubernetes Apply Guide',
-          content: 'Use kubectl apply -f manifest.yaml for deployments.',
-        ),
-      ],
-      createdAt: DateTime.now(),
-      updatedAt: DateTime.now(),
-    );
+  test(
+    'Skill hits recall with references title or content and clips matches',
+    () async {
+      final skill = AiSkillRecord(
+        id: 'skill-ref-test',
+        name: 'Docker Management',
+        description: 'How to manage docker containers',
+        content: 'Main docker instructions...',
+        enabled: true,
+        references: const [
+          SkillReferenceItem(
+            title: 'Docker Prune Command',
+            content: 'Run docker system prune -a to clean up resources.',
+          ),
+          SkillReferenceItem(
+            title: 'Kubernetes Apply Guide',
+            content: 'Use kubectl apply -f manifest.yaml for deployments.',
+          ),
+        ],
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
 
-    await storage.saveAiSkill(skill);
+      await storage.saveAiSkill(skill);
 
-    // 1. 通过 reference title 检索
-    final resultTitle = await retriever.retrieve(query: 'Prune Command');
-    expect(resultTitle.hits, isNotEmpty);
-    expect(resultTitle.hits.first.content,
-        contains('### Reference: Docker Prune Command'));
-    expect(resultTitle.hits.first.content,
-        isNot(contains('Kubernetes Apply Guide')));
+      // 1. 通过 reference title 检索
+      final resultTitle = await retriever.retrieve(query: 'Prune Command');
+      expect(resultTitle.hits, isNotEmpty);
+      expect(
+        resultTitle.hits.first.content,
+        contains('### Reference: Docker Prune Command'),
+      );
+      expect(
+        resultTitle.hits.first.content,
+        isNot(contains('Kubernetes Apply Guide')),
+      );
 
-    // 2. 通过 reference content 检索
-    final resultCont = await retriever.retrieve(query: 'kubectl apply');
-    expect(resultCont.hits, isNotEmpty);
-    expect(resultCont.hits.first.content,
-        contains('### Reference: Kubernetes Apply Guide'));
-    expect(
-        resultCont.hits.first.content, isNot(contains('Docker Prune Command')));
-  });
+      // 2. 通过 reference content 检索
+      final resultCont = await retriever.retrieve(query: 'kubectl apply');
+      expect(resultCont.hits, isNotEmpty);
+      expect(
+        resultCont.hits.first.content,
+        contains('### Reference: Kubernetes Apply Guide'),
+      );
+      expect(
+        resultCont.hits.first.content,
+        isNot(contains('Docker Prune Command')),
+      );
+    },
+  );
 
   test('Chinese text tokenization and recall for skills', () async {
     final skill = AiSkillRecord(
@@ -119,59 +129,62 @@ This is the main body that mentions proxying.''',
   });
 
   test(
-      'Legacy Skill JSON import handles missing name/description and fallbacks properly',
-      () async {
-    final legacyJson = <String, dynamic>{
-      'id': 'legacy-skill-1',
-      'content': '''---
+    'Legacy Skill JSON import handles missing name/description and fallbacks properly',
+    () async {
+      final legacyJson = <String, dynamic>{
+        'id': 'legacy-skill-1',
+        'content': '''---
 name: Legacy Imported Title
 description: Legacy Imported Desc
 ---
 body instructions here''',
-      'enabled': true,
-      'createdAt': DateTime.now().toIso8601String(),
-      'updatedAt': DateTime.now().toIso8601String(),
-    };
+        'enabled': true,
+        'createdAt': DateTime.now().toIso8601String(),
+        'updatedAt': DateTime.now().toIso8601String(),
+      };
 
-    final record = AiSkillRecord.fromJson(legacyJson);
+      final record = AiSkillRecord.fromJson(legacyJson);
 
-    expect(record.name, isEmpty);
-    expect(record.description, isEmpty);
-    expect(record.displayName, equals('Legacy Imported Title'));
-    expect(record.displayDescription, equals('Legacy Imported Desc'));
+      expect(record.name, isEmpty);
+      expect(record.description, isEmpty);
+      expect(record.displayName, equals('Legacy Imported Title'));
+      expect(record.displayDescription, equals('Legacy Imported Desc'));
 
-    await storage.saveAiSkill(record);
+      await storage.saveAiSkill(record);
 
-    final result = await retriever.retrieve(query: 'Imported Title');
-    expect(result.hits, isNotEmpty);
-    expect(result.hits.first.title, equals('Legacy Imported Title'));
-    expect(result.hits.first.content, contains('body instructions here'));
-  });
+      final result = await retriever.retrieve(query: 'Imported Title');
+      expect(result.hits, isNotEmpty);
+      expect(result.hits.first.title, equals('Legacy Imported Title'));
+      expect(result.hits.first.content, contains('body instructions here'));
+    },
+  );
 
-  test('fallbacks to legacy search when SkillIndexService throws Exception',
-      () async {
-    final brokenRetriever = OperationalMemoryRetriever(
-      storageService: storage,
-      skillIndexService: _MockBrokenSkillIndexService(),
-    );
+  test(
+    'fallbacks to legacy search when SkillIndexService throws Exception',
+    () async {
+      final brokenRetriever = OperationalMemoryRetriever(
+        storageService: storage,
+        skillIndexService: _MockBrokenSkillIndexService(),
+      );
 
-    final skill = AiSkillRecord(
-      id: 'skill-fallback-test',
-      name: 'Nginx Service',
-      description: 'Setup nginx service web',
-      content: 'Nginx commands...',
-      enabled: true,
-      references: const [],
-      createdAt: DateTime.now(),
-      updatedAt: DateTime.now(),
-    );
-    await storage.saveAiSkill(skill);
+      final skill = AiSkillRecord(
+        id: 'skill-fallback-test',
+        name: 'Nginx Service',
+        description: 'Setup nginx service web',
+        content: 'Nginx commands...',
+        enabled: true,
+        references: const [],
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+      await storage.saveAiSkill(skill);
 
-    // Should successfully retrieve and fallback to legacy search without throwing exception
-    final result = await brokenRetriever.retrieve(query: 'nginx service web');
-    expect(result.hits, isNotEmpty);
-    expect(result.hits.first.title, equals('Nginx Service'));
-  });
+      // Should successfully retrieve and fallback to legacy search without throwing exception
+      final result = await brokenRetriever.retrieve(query: 'nginx service web');
+      expect(result.hits, isNotEmpty);
+      expect(result.hits.first.title, equals('Nginx Service'));
+    },
+  );
 }
 
 class _MockBrokenSkillIndexService extends SkillIndexService {

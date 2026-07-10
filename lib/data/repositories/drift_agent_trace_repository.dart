@@ -24,10 +24,7 @@ extension DriftAgentTraceRepositoryOps on StorageService {
   }) async {
     final database = _database;
     if (!_driftAgentTraceActive || database == null) return const [];
-    return database.agentTraceDao.loadRecentRunIdsForChat(
-      chatId,
-      limit: limit,
-    );
+    return database.agentTraceDao.loadRecentRunIdsForChat(chatId, limit: limit);
   }
 
   Future<void> _saveAgentTraceEvent(AgentTraceEvent event) async {

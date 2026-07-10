@@ -8,11 +8,7 @@ void main() {
 
     test('initialize returns protocolVersion and tools capability', () {
       final result = handler.handle(
-        const McpJsonRpcRequest(
-          id: 1,
-          hasId: true,
-          method: 'initialize',
-        ),
+        const McpJsonRpcRequest(id: 1, hasId: true, method: 'initialize'),
       );
 
       final body = result.result as Map<String, dynamic>;
@@ -37,11 +33,7 @@ void main() {
 
     test('ping returns empty result', () {
       final result = handler.handle(
-        const McpJsonRpcRequest(
-          id: 'p',
-          hasId: true,
-          method: 'ping',
-        ),
+        const McpJsonRpcRequest(id: 'p', hasId: true, method: 'ping'),
       );
 
       expect(result.result, isEmpty);

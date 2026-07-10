@@ -96,19 +96,18 @@ class TextChunker {
 
       final chunkText = text.substring(start, end).trim();
       if (chunkText.isNotEmpty) {
-        chunks.add(RagChunk(
-          id: '${documentId}_c${chunkIndex++}',
-          documentId: documentId,
-          documentName: documentName,
-          text: chunkText,
-          pageNumber: pageNumber,
-          charStartIndex: start,
-          charEndIndex: end,
-          metadata: {
-            ...baseMetadata,
-            'chunkIndex': chunkIndex - 1,
-          },
-        ));
+        chunks.add(
+          RagChunk(
+            id: '${documentId}_c${chunkIndex++}',
+            documentId: documentId,
+            documentName: documentName,
+            text: chunkText,
+            pageNumber: pageNumber,
+            charStartIndex: start,
+            charEndIndex: end,
+            metadata: {...baseMetadata, 'chunkIndex': chunkIndex - 1},
+          ),
+        );
       }
 
       // 前进：移动步长为 (当前分块大小 - 重叠大小)

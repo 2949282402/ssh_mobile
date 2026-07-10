@@ -60,21 +60,27 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   @override
   void initState() {
     super.initState();
-    _baseUrlController =
-        TextEditingController(text: widget.initialSettings.baseUrl);
-    _modelController =
-        TextEditingController(text: widget.initialSettings.model);
-    _helperModelController =
-        TextEditingController(text: widget.initialSettings.helperModel);
-    _auditModelController =
-        TextEditingController(text: widget.initialSettings.auditModel);
+    _baseUrlController = TextEditingController(
+      text: widget.initialSettings.baseUrl,
+    );
+    _modelController = TextEditingController(
+      text: widget.initialSettings.model,
+    );
+    _helperModelController = TextEditingController(
+      text: widget.initialSettings.helperModel,
+    );
+    _auditModelController = TextEditingController(
+      text: widget.initialSettings.auditModel,
+    );
     _apiKeyController = TextEditingController();
     _quarkApiKeyController = TextEditingController();
-    _quarkEndpointController =
-        TextEditingController(text: widget.initialSettings.quarkSearchEndpoint);
+    _quarkEndpointController = TextEditingController(
+      text: widget.initialSettings.quarkSearchEndpoint,
+    );
     _baseUrlHistory = List<String>.from(widget.initialBaseUrlHistory);
-    _apiKeyHistory =
-        List<AiApiKeyHistoryEntry>.from(widget.initialApiKeyHistory);
+    _apiKeyHistory = List<AiApiKeyHistoryEntry>.from(
+      widget.initialApiKeyHistory,
+    );
     _models = List<String>.from(widget.initialModels);
     _contextWindowTokens = widget.initialSettings.contextWindowTokens;
     _timeoutSeconds = widget.initialSettings.timeoutSeconds;
@@ -93,8 +99,9 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     _postToolReviewEnabled = widget.initialSettings.postToolReviewEnabled;
     _modelFallbackPolicy = widget.initialSettings.modelFallbackPolicy;
     _toolCallBudget = widget.initialSettings.toolCallBudget;
-    _agentLoopMode =
-        AiAgentLoopMode.normalize(widget.initialSettings.agentLoopMode);
+    _agentLoopMode = AiAgentLoopMode.normalize(
+      widget.initialSettings.agentLoopMode,
+    );
     _maxImageSizeBytes = widget.initialSettings.maxImageSizeBytes;
     _maxFileSizeBytes = widget.initialSettings.maxFileSizeBytes;
     _selectedApiKeyId = widget.initialSettings.activeApiKeyId;
@@ -227,8 +234,9 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
     await viewModel.removeAiBaseUrlHistoryEntry(baseUrl);
     if (!mounted) return;
     setState(() {
-      _baseUrlHistory =
-          _baseUrlHistory.where((item) => item != baseUrl).toList();
+      _baseUrlHistory = _baseUrlHistory
+          .where((item) => item != baseUrl)
+          .toList();
     });
   }
 
@@ -275,14 +283,10 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
           deleteTooltip: strings.delete,
           items: _baseUrlHistory,
           labelBuilder: (value) => value,
-          onSelect: (value) => Navigator.pop(
-            sheetContext,
-            _SettingsHistoryAction.select(value),
-          ),
-          onDelete: (value) => Navigator.pop(
-            sheetContext,
-            _SettingsHistoryAction.delete(value),
-          ),
+          onSelect: (value) =>
+              Navigator.pop(sheetContext, _SettingsHistoryAction.select(value)),
+          onDelete: (value) =>
+              Navigator.pop(sheetContext, _SettingsHistoryAction.delete(value)),
         ),
       ),
     );
@@ -305,30 +309,32 @@ class _LlmSettingsScreenState extends State<_LlmSettingsScreen> {
   }
 
   Future<void> _openApiKeyHistory(AiStrings strings) async {
-    final action = await showModalBottomSheet<
-        _SettingsHistoryAction<AiApiKeyHistoryEntry>>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: HistoryActionSheet<AiApiKeyHistoryEntry>(
-          title: strings.apiKeyHistory,
-          emptyText: strings.noApiKeyHistory,
-          deleteTooltip: strings.delete,
-          items: _apiKeyHistory,
-          labelBuilder: (entry) => entry.maskedValue,
-          selectedValue: _selectedApiKeyId,
-          valueKeyBuilder: (entry) => entry.id,
-          onSelect: (entry) => Navigator.pop(
-            sheetContext,
-            _SettingsHistoryAction.select(entry),
+    final action =
+        await showModalBottomSheet<
+          _SettingsHistoryAction<AiApiKeyHistoryEntry>
+        >(
+          context: context,
+          showDragHandle: true,
+          builder: (sheetContext) => SafeArea(
+            child: HistoryActionSheet<AiApiKeyHistoryEntry>(
+              title: strings.apiKeyHistory,
+              emptyText: strings.noApiKeyHistory,
+              deleteTooltip: strings.delete,
+              items: _apiKeyHistory,
+              labelBuilder: (entry) => entry.maskedValue,
+              selectedValue: _selectedApiKeyId,
+              valueKeyBuilder: (entry) => entry.id,
+              onSelect: (entry) => Navigator.pop(
+                sheetContext,
+                _SettingsHistoryAction.select(entry),
+              ),
+              onDelete: (entry) => Navigator.pop(
+                sheetContext,
+                _SettingsHistoryAction.delete(entry),
+              ),
+            ),
           ),
-          onDelete: (entry) => Navigator.pop(
-            sheetContext,
-            _SettingsHistoryAction.delete(entry),
-          ),
-        ),
-      ),
-    );
+        );
     if (action == null) return;
     if (!mounted) return;
     if (action.delete) {
@@ -720,10 +726,7 @@ class _SettingsHistoryAction<T> {
   final T value;
   final bool delete;
 
-  const _SettingsHistoryAction._({
-    required this.value,
-    required this.delete,
-  });
+  const _SettingsHistoryAction._({required this.value, required this.delete});
 
   factory _SettingsHistoryAction.select(T value) {
     return _SettingsHistoryAction._(value: value, delete: false);

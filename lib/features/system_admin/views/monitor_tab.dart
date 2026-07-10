@@ -33,7 +33,9 @@ class _MonitorTabState extends State<_MonitorTab>
   late List<ConnectionConfig> connections;
 
   List<ConnectionConfig> _getActiveConnections(
-      PerformanceMonitorViewModel monitor, List<ConnectionConfig> connections) {
+    PerformanceMonitorViewModel monitor,
+    List<ConnectionConfig> connections,
+  ) {
     return monitor.isRunning
         ? [
             for (final connection in connections)
@@ -90,18 +92,21 @@ class _MonitorTabState extends State<_MonitorTab>
           },
         ),
         Expanded(
-          child: Selector<PerformanceMonitorViewModel,
-              _MonitorPerformanceSnapshot>(
-            selector: (_, monitor) => _MonitorPerformanceSnapshot.from(
-              monitor,
-              [
-                for (final connection in connections)
-                  if (monitor.monitoringConnectionIds.contains(connection.id))
-                    connection,
-              ],
-            ),
-            builder: (context, _, __) => _buildPerformanceTab(context),
-          ),
+          child:
+              Selector<
+                PerformanceMonitorViewModel,
+                _MonitorPerformanceSnapshot
+              >(
+                selector: (_, monitor) =>
+                    _MonitorPerformanceSnapshot.from(monitor, [
+                      for (final connection in connections)
+                        if (monitor.monitoringConnectionIds.contains(
+                          connection.id,
+                        ))
+                          connection,
+                    ]),
+                builder: (context, _, _) => _buildPerformanceTab(context),
+              ),
         ),
       ],
     );
@@ -125,23 +130,28 @@ class _MonitorTabState extends State<_MonitorTab>
     if (!monitor.isRunning) {
       return _MonitorResponsiveEmptyState(
         strings: strings,
-        message: [
-          for (final connection in connections)
-            if (monitor.selectedConnectionIds.contains(connection.id))
-              connection,
-        ].isEmpty
+        message:
+            [
+              for (final connection in connections)
+                if (monitor.selectedConnectionIds.contains(connection.id))
+                  connection,
+            ].isEmpty
             ? null
             : _monitorText(
                 strings,
                 'Stop monitoring before changing server selection.',
-                '停止监控后可修改服务器选择。'),
+                '停止监控后可修改服务器选择。',
+              ),
       );
     }
     if (monitoringConnections.isEmpty) {
       return _MonitorResponsiveEmptyState(
         strings: strings,
         message: _monitorText(
-            strings, 'No active monitoring servers.', '暂无处于监控中的服务器。'),
+          strings,
+          'No active monitoring servers.',
+          '暂无处于监控中的服务器。',
+        ),
       );
     }
     if (!hasSamples) {

@@ -22,11 +22,7 @@ class _ChatShellSnapshot {
           activeChatId == other.activeChatId;
 
   @override
-  int get hashCode => Object.hash(
-        loading,
-        hasActiveChat,
-        activeChatId,
-      );
+  int get hashCode => Object.hash(loading, hasActiveChat, activeChatId);
 }
 
 @immutable
@@ -57,13 +53,8 @@ class _ChatHeaderSnapshot {
           sending == other.sending;
 
   @override
-  int get hashCode => Object.hash(
-        chatId,
-        title,
-        contextTokens,
-        contextWindowTokens,
-        sending,
-      );
+  int get hashCode =>
+      Object.hash(chatId, title, contextTokens, contextWindowTokens, sending);
 }
 
 @immutable
@@ -88,11 +79,7 @@ class _ChatMessagesSnapshot {
           sending == other.sending;
 
   @override
-  int get hashCode => Object.hash(
-        chatId,
-        Object.hashAll(messages),
-        sending,
-      );
+  int get hashCode => Object.hash(chatId, Object.hashAll(messages), sending);
 }
 
 @immutable
@@ -130,14 +117,14 @@ class _ComposerSnapshot {
 
   @override
   int get hashCode => Object.hash(
-        chatId,
-        planMode,
-        sending,
-        hasPendingAttachments,
-        pendingAttachmentsCount,
-        Object.hashAll(selectedConnectionIds),
-        connectionsCount,
-      );
+    chatId,
+    planMode,
+    sending,
+    hasPendingAttachments,
+    pendingAttachmentsCount,
+    Object.hashAll(selectedConnectionIds),
+    connectionsCount,
+  );
 }
 
 @immutable
@@ -159,10 +146,7 @@ class _ToolApprovalSnapshot {
           pendingApproval == other.pendingApproval;
 
   @override
-  int get hashCode => Object.hash(
-        chatId,
-        pendingApproval,
-      );
+  int get hashCode => Object.hash(chatId, pendingApproval);
 }
 
 @immutable
@@ -188,8 +172,8 @@ class _HistoryPanelSnapshot {
 
   @override
   int get hashCode => Object.hash(
-        activeChatId,
-        historyLoading,
-        Object.hashAll(savedHistoryChats),
-      );
+    activeChatId,
+    historyLoading,
+    Object.hashAll(savedHistoryChats),
+  );
 }

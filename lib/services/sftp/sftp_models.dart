@@ -1,12 +1,6 @@
 part of '../sftp_service.dart';
 
-enum SftpConnectionState {
-  disconnected,
-  connecting,
-  connected,
-  loading,
-  error,
-}
+enum SftpConnectionState { disconnected, connecting, connected, loading, error }
 
 class SftpEntry {
   final String connectionId;
@@ -64,15 +58,13 @@ class SftpPathInfo {
   }
 }
 
-enum SftpTransferDirection {
-  upload,
-  download,
-}
+enum SftpTransferDirection { upload, download }
 
 class SftpTransferCancelledException implements Exception {
   final String message;
-  const SftpTransferCancelledException(
-      [this.message = 'Transfer cancelled by user']);
+  const SftpTransferCancelledException([
+    this.message = 'Transfer cancelled by user',
+  ]);
 
   @override
   String toString() => 'SftpTransferCancelledException: $message';
@@ -135,13 +127,13 @@ class SftpTransferState {
 
   @override
   int get hashCode => Object.hash(
-        id,
-        name,
-        totalBytes,
-        isUpload,
-        bytesTransferred,
-        isCancelled,
-        isError,
-        errorMessage,
-      );
+    id,
+    name,
+    totalBytes,
+    isUpload,
+    bytesTransferred,
+    isCancelled,
+    isError,
+    errorMessage,
+  );
 }

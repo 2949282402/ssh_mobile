@@ -46,13 +46,14 @@ class TerminalSessionViewModel extends ChangeNotifier {
   static const int _terminalScrollbackLines = 4000;
 
   TerminalSessionViewModel({
-    required SshService sshService,
+    required this._sshService,
     required this.sessionId,
     required this.connectionId,
-  }) : _sshService = sshService {
+  }) {
     _sshService.addListener(_onSshServiceChanged);
 
-    final initialFontSize = _sshService.getSession(sessionId)?.fontSize ??
+    final initialFontSize =
+        _sshService.getSession(sessionId)?.fontSize ??
         SshSession.defaultTerminalFontSize;
     _fontSize = initialFontSize;
 
@@ -62,8 +63,9 @@ class TerminalSessionViewModel extends ChangeNotifier {
     );
     terminalController = TerminalController();
     terminalFocusNode = FocusNode();
-    commandInputFocusNode =
-        FocusNode(debugLabel: 'Windows terminal command input');
+    commandInputFocusNode = FocusNode(
+      debugLabel: 'Windows terminal command input',
+    );
     complexInputController = TextEditingController();
     commandInputController = TextEditingController();
 
@@ -158,8 +160,10 @@ class TerminalSessionViewModel extends ChangeNotifier {
     _reconnectInProgress = true;
     notifyListeners();
 
-    final connected =
-        await _sshService.ensureSessionConnected(sessionId, connectionId);
+    final connected = await _sshService.ensureSessionConnected(
+      sessionId,
+      connectionId,
+    );
 
     if (connected) {
       _setupOutputStream();
@@ -368,7 +372,9 @@ class TerminalSessionViewModel extends ChangeNotifier {
   }
 
   void selectWordAtPosition(
-      Offset globalPos, GlobalKey<TerminalViewState> viewKey) {
+    Offset globalPos,
+    GlobalKey<TerminalViewState> viewKey,
+  ) {
     final terminalView = viewKey.currentState;
     if (terminalView == null) return;
 

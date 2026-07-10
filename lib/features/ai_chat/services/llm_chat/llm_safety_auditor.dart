@@ -21,38 +21,41 @@ extension LlmChatServiceSafetyAuditor on LlmChatService {
     try {
       final settings = await storageService.loadAiConnectionSettings();
       final provider = LlmProviderFactory.fromSettings(settings);
-      final response = await provider.complete(LlmProviderRequest(
-        baseUrl: baseUrl,
-        apiKey: apiKey,
-        model: model,
-        messages: [
-          {
-            'role': 'system',
-            'content':
-                'You are a safety auditor for SSH Mobile AI tool usage. Return JSON only with keys shouldContinue, summary, issues, suspectedLoop, goalDrift, recommendedNextAction. Approve only when continued tool use is still clearly advancing the original user goal. Reject when you see repeated identical calls, alternating tool loops, repeated failures, many empty results, or goal drift. Keep summary concise. issues must be a short array of strings.',
-          },
-          {
-            'role': 'user',
-            'content': _prettyJson({
-              'originalUserGoal': originalUserGoal,
-              'recentConversationSummary':
-                  _recentConversationSummary(workingMessages),
-              'budget': toolBudget.toJson(),
-              'deterministicSignals': signals.toJson(),
-              'toolLedger': [
-                for (final entry in recentLedger) entry.toJson(),
-              ],
-            }),
-          },
-        ],
-        deepSeekThinkingEnabled: deepSeekThinkingEnabled,
-        deepSeekReasoningEffort: deepSeekReasoningEffort,
-        openAiReasoningEffort: supportsOpenAiReasoningEffort(model)
-            ? 'low'
-            : openAiReasoningEffort,
-        cancellationToken: cancellationToken,
-        timeoutSeconds: settings.timeoutSeconds,
-      ));
+      final response = await provider.complete(
+        LlmProviderRequest(
+          baseUrl: baseUrl,
+          apiKey: apiKey,
+          model: model,
+          messages: [
+            {
+              'role': 'system',
+              'content':
+                  'You are a safety auditor for SSH Mobile AI tool usage. Return JSON only with keys shouldContinue, summary, issues, suspectedLoop, goalDrift, recommendedNextAction. Approve only when continued tool use is still clearly advancing the original user goal. Reject when you see repeated identical calls, alternating tool loops, repeated failures, many empty results, or goal drift. Keep summary concise. issues must be a short array of strings.',
+            },
+            {
+              'role': 'user',
+              'content': _prettyJson({
+                'originalUserGoal': originalUserGoal,
+                'recentConversationSummary': _recentConversationSummary(
+                  workingMessages,
+                ),
+                'budget': toolBudget.toJson(),
+                'deterministicSignals': signals.toJson(),
+                'toolLedger': [
+                  for (final entry in recentLedger) entry.toJson(),
+                ],
+              }),
+            },
+          ],
+          deepSeekThinkingEnabled: deepSeekThinkingEnabled,
+          deepSeekReasoningEffort: deepSeekReasoningEffort,
+          openAiReasoningEffort: supportsOpenAiReasoningEffort(model)
+              ? 'low'
+              : openAiReasoningEffort,
+          cancellationToken: cancellationToken,
+          timeoutSeconds: settings.timeoutSeconds,
+        ),
+      );
       cancellationToken?.throwIfCancelled();
       final content = response.text;
       final auditResult = _parseToolSafetyAuditResult(
@@ -138,8 +141,8 @@ extension LlmChatServiceSafetyAuditor on LlmChatService {
         summary: parsed.summary.isNotEmpty
             ? parsed.summary
             : parsed.shouldContinue
-                ? 'Continued tool use still appears justified.'
-                : 'Continued tool use is no longer justified for this run.',
+            ? 'Continued tool use still appears justified.'
+            : 'Continued tool use is no longer justified for this run.',
         issues: parsed.issues,
         suspectedLoop: parsed.suspectedLoop || signals.suspectedLoop,
         goalDrift: parsed.goalDrift,

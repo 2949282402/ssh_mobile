@@ -41,18 +41,22 @@ class _ToolApprovalPanel extends StatelessWidget {
     final description = isBudgetAudit
         ? strings.budgetAuditReason
         : (isAgentLoopBudget
-            ? (en
-                ? '${pending.request.reason} Tool call budget and safety approvals remain unchanged.'
-                : '${pending.request.reason} 工具调用预算与安全审批保持不变。')
-            : (en
-                ? 'The model wants to perform this action on ${pending.request.connectionName}. Reason: ${pending.request.reason}'
-                : '模型想在 ${pending.request.connectionName} 上执行该操作。原因：${pending.request.reason}'));
-    final reject =
-        isAgentLoopBudget ? (en ? 'Pause' : '暂停') : (en ? 'Reject' : '拒绝');
-    final approve =
-        isAgentLoopBudget ? (en ? 'Continue' : '继续') : (en ? 'Approve' : '同意');
-    final maxCommandHeight =
-        (MediaQuery.sizeOf(context).height * 0.24).clamp(96.0, 180.0);
+              ? (en
+                    ? '${pending.request.reason} Tool call budget and safety approvals remain unchanged.'
+                    : '${pending.request.reason} 工具调用预算与安全审批保持不变。')
+              : (en
+                    ? 'The model wants to perform this action on ${pending.request.connectionName}. Reason: ${pending.request.reason}'
+                    : '模型想在 ${pending.request.connectionName} 上执行该操作。原因：${pending.request.reason}'));
+    final reject = isAgentLoopBudget
+        ? (en ? 'Pause' : '暂停')
+        : (en ? 'Reject' : '拒绝');
+    final approve = isAgentLoopBudget
+        ? (en ? 'Continue' : '继续')
+        : (en ? 'Approve' : '同意');
+    final maxCommandHeight = (MediaQuery.sizeOf(context).height * 0.24).clamp(
+      96.0,
+      180.0,
+    );
     final targetLabel = en ? 'Target' : '目标';
     final pathLabel = en ? 'Path' : '路径';
     final bytesLabel = en ? 'Bytes' : '字节';
@@ -102,11 +106,7 @@ class _ToolApprovalPanel extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(
-                Icons.security_rounded,
-                size: 20,
-                color: colorScheme.error,
-              ),
+              Icon(Icons.security_rounded, size: 20, color: colorScheme.error),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -172,7 +172,7 @@ class _ToolApprovalPanel extends StatelessWidget {
                             'Consolas',
                             'Microsoft YaHei',
                             'PingFang SC',
-                            'sans-serif'
+                            'sans-serif',
                           ],
                           color: colorScheme.onSurface,
                         ),
@@ -211,7 +211,7 @@ class _ToolApprovalPanel extends StatelessWidget {
                         'Consolas',
                         'Microsoft YaHei',
                         'PingFang SC',
-                        'sans-serif'
+                        'sans-serif',
                       ],
                       color: colorScheme.onSurface,
                     ),

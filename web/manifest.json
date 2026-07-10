@@ -1,11 +1,11 @@
 {
-    "name": "ssh_mobile",
-    "short_name": "ssh_mobile",
+    "name": "SSH Mobile",
+    "short_name": "SSH Mobile",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#07111F",
+    "theme_color": "#0F2742",
+    "description": "Cross-platform SSH, SFTP, monitoring, and AI-assisted operations client.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

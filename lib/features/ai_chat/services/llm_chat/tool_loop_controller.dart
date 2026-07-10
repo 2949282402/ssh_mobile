@@ -49,8 +49,9 @@ class ToolLoopController {
     required String originalUserGoal,
     required List<Map<String, dynamic>> workingMessages,
     required Future<AiToolApprovalDecision> Function(
-            AiToolApprovalRequest request)?
-        requestToolApproval,
+      AiToolApprovalRequest request,
+    )?
+    requestToolApproval,
     required void Function(LlmTraceEvent event)? onTrace,
     required LlmCancellationToken? cancellationToken,
     required AiConnectionSettings settings,
@@ -77,9 +78,7 @@ class ToolLoopController {
       final call = toolCalls[toolIndex];
       cancellationToken?.throwIfCancelled();
 
-      var result = jsonEncode({
-        'error': 'Tool execution did not complete.',
-      });
+      var result = jsonEncode({'error': 'Tool execution did not complete.'});
       var outcome = 'success';
       var approvalRequired = false;
       var approvedWrite = false;
@@ -101,8 +100,9 @@ class ToolLoopController {
       );
 
       final tool = visibleToolsByName[call.name];
-      final redactedArguments =
-          chatService._toolSecretPolicy.redactValue(arguments);
+      final redactedArguments = chatService._toolSecretPolicy.redactValue(
+        arguments,
+      );
       final signatureArguments = chatService._mapFromValue(redactedArguments);
       final signature = LlmToolLedgerEntry.buildSignature(
         call.name,
@@ -123,14 +123,16 @@ class ToolLoopController {
                 'Tool "${call.name}" is not exposed in the current context.',
           ),
         );
-        workingMessages.add(activeProvider.buildToolResultMessage(
-          call: LlmProviderToolCall(
-            id: call.id,
-            name: call.name,
-            argumentsJson: call.arguments,
+        workingMessages.add(
+          activeProvider.buildToolResultMessage(
+            call: LlmProviderToolCall(
+              id: call.id,
+              name: call.name,
+              argumentsJson: call.arguments,
+            ),
+            result: result,
           ),
-          result: result,
-        ));
+        );
         workingMessages.add({
           'role': 'system',
           'content':
@@ -175,12 +177,12 @@ class ToolLoopController {
       if (!planMode &&
           activeSnapshot != null &&
           activeSnapshot.steps.isNotEmpty) {
-        final gateResult =
-            const PlanExecutionController().canRunToolForCurrentStep(
-          steps: activeSnapshot.steps,
-          toolName: tool.name,
-          arguments: arguments,
-        );
+        final gateResult = const PlanExecutionController()
+            .canRunToolForCurrentStep(
+              steps: activeSnapshot.steps,
+              toolName: tool.name,
+              arguments: arguments,
+            );
 
         if (!gateResult.allowed) {
           outcome = 'plan_execution_blocked';
@@ -227,14 +229,16 @@ class ToolLoopController {
             ),
           );
 
-          workingMessages.add(activeProvider.buildToolResultMessage(
-            call: LlmProviderToolCall(
-              id: call.id,
-              name: call.name,
-              argumentsJson: call.arguments,
+          workingMessages.add(
+            activeProvider.buildToolResultMessage(
+              call: LlmProviderToolCall(
+                id: call.id,
+                name: call.name,
+                argumentsJson: call.arguments,
+              ),
+              result: result,
             ),
-            result: result,
-          ));
+          );
 
           final quality = ToolResultClassifier.classify(
             toolName: call.name,
@@ -246,13 +250,13 @@ class ToolLoopController {
             dedupBlocked: false,
           );
 
-          final hint =
-              ToolResultClassifier.getSystemHint(call.name, quality, language);
+          final hint = ToolResultClassifier.getSystemHint(
+            call.name,
+            quality,
+            language,
+          );
           if (hint != null) {
-            workingMessages.add({
-              'role': 'system',
-              'content': hint,
-            });
+            workingMessages.add({'role': 'system', 'content': hint});
           }
 
           toolLedger.add(
@@ -346,9 +350,11 @@ class ToolLoopController {
             }),
           );
 
-          for (var blockedIndex = toolIndex;
-              blockedIndex < toolCalls.length;
-              blockedIndex++) {
+          for (
+            var blockedIndex = toolIndex;
+            blockedIndex < toolCalls.length;
+            blockedIndex++
+          ) {
             final blockedCall = toolCalls[blockedIndex];
             final blockedResult = chatService._toolBudgetBlockedToolResult(
               toolName: blockedCall.name,
@@ -361,14 +367,16 @@ class ToolLoopController {
               blockedResult,
               outcome: 'budget_audit_rejected',
             );
-            workingMessages.add(activeProvider.buildToolResultMessage(
-              call: LlmProviderToolCall(
-                id: blockedCall.id,
-                name: blockedCall.name,
-                argumentsJson: blockedCall.arguments,
+            workingMessages.add(
+              activeProvider.buildToolResultMessage(
+                call: LlmProviderToolCall(
+                  id: blockedCall.id,
+                  name: blockedCall.name,
+                  argumentsJson: blockedCall.arguments,
+                ),
+                result: blockedResult,
               ),
-              result: blockedResult,
-            ));
+            );
           }
 
           workingMessages.add({
@@ -458,9 +466,11 @@ class ToolLoopController {
             }),
           );
 
-          for (var blockedIndex = toolIndex;
-              blockedIndex < toolCalls.length;
-              blockedIndex++) {
+          for (
+            var blockedIndex = toolIndex;
+            blockedIndex < toolCalls.length;
+            blockedIndex++
+          ) {
             final blockedCall = toolCalls[blockedIndex];
             final blockedResult = chatService._toolBudgetBlockedToolResult(
               toolName: blockedCall.name,
@@ -473,14 +483,16 @@ class ToolLoopController {
               blockedResult,
               outcome: 'budget_audit_rejected',
             );
-            workingMessages.add(activeProvider.buildToolResultMessage(
-              call: LlmProviderToolCall(
-                id: blockedCall.id,
-                name: blockedCall.name,
-                argumentsJson: blockedCall.arguments,
+            workingMessages.add(
+              activeProvider.buildToolResultMessage(
+                call: LlmProviderToolCall(
+                  id: blockedCall.id,
+                  name: blockedCall.name,
+                  argumentsJson: blockedCall.arguments,
+                ),
+                result: blockedResult,
               ),
-              result: blockedResult,
-            ));
+            );
           }
 
           workingMessages.add({
@@ -524,9 +536,7 @@ class ToolLoopController {
         );
       }
 
-      result = jsonEncode({
-        'error': 'Tool execution did not complete.',
-      });
+      result = jsonEncode({'error': 'Tool execution did not complete.'});
       outcome = 'success';
       approvalRequired = false;
       approvedWrite = false;
@@ -544,7 +554,9 @@ class ToolLoopController {
         if (tool.executionMode == AiToolExecutionMode.readOnly &&
             (repeatedStreak >= 3 ||
                 chatService._wouldTriggerAlternatingLoop(
-                    toolLedger, signature))) {
+                  toolLedger,
+                  signature,
+                ))) {
           dedupBlocked = true;
           dedupBlockedCount += 1;
           outcome = 'loop_guard_blocked';
@@ -574,11 +586,8 @@ class ToolLoopController {
           result = cacheEntry.result;
         }
 
-        final approvalRequest =
-            await chatService.toolService.approvalRequestFor(
-          call.name,
-          arguments,
-        );
+        final approvalRequest = await chatService.toolService
+            .approvalRequestFor(call.name, arguments);
         approvalRequired = approvalRequest != null;
 
         if (!dedupBlocked && !cacheHit && approvalRequest != null) {
@@ -705,8 +714,9 @@ class ToolLoopController {
               activeSnapshot.steps.isNotEmpty) {
             final currentStep = activeSnapshot.currentStep;
             if (currentStep != null) {
-              final stepIndex = activeSnapshot.steps
-                  .indexWhere((s) => s.id == currentStep.id);
+              final stepIndex = activeSnapshot.steps.indexWhere(
+                (s) => s.id == currentStep.id,
+              );
               onTrace?.call(
                 LlmTraceEvent(
                   kind: 'plan_step_tool_binding',
@@ -718,8 +728,10 @@ class ToolLoopController {
                     'stepName': currentStep.name,
                     'toolName': call.name,
                     'connectionId': currentStep.connectionId,
-                    'commandPreview': chatService._toolSecretPolicy
-                        .previewText(currentStep.command, maxChars: 300),
+                    'commandPreview': chatService._toolSecretPolicy.previewText(
+                      currentStep.command,
+                      maxChars: 300,
+                    ),
                     'statusBefore': currentStep.status.name,
                   }),
                 ),
@@ -758,10 +770,13 @@ class ToolLoopController {
                     'taskId': currentStep.id,
                     'toolName': call.name,
                     'toolOutcome': outcome,
-                    'resultPreview': chatService._toolSecretPolicy
-                        .previewText(result, maxChars: 300),
-                    'suggestedTaskStatus':
-                        outcome == 'success' ? 'success' : 'failed',
+                    'resultPreview': chatService._toolSecretPolicy.previewText(
+                      result,
+                      maxChars: 300,
+                    ),
+                    'suggestedTaskStatus': outcome == 'success'
+                        ? 'success'
+                        : 'failed',
                   }),
                 ),
               );
@@ -794,14 +809,16 @@ class ToolLoopController {
         cacheHit: cacheHit,
         dedupBlocked: dedupBlocked,
       );
-      workingMessages.add(activeProvider.buildToolResultMessage(
-        call: LlmProviderToolCall(
-          id: call.id,
-          name: call.name,
-          argumentsJson: call.arguments,
+      workingMessages.add(
+        activeProvider.buildToolResultMessage(
+          call: LlmProviderToolCall(
+            id: call.id,
+            name: call.name,
+            argumentsJson: call.arguments,
+          ),
+          result: result,
         ),
-        result: result,
-      ));
+      );
 
       final quality = ToolResultClassifier.classify(
         toolName: call.name,
@@ -813,13 +830,13 @@ class ToolLoopController {
         dedupBlocked: dedupBlocked,
       );
 
-      final hint =
-          ToolResultClassifier.getSystemHint(call.name, quality, language);
+      final hint = ToolResultClassifier.getSystemHint(
+        call.name,
+        quality,
+        language,
+      );
       if (hint != null) {
-        workingMessages.add({
-          'role': 'system',
-          'content': hint,
-        });
+        workingMessages.add({'role': 'system', 'content': hint});
       }
 
       toolLedger.add(
@@ -917,12 +934,15 @@ class ToolLoopController {
       }
 
       final arguments = chatService._decodeArguments(call.arguments);
-      final approvalRequest = await chatService.toolService
-          .approvalRequestFor(call.name, arguments);
+      final approvalRequest = await chatService.toolService.approvalRequestFor(
+        call.name,
+        arguments,
+      );
       if (approvalRequest != null) return null;
 
-      final redactedArguments =
-          chatService._toolSecretPolicy.redactValue(arguments);
+      final redactedArguments = chatService._toolSecretPolicy.redactValue(
+        arguments,
+      );
       final signatureArguments = chatService._mapFromValue(redactedArguments);
       final signature = LlmToolLedgerEntry.buildSignature(
         call.name,
@@ -1033,9 +1053,7 @@ class ToolLoopController {
               item: item,
               index: index,
               result: jsonEncode({
-                'error': chatService._toolSecretPolicy.redactText(
-                  e.toString(),
-                ),
+                'error': chatService._toolSecretPolicy.redactText(e.toString()),
               }),
               outcome: 'execution_error',
             );
@@ -1044,12 +1062,11 @@ class ToolLoopController {
       );
     }
 
-    final completed = [
-      ...immediateResults,
-      ...await Future.wait(pendingResults),
-    ]..sort(
-        (a, b) => prepared.indexOf(a.item).compareTo(prepared.indexOf(b.item)),
-      );
+    final completed =
+        [...immediateResults, ...await Future.wait(pendingResults)]..sort(
+          (a, b) =>
+              prepared.indexOf(a.item).compareTo(prepared.indexOf(b.item)),
+        );
 
     for (final completedResult in completed) {
       cancellationToken?.throwIfCancelled();
@@ -1066,14 +1083,16 @@ class ToolLoopController {
         cacheHit: cacheHit,
         dedupBlocked: false,
       );
-      workingMessages.add(activeProvider.buildToolResultMessage(
-        call: LlmProviderToolCall(
-          id: item.call.id,
-          name: item.call.name,
-          argumentsJson: item.call.arguments,
+      workingMessages.add(
+        activeProvider.buildToolResultMessage(
+          call: LlmProviderToolCall(
+            id: item.call.id,
+            name: item.call.name,
+            argumentsJson: item.call.arguments,
+          ),
+          result: result,
         ),
-        result: result,
-      ));
+      );
 
       final quality = ToolResultClassifier.classify(
         toolName: item.call.name,
@@ -1084,13 +1103,13 @@ class ToolLoopController {
         cacheHit: cacheHit,
         dedupBlocked: false,
       );
-      final hint =
-          ToolResultClassifier.getSystemHint(item.call.name, quality, language);
+      final hint = ToolResultClassifier.getSystemHint(
+        item.call.name,
+        quality,
+        language,
+      );
       if (hint != null) {
-        workingMessages.add({
-          'role': 'system',
-          'content': hint,
-        });
+        workingMessages.add({'role': 'system', 'content': hint});
       }
 
       toolLedger.add(
@@ -1161,7 +1180,8 @@ class ToolLoopController {
     } else if (toolName == 'client_task_skip') {
       nextStatus = StepStatus.skipped;
     } else {
-      nextStatus = _statusFromTaskToolResult(resultJson) ??
+      nextStatus =
+          _statusFromTaskToolResult(resultJson) ??
           _statusFromRaw(arguments['status']);
     }
     if (nextStatus == null) return current;
@@ -1230,7 +1250,8 @@ class ToolLoopController {
     required AiConnectionSettings settings,
     PlanExecutionSnapshot? planExecutionSnapshot,
   }) async {
-    final needsPostReview = (finalOutcome == AgentFinalOutcome.toolError ||
+    final needsPostReview =
+        (finalOutcome == AgentFinalOutcome.toolError ||
         finalOutcome == AgentFinalOutcome.loopGuardBlocked ||
         finalOutcome == AgentFinalOutcome.approvalRejected ||
         finalOutcome == AgentFinalOutcome.budgetAuditRejected ||
@@ -1258,10 +1279,7 @@ class ToolLoopController {
         'Current Plan Step:',
         '- taskId: ${currentTodoStep.id}',
         '- name: ${currentTodoStep.name}',
-        '- command: ${chatService._toolSecretPolicy.previewText(
-          currentTodoStep.command,
-          maxChars: 300,
-        )}',
+        '- command: ${chatService._toolSecretPolicy.previewText(currentTodoStep.command, maxChars: 300)}',
         '- status: ${currentTodoStep.status.name}',
         if (currentTodoStep.connectionId?.trim().isNotEmpty == true)
           '- connectionId: ${currentTodoStep.connectionId}',

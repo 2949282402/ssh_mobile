@@ -81,39 +81,42 @@ void main() {
     });
 
     test(
-        'exportAppData and importAppData handle state transitions and callbacks',
-        () async {
-      final viewModel = SettingsViewModel(
-        appSettings: appSettings,
-        storageService: storageService,
-      );
+      'exportAppData and importAppData handle state transitions and callbacks',
+      () async {
+        final viewModel = SettingsViewModel(
+          appSettings: appSettings,
+          storageService: storageService,
+        );
 
-      List<int>? exportedBytes;
-      bool saveCallbackCalled = false;
-      final exportSuccess =
-          await viewModel.exportAppData((fileName, bytes) async {
-        saveCallbackCalled = true;
-        expect(fileName, startsWith('ssh_mobile_backup_'));
-        expect(bytes, isNotEmpty);
-        exportedBytes = bytes;
-        return 'mock_path';
-      });
+        List<int>? exportedBytes;
+        bool saveCallbackCalled = false;
+        final exportSuccess = await viewModel.exportAppData((
+          fileName,
+          bytes,
+        ) async {
+          saveCallbackCalled = true;
+          expect(fileName, startsWith('ssh_mobile_backup_'));
+          expect(bytes, isNotEmpty);
+          exportedBytes = bytes;
+          return 'mock_path';
+        });
 
-      expect(exportSuccess, isTrue);
-      expect(saveCallbackCalled, isTrue);
-      expect(viewModel.isExporting, isFalse);
-      expect(viewModel.lastOperationMessage, equals('success'));
+        expect(exportSuccess, isTrue);
+        expect(saveCallbackCalled, isTrue);
+        expect(viewModel.isExporting, isFalse);
+        expect(viewModel.lastOperationMessage, equals('success'));
 
-      bool pickCallbackCalled = false;
-      final importSuccess = await viewModel.importAppData(() async {
-        pickCallbackCalled = true;
-        return exportedBytes;
-      });
+        bool pickCallbackCalled = false;
+        final importSuccess = await viewModel.importAppData(() async {
+          pickCallbackCalled = true;
+          return exportedBytes;
+        });
 
-      expect(importSuccess, isTrue);
-      expect(pickCallbackCalled, isTrue);
-      expect(viewModel.isImporting, isFalse);
-      expect(viewModel.lastOperationMessage, equals('success'));
-    });
+        expect(importSuccess, isTrue);
+        expect(pickCallbackCalled, isTrue);
+        expect(viewModel.isImporting, isFalse);
+        expect(viewModel.lastOperationMessage, equals('success'));
+      },
+    );
   });
 }

@@ -23,8 +23,9 @@ class _MessageActions extends StatelessWidget {
   Widget build(BuildContext context) {
     final en = context.read<AppSettings>().language == AppLanguage.en;
     final colorScheme = Theme.of(context).colorScheme;
-    final copyText =
-        assistantText?.trim().isNotEmpty == true ? assistantText!.trim() : null;
+    final copyText = assistantText?.trim().isNotEmpty == true
+        ? assistantText!.trim()
+        : null;
     final children = <Widget>[
       if (copyText != null)
         _actionButton(
@@ -78,8 +79,9 @@ class _MessageActions extends StatelessWidget {
         children: [
           DecoratedBox(
             decoration: BoxDecoration(
-              color:
-                  colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
+              color: colorScheme.surfaceContainerHighest.withValues(
+                alpha: 0.36,
+              ),
               borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
               border: Border.all(
                 color: colorScheme.outlineVariant.withValues(alpha: 0.72),
@@ -132,9 +134,7 @@ class _MessageActions extends StatelessWidget {
                       Expanded(
                         child: Text(
                           en ? 'Select and copy' : '选择复制',
-                          style: Theme.of(sheetContext)
-                              .textTheme
-                              .titleMedium
+                          style: Theme.of(sheetContext).textTheme.titleMedium
                               ?.copyWith(fontWeight: FontWeight.w800),
                         ),
                       ),
@@ -155,13 +155,16 @@ class _MessageActions extends StatelessWidget {
                   Expanded(
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        color: colorScheme.surfaceContainerHighest
-                            .withValues(alpha: 0.36),
-                        borderRadius:
-                            BorderRadius.circular(AppTheme.radiusSmall),
+                        color: colorScheme.surfaceContainerHighest.withValues(
+                          alpha: 0.36,
+                        ),
+                        borderRadius: BorderRadius.circular(
+                          AppTheme.radiusSmall,
+                        ),
                         border: Border.all(
-                          color: colorScheme.outlineVariant
-                              .withValues(alpha: 0.72),
+                          color: colorScheme.outlineVariant.withValues(
+                            alpha: 0.72,
+                          ),
                         ),
                       ),
                       child: Scrollbar(

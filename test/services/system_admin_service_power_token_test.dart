@@ -41,41 +41,47 @@ void main() {
     });
 
     test(
-        'rebootServer throws StateError and blocks execution with a shutdown token',
-        () async {
-      final token = SystemPowerConfirmationToken.testing(
-        action: SystemPowerAction.shutdown,
-      );
+      'rebootServer throws StateError and blocks execution with a shutdown token',
+      () async {
+        final token = SystemPowerConfirmationToken.testing(
+          action: SystemPowerAction.shutdown,
+        );
 
-      expect(
-        () => service.rebootServer('conn1', token),
-        throwsA(isA<StateError>().having(
-          (e) => e.message,
-          'message',
-          'System power confirmation token action mismatch',
-        )),
-      );
-      expect(lastCommand, isNull);
-    });
+        expect(
+          () => service.rebootServer('conn1', token),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              'System power confirmation token action mismatch',
+            ),
+          ),
+        );
+        expect(lastCommand, isNull);
+      },
+    );
 
     test(
-        'rebootServer throws StateError and blocks execution with an expired token',
-        () async {
-      final token = SystemPowerConfirmationToken.testing(
-        action: SystemPowerAction.reboot,
-        issuedAt: DateTime.now().subtract(const Duration(minutes: 3)),
-      );
+      'rebootServer throws StateError and blocks execution with an expired token',
+      () async {
+        final token = SystemPowerConfirmationToken.testing(
+          action: SystemPowerAction.reboot,
+          issuedAt: DateTime.now().subtract(const Duration(minutes: 3)),
+        );
 
-      expect(
-        () => service.rebootServer('conn1', token),
-        throwsA(isA<StateError>().having(
-          (e) => e.message,
-          'message',
-          'System power confirmation token expired',
-        )),
-      );
-      expect(lastCommand, isNull);
-    });
+        expect(
+          () => service.rebootServer('conn1', token),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              'System power confirmation token expired',
+            ),
+          ),
+        );
+        expect(lastCommand, isNull);
+      },
+    );
 
     test('shutdownServer execution with a valid shutdown token', () async {
       final token = SystemPowerConfirmationToken.testing(
@@ -87,40 +93,46 @@ void main() {
     });
 
     test(
-        'shutdownServer throws StateError and blocks execution with a reboot token',
-        () async {
-      final token = SystemPowerConfirmationToken.testing(
-        action: SystemPowerAction.reboot,
-      );
+      'shutdownServer throws StateError and blocks execution with a reboot token',
+      () async {
+        final token = SystemPowerConfirmationToken.testing(
+          action: SystemPowerAction.reboot,
+        );
 
-      expect(
-        () => service.shutdownServer('conn1', token),
-        throwsA(isA<StateError>().having(
-          (e) => e.message,
-          'message',
-          'System power confirmation token action mismatch',
-        )),
-      );
-      expect(lastCommand, isNull);
-    });
+        expect(
+          () => service.shutdownServer('conn1', token),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              'System power confirmation token action mismatch',
+            ),
+          ),
+        );
+        expect(lastCommand, isNull);
+      },
+    );
 
     test(
-        'shutdownServer throws StateError and blocks execution with an expired token',
-        () async {
-      final token = SystemPowerConfirmationToken.testing(
-        action: SystemPowerAction.shutdown,
-        issuedAt: DateTime.now().subtract(const Duration(minutes: 3)),
-      );
+      'shutdownServer throws StateError and blocks execution with an expired token',
+      () async {
+        final token = SystemPowerConfirmationToken.testing(
+          action: SystemPowerAction.shutdown,
+          issuedAt: DateTime.now().subtract(const Duration(minutes: 3)),
+        );
 
-      expect(
-        () => service.shutdownServer('conn1', token),
-        throwsA(isA<StateError>().having(
-          (e) => e.message,
-          'message',
-          'System power confirmation token expired',
-        )),
-      );
-      expect(lastCommand, isNull);
-    });
+        expect(
+          () => service.shutdownServer('conn1', token),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              'System power confirmation token expired',
+            ),
+          ),
+        );
+        expect(lastCommand, isNull);
+      },
+    );
   });
 }

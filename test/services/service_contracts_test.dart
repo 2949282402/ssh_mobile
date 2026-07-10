@@ -48,10 +48,7 @@ void main() {
   });
 
   test('core services expose injectable contracts', () {
-    final llm = LlmChatService(
-      storageService: storage,
-      toolService: tools,
-    );
+    final llm = LlmChatService(storageService: storage, toolService: tools);
 
     expect(storage, isA<AiChatRepository>());
     expect(storage, isA<AiSkillRepository>());

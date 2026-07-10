@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,13 +8,7 @@ import '../../../services/storage_service.dart';
 import '../../../theme/app_theme.dart';
 import '../models/agent_trace_event.dart';
 
-enum _TraceFilter {
-  all,
-  tools,
-  approvals,
-  blocked,
-  errors,
-}
+enum _TraceFilter { all, tools, approvals, blocked, errors }
 
 class AgentTraceDebugPage extends StatefulWidget {
   final String chatId;
@@ -47,18 +41,16 @@ class _AgentTraceDebugPageState extends State<AgentTraceDebugPage> {
     return _TraceDebugData(
       events: events,
       metrics: metrics.cast<AgentRunMetrics?>().firstWhere(
-            (metric) => metric?.id == widget.runId,
-            orElse: () => null,
-          ),
+        (metric) => metric?.id == widget.runId,
+        orElse: () => null,
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Agent Trace'),
-      ),
+      appBar: AppBar(title: const Text('Agent Trace')),
       body: FutureBuilder<_TraceDebugData>(
         future: _future,
         builder: (context, snapshot) {
@@ -101,8 +93,9 @@ class _AgentTraceDebugPageState extends State<AgentTraceDebugPage> {
                         Text(
                           widget.runId,
                           style: TextStyle(
-                            color:
-                                Theme.of(context).colorScheme.onSurfaceVariant,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
                             fontSize: 12,
                           ),
                         ),
@@ -138,26 +131,28 @@ class _AgentTraceDebugPageState extends State<AgentTraceDebugPage> {
   }
 
   List<AgentTraceEvent> _filteredEvents(List<AgentTraceEvent> events) {
-    return events.where((event) {
-      switch (_filter) {
-        case _TraceFilter.all:
-          return true;
-        case _TraceFilter.tools:
-          return event.kind.contains('tool') ||
-              event.toolName?.trim().isNotEmpty == true;
-        case _TraceFilter.approvals:
-          return event.kind.contains('approval');
-        case _TraceFilter.blocked:
-          return event.kind.contains('blocked') ||
-              event.status.contains('blocked') ||
-              event.status.contains('rejected') ||
-              event.status.contains('unavailable');
-        case _TraceFilter.errors:
-          return event.kind.contains('error') ||
-              event.status.contains('error') ||
-              event.status.contains('failed');
-      }
-    }).toList(growable: false);
+    return events
+        .where((event) {
+          switch (_filter) {
+            case _TraceFilter.all:
+              return true;
+            case _TraceFilter.tools:
+              return event.kind.contains('tool') ||
+                  event.toolName?.trim().isNotEmpty == true;
+            case _TraceFilter.approvals:
+              return event.kind.contains('approval');
+            case _TraceFilter.blocked:
+              return event.kind.contains('blocked') ||
+                  event.status.contains('blocked') ||
+                  event.status.contains('rejected') ||
+                  event.status.contains('unavailable');
+            case _TraceFilter.errors:
+              return event.kind.contains('error') ||
+                  event.status.contains('error') ||
+                  event.status.contains('failed');
+          }
+        })
+        .toList(growable: false);
   }
 }
 
@@ -165,10 +160,7 @@ class _TraceDebugData {
   final List<AgentTraceEvent> events;
   final AgentRunMetrics? metrics;
 
-  const _TraceDebugData({
-    required this.events,
-    required this.metrics,
-  });
+  const _TraceDebugData({required this.events, required this.metrics});
 }
 
 class _OverviewSection extends StatelessWidget {
@@ -224,32 +216,58 @@ class _OverviewSection extends StatelessWidget {
               _MetricPill('Status', _statusLabel(metrics, finalOutcome)),
               _MetricPill('Run', runId),
               _MetricPill(
-                  'Model', metrics?.model ?? '${summary['model'] ?? '-'}'),
-              _MetricPill('Helper',
-                  metrics?.helperModel ?? '${summary['helperModel'] ?? '-'}'),
-              _MetricPill('Audit',
-                  metrics?.auditModel ?? '${summary['auditModel'] ?? '-'}'),
-              _MetricPill('Elapsed', _elapsed(metrics, summary)),
-              _MetricPill('Prompt',
-                  '${metrics?.promptTokens ?? summary['promptTokens'] ?? 0}'),
-              _MetricPill('Completion',
-                  '${metrics?.completionTokens ?? summary['completionTokens'] ?? 0}'),
+                'Model',
+                metrics?.model ?? '${summary['model'] ?? '-'}',
+              ),
               _MetricPill(
-                  'Total', '${metrics?.totalTokens ?? _totalTokens(summary)}'),
-              _MetricPill('Tools',
-                  '${metrics?.toolCalls ?? summary['toolCalls'] ?? _countKind(events, 'tool_request')}'),
-              _MetricPill('Cache hits',
-                  '${metrics?.cacheHits ?? summary['cacheHits'] ?? 0}'),
-              _MetricPill('Dedup blocked',
-                  '${metrics?.dedupBlockedCalls ?? summary['dedupBlockedCalls'] ?? 0}'),
-              _MetricPill('Approvals',
-                  '${metrics?.approvalCount ?? summary['approvalCount'] ?? _countKind(events, 'approval')}'),
-              _MetricPill('Approved',
-                  '${metrics?.approvedCount ?? summary['approvedCount'] ?? 0}'),
-              _MetricPill('Audits',
-                  '${metrics?.auditCount ?? summary['auditEscalationLevel'] ?? 0}'),
-              _MetricPill('Helper fanout',
-                  '${metrics?.helperFanout ?? summary['helperFanout'] ?? 0}'),
+                'Helper',
+                metrics?.helperModel ?? '${summary['helperModel'] ?? '-'}',
+              ),
+              _MetricPill(
+                'Audit',
+                metrics?.auditModel ?? '${summary['auditModel'] ?? '-'}',
+              ),
+              _MetricPill('Elapsed', _elapsed(metrics, summary)),
+              _MetricPill(
+                'Prompt',
+                '${metrics?.promptTokens ?? summary['promptTokens'] ?? 0}',
+              ),
+              _MetricPill(
+                'Completion',
+                '${metrics?.completionTokens ?? summary['completionTokens'] ?? 0}',
+              ),
+              _MetricPill(
+                'Total',
+                '${metrics?.totalTokens ?? _totalTokens(summary)}',
+              ),
+              _MetricPill(
+                'Tools',
+                '${metrics?.toolCalls ?? summary['toolCalls'] ?? _countKind(events, 'tool_request')}',
+              ),
+              _MetricPill(
+                'Cache hits',
+                '${metrics?.cacheHits ?? summary['cacheHits'] ?? 0}',
+              ),
+              _MetricPill(
+                'Dedup blocked',
+                '${metrics?.dedupBlockedCalls ?? summary['dedupBlockedCalls'] ?? 0}',
+              ),
+              _MetricPill(
+                'Approvals',
+                '${metrics?.approvalCount ?? summary['approvalCount'] ?? _countKind(events, 'approval')}',
+              ),
+              _MetricPill(
+                'Approved',
+                '${metrics?.approvedCount ?? summary['approvedCount'] ?? 0}',
+              ),
+              _MetricPill(
+                'Audits',
+                '${metrics?.auditCount ?? summary['auditEscalationLevel'] ?? 0}',
+              ),
+              _MetricPill(
+                'Helper fanout',
+                '${metrics?.helperFanout ?? summary['helperFanout'] ?? 0}',
+              ),
             ],
           ),
           if (selectedTools.isNotEmpty) ...[
@@ -277,7 +295,7 @@ class _OverviewSection extends StatelessWidget {
         if (decoded is Map<String, dynamic>) return decoded;
         if (decoded is Map) {
           return {
-            for (final entry in decoded.entries) '${entry.key}': entry.value
+            for (final entry in decoded.entries) '${entry.key}': entry.value,
           };
         }
       } catch (_) {
@@ -294,7 +312,9 @@ class _OverviewSection extends StatelessWidget {
   }
 
   static String _elapsed(
-      AgentRunMetrics? metrics, Map<String, dynamic> summary) {
+    AgentRunMetrics? metrics,
+    Map<String, dynamic> summary,
+  ) {
     final value = metrics?.elapsedMs ?? summary['elapsedMs'];
     if (value is int) return _formatDuration(Duration(milliseconds: value));
     final started = DateTime.tryParse('${summary['startedAt'] ?? ''}');
@@ -333,10 +353,7 @@ class _FilterBar extends StatelessWidget {
   final _TraceFilter selected;
   final ValueChanged<_TraceFilter> onSelected;
 
-  const _FilterBar({
-    required this.selected,
-    required this.onSelected,
-  });
+  const _FilterBar({required this.selected, required this.onSelected});
 
   @override
   Widget build(BuildContext context) {
@@ -359,10 +376,7 @@ class _TraceTimelineItem extends StatelessWidget {
   final AgentTraceEvent event;
   final Duration offset;
 
-  const _TraceTimelineItem({
-    required this.event,
-    required this.offset,
-  });
+  const _TraceTimelineItem({required this.event, required this.offset});
 
   @override
   Widget build(BuildContext context) {
@@ -453,8 +467,9 @@ class _TraceTimelineItem extends StatelessWidget {
                 width: double.infinity,
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: colorScheme.surfaceContainerHighest
-                      .withValues(alpha: 0.4),
+                  color: colorScheme.surfaceContainerHighest.withValues(
+                    alpha: 0.4,
+                  ),
                   borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                 ),
                 child: SelectableText(
@@ -465,7 +480,7 @@ class _TraceTimelineItem extends StatelessWidget {
                       'Consolas',
                       'Microsoft YaHei',
                       'PingFang SC',
-                      'sans-serif'
+                      'sans-serif',
                     ],
                     fontSize: 12,
                     height: 1.35,

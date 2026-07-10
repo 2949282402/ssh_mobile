@@ -23,18 +23,25 @@ class ServerToolsProvider implements AiToolProvider {
   }) async {
     switch (name) {
       case 'list_servers':
-        return jsonEncode(
-            {'servers': serverCatalogService.listServerSummaries()});
+        return jsonEncode({
+          'servers': serverCatalogService.listServerSummaries(),
+        });
       case 'get_server_details':
         return _getServerDetails(service, arguments);
       case 'update_server_metadata':
-        return _updateServerMetadata(service, arguments,
-            approvedWrite: approvedWrite);
+        return _updateServerMetadata(
+          service,
+          arguments,
+          approvedWrite: approvedWrite,
+        );
       case 'delete_server':
         return _deleteServer(service, arguments, approvedWrite: approvedWrite);
       case 'reorder_servers':
-        return _reorderServers(service, arguments,
-            approvedWrite: approvedWrite);
+        return _reorderServers(
+          service,
+          arguments,
+          approvedWrite: approvedWrite,
+        );
       case 'detect_os':
         return _detectOsTool(service, arguments);
       case 'run_command':
@@ -55,7 +62,9 @@ class ServerToolsProvider implements AiToolProvider {
   }
 
   Future<String> _getServerDetails(
-      AiToolService service, Map<String, dynamic> arguments) async {
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
     final details = serverCatalogService.getServerDetails(
       service._arg(arguments, 'connectionId'),
     );
@@ -106,8 +115,9 @@ class ServerToolsProvider implements AiToolProvider {
       });
     }
     return jsonEncode(
-      await serverCatalogService
-          .deleteServer(service._arg(arguments, 'connectionId')),
+      await serverCatalogService.deleteServer(
+        service._arg(arguments, 'connectionId'),
+      ),
     );
   }
 
@@ -129,15 +139,20 @@ class ServerToolsProvider implements AiToolProvider {
   }
 
   Future<String> _detectOsTool(
-      AiToolService service, Map<String, dynamic> arguments) async {
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
     return jsonEncode(
-      await serverDiagnosticsService
-          .detectOs(service._arg(arguments, 'connectionId')),
+      await serverDiagnosticsService.detectOs(
+        service._arg(arguments, 'connectionId'),
+      ),
     );
   }
 
   Future<String> _serverStatus(
-      AiToolService service, Map<String, dynamic> arguments) async {
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
     final connectionId = service._arg(arguments, 'connectionId');
     final mode = service._optionalString(arguments, 'mode')?.toLowerCase();
     return jsonEncode(
@@ -149,7 +164,9 @@ class ServerToolsProvider implements AiToolProvider {
   }
 
   Future<String> _opsReport(
-      AiToolService service, Map<String, dynamic> arguments) async {
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
     return jsonEncode(
       await serverDiagnosticsService.generateOpsReport(
         service._arg(arguments, 'connectionId'),
@@ -171,8 +188,10 @@ class ServerToolsProvider implements AiToolProvider {
         'connectionId': connectionId,
       });
     }
-    final review =
-        service.reviewCommand(command, platform: config.serverPlatform);
+    final review = service.reviewCommand(
+      command,
+      platform: config.serverPlatform,
+    );
     if (review.blocked) {
       return jsonEncode({
         'error': review.reason,
@@ -187,8 +206,8 @@ class ServerToolsProvider implements AiToolProvider {
         'command': service.secretPolicy.previewText(command, maxChars: 240),
       });
     }
-    final timeoutSeconds =
-        await service.storageService.getAiRequestTimeoutSeconds();
+    final timeoutSeconds = await service.storageService
+        .getAiRequestTimeoutSeconds();
     late final RemoteCommandResult result;
     try {
       result = await service.sshService.runOneShotCommand(
@@ -262,8 +281,9 @@ class ServerToolsProvider implements AiToolProvider {
       command: command,
       timeout: const Duration(seconds: 12),
     );
-    final report =
-        await serverDiagnosticsService.generateOpsReport(connectionId);
+    final report = await serverDiagnosticsService.generateOpsReport(
+      connectionId,
+    );
     return jsonEncode({
       'connectionId': connectionId,
       'serviceName': serviceName,
@@ -284,8 +304,9 @@ class ServerToolsProvider implements AiToolProvider {
     final connectionId = service._arg(arguments, 'connectionId');
     final focus = service._optionalString(arguments, 'focus');
     final path = service._optionalString(arguments, 'path');
-    final report =
-        await serverDiagnosticsService.generateOpsReport(connectionId);
+    final report = await serverDiagnosticsService.generateOpsReport(
+      connectionId,
+    );
     final health = service.performanceMonitorToolService.getHealth(
       connectionIds: [connectionId],
     );
@@ -307,7 +328,7 @@ class ServerToolsProvider implements AiToolProvider {
       'opsReport': report,
       'monitorHealth': health,
       'monitorAlerts': alerts,
-      if (fileContext != null) 'pathContext': fileContext,
+      'pathContext': ?fileContext,
     });
   }
 
@@ -350,9 +371,7 @@ class ServerToolsProvider implements AiToolProvider {
         name: 'get_server_details',
         description:
             'Get saved non-sensitive metadata for one SSH server, including session overview. Does not reveal credentials.',
-        properties: {
-          'connectionId': _string('Server connection id.'),
-        },
+        properties: {'connectionId': _string('Server connection id.')},
         required: const ['connectionId'],
         capabilities: const {
           AiToolCapability.server,
@@ -385,9 +404,7 @@ class ServerToolsProvider implements AiToolProvider {
             'Optional tmux auto-delete idle timeout in seconds.',
           ),
           'keepAlive': _bool('Optional keep-alive enabled flag.'),
-          'keepAliveInterval': _int(
-            'Optional keep-alive interval in seconds.',
-          ),
+          'keepAliveInterval': _int('Optional keep-alive interval in seconds.'),
           'terminalWidth': _int('Optional default terminal width.'),
           'terminalHeight': _int('Optional default terminal height.'),
           'jumpHost': _string('Optional jump host hostname.'),
@@ -400,19 +417,14 @@ class ServerToolsProvider implements AiToolProvider {
           AiToolCapability.server,
           AiToolCapability.settings,
         },
-        handler: (arguments) => _updateServerMetadata(
-          service,
-          arguments,
-          approvedWrite: false,
-        ),
+        handler: (arguments) =>
+            _updateServerMetadata(service, arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'delete_server',
         description:
             'Delete one saved SSH server from the client app. Credentials stored for that server are also removed locally. This is destructive and requires user approval.',
-        properties: {
-          'connectionId': _string('Server connection id.'),
-        },
+        properties: {'connectionId': _string('Server connection id.')},
         required: const ['connectionId'],
         executionMode: AiToolExecutionMode.stateChanging,
         capabilities: const {
@@ -438,19 +450,14 @@ class ServerToolsProvider implements AiToolProvider {
           AiToolCapability.server,
           AiToolCapability.settings,
         },
-        handler: (arguments) => _reorderServers(
-          service,
-          arguments,
-          approvedWrite: false,
-        ),
+        handler: (arguments) =>
+            _reorderServers(service, arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'detect_os',
         description:
             'Detect whether a selected SSH server is Windows or Linux or Unix before choosing OS-specific commands.',
-        properties: {
-          'connectionId': _string('Server connection id.'),
-        },
+        properties: {'connectionId': _string('Server connection id.')},
         required: const ['connectionId'],
         requiresServerSelection: true,
         capabilities: const {
@@ -503,9 +510,7 @@ class ServerToolsProvider implements AiToolProvider {
         name: 'generate_ops_report',
         description:
             'Collect read-only server status and return an operations report payload with health score, risks, ports, applications, and suggested next checks.',
-        properties: {
-          'connectionId': _string('Server connection id.'),
-        },
+        properties: {'connectionId': _string('Server connection id.')},
         required: const ['connectionId'],
         requiresServerSelection: true,
         capabilities: const {
@@ -522,8 +527,9 @@ class ServerToolsProvider implements AiToolProvider {
             'Collect a structured service-health snapshot for one server and one service name, combining read-only service status with the current ops report.',
         properties: {
           'connectionId': _string('Server connection id.'),
-          'serviceName':
-              _string('Service name such as nginx, sshd, docker, or mysql.'),
+          'serviceName': _string(
+            'Service name such as nginx, sshd, docker, or mysql.',
+          ),
         },
         required: const ['connectionId', 'serviceName'],
         requiresServerSelection: true,
@@ -542,9 +548,11 @@ class ServerToolsProvider implements AiToolProvider {
         properties: {
           'connectionId': _string('Server connection id.'),
           'focus': _string(
-              'Optional incident focus such as nginx, disk, memory, ports, or login failures.'),
-          'path':
-              _string('Optional remote file path to inspect metadata only.'),
+            'Optional incident focus such as nginx, disk, memory, ports, or login failures.',
+          ),
+          'path': _string(
+            'Optional remote file path to inspect metadata only.',
+          ),
         },
         required: const ['connectionId'],
         requiresServerSelection: true,

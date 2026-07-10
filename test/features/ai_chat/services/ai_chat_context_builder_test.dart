@@ -16,7 +16,7 @@ void main() {
           command: 'echo 1',
           description: 'Desc 1',
           connectionId: 'conn-1',
-        )
+        ),
       ];
       final planMessage = AiChatMessageRecord(
         role: 'assistant',
@@ -124,47 +124,57 @@ void main() {
       expect(result, contains('success response'));
     });
 
-    test('buildAssistantContextText redacts large trace content (>2500 chars)',
-        () {
-      final largeContent = 'a' * 3000;
-      final traces = [
-        AiMessageTrace(
-          id: 'trace-1',
-          kind: 'tool_result',
-          title: 'Run command',
-          content: largeContent,
-          createdAt: DateTime.now(),
-        ),
-      ];
+    test(
+      'buildAssistantContextText redacts large trace content (>2500 chars)',
+      () {
+        final largeContent = 'a' * 3000;
+        final traces = [
+          AiMessageTrace(
+            id: 'trace-1',
+            kind: 'tool_result',
+            title: 'Run command',
+            content: largeContent,
+            createdAt: DateTime.now(),
+          ),
+        ];
 
-      final result = builder.buildAssistantContextText(
-        'reply',
-        traces: traces,
-      );
+        final result = builder.buildAssistantContextText(
+          'reply',
+          traces: traces,
+        );
 
-      expect(result,
-          contains('[Large tool_result output omitted from future context.'));
-      expect(result, contains('Length: 3000 chars.'));
-    });
+        expect(
+          result,
+          contains('[Large tool_result output omitted from future context.'),
+        );
+        expect(result, contains('Length: 3000 chars.'));
+      },
+    );
 
     test('buildAssistantContextText body trimming rules', () {
       // Rule 1: length > 6000
       final veryLongText = 'a' * 6005;
       final result1 = builder.buildAssistantContextText(veryLongText);
-      expect(result1,
-          contains('Large document output omitted from future context.'));
+      expect(
+        result1,
+        contains('Large document output omitted from future context.'),
+      );
 
       // Rule 2: length > 2500 && code fences >= 2
       final codeFenceText = '```\n${'a' * 2500}\n```';
       final result2 = builder.buildAssistantContextText(codeFenceText);
-      expect(result2,
-          contains('Large code/document output omitted from future context.'));
+      expect(
+        result2,
+        contains('Large code/document output omitted from future context.'),
+      );
 
       // Rule 3: length > 2500 && HTML
       final htmlText = '<html>${'a' * 2500}</html>';
       final result3 = builder.buildAssistantContextText(htmlText);
       expect(
-          result3, contains('Large HTML output omitted from future context.'));
+        result3,
+        contains('Large HTML output omitted from future context.'),
+      );
 
       // Rule 4: length > 3000 && Markdown document score >= 10
       final mdText =
@@ -172,9 +182,9 @@ void main() {
           '${'a' * 3000}';
       final result4 = builder.buildAssistantContextText(mdText);
       expect(
-          result4,
-          contains(
-              'Large Markdown/document output omitted from future context.'));
+        result4,
+        contains('Large Markdown/document output omitted from future context.'),
+      );
 
       // Rule 5: ordinary text does not trim
       final ordinary = 'a' * 2000;

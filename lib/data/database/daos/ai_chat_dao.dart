@@ -6,10 +6,7 @@ class AiChatWithMessages {
   final AiChat chat;
   final List<AiChatMessage> messages;
 
-  const AiChatWithMessages({
-    required this.chat,
-    required this.messages,
-  });
+  const AiChatWithMessages({required this.chat, required this.messages});
 }
 
 @DriftAccessor(tables: [AiChats, AiChatMessages])
@@ -17,14 +14,14 @@ class AiChatDao extends DatabaseAccessor<AppDatabase> with _$AiChatDaoMixin {
   AiChatDao(super.db);
 
   Future<List<AiChatWithMessages>> loadChats() async {
-    final rows = await (select(aiChats)
-          ..orderBy([
-            (row) => OrderingTerm(
-                  expression: row.updatedAt,
-                  mode: OrderingMode.desc,
-                ),
-          ]))
-        .get();
+    final rows =
+        await (select(aiChats)..orderBy([
+              (row) => OrderingTerm(
+                expression: row.updatedAt,
+                mode: OrderingMode.desc,
+              ),
+            ]))
+            .get();
     final result = <AiChatWithMessages>[];
     for (final chat in rows) {
       final messages = await loadMessagesForChat(chat.id);
@@ -42,9 +39,9 @@ class AiChatDao extends DatabaseAccessor<AppDatabase> with _$AiChatDaoMixin {
     return (select(aiChats)
           ..orderBy([
             (row) => OrderingTerm(
-                  expression: row.updatedAt,
-                  mode: OrderingMode.desc,
-                ),
+              expression: row.updatedAt,
+              mode: OrderingMode.desc,
+            ),
           ])
           ..limit(pageSize, offset: pageOffset))
         .get();
@@ -66,9 +63,9 @@ class AiChatDao extends DatabaseAccessor<AppDatabase> with _$AiChatDaoMixin {
   ) async {
     await transaction(() async {
       await into(aiChats).insertOnConflictUpdate(chat);
-      await (delete(aiChatMessages)
-            ..where((row) => row.chatId.equals(chat.id.value)))
-          .go();
+      await (delete(
+        aiChatMessages,
+      )..where((row) => row.chatId.equals(chat.id.value))).go();
       if (messages.isNotEmpty) {
         await batch((batch) {
           batch.insertAll(aiChatMessages, messages);
@@ -128,17 +125,18 @@ class AiChatDao extends DatabaseAccessor<AppDatabase> with _$AiChatDaoMixin {
   }
 
   Future<void> _deleteChatsBeyondRetention(int limit) async {
-    final orderedIds = await (selectOnly(aiChats)
-          ..addColumns([aiChats.id])
-          ..orderBy([
-            OrderingTerm(
-              expression: aiChats.updatedAt,
-              mode: OrderingMode.desc,
-            ),
-          ]))
-        .map((row) => row.read(aiChats.id))
-        .get()
-        .then((ids) => ids.whereType<String>().toList(growable: false));
+    final orderedIds =
+        await (selectOnly(aiChats)
+              ..addColumns([aiChats.id])
+              ..orderBy([
+                OrderingTerm(
+                  expression: aiChats.updatedAt,
+                  mode: OrderingMode.desc,
+                ),
+              ]))
+            .map((row) => row.read(aiChats.id))
+            .get()
+            .then((ids) => ids.whereType<String>().toList(growable: false));
     final staleIds = orderedIds.skip(limit).toList(growable: false);
     if (staleIds.isNotEmpty) {
       await (delete(aiChats)..where((row) => row.id.isIn(staleIds))).go();

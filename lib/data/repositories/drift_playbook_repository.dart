@@ -65,8 +65,6 @@ extension DriftPlaybookRepositoryOps on StorageService {
 
   Future<Playbook> _playbookFromDrift(db.Playbook row) async {
     final contentJson = await _decryptDriftText(row.contentJson);
-    return Playbook.fromJson(
-      jsonDecode(contentJson) as Map<String, dynamic>,
-    );
+    return Playbook.fromJson(jsonDecode(contentJson) as Map<String, dynamic>);
   }
 }

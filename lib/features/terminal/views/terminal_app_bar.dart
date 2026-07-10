@@ -53,10 +53,7 @@ class TerminalScreenAppBar extends StatelessWidget
               displayName ?? serverName ?? strings.defaultTerminal,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-              ),
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
             ),
           ),
           const SizedBox(width: 8),
@@ -65,9 +62,7 @@ class TerminalScreenAppBar extends StatelessWidget
             decoration: BoxDecoration(
               color: statusColor.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(999),
-              border: Border.all(
-                color: statusColor.withValues(alpha: 0.32),
-              ),
+              border: Border.all(color: statusColor.withValues(alpha: 0.32)),
             ),
             child: Text(
               isConnected ? strings.connected : strings.disconnected,

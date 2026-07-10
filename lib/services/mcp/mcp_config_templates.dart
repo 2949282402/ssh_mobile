@@ -27,9 +27,7 @@ Authorization = "Bearer ${settings.token}"
       'mcpServers': {
         'ssh_mobile': {
           'httpUrl': settings.url,
-          'headers': {
-            'Authorization': 'Bearer ${settings.token}',
-          },
+          'headers': {'Authorization': 'Bearer ${settings.token}'},
           'timeout': 30000,
         },
       },

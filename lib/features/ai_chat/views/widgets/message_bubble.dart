@@ -60,7 +60,8 @@ class MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final viewModel = context.watch<AiChatViewModel>();
     final activeChat = viewModel.activeChat;
-    final isLatestAssistant = activeChat != null &&
+    final isLatestAssistant =
+        activeChat != null &&
         activeChat.messages.lastIndexWhere((m) => m.role == 'assistant') ==
             index;
 
@@ -75,149 +76,157 @@ class MessageBubble extends StatelessWidget {
     final isAssistant = !isUser && !isError;
     final canCopyAssistant = isAssistant && message.text.trim().isNotEmpty;
     return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 760),
-        child: Column(
-          crossAxisAlignment:
-              isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-          children: [
-            if (!isUser && !isError && message.traces.isNotEmpty)
-              TracePanel(
-                traces: message.traces,
-                storageKey:
-                    'trace-panel-${message.createdAt.microsecondsSinceEpoch}',
-              ),
-            Container(
-              margin: const EdgeInsets.only(bottom: 4),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                color: isError
-                    ? colorScheme.error.withValues(alpha: 0.08)
-                    : isUser
+          alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 760),
+            child: Column(
+              crossAxisAlignment: isUser
+                  ? CrossAxisAlignment.end
+                  : CrossAxisAlignment.start,
+              children: [
+                if (!isUser && !isError && message.traces.isNotEmpty)
+                  TracePanel(
+                    traces: message.traces,
+                    storageKey:
+                        'trace-panel-${message.createdAt.microsecondsSinceEpoch}',
+                  ),
+                Container(
+                  margin: const EdgeInsets.only(bottom: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isError
+                        ? colorScheme.error.withValues(alpha: 0.08)
+                        : isUser
                         ? colorScheme.primary.withValues(alpha: 0.14)
                         : colorScheme.surface,
-                borderRadius: BorderRadius.only(
-                  topLeft: const Radius.circular(AppTheme.radiusMedium),
-                  topRight: isUser
-                      ? const Radius.circular(4)
-                      : const Radius.circular(AppTheme.radiusMedium),
-                  bottomLeft: const Radius.circular(AppTheme.radiusMedium),
-                  bottomRight: isUser
-                      ? const Radius.circular(AppTheme.radiusMedium)
-                      : const Radius.circular(4),
-                ),
-                border: Border.all(
-                  color: isError
-                      ? colorScheme.error.withValues(alpha: 0.3)
-                      : isUser
+                    borderRadius: BorderRadius.only(
+                      topLeft: const Radius.circular(AppTheme.radiusMedium),
+                      topRight: isUser
+                          ? const Radius.circular(4)
+                          : const Radius.circular(AppTheme.radiusMedium),
+                      bottomLeft: const Radius.circular(AppTheme.radiusMedium),
+                      bottomRight: isUser
+                          ? const Radius.circular(AppTheme.radiusMedium)
+                          : const Radius.circular(4),
+                    ),
+                    border: Border.all(
+                      color: isError
+                          ? colorScheme.error.withValues(alpha: 0.3)
+                          : isUser
                           ? colorScheme.primary.withValues(alpha: 0.2)
                           : colorScheme.outlineVariant,
-                ),
-              ),
-              child: isUser || isError
-                  ? Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (isUser && message.attachments.isNotEmpty)
-                          MessageAttachmentsWrap(
-                              attachments: message.attachments),
-                        SelectableText(
-                          message.text.isEmpty ? '...' : message.text,
-                          style: TextStyle(
-                            color: isError
-                                ? colorScheme.error
-                                : colorScheme.onSurface,
-                            height: 1.35,
-                          ),
-                        ),
-                      ],
-                    )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _AssistantMarkdownBody(
-                          text: message.text,
-                          streamingTextListenable: streamingTextListenable,
-                          streamingStatusListenable: streamingStatusListenable,
-                        ),
-                        if (message.todoSteps.isNotEmpty) ...[
-                          const SizedBox(height: 12),
-                          _ChatTodoPanel(
-                            chatId: chatId,
-                            message: message,
-                            onRevisePlan: onRevisePlan,
-                          ),
-                          if (message.todoSteps.every(
-                                  (s) => s.status == StepStatus.pending) &&
-                              isLatestAssistant) ...[
-                            const SizedBox(height: 8),
-                            _buildApproveButton(context),
-                            const SizedBox(height: 4),
-                            Center(
-                              child: Text(
-                                strings.language == AppLanguage.en
-                                    ? '💡 If you want to modify this plan, simply type your feedback to adjust it.'
-                                    : '💡 如果你想修改此计划，直接在下方输入框发送修改意见以进行调整。',
-                                style: TextStyle(
-                                  fontSize: 10.5,
-                                  fontStyle: FontStyle.italic,
-                                  color: colorScheme.onSurfaceVariant
-                                      .withValues(alpha: 0.8),
-                                ),
+                    ),
+                  ),
+                  child: isUser || isError
+                      ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (isUser && message.attachments.isNotEmpty)
+                              MessageAttachmentsWrap(
+                                attachments: message.attachments,
+                              ),
+                            SelectableText(
+                              message.text.isEmpty ? '...' : message.text,
+                              style: TextStyle(
+                                color: isError
+                                    ? colorScheme.error
+                                    : colorScheme.onSurface,
+                                height: 1.35,
                               ),
                             ),
                           ],
-                        ]
-                      ],
-                    ),
-            ),
-            if (!isUser && message.agentRunId?.trim().isNotEmpty == true)
-              _AgentRunInlineSummary(
-                runId: message.agentRunId!.trim(),
-              ),
-            if (!isUser && message.agentRunId?.trim().isNotEmpty == true)
-              _AgentTraceLink(
-                chatId: chatId,
-                runId: message.agentRunId!.trim(),
-                message: message,
-              ),
-            if (canAct &&
-                (onEditUser != null ||
-                    onRegenerate != null ||
-                    onBranch != null ||
-                    onContinueTimeout != null ||
-                    canCopyAssistant))
-              _MessageActions(
-                isUser: isUser,
-                isError: isError,
-                assistantText: isAssistant ? message.text : null,
-                onEditUser: onEditUser,
-                onRegenerate: onRegenerate,
-                onBranch: onBranch,
-                onContinueTimeout: onContinueTimeout,
-              ),
-            if (!isUser && !isError && message.totalTokens != null)
-              Padding(
-                padding: const EdgeInsets.only(left: 4, bottom: 8),
-                child: Text(
-                  _messageStats(message),
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.72),
-                    height: 1.2,
-                  ),
+                        )
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _AssistantMarkdownBody(
+                              text: message.text,
+                              streamingTextListenable: streamingTextListenable,
+                              streamingStatusListenable:
+                                  streamingStatusListenable,
+                            ),
+                            if (message.todoSteps.isNotEmpty) ...[
+                              const SizedBox(height: 12),
+                              _ChatTodoPanel(
+                                chatId: chatId,
+                                message: message,
+                                onRevisePlan: onRevisePlan,
+                              ),
+                              if (message.todoSteps.every(
+                                    (s) => s.status == StepStatus.pending,
+                                  ) &&
+                                  isLatestAssistant) ...[
+                                const SizedBox(height: 8),
+                                _buildApproveButton(context),
+                                const SizedBox(height: 4),
+                                Center(
+                                  child: Text(
+                                    strings.language == AppLanguage.en
+                                        ? '💡 If you want to modify this plan, simply type your feedback to adjust it.'
+                                        : '💡 如果你想修改此计划，直接在下方输入框发送修改意见以进行调整。',
+                                    style: TextStyle(
+                                      fontSize: 10.5,
+                                      fontStyle: FontStyle.italic,
+                                      color: colorScheme.onSurfaceVariant
+                                          .withValues(alpha: 0.8),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ],
+                        ),
                 ),
-              )
-            else
-              const SizedBox(height: 6),
-          ],
-        ),
-      ),
-    )
+                if (!isUser && message.agentRunId?.trim().isNotEmpty == true)
+                  _AgentRunInlineSummary(runId: message.agentRunId!.trim()),
+                if (!isUser && message.agentRunId?.trim().isNotEmpty == true)
+                  _AgentTraceLink(
+                    chatId: chatId,
+                    runId: message.agentRunId!.trim(),
+                    message: message,
+                  ),
+                if (canAct &&
+                    (onEditUser != null ||
+                        onRegenerate != null ||
+                        onBranch != null ||
+                        onContinueTimeout != null ||
+                        canCopyAssistant))
+                  _MessageActions(
+                    isUser: isUser,
+                    isError: isError,
+                    assistantText: isAssistant ? message.text : null,
+                    onEditUser: onEditUser,
+                    onRegenerate: onRegenerate,
+                    onBranch: onBranch,
+                    onContinueTimeout: onContinueTimeout,
+                  ),
+                if (!isUser && !isError && message.totalTokens != null)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4, bottom: 8),
+                    child: Text(
+                      _messageStats(message),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: colorScheme.onSurfaceVariant.withValues(
+                          alpha: 0.72,
+                        ),
+                        height: 1.2,
+                      ),
+                    ),
+                  )
+                else
+                  const SizedBox(height: 6),
+              ],
+            ),
+          ),
+        )
         .animate(
           key: ValueKey(
-              'msg-animate-${message.createdAt.microsecondsSinceEpoch}'),
+            'msg-animate-${message.createdAt.microsecondsSinceEpoch}',
+          ),
         )
         .fade(duration: 200.ms)
         .slideX(

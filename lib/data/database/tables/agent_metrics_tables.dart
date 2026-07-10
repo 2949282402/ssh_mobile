@@ -33,20 +33,20 @@ class AgentRunMetricsTable extends Table {
   Set<Column<Object>> get primaryKey => {id};
 
   List<Index> get indexes => [
-        Index(
-          'idx_agent_run_metrics_finished_at',
-          'CREATE INDEX idx_agent_run_metrics_finished_at '
-              'ON agent_run_metrics(finished_at DESC)',
-        ),
-        Index(
-          'idx_agent_run_metrics_model',
-          'CREATE INDEX idx_agent_run_metrics_model '
-              'ON agent_run_metrics(model)',
-        ),
-        Index(
-          'idx_agent_run_metrics_success',
-          'CREATE INDEX idx_agent_run_metrics_success '
-              'ON agent_run_metrics(success)',
-        ),
-      ];
+    Index(
+      'idx_agent_run_metrics_finished_at',
+      'CREATE INDEX idx_agent_run_metrics_finished_at '
+          'ON agent_run_metrics(finished_at DESC)',
+    ),
+    Index(
+      'idx_agent_run_metrics_model',
+      'CREATE INDEX idx_agent_run_metrics_model '
+          'ON agent_run_metrics(model)',
+    ),
+    Index(
+      'idx_agent_run_metrics_success',
+      'CREATE INDEX idx_agent_run_metrics_success '
+          'ON agent_run_metrics(success)',
+    ),
+  ];
 }

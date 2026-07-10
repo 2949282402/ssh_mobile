@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'package:ssh_mobile/features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
@@ -10,8 +10,9 @@ class SkillEditorForm extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final viewModel = context.read<AiSkillsViewModel>();
-    final language =
-        context.select<AiSkillsViewModel, AppLanguage>((vm) => vm.language);
+    final language = context.select<AiSkillsViewModel, AppLanguage>(
+      (vm) => vm.language,
+    );
     final strings = _FormStrings(language);
 
     return Column(
@@ -43,14 +44,15 @@ class SkillEditorForm extends StatelessWidget {
           minLines: 12,
           maxLines: 24,
           style: const TextStyle(
-              fontFamily: 'monospace',
-              fontFamilyFallback: [
-                'Consolas',
-                'Microsoft YaHei',
-                'PingFang SC',
-                'sans-serif'
-              ],
-              fontSize: 13),
+            fontFamily: 'monospace',
+            fontFamilyFallback: [
+              'Consolas',
+              'Microsoft YaHei',
+              'PingFang SC',
+              'sans-serif',
+            ],
+            fontSize: 13,
+          ),
           decoration: InputDecoration(
             labelText: strings.content,
             helperText: strings.contentHelp,

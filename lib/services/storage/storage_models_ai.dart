@@ -144,11 +144,11 @@ class AiConnectionSettings {
   });
 
   AgentModelProfile get agentModelProfile => AgentModelProfile(
-        mainModel: model,
-        helperModel: helperModel,
-        auditModel: auditModel,
-        fallbackPolicy: modelFallbackPolicy,
-      );
+    mainModel: model,
+    helperModel: helperModel,
+    auditModel: auditModel,
+    fallbackPolicy: modelFallbackPolicy,
+  );
 
   AiConnectionSettings copyWith({
     String? baseUrl,
@@ -210,8 +210,9 @@ class AiConnectionSettings {
       postToolReviewEnabled:
           postToolReviewEnabled ?? this.postToolReviewEnabled,
       toolCallBudget: toolCallBudget ?? this.toolCallBudget,
-      agentLoopMode:
-          AiAgentLoopMode.normalize(agentLoopMode ?? this.agentLoopMode),
+      agentLoopMode: AiAgentLoopMode.normalize(
+        agentLoopMode ?? this.agentLoopMode,
+      ),
       maxImageSizeBytes: maxImageSizeBytes ?? this.maxImageSizeBytes,
       maxFileSizeBytes: maxFileSizeBytes ?? this.maxFileSizeBytes,
       hasApiKey: hasApiKey ?? this.hasApiKey,
@@ -526,10 +527,7 @@ class _MemorySecret {
   final String? value;
   final DateTime loadedAt;
 
-  const _MemorySecret({
-    required this.value,
-    required this.loadedAt,
-  });
+  const _MemorySecret({required this.value, required this.loadedAt});
 }
 
 class AiRequestTimeout {
@@ -578,16 +576,10 @@ class SkillReferenceItem {
   final String title;
   final String content;
 
-  const SkillReferenceItem({
-    required this.title,
-    required this.content,
-  });
+  const SkillReferenceItem({required this.title, required this.content});
 
   Map<String, dynamic> toJson() {
-    return {
-      'title': title,
-      'content': content,
-    };
+    return {'title': title, 'content': content};
   }
 
   factory SkillReferenceItem.fromJson(Map<String, dynamic> json) {
@@ -683,12 +675,15 @@ class AiSkillRecord {
       content: json['content'] as String? ?? '',
       enabled: json['enabled'] as bool? ?? true,
       references: ((json['references'] as List<dynamic>?) ?? const [])
-          .map((item) =>
-              SkillReferenceItem.fromJson(item as Map<String, dynamic>))
+          .map(
+            (item) => SkillReferenceItem.fromJson(item as Map<String, dynamic>),
+          )
           .toList(),
-      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+      createdAt:
+          DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
-      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
+      updatedAt:
+          DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
           DateTime.now(),
     );
   }
@@ -770,9 +765,11 @@ class AgentRunMetrics {
   factory AgentRunMetrics.fromJson(Map<String, dynamic> json) {
     return AgentRunMetrics(
       id: json['id'] as String? ?? _traceUuid.v4(),
-      startedAt: DateTime.tryParse(json['startedAt'] as String? ?? '') ??
+      startedAt:
+          DateTime.tryParse(json['startedAt'] as String? ?? '') ??
           DateTime.now(),
-      finishedAt: DateTime.tryParse(json['finishedAt'] as String? ?? '') ??
+      finishedAt:
+          DateTime.tryParse(json['finishedAt'] as String? ?? '') ??
           DateTime.now(),
       model: json['model'] as String? ?? '',
       helperModel: json['helperModel'] as String? ?? '',
@@ -822,8 +819,9 @@ class AiApprovedPlanRef {
     return AiApprovedPlanRef(
       assistantCreatedAt:
           DateTime.tryParse(json['assistantCreatedAt'] as String? ?? '') ??
-              DateTime.now(),
-      approvedAt: DateTime.tryParse(json['approvedAt'] as String? ?? '') ??
+          DateTime.now(),
+      approvedAt:
+          DateTime.tryParse(json['approvedAt'] as String? ?? '') ??
           DateTime.now(),
     );
   }
@@ -867,8 +865,9 @@ class AiChatRecord {
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       planMode: planMode ?? this.planMode,
-      approvedPlan:
-          clearApprovedPlan ? null : approvedPlan ?? this.approvedPlan,
+      approvedPlan: clearApprovedPlan
+          ? null
+          : approvedPlan ?? this.approvedPlan,
     );
   }
 
@@ -891,12 +890,16 @@ class AiChatRecord {
       title: json['title'] as String? ?? 'New chat',
       model: json['model'] as String? ?? 'deepseek-v4-flash',
       messages: ((json['messages'] as List<dynamic>?) ?? const [])
-          .map((item) =>
-              AiChatMessageRecord.fromJson(item as Map<String, dynamic>))
+          .map(
+            (item) =>
+                AiChatMessageRecord.fromJson(item as Map<String, dynamic>),
+          )
           .toList(),
-      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+      createdAt:
+          DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
-      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
+      updatedAt:
+          DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
           DateTime.now(),
       planMode: json['planMode'] as bool? ?? false,
       approvedPlan: json['approvedPlan'] is Map<String, dynamic>
@@ -930,10 +933,7 @@ AiChatMessageRecord? latestAssistantMessageForChat(AiChatRecord chat) {
   return null;
 }
 
-enum PlanModeExitActor {
-  userUi,
-  llmTool,
-}
+enum PlanModeExitActor { userUi, llmTool }
 
 AiChatMessageRecord? approvedPlanMessageForChat(AiChatRecord chat) {
   final approvedPlan = chat.approvedPlan;
@@ -1066,12 +1066,14 @@ class AiChatMessageRecord {
       contextText: json['contextText'] as String?,
       attachments: ((json['attachments'] as List<dynamic>?) ?? const [])
           .map(
-              (item) => AiChatAttachment.fromJson(item as Map<String, dynamic>))
+            (item) => AiChatAttachment.fromJson(item as Map<String, dynamic>),
+          )
           .toList(),
       traces: ((json['traces'] as List<dynamic>?) ?? const [])
           .map((item) => AiMessageTrace.fromJson(item as Map<String, dynamic>))
           .toList(),
-      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+      createdAt:
+          DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
       promptTokens: json['promptTokens'] as int?,
       completionTokens: json['completionTokens'] as int?,
@@ -1136,7 +1138,8 @@ class AiMessageTrace {
       kind: json['kind'] as String? ?? 'info',
       title: json['title'] as String? ?? 'Details',
       content: json['content'] as String? ?? '',
-      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+      createdAt:
+          DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
     );
   }

@@ -27,10 +27,7 @@ abstract interface class AiToolExecutor {
     bool approvedWrite = false,
   });
 
-  AiCommandReview reviewCommand(
-    String command, {
-    ServerPlatform? platform,
-  });
+  AiCommandReview reviewCommand(String command, {ServerPlatform? platform});
 }
 
 class AiToolApprovalRequest {
@@ -65,14 +62,12 @@ class AiToolApprovalDecision {
   final String? feedback;
 
   const AiToolApprovalDecision.approved()
-      : approved = true,
-        abort = false,
-        feedback = null;
+    : approved = true,
+      abort = false,
+      feedback = null;
 
-  const AiToolApprovalDecision.rejected({
-    this.abort = true,
-    this.feedback,
-  }) : approved = false;
+  const AiToolApprovalDecision.rejected({this.abort = true, this.feedback})
+    : approved = false;
 }
 
 class AiPendingApprovalSnapshot {
@@ -103,17 +98,17 @@ class AiCommandReview {
   final String reason;
 
   const AiCommandReview.readOnly()
-      : requiresApproval = false,
-        blocked = false,
-        reason = 'Read-only diagnostic command.';
+    : requiresApproval = false,
+      blocked = false,
+      reason = 'Read-only diagnostic command.';
 
   const AiCommandReview.requiresApproval(this.reason)
-      : requiresApproval = true,
-        blocked = false;
+    : requiresApproval = true,
+      blocked = false;
 
   const AiCommandReview.blocked(this.reason)
-      : requiresApproval = false,
-        blocked = true;
+    : requiresApproval = false,
+      blocked = true;
 }
 
 enum AiToolExecutionMode {
@@ -327,8 +322,11 @@ class AiTool {
           );
         }
       }
-      node['type'] =
-          _strictType(type, fallback: 'object', allowNull: allowNull);
+      node['type'] = _strictType(
+        type,
+        fallback: 'object',
+        allowNull: allowNull,
+      );
       node['properties'] = normalizedProps;
       node['required'] = normalizedProps.keys.toList(growable: false);
       node['additionalProperties'] = false;
@@ -460,58 +458,77 @@ class _UnavailablePerformanceMonitorToolService
       'Performance monitor service is not available in this context.';
 
   @override
-  Map<String, dynamic> clearSelection() =>
-      {'supported': false, 'error': _message};
+  Map<String, dynamic> clearSelection() => {
+    'supported': false,
+    'error': _message,
+  };
 
   @override
-  Future<Map<String, dynamic>> getApplications(String connectionId) async =>
-      {'supported': false, 'error': _message};
+  Future<Map<String, dynamic>> getApplications(String connectionId) async => {
+    'supported': false,
+    'error': _message,
+  };
 
   @override
-  Map<String, dynamic> getAlerts({int limit = 50}) =>
-      {'supported': false, 'error': _message};
+  Map<String, dynamic> getAlerts({int limit = 50}) => {
+    'supported': false,
+    'error': _message,
+  };
 
   @override
-  Map<String, dynamic> getHealth({List<String>? connectionIds}) =>
-      {'supported': false, 'error': _message};
+  Map<String, dynamic> getHealth({List<String>? connectionIds}) => {
+    'supported': false,
+    'error': _message,
+  };
 
   @override
-  Future<Map<String, dynamic>> getPorts(String connectionId) async =>
-      {'supported': false, 'error': _message};
+  Future<Map<String, dynamic>> getPorts(String connectionId) async => {
+    'supported': false,
+    'error': _message,
+  };
 
   @override
   Map<String, dynamic> getSamples(
     String connectionId, {
     bool visibleOnly = true,
     int limit = 100,
-  }) =>
-      {'supported': false, 'error': _message};
+  }) => {'supported': false, 'error': _message};
 
   @override
   Map<String, dynamic> getState() => {'supported': false, 'error': _message};
 
   @override
-  Map<String, dynamic> setHistoryWindow(Duration window) =>
-      {'supported': false, 'error': _message};
+  Map<String, dynamic> setHistoryWindow(Duration window) => {
+    'supported': false,
+    'error': _message,
+  };
 
   @override
-  Map<String, dynamic> setInterval(Duration interval) =>
-      {'supported': false, 'error': _message};
+  Map<String, dynamic> setInterval(Duration interval) => {
+    'supported': false,
+    'error': _message,
+  };
 
   @override
-  Map<String, dynamic> setSelectedServers(List<String> connectionIds) =>
-      {'supported': false, 'error': _message};
+  Map<String, dynamic> setSelectedServers(List<String> connectionIds) => {
+    'supported': false,
+    'error': _message,
+  };
 
   @override
-  Future<Map<String, dynamic>> start() async =>
-      {'supported': false, 'error': _message};
+  Future<Map<String, dynamic>> start() async => {
+    'supported': false,
+    'error': _message,
+  };
 
   @override
   Map<String, dynamic> stop() => {'supported': false, 'error': _message};
 
   @override
-  Map<String, dynamic> stopForConnection(String connectionId) =>
-      {'supported': false, 'error': _message};
+  Map<String, dynamic> stopForConnection(String connectionId) => {
+    'supported': false,
+    'error': _message,
+  };
 }
 
 Map<String, dynamic> _string(String description) =>
@@ -522,25 +539,18 @@ Map<String, dynamic> _int(
   int? minimum,
   int? maximum,
   int? defaultValue,
-}) =>
-    AiToolService._int(
-      description,
-      minimum: minimum,
-      maximum: maximum,
-      defaultValue: defaultValue,
-    );
+}) => AiToolService._int(
+  description,
+  minimum: minimum,
+  maximum: maximum,
+  defaultValue: defaultValue,
+);
 
 Map<String, dynamic> _bool(String description) =>
     AiToolService._bool(description);
 
-Map<String, dynamic> _stringArray(
-  String description, {
-  int? minimumItems,
-}) =>
+Map<String, dynamic> _stringArray(String description, {int? minimumItems}) =>
     AiToolService._stringArray(description, minimumItems: minimumItems);
 
-Map<String, dynamic> _intArray(
-  String description, {
-  int? minimumItems,
-}) =>
+Map<String, dynamic> _intArray(String description, {int? minimumItems}) =>
     AiToolService._intArray(description, minimumItems: minimumItems);

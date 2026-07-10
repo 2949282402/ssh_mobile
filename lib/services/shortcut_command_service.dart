@@ -20,11 +20,11 @@ class ShortcutCommand {
   });
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'label': label,
-        'code': code,
-        'custom': custom,
-      };
+    'id': id,
+    'label': label,
+    'code': code,
+    'custom': custom,
+  };
 
   factory ShortcutCommand.fromJson(Map<String, dynamic> json) {
     return ShortcutCommand(
@@ -103,9 +103,8 @@ class ShortcutCommandService extends ChangeNotifier {
             ..clear()
             ..addAll(
               decoded.map(
-                (item) => ShortcutCommand.fromJson(
-                  item as Map<String, dynamic>,
-                ),
+                (item) =>
+                    ShortcutCommand.fromJson(item as Map<String, dynamic>),
               ),
             );
           _refreshCustomCommandsView();

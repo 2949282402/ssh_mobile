@@ -33,6 +33,7 @@ migrate_working_dir/
 .pub/
 .tools/
 /build/
+/coverage/
 
 # Symbolication related
 app.*.symbols
@@ -44,6 +45,9 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+/android/key.properties
+*.jks
+*.keystore
 
 # Antigravity Exclusive Memory
 .agents/skills/apk-publish/

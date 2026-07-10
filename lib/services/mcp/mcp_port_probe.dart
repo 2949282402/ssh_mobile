@@ -55,11 +55,7 @@ class McpPortProbe {
 
     ServerSocket? socket;
     try {
-      socket = await ServerSocket.bind(
-        normalizedHost,
-        port,
-        shared: false,
-      );
+      socket = await ServerSocket.bind(normalizedHost, port, shared: false);
       return McpPortProbeResult(
         host: normalizedHost,
         port: port,

@@ -38,10 +38,14 @@ void main() {
 
     sshService = SshService(storageService);
     sftpService = SftpService(storageService);
-    performanceMonitorService =
-        PerformanceMonitorService(sshService, storageService);
-    playbookService =
-        PlaybookService(storageService: storageService, sshService: sshService);
+    performanceMonitorService = PerformanceMonitorService(
+      sshService,
+      storageService,
+    );
+    playbookService = PlaybookService(
+      storageService: storageService,
+      sshService: sshService,
+    );
     ragService = RagService(storageService: storageService);
   });
 

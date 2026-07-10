@@ -9,35 +9,33 @@ import 'package:ssh_mobile/core/services/ssh_client_factory.dart';
 void main() {
   group('SshClientFactory', () {
     test(
-        'answers a single hidden keyboard-interactive prompt with the password',
-        () {
-      final responses =
-          SshClientFactory.keyboardInteractiveResponsesForPassword(
-        const _FakeKeyboardInteractiveRequest(
-          'password',
-          [_FakeKeyboardInteractivePrompt('Password: ', false)],
-        ),
-        'secret',
-      );
-      expect(responses, ['secret']);
-    });
+      'answers a single hidden keyboard-interactive prompt with the password',
+      () {
+        final responses =
+            SshClientFactory.keyboardInteractiveResponsesForPassword(
+              const _FakeKeyboardInteractiveRequest('password', [
+                _FakeKeyboardInteractivePrompt('Password: ', false),
+              ]),
+              'secret',
+            );
+        expect(responses, ['secret']);
+      },
+    );
 
     test(
-        'skips multi-factor keyboard-interactive prompts it cannot answer safely',
-        () {
-      final responses =
-          SshClientFactory.keyboardInteractiveResponsesForPassword(
-        const _FakeKeyboardInteractiveRequest(
-          'mfa',
-          [
-            _FakeKeyboardInteractivePrompt('Password: ', false),
-            _FakeKeyboardInteractivePrompt('Verification code: ', false),
-          ],
-        ),
-        'secret',
-      );
-      expect(responses, isNull);
-    });
+      'skips multi-factor keyboard-interactive prompts it cannot answer safely',
+      () {
+        final responses =
+            SshClientFactory.keyboardInteractiveResponsesForPassword(
+              const _FakeKeyboardInteractiveRequest('mfa', [
+                _FakeKeyboardInteractivePrompt('Password: ', false),
+                _FakeKeyboardInteractivePrompt('Verification code: ', false),
+              ]),
+              'secret',
+            );
+        expect(responses, isNull);
+      },
+    );
 
     test('rejects password auth when the password is missing', () {
       expect(
@@ -65,10 +63,7 @@ void main() {
           username: 'user',
           authMethod: AuthMethod.privateKey,
         ),
-        credentials: const SshCredentials(
-          password: null,
-          privateKey: null,
-        ),
+        credentials: const SshCredentials(password: null, privateKey: null),
         identities: null,
       );
 
@@ -76,112 +71,123 @@ void main() {
       expect(options.onUserInfoRequest, isNull);
     });
 
-    test('host key policy trusts an unknown key only after confirmation',
-        () async {
-      final config = ConnectionConfig(
-        id: 'id',
-        name: 'server',
-        host: 'example.com',
-        username: 'user',
-      );
-      var persisted = false;
-      final policy = SshHostKeyPolicy(
-        onUnknownHostKey: (request) {
-          expect(request.fingerprint,
-              'MD5:00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f');
-          return true;
-        },
-        persistTrust: (config) async {
-          persisted = true;
-        },
-        now: () => DateTime.utc(2026, 6, 18, 10, 0),
-      );
-
-      final accepted = await policy.verifyHostKey(
-        config: config,
-        algorithm: 'ssh-ed25519',
-        md5Fingerprint: Uint8List.fromList(
-          List<int>.generate(16, (index) => index),
-        ),
-      );
-
-      expect(accepted, isTrue);
-      expect(persisted, isTrue);
-      expect(config.hostKeyAlgorithm, 'ssh-ed25519');
-      expect(config.hostKeyFingerprint,
-          'MD5:00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f');
-      expect(config.hostKeyTrustedAt, DateTime.utc(2026, 6, 18, 10, 0));
-    });
-
     test(
-        'host key policy rejects unknown hosts without a confirmation callback',
-        () async {
-      final policy = SshHostKeyPolicy();
-      final config = ConnectionConfig(
-        id: 'id',
-        name: 'server',
-        host: 'example.com',
-        username: 'user',
-      );
+      'host key policy trusts an unknown key only after confirmation',
+      () async {
+        final config = ConnectionConfig(
+          id: 'id',
+          name: 'server',
+          host: 'example.com',
+          username: 'user',
+        );
+        var persisted = false;
+        final policy = SshHostKeyPolicy(
+          onUnknownHostKey: (request) {
+            expect(
+              request.fingerprint,
+              'MD5:00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f',
+            );
+            return true;
+          },
+          persistTrust: (config) async {
+            persisted = true;
+          },
+          now: () => DateTime.utc(2026, 6, 18, 10, 0),
+        );
 
-      expect(
-        policy.verifyHostKey(
+        final accepted = await policy.verifyHostKey(
           config: config,
           algorithm: 'ssh-ed25519',
-          md5Fingerprint: Uint8List(16),
-        ),
-        throwsA(isA<SshHostKeyUntrustedException>()),
-      );
-    });
-
-    test('host key policy allows trusted fingerprint with same algorithm',
-        () async {
-      final policy = SshHostKeyPolicy();
-      final config = ConnectionConfig(
-        id: 'id',
-        name: 'server',
-        host: 'example.com',
-        username: 'user',
-        hostKeyAlgorithm: 'ssh-ed25519',
-        hostKeyFingerprint:
-            'MD5:00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f',
-      );
-
-      final accepted = await policy.verifyHostKey(
-        config: config,
-        algorithm: 'ssh-ed25519',
-        md5Fingerprint: Uint8List.fromList(
-          List<int>.generate(16, (index) => index),
-        ),
-      );
-
-      expect(accepted, isTrue);
-    });
-
-    test('host key policy blocks trusted fingerprint with changed algorithm',
-        () async {
-      final policy = SshHostKeyPolicy();
-      final config = ConnectionConfig(
-        id: 'id',
-        name: 'server',
-        host: 'example.com',
-        username: 'user',
-        hostKeyAlgorithm: 'ssh-ed25519',
-        hostKeyFingerprint:
-            'MD5:00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f',
-      );
-
-      expect(
-        policy.verifyHostKey(
-          config: config,
-          algorithm: 'rsa-sha2-512',
           md5Fingerprint: Uint8List.fromList(
             List<int>.generate(16, (index) => index),
           ),
-        ),
-        throwsA(isA<SshHostKeyMismatchException>()),
-      );
-    });
+        );
+
+        expect(accepted, isTrue);
+        expect(persisted, isTrue);
+        expect(config.hostKeyAlgorithm, 'ssh-ed25519');
+        expect(
+          config.hostKeyFingerprint,
+          'MD5:00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f',
+        );
+        expect(config.hostKeyTrustedAt, DateTime.utc(2026, 6, 18, 10, 0));
+      },
+    );
+
+    test(
+      'host key policy rejects unknown hosts without a confirmation callback',
+      () async {
+        final policy = SshHostKeyPolicy();
+        final config = ConnectionConfig(
+          id: 'id',
+          name: 'server',
+          host: 'example.com',
+          username: 'user',
+        );
+
+        expect(
+          policy.verifyHostKey(
+            config: config,
+            algorithm: 'ssh-ed25519',
+            md5Fingerprint: Uint8List(16),
+          ),
+          throwsA(isA<SshHostKeyUntrustedException>()),
+        );
+      },
+    );
+
+    test(
+      'host key policy allows trusted fingerprint with same algorithm',
+      () async {
+        final policy = SshHostKeyPolicy();
+        final config = ConnectionConfig(
+          id: 'id',
+          name: 'server',
+          host: 'example.com',
+          username: 'user',
+          hostKeyAlgorithm: 'ssh-ed25519',
+          hostKeyFingerprint:
+              'MD5:00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f',
+        );
+
+        final accepted = await policy.verifyHostKey(
+          config: config,
+          algorithm: 'ssh-ed25519',
+          md5Fingerprint: Uint8List.fromList(
+            List<int>.generate(16, (index) => index),
+          ),
+        );
+
+        expect(accepted, isTrue);
+      },
+    );
+
+    test(
+      'host key policy blocks trusted fingerprint with changed algorithm',
+      () async {
+        final policy = SshHostKeyPolicy();
+        final config = ConnectionConfig(
+          id: 'id',
+          name: 'server',
+          host: 'example.com',
+          username: 'user',
+          hostKeyAlgorithm: 'ssh-ed25519',
+          hostKeyFingerprint:
+              'MD5:00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f',
+        );
+
+        expect(
+          policy.verifyHostKey(
+            config: config,
+            algorithm: 'rsa-sha2-512',
+            md5Fingerprint: Uint8List.fromList(
+              List<int>.generate(16, (index) => index),
+            ),
+          ),
+          throwsA(isA<SshHostKeyMismatchException>()),
+        );
+      },
+    );
 
     test('host key policy matches normalized MD5 fingerprints', () async {
       final policy = SshHostKeyPolicy();
@@ -205,32 +211,30 @@ void main() {
       expect(accepted, isTrue);
     });
 
-    test('host key policy rejects when confirmation callback declines',
-        () async {
-      final policy = SshHostKeyPolicy(
-        onUnknownHostKey: (_) => false,
-      );
-      final config = ConnectionConfig(
-        id: 'id',
-        name: 'server',
-        host: 'example.com',
-        username: 'user',
-      );
+    test(
+      'host key policy rejects when confirmation callback declines',
+      () async {
+        final policy = SshHostKeyPolicy(onUnknownHostKey: (_) => false);
+        final config = ConnectionConfig(
+          id: 'id',
+          name: 'server',
+          host: 'example.com',
+          username: 'user',
+        );
 
-      expect(
-        policy.verifyHostKey(
-          config: config,
-          algorithm: 'ssh-ed25519',
-          md5Fingerprint: Uint8List(16),
-        ),
-        throwsA(isA<SshHostKeyRejectedException>()),
-      );
-    });
+        expect(
+          policy.verifyHostKey(
+            config: config,
+            algorithm: 'ssh-ed25519',
+            md5Fingerprint: Uint8List(16),
+          ),
+          throwsA(isA<SshHostKeyRejectedException>()),
+        );
+      },
+    );
 
     test('host key policy blocks changed fingerprints', () async {
-      final policy = SshHostKeyPolicy(
-        onUnknownHostKey: (_) => true,
-      );
+      final policy = SshHostKeyPolicy(onUnknownHostKey: (_) => true);
       final config = ConnectionConfig(
         id: 'id',
         name: 'server',

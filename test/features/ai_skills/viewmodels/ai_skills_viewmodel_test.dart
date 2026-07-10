@@ -56,8 +56,10 @@ description: >
 body''';
       final fm = SkillFrontmatter.parse(text);
       expect(fm, isNotNull);
-      expect(fm!.description,
-          equals('Line 1 of description\nLine 2 of description'));
+      expect(
+        fm!.description,
+        equals('Line 1 of description\nLine 2 of description'),
+      );
     });
 
     test('formats name and description with correct YAML syntax', () {
@@ -68,8 +70,10 @@ body''';
       );
       expect(formatted, contains('name: "My Skill"'));
       expect(formatted, contains('description: >\n  Line 1\n  Line 2'));
-      expect(formatted,
-          endsWith('\nBody content\n')); // Body format must preserve space
+      expect(
+        formatted,
+        endsWith('\nBody content\n'),
+      ); // Body format must preserve space
     });
   });
 
@@ -120,92 +124,102 @@ body''';
       expect(viewModel.enabled, isTrue);
     });
 
-    test('Saving a skill updates custom skills collection and selection',
-        () async {
-      final viewModel = AiSkillsViewModel(
-        storageService: storageService,
-        appSettings: appSettings,
-      );
+    test(
+      'Saving a skill updates custom skills collection and selection',
+      () async {
+        final viewModel = AiSkillsViewModel(
+          storageService: storageService,
+          appSettings: appSettings,
+        );
 
-      viewModel.newSkill();
-      viewModel.nameController.text = 'Test Skill';
-      await viewModel.saveSkill();
+        viewModel.newSkill();
+        viewModel.nameController.text = 'Test Skill';
+        await viewModel.saveSkill();
 
-      expect(viewModel.skills, hasLength(1));
-      expect(viewModel.selectedId, isNotNull);
-      expect(viewModel.dirty, isFalse);
-      expect(viewModel.skills.first.name, equals('Test Skill'));
-    });
+        expect(viewModel.skills, hasLength(1));
+        expect(viewModel.selectedId, isNotNull);
+        expect(viewModel.dirty, isFalse);
+        expect(viewModel.skills.first.name, equals('Test Skill'));
+      },
+    );
 
-    test('Saving a skill synchronizes frontmatter name and description',
-        () async {
-      final viewModel = AiSkillsViewModel(
-        storageService: storageService,
-        appSettings: appSettings,
-      );
+    test(
+      'Saving a skill synchronizes frontmatter name and description',
+      () async {
+        final viewModel = AiSkillsViewModel(
+          storageService: storageService,
+          appSettings: appSettings,
+        );
 
-      viewModel.newSkill();
-      viewModel.nameController.text = 'My Updated Skill';
-      viewModel.descriptionController.text = 'My Custom Desc';
-      await viewModel.saveSkill();
+        viewModel.newSkill();
+        viewModel.nameController.text = 'My Updated Skill';
+        viewModel.descriptionController.text = 'My Custom Desc';
+        await viewModel.saveSkill();
 
-      final saved = viewModel.skills.first;
-      expect(saved.name, equals('My Updated Skill'));
-      expect(saved.description, equals('My Custom Desc'));
-      expect(saved.content, contains('name: "My Updated Skill"'));
-      expect(saved.content, contains('description: "My Custom Desc"'));
-    });
+        final saved = viewModel.skills.first;
+        expect(saved.name, equals('My Updated Skill'));
+        expect(saved.description, equals('My Custom Desc'));
+        expect(saved.content, contains('name: "My Updated Skill"'));
+        expect(saved.content, contains('description: "My Custom Desc"'));
+      },
+    );
 
-    test('Saving a skill without frontmatter does not inject frontmatter head',
-        () async {
-      final viewModel = AiSkillsViewModel(
-        storageService: storageService,
-        appSettings: appSettings,
-      );
+    test(
+      'Saving a skill without frontmatter does not inject frontmatter head',
+      () async {
+        final viewModel = AiSkillsViewModel(
+          storageService: storageService,
+          appSettings: appSettings,
+        );
 
-      viewModel.newSkill();
-      viewModel.nameController.text = 'Plain Skill';
-      viewModel.descriptionController.text = 'Plain Desc';
-      viewModel.contentController.text = '# Plain Body\nNo frontmatter here.';
+        viewModel.newSkill();
+        viewModel.nameController.text = 'Plain Skill';
+        viewModel.descriptionController.text = 'Plain Desc';
+        viewModel.contentController.text = '# Plain Body\nNo frontmatter here.';
 
-      await viewModel.saveSkill();
+        await viewModel.saveSkill();
 
-      final saved = viewModel.skills.first;
-      expect(saved.name, equals('Plain Skill'));
-      expect(saved.description, equals('Plain Desc'));
-      expect(saved.content, equals('# Plain Body\nNo frontmatter here.'));
-    });
+        final saved = viewModel.skills.first;
+        expect(saved.name, equals('Plain Skill'));
+        expect(saved.description, equals('Plain Desc'));
+        expect(saved.content, equals('# Plain Body\nNo frontmatter here.'));
+      },
+    );
 
-    test('selectSkill fallbacks name and description from frontmatter',
-        () async {
-      final now = DateTime.now();
-      final skill = AiSkillRecord(
-        id: 'skill-fm-viewmodel',
-        name: '',
-        description: '',
-        content: '''---
+    test(
+      'selectSkill fallbacks name and description from frontmatter',
+      () async {
+        final now = DateTime.now();
+        final skill = AiSkillRecord(
+          id: 'skill-fm-viewmodel',
+          name: '',
+          description: '',
+          content: '''---
 name: YAML Skill Name
 description: YAML Skill Description
 ---
 Some body text.''',
-        enabled: true,
-        createdAt: now,
-        updatedAt: now,
-      );
-      await storageService.saveAiSkill(skill);
+          enabled: true,
+          createdAt: now,
+          updatedAt: now,
+        );
+        await storageService.saveAiSkill(skill);
 
-      final viewModel = AiSkillsViewModel(
-        storageService: storageService,
-        appSettings: appSettings,
-      );
-      await viewModel.loadSkills();
+        final viewModel = AiSkillsViewModel(
+          storageService: storageService,
+          appSettings: appSettings,
+        );
+        await viewModel.loadSkills();
 
-      viewModel.selectSkill(skill);
+        viewModel.selectSkill(skill);
 
-      expect(viewModel.nameController.text, equals('YAML Skill Name'));
-      expect(viewModel.descriptionController.text,
-          equals('YAML Skill Description'));
-    });
+        expect(viewModel.nameController.text, equals('YAML Skill Name'));
+        expect(
+          viewModel.descriptionController.text,
+          equals('YAML Skill Description'),
+        );
+      },
+    );
 
     test('Marking dirty updates states', () {
       final viewModel = AiSkillsViewModel(
@@ -229,26 +243,36 @@ Some body text.''',
 
       expect(viewModel.hasReferences, isTrue);
       expect(viewModel.references, hasLength(1));
-      expect(viewModel.references.first.title,
-          equals('Example reference document'));
+      expect(
+        viewModel.references.first.title,
+        equals('Example reference document'),
+      );
 
       viewModel.addReference(
-          'My config rule', 'Configurations detailed command info');
+        'My config rule',
+        'Configurations detailed command info',
+      );
       expect(
-          viewModel.references,
-          contains(const SkillReferenceItem(
-              title: 'My config rule',
-              content: 'Configurations detailed command info')));
+        viewModel.references,
+        contains(
+          const SkillReferenceItem(
+            title: 'My config rule',
+            content: 'Configurations detailed command info',
+          ),
+        ),
+      );
       expect(viewModel.dirty, isTrue);
 
       viewModel.removeReference(0); // Removes example document
       expect(
-          viewModel.references,
-          equals([
-            const SkillReferenceItem(
-                title: 'My config rule',
-                content: 'Configurations detailed command info')
-          ]));
+        viewModel.references,
+        equals([
+          const SkillReferenceItem(
+            title: 'My config rule',
+            content: 'Configurations detailed command info',
+          ),
+        ]),
+      );
 
       viewModel.toggleReferences(false);
       expect(viewModel.hasReferences, isFalse);

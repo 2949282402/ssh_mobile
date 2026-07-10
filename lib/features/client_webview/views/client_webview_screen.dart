@@ -10,10 +10,7 @@ import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
 class ClientWebViewScreen extends StatefulWidget {
   final String chatId;
 
-  const ClientWebViewScreen({
-    super.key,
-    required this.chatId,
-  });
+  const ClientWebViewScreen({super.key, required this.chatId});
 
   @override
   State<ClientWebViewScreen> createState() => _ClientWebViewScreenState();
@@ -23,9 +20,9 @@ class _ClientWebViewScreenState extends State<ClientWebViewScreen> {
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider<ClientWebViewViewModel>(
-      create: (context) => ClientWebViewViewModel(
-        appSettings: context.read<AppSettings>(),
-      )..init(widget.chatId),
+      create: (context) =>
+          ClientWebViewViewModel(appSettings: context.read<AppSettings>())
+            ..init(widget.chatId),
       child: Consumer<ClientWebViewViewModel>(
         builder: (context, viewModel, child) {
           final strings = _WebViewStrings(viewModel.language);
@@ -69,7 +66,8 @@ class _ClientWebViewScreenState extends State<ClientWebViewScreen> {
                             AbsorbPointer(
                               absorbing: viewModel.isAiBrowsing,
                               child: WebViewWidget(
-                                  controller: viewModel.session.controller!),
+                                controller: viewModel.session.controller!,
+                              ),
                             ),
                             if (viewModel.isAiBrowsing) ...[
                               const Positioned.fill(
@@ -95,9 +93,9 @@ class _ClientWebViewScreenState extends State<ClientWebViewScreen> {
                                     margin: const EdgeInsets.all(12),
                                     padding: const EdgeInsets.all(10),
                                     decoration: BoxDecoration(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .errorContainer,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.errorContainer,
                                       borderRadius: BorderRadius.circular(8),
                                     ),
                                     child: OverflowScrollText(
@@ -105,9 +103,9 @@ class _ClientWebViewScreenState extends State<ClientWebViewScreen> {
                                       selectable: true,
                                       maxLines: 2,
                                       style: TextStyle(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onErrorContainer,
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.onErrorContainer,
                                         fontSize: 12,
                                       ),
                                     ),
@@ -191,8 +189,9 @@ class _WebAddressBar extends StatelessWidget {
                     suffixIcon: IconButton(
                       tooltip: strings.go,
                       icon: const Icon(Icons.north_east_rounded, size: 18),
-                      onPressed:
-                          enabled ? () => onSubmitted(controller.text) : null,
+                      onPressed: enabled
+                          ? () => onSubmitted(controller.text)
+                          : null,
                     ),
                   ),
                   onSubmitted: enabled ? onSubmitted : null,
@@ -215,8 +214,9 @@ class _WebAddressBar extends StatelessWidget {
                     Icon(
                       Icons.arrow_drop_down_rounded,
                       size: 14,
-                      color:
-                          colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                      color: colorScheme.onSurfaceVariant.withValues(
+                        alpha: 0.6,
+                      ),
                     ),
                   ],
                 ),
@@ -229,10 +229,7 @@ class _WebAddressBar extends StatelessWidget {
                     value: 'google',
                     child: Text('谷歌 (Google)'),
                   ),
-                  const PopupMenuItem(
-                    value: 'bing',
-                    child: Text('必应 (Bing)'),
-                  ),
+                  const PopupMenuItem(value: 'bing', child: Text('必应 (Bing)')),
                   const PopupMenuItem(
                     value: 'duckduckgo',
                     child: Text('DuckDuckGo'),

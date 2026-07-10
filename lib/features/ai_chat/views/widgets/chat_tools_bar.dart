@@ -59,13 +59,14 @@ class _ChatToolsBar extends StatelessWidget {
         physics: const ClampingScrollPhysics(),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final isMobile = defaultTargetPlatform == TargetPlatform.android ||
+            final isMobile =
+                defaultTargetPlatform == TargetPlatform.android ||
                 defaultTargetPlatform == TargetPlatform.iOS;
             final itemsPerRow = isMobile ? 4 : 2;
             final spacing = 10.0;
             final tileWidth =
                 (constraints.maxWidth - (spacing * (itemsPerRow - 1))) /
-                    itemsPerRow;
+                itemsPerRow;
             return Wrap(
               spacing: spacing,
               runSpacing: spacing,
@@ -211,10 +212,7 @@ class _AttachmentChip extends StatelessWidget {
   final AiChatAttachment attachment;
   final VoidCallback onRemove;
 
-  const _AttachmentChip({
-    required this.attachment,
-    required this.onRemove,
-  });
+  const _AttachmentChip({required this.attachment, required this.onRemove});
 
   @override
   Widget build(BuildContext context) {
@@ -232,14 +230,15 @@ class _AttachmentChip extends StatelessWidget {
         children: [
           if (isImage)
             ClipRRect(
-              borderRadius:
-                  const BorderRadius.horizontal(left: Radius.circular(7)),
+              borderRadius: const BorderRadius.horizontal(
+                left: Radius.circular(7),
+              ),
               child: Image.memory(
                 base64Decode(attachment.dataBase64),
                 width: 36,
                 height: 36,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const SizedBox(
+                errorBuilder: (_, _, _) => const SizedBox(
                   width: 36,
                   height: 36,
                   child: Icon(Icons.broken_image_outlined, size: 18),

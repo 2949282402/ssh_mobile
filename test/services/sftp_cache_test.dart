@@ -17,8 +17,8 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(pathProviderChannel, (_) async {
-      return tempDir.path;
-    });
+          return tempDir.path;
+        });
     await SftpFileCache.clearAll();
   });
 

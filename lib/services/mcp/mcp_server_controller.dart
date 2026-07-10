@@ -12,13 +12,7 @@ import 'mcp_lifecycle_handler.dart';
 import 'mcp_port_probe.dart';
 import 'mcp_tool_handler.dart';
 
-enum McpServerRunStatus {
-  stopped,
-  checkingPort,
-  starting,
-  running,
-  failed,
-}
+enum McpServerRunStatus { stopped, checkingPort, starting, running, failed }
 
 class McpServerStatusSnapshot {
   final bool enabled;
@@ -207,10 +201,7 @@ class McpServerController extends ChangeNotifier {
     return start();
   }
 
-  Future<McpPortProbeResult> checkPort({
-    String? host,
-    int? port,
-  }) async {
+  Future<McpPortProbeResult> checkPort({String? host, int? port}) async {
     final settings = appSettings.mcpSettings;
     final wasRunning = running;
     if (!wasRunning) {

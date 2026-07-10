@@ -30,18 +30,16 @@ void main() {
       );
 
       expect(report.status, ClientRuntimeHealthStatus.blocking);
-      expect(report.issues.map((issue) => issue.code),
-          contains('network_disconnected'));
+      expect(
+        report.issues.map((issue) => issue.code),
+        contains('network_disconnected'),
+      );
     });
 
     test('blocks when Android network is not validated', () async {
       final advisor = ClientHealthAdvisor(
         clientSystemToolService: _FakeClientSystem(
-          network: {
-            'supported': true,
-            'connected': true,
-            'validated': false,
-          },
+          network: {'supported': true, 'connected': true, 'validated': false},
         ),
       );
 
@@ -50,8 +48,10 @@ void main() {
       );
 
       expect(report.status, ClientRuntimeHealthStatus.blocking);
-      expect(report.issues.map((issue) => issue.code),
-          contains('network_not_validated'));
+      expect(
+        report.issues.map((issue) => issue.code),
+        contains('network_not_validated'),
+      );
     });
 
     test('warns for low battery and power save mode', () async {
@@ -61,11 +61,7 @@ void main() {
             'supported': true,
             'batteryPercent': 12,
             'powerSaveMode': true,
-            'plugged': {
-              'ac': false,
-              'usb': false,
-              'wireless': false,
-            },
+            'plugged': {'ac': false, 'usb': false, 'wireless': false},
           },
         ),
       );
@@ -76,8 +72,10 @@ void main() {
 
       expect(report.status, ClientRuntimeHealthStatus.warning);
       expect(report.canProceed, isTrue);
-      expect(report.issues.map((issue) => issue.code),
-          containsAll(['low_battery', 'power_save_mode']));
+      expect(
+        report.issues.map((issue) => issue.code),
+        containsAll(['low_battery', 'power_save_mode']),
+      );
     });
 
     test('warns when battery optimization exemption is missing', () async {
@@ -97,31 +95,37 @@ void main() {
       );
 
       expect(report.status, ClientRuntimeHealthStatus.warning);
-      expect(report.issues.map((issue) => issue.code),
-          contains('battery_optimization_active'));
+      expect(
+        report.issues.map((issue) => issue.code),
+        contains('battery_optimization_active'),
+      );
     });
 
-    test('blocks when notification permission is denied for agent execution',
-        () async {
-      final advisor = ClientHealthAdvisor(
-        clientSystemToolService: _FakeClientSystem(
-          permission: {
-            'notificationGranted': false,
-            'supportsNativeBackgroundService': true,
-            'supportsBatteryOptimizationExemption': true,
-            'ignoringBatteryOptimizations': true,
-          },
-        ),
-      );
+    test(
+      'blocks when notification permission is denied for agent execution',
+      () async {
+        final advisor = ClientHealthAdvisor(
+          clientSystemToolService: _FakeClientSystem(
+            permission: {
+              'notificationGranted': false,
+              'supportsNativeBackgroundService': true,
+              'supportsBatteryOptimizationExemption': true,
+              'ignoringBatteryOptimizations': true,
+            },
+          ),
+        );
 
-      final report = await advisor.check(
-        profile: ClientHealthCheckProfile.agentExecution,
-      );
+        final report = await advisor.check(
+          profile: ClientHealthCheckProfile.agentExecution,
+        );
 
-      expect(report.status, ClientRuntimeHealthStatus.blocking);
-      expect(report.issues.map((issue) => issue.code),
-          contains('notification_permission_denied'));
-    });
+        expect(report.status, ClientRuntimeHealthStatus.blocking);
+        expect(
+          report.issues.map((issue) => issue.code),
+          contains('notification_permission_denied'),
+        );
+      },
+    );
   });
 }
 
@@ -134,33 +138,32 @@ class _FakeClientSystem implements ClientSystemToolAdapter {
     Map<String, dynamic>? network,
     Map<String, dynamic>? battery,
     Map<String, dynamic>? permission,
-  })  : network = network ??
-            {
-              'supported': true,
-              'connected': true,
-              'validated': true,
-              'metered': false,
-              'vpnActive': false,
-            },
-        battery = battery ??
-            {
-              'supported': true,
-              'batteryPercent': 80,
-              'powerSaveMode': false,
-              'thermalStatus': 'none',
-              'plugged': {
-                'ac': false,
-                'usb': false,
-                'wireless': false,
-              },
-            },
-        permission = permission ??
-            {
-              'notificationGranted': true,
-              'supportsNativeBackgroundService': true,
-              'supportsBatteryOptimizationExemption': true,
-              'ignoringBatteryOptimizations': true,
-            };
+  }) : network =
+           network ??
+           {
+             'supported': true,
+             'connected': true,
+             'validated': true,
+             'metered': false,
+             'vpnActive': false,
+           },
+       battery =
+           battery ??
+           {
+             'supported': true,
+             'batteryPercent': 80,
+             'powerSaveMode': false,
+             'thermalStatus': 'none',
+             'plugged': {'ac': false, 'usb': false, 'wireless': false},
+           },
+       permission =
+           permission ??
+           {
+             'notificationGranted': true,
+             'supportsNativeBackgroundService': true,
+             'supportsBatteryOptimizationExemption': true,
+             'ignoringBatteryOptimizations': true,
+           };
 
   @override
   Map<String, dynamic> getClientTime() => const {};
@@ -190,8 +193,7 @@ class _FakeClientSystem implements ClientSystemToolAdapter {
     int? delayMinutes,
     String? label,
     bool useSystemAlarm = true,
-  }) async =>
-      const {};
+  }) async => const {};
 
   @override
   Future<Map<String, dynamic>> listAlarms() async => const {};
@@ -204,8 +206,7 @@ class _FakeClientSystem implements ClientSystemToolAdapter {
     String? level,
     String? contains,
     int limit = 50,
-  }) async =>
-      const {};
+  }) async => const {};
 
   @override
   Future<Map<String, dynamic>> getLogCounts() async => const {};
@@ -222,13 +223,11 @@ class _FakeClientSystem implements ClientSystemToolAdapter {
     required String fileName,
     required List<int> bytes,
     String? dialogTitle,
-  }) async =>
-      const {};
+  }) async => const {};
 
   @override
   Future<ClientPickedFile?> pickFile({
     List<String>? allowedExtensions,
     String? dialogTitle,
-  }) async =>
-      null;
+  }) async => null;
 }

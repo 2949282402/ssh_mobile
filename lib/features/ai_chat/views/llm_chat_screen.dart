@@ -55,10 +55,7 @@ part 'widgets/jump_to_bottom_button.dart';
 part 'widgets/chat_history_overlay.dart';
 part 'widgets/chat_composer.dart';
 
-const List<String> _defaultModels = [
-  'deepseek-v4-flash',
-  'deepseek-v4-pro',
-];
+const List<String> _defaultModels = ['deepseek-v4-flash', 'deepseek-v4-pro'];
 
 @visibleForTesting
 List<String> resolveFetchedModelOptions({
@@ -84,8 +81,7 @@ List<String> buildInitialModelOptions({
   return {
     ...seededModels,
     if (normalizedCurrentModel.isNotEmpty) normalizedCurrentModel,
-  }.toList()
-    ..sort();
+  }.toList()..sort();
 }
 
 @visibleForTesting
@@ -96,14 +92,16 @@ String buildApprovedPlanExecutionContext({
 }) {
   final isEn = language == AppLanguage.en;
   final steps = planMessage.todoSteps
-      .map((step) => {
-            'taskId': step.id,
-            'name': step.name,
-            'command': step.command,
-            'description': step.description,
-            if (step.connectionId?.trim().isNotEmpty == true)
-              'connectionId': step.connectionId,
-          })
+      .map(
+        (step) => {
+          'taskId': step.id,
+          'name': step.name,
+          'command': step.command,
+          'description': step.description,
+          if (step.connectionId?.trim().isNotEmpty == true)
+            'connectionId': step.connectionId,
+        },
+      )
       .toList(growable: false);
   return [
     isEn ? 'Approved execution plan:' : '已批准执行计划：',
@@ -290,14 +288,15 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     _checkPendingDiagnosticPrompt();
     _inputFocusNode = FocusNode(onKeyEvent: _handleInputKeyEvent);
     _inputFocusNode.addListener(_onInputFocusChanged);
-    _historySlideController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 240),
-    )..addListener(() {
-        final animation = _historySlideAnimation;
-        if (animation == null || !mounted) return;
-        _setHistoryPanelExtent(animation.value);
-      });
+    _historySlideController =
+        AnimationController(
+          vsync: this,
+          duration: const Duration(milliseconds: 240),
+        )..addListener(() {
+          final animation = _historySlideAnimation;
+          if (animation == null || !mounted) return;
+          _setHistoryPanelExtent(animation.value);
+        });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -409,11 +408,11 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
                           approvePlanAndExecute(createdAt),
                       onRevisePlan: (chat) =>
                           LlmChatCommandsHelper.setPlanModeFromUi(
-                        context: context,
-                        chat: chat,
-                        enabled: true,
-                        strings: strings,
-                      ),
+                            context: context,
+                            chat: chat,
+                            enabled: true,
+                            strings: strings,
+                          ),
                     ),
                   ),
                   const _ChatToolApprovalArea(),
@@ -473,9 +472,11 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(strings.language == AppLanguage.en
-                ? 'No configured servers.'
-                : '没有配置服务器。'),
+            content: Text(
+              strings.language == AppLanguage.en
+                  ? 'No configured servers.'
+                  : '没有配置服务器。',
+            ),
           ),
         );
       }
@@ -506,9 +507,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
                             strings.language == AppLanguage.en
                                 ? 'Select target servers'
                                 : '选择目标服务器',
-                            style: Theme.of(sheetContext)
-                                .textTheme
-                                .titleMedium
+                            style: Theme.of(sheetContext).textTheme.titleMedium
                                 ?.copyWith(fontWeight: FontWeight.w800),
                           ),
                         ),
@@ -517,9 +516,11 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
                             onPressed: () {
                               setSheetState(() => selected.clear());
                             },
-                            child: Text(strings.language == AppLanguage.en
-                                ? 'Clear all'
-                                : '清空全部'),
+                            child: Text(
+                              strings.language == AppLanguage.en
+                                  ? 'Clear all'
+                                  : '清空全部',
+                            ),
                           ),
                       ],
                     ),
@@ -533,7 +534,8 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
                               value: selected.contains(connection.id),
                               title: Text(connection.name),
                               subtitle: Text(
-                                  '${connection.username}@${connection.host}:${connection.port}'),
+                                '${connection.username}@${connection.host}:${connection.port}',
+                              ),
                               onChanged: (val) {
                                 setSheetState(() {
                                   if (val == true) {
@@ -580,9 +582,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
 
   Future<void> _openClientWebView(String chatId) async {
     await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ClientWebViewScreen(chatId: chatId),
-      ),
+      MaterialPageRoute(builder: (_) => ClientWebViewScreen(chatId: chatId)),
     );
   }
 
@@ -598,7 +598,8 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     if (!_isDesktopPlatform || event is! KeyDownEvent) {
       return KeyEventResult.ignored;
     }
-    final isEnter = event.logicalKey == LogicalKeyboardKey.enter ||
+    final isEnter =
+        event.logicalKey == LogicalKeyboardKey.enter ||
         event.logicalKey == LogicalKeyboardKey.numpadEnter;
     if (!isEnter) return KeyEventResult.ignored;
 
@@ -717,16 +718,17 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
   void _animateHistoryPanel(BuildContext context, double target) {
     final width = _historyPanelWidth(context);
     final safeTarget = target.clamp(0.0, width);
-    _historySlideAnimation = Tween<double>(
-      begin: _historyPanelExtent.value.clamp(0.0, width),
-      end: safeTarget,
-    ).animate(
-      CurvedAnimation(
-        parent: _historySlideController,
-        curve: Curves.easeOutCubic,
-        reverseCurve: Curves.easeInCubic,
-      ),
-    );
+    _historySlideAnimation =
+        Tween<double>(
+          begin: _historyPanelExtent.value.clamp(0.0, width),
+          end: safeTarget,
+        ).animate(
+          CurvedAnimation(
+            parent: _historySlideController,
+            curve: Curves.easeOutCubic,
+            reverseCurve: Curves.easeInCubic,
+          ),
+        );
     _historySlideController.forward(from: 0);
   }
 

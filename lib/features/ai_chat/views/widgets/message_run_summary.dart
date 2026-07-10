@@ -3,9 +3,7 @@ part of 'message_bubble.dart';
 class _AgentRunInlineSummary extends StatefulWidget {
   final String runId;
 
-  const _AgentRunInlineSummary({
-    required this.runId,
-  });
+  const _AgentRunInlineSummary({required this.runId});
 
   @override
   State<_AgentRunInlineSummary> createState() => _AgentRunInlineSummaryState();
@@ -145,20 +143,26 @@ class _AgentRunInlineData {
     required List<AgentTraceEvent> events,
   }) {
     final blockedCount = events
-        .where((event) =>
-            event.kind.contains('blocked') ||
-            event.status.contains('blocked') ||
-            event.status.contains('rejected'))
+        .where(
+          (event) =>
+              event.kind.contains('blocked') ||
+              event.status.contains('blocked') ||
+              event.status.contains('rejected'),
+        )
         .length;
     final toolEvents = events
-        .where((event) =>
-            event.kind.contains('tool_result') ||
-            event.kind.contains('tool_request'))
+        .where(
+          (event) =>
+              event.kind.contains('tool_result') ||
+              event.kind.contains('tool_request'),
+        )
         .length;
-    final approvalEvents =
-        events.where((event) => event.kind.contains('approval')).length;
+    final approvalEvents = events
+        .where((event) => event.kind.contains('approval'))
+        .length;
     final finalOutcome = _finalOutcomeFrom(events);
-    final success = metric?.success ??
+    final success =
+        metric?.success ??
         (finalOutcome == null ||
             finalOutcome == 'success' ||
             finalOutcome == 'completed');

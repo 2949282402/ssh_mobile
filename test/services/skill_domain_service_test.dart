@@ -16,7 +16,9 @@ void main() {
         const SkillReferenceItem(title: '  ', content: 'Content 2'),
         const SkillReferenceItem(title: 'Ref 2', content: ''),
         const SkillReferenceItem(
-            title: 'Ref 1', content: 'Duplicate Title Content'),
+          title: 'Ref 1',
+          content: 'Duplicate Title Content',
+        ),
         const SkillReferenceItem(title: 'Ref 3', content: 'Content 3'),
       ];
 
@@ -30,16 +32,17 @@ void main() {
     });
 
     test(
-        'syncFrontmatterContent does not inject if no frontmatter in rawContent',
-        () {
-      const rawContent = 'Some content without frontmatter';
-      final result = domainService.syncFrontmatterContent(
-        rawContent: rawContent,
-        finalName: 'New Name',
-        finalDesc: 'New Desc',
-      );
-      expect(result, rawContent);
-    });
+      'syncFrontmatterContent does not inject if no frontmatter in rawContent',
+      () {
+        const rawContent = 'Some content without frontmatter';
+        final result = domainService.syncFrontmatterContent(
+          rawContent: rawContent,
+          finalName: 'New Name',
+          finalDesc: 'New Desc',
+        );
+        expect(result, rawContent);
+      },
+    );
 
     test('syncFrontmatterContent replaces header when values change', () {
       const rawContent = '''---
@@ -60,22 +63,24 @@ Body here.''';
       expect(result.contains('# Main Content'), isTrue);
     });
 
-    test('syncFrontmatterContent keeps content intact if header values match',
-        () {
-      const rawContent = '''---
+    test(
+      'syncFrontmatterContent keeps content intact if header values match',
+      () {
+        const rawContent = '''---
 name: "Same Name"
 description: "Same Desc"
 ---
 # Main Content''';
 
-      final result = domainService.syncFrontmatterContent(
-        rawContent: rawContent,
-        finalName: 'Same Name',
-        finalDesc: 'Same Desc',
-      );
+        final result = domainService.syncFrontmatterContent(
+          rawContent: rawContent,
+          finalName: 'Same Name',
+          finalDesc: 'Same Desc',
+        );
 
-      expect(result, rawContent);
-    });
+        expect(result, rawContent);
+      },
+    );
 
     test('buildCreateSkill constructs canonical record fields', () {
       const content = '''---
@@ -134,10 +139,7 @@ Body text.''',
       );
 
       // Only update name
-      final result1 = domainService.buildUpdateSkill(
-        current,
-        name: 'Name B',
-      );
+      final result1 = domainService.buildUpdateSkill(current, name: 'Name B');
       expect(result1.name, 'Name B');
       expect(result1.description, 'Desc A');
       expect(result1.content.contains('name: "Name B"'), isTrue);
@@ -198,7 +200,9 @@ Body text.''',
         content: 'Updated Content',
         references: [
           const SkillReferenceItem(
-              title: 'Ref 1', content: 'Content 1 Changed'),
+            title: 'Ref 1',
+            content: 'Content 1 Changed',
+          ),
           const SkillReferenceItem(title: 'Ref 3', content: 'Content 3'),
         ],
         createdAt: DateTime.now(),
@@ -216,31 +220,32 @@ Body text.''',
     });
 
     test(
-        'buildUpdateSkill with empty or whitespace values fallbacks to existing or frontmatter',
-        () {
-      final current = AiSkillRecord(
-        id: 'skill-1',
-        name: 'Name A',
-        description: 'Desc A',
-        content: '''---
+      'buildUpdateSkill with empty or whitespace values fallbacks to existing or frontmatter',
+      () {
+        final current = AiSkillRecord(
+          id: 'skill-1',
+          name: 'Name A',
+          description: 'Desc A',
+          content: '''---
 name: "Name A"
 description: "Desc A"
 ---
 Body text.''',
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
-      );
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        );
 
-      final result = domainService.buildUpdateSkill(
-        current,
-        name: '  ',
-        description: '',
-      );
+        final result = domainService.buildUpdateSkill(
+          current,
+          name: '  ',
+          description: '',
+        );
 
-      // Should fallback to frontmatter/current values instead of resetting to empty strings
-      expect(result.name, equals('Name A'));
-      expect(result.description, equals('Desc A'));
-      expect(result.content, equals(current.content));
-    });
+        // Should fallback to frontmatter/current values instead of resetting to empty strings
+        expect(result.name, equals('Name A'));
+        expect(result.description, equals('Desc A'));
+        expect(result.content, equals(current.content));
+      },
+    );
   });
 }

@@ -4,14 +4,12 @@ class McpAuthResult {
   final String reason;
 
   const McpAuthResult.allowed()
-      : allowed = true,
-        statusCode = 200,
-        reason = 'allowed';
+    : allowed = true,
+      statusCode = 200,
+      reason = 'allowed';
 
-  const McpAuthResult.rejected({
-    required this.statusCode,
-    required this.reason,
-  }) : allowed = false;
+  const McpAuthResult.rejected({required this.statusCode, required this.reason})
+    : allowed = false;
 }
 
 class McpAuthGuard {

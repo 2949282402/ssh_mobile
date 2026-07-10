@@ -142,9 +142,11 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(widget.strings.language == AppLanguage.en
-                ? 'Prompts updated successfully.'
-                : '提示词更新成功。'),
+            content: Text(
+              widget.strings.language == AppLanguage.en
+                  ? 'Prompts updated successfully.'
+                  : '提示词更新成功。',
+            ),
           ),
         );
         Navigator.pop(context);
@@ -153,9 +155,11 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(widget.strings.language == AppLanguage.en
-                ? 'Save failed: $e'
-                : '保存失败：$e'),
+            content: Text(
+              widget.strings.language == AppLanguage.en
+                  ? 'Save failed: $e'
+                  : '保存失败：$e',
+            ),
           ),
         );
       }
@@ -168,9 +172,11 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(en ? 'Reset prompts?' : '确认重置提示词？'),
-        content: Text(en
-            ? 'This will clear all custom prompts and revert to default templates. Continue?'
-            : '这将清空所有自定义提示词并恢复为系统默认模板。是否继续？'),
+        content: Text(
+          en
+              ? 'This will clear all custom prompts and revert to default templates. Continue?'
+              : '这将清空所有自定义提示词并恢复为系统默认模板。是否继续？',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
@@ -253,9 +259,11 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                     en ? 'Enable Custom Prompts' : '启用自定义提示词',
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
-                  subtitle: Text(en
-                      ? 'Override default templates with edited custom prompts'
-                      : '启用后，将覆盖系统默认模板并使用修改后的提示词'),
+                  subtitle: Text(
+                    en
+                        ? 'Override default templates with edited custom prompts'
+                        : '启用后，将覆盖系统默认模板并使用修改后的提示词',
+                  ),
                   value: _useCustomPrompts,
                   onChanged: (val) {
                     setState(() {
@@ -263,8 +271,9 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                       if (val) {
                         final currentVal = _customPrompts[_activeType] ?? '';
                         if (currentVal.trim().isEmpty) {
-                          _customPrompts[_activeType] =
-                              _getDefaultPrompt(_activeType);
+                          _customPrompts[_activeType] = _getDefaultPrompt(
+                            _activeType,
+                          );
                         }
                       }
                       _textController.text = _getCurrentPromptValue();
@@ -285,26 +294,31 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                         isExpanded: true,
                         decoration: const InputDecoration(
                           isDense: true,
-                          contentPadding:
-                              EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
                         ),
-                        items: [
-                          'system',
-                          'planner',
-                          'explore',
-                          'operator',
-                          'reviewer',
-                          'summarizer'
-                        ]
-                            .map((type) => DropdownMenuItem<String>(
-                                  value: type,
-                                  child: Text(
-                                    _getPromptLabel(type),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
+                        items:
+                            [
+                                  'system',
+                                  'planner',
+                                  'explore',
+                                  'operator',
+                                  'reviewer',
+                                  'summarizer',
+                                ]
+                                .map(
+                                  (type) => DropdownMenuItem<String>(
+                                    value: type,
+                                    child: Text(
+                                      _getPromptLabel(type),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
                                   ),
-                                ))
-                            .toList(),
+                                )
+                                .toList(),
                         onChanged: _onTypeChanged,
                       ),
                     ),
@@ -317,8 +331,9 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                     padding: const EdgeInsets.all(12),
                     margin: const EdgeInsets.only(bottom: 12),
                     decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainerHighest
-                          .withValues(alpha: 0.5),
+                      color: colorScheme.surfaceContainerHighest.withValues(
+                        alpha: 0.5,
+                      ),
                       borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                       border: Border.all(color: colorScheme.outlineVariant),
                     ),
@@ -341,7 +356,9 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                           label: Text(en ? 'Copy to Edit' : '复制默认并编辑'),
                           style: ElevatedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 6),
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
                           ),
                         ),
                       ],
@@ -353,16 +370,21 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                     padding: const EdgeInsets.all(8),
                     margin: const EdgeInsets.only(bottom: 12),
                     decoration: BoxDecoration(
-                      color:
-                          colorScheme.primaryContainer.withValues(alpha: 0.15),
+                      color: colorScheme.primaryContainer.withValues(
+                        alpha: 0.15,
+                      ),
                       borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                       border: Border.all(
-                          color: colorScheme.primary.withValues(alpha: 0.3)),
+                        color: colorScheme.primary.withValues(alpha: 0.3),
+                      ),
                     ),
                     child: Row(
                       children: [
-                        Icon(Icons.shield_outlined,
-                            size: 16, color: colorScheme.primary),
+                        Icon(
+                          Icons.shield_outlined,
+                          size: 16,
+                          color: colorScheme.primary,
+                        ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
@@ -391,7 +413,7 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                         'Consolas',
                         'Microsoft YaHei',
                         'PingFang SC',
-                        'sans-serif'
+                        'sans-serif',
                       ],
                       fontSize: 13,
                     ),
@@ -400,11 +422,13 @@ class _PromptCustomizerDialogState extends State<_PromptCustomizerDialog> {
                       filled: true,
                       fillColor: _useCustomPrompts
                           ? colorScheme.surface
-                          : colorScheme.surfaceContainerHighest
-                              .withValues(alpha: 0.3),
+                          : colorScheme.surfaceContainerHighest.withValues(
+                              alpha: 0.3,
+                            ),
                       border: OutlineInputBorder(
-                        borderRadius:
-                            BorderRadius.circular(AppTheme.radiusSmall),
+                        borderRadius: BorderRadius.circular(
+                          AppTheme.radiusSmall,
+                        ),
                       ),
                     ),
                     readOnly: !_useCustomPrompts,

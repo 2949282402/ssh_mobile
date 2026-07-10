@@ -20,8 +20,9 @@ class DataProtectionService {
   // 加密数据的前缀标识，用于 isEncrypted 检测
   static const encryptedPrefix = 'ssh-mobile-v1:';
   static const encryptedBytesPrefix = 'ssh-mobile-bin-v1:';
-  static final List<int> _encryptedBytesPrefixBytes =
-      utf8.encode(encryptedBytesPrefix);
+  static final List<int> _encryptedBytesPrefixBytes = utf8.encode(
+    encryptedBytesPrefix,
+  );
 
   static final DataProtectionService instance = DataProtectionService._();
 
@@ -41,8 +42,10 @@ class DataProtectionService {
     if (plaintext.isEmpty) return '$encryptedPrefix.';
     try {
       final key = await _getOrCreateKey();
-      final secretBox =
-          await _algorithm.encryptString(plaintext, secretKey: key);
+      final secretBox = await _algorithm.encryptString(
+        plaintext,
+        secretKey: key,
+      );
       final payload = {
         'n': base64Encode(secretBox.nonce), // 随机 nonce（每次加密不同）
         'm': base64Encode(secretBox.mac.bytes), // 认证标签，防篡改
@@ -167,7 +170,9 @@ class DataProtectionService {
       final key = await _algorithm.newSecretKey();
       final bytes = await key.extractBytes();
       await _secureStorage.write(
-          key: _keyStorageKey, value: base64Encode(bytes));
+        key: _keyStorageKey,
+        value: base64Encode(bytes),
+      );
       _cachedKey = key;
       return key;
     } catch (e, stackTrace) {

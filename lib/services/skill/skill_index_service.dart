@@ -19,10 +19,7 @@ class SkillSearchHit {
   final AiSkillRecord skill;
   final double score;
 
-  const SkillSearchHit({
-    required this.skill,
-    required this.score,
-  });
+  const SkillSearchHit({required this.skill, required this.score});
 }
 
 class SkillIndexService {
@@ -37,7 +34,8 @@ class SkillIndexService {
     final buffer = StringBuffer();
     for (final s in skills) {
       buffer.write(
-          '${s.id}:${s.updatedAt.millisecondsSinceEpoch}:${s.enabled}:${s.content.length}:${s.references.length};');
+        '${s.id}:${s.updatedAt.millisecondsSinceEpoch}:${s.enabled}:${s.content.length}:${s.references.length};',
+      );
     }
     final revisionKey = buffer.toString();
     if (_currentRevisionKey == revisionKey && _entries.isNotEmpty) {
@@ -85,7 +83,8 @@ class SkillIndexService {
     for (final entry in _entries) {
       // Pre-filter check to see if there is potential overlap with keywords
       final hasOverlap = keywords.any(
-          (k) => entry.tokens.contains(k) || entry.searchableText.contains(k));
+        (k) => entry.tokens.contains(k) || entry.searchableText.contains(k),
+      );
       if (!hasOverlap) continue;
 
       double score = 0.0;
@@ -99,12 +98,7 @@ class SkillIndexService {
       }
 
       if (score > 0) {
-        hits.add(
-          SkillSearchHit(
-            skill: entry.skill,
-            score: score,
-          ),
-        );
+        hits.add(SkillSearchHit(skill: entry.skill, score: score));
       }
     }
     return hits;

@@ -49,15 +49,15 @@ class _MonitorConfigSnapshot {
 
   @override
   int get hashCode => Object.hash(
-        isRunning,
-        isSampling,
-        interval,
-        historyWindow,
-        effectiveInterval,
-        startedAt,
-        selectedCount,
-        monitoringCount,
-      );
+    isRunning,
+    isSampling,
+    interval,
+    historyWindow,
+    effectiveInterval,
+    startedAt,
+    selectedCount,
+    monitoringCount,
+  );
 }
 
 class _MonitorPerformanceSnapshot {
@@ -107,13 +107,13 @@ class _MonitorPerformanceSnapshot {
 
   @override
   int get hashCode => Object.hash(
-        isRunning,
-        isSampling,
-        historyWindow,
-        alertCount,
-        newestAlertId,
-        Object.hashAll(connections),
-      );
+    isRunning,
+    isSampling,
+    historyWindow,
+    alertCount,
+    newestAlertId,
+    Object.hashAll(connections),
+  );
 }
 
 class _MonitorConnectionRenderToken {
@@ -168,12 +168,12 @@ class _MonitorConnectionRenderToken {
 
   @override
   int get hashCode => Object.hash(
-        connectionId,
-        visibleSampleCount,
-        latestVisibleSampleMicros,
-        diskUsageCount,
-        healthUpdatedAtMicros,
-        healthScore,
-        healthLevel,
-      );
+    connectionId,
+    visibleSampleCount,
+    latestVisibleSampleMicros,
+    diskUsageCount,
+    healthUpdatedAtMicros,
+    healthScore,
+    healthLevel,
+  );
 }

@@ -39,8 +39,10 @@ class ChatRagSheet {
                     children: [
                       Row(
                         children: [
-                          Icon(Icons.auto_stories,
-                              color: theme.colorScheme.primary),
+                          Icon(
+                            Icons.auto_stories,
+                            color: theme.colorScheme.primary,
+                          ),
                           const SizedBox(width: 8),
                           Text(
                             strings.ragTitle,

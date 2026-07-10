@@ -18,11 +18,7 @@ class PlaybookService extends ChangeNotifier {
 
   String? _pendingDiagnosticPrompt;
 
-  PlaybookService({
-    required StorageService storageService,
-    required SshService sshService,
-  })  : _storageService = storageService,
-        _sshService = sshService {
+  PlaybookService({required this._storageService, required this._sshService}) {
     _loadPlaybooksFromStorage();
   }
 
@@ -87,12 +83,14 @@ class PlaybookService extends ChangeNotifier {
 
     final original = _playbooks[index];
     final resetSteps = original.steps
-        .map((s) => s.copyWith(
-              status: StepStatus.pending,
-              stdout: null,
-              stderr: null,
-              exitCode: null,
-            ))
+        .map(
+          (s) => s.copyWith(
+            status: StepStatus.pending,
+            stdout: null,
+            stderr: null,
+            exitCode: null,
+          ),
+        )
         .toList();
 
     final resetPlaybook = original.copyWith(
@@ -122,12 +120,14 @@ class PlaybookService extends ChangeNotifier {
 
     // Reset status of all steps to pending before starting
     final cleanSteps = _activePlaybook!.steps
-        .map((s) => s.copyWith(
-              status: StepStatus.pending,
-              stdout: null,
-              stderr: null,
-              exitCode: null,
-            ))
+        .map(
+          (s) => s.copyWith(
+            status: StepStatus.pending,
+            stdout: null,
+            stderr: null,
+            exitCode: null,
+          ),
+        )
         .toList();
     _activePlaybook = _activePlaybook!.copyWith(
       steps: cleanSteps,
@@ -198,8 +198,9 @@ class PlaybookService extends ChangeNotifier {
 
       // Update step status to running
       final stepsBefore = [..._activePlaybook!.steps];
-      stepsBefore[_currentStepIndex] =
-          step.copyWith(status: StepStatus.running);
+      stepsBefore[_currentStepIndex] = step.copyWith(
+        status: StepStatus.running,
+      );
       _activePlaybook = _activePlaybook!.copyWith(steps: stepsBefore);
       await updatePlaybook(_activePlaybook!);
       notifyListeners();

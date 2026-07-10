@@ -104,8 +104,9 @@ class _ChatHeader extends StatelessWidget {
                             selectable: false,
                             maxLines: 1,
                             style: TextStyle(
-                              color:
-                                  colorScheme.onSurface.withValues(alpha: 0.62),
+                              color: colorScheme.onSurface.withValues(
+                                alpha: 0.62,
+                              ),
                               fontSize: 12,
                             ),
                           ),

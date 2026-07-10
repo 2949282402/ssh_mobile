@@ -12,8 +12,9 @@ extension DriftAgentMetricsRepositoryOps on StorageService {
   Future<void> _saveDriftAgentRunMetrics(AgentRunMetrics metrics) async {
     final database = _database;
     if (!_driftAgentMetricsActive || database == null) return;
-    await database.agentMetricsDao
-        .saveMetric(_agentRunMetricsToCompanion(metrics));
+    await database.agentMetricsDao.saveMetric(
+      _agentRunMetricsToCompanion(metrics),
+    );
     final current = _agentRunMetricsCache ?? const <AgentRunMetrics>[];
     final next = <AgentRunMetrics>[
       metrics,

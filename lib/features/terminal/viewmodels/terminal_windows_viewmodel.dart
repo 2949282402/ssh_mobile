@@ -12,10 +12,9 @@ class TerminalWindowsViewModel extends ChangeNotifier {
   String? connectionId;
 
   TerminalWindowsViewModel({
-    required SshService sshService,
-    required AppSettings appSettings,
-  })  : _sshService = sshService,
-        _appSettings = appSettings {
+    required this._sshService,
+    required this._appSettings,
+  }) {
     _sshService.addListener(_onServiceChanged);
   }
 
@@ -32,8 +31,10 @@ class TerminalWindowsViewModel extends ChangeNotifier {
   // Getters
   List<SshSession> get sessions {
     return _sshService.sessions
-        .where((session) =>
-            connectionId == null || session.connectionId == connectionId)
+        .where(
+          (session) =>
+              connectionId == null || session.connectionId == connectionId,
+        )
         .toList();
   }
 

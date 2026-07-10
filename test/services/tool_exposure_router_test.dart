@@ -151,101 +151,109 @@ void main() {
     });
 
     test(
-        'contains explainable decisions showing why tools were selected or blocked',
-        () {
-      const router = ToolExposureRouter();
-      final tools = [
-        AiTool(
-          name: 'client_webview_get_state',
-          description: 'Read webview state',
-          properties: const {},
-          requiresWebViewSession: true,
-          capabilities: const {AiToolCapability.web},
-          handler: _noop,
-        ),
-        AiTool(
-          name: 'client_task_update',
-          description: 'Update approved plan step',
-          properties: const {},
-          executionMode: AiToolExecutionMode.executionOnly,
-          capabilities: const {AiToolCapability.planning},
-          handler: _noop,
-        ),
-      ];
+      'contains explainable decisions showing why tools were selected or blocked',
+      () {
+        const router = ToolExposureRouter();
+        final tools = [
+          AiTool(
+            name: 'client_webview_get_state',
+            description: 'Read webview state',
+            properties: const {},
+            requiresWebViewSession: true,
+            capabilities: const {AiToolCapability.web},
+            handler: _noop,
+          ),
+          AiTool(
+            name: 'client_task_update',
+            description: 'Update approved plan step',
+            properties: const {},
+            executionMode: AiToolExecutionMode.executionOnly,
+            capabilities: const {AiToolCapability.planning},
+            handler: _noop,
+          ),
+        ];
 
-      final selection = router.selectTools(
-        tools,
-        context: const ToolExposureContext(
-          userRequest: 'show the current web page and update the task',
-        ),
-      );
+        final selection = router.selectTools(
+          tools,
+          context: const ToolExposureContext(
+            userRequest: 'show the current web page and update the task',
+          ),
+        );
 
-      expect(selection.decisions, hasLength(2));
+        expect(selection.decisions, hasLength(2));
 
-      final webviewDecision = selection.decisions
-          .firstWhere((d) => d.toolName == 'client_webview_get_state');
-      expect(webviewDecision.selected, isFalse);
-      expect(webviewDecision.blockedBy, contains('webview_session_missing'));
+        final webviewDecision = selection.decisions.firstWhere(
+          (d) => d.toolName == 'client_webview_get_state',
+        );
+        expect(webviewDecision.selected, isFalse);
+        expect(webviewDecision.blockedBy, contains('webview_session_missing'));
 
-      final taskUpdateDecision = selection.decisions
-          .firstWhere((d) => d.toolName == 'client_task_update');
-      expect(taskUpdateDecision.selected, isFalse);
-      expect(taskUpdateDecision.blockedBy,
-          contains('execution_only_without_approved_plan'));
-    });
-
-    test('allows server tools without selected server when planMode is active',
-        () {
-      const router = ToolExposureRouter();
-      final tools = [
-        AiTool(
-          name: 'run_command',
-          description: 'Run server command',
-          properties: const {},
-          requiresServerSelection: true,
-          capabilities: const {AiToolCapability.server, AiToolCapability.ssh},
-          handler: _noop,
-        ),
-      ];
-
-      final selection = router.selectTools(
-        tools,
-        context: const ToolExposureContext(
-          userRequest: 'check disk usage on server',
-          planMode: true,
-          selectedConnectionIds: {},
-        ),
-      );
-
-      expect(selection.selectedToolSet, contains('run_command'));
-    });
+        final taskUpdateDecision = selection.decisions.firstWhere(
+          (d) => d.toolName == 'client_task_update',
+        );
+        expect(taskUpdateDecision.selected, isFalse);
+        expect(
+          taskUpdateDecision.blockedBy,
+          contains('execution_only_without_approved_plan'),
+        );
+      },
+    );
 
     test(
-        'normal mode still blocks server tool without selected server when request is not server-relevant',
-        () {
-      const router = ToolExposureRouter();
-      final tools = [
-        AiTool(
-          name: 'run_command',
-          description: 'Run server command',
-          properties: const {},
-          requiresServerSelection: true,
-          capabilities: const {AiToolCapability.server, AiToolCapability.ssh},
-          handler: _noop,
-        ),
-      ];
+      'allows server tools without selected server when planMode is active',
+      () {
+        const router = ToolExposureRouter();
+        final tools = [
+          AiTool(
+            name: 'run_command',
+            description: 'Run server command',
+            properties: const {},
+            requiresServerSelection: true,
+            capabilities: const {AiToolCapability.server, AiToolCapability.ssh},
+            handler: _noop,
+          ),
+        ];
 
-      final selection = router.selectTools(
-        tools,
-        context: const ToolExposureContext(
-          userRequest: 'Please show local clipboard text',
-          planMode: false,
-          selectedConnectionIds: {},
-        ),
-      );
+        final selection = router.selectTools(
+          tools,
+          context: const ToolExposureContext(
+            userRequest: 'check disk usage on server',
+            planMode: true,
+            selectedConnectionIds: {},
+          ),
+        );
 
-      expect(selection.selectedToolSet, isNot(contains('run_command')));
-    });
+        expect(selection.selectedToolSet, contains('run_command'));
+      },
+    );
+
+    test(
+      'normal mode still blocks server tool without selected server when request is not server-relevant',
+      () {
+        const router = ToolExposureRouter();
+        final tools = [
+          AiTool(
+            name: 'run_command',
+            description: 'Run server command',
+            properties: const {},
+            requiresServerSelection: true,
+            capabilities: const {AiToolCapability.server, AiToolCapability.ssh},
+            handler: _noop,
+          ),
+        ];
+
+        final selection = router.selectTools(
+          tools,
+          context: const ToolExposureContext(
+            userRequest: 'Please show local clipboard text',
+            planMode: false,
+            selectedConnectionIds: {},
+          ),
+        );
+
+        expect(selection.selectedToolSet, isNot(contains('run_command')));
+      },
+    );
 
     test('properly detects web capability with expanded keywords', () {
       const router = ToolExposureRouter();
@@ -267,8 +275,11 @@ void main() {
             hasWebViewSession: true,
           ),
         );
-        expect(selection.selectedToolSet, contains('web_search'),
-            reason: 'Should detect web capability for keyword: $keyword');
+        expect(
+          selection.selectedToolSet,
+          contains('web_search'),
+          reason: 'Should detect web capability for keyword: $keyword',
+        );
       }
     });
   });

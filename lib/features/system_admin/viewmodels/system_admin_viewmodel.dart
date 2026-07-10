@@ -38,10 +38,9 @@ class SystemAdminViewModel extends ChangeNotifier {
   String? _connectingConnectionId;
 
   SystemAdminViewModel({
-    required SystemAdminService adminService,
-    required StorageService storageService,
-  })  : _adminService = adminService,
-        _storageService = storageService {
+    required this._adminService,
+    required this._storageService,
+  }) {
     _adminService.addListener(_onAdminServiceChanged);
     _storageService.addListener(_onStorageChanged);
     if (_adminService.isConnected) {
@@ -132,10 +131,9 @@ class SystemAdminViewModel extends ChangeNotifier {
   void restoreServersCollapsed(BuildContext context) {
     if (_restoredServersCollapsed) return;
     _restoredServersCollapsed = true;
-    final stored = PageStorage.maybeOf(context)?.readState(
+    final stored = PageStorage.maybeOf(
       context,
-      identifier: _serversCollapsedStorageKey,
-    );
+    )?.readState(context, identifier: _serversCollapsedStorageKey);
     if (stored is bool) {
       _serversCollapsed = stored;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -147,11 +145,9 @@ class SystemAdminViewModel extends ChangeNotifier {
   void setServersCollapsed(BuildContext context, bool collapsed) {
     if (_serversCollapsed == collapsed) return;
     _serversCollapsed = collapsed;
-    PageStorage.maybeOf(context)?.writeState(
+    PageStorage.maybeOf(
       context,
-      collapsed,
-      identifier: _serversCollapsedStorageKey,
-    );
+    )?.writeState(context, collapsed, identifier: _serversCollapsedStorageKey);
     notifyListeners();
   }
 
@@ -435,12 +431,19 @@ class SystemAdminViewModel extends ChangeNotifier {
   }
 
   // Administration actions
-  Future<void> createUser(String username, String password,
-      {String shell = '/bin/bash'}) async {
+  Future<void> createUser(
+    String username,
+    String password, {
+    String shell = '/bin/bash',
+  }) async {
     final id = activeManagementConnectionId;
     if (id == null) return;
-    await _adminService.createUser(id,
-        username: username, password: password, shell: shell);
+    await _adminService.createUser(
+      id,
+      username: username,
+      password: password,
+      shell: shell,
+    );
     await fetchAccounts(id, force: true);
   }
 
@@ -485,7 +488,8 @@ class SystemAdminViewModel extends ChangeNotifier {
   }
 
   Future<List<LinuxUserProcess>> getUserProcessesAndMemory(
-      String username) async {
+    String username,
+  ) async {
     final id = activeManagementConnectionId;
     if (id == null) return [];
     return await _adminService.getUserProcessesAndMemory(id, username);

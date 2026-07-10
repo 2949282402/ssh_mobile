@@ -39,8 +39,9 @@ class BackgroundServiceManager {
 
   static Future<void> initialize() async {
     if (!_supportsNativeBackgroundService) return;
-    AppLogService.instance
-        .info('[BackgroundManager] Initializing background service manager');
+    AppLogService.instance.info(
+      '[BackgroundManager] Initializing background service manager',
+    );
     await _requestNotificationPermission();
     await prewarm();
   }
@@ -59,12 +60,15 @@ class BackgroundServiceManager {
     _prewarmFuture = future;
     try {
       AppLogService.instance.info(
-          '[BackgroundManager] Prewarming background service configuration');
+        '[BackgroundManager] Prewarming background service configuration',
+      );
       await future;
       AppLogService().info('BackgroundServiceManager prewarmed successfully');
     } catch (e) {
-      AppLogService()
-          .error('BackgroundServiceManager prewarm failed', error: e);
+      AppLogService().error(
+        'BackgroundServiceManager prewarm failed',
+        error: e,
+      );
     } finally {
       _prewarmFuture = null;
     }
@@ -75,10 +79,12 @@ class BackgroundServiceManager {
     try {
       await _createNotificationChannel();
       AppLogService.instance.info(
-          '[BackgroundManager] Notification channel created successfully');
+        '[BackgroundManager] Notification channel created successfully',
+      );
     } catch (e) {
       AppLogService.instance.warning(
-          '[BackgroundManager] Failed to create notification channel: $e');
+        '[BackgroundManager] Failed to create notification channel: $e',
+      );
     }
 
     final service = FlutterBackgroundService();
@@ -101,8 +107,9 @@ class BackgroundServiceManager {
     );
 
     _configured = true;
-    AppLogService.instance
-        .info('[BackgroundManager] Background service configured successfully');
+    AppLogService.instance.info(
+      '[BackgroundManager] Background service configured successfully',
+    );
   }
 
   static Future<void> start({
@@ -111,7 +118,8 @@ class BackgroundServiceManager {
   }) async {
     if (!_supportsNativeBackgroundService) return;
     AppLogService.instance.info(
-        '[BackgroundManager] Starting background service for connection: $connectionName');
+      '[BackgroundManager] Starting background service for connection: $connectionName',
+    );
     await initialize();
     var locksAcquired = false;
     try {
@@ -123,10 +131,12 @@ class BackgroundServiceManager {
       if (!await service.isRunning()) {
         final started = await service.startService();
         AppLogService.instance.info(
-            '[BackgroundManager] service.startService() invoked, result: $started');
+          '[BackgroundManager] service.startService() invoked, result: $started',
+        );
       } else {
-        AppLogService.instance
-            .info('[BackgroundManager] Background service is already running');
+        AppLogService.instance.info(
+          '[BackgroundManager] Background service is already running',
+        );
       }
 
       service.invoke('update', {
@@ -151,13 +161,15 @@ class BackgroundServiceManager {
 
   static Future<void> stop() async {
     if (!_supportsNativeBackgroundService) return;
-    AppLogService.instance
-        .info('[BackgroundManager] Stopping background service');
+    AppLogService.instance.info(
+      '[BackgroundManager] Stopping background service',
+    );
     final service = FlutterBackgroundService();
     if (await service.isRunning()) {
       service.invoke('stopService');
-      AppLogService.instance
-          .info('[BackgroundManager] Invoked stopService command');
+      AppLogService.instance.info(
+        '[BackgroundManager] Invoked stopService command',
+      );
     } else {
       AppLogService.instance.info('[BackgroundManager] Service is not running');
     }
@@ -168,12 +180,14 @@ class BackgroundServiceManager {
   static Future<bool> isIgnoringBatteryOptimizations() async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return true;
     try {
-      return await _powerChannel
-              .invokeMethod<bool>('isIgnoringBatteryOptimizations') ??
+      return await _powerChannel.invokeMethod<bool>(
+            'isIgnoringBatteryOptimizations',
+          ) ??
           false;
     } catch (e) {
       AppLogService.instance.warning(
-          '[BackgroundManager] Error checking battery optimizations: $e');
+        '[BackgroundManager] Error checking battery optimizations: $e',
+      );
       return false;
     }
   }
@@ -186,7 +200,8 @@ class BackgroundServiceManager {
       );
     } catch (e) {
       AppLogService.instance.warning(
-          '[BackgroundManager] Error requesting battery optimizations: $e');
+        '[BackgroundManager] Error requesting battery optimizations: $e',
+      );
     }
   }
 
@@ -195,8 +210,9 @@ class BackgroundServiceManager {
     try {
       await _powerChannel.invokeMethod<bool>('openAppSettings');
     } catch (e) {
-      AppLogService.instance
-          .warning('[BackgroundManager] Error opening app settings: $e');
+      AppLogService.instance.warning(
+        '[BackgroundManager] Error opening app settings: $e',
+      );
     }
   }
 
@@ -214,11 +230,13 @@ class BackgroundServiceManager {
 
     final status = await Permission.notification.status;
     AppLogService.instance.info(
-        '[BackgroundManager] Current notification permission status: $status');
+      '[BackgroundManager] Current notification permission status: $status',
+    );
     if (status.isDenied || status.isRestricted || status.isLimited) {
       final result = await Permission.notification.request();
       AppLogService.instance.info(
-          '[BackgroundManager] Requested notification permission, result: $result');
+        '[BackgroundManager] Requested notification permission, result: $result',
+      );
     }
   }
 
@@ -236,49 +254,59 @@ class BackgroundServiceManager {
     final plugin = FlutterLocalNotificationsPlugin();
     await plugin
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
+          AndroidFlutterLocalNotificationsPlugin
+        >()
         ?.createNotificationChannel(channel);
   }
 
   static Future<void> _acquirePowerLocks() async {
     try {
       await _powerChannel.invokeMethod<bool>('acquireLocks');
-      AppLogService.instance
-          .info('[BackgroundManager] Power locks acquired successfully');
+      AppLogService.instance.info(
+        '[BackgroundManager] Power locks acquired successfully',
+      );
     } catch (e) {
-      AppLogService.instance
-          .warning('[BackgroundManager] Failed to acquire power locks: $e');
+      AppLogService.instance.warning(
+        '[BackgroundManager] Failed to acquire power locks: $e',
+      );
     }
   }
 
   static Future<void> _releasePowerLocks() async {
     try {
       await _powerChannel.invokeMethod<bool>('releaseLocks');
-      AppLogService.instance
-          .info('[BackgroundManager] Power locks released successfully');
+      AppLogService.instance.info(
+        '[BackgroundManager] Power locks released successfully',
+      );
     } catch (e) {
-      AppLogService.instance
-          .warning('[BackgroundManager] Failed to release power locks: $e');
+      AppLogService.instance.warning(
+        '[BackgroundManager] Failed to release power locks: $e',
+      );
     }
   }
 
   static Future<void> _requestBatteryOptimizationExemption() async {
     try {
-      final ignoring = await _powerChannel
-              .invokeMethod<bool>('isIgnoringBatteryOptimizations') ??
+      final ignoring =
+          await _powerChannel.invokeMethod<bool>(
+            'isIgnoringBatteryOptimizations',
+          ) ??
           true;
       AppLogService.instance.info(
-          '[BackgroundManager] Battery optimization ignoring check: $ignoring');
+        '[BackgroundManager] Battery optimization ignoring check: $ignoring',
+      );
       if (!ignoring) {
         await _powerChannel.invokeMethod<bool>(
           'requestBatteryOptimizationExemption',
         );
         AppLogService.instance.info(
-            '[BackgroundManager] Requested battery optimization exemption');
+          '[BackgroundManager] Requested battery optimization exemption',
+        );
       }
     } catch (e) {
       AppLogService.instance.warning(
-          '[BackgroundManager] Failed battery optimization exemption request: $e');
+        '[BackgroundManager] Failed battery optimization exemption request: $e',
+      );
     }
   }
 
@@ -354,12 +382,9 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
       final connId = session.connectionId;
       if (connId != null) {
         final current = byConnection.putIfAbsent(
-            connId,
-            () => {
-                  'count': 0,
-                  'latestState': 'connected',
-                  'hasConnected': true,
-                });
+          connId,
+          () => {'count': 0, 'latestState': 'connected', 'hasConnected': true},
+        );
         current['count'] = (current['count'] as int) + 1;
       }
     }
@@ -397,9 +422,9 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
     service.invoke('sshStateChanged', {
       'sessionId': sessionId,
       'state': state,
-      if (message != null) 'message': message,
-      if (connectionId != null) 'connectionId': connectionId,
-      if (connectionName != null) 'connectionName': connectionName,
+      'message': ?message,
+      'connectionId': ?connectionId,
+      'connectionName': ?connectionName,
     });
   }
 
@@ -483,10 +508,7 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
       );
     }
 
-    await closeSsh(
-      runtime.sessionId,
-      message: decision.message,
-    );
+    await closeSsh(runtime.sessionId, message: decision.message);
   }
 
   String sanitizeTmuxSessionName(String name) {
@@ -510,7 +532,8 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
     final safeName = sanitizeTmuxSessionName(sessionName);
     final quotedName = shellQuote(safeName);
     final seconds = autoDeleteSeconds.clamp(30, 86400);
-    final idleWatcher = 'idle_start=0; interval=5; '
+    final idleWatcher =
+        'idle_start=0; interval=5; '
         'while tmux has-session -t $quotedName 2>/dev/null; do '
         'if tmux list-clients -t $quotedName 2>/dev/null | grep -q .; then '
         'idle_start=0; '
@@ -529,9 +552,7 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
         'else echo "tmux is not installed on this server"; exit 127; fi';
   }
 
-  Future<void> ensureTmuxInstalled({
-    required SSHClient client,
-  }) async {
+  Future<void> ensureTmuxInstalled({required SSHClient client}) async {
     late final SSHRunResult tmuxCheck;
     try {
       emitLog('service', 'Checking tmux installation');
@@ -592,11 +613,14 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
       final keepAliveSeconds =
           (data['keepAliveInterval'] as num?)?.toInt() ?? 3;
       final launchMode = data['launchMode'] as String? ?? 'ssh';
-      final tmuxSessionName =
-          sanitizeTmuxSessionName(data['tmuxSessionName'] as String? ?? name);
+      final tmuxSessionName = sanitizeTmuxSessionName(
+        data['tmuxSessionName'] as String? ?? name,
+      );
       final tmuxAutoDeleteSeconds =
-          ((data['tmuxAutoDeleteSeconds'] as num?)?.toInt() ?? 600)
-              .clamp(30, 86400);
+          ((data['tmuxAutoDeleteSeconds'] as num?)?.toInt() ?? 600).clamp(
+            30,
+            86400,
+          );
       final socket = await SSHSocket.connect(
         host,
         port,
@@ -627,8 +651,10 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
       );
       final hostKeyPolicy = SshHostKeyPolicy();
 
-      final identities =
-          await SshClientFactory.identitiesFor(config, credentials);
+      final identities = await SshClientFactory.identitiesFor(
+        config,
+        credentials,
+      );
 
       final authOptions = SshClientFactory.buildAuthOptions(
         config: config,
@@ -641,10 +667,10 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
         username: username,
         onVerifyHostKey: (algorithm, fingerprint) =>
             hostKeyPolicy.verifyHostKey(
-          config: config,
-          algorithm: algorithm,
-          md5Fingerprint: fingerprint,
-        ),
+              config: config,
+              algorithm: algorithm,
+              md5Fingerprint: fingerprint,
+            ),
         identities: authOptions.identities,
         onPasswordRequest: authOptions.onPasswordRequest,
         onUserInfoRequest: authOptions.onUserInfoRequest,
@@ -654,9 +680,7 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
 
       if (launchMode == 'tmux') {
         try {
-          await ensureTmuxInstalled(
-            client: client,
-          );
+          await ensureTmuxInstalled(client: client);
           emitLog(
             'service',
             'tmux available',
@@ -669,11 +693,7 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
       }
 
       final shell = await client.shell(
-        pty: SSHPtyConfig(
-          width: width,
-          height: height,
-          type: 'xterm-256color',
-        ),
+        pty: SSHPtyConfig(width: width, height: height, type: 'xterm-256color'),
       );
       emitLog(
         'service',
@@ -711,20 +731,21 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
           unawaited(handleUnexpectedDisconnect(runtime, error.toString()));
         },
         onDone: () {
-          emitLog('service', 'SSH stdout stream closed',
-              details: 'sessionId=$sessionId');
+          emitLog(
+            'service',
+            'SSH stdout stream closed',
+            details: 'sessionId=$sessionId',
+          );
           unawaited(handleUnexpectedDisconnect(runtime, 'stdout closed'));
         },
       );
 
-      runtime.stderrSub = shell.stderr.listen(
-        (bytes) {
-          service.invoke('sshDataReceived', {
-            'sessionId': sessionId,
-            'data': utf8.decode(bytes, allowMalformed: true),
-          });
-        },
-      );
+      runtime.stderrSub = shell.stderr.listen((bytes) {
+        service.invoke('sshDataReceived', {
+          'sessionId': sessionId,
+          'data': utf8.decode(bytes, allowMalformed: true),
+        });
+      });
 
       if (launchMode == 'tmux') {
         final command = buildTmuxAttachCommand(
@@ -852,8 +873,11 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
   service.on('sshDisconnect').listen((event) {
     final sessionId = event?['sessionId'] as String?;
     if (sessionId != null) {
-      emitLog('service', 'Received sshDisconnect request',
-          details: 'sessionId=$sessionId');
+      emitLog(
+        'service',
+        'Received sshDisconnect request',
+        details: 'sessionId=$sessionId',
+      );
       unawaited(closeSsh(sessionId, destroyTmux: true));
     }
   });
@@ -864,9 +888,7 @@ void sshBackgroundServiceEntryPoint(ServiceInstance service) {
   });
 
   service.on('update').listen((event) {
-    setNotification(
-      event?['content'] as String? ?? 'SSH service is running',
-    );
+    setNotification(event?['content'] as String? ?? 'SSH service is running');
   });
 
   service.on('stopService').listen((event) async {

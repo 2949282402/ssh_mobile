@@ -5,13 +5,7 @@ import 'package:flutter/foundation.dart';
 export 'sftp/sftp_service_stub.dart'
     if (dart.library.io) 'sftp/sftp_service_io.dart';
 
-enum SftpConnectionState {
-  disconnected,
-  connecting,
-  connected,
-  loading,
-  error,
-}
+enum SftpConnectionState { disconnected, connecting, connected, loading, error }
 
 class SftpEntry {
   final String connectionId;
@@ -69,15 +63,13 @@ class SftpPathInfo {
   }
 }
 
-enum SftpTransferDirection {
-  upload,
-  download,
-}
+enum SftpTransferDirection { upload, download }
 
 class SftpTransferCancelledException implements Exception {
   final String message;
-  const SftpTransferCancelledException(
-      [this.message = 'Transfer cancelled by user']);
+  const SftpTransferCancelledException([
+    this.message = 'Transfer cancelled by user',
+  ]);
 
   @override
   String toString() => 'SftpTransferCancelledException: $message';
@@ -140,15 +132,15 @@ class SftpTransferState {
 
   @override
   int get hashCode => Object.hash(
-        id,
-        name,
-        totalBytes,
-        isUpload,
-        bytesTransferred,
-        isCancelled,
-        isError,
-        errorMessage,
-      );
+    id,
+    name,
+    totalBytes,
+    isUpload,
+    bytesTransferred,
+    isCancelled,
+    isError,
+    errorMessage,
+  );
 }
 
 abstract interface class SftpClientAdapter {
@@ -168,10 +160,7 @@ abstract interface class SftpClientAdapter {
 
   bool isConnectionOpen(String connectionId);
 
-  Future<void> connect(
-    String connectionId, {
-    dynamic onUnknownHostKey,
-  });
+  Future<void> connect(String connectionId, {dynamic onUnknownHostKey});
 
   Future<void> refresh();
 
@@ -185,10 +174,7 @@ abstract interface class SftpClientAdapter {
     required String filename,
   });
 
-  Future<void> deleteEntry(
-    SftpEntry entry, {
-    required String confirmedName,
-  });
+  Future<void> deleteEntry(SftpEntry entry, {required String confirmedName});
 
   Future<List<SftpEntry>> listDirectoryForConnection(
     String connectionId,

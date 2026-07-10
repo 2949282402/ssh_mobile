@@ -25,24 +25,39 @@ class MonitorToolsProvider implements AiToolProvider {
       case 'monitor_get_state':
         return _monitorGetState(service, arguments);
       case 'monitor_set_selected_servers':
-        return _monitorSetSelectedServers(service, arguments,
-            approvedWrite: approvedWrite);
+        return _monitorSetSelectedServers(
+          service,
+          arguments,
+          approvedWrite: approvedWrite,
+        );
       case 'monitor_clear_selection':
-        return _monitorClearSelection(service, arguments,
-            approvedWrite: approvedWrite);
+        return _monitorClearSelection(
+          service,
+          arguments,
+          approvedWrite: approvedWrite,
+        );
       case 'monitor_start':
         return _monitorStart(service, arguments, approvedWrite: approvedWrite);
       case 'monitor_stop':
         return _monitorStop(service, arguments, approvedWrite: approvedWrite);
       case 'monitor_stop_for_connection':
-        return _monitorStopForConnection(service, arguments,
-            approvedWrite: approvedWrite);
+        return _monitorStopForConnection(
+          service,
+          arguments,
+          approvedWrite: approvedWrite,
+        );
       case 'monitor_set_interval':
-        return _monitorSetInterval(service, arguments,
-            approvedWrite: approvedWrite);
+        return _monitorSetInterval(
+          service,
+          arguments,
+          approvedWrite: approvedWrite,
+        );
       case 'monitor_set_history_window':
-        return _monitorSetHistoryWindow(service, arguments,
-            approvedWrite: approvedWrite);
+        return _monitorSetHistoryWindow(
+          service,
+          arguments,
+          approvedWrite: approvedWrite,
+        );
       case 'monitor_get_health':
         return _monitorGetHealth(service, arguments);
       case 'monitor_get_samples':
@@ -59,7 +74,9 @@ class MonitorToolsProvider implements AiToolProvider {
   }
 
   Future<String> _monitorGetState(
-      AiToolService service, Map<String, dynamic> arguments) async {
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
     return jsonEncode(performanceMonitorToolService.getState());
   }
 
@@ -166,13 +183,16 @@ class MonitorToolsProvider implements AiToolProvider {
     }
     final seconds = service._argInt(arguments, 'seconds').clamp(30, 600);
     return jsonEncode(
-      performanceMonitorToolService
-          .setHistoryWindow(Duration(seconds: seconds)),
+      performanceMonitorToolService.setHistoryWindow(
+        Duration(seconds: seconds),
+      ),
     );
   }
 
   Future<String> _monitorGetHealth(
-      AiToolService service, Map<String, dynamic> arguments) async {
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
     return jsonEncode(
       performanceMonitorToolService.getHealth(
         connectionIds: service._optionalStringList(arguments, 'connectionIds'),
@@ -181,7 +201,9 @@ class MonitorToolsProvider implements AiToolProvider {
   }
 
   Future<String> _monitorGetSamples(
-      AiToolService service, Map<String, dynamic> arguments) async {
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
     return jsonEncode(
       performanceMonitorToolService.getSamples(
         service._arg(arguments, 'connectionId'),
@@ -192,7 +214,9 @@ class MonitorToolsProvider implements AiToolProvider {
   }
 
   Future<String> _monitorGetAlerts(
-      AiToolService service, Map<String, dynamic> arguments) async {
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
     return jsonEncode(
       performanceMonitorToolService.getAlerts(
         limit: service._optionalInt(arguments, 'limit') ?? 50,
@@ -201,15 +225,20 @@ class MonitorToolsProvider implements AiToolProvider {
   }
 
   Future<String> _monitorGetPorts(
-      AiToolService service, Map<String, dynamic> arguments) async {
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
     return jsonEncode(
-      await performanceMonitorToolService
-          .getPorts(service._arg(arguments, 'connectionId')),
+      await performanceMonitorToolService.getPorts(
+        service._arg(arguments, 'connectionId'),
+      ),
     );
   }
 
   Future<String> _monitorGetApplications(
-      AiToolService service, Map<String, dynamic> arguments) async {
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
     return jsonEncode(
       await performanceMonitorToolService.getApplications(
         service._arg(arguments, 'connectionId'),
@@ -275,16 +304,11 @@ class MonitorToolsProvider implements AiToolProvider {
         name: 'monitor_stop_for_connection',
         description:
             'Stop the app-scoped performance monitor for one connection id. This changes app monitor state and requires user approval.',
-        properties: {
-          'connectionId': _string('Server connection id.'),
-        },
+        properties: {'connectionId': _string('Server connection id.')},
         required: const ['connectionId'],
         executionMode: AiToolExecutionMode.stateChanging,
-        handler: (arguments) => _monitorStopForConnection(
-          service,
-          arguments,
-          approvedWrite: false,
-        ),
+        handler: (arguments) =>
+            _monitorStopForConnection(service, arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'monitor_set_interval',
@@ -358,9 +382,7 @@ class MonitorToolsProvider implements AiToolProvider {
         name: 'monitor_get_ports',
         description:
             'Return current listening ports and owning processes for one server using the existing performance monitor diagnostics path.',
-        properties: {
-          'connectionId': _string('Server connection id.'),
-        },
+        properties: {'connectionId': _string('Server connection id.')},
         required: const ['connectionId'],
         handler: (args) => _monitorGetPorts(service, args),
       ),
@@ -368,9 +390,7 @@ class MonitorToolsProvider implements AiToolProvider {
         name: 'monitor_get_applications',
         description:
             'Return current top applications or processes for one server using the existing performance monitor diagnostics path.',
-        properties: {
-          'connectionId': _string('Server connection id.'),
-        },
+        properties: {'connectionId': _string('Server connection id.')},
         required: const ['connectionId'],
         handler: (args) => _monitorGetApplications(service, args),
       ),

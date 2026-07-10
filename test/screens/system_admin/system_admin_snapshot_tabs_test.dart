@@ -249,8 +249,11 @@ class StubSystemAdminViewModel extends ChangeNotifier
   }
 
   @override
-  Future<void> createUser(String username, String password,
-      {String shell = '/bin/bash'}) async {}
+  Future<void> createUser(
+    String username,
+    String password, {
+    String shell = '/bin/bash',
+  }) async {}
 
   @override
   Future<bool> checkUserSudo(String username) async => false;
@@ -272,8 +275,8 @@ class StubSystemAdminViewModel extends ChangeNotifier
 
   @override
   Future<List<LinuxUserProcess>> getUserProcessesAndMemory(
-          String username) async =>
-      [];
+    String username,
+  ) async => [];
 
   @override
   Future<void> killActiveSession(String tty) async {}
@@ -338,13 +341,13 @@ class StubPerformanceMonitorViewModel extends ChangeNotifier
 
   @override
   ServerHealthSnapshot getHealth(String connectionId) => ServerHealthSnapshot(
-        connectionId: connectionId,
-        level: ServerHealthLevel.healthy,
-        score: 100,
-        summary: 'Healthy',
-        details: const [],
-        updatedAt: DateTime.now(),
-      );
+    connectionId: connectionId,
+    level: ServerHealthLevel.healthy,
+    score: 100,
+    summary: 'Healthy',
+    details: const [],
+    updatedAt: DateTime.now(),
+  );
 
   @override
   void setTabIndex(int index) {
@@ -414,11 +417,12 @@ class StubPerformanceMonitorViewModel extends ChangeNotifier
     fetchPortsCalls.add(connectionId);
     return [
       PortProcessSnapshot(
-          port: 80,
-          protocol: 'tcp',
-          localAddress: '0.0.0.0',
-          process: 'nginx',
-          state: 'LISTEN'),
+        port: 80,
+        protocol: 'tcp',
+        localAddress: '0.0.0.0',
+        process: 'nginx',
+        state: 'LISTEN',
+      ),
     ];
   }
 
@@ -430,11 +434,12 @@ class StubPerformanceMonitorViewModel extends ChangeNotifier
     fetchApplicationsCalls.add(connectionId);
     return const [
       ApplicationMemorySnapshot(
-          pid: 101,
-          command: 'nginx',
-          cpuPercent: 0.5,
-          rssBytes: 1024 * 1024 * 5,
-          memoryPercent: 0.5),
+        pid: 101,
+        command: 'nginx',
+        cpuPercent: 0.5,
+        rssBytes: 1024 * 1024 * 5,
+        memoryPercent: 0.5,
+      ),
     ];
   }
 
@@ -446,11 +451,12 @@ class StubPerformanceMonitorViewModel extends ChangeNotifier
     fetchServicesCalls.add(connectionId);
     return [
       ServiceStatusSnapshot(
-          name: 'nginx.service',
-          displayName: 'Nginx Service',
-          status: 'running',
-          activeState: 'active',
-          loadState: 'loaded'),
+        name: 'nginx.service',
+        displayName: 'Nginx Service',
+        status: 'running',
+        activeState: 'active',
+        loadState: 'loaded',
+      ),
     ];
   }
 
@@ -508,185 +514,188 @@ void main() {
     );
   }
 
-  testWidgets('SystemAdminScreen displays empty state when no server selected',
-      (WidgetTester tester) async {
-    tester.view.physicalSize = const Size(1280, 800);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
+  testWidgets(
+    'SystemAdminScreen displays empty state when no server selected',
+    (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
 
-    final adminVm = StubSystemAdminViewModel();
-    final monitorVm = StubPerformanceMonitorViewModel();
-    adminVm.connections = fakeConnections;
+      final adminVm = StubSystemAdminViewModel();
+      final monitorVm = StubPerformanceMonitorViewModel();
+      adminVm.connections = fakeConnections;
 
-    await tester.pumpWidget(buildTestableWidget(
-      adminVm: adminVm,
-      monitorVm: monitorVm,
-    ));
+      await tester.pumpWidget(
+        buildTestableWidget(adminVm: adminVm, monitorVm: monitorVm),
+      );
 
-    expect(find.text('选择要监控的服务器'), findsOneWidget);
-  });
+      expect(find.text('选择要监控的服务器'), findsOneWidget);
+    },
+  );
 
   testWidgets(
-      'SystemAdminScreen displays Ports snapshot when server is selected',
-      (WidgetTester tester) async {
-    tester.view.physicalSize = const Size(1280, 800);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
+    'SystemAdminScreen displays Ports snapshot when server is selected',
+    (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
 
-    final adminVm = StubSystemAdminViewModel();
-    final monitorVm = StubPerformanceMonitorViewModel();
-    adminVm.connections = fakeConnections;
+      final adminVm = StubSystemAdminViewModel();
+      final monitorVm = StubPerformanceMonitorViewModel();
+      adminVm.connections = fakeConnections;
 
-    adminVm.selectConnection('conn_123');
+      adminVm.selectConnection('conn_123');
 
-    await tester.pumpWidget(buildTestableWidget(
-      adminVm: adminVm,
-      monitorVm: monitorVm,
-    ));
+      await tester.pumpWidget(
+        buildTestableWidget(adminVm: adminVm, monitorVm: monitorVm),
+      );
 
-    await tester.pumpAndSettle();
+      await tester.pumpAndSettle();
 
-    // Verify TabBar is present
-    expect(find.byType(TabBar), findsOneWidget);
+      // Verify TabBar is present
+      expect(find.byType(TabBar), findsOneWidget);
 
-    // Switch to Tab 1 (listeningPorts)
-    await tester.tap(find.text('监听端口'));
-    await tester.pumpAndSettle();
+      // Switch to Tab 1 (listeningPorts)
+      await tester.tap(find.text('监听端口'));
+      await tester.pumpAndSettle();
 
-    // Snapshot mode is the default and does not root-connect automatically.
-    expect(find.text('快照模式'), findsOneWidget);
-    expect(find.text('nginx'), findsWidgets);
-    expect(find.text('连接 Root'), findsNothing);
-    expect(adminVm.connectIfNeededCalls, 0);
-    expect(monitorVm.fetchPortsCalls, ['conn_123']);
-  });
-
-  testWidgets(
-      'SystemAdminScreen displays Applications snapshot when server is selected',
-      (WidgetTester tester) async {
-    tester.view.physicalSize = const Size(1280, 800);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-
-    final adminVm = StubSystemAdminViewModel();
-    final monitorVm = StubPerformanceMonitorViewModel();
-    adminVm.connections = fakeConnections;
-
-    adminVm.selectConnection('conn_123');
-
-    await tester.pumpWidget(buildTestableWidget(
-      adminVm: adminVm,
-      monitorVm: monitorVm,
-    ));
-
-    await tester.pumpAndSettle();
-
-    // Switch to Tab 2 (applications)
-    await tester.tap(find.text('应用/进程'));
-    await tester.pumpAndSettle();
-
-    // Verify snapshot shows process 'nginx' and 'PID 101'
-    expect(find.text('nginx'), findsWidgets);
-    expect(find.textContaining('PID 101'), findsOneWidget);
-    // Applications does not display a manage mode or Connect Root warning
-    expect(find.textContaining('管理模式'), findsNothing);
-    expect(find.text('连接 Root'), findsNothing);
-  });
+      // Snapshot mode is the default and does not root-connect automatically.
+      expect(find.text('快照模式'), findsOneWidget);
+      expect(find.text('nginx'), findsWidgets);
+      expect(find.text('连接 Root'), findsNothing);
+      expect(adminVm.connectIfNeededCalls, 0);
+      expect(monitorVm.fetchPortsCalls, ['conn_123']);
+    },
+  );
 
   testWidgets(
-      'SystemAdminScreen displays Services snapshot when server is selected but not connected',
-      (WidgetTester tester) async {
-    tester.view.physicalSize = const Size(1280, 800);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
+    'SystemAdminScreen displays Applications snapshot when server is selected',
+    (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
 
-    final adminVm = StubSystemAdminViewModel();
-    final monitorVm = StubPerformanceMonitorViewModel();
-    adminVm.connections = fakeConnections;
+      final adminVm = StubSystemAdminViewModel();
+      final monitorVm = StubPerformanceMonitorViewModel();
+      adminVm.connections = fakeConnections;
 
-    adminVm.selectConnection('conn_123');
+      adminVm.selectConnection('conn_123');
 
-    await tester.pumpWidget(buildTestableWidget(
-      adminVm: adminVm,
-      monitorVm: monitorVm,
-    ));
+      await tester.pumpWidget(
+        buildTestableWidget(adminVm: adminVm, monitorVm: monitorVm),
+      );
 
-    await tester.pumpAndSettle();
+      await tester.pumpAndSettle();
 
-    // Switch to Tab 3 (systemServices)
-    await tester.tap(find.text('系统服务'));
-    await tester.pumpAndSettle();
+      // Switch to Tab 2 (applications)
+      await tester.tap(find.text('应用/进程'));
+      await tester.pumpAndSettle();
 
-    // Verify service card nginx.service exists
-    expect(find.text('快照模式'), findsOneWidget);
-    expect(find.text('nginx.service'), findsWidgets);
-    expect(find.text('连接 Root'), findsNothing);
-    expect(adminVm.connectIfNeededCalls, 0);
-    expect(monitorVm.fetchServicesCalls, ['conn_123']);
-
-    // Snapshot mode does not have the trailing actions PopMenuButton
-    expect(find.byType(PopupMenuButton<String>), findsNothing);
-  });
+      // Verify snapshot shows process 'nginx' and 'PID 101'
+      expect(find.text('nginx'), findsWidgets);
+      expect(find.textContaining('PID 101'), findsOneWidget);
+      // Applications does not display a manage mode or Connect Root warning
+      expect(find.textContaining('管理模式'), findsNothing);
+      expect(find.text('连接 Root'), findsNothing);
+    },
+  );
 
   testWidgets(
-      'SystemAdminScreen displays Services manage mode when root connected',
-      (WidgetTester tester) async {
-    tester.view.physicalSize = const Size(1280, 800);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
+    'SystemAdminScreen displays Services snapshot when server is selected but not connected',
+    (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
 
-    final adminVm = StubSystemAdminViewModel();
-    final monitorVm = StubPerformanceMonitorViewModel();
-    adminVm.connections = fakeConnections;
+      final adminVm = StubSystemAdminViewModel();
+      final monitorVm = StubPerformanceMonitorViewModel();
+      adminVm.connections = fakeConnections;
 
-    // Simulate root connected
-    adminVm.selectedConnectionId = 'conn_123';
-    adminVm.managementConnectionId = 'conn_123';
-    adminVm.isConnected = true;
-    adminVm.isRoot = true;
+      adminVm.selectConnection('conn_123');
 
-    // Add some system services in viewModel
-    adminVm.services = [
-      SystemdService(
+      await tester.pumpWidget(
+        buildTestableWidget(adminVm: adminVm, monitorVm: monitorVm),
+      );
+
+      await tester.pumpAndSettle();
+
+      // Switch to Tab 3 (systemServices)
+      await tester.tap(find.text('系统服务'));
+      await tester.pumpAndSettle();
+
+      // Verify service card nginx.service exists
+      expect(find.text('快照模式'), findsOneWidget);
+      expect(find.text('nginx.service'), findsWidgets);
+      expect(find.text('连接 Root'), findsNothing);
+      expect(adminVm.connectIfNeededCalls, 0);
+      expect(monitorVm.fetchServicesCalls, ['conn_123']);
+
+      // Snapshot mode does not have the trailing actions PopMenuButton
+      expect(find.byType(PopupMenuButton<String>), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'SystemAdminScreen displays Services manage mode when root connected',
+    (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final adminVm = StubSystemAdminViewModel();
+      final monitorVm = StubPerformanceMonitorViewModel();
+      adminVm.connections = fakeConnections;
+
+      // Simulate root connected
+      adminVm.selectedConnectionId = 'conn_123';
+      adminVm.managementConnectionId = 'conn_123';
+      adminVm.isConnected = true;
+      adminVm.isRoot = true;
+
+      // Add some system services in viewModel
+      adminVm.services = [
+        SystemdService(
           name: 'nginx.service',
           loadState: 'loaded',
           activeState: 'active',
           subState: 'running',
-          description: 'Nginx Service'),
-    ];
+          description: 'Nginx Service',
+        ),
+      ];
 
-    await tester.pumpWidget(buildTestableWidget(
-      adminVm: adminVm,
-      monitorVm: monitorVm,
-    ));
+      await tester.pumpWidget(
+        buildTestableWidget(adminVm: adminVm, monitorVm: monitorVm),
+      );
 
-    await tester.pumpAndSettle();
+      await tester.pumpAndSettle();
 
-    // Switch to Tab 3 (systemServices)
-    await tester.tap(find.text('系统服务'));
-    await tester.pumpAndSettle();
+      // Switch to Tab 3 (systemServices)
+      await tester.tap(find.text('系统服务'));
+      await tester.pumpAndSettle();
 
-    // Verify segmented button for Manage/Snapshot exists
-    expect(find.text('管理模式'), findsOneWidget);
-    expect(find.text('快照模式'), findsOneWidget);
+      // Verify segmented button for Manage/Snapshot exists
+      expect(find.text('管理模式'), findsOneWidget);
+      expect(find.text('快照模式'), findsOneWidget);
 
-    await tester.tap(find.text('管理模式'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('管理模式'));
+      await tester.pumpAndSettle();
 
-    // Verify nginx.service exists
-    expect(find.text('nginx.service'), findsWidgets);
+      // Verify nginx.service exists
+      expect(find.text('nginx.service'), findsWidgets);
 
-    // Manage mode has trailing actions PopMenuButton
-    expect(find.byType(PopupMenuButton<String>), findsWidgets);
-  });
+      // Manage mode has trailing actions PopMenuButton
+      expect(find.byType(PopupMenuButton<String>), findsWidgets);
+    },
+  );
 
-  testWidgets('Services manage mode shows services after lazy fetch',
-      (WidgetTester tester) async {
+  testWidgets('Services manage mode shows services after lazy fetch', (
+    WidgetTester tester,
+  ) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -698,10 +707,9 @@ void main() {
     final monitorVm = StubPerformanceMonitorViewModel();
     adminVm.selectConnection('conn_123');
 
-    await tester.pumpWidget(buildTestableWidget(
-      adminVm: adminVm,
-      monitorVm: monitorVm,
-    ));
+    await tester.pumpWidget(
+      buildTestableWidget(adminVm: adminVm, monitorVm: monitorVm),
+    );
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('系统服务'));
@@ -731,8 +739,9 @@ void main() {
     expect(find.text('No services found.'), findsOneWidget);
   });
 
-  testWidgets('SystemAdminScreen clears stale selected server safely',
-      (WidgetTester tester) async {
+  testWidgets('SystemAdminScreen clears stale selected server safely', (
+    WidgetTester tester,
+  ) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -743,10 +752,9 @@ void main() {
     adminVm.connections = fakeConnections;
     adminVm.selectConnection('conn_123');
 
-    await tester.pumpWidget(buildTestableWidget(
-      adminVm: adminVm,
-      monitorVm: monitorVm,
-    ));
+    await tester.pumpWidget(
+      buildTestableWidget(adminVm: adminVm, monitorVm: monitorVm),
+    );
     await tester.pumpAndSettle();
 
     adminVm.connections = [];
@@ -757,8 +765,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('Users tab connects and fetches only accounts on activation',
-      (WidgetTester tester) async {
+  testWidgets('Users tab connects and fetches only accounts on activation', (
+    WidgetTester tester,
+  ) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -769,10 +778,9 @@ void main() {
     adminVm.connections = fakeConnections;
     adminVm.selectConnection('conn_123');
 
-    await tester.pumpWidget(buildTestableWidget(
-      adminVm: adminVm,
-      monitorVm: monitorVm,
-    ));
+    await tester.pumpWidget(
+      buildTestableWidget(adminVm: adminVm, monitorVm: monitorVm),
+    );
     await tester.pumpAndSettle();
 
     await tester.ensureVisible(find.text('用户账号'));
@@ -786,8 +794,9 @@ void main() {
     expect(adminVm.fetchPortsCalls, isEmpty);
   });
 
-  testWidgets('Power tab connects without preloading management lists',
-      (WidgetTester tester) async {
+  testWidgets('Power tab connects without preloading management lists', (
+    WidgetTester tester,
+  ) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -798,10 +807,9 @@ void main() {
     adminVm.connections = fakeConnections;
     adminVm.selectConnection('conn_123');
 
-    await tester.pumpWidget(buildTestableWidget(
-      adminVm: adminVm,
-      monitorVm: monitorVm,
-    ));
+    await tester.pumpWidget(
+      buildTestableWidget(adminVm: adminVm, monitorVm: monitorVm),
+    );
     await tester.pumpAndSettle();
 
     await tester.ensureVisible(find.text('系统电源'));
@@ -815,8 +823,9 @@ void main() {
     expect(adminVm.fetchPortsCalls, isEmpty);
   });
 
-  testWidgets('Applications snapshot loads only after tab activation',
-      (WidgetTester tester) async {
+  testWidgets('Applications snapshot loads only after tab activation', (
+    WidgetTester tester,
+  ) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -827,10 +836,9 @@ void main() {
     adminVm.connections = fakeConnections;
     adminVm.selectConnection('conn_123');
 
-    await tester.pumpWidget(buildTestableWidget(
-      adminVm: adminVm,
-      monitorVm: monitorVm,
-    ));
+    await tester.pumpWidget(
+      buildTestableWidget(adminVm: adminVm, monitorVm: monitorVm),
+    );
     await tester.pumpAndSettle();
 
     expect(monitorVm.fetchApplicationsCalls, isEmpty);
@@ -841,31 +849,32 @@ void main() {
     expect(monitorVm.fetchApplicationsCalls, ['conn_123']);
   });
 
-  testWidgets('Server selection hint uses left on desktop and above on mobile',
-      (WidgetTester tester) async {
-    final adminVm = StubSystemAdminViewModel();
-    final monitorVm = StubPerformanceMonitorViewModel();
-    adminVm.connections = fakeConnections;
+  testWidgets(
+    'Server selection hint uses left on desktop and above on mobile',
+    (WidgetTester tester) async {
+      final adminVm = StubSystemAdminViewModel();
+      final monitorVm = StubPerformanceMonitorViewModel();
+      adminVm.connections = fakeConnections;
 
-    tester.view.physicalSize = const Size(1280, 800);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(buildTestableWidget(
-      adminVm: adminVm,
-      monitorVm: monitorVm,
-    ));
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        buildTestableWidget(adminVm: adminVm, monitorVm: monitorVm),
+      );
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.text('监听端口'));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('左侧'), findsOneWidget);
+      await tester.tap(find.text('监听端口'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('左侧'), findsOneWidget);
 
-    await appSettings.toggleLanguage();
-    tester.view.physicalSize = const Size(390, 844);
-    await tester.pumpAndSettle();
+      await appSettings.toggleLanguage();
+      tester.view.physicalSize = const Size(390, 844);
+      await tester.pumpAndSettle();
 
-    expect(find.textContaining('above'), findsOneWidget);
-  });
+      expect(find.textContaining('above'), findsOneWidget);
+    },
+  );
 }

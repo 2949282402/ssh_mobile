@@ -60,8 +60,11 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
     });
   }
 
-  Future<void> _showAliyunSettings(BuildContext context, _RagStrings strings,
-      RagKnowledgeViewModel viewModel) async {
+  Future<void> _showAliyunSettings(
+    BuildContext context,
+    _RagStrings strings,
+    RagKnowledgeViewModel viewModel,
+  ) async {
     final currentKey = await viewModel.getAliyunApiKey() ?? '';
     final controller = TextEditingController(text: currentKey);
     var isObscured = true;
@@ -78,10 +81,7 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  strings.aliyunHint,
-                  style: const TextStyle(fontSize: 12),
-                ),
+                Text(strings.aliyunHint, style: const TextStyle(fontSize: 12)),
                 const SizedBox(height: 14),
                 TextField(
                   controller: controller,
@@ -120,8 +120,11 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
     );
   }
 
-  Future<void> _handleUpload(BuildContext context, _RagStrings strings,
-      RagKnowledgeViewModel viewModel) async {
+  Future<void> _handleUpload(
+    BuildContext context,
+    _RagStrings strings,
+    RagKnowledgeViewModel viewModel,
+  ) async {
     final messenger = ScaffoldMessenger.of(context);
 
     try {
@@ -135,7 +138,7 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
           'json',
           'yaml',
           'yml',
-          'csv'
+          'csv',
         ],
       );
 
@@ -149,9 +152,7 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
         file.extension == 'pdf' ? 'application/pdf' : 'text/plain',
       );
 
-      messenger.showSnackBar(
-        SnackBar(content: Text(strings.successAdded)),
-      );
+      messenger.showSnackBar(SnackBar(content: Text(strings.successAdded)));
     } catch (e) {
       messenger.showSnackBar(
         SnackBar(content: Text('${strings.errorAdd}: $e')),
@@ -266,8 +267,9 @@ class _RagKnowledgeScreenState extends State<RagKnowledgeScreen> {
               itemBuilder: (context, index) {
                 final doc = viewModel.documents[index];
                 final isPdf = doc.name.toLowerCase().endsWith('.pdf');
-                final dateStr =
-                    DateFormat('yyyy-MM-dd HH:mm').format(doc.uploadedAt);
+                final dateStr = DateFormat(
+                  'yyyy-MM-dd HH:mm',
+                ).format(doc.uploadedAt);
 
                 return Card(
                   margin: const EdgeInsets.only(bottom: 12),

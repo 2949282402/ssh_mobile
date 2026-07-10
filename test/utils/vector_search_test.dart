@@ -103,15 +103,15 @@ class MockHttpClientResponse extends Stream<List<int>>
         'embeddings': [
           {
             'embedding': [0.1, 0.2, -0.3],
-            'text_index': 0
+            'text_index': 0,
           },
           {
             'embedding': [-0.5, 0.6, 0.0],
-            'text_index': 1
-          }
-        ]
+            'text_index': 1,
+          },
+        ],
       },
-      'usage': {'total_tokens': 15}
+      'usage': {'total_tokens': 15},
     };
     final bytes = utf8.encode(jsonEncode(fakeResponse));
     return Stream<List<int>>.fromIterable([bytes]).listen(

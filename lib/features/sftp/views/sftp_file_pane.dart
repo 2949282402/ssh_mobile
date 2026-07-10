@@ -4,10 +4,7 @@ class _FilePane extends StatelessWidget {
   final AppStrings strings;
   final SftpViewModel sftp;
 
-  const _FilePane({
-    required this.strings,
-    required this.sftp,
-  });
+  const _FilePane({required this.strings, required this.sftp});
 
   @override
   Widget build(BuildContext context) {
@@ -26,9 +23,7 @@ class _FilePane extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
       decoration: BoxDecoration(
         color: colorScheme.surface,
-        border: Border(
-          bottom: BorderSide(color: colorScheme.outlineVariant),
-        ),
+        border: Border(bottom: BorderSide(color: colorScheme.outlineVariant)),
       ),
       child: desktop
           ? Row(
@@ -45,8 +40,9 @@ class _FilePane extends StatelessWidget {
                     alignment: Alignment.centerLeft,
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainerHighest
-                          .withValues(alpha: 0.42),
+                      color: colorScheme.surfaceContainerHighest.withValues(
+                        alpha: 0.42,
+                      ),
                       borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                       border: Border.all(color: colorScheme.outlineVariant),
                     ),
@@ -74,8 +70,9 @@ class _FilePane extends StatelessWidget {
                 IconButton(
                   tooltip: strings.uploadFile,
                   icon: const Icon(Icons.upload_file_rounded),
-                  onPressed:
-                      snapshot.isBusy ? null : () => _uploadFile(context),
+                  onPressed: snapshot.isBusy
+                      ? null
+                      : () => _uploadFile(context),
                 ),
                 IconButton(
                   tooltip: strings.disconnect,
@@ -97,17 +94,22 @@ class _FilePane extends StatelessWidget {
                     onTap: snapshot.isBusy
                         ? null
                         : () => _showPathHistorySheet(
-                            context, sftp, snapshot.currentPath),
+                            context,
+                            sftp,
+                            snapshot.currentPath,
+                          ),
                     borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                     child: Container(
                       height: 36,
                       alignment: Alignment.centerLeft,
                       padding: const EdgeInsets.symmetric(horizontal: 10),
                       decoration: BoxDecoration(
-                        color: colorScheme.surfaceContainerHighest
-                            .withValues(alpha: 0.42),
-                        borderRadius:
-                            BorderRadius.circular(AppTheme.radiusSmall),
+                        color: colorScheme.surfaceContainerHighest.withValues(
+                          alpha: 0.42,
+                        ),
+                        borderRadius: BorderRadius.circular(
+                          AppTheme.radiusSmall,
+                        ),
                         border: Border.all(color: colorScheme.outlineVariant),
                       ),
                       child: Row(
@@ -118,11 +120,16 @@ class _FilePane extends StatelessWidget {
                               selectable: false,
                               maxLines: 1,
                               style: const TextStyle(
-                                  fontSize: 12, fontWeight: FontWeight.w600),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
-                          Icon(Icons.edit,
-                              size: 14, color: colorScheme.onSurfaceVariant),
+                          Icon(
+                            Icons.edit,
+                            size: 14,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
                         ],
                       ),
                     ),
@@ -145,8 +152,9 @@ class _FilePane extends StatelessWidget {
                 IconButton(
                   tooltip: strings.uploadFile,
                   icon: const Icon(Icons.upload_file_rounded),
-                  onPressed:
-                      snapshot.isBusy ? null : () => _uploadFile(context),
+                  onPressed: snapshot.isBusy
+                      ? null
+                      : () => _uploadFile(context),
                 ),
                 const SizedBox(width: 4),
                 PopupMenuButton<String>(
@@ -161,8 +169,10 @@ class _FilePane extends StatelessWidget {
                       value: 'disconnect',
                       child: Row(
                         children: [
-                          Icon(Icons.link_off_rounded,
-                              color: colorScheme.error),
+                          Icon(
+                            Icons.link_off_rounded,
+                            color: colorScheme.error,
+                          ),
                           const SizedBox(width: 8),
                           Text(
                             strings.disconnect,
@@ -194,10 +204,7 @@ class _FilePane extends StatelessWidget {
             content: Text(snapshot.errorMessage!),
             leading: const Icon(Icons.warning_amber_rounded),
             actions: [
-              TextButton(
-                onPressed: sftp.refresh,
-                child: Text(strings.retry),
-              ),
+              TextButton(onPressed: sftp.refresh, child: Text(strings.retry)),
             ],
           ),
         Expanded(
@@ -227,8 +234,9 @@ class _FilePane extends StatelessWidget {
         SnackBar(
           content: Text(
             strings.uploadFailed(
-              strings
-                  .uploadFileTooLarge(_formatBytes(SftpService.maxUploadBytes)),
+              strings.uploadFileTooLarge(
+                _formatBytes(SftpService.maxUploadBytes),
+              ),
             ),
           ),
         ),
@@ -240,11 +248,7 @@ class _FilePane extends StatelessWidget {
     if (localPath == null) {
       messenger.showSnackBar(
         SnackBar(
-          content: Text(
-            strings.uploadFailed(
-              strings.uploadFileNoAccess,
-            ),
-          ),
+          content: Text(strings.uploadFailed(strings.uploadFileNoAccess)),
         ),
       );
       return;
@@ -264,15 +268,11 @@ class _FilePane extends StatelessWidget {
       if (!context.mounted) return;
       if (e is SftpTransferCancelledException) {
         messenger.showSnackBar(
-          SnackBar(
-            content: Text(strings.uploadCancelled),
-          ),
+          SnackBar(content: Text(strings.uploadCancelled)),
         );
         return;
       }
-      messenger.showSnackBar(
-        SnackBar(content: Text(strings.uploadFailed(e))),
-      );
+      messenger.showSnackBar(SnackBar(content: Text(strings.uploadFailed(e))));
     }
   }
 
@@ -305,11 +305,11 @@ class _FilePane extends StatelessWidget {
         reverseTransitionDuration: const Duration(milliseconds: 200),
         pageBuilder: (context, animation, secondaryAnimation) =>
             SharedAxisTransition(
-          animation: animation,
-          secondaryAnimation: secondaryAnimation,
-          transitionType: SharedAxisTransitionType.scaled,
-          child: SftpFileViewerScreen(entry: entry),
-        ),
+              animation: animation,
+              secondaryAnimation: secondaryAnimation,
+              transitionType: SharedAxisTransitionType.scaled,
+              child: SftpFileViewerScreen(entry: entry),
+            ),
       ),
     );
   }
@@ -326,7 +326,8 @@ class _FilePane extends StatelessWidget {
           content: Text(
             strings.downloadFailed(
               strings.downloadFileTooLarge(
-                  _formatBytes(settings.sftpDownloadLimitBytes)),
+                _formatBytes(settings.sftpDownloadLimitBytes),
+              ),
             ),
           ),
         ),
@@ -348,16 +349,12 @@ class _FilePane extends StatelessWidget {
         maxBytes: settings.sftpDownloadLimitBytes,
       );
       if (!context.mounted) return;
-      messenger.showSnackBar(
-        SnackBar(content: Text(strings.downloadComplete)),
-      );
+      messenger.showSnackBar(SnackBar(content: Text(strings.downloadComplete)));
     } catch (e) {
       if (!context.mounted) return;
       if (e is SftpTransferCancelledException) {
         messenger.showSnackBar(
-          SnackBar(
-            content: Text(strings.downloadCancelled),
-          ),
+          SnackBar(content: Text(strings.downloadCancelled)),
         );
         return;
       }
@@ -444,9 +441,9 @@ class _FilePane extends StatelessWidget {
     if (confirmedName != null) {
       await sftp.deleteEntry(entry, confirmedName: confirmedName);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(strings.deleteComplete)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(strings.deleteComplete)));
     }
   }
 
@@ -458,11 +455,11 @@ class _FilePane extends StatelessWidget {
         reverseTransitionDuration: const Duration(milliseconds: 200),
         pageBuilder: (context, animation, secondaryAnimation) =>
             SharedAxisTransition(
-          animation: animation,
-          secondaryAnimation: secondaryAnimation,
-          transitionType: SharedAxisTransitionType.scaled,
-          child: SftpEditorScreen(entry: entry),
-        ),
+              animation: animation,
+              secondaryAnimation: secondaryAnimation,
+              transitionType: SharedAxisTransitionType.scaled,
+              child: SftpEditorScreen(entry: entry),
+            ),
       ),
     );
     if (saved == true && context.mounted) {
@@ -490,7 +487,10 @@ class _FilePane extends StatelessWidget {
   }
 
   void _showPathHistorySheet(
-      BuildContext context, SftpViewModel sftp, String currentPath) {
+    BuildContext context,
+    SftpViewModel sftp,
+    String currentPath,
+  ) {
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -525,15 +525,15 @@ class _SftpPathMenuButton extends StatelessWidget {
       onPressed: disabled
           ? null
           : () => showModalBottomSheet<void>(
-                context: context,
-                showDragHandle: true,
-                isScrollControlled: true,
-                builder: (_) => _SftpPathHistorySheet(
-                  strings: strings,
-                  sftp: sftp,
-                  currentPath: currentPath,
-                ),
+              context: context,
+              showDragHandle: true,
+              isScrollControlled: true,
+              builder: (_) => _SftpPathHistorySheet(
+                strings: strings,
+                sftp: sftp,
+                currentPath: currentPath,
               ),
+            ),
     );
   }
 }
@@ -555,8 +555,9 @@ class _SftpPathHistorySheet extends StatefulWidget {
 
 class _SftpPathHistorySheetState extends State<_SftpPathHistorySheet> {
   late Future<_SftpPathHistoryData> _future = _load();
-  late final TextEditingController _pathController =
-      TextEditingController(text: widget.currentPath);
+  late final TextEditingController _pathController = TextEditingController(
+    text: widget.currentPath,
+  );
 
   @override
   void dispose() {
@@ -567,8 +568,9 @@ class _SftpPathHistorySheetState extends State<_SftpPathHistorySheet> {
   Future<_SftpPathHistoryData> _load() async {
     final favorites = await widget.sftp.loadFavoritePaths();
     final recent = await widget.sftp.loadRecentPaths();
-    final currentFavorite =
-        await widget.sftp.findFavoritePath(widget.currentPath);
+    final currentFavorite = await widget.sftp.findFavoritePath(
+      widget.currentPath,
+    );
     return _SftpPathHistoryData(
       recent: recent,
       favorites: favorites,
@@ -624,7 +626,8 @@ class _SftpPathHistorySheetState extends State<_SftpPathHistorySheet> {
                                 ? colorScheme.onSurfaceVariant
                                 : colorScheme.primary,
                           ),
-                          onPressed: snapshot.connectionState ==
+                          onPressed:
+                              snapshot.connectionState ==
                                   ConnectionState.waiting
                               ? null
                               : () => _toggleFavorite(data?.currentFavorite),
@@ -633,8 +636,10 @@ class _SftpPathHistorySheetState extends State<_SftpPathHistorySheet> {
                     ),
                   ),
                   Padding(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 8,
+                    ),
                     child: Row(
                       children: [
                         Expanded(
@@ -754,9 +759,9 @@ class _SftpPathHistorySheetState extends State<_SftpPathHistorySheet> {
 
   void _showHistoryError(Object error) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(error.toString())),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(error.toString())));
   }
 
   Future<void> _openPath(String path) async {
@@ -812,11 +817,7 @@ class _EmptyPathRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      dense: true,
-      enabled: false,
-      title: Text(label),
-    );
+    return ListTile(dense: true, enabled: false, title: Text(label));
   }
 }
 
@@ -839,16 +840,8 @@ class _PathListTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListTile(
       leading: Icon(icon),
-      title: OverflowScrollText(
-        label,
-        selectable: false,
-        maxLines: 1,
-      ),
-      subtitle: OverflowScrollText(
-        path,
-        selectable: false,
-        maxLines: 1,
-      ),
+      title: OverflowScrollText(label, selectable: false, maxLines: 1),
+      subtitle: OverflowScrollText(path, selectable: false, maxLines: 1),
       trailing: trailing,
       onTap: onTap,
     );
@@ -863,7 +856,8 @@ class _SftpEntryList extends StatelessWidget {
     BuildContext context,
     String action,
     SftpEntry entry,
-  ) onEntryAction;
+  )
+  onEntryAction;
   final String Function(AppStrings strings, SftpEntry entry) entryMeta;
 
   const _SftpEntryList({
@@ -899,7 +893,7 @@ class _SftpEntryList extends StatelessWidget {
       scrollCacheExtent: const ScrollCacheExtent.pixels(900.0),
       padding: EdgeInsets.fromLTRB(8 * scale, 8 * scale, 8 * scale, 24 * scale),
       itemCount: entries.length,
-      separatorBuilder: (_, __) => const Divider(height: 1),
+      separatorBuilder: (_, _) => const Divider(height: 1),
       itemBuilder: (context, index) {
         final entry = entries[index];
         return RepaintBoundary(
@@ -918,8 +912,8 @@ class _SftpEntryList extends StatelessWidget {
                     entry.isDirectory
                         ? Icons.folder_rounded
                         : entry.isLink
-                            ? Icons.shortcut_rounded
-                            : Icons.description_outlined,
+                        ? Icons.shortcut_rounded
+                        : Icons.description_outlined,
                     color: entry.isDirectory
                         ? colorScheme.primary
                         : colorScheme.onSurface.withValues(alpha: 0.72),
@@ -957,11 +951,8 @@ class _SftpEntryList extends StatelessWidget {
                       if (entry.isDirectory)
                         const Icon(Icons.chevron_right_rounded),
                       PopupMenuButton<String>(
-                        onSelected: (action) => onEntryAction(
-                          innerContext,
-                          action,
-                          entry,
-                        ),
+                        onSelected: (action) =>
+                            onEntryAction(innerContext, action, entry),
                         itemBuilder: (_) =>
                             _buildMenuItems(innerContext, entry),
                       ),
@@ -977,17 +968,16 @@ class _SftpEntryList extends StatelessWidget {
   }
 
   List<PopupMenuEntry<String>> _buildMenuItems(
-      BuildContext context, SftpEntry entry) {
+    BuildContext context,
+    SftpEntry entry,
+  ) {
     return [
       if (!entry.isDirectory)
         PopupMenuItem(
           value: 'view',
           child: Row(
             children: [
-              const Icon(
-                Icons.visibility_outlined,
-                size: 18,
-              ),
+              const Icon(Icons.visibility_outlined, size: 18),
               const SizedBox(width: 8),
               Text(strings.viewFile),
             ],
@@ -1009,10 +999,7 @@ class _SftpEntryList extends StatelessWidget {
           value: 'download',
           child: Row(
             children: [
-              const Icon(
-                Icons.download_rounded,
-                size: 18,
-              ),
+              const Icon(Icons.download_rounded, size: 18),
               const SizedBox(width: 8),
               Text(strings.downloadFile),
             ],
@@ -1030,9 +1017,7 @@ class _SftpEntryList extends StatelessWidget {
             const SizedBox(width: 8),
             Text(
               strings.delete,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.error,
-              ),
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ],
         ),
@@ -1145,8 +1130,9 @@ class _SftpTransferBanner extends StatelessWidget {
         ? strings.uploadingFile(activeTransfer.name)
         : strings.downloadingFile(activeTransfer.name);
 
-    final percentText =
-        totalBytes > 0 ? ' ${(progress * 100).toStringAsFixed(0)}%' : '';
+    final percentText = totalBytes > 0
+        ? ' ${(progress * 100).toStringAsFixed(0)}%'
+        : '';
 
     final sizeText =
         '${_formatBytes(transferredBytes)}${totalBytes > 0 ? ' / ${_formatBytes(totalBytes)}' : ''}';
@@ -1155,9 +1141,7 @@ class _SftpTransferBanner extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainer,
-        border: Border(
-          bottom: BorderSide(color: colorScheme.outlineVariant),
-        ),
+        border: Border(bottom: BorderSide(color: colorScheme.outlineVariant)),
       ),
       child: Row(
         children: [
@@ -1179,7 +1163,9 @@ class _SftpTransferBanner extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 13),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -1214,8 +1200,9 @@ class _SftpTransferBanner extends StatelessWidget {
           IconButton(
             icon: Icon(Icons.close_rounded, color: colorScheme.error),
             tooltip: strings.cancel,
-            onPressed:
-                activeTransfer.isCancelled ? null : sftp.cancelActiveTransfer,
+            onPressed: activeTransfer.isCancelled
+                ? null
+                : sftp.cancelActiveTransfer,
           ),
         ],
       ),

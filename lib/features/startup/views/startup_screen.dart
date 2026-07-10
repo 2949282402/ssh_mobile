@@ -37,9 +37,7 @@ class _StartupScreenState extends State<StartupScreen> {
     }
 
     if (viewModel.shouldShowPowerGuide) {
-      return PowerGuideScreen(
-        viewModel: viewModel,
-      );
+      return PowerGuideScreen(viewModel: viewModel);
     }
 
     return const HomeScreen();
@@ -176,10 +174,7 @@ class _StatusTile extends StatelessWidget {
           Expanded(
             child: Text(
               isExempt ? strings.powerLimitExempt : strings.powerLimitUnknown,
-              style: TextStyle(
-                color: colorScheme.onSurface,
-                fontSize: 14,
-              ),
+              style: TextStyle(color: colorScheme.onSurface, fontSize: 14),
             ),
           ),
         ],

@@ -8,9 +8,7 @@ import '../../../services/storage_service.dart';
 class SftpViewModel extends ChangeNotifier {
   final SftpService _sftpService;
 
-  SftpViewModel({
-    required SftpService sftpService,
-  }) : _sftpService = sftpService {
+  SftpViewModel({required this._sftpService}) {
     _sftpService.addListener(notifyListeners);
   }
 
@@ -35,9 +33,7 @@ class SftpViewModel extends ChangeNotifier {
   bool isConnectionBusy(String id) => _sftpService.isConnectionBusy(id);
   bool isConnectionOpen(String id) => _sftpService.isConnectionOpen(id);
 
-  Future<List<SftpRecentPathRecord>> loadRecentPaths({
-    int limit = 30,
-  }) async {
+  Future<List<SftpRecentPathRecord>> loadRecentPaths({int limit = 30}) async {
     final id = connectionId;
     if (id == null) return const [];
     return _sftpService.loadRecentPaths(id, limit: limit);
@@ -101,10 +97,7 @@ class SftpViewModel extends ChangeNotifier {
     required String filename,
     required int sizeBytes,
   }) async {
-    await _sftpService.uploadFile(
-      localPath: localPath,
-      filename: filename,
-    );
+    await _sftpService.uploadFile(localPath: localPath, filename: filename);
   }
 
   Future<void> downloadToLocalFile({
@@ -152,17 +145,11 @@ class SftpViewModel extends ChangeNotifier {
     );
   }
 
-  Future<String> readTextFile(
-    SftpEntry entry, {
-    required int maxBytes,
-  }) async {
+  Future<String> readTextFile(SftpEntry entry, {required int maxBytes}) async {
     return await _sftpService.readTextFile(entry, maxBytes: maxBytes);
   }
 
-  Future<void> saveTextFile(
-    SftpEntry entry,
-    String content,
-  ) async {
+  Future<void> saveTextFile(SftpEntry entry, String content) async {
     await _sftpService.saveTextFile(entry, content);
   }
 }

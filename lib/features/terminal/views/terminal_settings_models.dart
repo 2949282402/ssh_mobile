@@ -44,15 +44,6 @@ class _SessionSwitcherAction {
   const _SessionSwitcherAction.close(this.sessionId) : close = true;
 }
 
-enum _TerminalEditAction {
-  selectCopy,
-  copy,
-  paste,
-  selectAll,
-}
+enum _TerminalEditAction { selectCopy, copy, paste, selectAll }
 
-enum _NewWindowAction {
-  current,
-  editCurrent,
-  addNew,
-}
+enum _NewWindowAction { current, editCurrent, addNew }

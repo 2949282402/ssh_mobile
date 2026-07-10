@@ -5,10 +5,7 @@ class ScoredRagChunk {
   final RagChunk chunk;
   final double score;
 
-  const ScoredRagChunk({
-    required this.chunk,
-    required this.score,
-  });
+  const ScoredRagChunk({required this.chunk, required this.score});
 }
 
 /// 纯 Dart 实现的轻量级 BM25 搜索引擎。
@@ -33,10 +30,7 @@ class Bm25SearchEngine {
   // 平均文档长度
   double avgDocLength = 0.0;
 
-  Bm25SearchEngine({
-    this.k1 = 1.2,
-    this.b = 0.75,
-  });
+  Bm25SearchEngine({this.k1 = 1.2, this.b = 0.75});
 
   /// 清空索引
   void clear() {
@@ -164,10 +158,10 @@ class Bm25SearchEngine {
     }
 
     final scoredList = scores.entries
-        .map((entry) => ScoredRagChunk(
-              chunk: chunks[entry.key]!,
-              score: entry.value,
-            ))
+        .map(
+          (entry) =>
+              ScoredRagChunk(chunk: chunks[entry.key]!, score: entry.value),
+        )
         .toList();
 
     // 按得分从高到低排序

@@ -1,4 +1,4 @@
-﻿part of '../playbook_screen.dart';
+part of '../playbook_screen.dart';
 
 extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
   Widget _buildExecutionDashboard(
@@ -13,9 +13,11 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.rocket_launch_outlined,
-                size: 64,
-                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
+            Icon(
+              Icons.rocket_launch_outlined,
+              size: 64,
+              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
+            ),
             const SizedBox(height: 16),
             Text(
               strings.selectPlaybookPrompt,
@@ -26,8 +28,9 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
       );
     }
 
-    final hasConnectedServer =
-        connections.any((c) => c.id == viewModel.selectedConnectionId);
+    final hasConnectedServer = connections.any(
+      (c) => c.id == viewModel.selectedConnectionId,
+    );
 
     return Column(
       children: [
@@ -52,13 +55,17 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                       Text(
                         strings.selectServer,
                         style: const TextStyle(
-                            fontSize: 11, fontWeight: FontWeight.bold),
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       const SizedBox(height: 4),
                       DropdownButtonHideUnderline(
                         child: DropdownButton<String>(
-                          value: connections.any(
-                                  (c) => c.id == viewModel.selectedConnectionId)
+                          value:
+                              connections.any(
+                                (c) => c.id == viewModel.selectedConnectionId,
+                              )
                               ? viewModel.selectedConnectionId
                               : null,
                           hint: Text(strings.selectServerHint),
@@ -101,14 +108,18 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                     Text(
                       playbook.name,
                       style: const TextStyle(
-                          fontSize: 18, fontWeight: FontWeight.bold),
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     if (playbook.description.isNotEmpty) ...[
                       const SizedBox(height: 4),
                       Text(
                         playbook.description,
                         style: TextStyle(
-                            fontSize: 13, color: colorScheme.onSurfaceVariant),
+                          fontSize: 13,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ],
                   ],
@@ -129,8 +140,15 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
             itemBuilder: (context, index) {
               final step = playbook.steps[index];
               final isCurrent = viewModel.currentStepIndex == index;
-              return _buildStepCard(index, step, isCurrent, playbook, viewModel,
-                  strings, colorScheme);
+              return _buildStepCard(
+                index,
+                step,
+                isCurrent,
+                playbook,
+                viewModel,
+                strings,
+                colorScheme,
+              );
             },
           ),
         ),
@@ -151,7 +169,8 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
     ColorScheme colorScheme,
   ) {
     final isExpanded = viewModel.expandedSteps.contains(index);
-    final hasOutput = (step.stdout != null && step.stdout!.isNotEmpty) ||
+    final hasOutput =
+        (step.stdout != null && step.stdout!.isNotEmpty) ||
         (step.stderr != null && step.stderr!.isNotEmpty);
 
     Color statusColor;
@@ -195,8 +214,8 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
           color: isCurrent
               ? colorScheme.primary
               : (step.status == StepStatus.failed
-                  ? colorScheme.error
-                  : colorScheme.outlineVariant),
+                    ? colorScheme.error
+                    : colorScheme.outlineVariant),
           width: isCurrent ? 1.5 : 1,
         ),
       ),
@@ -220,7 +239,7 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                     padding: const EdgeInsets.only(top: 2),
                     child: step.status == StepStatus.running
                         ? (trailingWidget ??
-                            Icon(statusIcon, color: statusColor, size: 20))
+                              Icon(statusIcon, color: statusColor, size: 20))
                         : Icon(statusIcon, color: statusColor, size: 20),
                   ),
                   const SizedBox(width: 12),
@@ -245,7 +264,8 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                               child: Text(
                                 step.name,
                                 style: const TextStyle(
-                                    fontWeight: FontWeight.bold),
+                                  fontWeight: FontWeight.bold,
+                                ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
@@ -263,7 +283,7 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                               'Consolas',
                               'Microsoft YaHei',
                               'PingFang SC',
-                              'sans-serif'
+                              'sans-serif',
                             ],
                             fontSize: 12,
                             backgroundColor: colorScheme.surfaceContainerHighest
@@ -276,8 +296,9 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                           Text(
                             step.description,
                             style: TextStyle(
-                                fontSize: 12,
-                                color: colorScheme.onSurfaceVariant),
+                              fontSize: 12,
+                              color: colorScheme.onSurfaceVariant,
+                            ),
                           ),
                         ],
                         if (step.expectedOutcomeRegex != null) ...[
@@ -287,8 +308,9 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                             style: TextStyle(
                               fontSize: 11,
                               fontStyle: FontStyle.italic,
-                              color: colorScheme.onSurfaceVariant
-                                  .withValues(alpha: 0.8),
+                              color: colorScheme.onSurfaceVariant.withValues(
+                                alpha: 0.8,
+                              ),
                             ),
                           ),
                         ],
@@ -320,10 +342,13 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                 child: FilledButton.tonalIcon(
                   style: FilledButton.styleFrom(
                     foregroundColor: colorScheme.primary,
-                    backgroundColor:
-                        colorScheme.primaryContainer.withValues(alpha: 0.3),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    backgroundColor: colorScheme.primaryContainer.withValues(
+                      alpha: 0.3,
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                   ),
                   icon: const Icon(Icons.smart_toy_outlined, size: 16),
                   label: Text(strings.aiDiagnostic),
@@ -355,46 +380,49 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                       child: Text(
                         '${strings.exitCode}: ${step.exitCode}',
                         style: const TextStyle(
-                            color: AppTheme.terminalAmber,
-                            fontFamily: 'monospace',
-                            fontFamilyFallback: [
-                              'Consolas',
-                              'Microsoft YaHei',
-                              'PingFang SC',
-                              'sans-serif'
-                            ],
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold),
+                          color: AppTheme.terminalAmber,
+                          fontFamily: 'monospace',
+                          fontFamilyFallback: [
+                            'Consolas',
+                            'Microsoft YaHei',
+                            'PingFang SC',
+                            'sans-serif',
+                          ],
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   if (step.stdout != null && step.stdout!.isNotEmpty) ...[
                     const Text(
                       'STDOUT:',
                       style: TextStyle(
-                          color: AppTheme.terminalGreen,
-                          fontFamily: 'monospace',
-                          fontFamilyFallback: [
-                            'Consolas',
-                            'Microsoft YaHei',
-                            'PingFang SC',
-                            'sans-serif'
-                          ],
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold),
+                        color: AppTheme.terminalGreen,
+                        fontFamily: 'monospace',
+                        fontFamilyFallback: [
+                          'Consolas',
+                          'Microsoft YaHei',
+                          'PingFang SC',
+                          'sans-serif',
+                        ],
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       step.stdout!,
                       style: const TextStyle(
-                          color: Colors.white70,
-                          fontFamily: 'monospace',
-                          fontFamilyFallback: [
-                            'Consolas',
-                            'Microsoft YaHei',
-                            'PingFang SC',
-                            'sans-serif'
-                          ],
-                          fontSize: 11),
+                        color: Colors.white70,
+                        fontFamily: 'monospace',
+                        fontFamilyFallback: [
+                          'Consolas',
+                          'Microsoft YaHei',
+                          'PingFang SC',
+                          'sans-serif',
+                        ],
+                        fontSize: 11,
+                      ),
                     ),
                     const SizedBox(height: 8),
                   ],
@@ -402,33 +430,34 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                     Text(
                       'STDERR:',
                       style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                          fontFamily: 'monospace',
-                          fontFamilyFallback: [
-                            'Consolas',
-                            'Microsoft YaHei',
-                            'PingFang SC',
-                            'sans-serif'
-                          ],
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold),
+                        color: Theme.of(context).colorScheme.error,
+                        fontFamily: 'monospace',
+                        fontFamilyFallback: [
+                          'Consolas',
+                          'Microsoft YaHei',
+                          'PingFang SC',
+                          'sans-serif',
+                        ],
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       step.stderr!,
                       style: TextStyle(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .error
-                              .withValues(alpha: 0.9),
-                          fontFamily: 'monospace',
-                          fontFamilyFallback: [
-                            'Consolas',
-                            'Microsoft YaHei',
-                            'PingFang SC',
-                            'sans-serif'
-                          ],
-                          fontSize: 11),
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.error.withValues(alpha: 0.9),
+                        fontFamily: 'monospace',
+                        fontFamilyFallback: [
+                          'Consolas',
+                          'Microsoft YaHei',
+                          'PingFang SC',
+                          'sans-serif',
+                        ],
+                        fontSize: 11,
+                      ),
                     ),
                   ],
                 ],
@@ -451,9 +480,12 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
 
     final isRunning = viewModel.isRunning;
     final isPaused = viewModel.isPaused;
-    final isFinished = activePlaybook.steps.isNotEmpty &&
-        activePlaybook.steps.every((s) =>
-            s.status == StepStatus.success || s.status == StepStatus.skipped);
+    final isFinished =
+        activePlaybook.steps.isNotEmpty &&
+        activePlaybook.steps.every(
+          (s) =>
+              s.status == StepStatus.success || s.status == StepStatus.skipped,
+        );
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -494,8 +526,9 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                     label: Text(strings.resume),
                     onPressed: viewModel.selectedConnectionId == null
                         ? null
-                        : () => viewModel
-                            .resumePlaybook(viewModel.selectedConnectionId!),
+                        : () => viewModel.resumePlaybook(
+                            viewModel.selectedConnectionId!,
+                          ),
                   );
                 } else {
                   return FilledButton.icon(
@@ -504,8 +537,9 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                     onPressed: viewModel.selectedConnectionId == null
                         ? null
                         : () {
-                            viewModel
-                                .runPlaybook(viewModel.selectedConnectionId!);
+                            viewModel.runPlaybook(
+                              viewModel.selectedConnectionId!,
+                            );
                           },
                   );
                 }
@@ -521,8 +555,9 @@ extension _PlaybookScreenExecutionDashboard on _PlaybookScreenState {
                 label: Text(strings.skip),
                 onPressed: viewModel.selectedConnectionId == null
                     ? null
-                    : () => viewModel
-                        .skipCurrentStep(viewModel.selectedConnectionId!),
+                    : () => viewModel.skipCurrentStep(
+                        viewModel.selectedConnectionId!,
+                      ),
               ),
               const SizedBox(width: 8),
             ],
@@ -581,10 +616,7 @@ Please analyze what went wrong and provide:
     }
   }
 
-  void _requestAiSummary(
-    Playbook playbook,
-    _PlaybookStrings strings,
-  ) {
+  void _requestAiSummary(Playbook playbook, _PlaybookStrings strings) {
     String limitOutput(String? text) {
       if (text == null || text.trim().isEmpty) return '(empty)';
       final trimmed = text.trim();
@@ -595,13 +627,16 @@ Please analyze what went wrong and provide:
     }
 
     final buffer = StringBuffer()
-      ..writeln(strings.language == AppLanguage.en
-          ? "I have finished executing the following playbook successfully! Please review the overall execution results and summarize them:"
-          : "我已成功执行完以下运维剧本！请评估整体的执行结果并做一个总结：")
+      ..writeln(
+        strings.language == AppLanguage.en
+            ? "I have finished executing the following playbook successfully! Please review the overall execution results and summarize them:"
+            : "我已成功执行完以下运维剧本！请评估整体的执行结果并做一个总结：",
+      )
       ..writeln()
       ..writeln("Playbook: ${playbook.name}")
       ..writeln(
-          "Description: ${playbook.description.isEmpty ? '(none)' : playbook.description}")
+        "Description: ${playbook.description.isEmpty ? '(none)' : playbook.description}",
+      )
       ..writeln()
       ..writeln("Execution Steps & Results:");
 
@@ -622,13 +657,15 @@ Please analyze what went wrong and provide:
     buffer
       ..writeln("---")
       ..writeln()
-      ..writeln(strings.language == AppLanguage.en
-          ? "Please provide a quick summary confirming that everything is successful, highlight any potential post-run validation I should do, and give next step suggestions."
-          : "请提供一个简短的总结，确认所有操作均已成功执行。指出任何我可能需要进行的后续校验，并给出下一步建议。");
+      ..writeln(
+        strings.language == AppLanguage.en
+            ? "Please provide a quick summary confirming that everything is successful, highlight any potential post-run validation I should do, and give next step suggestions."
+            : "请提供一个简短的总结，确认所有操作均已成功执行。指出任何我可能需要进行的后续校验，并给出下一步建议。",
+      );
 
     // Set the prompt in the viewModel/service
-    context.read<PlaybookViewModel>().pendingDiagnosticPrompt =
-        buffer.toString();
+    context.read<PlaybookViewModel>().pendingDiagnosticPrompt = buffer
+        .toString();
 
     // Send notification to switch to AI tab
     const SwitchToAiTabNotification().dispatch(context);

@@ -44,8 +44,8 @@ class _WindowNameDialogState extends State<WindowNameDialog> {
     final errorText = name.isEmpty
         ? strings.enterWindowName
         : valid
-            ? null
-            : strings.duplicateWindowName;
+        ? null
+        : strings.duplicateWindowName;
 
     return ShadDialog(
       title: Text(strings.newTerminalWindow),

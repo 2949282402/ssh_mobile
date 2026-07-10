@@ -15,16 +15,20 @@ void main() {
       );
 
       recorder
-        ..record(const LlmTraceEvent(
-          kind: 'tool_request',
-          title: 'Tool request: run_command',
-          content: '{"password":"secret","command":"uptime"}',
-        ))
-        ..record(const LlmTraceEvent(
-          kind: 'approval',
-          title: 'Tool action approved',
-          content: 'approved',
-        ));
+        ..record(
+          const LlmTraceEvent(
+            kind: 'tool_request',
+            title: 'Tool request: run_command',
+            content: '{"password":"secret","command":"uptime"}',
+          ),
+        )
+        ..record(
+          const LlmTraceEvent(
+            kind: 'approval',
+            title: 'Tool action approved',
+            content: 'approved',
+          ),
+        );
 
       expect(recorder.bufferedEvents.map((event) => event.sequence), [0, 1]);
       expect(recorder.bufferedEvents.first.toolName, 'run_command');
@@ -40,11 +44,13 @@ void main() {
         chatId: 'chat-1',
       );
 
-      recorder.record(const LlmTraceEvent(
-        kind: 'agent_run_summary',
-        title: 'Agent run summary',
-        content: '{"finalOutcome":"success"}',
-      ));
+      recorder.record(
+        const LlmTraceEvent(
+          kind: 'agent_run_summary',
+          title: 'Agent run summary',
+          content: '{"finalOutcome":"success"}',
+        ),
+      );
       await recorder.flush();
 
       expect(repository.saved, hasLength(1));
@@ -60,17 +66,13 @@ void main() {
         chatId: 'chat-1',
       );
 
-      recorder.record(const LlmTraceEvent(
-        kind: 'info',
-        title: 'one',
-        content: '',
-      ));
+      recorder.record(
+        const LlmTraceEvent(kind: 'info', title: 'one', content: ''),
+      );
       recorder.clear();
-      recorder.record(const LlmTraceEvent(
-        kind: 'info',
-        title: 'two',
-        content: '',
-      ));
+      recorder.record(
+        const LlmTraceEvent(kind: 'info', title: 'two', content: ''),
+      );
 
       expect(recorder.bufferedEvents.single.sequence, 0);
       expect(recorder.bufferedEvents.single.title, 'two');
@@ -83,11 +85,9 @@ void main() {
         runId: 'run-1',
         chatId: 'chat-1',
       );
-      recorder.record(const LlmTraceEvent(
-        kind: 'info',
-        title: 'one',
-        content: '',
-      ));
+      recorder.record(
+        const LlmTraceEvent(kind: 'info', title: 'one', content: ''),
+      );
 
       await expectLater(recorder.flush(), throwsStateError);
       expect(recorder.bufferedEvents, hasLength(1));
@@ -100,12 +100,14 @@ void main() {
         chatId: 'chat-1',
       );
 
-      recorder.record(LlmTraceEvent(
-        kind: 'tool_result',
-        title: 'Tool result: run_command',
-        content:
-            '{"result":"${'x' * 5000}","token":"sk-abcdefghijklmnopqrstuvwxyz"}',
-      ));
+      recorder.record(
+        LlmTraceEvent(
+          kind: 'tool_result',
+          title: 'Tool result: run_command',
+          content:
+              '{"result":"${'x' * 5000}","token":"sk-abcdefghijklmnopqrstuvwxyz"}',
+        ),
+      );
 
       final event = recorder.bufferedEvents.single;
       expect(event.content.length, lessThan(2000));
@@ -120,11 +122,13 @@ void main() {
         chatId: 'chat-1',
       );
 
-      recorder.record(const LlmTraceEvent(
-        kind: 'agent_run_summary',
-        title: 'Agent run summary',
-        content: '{"finalOutcome":"success","approvedCount":1}',
-      ));
+      recorder.record(
+        const LlmTraceEvent(
+          kind: 'agent_run_summary',
+          title: 'Agent run summary',
+          content: '{"finalOutcome":"success","approvedCount":1}',
+        ),
+      );
 
       expect(recorder.bufferedEvents.single.status, 'success');
     });
@@ -136,11 +140,13 @@ void main() {
         chatId: 'chat-1',
       );
 
-      recorder.record(const LlmTraceEvent(
-        kind: 'agent_run_summary',
-        title: 'Agent run summary',
-        content: '{"approvedCount":1}',
-      ));
+      recorder.record(
+        const LlmTraceEvent(
+          kind: 'agent_run_summary',
+          title: 'Agent run summary',
+          content: '{"approvedCount":1}',
+        ),
+      );
 
       expect(recorder.bufferedEvents.single.status, 'completed');
     });

@@ -40,24 +40,24 @@ class ServerDiagnosticsService implements ServerDiagnosticsAdapter {
       return _windowsServerStatus(connectionId, normalizedMode, os);
     }
 
-    final wantPerformance = normalizedMode == null ||
+    final wantPerformance =
+        normalizedMode == null ||
         normalizedMode.isEmpty ||
         normalizedMode == 'all' ||
         normalizedMode == 'performance';
-    final wantPorts = normalizedMode == null ||
+    final wantPorts =
+        normalizedMode == null ||
         normalizedMode.isEmpty ||
         normalizedMode == 'all' ||
         normalizedMode == 'ports';
-    final wantApplications = normalizedMode == null ||
+    final wantApplications =
+        normalizedMode == null ||
         normalizedMode.isEmpty ||
         normalizedMode == 'all' ||
         normalizedMode == 'applications' ||
         normalizedMode == 'apps';
 
-    final payload = <String, dynamic>{
-      'connectionId': connectionId,
-      'os': os,
-    };
+    final payload = <String, dynamic>{'connectionId': connectionId, 'os': os};
 
     if (wantPerformance) {
       final result = await sshService.runOneShotCommand(
@@ -85,10 +85,9 @@ class ServerDiagnosticsService implements ServerDiagnosticsAdapter {
         command: ServerStatusProbe.portsCommand,
         timeout: const Duration(seconds: 12),
       );
-      payload['ports'] = ServerStatusProbe.parsePorts(result.stdout)
-          .take(200)
-          .map((item) => item.toJson())
-          .toList();
+      payload['ports'] = ServerStatusProbe.parsePorts(
+        result.stdout,
+      ).take(200).map((item) => item.toJson()).toList();
       if (result.stderr.trim().isNotEmpty) {
         payload['portsStderr'] = _truncate(result.stderr);
       }
@@ -117,11 +116,7 @@ class ServerDiagnosticsService implements ServerDiagnosticsAdapter {
     final os = await _detectRemoteOs(connectionId);
 
     if (os['os'] == 'windows') {
-      final status = await _windowsServerStatus(
-        connectionId,
-        'all',
-        os,
-      );
+      final status = await _windowsServerStatus(connectionId, 'all', os);
       return {
         'connectionId': connectionId,
         'server': connection == null
@@ -160,15 +155,16 @@ class ServerDiagnosticsService implements ServerDiagnosticsAdapter {
       timeout: const Duration(seconds: 12),
     );
 
-    final performance =
-        ServerStatusProbe.parsePerformanceOutput(performanceResult.stdout);
+    final performance = ServerStatusProbe.parsePerformanceOutput(
+      performanceResult.stdout,
+    );
     final ports = ServerStatusProbe.parsePorts(portsResult.stdout);
     final applications = ServerStatusProbe.parseApplications(appsResult.stdout);
     final diskMax = performance.diskUsage.isEmpty
         ? 0.0
         : performance.diskUsage
-            .map((disk) => disk.usedPercent)
-            .reduce((a, b) => a > b ? a : b);
+              .map((disk) => disk.usedPercent)
+              .reduce((a, b) => a > b ? a : b);
 
     final risks = <String>[];
     final suggestions = <String>[];
@@ -189,17 +185,18 @@ class ServerDiagnosticsService implements ServerDiagnosticsAdapter {
       suggestions.add('Inspect the top CPU process and related logs.');
     }
 
-    final score = (100 -
-            _opsPenalty(performance.counters.memoryPercent, 70, 95, 40) -
-            _opsPenalty(diskMax, 75, 95, 35) -
-            (ports.isEmpty ? 10 : 0))
-        .clamp(0, 100)
-        .round();
+    final score =
+        (100 -
+                _opsPenalty(performance.counters.memoryPercent, 70, 95, 40) -
+                _opsPenalty(diskMax, 75, 95, 35) -
+                (ports.isEmpty ? 10 : 0))
+            .clamp(0, 100)
+            .round();
     final level = score < 45
         ? 'critical'
         : score < 75
-            ? 'warning'
-            : 'healthy';
+        ? 'warning'
+        : 'healthy';
 
     return {
       'connectionId': connectionId,
@@ -219,8 +216,9 @@ class ServerDiagnosticsService implements ServerDiagnosticsAdapter {
       },
       'performance': {
         'memoryPercent': performance.counters.memoryPercent,
-        'diskUsage':
-            performance.diskUsage.map((item) => item.toJson()).toList(),
+        'diskUsage': performance.diskUsage
+            .map((item) => item.toJson())
+            .toList(),
         'rawCounters': {
           'cpuTotal': performance.counters.cpuTotal,
           'cpuBusy': performance.counters.cpuBusy,
@@ -229,8 +227,10 @@ class ServerDiagnosticsService implements ServerDiagnosticsAdapter {
         },
       },
       'ports': ports.take(80).map((item) => item.toJson()).toList(),
-      'applications':
-          applications.take(40).map((item) => item.toJson()).toList(),
+      'applications': applications
+          .take(40)
+          .map((item) => item.toJson())
+          .toList(),
       'stderr': {
         if (performanceResult.stderr.trim().isNotEmpty)
           'performance': _truncate(performanceResult.stderr),

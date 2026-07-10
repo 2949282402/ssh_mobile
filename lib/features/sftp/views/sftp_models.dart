@@ -82,12 +82,12 @@ class _SftpPaneStatusSnapshot {
 
   @override
   int get hashCode => Object.hash(
-        connectionId,
-        currentPath,
-        state,
-        errorMessage,
-        activeTransfer,
-      );
+    connectionId,
+    currentPath,
+    state,
+    errorMessage,
+    activeTransfer,
+  );
 }
 
 class _SftpEntriesSnapshot {

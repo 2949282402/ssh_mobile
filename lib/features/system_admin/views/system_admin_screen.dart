@@ -133,7 +133,8 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                           child: snapshot.serversCollapsed
                               ? _AdminCollapsedDesktopServerRail(
                                   key: const ValueKey(
-                                      'admin-server-rail-collapsed'),
+                                    'admin-server-rail-collapsed',
+                                  ),
                                   strings: strings,
                                   isMonitorTab: isMonitorTab,
                                   onExpand: () => context
@@ -153,9 +154,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                           thickness: 1,
                           color: Theme.of(context).colorScheme.outlineVariant,
                         ),
-                        Expanded(
-                          child: bodyContent,
-                        ),
+                        Expanded(child: bodyContent),
                       ],
                     )
                   : Column(
@@ -171,7 +170,8 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                             child: snapshot.serversCollapsed
                                 ? _AdminCollapsedMobileServerBar(
                                     key: const ValueKey(
-                                        'admin-server-collapsed'),
+                                      'admin-server-collapsed',
+                                    ),
                                     strings: strings,
                                     isMonitorTab: isMonitorTab,
                                     onExpand: () => context
@@ -179,8 +179,9 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                                         .setServersCollapsed(context, false),
                                   )
                                 : _AdminMobileServerStrip(
-                                    key:
-                                        const ValueKey('admin-server-expanded'),
+                                    key: const ValueKey(
+                                      'admin-server-expanded',
+                                    ),
                                     strings: strings,
                                     isMonitorTab: isMonitorTab,
                                     onCollapse: () => context
@@ -194,9 +195,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                           thickness: 1,
                           color: Theme.of(context).colorScheme.outlineVariant,
                         ),
-                        Expanded(
-                          child: bodyContent,
-                        ),
+                        Expanded(child: bodyContent),
                       ],
                     );
             },
@@ -214,8 +213,10 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
 
     final selectedIdChanged =
         _lastObservedSelectedConnectionId != currentSelectedId;
-    final connectionsChanged =
-        !identical(_lastObservedConnections, currentConnections);
+    final connectionsChanged = !identical(
+      _lastObservedConnections,
+      currentConnections,
+    );
 
     if (!selectedIdChanged && !connectionsChanged) return;
 
@@ -243,7 +244,8 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
       if (selectedId == null) return;
 
       final index = _tabController.index;
-      final activationKeyChanged = _lastActivatedTabIndex != index ||
+      final activationKeyChanged =
+          _lastActivatedTabIndex != index ||
           _lastActivatedConnectionId != selectedId;
 
       if (!activationKeyChanged) return;
@@ -255,10 +257,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
     });
   }
 
-  Future<void> _activateTab(
-    int index,
-    SystemAdminViewModel viewModel,
-  ) async {
+  Future<void> _activateTab(int index, SystemAdminViewModel viewModel) async {
     final selectedId = viewModel.selectedConnectionId;
     if (selectedId == null) return;
 
@@ -330,26 +329,33 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                   tabAlignment: TabAlignment.start,
                   tabs: [
                     Tab(
-                        text: strings.monitor,
-                        icon: const Icon(Icons.monitor_heart_outlined)),
+                      text: strings.monitor,
+                      icon: const Icon(Icons.monitor_heart_outlined),
+                    ),
                     Tab(
-                        text: strings.listeningPorts,
-                        icon: const Icon(Icons.lan)),
+                      text: strings.listeningPorts,
+                      icon: const Icon(Icons.lan),
+                    ),
                     Tab(
-                        text: strings.applications,
-                        icon: const Icon(Icons.apps_rounded)),
+                      text: strings.applications,
+                      icon: const Icon(Icons.apps_rounded),
+                    ),
                     Tab(
-                        text: strings.systemServices,
-                        icon: const Icon(Icons.settings_suggest)),
+                      text: strings.systemServices,
+                      icon: const Icon(Icons.settings_suggest),
+                    ),
                     Tab(
-                        text: strings.userAccounts,
-                        icon: const Icon(Icons.people)),
+                      text: strings.userAccounts,
+                      icon: const Icon(Icons.people),
+                    ),
                     Tab(
-                        text: strings.activeSessions,
-                        icon: const Icon(Icons.co_present)),
+                      text: strings.activeSessions,
+                      icon: const Icon(Icons.co_present),
+                    ),
                     Tab(
-                        text: strings.systemPower,
-                        icon: const Icon(Icons.power_settings_new)),
+                      text: strings.systemPower,
+                      icon: const Icon(Icons.power_settings_new),
+                    ),
                   ],
                 ),
               ),
@@ -392,9 +398,10 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                         showSshHostKeyTrustDialog(context, request),
                   );
                   if (mounted) {
-                    context
-                        .read<SystemAdminViewModel>()
-                        .setServersCollapsed(context, true);
+                    context.read<SystemAdminViewModel>().setServersCollapsed(
+                      context,
+                      true,
+                    );
                   }
                 },
               ),
@@ -455,9 +462,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
 class _RootRequiredTabWrapper extends StatelessWidget {
   final Widget child;
 
-  const _RootRequiredTabWrapper({
-    required this.child,
-  });
+  const _RootRequiredTabWrapper({required this.child});
 
   @override
   Widget build(BuildContext context) {
@@ -475,10 +480,10 @@ class _RootRequiredTabWrapper extends StatelessWidget {
       return _AdminEmptyState(strings: strings);
     }
 
-    final selectedConnection =
-        context.select<SystemAdminViewModel, ConnectionConfig?>(
-      (vm) => vm.connectionById(selectedConnectionId),
-    );
+    final selectedConnection = context
+        .select<SystemAdminViewModel, ConnectionConfig?>(
+          (vm) => vm.connectionById(selectedConnectionId),
+        );
     if (selectedConnection == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         context.read<SystemAdminViewModel>().clearInvalidSelection();
@@ -498,8 +503,10 @@ class _RootRequiredTabWrapper extends StatelessWidget {
               Text(
                 strings.nonLinuxMsg,
                 textAlign: TextAlign.center,
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ],
           ),
@@ -519,7 +526,8 @@ class _RootRequiredTabWrapper extends StatelessWidget {
     final errorMessage = hasError
         ? context.select<SystemAdminViewModel, String?>((vm) => vm.errorMessage)
         : null;
-    final isRoot = isConnected &&
+    final isRoot =
+        isConnected &&
         context.select<SystemAdminViewModel, bool>((vm) => vm.isRoot);
 
     if (isConnecting) {
@@ -544,10 +552,10 @@ class _RootRequiredTabWrapper extends StatelessWidget {
         errorMessage: errorMessage,
         onConnect: () => unawaited(
           context.read<SystemAdminViewModel>().connectIfNeeded(
-                selectedConnectionId,
-                onUnknownHostKey: (request) =>
-                    showSshHostKeyTrustDialog(context, request),
-              ),
+            selectedConnectionId,
+            onUnknownHostKey: (request) =>
+                showSshHostKeyTrustDialog(context, request),
+          ),
         ),
       );
     }
@@ -570,7 +578,8 @@ class _RootRequiredView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isPrivilegeError = errorMessage != null &&
+    final isPrivilegeError =
+        errorMessage != null &&
         (errorMessage!.toLowerCase().contains('privilege') ||
             errorMessage!.toLowerCase().contains('root required') ||
             errorMessage!.toLowerCase().contains('insufficient'));
@@ -614,9 +623,11 @@ class _RootRequiredView extends StatelessWidget {
               const SizedBox(height: 20),
               FilledButton.icon(
                 icon: const Icon(Icons.admin_panel_settings_rounded),
-                label: Text(strings.language == AppLanguage.en
-                    ? 'Connect as Root'
-                    : '以 Root 连接'),
+                label: Text(
+                  strings.language == AppLanguage.en
+                      ? 'Connect as Root'
+                      : '以 Root 连接',
+                ),
                 onPressed: onConnect,
               ),
             ],
@@ -687,10 +698,7 @@ class _MonitorResponsiveEmptyState extends StatelessWidget {
   final AppStrings strings;
   final String? message;
 
-  const _MonitorResponsiveEmptyState({
-    required this.strings,
-    this.message,
-  });
+  const _MonitorResponsiveEmptyState({required this.strings, this.message});
 
   @override
   Widget build(BuildContext context) {
@@ -726,7 +734,10 @@ class _MonitorResponsiveEmptyState extends StatelessWidget {
                 ],
                 Text(
                   _monitorText(
-                      strings, 'Select servers to monitor', '选择要监控的服务器'),
+                    strings,
+                    'Select servers to monitor',
+                    '选择要监控的服务器',
+                  ),
                   textAlign: TextAlign.center,
                   maxLines: compact ? 1 : 2,
                   overflow: TextOverflow.ellipsis,
@@ -893,9 +904,9 @@ class _SystemAdminShellSnapshot {
 
   @override
   int get hashCode => Object.hash(
-        storageReady,
-        serversCollapsed,
-        selectedConnectionId,
-        Object.hashAll(connections),
-      );
+    storageReady,
+    serversCollapsed,
+    selectedConnectionId,
+    Object.hashAll(connections),
+  );
 }

@@ -67,50 +67,52 @@ void main() {
       expect(tokens3, greaterThan(tokens1));
     });
 
-    test('contextTokensFor throttles query within 1500ms when sending is true',
-        () async {
-      final estimator = AiChatTokenEstimator(messageMapper: mapper);
+    test(
+      'contextTokensFor throttles query within 1500ms when sending is true',
+      () async {
+        final estimator = AiChatTokenEstimator(messageMapper: mapper);
 
-      final chat = AiChatRecord(
-        id: 'chat-1',
-        title: 'Title',
-        model: 'gpt-4o',
-        messages: [
-          AiChatMessageRecord(
-            role: 'user',
-            text: 'hello',
-            createdAt: DateTime.now(),
-          ),
-        ],
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
-      );
+        final chat = AiChatRecord(
+          id: 'chat-1',
+          title: 'Title',
+          model: 'gpt-4o',
+          messages: [
+            AiChatMessageRecord(
+              role: 'user',
+              text: 'hello',
+              createdAt: DateTime.now(),
+            ),
+          ],
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        );
 
-      final tokens1 = estimator.contextTokensFor(chat, sending: true);
+        final tokens1 = estimator.contextTokensFor(chat, sending: true);
 
-      // Modify last message -> normally invalidates, but within 1500ms when sending should hit cache
-      final chatModified = AiChatRecord(
-        id: 'chat-1',
-        title: 'Title',
-        model: 'gpt-4o',
-        messages: [
-          AiChatMessageRecord(
-            role: 'user',
-            text: 'hello modified!',
-            createdAt: DateTime.now(),
-          ),
-        ],
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
-      );
+        // Modify last message -> normally invalidates, but within 1500ms when sending should hit cache
+        final chatModified = AiChatRecord(
+          id: 'chat-1',
+          title: 'Title',
+          model: 'gpt-4o',
+          messages: [
+            AiChatMessageRecord(
+              role: 'user',
+              text: 'hello modified!',
+              createdAt: DateTime.now(),
+            ),
+          ],
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        );
 
-      final tokens2 = estimator.contextTokensFor(chatModified, sending: true);
-      expect(tokens2, equals(tokens1)); // Throttled/Cached
+        final tokens2 = estimator.contextTokensFor(chatModified, sending: true);
+        expect(tokens2, equals(tokens1)); // Throttled/Cached
 
-      // invalidate forces re-estimate
-      estimator.invalidate();
-      final tokens3 = estimator.contextTokensFor(chatModified, sending: true);
-      expect(tokens3, isNot(equals(tokens1)));
-    });
+        // invalidate forces re-estimate
+        estimator.invalidate();
+        final tokens3 = estimator.contextTokensFor(chatModified, sending: true);
+        expect(tokens3, isNot(equals(tokens1)));
+      },
+    );
   });
 }

@@ -6,9 +6,9 @@ class MigrationMetaDao extends DatabaseAccessor<AppDatabase>
   MigrationMetaDao(super.db);
 
   Future<bool> isComplete(String key) async {
-    final value = await (select(migrationMeta)
-          ..where((row) => row.key.equals(key)))
-        .getSingleOrNull();
+    final value = await (select(
+      migrationMeta,
+    )..where((row) => row.key.equals(key))).getSingleOrNull();
     return value?.value == 'true';
   }
 

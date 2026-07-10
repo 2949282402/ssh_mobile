@@ -10,14 +10,9 @@ class AiChatTokenEstimator {
   int _cachedContextTokens = 0;
   DateTime _lastContextTokenEstimateAt = DateTime.fromMillisecondsSinceEpoch(0);
 
-  AiChatTokenEstimator({
-    required AiChatMessageMapper messageMapper,
-  }) : _messageMapper = messageMapper;
+  AiChatTokenEstimator({required this._messageMapper});
 
-  int contextTokensFor(
-    AiChatRecord chat, {
-    required bool sending,
-  }) {
+  int contextTokensFor(AiChatRecord chat, {required bool sending}) {
     final key = _contextTokenKey(chat);
     if (_contextTokenCacheKey == key) return _cachedContextTokens;
     final now = DateTime.now();

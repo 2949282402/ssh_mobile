@@ -36,19 +36,19 @@ class AgentTraceEvent {
     String? parentEventId,
     bool truncated = false,
   }) : this._internal(
-          id: id,
-          runId: runId,
-          chatId: chatId,
-          createdAt: createdAt,
-          sequence: sequence,
-          kind: kind,
-          title: title,
-          toolName: toolName,
-          status: status,
-          durationMs: durationMs,
-          parentEventId: parentEventId,
-          contentAndTruncated: _normalizeContent(content, truncated),
-        );
+         id: id,
+         runId: runId,
+         chatId: chatId,
+         createdAt: createdAt,
+         sequence: sequence,
+         kind: kind,
+         title: title,
+         toolName: toolName,
+         status: status,
+         durationMs: durationMs,
+         parentEventId: parentEventId,
+         contentAndTruncated: _normalizeContent(content, truncated),
+       );
 
   AgentTraceEvent._internal({
     String? id,
@@ -63,10 +63,10 @@ class AgentTraceEvent {
     this.durationMs,
     this.parentEventId,
     required (String, bool) contentAndTruncated,
-  })  : id = id?.trim().isNotEmpty == true ? id!.trim() : _agentTraceUuid.v4(),
-        status = status?.trim().isNotEmpty == true ? status!.trim() : 'info',
-        content = contentAndTruncated.$1,
-        truncated = contentAndTruncated.$2;
+  }) : id = id?.trim().isNotEmpty == true ? id!.trim() : _agentTraceUuid.v4(),
+       status = status?.trim().isNotEmpty == true ? status!.trim() : 'info',
+       content = contentAndTruncated.$1,
+       truncated = contentAndTruncated.$2;
 
   AgentTraceEvent copyWith({
     String? id,
@@ -124,7 +124,8 @@ class AgentTraceEvent {
       id: json['id'] as String?,
       runId: json['runId'] as String? ?? '',
       chatId: json['chatId'] as String? ?? '',
-      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+      createdAt:
+          DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
       sequence: json['sequence'] as int? ?? 0,
       kind: json['kind'] as String? ?? 'info',

@@ -42,10 +42,9 @@ class _SftpScreenState extends State<SftpScreen> {
     super.didChangeDependencies();
     if (_restoredServersCollapsed) return;
     _restoredServersCollapsed = true;
-    final stored = PageStorage.maybeOf(context)?.readState(
+    final stored = PageStorage.maybeOf(
       context,
-      identifier: _serversCollapsedStorageKey,
-    );
+    )?.readState(context, identifier: _serversCollapsedStorageKey);
     if (stored is bool) _serversCollapsed = stored;
   }
 
@@ -58,17 +57,19 @@ class _SftpScreenState extends State<SftpScreen> {
     final storageReady = context.select<ConnectionViewModel, bool>(
       (vm) => !vm.isLoading,
     );
-    final connections =
-        context.select<ConnectionViewModel, List<ConnectionConfig>>(
-      (vm) => vm.connections,
-    );
+    final connections = context
+        .select<ConnectionViewModel, List<ConnectionConfig>>(
+          (vm) => vm.connections,
+        );
     final sftp = context.read<SftpViewModel>();
     final selectedConnectionId = context.select<SftpViewModel, String?>(
       (vm) => vm.connectionId,
     );
     final desktop = isDesktopLayout(context);
-    final selectedConnection =
-        _selectedConnection(connections, selectedConnectionId);
+    final selectedConnection = _selectedConnection(
+      connections,
+      selectedConnectionId,
+    );
     final serversCollapsed = _serversCollapsed && connections.isNotEmpty;
 
     if (!storageReady) {
@@ -92,17 +93,17 @@ class _SftpScreenState extends State<SftpScreen> {
                     ? Selector<SftpViewModel, _SftpConnectionStatusSnapshot>(
                         selector: (_, service) =>
                             _SftpConnectionStatusSnapshot.from(
-                          service,
-                          selectedConnection?.id,
-                        ),
+                              service,
+                              selectedConnection?.id,
+                            ),
                         builder: (context, status, _) =>
                             _CollapsedDesktopServerRail(
-                          selectedConnection: selectedConnection,
-                          busy: status.busy,
-                          connected: status.connected,
-                          strings: strings,
-                          onExpand: _expandServers,
-                        ),
+                              selectedConnection: selectedConnection,
+                              busy: status.busy,
+                              connected: status.connected,
+                              strings: strings,
+                              onExpand: _expandServers,
+                            ),
                       )
                     : _ServerPane(
                         connections: connections,
@@ -116,10 +117,7 @@ class _SftpScreenState extends State<SftpScreen> {
                 color: Theme.of(context).colorScheme.outlineVariant,
               ),
               Expanded(
-                child: _FilePane(
-                  strings: strings,
-                  sftp: sftp,
-                ),
+                child: _FilePane(strings: strings, sftp: sftp),
               ),
             ],
           )
@@ -134,17 +132,17 @@ class _SftpScreenState extends State<SftpScreen> {
                         key: const ValueKey('sftp-server-collapsed'),
                         selector: (_, service) =>
                             _SftpConnectionStatusSnapshot.from(
-                          service,
-                          selectedConnection?.id,
-                        ),
+                              service,
+                              selectedConnection?.id,
+                            ),
                         builder: (context, status, _) =>
                             _CollapsedMobileServerBar(
-                          selectedConnection: selectedConnection,
-                          busy: status.busy,
-                          connected: status.connected,
-                          strings: strings,
-                          onExpand: _expandServers,
-                        ),
+                              selectedConnection: selectedConnection,
+                              busy: status.busy,
+                              connected: status.connected,
+                              strings: strings,
+                              onExpand: _expandServers,
+                            ),
                       )
                     : _MobileServerStrip(
                         key: const ValueKey('sftp-server-expanded'),
@@ -159,10 +157,7 @@ class _SftpScreenState extends State<SftpScreen> {
                 color: Theme.of(context).colorScheme.outlineVariant,
               ),
               Expanded(
-                child: _FilePane(
-                  strings: strings,
-                  sftp: sftp,
-                ),
+                child: _FilePane(strings: strings, sftp: sftp),
               ),
             ],
           );
@@ -179,11 +174,9 @@ class _SftpScreenState extends State<SftpScreen> {
   void _setServersCollapsed(bool collapsed) {
     if (_serversCollapsed == collapsed) return;
     setState(() => _serversCollapsed = collapsed);
-    PageStorage.maybeOf(context)?.writeState(
+    PageStorage.maybeOf(
       context,
-      collapsed,
-      identifier: _serversCollapsedStorageKey,
-    );
+    )?.writeState(context, collapsed, identifier: _serversCollapsedStorageKey);
   }
 
   ConnectionConfig? _selectedConnection(

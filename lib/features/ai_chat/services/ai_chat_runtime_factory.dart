@@ -36,9 +36,7 @@ class AiChatRuntimeFactory {
   ChatOrchestrator createOrchestrator() {
     return ChatOrchestrator(
       storageService: storageService,
-      contextAssembler: ChatContextAssembler(
-        storageService: storageService,
-      ),
+      contextAssembler: ChatContextAssembler(storageService: storageService),
       memoryRetriever: OperationalMemoryRetriever(
         storageService: storageService,
         ragService: ragService,
@@ -67,15 +65,14 @@ class AiChatRuntimeFactory {
     );
   }
 
-  AiToolService createToolService({
-    String? chatId,
-  }) {
+  AiToolService createToolService({String? chatId}) {
     return AiToolService(
       storageService: storageService,
       sshService: sshService,
       sftpService: sftpService,
-      performanceMonitorToolService:
-          PerformanceMonitorToolService(performanceMonitorService),
+      performanceMonitorToolService: PerformanceMonitorToolService(
+        performanceMonitorService,
+      ),
       appSettings: appSettings,
       playbookService: playbookService,
       clientWebViewSessionId: chatId,

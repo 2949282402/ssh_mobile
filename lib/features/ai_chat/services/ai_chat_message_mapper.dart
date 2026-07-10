@@ -5,9 +5,7 @@ import 'ai_chat_context_builder.dart';
 class AiChatMessageMapper {
   final AiChatContextBuilder contextBuilder;
 
-  const AiChatMessageMapper({
-    required this.contextBuilder,
-  });
+  const AiChatMessageMapper({required this.contextBuilder});
 
   List<Map<String, dynamic>> messagesForRequest(
     List<AiChatMessageRecord> messages, {
@@ -25,14 +23,13 @@ class AiChatMessageMapper {
           if (message.role == 'user' && message.attachments.isNotEmpty) {
             return <String, dynamic>{
               'role': role,
-              'content':
-                  buildMultipartContent(textContent, message.attachments),
+              'content': buildMultipartContent(
+                textContent,
+                message.attachments,
+              ),
             };
           }
-          return <String, dynamic>{
-            'role': role,
-            'content': textContent,
-          };
+          return <String, dynamic>{'role': role, 'content': textContent};
         })
         .nonNulls
         .toList();
@@ -44,8 +41,10 @@ class AiChatMessageMapper {
     }
     if (message.role == 'assistant') {
       return message.contextText ??
-          contextBuilder.buildAssistantContextText(message.text,
-              traces: message.traces);
+          contextBuilder.buildAssistantContextText(
+            message.text,
+            traces: message.traces,
+          );
     }
     return message.text;
   }

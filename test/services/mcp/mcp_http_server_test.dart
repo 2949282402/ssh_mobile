@@ -38,8 +38,9 @@ void main() {
     });
 
     Future<_JsonResponse> postJson(Map<String, dynamic> body) async {
-      final request = await client
-          .postUrl(Uri.parse('http://127.0.0.1:${server.port}/mcp'));
+      final request = await client.postUrl(
+        Uri.parse('http://127.0.0.1:${server.port}/mcp'),
+      );
       request.headers.contentType = ContentType.json;
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer secret');
       request.write(jsonEncode(body));
@@ -101,10 +102,7 @@ void main() {
         'jsonrpc': '2.0',
         'id': 3,
         'method': 'tools/call',
-        'params': {
-          'name': 'list_servers',
-          'arguments': {},
-        },
+        'params': {'name': 'list_servers', 'arguments': {}},
       });
 
       expect(response.statusCode, 200);
@@ -131,31 +129,30 @@ void main() {
     });
 
     test('GET /mcp returns 405', () async {
-      final request =
-          await client.getUrl(Uri.parse('http://127.0.0.1:${server.port}/mcp'));
+      final request = await client.getUrl(
+        Uri.parse('http://127.0.0.1:${server.port}/mcp'),
+      );
       final response = await request.close();
 
       expect(response.statusCode, 405);
     });
 
     test('wrong path returns 404', () async {
-      final request = await client
-          .getUrl(Uri.parse('http://127.0.0.1:${server.port}/wrong'));
+      final request = await client.getUrl(
+        Uri.parse('http://127.0.0.1:${server.port}/wrong'),
+      );
       final response = await request.close();
 
       expect(response.statusCode, 404);
     });
 
     test('invalid token returns 401', () async {
-      final request = await client
-          .postUrl(Uri.parse('http://127.0.0.1:${server.port}/mcp'));
+      final request = await client.postUrl(
+        Uri.parse('http://127.0.0.1:${server.port}/mcp'),
+      );
       request.headers.contentType = ContentType.json;
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer wrong');
-      request.write(jsonEncode({
-        'jsonrpc': '2.0',
-        'id': 5,
-        'method': 'ping',
-      }));
+      request.write(jsonEncode({'jsonrpc': '2.0', 'id': 5, 'method': 'ping'}));
 
       final response = await request.close();
 
@@ -226,10 +223,7 @@ class _FakeToolExecutor implements AiToolExecutor {
   }
 
   @override
-  AiCommandReview reviewCommand(
-    String command, {
-    ServerPlatform? platform,
-  }) {
+  AiCommandReview reviewCommand(String command, {ServerPlatform? platform}) {
     return const AiCommandReview.readOnly();
   }
 }

@@ -75,7 +75,9 @@ class _ReferenceConfigPanelState extends State<ReferenceConfigPanel> {
                       child: Text(
                         strings.noReferences,
                         style: TextStyle(
-                            color: colorScheme.onSurfaceVariant, fontSize: 13),
+                          color: colorScheme.onSurfaceVariant,
+                          fontSize: 13,
+                        ),
                       ),
                     )
                   else
@@ -88,24 +90,34 @@ class _ReferenceConfigPanelState extends State<ReferenceConfigPanel> {
                         return ListTile(
                           contentPadding: EdgeInsets.zero,
                           dense: true,
-                          leading: const Icon(Icons.insert_drive_file_outlined,
-                              size: 20),
-                          title: Text(ref.title,
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.bold, fontSize: 13)),
+                          leading: const Icon(
+                            Icons.insert_drive_file_outlined,
+                            size: 20,
+                          ),
+                          title: Text(
+                            ref.title,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                          ),
                           subtitle: ref.content.isNotEmpty
                               ? Text(
                                   ref.content,
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
-                                      color: colorScheme.onSurfaceVariant,
-                                      fontSize: 12),
+                                    color: colorScheme.onSurfaceVariant,
+                                    fontSize: 12,
+                                  ),
                                 )
                               : null,
                           trailing: IconButton(
-                            icon: const Icon(Icons.remove_circle_outline,
-                                color: Colors.redAccent, size: 20),
+                            icon: const Icon(
+                              Icons.remove_circle_outline,
+                              color: Colors.redAccent,
+                              size: 20,
+                            ),
                             onPressed: () => viewModel.removeReference(index),
                           ),
                           onTap: () {
@@ -114,8 +126,10 @@ class _ReferenceConfigPanelState extends State<ReferenceConfigPanel> {
                               builder: (ctx) => AlertDialog(
                                 title: Text(ref.title),
                                 content: SingleChildScrollView(
-                                  child: Text(ref.content,
-                                      style: const TextStyle(fontSize: 14)),
+                                  child: Text(
+                                    ref.content,
+                                    style: const TextStyle(fontSize: 14),
+                                  ),
                                 ),
                                 actions: [
                                   TextButton(

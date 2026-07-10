@@ -29,8 +29,11 @@ class _PowerTabState extends State<_PowerTab>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.power_settings_new,
-                size: 96, color: widget.colorScheme.error),
+            Icon(
+              Icons.power_settings_new,
+              size: 96,
+              color: widget.colorScheme.error,
+            ),
             const SizedBox(height: 24),
             Text(
               widget.strings.systemPower,

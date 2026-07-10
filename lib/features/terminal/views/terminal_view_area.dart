@@ -59,8 +59,9 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
   double _pinchStartDistance = 0;
   double _pinchStartFontSize = 0;
   double _lastAppliedFontSize = 0;
-  final ValueNotifier<_TerminalScrollMetrics> _scrollMetrics =
-      ValueNotifier(const _TerminalScrollMetrics());
+  final ValueNotifier<_TerminalScrollMetrics> _scrollMetrics = ValueNotifier(
+    const _TerminalScrollMetrics(),
+  );
   TerminalStyle? _cachedTerminalStyle;
   double? _cachedStyleFontSize;
   double? _cachedStyleLineHeight;
@@ -245,7 +246,8 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
     final metrics = notification.metrics;
     final atBottom =
         (metrics.maxScrollExtent - metrics.pixels).abs() <= _bottomTolerance;
-    final isUserScroll = notification is UserScrollNotification ||
+    final isUserScroll =
+        notification is UserScrollNotification ||
         (notification is ScrollUpdateNotification &&
             notification.dragDetails != null);
     if (isUserScroll) {
@@ -255,7 +257,8 @@ class _TerminalViewAreaState extends State<TerminalViewArea> {
   }
 
   bool _handleScrollMetricsNotification(
-      ScrollMetricsNotification notification) {
+    ScrollMetricsNotification notification,
+  ) {
     _scheduleMetricsUpdate();
     return false;
   }
@@ -493,10 +496,7 @@ class _TerminalScrollMetrics {
   final double pixels;
   final double maxScrollExtent;
 
-  const _TerminalScrollMetrics({
-    this.pixels = 0,
-    this.maxScrollExtent = 0,
-  });
+  const _TerminalScrollMetrics({this.pixels = 0, this.maxScrollExtent = 0});
 }
 
 class _TerminalHistoryScrollbar extends StatelessWidget {

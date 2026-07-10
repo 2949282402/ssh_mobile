@@ -29,12 +29,14 @@ Future<SystemPowerConfirmationToken?> confirmSystemPowerAction(
         isEnglish ? 'Confirm system shutdown?' : '确认关闭系统？',
     },
     content: switch (action) {
-      SystemPowerAction.reboot => isEnglish
-          ? 'Rebooting will interrupt current server connections and running tasks. Continue?'
-          : '重启会中断当前服务器连接和运行中的任务。是否继续？',
-      SystemPowerAction.shutdown => isEnglish
-          ? 'Shutting down will interrupt current server connections and running tasks, and may not be remotely recoverable. Continue?'
-          : '关机会中断当前服务器连接和运行中的任务，且可能无法远程恢复。是否继续？',
+      SystemPowerAction.reboot =>
+        isEnglish
+            ? 'Rebooting will interrupt current server connections and running tasks. Continue?'
+            : '重启会中断当前服务器连接和运行中的任务。是否继续？',
+      SystemPowerAction.shutdown =>
+        isEnglish
+            ? 'Shutting down will interrupt current server connections and running tasks, and may not be remotely recoverable. Continue?'
+            : '关机会中断当前服务器连接和运行中的任务，且可能无法远程恢复。是否继续？',
     },
     cancelLabel: cancelLabel,
     confirmLabel: confirmLabel,
@@ -62,12 +64,14 @@ Future<SystemPowerConfirmationToken?> confirmSystemPowerAction(
         isEnglish ? 'Final shutdown confirmation' : '最终确认关机',
     },
     content: switch (action) {
-      SystemPowerAction.reboot => isEnglish
-          ? 'You can confirm the reboot after the countdown finishes.'
-          : '倒计时结束后才能确认执行重启。',
-      SystemPowerAction.shutdown => isEnglish
-          ? 'You can confirm the shutdown after the countdown finishes.'
-          : '倒计时结束后才能确认执行关机。',
+      SystemPowerAction.reboot =>
+        isEnglish
+            ? 'You can confirm the reboot after the countdown finishes.'
+            : '倒计时结束后才能确认执行重启。',
+      SystemPowerAction.shutdown =>
+        isEnglish
+            ? 'You can confirm the shutdown after the countdown finishes.'
+            : '倒计时结束后才能确认执行关机。',
     },
     seconds: 10,
     cancelLabel: cancelLabel,

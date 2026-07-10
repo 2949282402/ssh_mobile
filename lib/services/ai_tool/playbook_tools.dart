@@ -27,11 +27,17 @@ class PlaybookToolsProvider implements AiToolProvider {
       case 'list_playbooks':
         return _listPlaybooksTool(service, arguments);
       case 'create_playbook':
-        return _createPlaybookTool(service, arguments,
-            approvedWrite: approvedWrite);
+        return _createPlaybookTool(
+          service,
+          arguments,
+          approvedWrite: approvedWrite,
+        );
       case 'run_playbook':
-        return _runPlaybookTool(service, arguments,
-            approvedWrite: approvedWrite);
+        return _runPlaybookTool(
+          service,
+          arguments,
+          approvedWrite: approvedWrite,
+        );
       case 'get_playbook_status':
         return _getPlaybookStatusTool(service, arguments);
       default:
@@ -40,23 +46,29 @@ class PlaybookToolsProvider implements AiToolProvider {
   }
 
   Future<String> _listPlaybooksTool(
-      AiToolService service, Map<String, dynamic> arguments) async {
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
     final list = await storageService.loadPlaybooks();
     return jsonEncode({
       'playbooks': list
-          .map((p) => {
-                'id': p.id,
-                'name': p.name,
-                'description': p.description,
-                'stepsCount': p.steps.length,
-                'steps': p.steps
-                    .map((s) => {
-                          'name': s.name,
-                          'command': s.command,
-                          'description': s.description,
-                        })
-                    .toList(),
-              })
+          .map(
+            (p) => {
+              'id': p.id,
+              'name': p.name,
+              'description': p.description,
+              'stepsCount': p.steps.length,
+              'steps': p.steps
+                  .map(
+                    (s) => {
+                      'name': s.name,
+                      'command': s.command,
+                      'description': s.description,
+                    },
+                  )
+                  .toList(),
+            },
+          )
           .toList(),
     });
   }
@@ -78,14 +90,16 @@ class PlaybookToolsProvider implements AiToolProvider {
     final steps = <PlaybookStep>[];
     for (int i = 0; i < rawSteps.length; i++) {
       final s = rawSteps[i] as Map<String, dynamic>;
-      steps.add(PlaybookStep(
-        id: 'step_${DateTime.now().millisecondsSinceEpoch}_$i',
-        name: s['name'] as String? ?? 'Step ${i + 1}',
-        command: s['command'] as String? ?? '',
-        description: s['description'] as String? ?? '',
-        expectedOutcomeRegex: s['expectedOutcomeRegex'] as String?,
-        status: StepStatus.pending,
-      ));
+      steps.add(
+        PlaybookStep(
+          id: 'step_${DateTime.now().millisecondsSinceEpoch}_$i',
+          name: s['name'] as String? ?? 'Step ${i + 1}',
+          command: s['command'] as String? ?? '',
+          description: s['description'] as String? ?? '',
+          expectedOutcomeRegex: s['expectedOutcomeRegex'] as String?,
+          status: StepStatus.pending,
+        ),
+      );
     }
 
     final playbook = Playbook(
@@ -144,7 +158,9 @@ class PlaybookToolsProvider implements AiToolProvider {
   }
 
   Future<String> _getPlaybookStatusTool(
-      AiToolService service, Map<String, dynamic> arguments) async {
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
     if (playbookService == null) {
       final list = await storageService.loadPlaybooks();
       final playbookId = service._arg(arguments, 'playbookId');
@@ -157,20 +173,20 @@ class PlaybookToolsProvider implements AiToolProvider {
           'isPaused': false,
           'currentStepIndex': -1,
           'steps': p.steps
-              .map((s) => {
-                    'id': s.id,
-                    'name': s.name,
-                    'status': s.status.name,
-                    'exitCode': s.exitCode,
-                    'stdout': s.stdout,
-                    'stderr': s.stderr,
-                  })
+              .map(
+                (s) => {
+                  'id': s.id,
+                  'name': s.name,
+                  'status': s.status.name,
+                  'exitCode': s.exitCode,
+                  'stdout': s.stdout,
+                  'stderr': s.stderr,
+                },
+              )
               .toList(),
         });
       } catch (_) {
-        return jsonEncode({
-          'error': 'Playbook not found: $playbookId',
-        });
+        return jsonEncode({'error': 'Playbook not found: $playbookId'});
       }
     }
 
@@ -188,20 +204,20 @@ class PlaybookToolsProvider implements AiToolProvider {
           'isPaused': false,
           'currentStepIndex': -1,
           'steps': p.steps
-              .map((s) => {
-                    'id': s.id,
-                    'name': s.name,
-                    'status': s.status.name,
-                    'exitCode': s.exitCode,
-                    'stdout': s.stdout,
-                    'stderr': s.stderr,
-                  })
+              .map(
+                (s) => {
+                  'id': s.id,
+                  'name': s.name,
+                  'status': s.status.name,
+                  'exitCode': s.exitCode,
+                  'stdout': s.stdout,
+                  'stderr': s.stderr,
+                },
+              )
               .toList(),
         });
       } catch (_) {
-        return jsonEncode({
-          'error': 'Playbook not found: $playbookId',
-        });
+        return jsonEncode({'error': 'Playbook not found: $playbookId'});
       }
     }
 
@@ -212,14 +228,16 @@ class PlaybookToolsProvider implements AiToolProvider {
       'isPaused': playbookService!.isPaused,
       'currentStepIndex': playbookService!.currentStepIndex,
       'steps': active.steps
-          .map((s) => {
-                'id': s.id,
-                'name': s.name,
-                'status': s.status.name,
-                'exitCode': s.exitCode,
-                'stdout': s.stdout,
-                'stderr': s.stderr,
-              })
+          .map(
+            (s) => {
+              'id': s.id,
+              'name': s.name,
+              'status': s.status.name,
+              'exitCode': s.exitCode,
+              'stdout': s.stdout,
+              'stderr': s.stderr,
+            },
+          )
           .toList(),
     });
   }
@@ -239,8 +257,9 @@ class PlaybookToolsProvider implements AiToolProvider {
             'CLIENT tool. Create a new saved reusable playbook in local storage. Use this only when the user explicitly asks to save, persist, or reuse the script/workflow beyond the current chat plan. This updates local client data and requires user approval.',
         properties: {
           'name': _string('The display name for the playbook.'),
-          'description':
-              _string('A short description of what this playbook does.'),
+          'description': _string(
+            'A short description of what this playbook does.',
+          ),
           'steps': {
             'type': 'array',
             'description': 'The ordered list of steps to execute.',
@@ -250,9 +269,11 @@ class PlaybookToolsProvider implements AiToolProvider {
                 'name': _string('The step display name.'),
                 'description': _string('What this step accomplishes.'),
                 'command': _string(
-                    'The multiline shell command/script to run via SSH exec.'),
+                  'The multiline shell command/script to run via SSH exec.',
+                ),
                 'expectedOutcomeRegex': _string(
-                    'Optional regex pattern that the stdout must match to succeed.'),
+                  'Optional regex pattern that the stdout must match to succeed.',
+                ),
               },
               'required': const ['name', 'description', 'command'],
             },
@@ -280,9 +301,7 @@ class PlaybookToolsProvider implements AiToolProvider {
         name: 'get_playbook_status',
         description:
             'CLIENT tool. Query the active or latest execution status of a saved playbook run, including live step results, exit codes, and stdout/stderr.',
-        properties: {
-          'playbookId': _string('The playbook ID to query.'),
-        },
+        properties: {'playbookId': _string('The playbook ID to query.')},
         required: const ['playbookId'],
         handler: (args) => _getPlaybookStatusTool(service, args),
       ),

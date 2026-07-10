@@ -29,10 +29,7 @@ class AiChatRunCancelled extends AiChatRunResult {
   @override
   final String runId;
   final String partialAnswer;
-  const AiChatRunCancelled({
-    required this.runId,
-    required this.partialAnswer,
-  });
+  const AiChatRunCancelled({required this.runId, required this.partialAnswer});
 }
 
 class AiChatRunFailed extends AiChatRunResult {
@@ -50,9 +47,7 @@ class AiChatRunFailed extends AiChatRunResult {
 class AiChatGenerationRunner {
   final AiChatRuntimeFactory _runtimeFactory;
 
-  AiChatGenerationRunner({
-    required AiChatRuntimeFactory runtimeFactory,
-  }) : _runtimeFactory = runtimeFactory;
+  AiChatGenerationRunner({required this._runtimeFactory});
 
   Future<AiChatRunResult> run({
     required String chatId,
@@ -68,7 +63,7 @@ class AiChatGenerationRunner {
     required void Function(String chunk) onTextChunk,
     required void Function(LlmTraceEvent event) onTrace,
     required Future<AiToolApprovalDecision> Function(AiToolApprovalRequest)
-        requestToolApproval,
+    requestToolApproval,
   }) async {
     final runId = 'run-${const Uuid().v4()}';
     final traceRecorder = AgentTraceRecorder(
@@ -120,10 +115,7 @@ class AiChatGenerationRunner {
         runStats: runStats,
       );
     } on LlmCancelledException {
-      return AiChatRunCancelled(
-        runId: runId,
-        partialAnswer: answer.toString(),
-      );
+      return AiChatRunCancelled(runId: runId, partialAnswer: answer.toString());
     } catch (e) {
       return AiChatRunFailed(
         runId: runId,

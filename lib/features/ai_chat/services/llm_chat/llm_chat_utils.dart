@@ -38,9 +38,7 @@ extension LlmChatServiceUtils on LlmChatService {
       return value;
     }
     if (value is Map) {
-      return {
-        for (final entry in value.entries) '${entry.key}': entry.value,
-      };
+      return {for (final entry in value.entries) '${entry.key}': entry.value};
     }
     return const {};
   }
@@ -139,11 +137,7 @@ extension LlmChatServiceUtils on LlmChatService {
     required String content,
   }) {
     onTrace?.call(
-      LlmTraceEvent(
-        kind: 'budget',
-        title: title,
-        content: content,
-      ),
+      LlmTraceEvent(kind: 'budget', title: title, content: content),
     );
   }
 
@@ -197,8 +191,9 @@ extension LlmChatServiceUtils on LlmChatService {
   }
 
   String _prettyJson(Object? value) {
-    return const JsonEncoder.withIndent('  ')
-        .convert(_toolSecretPolicy.redactValue(value));
+    return const JsonEncoder.withIndent(
+      '  ',
+    ).convert(_toolSecretPolicy.redactValue(value));
   }
 
   String _toolContinuationSeparator(String visibleText) {

@@ -4,9 +4,7 @@ import 'package:ssh_mobile/services/agent_model_profile.dart';
 void main() {
   group('AgentModelProfile', () {
     test('falls back helper and audit roles to the main model by default', () {
-      const profile = AgentModelProfile(
-        mainModel: 'gpt-main',
-      );
+      const profile = AgentModelProfile(mainModel: 'gpt-main');
 
       expect(profile.usesSingleModel, isFalse);
       expect(profile.resolve(AgentModelRole.main), 'gpt-main');

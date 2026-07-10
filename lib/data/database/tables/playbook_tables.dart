@@ -12,21 +12,18 @@ class Playbooks extends Table {
   Set<Column<Object>> get primaryKey => {id};
 
   List<Index> get indexes => [
-        Index(
-          'idx_playbooks_updated_at',
-          'CREATE INDEX idx_playbooks_updated_at '
-              'ON playbooks(updated_at DESC)',
-        ),
-      ];
+    Index(
+      'idx_playbooks_updated_at',
+      'CREATE INDEX idx_playbooks_updated_at '
+          'ON playbooks(updated_at DESC)',
+    ),
+  ];
 }
 
 class PlaybookRuns extends Table {
   TextColumn get id => text()();
-  TextColumn get playbookId => text().references(
-        Playbooks,
-        #id,
-        onDelete: KeyAction.cascade,
-      )();
+  TextColumn get playbookId =>
+      text().references(Playbooks, #id, onDelete: KeyAction.cascade)();
   TextColumn get connectionId => text().nullable()();
   TextColumn get status => text()();
   IntColumn get startedAt => integer()();
@@ -38,21 +35,18 @@ class PlaybookRuns extends Table {
   Set<Column<Object>> get primaryKey => {id};
 
   List<Index> get indexes => [
-        Index(
-          'idx_playbook_runs_playbook_started',
-          'CREATE INDEX idx_playbook_runs_playbook_started '
-              'ON playbook_runs(playbook_id, started_at DESC)',
-        ),
-      ];
+    Index(
+      'idx_playbook_runs_playbook_started',
+      'CREATE INDEX idx_playbook_runs_playbook_started '
+          'ON playbook_runs(playbook_id, started_at DESC)',
+    ),
+  ];
 }
 
 class PlaybookRunSteps extends Table {
   TextColumn get id => text()();
-  TextColumn get runId => text().references(
-        PlaybookRuns,
-        #id,
-        onDelete: KeyAction.cascade,
-      )();
+  TextColumn get runId =>
+      text().references(PlaybookRuns, #id, onDelete: KeyAction.cascade)();
   IntColumn get stepIndex => integer()();
   TextColumn get name => text()();
   TextColumn get command => text()();
@@ -65,10 +59,10 @@ class PlaybookRunSteps extends Table {
   Set<Column<Object>> get primaryKey => {id};
 
   List<Index> get indexes => [
-        Index(
-          'idx_playbook_run_steps_run_index',
-          'CREATE INDEX idx_playbook_run_steps_run_index '
-              'ON playbook_run_steps(run_id, step_index ASC)',
-        ),
-      ];
+    Index(
+      'idx_playbook_run_steps_run_index',
+      'CREATE INDEX idx_playbook_run_steps_run_index '
+          'ON playbook_run_steps(run_id, step_index ASC)',
+    ),
+  ];
 }

@@ -25,10 +25,7 @@ List<AiTool> _getClientTools(
         },
         required: const ['query'],
         requiresWebViewSession: true,
-        capabilities: const {
-          AiToolCapability.web,
-          AiToolCapability.client,
-        },
+        capabilities: const {AiToolCapability.web, AiToolCapability.client},
         cacheTtl: const Duration(seconds: 30),
         handler: (args) => _webSearch(provider, service, args),
       ),
@@ -75,7 +72,8 @@ List<AiTool> _getClientTools(
       properties: const {},
       parallelSafeReadOnly: true,
       handler: (_) async => jsonEncode(
-          await provider.clientSystemToolService.getPermissionStatus()),
+        await provider.clientSystemToolService.getPermissionStatus(),
+      ),
     ),
     AiTool(
       name: 'client_check_runtime_health',
@@ -91,9 +89,7 @@ List<AiTool> _getClientTools(
         },
       },
       parallelSafeReadOnly: true,
-      capabilities: const {
-        AiToolCapability.client,
-      },
+      capabilities: const {AiToolCapability.client},
       cacheTtl: const Duration(seconds: 10),
       handler: (args) => _clientCheckRuntimeHealth(provider, service, args),
     ),
@@ -110,9 +106,7 @@ List<AiTool> _getClientTools(
       name: 'client_set_clipboard',
       description:
           'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Copy text to the client clipboard.',
-      properties: {
-        'text': _string('Text to place on the client clipboard.'),
-      },
+      properties: {'text': _string('Text to place on the client clipboard.')},
       required: const ['text'],
       executionMode: AiToolExecutionMode.stateChanging,
       handler: (args) => _clientSetClipboard(provider, service, args),
@@ -140,7 +134,8 @@ List<AiTool> _getClientTools(
             'properties': {
               'title': _string('The title or purpose of this reference.'),
               'content': _string(
-                  'The detailed instructions or commands of this reference.'),
+                'The detailed instructions or commands of this reference.',
+              ),
             },
             'required': const ['title', 'content'],
           },
@@ -148,8 +143,12 @@ List<AiTool> _getClientTools(
       },
       required: const ['summary'],
       executionMode: AiToolExecutionMode.stateChanging,
-      handler: (args) => _clientSaveExperienceSkill(provider, service, args,
-          approvedWrite: false),
+      handler: (args) => _clientSaveExperienceSkill(
+        provider,
+        service,
+        args,
+        approvedWrite: false,
+      ),
     ),
     AiTool(
       name: 'client_list_skills',
@@ -168,10 +167,12 @@ List<AiTool> _getClientTools(
           'The unique skillId of the experience skill/note to update.',
         ),
         'name': _string('Optional new short title for the skill.'),
-        'description':
-            _string('Optional new concise summary of the experience.'),
-        'content':
-            _string('Optional new detailed content, commands, or lessons.'),
+        'description': _string(
+          'Optional new concise summary of the experience.',
+        ),
+        'content': _string(
+          'Optional new detailed content, commands, or lessons.',
+        ),
         'enabled': _bool('Optional flag to enable/disable the skill.'),
         'references': {
           'type': 'array',
@@ -182,7 +183,8 @@ List<AiTool> _getClientTools(
             'properties': {
               'title': _string('The title or purpose of this reference.'),
               'content': _string(
-                  'The detailed instructions or commands of this reference.'),
+                'The detailed instructions or commands of this reference.',
+              ),
             },
             'required': const ['title', 'content'],
           },
@@ -254,10 +256,7 @@ List<AiTool> _getClientTools(
           defaultValue: 50,
         ),
       },
-      capabilities: const {
-        AiToolCapability.client,
-        AiToolCapability.logs,
-      },
+      capabilities: const {AiToolCapability.client, AiToolCapability.logs},
       cacheTtl: const Duration(seconds: 8),
       handler: (args) => _clientQueryLogs(provider, service, args),
     ),
@@ -325,10 +324,7 @@ List<AiTool> _getClientTools(
         ),
       },
       requiresWebViewSession: true,
-      capabilities: const {
-        AiToolCapability.web,
-        AiToolCapability.client,
-      },
+      capabilities: const {AiToolCapability.web, AiToolCapability.client},
       handler: (args) => _clientWebViewGetPageText(provider, service, args),
     ),
     AiTool(
@@ -337,10 +333,7 @@ List<AiTool> _getClientTools(
           'CLIENT tool. Runs on the user device running SSH Mobile, not on any SSH server. Get the current WebView state for the page bound to this chat session.',
       properties: const {},
       requiresWebViewSession: true,
-      capabilities: const {
-        AiToolCapability.web,
-        AiToolCapability.client,
-      },
+      capabilities: const {AiToolCapability.web, AiToolCapability.client},
       handler: (args) => _clientWebViewGetState(provider, service, args),
     ),
     AiTool(
@@ -360,10 +353,7 @@ List<AiTool> _getClientTools(
       required: const ['action'],
       executionMode: AiToolExecutionMode.stateChanging,
       requiresWebViewSession: true,
-      capabilities: const {
-        AiToolCapability.web,
-        AiToolCapability.client,
-      },
+      capabilities: const {AiToolCapability.web, AiToolCapability.client},
       handler: (args) => _clientWebViewNavigate(provider, service, args),
     ),
     AiTool(
@@ -378,25 +368,31 @@ List<AiTool> _getClientTools(
       description:
           'Update app operational settings that affect tools and server operations, including SFTP limits, secret-cache settings, AI timeout, web-search settings, multi-agent settings, and the per-request tool call budget. This changes local app state and requires user approval.',
       properties: {
-        'sftpDownloadLimitBytes':
-            _int('Optional SFTP download limit in bytes.'),
-        'sftpTextEditLimitBytes':
-            _int('Optional SFTP text edit limit in bytes.'),
-        'secretCacheEnabled':
-            _bool('Optional in-memory secret cache enabled flag.'),
+        'sftpDownloadLimitBytes': _int(
+          'Optional SFTP download limit in bytes.',
+        ),
+        'sftpTextEditLimitBytes': _int(
+          'Optional SFTP text edit limit in bytes.',
+        ),
+        'secretCacheEnabled': _bool(
+          'Optional in-memory secret cache enabled flag.',
+        ),
         'secretCacheTtlMinutes': _int(
           'Optional in-memory secret cache TTL in minutes.',
         ),
-        'aiRequestTimeoutSeconds':
-            _int('Optional AI request timeout in seconds.'),
+        'aiRequestTimeoutSeconds': _int(
+          'Optional AI request timeout in seconds.',
+        ),
         'webSearchEnabled': _bool('Optional AI web search enabled flag.'),
         'webSearchMaxResults': _int(
           'Optional AI web search max results setting.',
         ),
-        'multiAgentEnabled':
-            _bool('Optional automatic multi-agent collaboration flag.'),
-        'postToolReviewEnabled':
-            _bool('Optional post-tool recovery review agent flag.'),
+        'multiAgentEnabled': _bool(
+          'Optional automatic multi-agent collaboration flag.',
+        ),
+        'postToolReviewEnabled': _bool(
+          'Optional post-tool recovery review agent flag.',
+        ),
         'multiAgentMaxAgents': _int(
           'Optional maximum helper agents for automatic multi-agent collaboration.',
           minimum: AiMultiAgentMaxAgents.values.first,
@@ -429,16 +425,14 @@ List<AiTool> _getClientTools(
       description:
           'CLIENT tool. Toggle Plan Mode for the active chat thread. Set enabled=true to enter read-only planning when you need to replan. Set enabled=false to exit to execution mode ONLY after you have outlined a structured step-by-step execution plan beforehand.',
       properties: {
-        'enabled':
-            _bool('true to enter plan mode, false to exit to execution mode.'),
+        'enabled': _bool(
+          'true to enter plan mode, false to exit to execution mode.',
+        ),
       },
       required: const ['enabled'],
       executionMode: AiToolExecutionMode.planControl,
       preferredInPlanMode: true,
-      capabilities: const {
-        AiToolCapability.planning,
-        AiToolCapability.client,
-      },
+      capabilities: const {AiToolCapability.planning, AiToolCapability.client},
       handler: (args) => _clientSetPlanMode(provider, service, args),
     ),
     AiTool(
@@ -448,19 +442,19 @@ List<AiTool> _getClientTools(
       properties: {
         'name': _string('The name/title of the planned step.'),
         'command': _string(
-            'The exact shell/remote command recommended for execution in this step.'),
+          'The exact shell/remote command recommended for execution in this step.',
+        ),
         'description': _string(
-            'The purpose or explanation of what this step accomplishes.'),
+          'The purpose or explanation of what this step accomplishes.',
+        ),
         'connectionId': _string(
-            'Optional. The unique connectionId of the server to execute this step on. Use list_servers to find available ids.'),
+          'Optional. The unique connectionId of the server to execute this step on. Use list_servers to find available ids.',
+        ),
       },
       required: const ['name'],
       executionMode: AiToolExecutionMode.planOnly,
       preferredInPlanMode: true,
-      capabilities: const {
-        AiToolCapability.planning,
-        AiToolCapability.client,
-      },
+      capabilities: const {AiToolCapability.planning, AiToolCapability.client},
       handler: (args) => _clientTaskCreate(provider, service, args),
     ),
     AiTool(
@@ -475,20 +469,20 @@ List<AiTool> _getClientTools(
           'description':
               'The new execution status of the step. The legacy alias in_progress is still accepted.',
         },
-        'stdout':
-            _string('Optional stdout log response from executing the command.'),
+        'stdout': _string(
+          'Optional stdout log response from executing the command.',
+        ),
         'stderr': _string('Optional stderr log response if execution failed.'),
         'reason': _string(
-            'Required when status is skipped. Explain why skipping this step is safe.'),
-        'errorSummary':
-            _string('Optional summary of the error when status is failed.'),
+          'Required when status is skipped. Explain why skipping this step is safe.',
+        ),
+        'errorSummary': _string(
+          'Optional summary of the error when status is failed.',
+        ),
       },
       required: const ['taskId', 'status'],
       executionMode: AiToolExecutionMode.executionOnly,
-      capabilities: const {
-        AiToolCapability.planning,
-        AiToolCapability.client,
-      },
+      capabilities: const {AiToolCapability.planning, AiToolCapability.client},
       handler: (args) => _clientTaskUpdate(provider, service, args),
     ),
     AiTool(
@@ -501,10 +495,7 @@ List<AiTool> _getClientTools(
       },
       required: const ['taskId'],
       executionMode: AiToolExecutionMode.executionOnly,
-      capabilities: const {
-        AiToolCapability.planning,
-        AiToolCapability.client,
-      },
+      capabilities: const {AiToolCapability.planning, AiToolCapability.client},
       handler: (args) => _clientTaskRetry(provider, service, args),
     ),
     AiTool(
@@ -513,15 +504,13 @@ List<AiTool> _getClientTools(
           'CLIENT tool. Skip a pending or failed step in the execution plan. Skipping is only allowed if a reason is provided. This tool is ONLY allowed during Execution Mode.',
       properties: {
         'taskId': _string('The unique taskId of the step to skip.'),
-        'reason':
-            _string('Clear justification of why it is safe to skip this step.'),
+        'reason': _string(
+          'Clear justification of why it is safe to skip this step.',
+        ),
       },
       required: const ['taskId', 'reason'],
       executionMode: AiToolExecutionMode.executionOnly,
-      capabilities: const {
-        AiToolCapability.planning,
-        AiToolCapability.client,
-      },
+      capabilities: const {AiToolCapability.planning, AiToolCapability.client},
       // Approval-aware tools must be executed through AiToolService.execute,
       // which routes to provider.execute with the approvedWrite flag.
       // This handler fallback intentionally passes approvedWrite=false so

@@ -43,14 +43,14 @@ extension BackupOps on StorageService {
     final sftpFavoritePaths = <Map<String, dynamic>>[];
     for (final connection in _connections) {
       sftpRecentPaths.addAll(
-        (await loadRecentPaths(connection.id))
-            .map((item) => item.toJson())
-            .toList(),
+        (await loadRecentPaths(
+          connection.id,
+        )).map((item) => item.toJson()).toList(),
       );
       sftpFavoritePaths.addAll(
-        (await loadFavoritePaths(connection.id))
-            .map((item) => item.toJson())
-            .toList(),
+        (await loadFavoritePaths(
+          connection.id,
+        )).map((item) => item.toJson()).toList(),
       );
     }
     final payload = {
@@ -93,13 +93,16 @@ extension BackupOps on StorageService {
         'darkMode': _prefs!.getBool('dark_mode'),
         'fontFamily': _prefs!.getString('font_family'),
         'sftpDownloadLimitBytes': _prefs!.getInt('sftp_download_limit_bytes'),
-        'sftpTextPreviewLimitBytes':
-            _prefs!.getInt('sftp_text_preview_limit_bytes'),
-        'sftpRichPreviewLimitBytes':
-            _prefs!.getInt('sftp_rich_preview_limit_bytes'),
+        'sftpTextPreviewLimitBytes': _prefs!.getInt(
+          'sftp_text_preview_limit_bytes',
+        ),
+        'sftpRichPreviewLimitBytes': _prefs!.getInt(
+          'sftp_rich_preview_limit_bytes',
+        ),
         'sftpTextEditLimitBytes': _prefs!.getInt('sftp_text_edit_limit_bytes'),
-        'showServerNamesInNotifications':
-            _prefs!.getBool('show_server_names_in_notifications'),
+        'showServerNamesInNotifications': _prefs!.getBool(
+          'show_server_names_in_notifications',
+        ),
       },
       'shortcutCommands': {
         'usage': _prefs!.getString('shortcut_command_usage'),
@@ -112,10 +115,12 @@ extension BackupOps on StorageService {
       },
       'aiChats': (await loadAiChats()).map((item) => item.toJson()).toList(),
       'aiSkills': (await loadAiSkills()).map((item) => item.toJson()).toList(),
-      'agentRunMetrics':
-          (await loadAgentRunMetrics()).map((item) => item.toJson()).toList(),
-      'playbooks':
-          (await loadPlaybooks()).map((item) => item.toJson()).toList(),
+      'agentRunMetrics': (await loadAgentRunMetrics())
+          .map((item) => item.toJson())
+          .toList(),
+      'playbooks': (await loadPlaybooks())
+          .map((item) => item.toJson())
+          .toList(),
       'sftpRecentPaths': sftpRecentPaths,
       'sftpFavoritePaths': sftpFavoritePaths,
       'powerGuideSeen': _powerGuideSeen,
@@ -166,21 +171,21 @@ extension BackupOps on StorageService {
         helperModel: aiSettings['helperModel'] as String?,
         auditModel: aiSettings['auditModel'] as String?,
         modelFallbackPolicy: aiSettings['modelFallbackPolicy'] as String?,
-        contextWindowTokens:
-            (aiSettings['contextWindowTokens'] as num?)?.toInt(),
+        contextWindowTokens: (aiSettings['contextWindowTokens'] as num?)
+            ?.toInt(),
         timeoutSeconds: (aiSettings['timeoutSeconds'] as num?)?.toInt(),
         deepSeekThinkingEnabled: aiSettings['deepSeekThinkingEnabled'] as bool?,
         deepSeekReasoningEffort:
             aiSettings['deepSeekReasoningEffort'] as String?,
         openAiReasoningEffort: aiSettings['openAiReasoningEffort'] as String?,
         webSearchEnabled: aiSettings['webSearchEnabled'] as bool?,
-        webSearchMaxResults:
-            (aiSettings['webSearchMaxResults'] as num?)?.toInt(),
+        webSearchMaxResults: (aiSettings['webSearchMaxResults'] as num?)
+            ?.toInt(),
         webSearchEngine: aiSettings['webSearchEngine'] as String?,
         quarkSearchEndpoint: aiSettings['quarkSearchEndpoint'] as String?,
         multiAgentEnabled: aiSettings['multiAgentEnabled'] as bool?,
-        multiAgentMaxAgents:
-            (aiSettings['multiAgentMaxAgents'] as num?)?.toInt(),
+        multiAgentMaxAgents: (aiSettings['multiAgentMaxAgents'] as num?)
+            ?.toInt(),
         toolCallBudget: (aiSettings['toolCallBudget'] as num?)?.toInt(),
         agentLoopMode: aiSettings['agentLoopMode'] as String?,
         maxImageSizeBytes: (aiSettings['maxImageSizeBytes'] as num?)?.toInt(),
@@ -196,35 +201,49 @@ extension BackupOps on StorageService {
     final appSettings = decoded['appSettings'];
     if (appSettings is Map<String, dynamic>) {
       if (appSettings['language'] != null) {
-        await _prefs!
-            .setString('app_language', appSettings['language'] as String);
+        await _prefs!.setString(
+          'app_language',
+          appSettings['language'] as String,
+        );
       }
       if (appSettings['themeMode'] != null) {
-        await _prefs!
-            .setString('theme_mode', appSettings['themeMode'] as String);
+        await _prefs!.setString(
+          'theme_mode',
+          appSettings['themeMode'] as String,
+        );
       }
       if (appSettings['darkMode'] != null) {
         await _prefs!.setBool('dark_mode', appSettings['darkMode'] as bool);
       }
       if (appSettings['fontFamily'] != null) {
-        await _prefs!
-            .setString('font_family', appSettings['fontFamily'] as String);
+        await _prefs!.setString(
+          'font_family',
+          appSettings['fontFamily'] as String,
+        );
       }
       if (appSettings['sftpDownloadLimitBytes'] != null) {
-        await _prefs!.setInt('sftp_download_limit_bytes',
-            (appSettings['sftpDownloadLimitBytes'] as num).toInt());
+        await _prefs!.setInt(
+          'sftp_download_limit_bytes',
+          (appSettings['sftpDownloadLimitBytes'] as num).toInt(),
+        );
       }
       if (appSettings['sftpTextPreviewLimitBytes'] != null) {
-        await _prefs!.setInt('sftp_text_preview_limit_bytes',
-            (appSettings['sftpTextPreviewLimitBytes'] as num).toInt());
+        await _prefs!.setInt(
+          'sftp_text_preview_limit_bytes',
+          (appSettings['sftpTextPreviewLimitBytes'] as num).toInt(),
+        );
       }
       if (appSettings['sftpRichPreviewLimitBytes'] != null) {
-        await _prefs!.setInt('sftp_rich_preview_limit_bytes',
-            (appSettings['sftpRichPreviewLimitBytes'] as num).toInt());
+        await _prefs!.setInt(
+          'sftp_rich_preview_limit_bytes',
+          (appSettings['sftpRichPreviewLimitBytes'] as num).toInt(),
+        );
       }
       if (appSettings['sftpTextEditLimitBytes'] != null) {
-        await _prefs!.setInt('sftp_text_edit_limit_bytes',
-            (appSettings['sftpTextEditLimitBytes'] as num).toInt());
+        await _prefs!.setInt(
+          'sftp_text_edit_limit_bytes',
+          (appSettings['sftpTextEditLimitBytes'] as num).toInt(),
+        );
       }
       if (appSettings['showServerNamesInNotifications'] != null) {
         await _prefs!.setBool(
@@ -238,37 +257,49 @@ extension BackupOps on StorageService {
     if (shortcutCommands is Map<String, dynamic>) {
       if (shortcutCommands['usage'] != null) {
         await _prefs!.setString(
-            'shortcut_command_usage', shortcutCommands['usage'] as String);
+          'shortcut_command_usage',
+          shortcutCommands['usage'] as String,
+        );
       }
       if (shortcutCommands['customCommands'] != null) {
-        await _prefs!.setString('custom_shortcut_commands',
-            shortcutCommands['customCommands'] as String);
+        await _prefs!.setString(
+          'custom_shortcut_commands',
+          shortcutCommands['customCommands'] as String,
+        );
       }
       if (shortcutCommands['order'] != null) {
         await _prefs!.setString(
-            'shortcut_command_order', shortcutCommands['order'] as String);
+          'shortcut_command_order',
+          shortcutCommands['order'] as String,
+        );
       }
     }
 
     final secretCache = decoded['secretCache'];
     if (secretCache is Map<String, dynamic>) {
       if (secretCache['enabled'] != null) {
-        await _prefs!
-            .setBool('secret_cache_enabled', secretCache['enabled'] as bool);
+        await _prefs!.setBool(
+          'secret_cache_enabled',
+          secretCache['enabled'] as bool,
+        );
       }
       if (secretCache['ttlSeconds'] != null) {
-        await _prefs!.setInt('secret_cache_ttl_seconds',
-            (secretCache['ttlSeconds'] as num).toInt());
+        await _prefs!.setInt(
+          'secret_cache_ttl_seconds',
+          (secretCache['ttlSeconds'] as num).toInt(),
+        );
       }
 
       // Update in-memory values immediately
       _secretCacheEnabled =
           _prefs!.getBool(StorageService._secretCacheEnabledKey) ?? true;
-      final ttlSeconds =
-          _prefs!.getInt(StorageService._secretCacheTtlSecondsKey);
+      final ttlSeconds = _prefs!.getInt(
+        StorageService._secretCacheTtlSecondsKey,
+      );
       if (ttlSeconds != null) {
-        _secretCacheTtl =
-            _normalizeSecretCacheTtl(Duration(seconds: ttlSeconds));
+        _secretCacheTtl = _normalizeSecretCacheTtl(
+          Duration(seconds: ttlSeconds),
+        );
       } else {
         _secretCacheTtl = StorageService._defaultSecretCacheTtl;
       }
@@ -346,8 +377,10 @@ extension BackupOps on StorageService {
       try {
         callback();
       } catch (e) {
-        AppLogService.instance
-            .error('Error invoking import callback', error: e);
+        AppLogService.instance.error(
+          'Error invoking import callback',
+          error: e,
+        );
       }
     }
   }
@@ -491,14 +524,13 @@ void _validateBackupSchema(Map<String, dynamic> decoded) {
     _optionalStringLimit(skill, 'content', _maxPlaybookContentChars);
   }
 
-  _validateOptionalList(
-    decoded,
-    'agentRunMetrics',
-    _maxBackupAgentRunMetrics,
-  );
+  _validateOptionalList(decoded, 'agentRunMetrics', _maxBackupAgentRunMetrics);
 
-  final playbooks =
-      _validateOptionalList(decoded, 'playbooks', _maxBackupPlaybooks);
+  final playbooks = _validateOptionalList(
+    decoded,
+    'playbooks',
+    _maxBackupPlaybooks,
+  );
   for (final playbook in playbooks) {
     if (playbook is! Map<String, dynamic>) {
       throw StateError('Backup playbooks must contain objects.');
@@ -520,8 +552,11 @@ void _validateBackupSchema(Map<String, dynamic> decoded) {
     }
   }
 
-  final sftpRecentPaths =
-      _validateOptionalList(decoded, 'sftpRecentPaths', _maxBackupSftpPaths);
+  final sftpRecentPaths = _validateOptionalList(
+    decoded,
+    'sftpRecentPaths',
+    _maxBackupSftpPaths,
+  );
   for (final path in sftpRecentPaths) {
     if (path is! Map<String, dynamic>) {
       throw StateError('Backup sftpRecentPaths must contain objects.');
@@ -530,8 +565,11 @@ void _validateBackupSchema(Map<String, dynamic> decoded) {
     _requireString(path, 'path', _maxRemotePathChars);
   }
 
-  final sftpFavoritePaths =
-      _validateOptionalList(decoded, 'sftpFavoritePaths', _maxBackupSftpPaths);
+  final sftpFavoritePaths = _validateOptionalList(
+    decoded,
+    'sftpFavoritePaths',
+    _maxBackupSftpPaths,
+  );
   for (final path in sftpFavoritePaths) {
     if (path is! Map<String, dynamic>) {
       throw StateError('Backup sftpFavoritePaths must contain objects.');
@@ -580,11 +618,7 @@ void _requireString(Map<String, dynamic> map, String key, int maxChars) {
   }
 }
 
-void _optionalStringLimit(
-  Map<String, dynamic> map,
-  String key,
-  int maxChars,
-) {
+void _optionalStringLimit(Map<String, dynamic> map, String key, int maxChars) {
   final value = map[key];
   if (value == null) return;
   if (value is! String) {

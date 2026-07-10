@@ -6,13 +6,10 @@ class PlaybookDao extends DatabaseAccessor<AppDatabase>
   PlaybookDao(super.db);
 
   Future<List<Playbook>> loadPlaybooks() {
-    return (select(playbooks)
-          ..orderBy([
-            (row) => OrderingTerm(
-                  expression: row.updatedAt,
-                  mode: OrderingMode.desc,
-                ),
-          ]))
+    return (select(playbooks)..orderBy([
+          (row) =>
+              OrderingTerm(expression: row.updatedAt, mode: OrderingMode.desc),
+        ]))
         .get();
   }
 

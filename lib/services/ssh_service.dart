@@ -30,8 +30,9 @@ part 'ssh/local_ssh_runtime.dart';
 class SshService extends ChangeNotifier implements SshClientAdapter {
   final StorageService _storageService;
   final AppSettings? _appSettings;
-  late final SshClientFactory _clientFactory =
-      SshClientFactory(_storageService);
+  late final SshClientFactory _clientFactory = SshClientFactory(
+    _storageService,
+  );
   final FlutterBackgroundService _backgroundService =
       FlutterBackgroundService();
   final TerminalHistoryService _historyService = TerminalHistoryService();
@@ -52,8 +53,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
   String? _lastErrorMessage;
   bool _restoredTmuxSessions = false;
 
-  SshService(this._storageService, {AppSettings? appSettings})
-      : _appSettings = appSettings {
+  SshService(this._storageService, {this._appSettings}) {
     if (_usesBackgroundService) {
       _listenToBackgroundService();
     } else {
@@ -160,7 +160,9 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     final session = _sessions[sessionId];
     if (session == null) return;
     session.fontSize = fontSize.clamp(
-        SshSession.minTerminalFontSize, SshSession.maxTerminalFontSize);
+      SshSession.minTerminalFontSize,
+      SshSession.maxTerminalFontSize,
+    );
     unawaited(_saveRestorableTmuxSession(session));
     _notifySessionMetadataChanged();
   }
@@ -354,7 +356,8 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     unawaited(_saveTerminalHistoryRecord(session));
     AppLogService.instance.info(
       'Session connecting',
-      details: 'sessionId=$id connection=${config.name} '
+      details:
+          'sessionId=$id connection=${config.name} '
           'mode=${launchMode.name} platform=${config.serverPlatform.name}',
     );
     _notifySessionMetadataChanged();
@@ -427,9 +430,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
         );
       }
 
-      await connectCompleter.future.timeout(
-        const Duration(seconds: 30),
-      );
+      await connectCompleter.future.timeout(const Duration(seconds: 30));
     } on TimeoutException {
       AppLogService.instance.error(
         'Session connect timed out',
@@ -449,8 +450,10 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
 
   @override
   Future<void> disconnectSession(String sessionId) async {
-    AppLogService.instance
-        .info('Disconnecting session', details: 'sessionId=$sessionId');
+    AppLogService.instance.info(
+      'Disconnecting session',
+      details: 'sessionId=$sessionId',
+    );
     _closingSessionIds.add(sessionId);
     if (_usesBackgroundService) {
       _backgroundService.invoke('sshDisconnect', {'sessionId': sessionId});
@@ -683,9 +686,11 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
       _onLocalSessionErrorData(session.id, text);
     });
 
-    unawaited(shell.done.then((_) {
-      _onLocalSessionDone(session.id);
-    }));
+    unawaited(
+      shell.done.then((_) {
+        _onLocalSessionDone(session.id);
+      }),
+    );
 
     _startLocalKeepAlive(runtime);
 
@@ -774,8 +779,9 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
   }
 
   void _startLocalKeepAlive(_LocalSshRuntime runtime) {
-    runtime.keepAliveTimer =
-        Timer.periodic(const Duration(seconds: 15), (timer) async {
+    runtime.keepAliveTimer = Timer.periodic(const Duration(seconds: 15), (
+      timer,
+    ) async {
       if (runtime.pingInFlight) {
         runtime.keepAliveFailures++;
         AppLogService.instance.warning(
@@ -812,8 +818,10 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     });
   }
 
-  Future<void> _closeLocalSession(String sessionId,
-      {required bool destroyTmux}) async {
+  Future<void> _closeLocalSession(
+    String sessionId, {
+    required bool destroyTmux,
+  }) async {
     final runtime = _localRuntimes.remove(sessionId);
     if (runtime == null) return;
 
@@ -932,8 +940,10 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
   }
 
   void _refreshSessionsView() {
-    _sessionsView = List.unmodifiable(_sessions.values.toList()
-      ..sort((a, b) => a.createdAt.compareTo(b.createdAt)));
+    _sessionsView = List.unmodifiable(
+      _sessions.values.toList()
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt)),
+    );
 
     if (!_usesBackgroundService) {
       final byConnection = <String, SshConnectionOverview>{};
@@ -964,7 +974,8 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
           byConnection[connId] = SshConnectionOverview(
             count: current.count + 1,
             latestState: newState,
-            hasConnected: current.hasConnected ||
+            hasConnected:
+                current.hasConnected ||
                 session.state == SshConnectionState.connected,
           );
         }
@@ -1020,13 +1031,17 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     }
   }
 
-  String _uniqueTmuxSessionName(String baseName,
-      {required String exceptSessionId}) {
+  String _uniqueTmuxSessionName(
+    String baseName, {
+    required String exceptSessionId,
+  }) {
     bool exists(String name) {
-      return _sessions.values.any((session) =>
-          session.id != exceptSessionId &&
-          session.tmuxSessionName != null &&
-          session.tmuxSessionName!.toLowerCase() == name.toLowerCase());
+      return _sessions.values.any(
+        (session) =>
+            session.id != exceptSessionId &&
+            session.tmuxSessionName != null &&
+            session.tmuxSessionName!.toLowerCase() == name.toLowerCase(),
+      );
     }
 
     final normalized = baseName.trim().replaceAll(RegExp(r'\s+'), '_');

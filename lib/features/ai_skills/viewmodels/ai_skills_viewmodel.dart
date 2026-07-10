@@ -23,12 +23,10 @@ class AiSkillsViewModel extends ChangeNotifier {
   List<SkillReferenceItem> _references = const [];
 
   AiSkillsViewModel({
-    required StorageService storageService,
-    required AppSettings appSettings,
+    required this._storageService,
+    required this._appSettings,
     SkillDomainService? skillDomainService,
-  })  : _storageService = storageService,
-        _appSettings = appSettings,
-        _skillDomainService = skillDomainService ?? const SkillDomainService();
+  }) : _skillDomainService = skillDomainService ?? const SkillDomainService();
 
   @override
   void dispose() {
@@ -83,8 +81,9 @@ class AiSkillsViewModel extends ChangeNotifier {
     _hasReferences = skill.references.isNotEmpty;
     if (!isSameId) {
       final fm = SkillFrontmatter.parse(skill.content);
-      nameController.text =
-          skill.name.isNotEmpty ? skill.name : (fm?.name ?? '');
+      nameController.text = skill.name.isNotEmpty
+          ? skill.name
+          : (fm?.name ?? '');
       descriptionController.text = skill.description.isNotEmpty
           ? skill.description
           : (fm?.description ?? '');
@@ -158,8 +157,9 @@ description: ""
     final now = DateTime.now();
     final current = selectedSkill;
     final isNew = current == null;
-    final activeReferences =
-        _hasReferences ? _references : const <SkillReferenceItem>[];
+    final activeReferences = _hasReferences
+        ? _references
+        : const <SkillReferenceItem>[];
 
     final inputName = nameController.text.trim();
     final inputDesc = descriptionController.text.trim();
@@ -223,8 +223,10 @@ description: ""
     _dirty = false;
 
     if (isNew) {
-      final saved =
-          data.firstWhere((item) => item.id == skill.id, orElse: () => skill);
+      final saved = data.firstWhere(
+        (item) => item.id == skill.id,
+        orElse: () => skill,
+      );
       selectSkill(saved);
     } else {
       notifyListeners();
@@ -274,7 +276,7 @@ description: ""
           title: 'Example reference document',
           content:
               'Put detailed rules, commands, or troubleshooting instructions here.',
-        )
+        ),
       ];
     }
     _dirty = true;

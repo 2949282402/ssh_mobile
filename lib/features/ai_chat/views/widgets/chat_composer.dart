@@ -62,8 +62,9 @@ class _ChatComposerState extends State<_ChatComposer> {
           sending: vm.sending,
           hasPendingAttachments: vm.pendingAttachments.isNotEmpty,
           pendingAttachmentsCount: vm.pendingAttachments.length,
-          selectedConnectionIds:
-              Set<String>.unmodifiable(vm.selectedConnectionIds),
+          selectedConnectionIds: Set<String>.unmodifiable(
+            vm.selectedConnectionIds,
+          ),
           connectionsCount: vm.connections.length,
         );
       },
@@ -75,9 +76,7 @@ class _ChatComposerState extends State<_ChatComposer> {
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
           decoration: BoxDecoration(
             color: colorScheme.surfaceContainer,
-            border: Border(
-              top: BorderSide(color: colorScheme.outlineVariant),
-            ),
+            border: Border(top: BorderSide(color: colorScheme.outlineVariant)),
           ),
           child: SingleChildScrollView(
             reverse: true,
@@ -206,8 +205,9 @@ class _ChatComposerState extends State<_ChatComposer> {
                             ? Icons.stop_rounded
                             : Icons.send_rounded,
                       ),
-                      onPressed:
-                          snapshot.sending ? widget.onStop : widget.onSubmit,
+                      onPressed: snapshot.sending
+                          ? widget.onStop
+                          : widget.onSubmit,
                     ),
                   ],
                 ),
@@ -239,19 +239,25 @@ class _ChatComposerState extends State<_ChatComposer> {
                             onWebViewTap: () =>
                                 state._openClientWebView(snapshot.chatId),
                             onImageTap: () => ChatAttachmentPicker.pickImage(
-                                context, strings, viewModel),
+                              context,
+                              strings,
+                              viewModel,
+                            ),
                             onFileTap: () => ChatAttachmentPicker.pickFile(
-                                context, strings, viewModel),
+                              context,
+                              strings,
+                              viewModel,
+                            ),
                             onRagTap: () => ChatRagSheet.show(context, strings),
                             onPromptTap: () =>
                                 state._showPromptCustomizer(strings),
                             onPlanModeTap: () =>
                                 LlmChatCommandsHelper.setPlanModeFromUi(
-                              context: context,
-                              chat: activeChat,
-                              enabled: !snapshot.planMode,
-                              strings: strings,
-                            ),
+                                  context: context,
+                                  chat: activeChat,
+                                  enabled: !snapshot.planMode,
+                                  strings: strings,
+                                ),
                             onPlaybooksTap: () {
                               Navigator.pushNamed(context, '/playbooks');
                             },

@@ -123,8 +123,10 @@ abstract interface class AiSettingsRepository {
   Future<void> removeAiApiKeyHistoryEntry(String id);
   Future<List<AiApiKeyHistoryEntry>> loadAiApiKeyHistory();
   Future<String?> getAiApiKeyById(String id);
-  Future<void> saveCachedAiModels(
-      {required String baseUrl, required Iterable<String> models});
+  Future<void> saveCachedAiModels({
+    required String baseUrl,
+    required Iterable<String> models,
+  });
   Future<void> clearCachedAiModels({String? baseUrl});
   Future<int> getAiRequestTimeoutSeconds();
   Future<void> selectAiApiKey(String id);
@@ -231,13 +233,12 @@ class StorageService extends ChangeNotifier
     required String? algorithm,
     required String? fingerprint,
     required DateTime? trustedAt,
-  }) =>
-      ConnectionOps(this).trustHostKey(
-        connectionId,
-        algorithm: algorithm,
-        fingerprint: fingerprint,
-        trustedAt: trustedAt,
-      );
+  }) => ConnectionOps(this).trustHostKey(
+    connectionId,
+    algorithm: algorithm,
+    fingerprint: fingerprint,
+    trustedAt: trustedAt,
+  );
 
   @override
   Future<void> deleteConnection(String id) =>
@@ -303,44 +304,43 @@ class StorageService extends ChangeNotifier
     String? customSummarizerPrompt,
     String? customCoordinatorPrompt,
     LlmApiFormat? apiFormat,
-  }) =>
-      SettingsOps(this).saveAiConnectionSettings(
-        baseUrl: baseUrl,
-        model: model,
-        helperModel: helperModel,
-        auditModel: auditModel,
-        modelFallbackPolicy: modelFallbackPolicy,
-        contextWindowTokens: contextWindowTokens,
-        timeoutSeconds: timeoutSeconds,
-        deepSeekThinkingEnabled: deepSeekThinkingEnabled,
-        deepSeekReasoningEffort: deepSeekReasoningEffort,
-        openAiReasoningEffort: openAiReasoningEffort,
-        webSearchEnabled: webSearchEnabled,
-        webSearchMaxResults: webSearchMaxResults,
-        webSearchEngine: webSearchEngine,
-        multiAgentEnabled: multiAgentEnabled,
-        multiAgentMaxAgents: multiAgentMaxAgents,
-        postToolReviewEnabled: postToolReviewEnabled,
-        toolCallBudget: toolCallBudget,
-        agentLoopMode: agentLoopMode,
-        maxImageSizeBytes: maxImageSizeBytes,
-        maxFileSizeBytes: maxFileSizeBytes,
-        apiKey: apiKey,
-        selectedApiKeyId: selectedApiKeyId,
-        clearApiKey: clearApiKey,
-        quarkSearchEndpoint: quarkSearchEndpoint,
-        quarkApiKey: quarkApiKey,
-        clearQuarkApiKey: clearQuarkApiKey,
-        useCustomPrompts: useCustomPrompts,
-        customSystemPrompt: customSystemPrompt,
-        customPlannerPrompt: customPlannerPrompt,
-        customOperatorPrompt: customOperatorPrompt,
-        customExplorePrompt: customExplorePrompt,
-        customReviewerPrompt: customReviewerPrompt,
-        customSummarizerPrompt: customSummarizerPrompt,
-        customCoordinatorPrompt: customCoordinatorPrompt,
-        apiFormat: apiFormat,
-      );
+  }) => SettingsOps(this).saveAiConnectionSettings(
+    baseUrl: baseUrl,
+    model: model,
+    helperModel: helperModel,
+    auditModel: auditModel,
+    modelFallbackPolicy: modelFallbackPolicy,
+    contextWindowTokens: contextWindowTokens,
+    timeoutSeconds: timeoutSeconds,
+    deepSeekThinkingEnabled: deepSeekThinkingEnabled,
+    deepSeekReasoningEffort: deepSeekReasoningEffort,
+    openAiReasoningEffort: openAiReasoningEffort,
+    webSearchEnabled: webSearchEnabled,
+    webSearchMaxResults: webSearchMaxResults,
+    webSearchEngine: webSearchEngine,
+    multiAgentEnabled: multiAgentEnabled,
+    multiAgentMaxAgents: multiAgentMaxAgents,
+    postToolReviewEnabled: postToolReviewEnabled,
+    toolCallBudget: toolCallBudget,
+    agentLoopMode: agentLoopMode,
+    maxImageSizeBytes: maxImageSizeBytes,
+    maxFileSizeBytes: maxFileSizeBytes,
+    apiKey: apiKey,
+    selectedApiKeyId: selectedApiKeyId,
+    clearApiKey: clearApiKey,
+    quarkSearchEndpoint: quarkSearchEndpoint,
+    quarkApiKey: quarkApiKey,
+    clearQuarkApiKey: clearQuarkApiKey,
+    useCustomPrompts: useCustomPrompts,
+    customSystemPrompt: customSystemPrompt,
+    customPlannerPrompt: customPlannerPrompt,
+    customOperatorPrompt: customOperatorPrompt,
+    customExplorePrompt: customExplorePrompt,
+    customReviewerPrompt: customReviewerPrompt,
+    customSummarizerPrompt: customSummarizerPrompt,
+    customCoordinatorPrompt: customCoordinatorPrompt,
+    apiFormat: apiFormat,
+  );
 
   @override
   Future<List<String>> loadCachedAiModels({String? baseUrl}) =>
@@ -363,9 +363,10 @@ class StorageService extends ChangeNotifier
       SettingsOps(this).getAiApiKeyById(id);
 
   @override
-  Future<void> saveCachedAiModels(
-          {required String baseUrl, required Iterable<String> models}) =>
-      SettingsOps(this).saveCachedAiModels(baseUrl: baseUrl, models: models);
+  Future<void> saveCachedAiModels({
+    required String baseUrl,
+    required Iterable<String> models,
+  }) => SettingsOps(this).saveCachedAiModels(baseUrl: baseUrl, models: models);
 
   @override
   Future<void> clearCachedAiModels({String? baseUrl}) =>
@@ -608,8 +609,10 @@ class StorageService extends ChangeNotifier
       await _loadSecretCacheSettings();
       await _loadConnections();
     } catch (e) {
-      AppLogService.instance
-          .error('Failed to initialize storage service preferences', error: e);
+      AppLogService.instance.error(
+        'Failed to initialize storage service preferences',
+        error: e,
+      );
       _connections = [];
       _refreshConnectionsView();
       _powerGuideSeen = false;
@@ -624,10 +627,14 @@ class StorageService extends ChangeNotifier
         await _initializeDriftStorage();
       } else {
         // Asynchronously initialize Drift database in the background to not block cold start
-        unawaited(_initializeDriftStorage().catchError((e) {
-          AppLogService.instance
-              .error('Asynchronous Drift initialization failed', error: e);
-        }));
+        unawaited(
+          _initializeDriftStorage().catchError((e) {
+            AppLogService.instance.error(
+              'Asynchronous Drift initialization failed',
+              error: e,
+            );
+          }),
+        );
       }
     }
   }
@@ -669,9 +676,9 @@ class StorageService extends ChangeNotifier
   Future<List<String>> loadRecentAgentTraceRunIdsForChat(
     String chatId, {
     int limit = 20,
-  }) =>
-      _executeDrift(
-          () => _loadRecentAgentTraceRunIdsForChat(chatId, limit: limit));
+  }) => _executeDrift(
+    () => _loadRecentAgentTraceRunIdsForChat(chatId, limit: limit),
+  );
 
   @override
   Future<void> saveAgentTraceEvent(AgentTraceEvent event) =>
@@ -705,16 +712,14 @@ class StorageService extends ChangeNotifier
   Future<List<SftpRecentPathRecord>> loadRecentPaths(
     String connectionId, {
     int limit = 30,
-  }) =>
-      _executeDrift(() => _loadSftpRecentPaths(connectionId, limit: limit));
+  }) => _executeDrift(() => _loadSftpRecentPaths(connectionId, limit: limit));
 
   @override
   Future<SftpFavoritePathRecord> addFavoritePath(
     String connectionId,
     String path,
     String name,
-  ) =>
-      _executeDrift(() => _addSftpFavoritePath(connectionId, path, name));
+  ) => _executeDrift(() => _addSftpFavoritePath(connectionId, path, name));
 
   @override
   Future<void> removeFavoritePath(String id) =>
@@ -732,8 +737,7 @@ class StorageService extends ChangeNotifier
   Future<SftpFavoritePathRecord?> findFavoritePath(
     String connectionId,
     String path,
-  ) =>
-      _executeDrift(() => _findSftpFavoritePath(connectionId, path));
+  ) => _executeDrift(() => _findSftpFavoritePath(connectionId, path));
 
   @override
   Future<String> exportAppDataJson() =>

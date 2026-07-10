@@ -22,14 +22,11 @@ class ConnectionViewModel extends ChangeNotifier {
   String? _errorMessage;
 
   ConnectionViewModel({
-    required ConnectionRepository connectionRepository,
-    required SshService sshService,
-    required SftpService sftpService,
-    required PerformanceMonitorService performanceService,
-  })  : _connectionRepository = connectionRepository,
-        _sshService = sshService,
-        _sftpService = sftpService,
-        _performanceService = performanceService;
+    required this._connectionRepository,
+    required this._sshService,
+    required this._sftpService,
+    required this._performanceService,
+  });
 
   List<ConnectionConfig> get connections => _connections;
   bool get isLoading => _isLoading;
@@ -157,8 +154,9 @@ class ConnectionViewModel extends ChangeNotifier {
       _isVerifying = false;
       notifyListeners();
 
-      final activeWindowCount =
-          isEditing ? _sshService.sessionCountForConnection(config.id) : 0;
+      final activeWindowCount = isEditing
+          ? _sshService.sessionCountForConnection(config.id)
+          : 0;
       if (activeWindowCount > 0) {
         _isSaving = false;
         notifyListeners();

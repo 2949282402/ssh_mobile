@@ -37,13 +37,12 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
       details: 'endpoint=$endpoint',
     );
     try {
-      final response = await client.get(
-        endpoint,
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-      ).timeout(const Duration(seconds: 30));
+      final response = await client
+          .get(
+            endpoint,
+            headers: {'x-api-key': apiKey, 'anthropic-version': '2023-06-01'},
+          )
+          .timeout(const Duration(seconds: 30));
 
       final body = response.body;
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -52,9 +51,7 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
           details:
               'status=${response.statusCode} elapsedMs=${DateTime.now().difference(startedAt).inMilliseconds} bodyChars=${body.length}',
         );
-        throw StateError(
-          'Fetch models failed (${response.statusCode}): $body',
-        );
+        throw StateError('Fetch models failed (${response.statusCode}): $body');
       }
 
       final decoded = jsonDecode(body) as Map<String, dynamic>;
@@ -109,7 +106,7 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
         final requestBody = <String, dynamic>{
           'model': request.model,
           'messages': convertedMessages,
-          if (systemPrompt != null) 'system': systemPrompt,
+          'system': ?systemPrompt,
           'max_tokens': 4096,
           if (request.includeTools && request.tools.isNotEmpty)
             'tools': _convertOpenAiToolsToAnthropic(request.tools),
@@ -150,11 +147,13 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
               final id = item['id'] as String? ?? '';
               final name = item['name'] as String? ?? '';
               final inputMap = item['input'] as Map? ?? const {};
-              providerToolCalls.add(LlmProviderToolCall(
-                id: id,
-                name: name,
-                argumentsJson: jsonEncode(inputMap),
-              ));
+              providerToolCalls.add(
+                LlmProviderToolCall(
+                  id: id,
+                  name: name,
+                  argumentsJson: jsonEncode(inputMap),
+                ),
+              );
             }
           }
         }
@@ -243,7 +242,7 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
         final requestBody = <String, dynamic>{
           'model': request.model,
           'messages': convertedMessages,
-          if (systemPrompt != null) 'system': systemPrompt,
+          'system': ?systemPrompt,
           'max_tokens': 4096,
           if (request.includeTools && request.tools.isNotEmpty)
             'tools': _convertOpenAiToolsToAnthropic(request.tools),
@@ -262,9 +261,9 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
         });
         httpRequest.bodyBytes = bodyBytes;
 
-        final response = await client.send(httpRequest).timeout(
-              Duration(seconds: request.timeoutSeconds),
-            );
+        final response = await client
+            .send(httpRequest)
+            .timeout(Duration(seconds: request.timeoutSeconds));
 
         if (response.statusCode < 200 || response.statusCode >= 300) {
           final body = await response.stream.bytesToString();
@@ -378,7 +377,8 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
           );
           throw const LlmCancelledException();
         }
-        final canRetry = _isRetryableNetworkError(e) &&
+        final canRetry =
+            _isRetryableNetworkError(e) &&
             contentChunks.isEmpty &&
             toolCalls.isEmpty &&
             attempt < 3;
@@ -423,10 +423,7 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
           {
             'id': call.id,
             'type': 'function',
-            'function': {
-              'name': call.name,
-              'arguments': call.argumentsJson,
-            },
+            'function': {'name': call.name, 'arguments': call.argumentsJson},
           },
       ],
       if (reasoningContent != null && reasoningContent.trim().isNotEmpty)
@@ -442,11 +439,7 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
     required LlmProviderToolCall call,
     required String result,
   }) {
-    return {
-      'role': 'tool',
-      'tool_call_id': call.id,
-      'content': result,
-    };
+    return {'role': 'tool', 'tool_call_id': call.id, 'content': result};
   }
 
   String _joinUrl(String baseUrl, String path) {
@@ -473,10 +466,7 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
       }
 
       if (role == 'user') {
-        anthropicMessages.add({
-          'role': 'user',
-          'content': content ?? '',
-        });
+        anthropicMessages.add({'role': 'user', 'content': content ?? ''});
         continue;
       }
 
@@ -490,10 +480,7 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
         } else {
           final contentList = <Map<String, dynamic>>[];
           if (content is String && content.isNotEmpty) {
-            contentList.add({
-              'type': 'text',
-              'text': content,
-            });
+            contentList.add({'type': 'text', 'text': content});
           }
           for (final tc in toolCalls) {
             if (tc is Map) {
@@ -516,10 +503,7 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
               });
             }
           }
-          anthropicMessages.add({
-            'role': 'assistant',
-            'content': contentList,
-          });
+          anthropicMessages.add({'role': 'assistant', 'content': contentList});
         }
         continue;
       }
@@ -568,12 +552,12 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
           final prevList = prevContent is List
               ? prevContent
               : [
-                  {'type': 'text', 'text': prevContent}
+                  {'type': 'text', 'text': prevContent},
                 ];
           final nextList = nextContent is List
               ? nextContent
               : [
-                  {'type': 'text', 'text': nextContent}
+                  {'type': 'text', 'text': nextContent},
                 ];
           prevMsg['content'] = [...prevList, ...nextList];
         }
@@ -586,7 +570,8 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
   }
 
   List<Map<String, dynamic>> _convertOpenAiToolsToAnthropic(
-      List<Map<String, dynamic>> openAiTools) {
+    List<Map<String, dynamic>> openAiTools,
+  ) {
     final anthropicTools = <Map<String, dynamic>>[];
     for (final tool in openAiTools) {
       if (tool['type'] == 'function') {
@@ -595,11 +580,8 @@ class AnthropicMessagesProvider implements LlmProviderAdapter {
           anthropicTools.add({
             'name': function['name'],
             'description': function['description'] ?? '',
-            'input_schema': function['parameters'] ??
-                {
-                  'type': 'object',
-                  'properties': {},
-                },
+            'input_schema':
+                function['parameters'] ?? {'type': 'object', 'properties': {}},
           });
         }
       }

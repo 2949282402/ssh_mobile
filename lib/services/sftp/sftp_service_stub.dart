@@ -57,10 +57,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   bool isConnectionOpen(String connectionId) => false;
 
   @override
-  Future<void> connect(
-    String connectionId, {
-    dynamic onUnknownHostKey,
-  }) async {
+  Future<void> connect(String connectionId, {dynamic onUnknownHostKey}) async {
     _activeConnectionId = connectionId;
     _state = SftpConnectionState.error;
     _errorMessage =

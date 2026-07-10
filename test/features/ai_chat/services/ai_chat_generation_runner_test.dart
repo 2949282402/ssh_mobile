@@ -41,7 +41,7 @@ class FakeLlmChatService implements LlmChatService {
     required List<Map<String, dynamic>> messages,
     String? modelOverride,
     Future<AiToolApprovalDecision> Function(AiToolApprovalRequest request)?
-        requestToolApproval,
+    requestToolApproval,
     void Function(LlmRunStats stats)? onStats,
     void Function(LlmTraceEvent event)? onTrace,
     LlmCancellationToken? cancellationToken,
@@ -60,25 +60,27 @@ class FakeLlmChatService implements LlmChatService {
     receivedForceContextCompression = forceContextCompression;
     // 触发 stats 回调
     if (onStats != null) {
-      onStats(LlmRunStats(
-        promptTokens: 10,
-        completionTokens: 20,
-        totalTokens: 30,
-        elapsedMs: 100,
-        toolCalls: 1,
-        cacheHits: 5,
-        dedupBlockedCalls: 0,
-        approvalCount: 1,
-        approvedCount: 1,
-        auditEscalationLevel: 0,
-        helperFanout: 0,
-        selectedToolSet: [],
-        memorySources: [],
-        usageFromProvider: true,
-        contextTokensBeforeCompression: 10,
-        contextWindowTokens: 16384,
-        compressed: false,
-      ));
+      onStats(
+        LlmRunStats(
+          promptTokens: 10,
+          completionTokens: 20,
+          totalTokens: 30,
+          elapsedMs: 100,
+          toolCalls: 1,
+          cacheHits: 5,
+          dedupBlockedCalls: 0,
+          approvalCount: 1,
+          approvedCount: 1,
+          auditEscalationLevel: 0,
+          helperFanout: 0,
+          selectedToolSet: [],
+          memorySources: [],
+          usageFromProvider: true,
+          contextTokensBeforeCompression: 10,
+          contextWindowTokens: 16384,
+          compressed: false,
+        ),
+      );
     }
     if (onTrace != null) {
       for (final event in emittedTraces) {
@@ -143,10 +145,14 @@ void main() {
 
     sshService = SshService(storageService);
     sftpService = SftpService(storageService);
-    performanceMonitorService =
-        PerformanceMonitorService(sshService, storageService);
-    playbookService =
-        PlaybookService(storageService: storageService, sshService: sshService);
+    performanceMonitorService = PerformanceMonitorService(
+      sshService,
+      storageService,
+    );
+    playbookService = PlaybookService(
+      storageService: storageService,
+      sshService: sshService,
+    );
     ragService = RagService(storageService: storageService);
   });
 
@@ -214,14 +220,14 @@ void main() {
       expect(receivedTraces, hasLength(1));
       expect(receivedTraces.first.kind, 'reasoning');
       expect(receivedApprovals, isEmpty);
-      final traceEvents =
-          await storageService.loadAgentTraceEvents(success.runId);
+      final traceEvents = await storageService.loadAgentTraceEvents(
+        success.runId,
+      );
       expect(traceEvents, hasLength(1));
       expect(traceEvents.single.kind, 'reasoning');
     });
 
-    test('run persists tool, approval, blocked, and compression traces',
-        () async {
+    test('run persists tool, approval, blocked, and compression traces', () async {
       final fakeService = FakeLlmChatService(
         emittedTraces: const [
           LlmTraceEvent(
@@ -393,8 +399,10 @@ void main() {
       final cancelled = result as AiChatRunCancelled;
       expect(cancelled.runId, startsWith('run-'));
       expect(cancelled.partialAnswer, 'partial');
-      expect(await storageService.loadAgentTraceEvents(cancelled.runId),
-          isNotEmpty);
+      expect(
+        await storageService.loadAgentTraceEvents(cancelled.runId),
+        isNotEmpty,
+      );
     });
 
     test('run handles errors', () async {
@@ -444,7 +452,9 @@ void main() {
       expect(failed.runId, startsWith('run-'));
       expect(failed.error.toString(), contains('network error'));
       expect(
-          await storageService.loadAgentTraceEvents(failed.runId), isNotEmpty);
+        await storageService.loadAgentTraceEvents(failed.runId),
+        isNotEmpty,
+      );
     });
   });
 }

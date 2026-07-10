@@ -108,8 +108,9 @@ Future<void> main() async {
             ),
             ChangeNotifierProvider(
               create: (context) {
-                final service =
-                    RagService(storageService: context.read<StorageService>());
+                final service = RagService(
+                  storageService: context.read<StorageService>(),
+                );
                 context.read<StorageService>().registerOnImportCallback(() {
                   unawaited(service.init(force: true));
                 });
@@ -123,8 +124,8 @@ Future<void> main() async {
                   storageService: context.read<StorageService>(),
                   sshService: context.read<SshService>(),
                   sftpService: context.read<SftpService>(),
-                  performanceMonitorService:
-                      context.read<PerformanceMonitorService>(),
+                  performanceMonitorService: context
+                      .read<PerformanceMonitorService>(),
                   playbookService: context.read<PlaybookService>(),
                   ragService: context.read<RagService>(),
                   appSettings: context.read<AppSettings>(),
@@ -156,9 +157,8 @@ Future<void> main() async {
               ),
             ),
             ChangeNotifierProvider(
-              create: (context) => SftpViewModel(
-                sftpService: context.read<SftpService>(),
-              ),
+              create: (context) =>
+                  SftpViewModel(sftpService: context.read<SftpService>()),
             ),
             ChangeNotifierProvider(
               create: (context) => SystemAdminViewModel(
@@ -271,9 +271,7 @@ class _SshMobileAppState extends State<SshMobileApp>
             return MediaQuery(
               data: adaptedMediaQuery,
               child: Theme(
-                data: Theme.of(context).copyWith(
-                  visualDensity: visualDensity,
-                ),
+                data: Theme.of(context).copyWith(visualDensity: visualDensity),
                 child: shadChild,
               ),
             );
@@ -317,14 +315,11 @@ class _SshMobileAppState extends State<SshMobileApp>
                 }
 
                 return MaterialPageRoute(
-                  builder: (_) => TerminalWindowsScreen(
-                    connectionId: connectionId,
-                  ),
+                  builder: (_) =>
+                      TerminalWindowsScreen(connectionId: connectionId),
                 );
               case '/sftp':
-                return MaterialPageRoute(
-                  builder: (_) => const SftpScreen(),
-                );
+                return MaterialPageRoute(builder: (_) => const SftpScreen());
               case '/performance':
                 return MaterialPageRoute(
                   builder: (_) => const HomeScreen(initialIndex: 3),
@@ -359,9 +354,7 @@ class _SshMobileAppState extends State<SshMobileApp>
                   ),
                 );
               case '/add':
-                return MaterialPageRoute(
-                  builder: (_) => const AddEditScreen(),
-                );
+                return MaterialPageRoute(builder: (_) => const AddEditScreen());
               case '/edit':
                 final id = settings.arguments as String;
                 return MaterialPageRoute(
@@ -378,9 +371,7 @@ class _SshMobileAppState extends State<SshMobileApp>
                   ),
                 );
               default:
-                return MaterialPageRoute(
-                  builder: (_) => const HomeScreen(),
-                );
+                return MaterialPageRoute(builder: (_) => const HomeScreen());
             }
           },
         );

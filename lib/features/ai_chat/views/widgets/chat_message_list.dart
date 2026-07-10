@@ -86,10 +86,14 @@ class _ChatMessageList extends StatelessWidget {
               itemCount: visibleMessages.length,
               itemBuilder: (context, index) {
                 final message = visibleMessages[index];
-                final streamingTextListenable =
-                    viewModel.streamingTextFor(snapshot.chatId, message);
-                final streamingStatusListenable =
-                    viewModel.streamingStatusFor(snapshot.chatId, message);
+                final streamingTextListenable = viewModel.streamingTextFor(
+                  snapshot.chatId,
+                  message,
+                );
+                final streamingStatusListenable = viewModel.streamingStatusFor(
+                  snapshot.chatId,
+                  message,
+                );
 
                 return RepaintBoundary(
                   key: ValueKey(
@@ -101,17 +105,20 @@ class _ChatMessageList extends StatelessWidget {
                     message: message,
                     streamingTextListenable: streamingTextListenable,
                     streamingStatusListenable: streamingStatusListenable,
-                    canAct: !snapshot.sending &&
+                    canAct:
+                        !snapshot.sending &&
                         snapshot.messages == visibleMessages,
-                    onEditUser:
-                        message.role == 'user' ? () => onEditUser(index) : null,
+                    onEditUser: message.role == 'user'
+                        ? () => onEditUser(index)
+                        : null,
                     onRegenerate: message.role == 'assistant'
                         ? () => onRegenerate(index)
                         : null,
                     onBranch: message.role == 'assistant'
                         ? () => onBranch(index)
                         : null,
-                    onContinueTimeout: message.role == 'error' &&
+                    onContinueTimeout:
+                        message.role == 'error' &&
                             index == visibleMessages.length - 1 &&
                             _isTimeoutError(message.text)
                         ? onContinueTimeout

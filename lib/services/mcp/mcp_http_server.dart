@@ -14,11 +14,11 @@ class McpHttpServer {
   late final StreamSubscription<HttpRequest> _subscription;
 
   McpHttpServer._({
-    required HttpServer server,
+    required this._server,
     required this.token,
     required this.router,
     required this.authGuard,
-  }) : _server = server {
+  }) {
     _subscription = _server.listen(
       _handleRequest,
       onError: (Object error, StackTrace stackTrace) {
@@ -80,8 +80,9 @@ class McpHttpServer {
       }
 
       final auth = authGuard.authorize(
-        authorizationHeader:
-            request.headers.value(HttpHeaders.authorizationHeader),
+        authorizationHeader: request.headers.value(
+          HttpHeaders.authorizationHeader,
+        ),
         originHeader: request.headers.value('origin'),
         token: token,
         port: _server.port,

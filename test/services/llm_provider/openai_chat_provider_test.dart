@@ -15,8 +15,10 @@ class MockHttpOverrides extends HttpOverrides {
 
   @override
   HttpClient createHttpClient(SecurityContext? context) {
-    return MockHttpClient(getResponseBytes,
-        getResponseStatusCode: getResponseStatusCode);
+    return MockHttpClient(
+      getResponseBytes,
+      getResponseStatusCode: getResponseStatusCode,
+    );
   }
 }
 
@@ -151,30 +153,32 @@ void main() {
   group('OpenAiChatProvider tests', () {
     const provider = OpenAiChatProvider();
 
-    test('buildAssistantToolCallMessage construct OpenAI assistant messages',
-        () {
-      final msg = provider.buildAssistantToolCallMessage(
-        text: 'hello',
-        toolCalls: [
-          const LlmProviderToolCall(
-            id: 'call_123',
-            name: 'client_time',
-            argumentsJson: '{}',
-          ),
-        ],
-        reasoningContent: 'thinking...',
-      );
+    test(
+      'buildAssistantToolCallMessage construct OpenAI assistant messages',
+      () {
+        final msg = provider.buildAssistantToolCallMessage(
+          text: 'hello',
+          toolCalls: [
+            const LlmProviderToolCall(
+              id: 'call_123',
+              name: 'client_time',
+              argumentsJson: '{}',
+            ),
+          ],
+          reasoningContent: 'thinking...',
+        );
 
-      expect(msg['role'], equals('assistant'));
-      expect(msg['content'], equals('hello'));
-      expect(msg['reasoning_content'], equals('thinking...'));
-      expect(msg['tool_calls'], isList);
-      expect(msg['tool_calls'].length, equals(1));
-      expect(msg['tool_calls'][0]['id'], equals('call_123'));
-      expect(msg['tool_calls'][0]['type'], equals('function'));
-      expect(msg['tool_calls'][0]['function']['name'], equals('client_time'));
-      expect(msg['tool_calls'][0]['function']['arguments'], equals('{}'));
-    });
+        expect(msg['role'], equals('assistant'));
+        expect(msg['content'], equals('hello'));
+        expect(msg['reasoning_content'], equals('thinking...'));
+        expect(msg['tool_calls'], isList);
+        expect(msg['tool_calls'].length, equals(1));
+        expect(msg['tool_calls'][0]['id'], equals('call_123'));
+        expect(msg['tool_calls'][0]['type'], equals('function'));
+        expect(msg['tool_calls'][0]['function']['name'], equals('client_time'));
+        expect(msg['tool_calls'][0]['function']['arguments'], equals('{}'));
+      },
+    );
 
     test('buildToolResultMessage constructs OpenAI tool role messages', () {
       final msg = provider.buildToolResultMessage(
@@ -198,28 +202,30 @@ void main() {
             'message': {
               'role': 'assistant',
               'content': 'hello standard content',
-            }
-          }
+            },
+          },
         ],
         'usage': {
           'prompt_tokens': 15,
           'completion_tokens': 10,
           'total_tokens': 25,
-        }
+        },
       };
 
       final responseBytes = [utf8.encode(jsonEncode(responseBody))];
       HttpOverrides.global = MockHttpOverrides((url) => responseBytes);
 
       try {
-        final result = await provider.complete(const LlmProviderRequest(
-          baseUrl: 'https://api.openai.com/v1',
-          apiKey: 'test-key',
-          model: 'gpt-4',
-          messages: [
-            {'role': 'user', 'content': 'hi'}
-          ],
-        ));
+        final result = await provider.complete(
+          const LlmProviderRequest(
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            model: 'gpt-4',
+            messages: [
+              {'role': 'user', 'content': 'hi'},
+            ],
+          ),
+        );
 
         expect(result.text, equals('hello standard content'));
         expect(result.usage, isNotNull);
@@ -245,17 +251,19 @@ void main() {
 
       try {
         final deltaText = <String>[];
-        final finalResult = await provider.streamChat(LlmProviderRequest(
-          baseUrl: 'https://api.openai.com/v1',
-          apiKey: 'test-key',
-          model: 'gpt-4',
-          messages: [
-            {'role': 'user', 'content': 'hi'}
-          ],
-          onTextDelta: (delta) {
-            deltaText.add(delta);
-          },
-        ));
+        final finalResult = await provider.streamChat(
+          LlmProviderRequest(
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            model: 'gpt-4',
+            messages: [
+              {'role': 'user', 'content': 'hi'},
+            ],
+            onTextDelta: (delta) {
+              deltaText.add(delta);
+            },
+          ),
+        );
 
         expect(finalResult.text, equals('Hello'));
         expect(deltaText, equals(['Hello']));
@@ -269,98 +277,110 @@ void main() {
       }
     });
 
-    test('complete disables reasoning parameters on unsupported error fallback',
-        () async {
-      var requestCount = 0;
-      HttpOverrides.global = MockHttpOverrides(
-        (url) {
-          if (requestCount == 1) {
-            return [
-              utf8.encode('{"error":"does not support reasoning_effort"}')
-            ];
-          } else {
-            return [
-              utf8.encode(jsonEncode({
-                'choices': [
-                  {
-                    'message': {
-                      'role': 'assistant',
-                      'content': 'fallback success',
-                    }
-                  }
-                ]
-              }))
-            ];
-          }
-        },
-        getResponseStatusCode: (url) {
-          requestCount++;
-          if (requestCount == 1) {
-            return 400;
-          }
-          return 200;
-        },
-      );
+    test(
+      'complete disables reasoning parameters on unsupported error fallback',
+      () async {
+        var requestCount = 0;
+        HttpOverrides.global = MockHttpOverrides(
+          (url) {
+            if (requestCount == 1) {
+              return [
+                utf8.encode('{"error":"does not support reasoning_effort"}'),
+              ];
+            } else {
+              return [
+                utf8.encode(
+                  jsonEncode({
+                    'choices': [
+                      {
+                        'message': {
+                          'role': 'assistant',
+                          'content': 'fallback success',
+                        },
+                      },
+                    ],
+                  }),
+                ),
+              ];
+            }
+          },
+          getResponseStatusCode: (url) {
+            requestCount++;
+            if (requestCount == 1) {
+              return 400;
+            }
+            return 200;
+          },
+        );
 
-      try {
-        final result = await provider.complete(const LlmProviderRequest(
-          baseUrl: 'https://api.openai.com/v1',
-          apiKey: 'test-key',
-          model: 'o1-mini',
-          openAiReasoningEffort: 'low',
-          messages: [
-            {'role': 'user', 'content': 'hi'}
-          ],
-        ));
+        try {
+          final result = await provider.complete(
+            const LlmProviderRequest(
+              baseUrl: 'https://api.openai.com/v1',
+              apiKey: 'test-key',
+              model: 'o1-mini',
+              openAiReasoningEffort: 'low',
+              messages: [
+                {'role': 'user', 'content': 'hi'},
+              ],
+            ),
+          );
 
-        expect(result.text, equals('fallback success'));
-        expect(requestCount, equals(2));
-      } finally {
-        HttpOverrides.global = null;
-      }
-    });
+          expect(result.text, equals('fallback success'));
+          expect(requestCount, equals(2));
+        } finally {
+          HttpOverrides.global = null;
+        }
+      },
+    );
 
     test(
-        'streamChat disables reasoning parameters on unsupported error fallback',
-        () async {
-      var requestCount = 0;
-      HttpOverrides.global = MockHttpOverrides(
-        (url) {
-          if (requestCount == 1) {
-            return [utf8.encode('{"error":"unsupported parameter thinking"}')];
-          } else {
-            return [
-              utf8.encode(
-                  'data: {"choices":[{"delta":{"content":"stream success"}}]}\n\ndata: [DONE]\n\n')
-            ];
-          }
-        },
-        getResponseStatusCode: (url) {
-          requestCount++;
-          if (requestCount == 1) {
-            return 400;
-          }
-          return 200;
-        },
-      );
+      'streamChat disables reasoning parameters on unsupported error fallback',
+      () async {
+        var requestCount = 0;
+        HttpOverrides.global = MockHttpOverrides(
+          (url) {
+            if (requestCount == 1) {
+              return [
+                utf8.encode('{"error":"unsupported parameter thinking"}'),
+              ];
+            } else {
+              return [
+                utf8.encode(
+                  'data: {"choices":[{"delta":{"content":"stream success"}}]}\n\ndata: [DONE]\n\n',
+                ),
+              ];
+            }
+          },
+          getResponseStatusCode: (url) {
+            requestCount++;
+            if (requestCount == 1) {
+              return 400;
+            }
+            return 200;
+          },
+        );
 
-      try {
-        final result = await provider.streamChat(LlmProviderRequest(
-          baseUrl: 'https://api.deepseek.com',
-          apiKey: 'test-key',
-          model: 'deepseek-reasoner',
-          deepSeekThinkingEnabled: true,
-          messages: [
-            {'role': 'user', 'content': 'hi'}
-          ],
-        ));
+        try {
+          final result = await provider.streamChat(
+            LlmProviderRequest(
+              baseUrl: 'https://api.deepseek.com',
+              apiKey: 'test-key',
+              model: 'deepseek-reasoner',
+              deepSeekThinkingEnabled: true,
+              messages: [
+                {'role': 'user', 'content': 'hi'},
+              ],
+            ),
+          );
 
-        expect(result.text, equals('stream success'));
-        expect(requestCount, equals(2));
-      } finally {
-        HttpOverrides.global = null;
-      }
-    });
+          expect(result.text, equals('stream success'));
+          expect(requestCount, equals(2));
+        } finally {
+          HttpOverrides.global = null;
+        }
+      },
+    );
 
     test('fetchModels parses data objects with id and raw strings', () async {
       final responseBody = {
@@ -370,7 +390,7 @@ void main() {
           {'id': '  gpt-3.5-turbo  '},
           '',
           'deepseek-chat',
-        ]
+        ],
       };
       final responseBytes = [utf8.encode(jsonEncode(responseBody))];
       HttpOverrides.global = MockHttpOverrides((url) => responseBytes);
@@ -381,8 +401,10 @@ void main() {
           apiKey: 'test-key',
         );
 
-        expect(result,
-            equals(['claude-3', 'deepseek-chat', 'gpt-3.5-turbo', 'gpt-4']));
+        expect(
+          result,
+          equals(['claude-3', 'deepseek-chat', 'gpt-3.5-turbo', 'gpt-4']),
+        );
       } finally {
         HttpOverrides.global = null;
       }
@@ -400,17 +422,19 @@ void main() {
 
       try {
         final deltaText = <String>[];
-        final finalResult = await provider.streamChat(LlmProviderRequest(
-          baseUrl: 'https://api.openai.com/v1',
-          apiKey: 'test-key',
-          model: 'gpt-4',
-          messages: [
-            {'role': 'user', 'content': 'hi'}
-          ],
-          onTextDelta: (delta) {
-            deltaText.add(delta);
-          },
-        ));
+        final finalResult = await provider.streamChat(
+          LlmProviderRequest(
+            baseUrl: 'https://api.openai.com/v1',
+            apiKey: 'test-key',
+            model: 'gpt-4',
+            messages: [
+              {'role': 'user', 'content': 'hi'},
+            ],
+            onTextDelta: (delta) {
+              deltaText.add(delta);
+            },
+          ),
+        );
 
         expect(finalResult.text, equals('Part 1'));
         expect(deltaText, equals(['Part 1']));

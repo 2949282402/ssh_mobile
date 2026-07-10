@@ -38,8 +38,7 @@ void main() {
       debugDefaultTargetPlatformOverride = null;
     });
 
-    test('sequential step execution, failed blockage, and skip recovery flow',
-        () async {
+    test('sequential step execution, failed blockage, and skip recovery flow', () async {
       // 1. Create a chat record with an approved plan containing 2 pending steps
       final now = DateTime.now();
       final approvedPlanRef = AiApprovedPlanRef(
@@ -112,10 +111,7 @@ void main() {
         },
       );
 
-      llm = LlmChatService(
-        storageService: storage,
-        toolService: mockTools,
-      );
+      llm = LlmChatService(storageService: storage, toolService: mockTools);
 
       // We need to fetch visible tools
       final visibleTools = <String, AiTool>{
@@ -147,10 +143,12 @@ void main() {
       // We can construct AiToolService to override it, or since our mockTools is not AiToolService,
       // the controller fallback will use the passed planExecutionSnapshot argument.
       // So we will pass the snapshot computed from chat database.
-      var latestChat =
-          (await storage.loadAiChats()).firstWhere((c) => c.id == 'chat-1');
-      var snap = const PlanExecutionController()
-          .snapshot(latestChat.messages.last.todoSteps);
+      var latestChat = (await storage.loadAiChats()).firstWhere(
+        (c) => c.id == 'chat-1',
+      );
+      var snap = const PlanExecutionController().snapshot(
+        latestChat.messages.last.todoSteps,
+      );
 
       // --- PHASE 3.1: Execute step 1 without marking it running first -> should be BLOCKED ---
       await controller.handleToolCalls(
@@ -225,13 +223,12 @@ void main() {
       final steps = [...latestChat.messages.last.todoSteps];
       steps[0] = steps[0].copyWith(status: StepStatus.running);
       latestChat = latestChat.copyWith(
-        messages: [
-          latestChat.messages.last.copyWith(todoSteps: steps),
-        ],
+        messages: [latestChat.messages.last.copyWith(todoSteps: steps)],
       );
       await storage.saveAiChat(latestChat);
-      snap = const PlanExecutionController()
-          .snapshot(latestChat.messages.last.todoSteps);
+      snap = const PlanExecutionController().snapshot(
+        latestChat.messages.last.todoSteps,
+      );
 
       await controller.handleToolCalls(
         toolCalls: [
@@ -265,13 +262,12 @@ void main() {
       // --- PHASE 3.3: Mark step 1 as failed. Try to execute step 2 -> should be BLOCKED by failed previous step ---
       steps[0] = steps[0].copyWith(status: StepStatus.failed);
       latestChat = latestChat.copyWith(
-        messages: [
-          latestChat.messages.last.copyWith(todoSteps: steps),
-        ],
+        messages: [latestChat.messages.last.copyWith(todoSteps: steps)],
       );
       await storage.saveAiChat(latestChat);
-      snap = const PlanExecutionController()
-          .snapshot(latestChat.messages.last.todoSteps);
+      snap = const PlanExecutionController().snapshot(
+        latestChat.messages.last.todoSteps,
+      );
 
       await controller.handleToolCalls(
         toolCalls: [
@@ -304,16 +300,17 @@ void main() {
 
       // --- PHASE 3.4: Skip the failed step 1, mark step 2 as running, then execute step 2 -> should SUCCEED ---
       steps[0] = steps[0].copyWith(
-          status: StepStatus.skipped, stdout: 'Skipped: manual bypass');
+        status: StepStatus.skipped,
+        stdout: 'Skipped: manual bypass',
+      );
       steps[1] = steps[1].copyWith(status: StepStatus.running);
       latestChat = latestChat.copyWith(
-        messages: [
-          latestChat.messages.last.copyWith(todoSteps: steps),
-        ],
+        messages: [latestChat.messages.last.copyWith(todoSteps: steps)],
       );
       await storage.saveAiChat(latestChat);
-      snap = const PlanExecutionController()
-          .snapshot(latestChat.messages.last.todoSteps);
+      snap = const PlanExecutionController().snapshot(
+        latestChat.messages.last.todoSteps,
+      );
 
       await controller.handleToolCalls(
         toolCalls: [
@@ -349,13 +346,10 @@ void main() {
 
 class _MockToolService implements AiToolExecutor {
   final Future<String> Function(String name, Map<String, dynamic> arguments)
-      onExecute;
+  onExecute;
   final AiToolApprovalRequest? mockApprovalRequest;
 
-  _MockToolService({
-    required this.onExecute,
-    this.mockApprovalRequest,
-  });
+  _MockToolService({required this.onExecute, this.mockApprovalRequest});
 
   @override
   Future<List<AiTool>> tools() async => [];

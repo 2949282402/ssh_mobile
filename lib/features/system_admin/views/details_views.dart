@@ -64,34 +64,42 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
     for (final connection in connections) {
       final items = data[connection.id] ?? const [];
       if (items.isEmpty) {
-        flatItems.add(_FlatSnapshotItem<T>(
-          connection: connection,
-          isHeader: true,
-          isFirst: true,
-          isLast: false,
-        ));
-        flatItems.add(_FlatSnapshotItem<T>(
-          connection: connection,
-          emptyText: widget.emptyText,
-          isHeader: false,
-          isFirst: false,
-          isLast: true,
-        ));
-      } else {
-        flatItems.add(_FlatSnapshotItem<T>(
-          connection: connection,
-          isHeader: true,
-          isFirst: true,
-          isLast: false,
-        ));
-        for (int i = 0; i < items.length; i++) {
-          flatItems.add(_FlatSnapshotItem<T>(
+        flatItems.add(
+          _FlatSnapshotItem<T>(
             connection: connection,
-            item: items[i],
+            isHeader: true,
+            isFirst: true,
+            isLast: false,
+          ),
+        );
+        flatItems.add(
+          _FlatSnapshotItem<T>(
+            connection: connection,
+            emptyText: widget.emptyText,
             isHeader: false,
             isFirst: false,
-            isLast: i == items.length - 1,
-          ));
+            isLast: true,
+          ),
+        );
+      } else {
+        flatItems.add(
+          _FlatSnapshotItem<T>(
+            connection: connection,
+            isHeader: true,
+            isFirst: true,
+            isLast: false,
+          ),
+        );
+        for (int i = 0; i < items.length; i++) {
+          flatItems.add(
+            _FlatSnapshotItem<T>(
+              connection: connection,
+              item: items[i],
+              isHeader: false,
+              isFirst: false,
+              isLast: i == items.length - 1,
+            ),
+          );
         }
       }
     }
@@ -211,8 +219,10 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
             child: Text(
               flatItem.emptyText!,
-              style:
-                  TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
+              style: TextStyle(
+                color: colorScheme.onSurfaceVariant,
+                fontSize: 12,
+              ),
             ),
           );
         }
@@ -261,9 +271,7 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
       return Column(
         children: [
           _buildHeader(context, isRefreshing: false),
-          Expanded(
-            child: _buildFlatList(context, widget.dataOverride!),
-          ),
+          Expanded(child: _buildFlatList(context, widget.dataOverride!)),
         ],
       );
     }
@@ -308,9 +316,7 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
         return Column(
           children: [
             _buildHeader(context, isRefreshing: isRefreshing),
-            Expanded(
-              child: _buildFlatList(context, data),
-            ),
+            Expanded(child: _buildFlatList(context, data)),
           ],
         );
       },
@@ -322,10 +328,7 @@ class _PortProcessTile extends StatefulWidget {
   final AppStrings strings;
   final PortProcessSnapshot port;
 
-  const _PortProcessTile({
-    required this.strings,
-    required this.port,
-  });
+  const _PortProcessTile({required this.strings, required this.port});
 
   @override
   State<_PortProcessTile> createState() => _PortProcessTileState();
@@ -435,8 +438,9 @@ class _PortProcessTileState extends State<_PortProcessTile> {
               ],
             ),
           ),
-          crossFadeState:
-              _expanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+          crossFadeState: _expanded
+              ? CrossFadeState.showSecond
+              : CrossFadeState.showFirst,
           duration: const Duration(milliseconds: 160),
           sizeCurve: Curves.easeOutCubic,
         ),
@@ -449,10 +453,7 @@ class _PortDetailLine extends StatelessWidget {
   final String label;
   final String value;
 
-  const _PortDetailLine({
-    required this.label,
-    required this.value,
-  });
+  const _PortDetailLine({required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {
@@ -500,10 +501,7 @@ class _ServiceStatusTile extends StatefulWidget {
   final AppStrings strings;
   final ServiceStatusSnapshot service;
 
-  const _ServiceStatusTile({
-    required this.strings,
-    required this.service,
-  });
+  const _ServiceStatusTile({required this.strings, required this.service});
 
   @override
   State<_ServiceStatusTile> createState() => _ServiceStatusTileState();
@@ -517,10 +515,12 @@ class _ServiceStatusTileState extends State<_ServiceStatusTile> {
     final colorScheme = Theme.of(context).colorScheme;
     final service = widget.service;
     final nameText = service.name.trim().isEmpty ? '-' : service.name.trim();
-    final displayNameText =
-        service.displayName.trim().isEmpty ? '-' : service.displayName.trim();
+    final displayNameText = service.displayName.trim().isEmpty
+        ? '-'
+        : service.displayName.trim();
 
-    final isRunning = service.status.toLowerCase() == 'running' ||
+    final isRunning =
+        service.status.toLowerCase() == 'running' ||
         service.activeState.toLowerCase() == 'active';
     final statusColor = isRunning ? colorScheme.secondary : colorScheme.error;
 
@@ -566,8 +566,10 @@ class _ServiceStatusTileState extends State<_ServiceStatusTile> {
                 ),
                 const SizedBox(width: 8),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: statusColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(4),
@@ -621,8 +623,9 @@ class _ServiceStatusTileState extends State<_ServiceStatusTile> {
               ],
             ),
           ),
-          crossFadeState:
-              _expanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+          crossFadeState: _expanded
+              ? CrossFadeState.showSecond
+              : CrossFadeState.showFirst,
           duration: const Duration(milliseconds: 160),
           sizeCurve: Curves.easeOutCubic,
         ),
@@ -635,10 +638,7 @@ class _ServiceDetailLine extends StatelessWidget {
   final String label;
   final String value;
 
-  const _ServiceDetailLine({
-    required this.label,
-    required this.value,
-  });
+  const _ServiceDetailLine({required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {

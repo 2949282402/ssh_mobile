@@ -16,8 +16,9 @@ extension LlmContextCompressor on LlmChatService {
     LlmCancellationToken? cancellationToken,
   }) async {
     cancellationToken?.throwIfCancelled();
-    final lastUserIndex =
-        messages.lastIndexWhere((message) => message['role'] == 'user');
+    final lastUserIndex = messages.lastIndexWhere(
+      (message) => message['role'] == 'user',
+    );
     if (lastUserIndex <= 0) {
       return [
         {'role': 'system', 'content': systemPrompt},
@@ -37,23 +38,22 @@ extension LlmContextCompressor on LlmChatService {
     );
     final settings = await storageService.loadAiConnectionSettings();
     final provider = LlmProviderFactory.fromSettings(settings);
-    final response = await provider.complete(LlmProviderRequest(
-      baseUrl: baseUrl,
-      apiKey: apiKey,
-      model: model,
-      messages: [
-        {
-          'role': 'system',
-          'content': compressionPrompt,
-        },
-        {'role': 'user', 'content': transcript},
-      ],
-      deepSeekThinkingEnabled: deepSeekThinkingEnabled,
-      deepSeekReasoningEffort: deepSeekReasoningEffort,
-      openAiReasoningEffort: openAiReasoningEffort,
-      cancellationToken: cancellationToken,
-      timeoutSeconds: settings.timeoutSeconds,
-    ));
+    final response = await provider.complete(
+      LlmProviderRequest(
+        baseUrl: baseUrl,
+        apiKey: apiKey,
+        model: model,
+        messages: [
+          {'role': 'system', 'content': compressionPrompt},
+          {'role': 'user', 'content': transcript},
+        ],
+        deepSeekThinkingEnabled: deepSeekThinkingEnabled,
+        deepSeekReasoningEffort: deepSeekReasoningEffort,
+        openAiReasoningEffort: openAiReasoningEffort,
+        cancellationToken: cancellationToken,
+        timeoutSeconds: settings.timeoutSeconds,
+      ),
+    );
     cancellationToken?.throwIfCancelled();
     final summary = response.text;
     AppLogService.instance.info(

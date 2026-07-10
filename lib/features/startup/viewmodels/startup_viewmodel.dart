@@ -16,10 +16,9 @@ class StartupViewModel extends ChangeNotifier {
   bool _isExempt = false;
 
   StartupViewModel({
-    required StorageService storageService,
-    required AppSettings appSettings,
-  })  : _storageService = storageService,
-        _appSettings = appSettings {
+    required this._storageService,
+    required this._appSettings,
+  }) {
     _storageService.addListener(_onServiceChanged);
     _appSettings.addListener(_onServiceChanged);
   }

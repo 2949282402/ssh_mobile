@@ -81,41 +81,44 @@ void main() {
     });
 
     test(
-        'selectConnection updates selectedConnectionId and triggers notifyListeners',
-        () {
-      final viewModel = SystemAdminViewModel(
-        adminService: adminService,
-        storageService: storageService,
-      );
+      'selectConnection updates selectedConnectionId and triggers notifyListeners',
+      () {
+        final viewModel = SystemAdminViewModel(
+          adminService: adminService,
+          storageService: storageService,
+        );
 
-      bool notified = false;
-      viewModel.addListener(() {
-        notified = true;
-      });
+        bool notified = false;
+        viewModel.addListener(() {
+          notified = true;
+        });
 
-      viewModel.selectConnection('conn_123');
-      expect(viewModel.selectedConnectionId, equals('conn_123'));
-      expect(viewModel.connectionId, equals('conn_123'));
-      expect(notified, isTrue);
-    });
+        viewModel.selectConnection('conn_123');
+        expect(viewModel.selectedConnectionId, equals('conn_123'));
+        expect(viewModel.connectionId, equals('conn_123'));
+        expect(notified, isTrue);
+      },
+    );
 
-    test('connect only opens management connection without changing selection',
-        () async {
-      final viewModel = SystemAdminViewModel(
-        adminService: adminService,
-        storageService: storageService,
-      );
+    test(
+      'connect only opens management connection without changing selection',
+      () async {
+        final viewModel = SystemAdminViewModel(
+          adminService: adminService,
+          storageService: storageService,
+        );
 
-      bool notified = false;
-      viewModel.addListener(() {
-        notified = true;
-      });
+        bool notified = false;
+        viewModel.addListener(() {
+          notified = true;
+        });
 
-      await viewModel.connect('conn_123');
-      expect(viewModel.selectedConnectionId, isNull);
-      expect(viewModel.managementConnectionId, equals('conn_123'));
-      expect(notified, isTrue);
-    });
+        await viewModel.connect('conn_123');
+        expect(viewModel.selectedConnectionId, isNull);
+        expect(viewModel.managementConnectionId, equals('conn_123'));
+        expect(notified, isTrue);
+      },
+    );
 
     test('selectConnection does not trigger root management connection', () {
       final viewModel = SystemAdminViewModel(
@@ -150,22 +153,24 @@ void main() {
       expect(viewModel.isConnected, isFalse);
     });
 
-    test('management actions require active selected management connection',
-        () async {
-      final viewModel = SystemAdminViewModel(
-        adminService: adminService,
-        storageService: storageService,
-      );
+    test(
+      'management actions require active selected management connection',
+      () async {
+        final viewModel = SystemAdminViewModel(
+          adminService: adminService,
+          storageService: storageService,
+        );
 
-      viewModel.selectConnection('conn_123'); // selection is conn_123
-      expect(viewModel.selectedConnectionId, equals('conn_123'));
-      expect(viewModel.managementConnectionId, isNull);
+        viewModel.selectConnection('conn_123'); // selection is conn_123
+        expect(viewModel.selectedConnectionId, equals('conn_123'));
+        expect(viewModel.managementConnectionId, isNull);
 
-      // Try checking user sudo. It reads managementConnectionId which is null, so it returns early false
-      final isSudo = await viewModel.checkUserSudo('admin');
-      expect(isSudo, isFalse);
-      expect(lastCommand, isNull); // Didn't execute SSH command
-    });
+        // Try checking user sudo. It reads managementConnectionId which is null, so it returns early false
+        final isSudo = await viewModel.checkUserSudo('admin');
+        expect(isSudo, isFalse);
+        expect(lastCommand, isNull); // Didn't execute SSH command
+      },
+    );
 
     test('fetchAccounts loads and parses user accounts correctly', () async {
       final viewModel = await rootConnectedViewModel();
@@ -255,25 +260,26 @@ tcp   LISTEN  0       128               0.0.0.0:22            0.0.0.0:*      use
       expect(lastCommand, isNull);
     });
 
-    test('clearInvalidSelection disconnects stale selected management session',
-        () async {
-      final viewModel = await rootConnectedViewModel();
+    test(
+      'clearInvalidSelection disconnects stale selected management session',
+      () async {
+        final viewModel = await rootConnectedViewModel();
 
-      expect(viewModel.selectedConnectionId, equals('conn_123'));
-      expect(viewModel.managementConnectionId, equals('conn_123'));
+        expect(viewModel.selectedConnectionId, equals('conn_123'));
+        expect(viewModel.managementConnectionId, equals('conn_123'));
 
-      viewModel.clearInvalidSelection();
+        viewModel.clearInvalidSelection();
 
-      expect(viewModel.selectedConnectionId, isNull);
-      expect(viewModel.managementConnectionId, isNull);
-      expect(viewModel.accounts, isEmpty);
-      expect(viewModel.sessions, isEmpty);
-      expect(viewModel.services, isEmpty);
-      expect(viewModel.ports, isEmpty);
-    });
+        expect(viewModel.selectedConnectionId, isNull);
+        expect(viewModel.managementConnectionId, isNull);
+        expect(viewModel.accounts, isEmpty);
+        expect(viewModel.sessions, isEmpty);
+        expect(viewModel.services, isEmpty);
+        expect(viewModel.ports, isEmpty);
+      },
+    );
 
-    test('rebootServer and shutdownServer require valid/fresh tokens',
-        () async {
+    test('rebootServer and shutdownServer require valid/fresh tokens', () async {
       final viewModel = SystemAdminViewModel(
         adminService: adminService,
         storageService: storageService,
@@ -298,10 +304,7 @@ tcp   LISTEN  0       128               0.0.0.0:22            0.0.0.0:*      use
       final shutdownToken = SystemPowerConfirmationToken.testing(
         action: SystemPowerAction.shutdown,
       );
-      expect(
-        () => viewModel.rebootServer(shutdownToken),
-        throwsArgumentError,
-      );
+      expect(() => viewModel.rebootServer(shutdownToken), throwsArgumentError);
       expect(lastCommand, isNull);
 
       // 3. Expired reboot token
@@ -323,10 +326,7 @@ tcp   LISTEN  0       128               0.0.0.0:22            0.0.0.0:*      use
       lastCommand = null;
 
       // 5. Action mismatch shutdown
-      expect(
-        () => viewModel.shutdownServer(rebootToken),
-        throwsArgumentError,
-      );
+      expect(() => viewModel.shutdownServer(rebootToken), throwsArgumentError);
       expect(lastCommand, isNull);
 
       // 6. Expired shutdown token

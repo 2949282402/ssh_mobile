@@ -41,13 +41,15 @@ class GlassmorphicContainer extends StatelessWidget {
     final extColors = theme.extension<ExtendedColors>();
 
     // 默认的毛玻璃透明背景色，根据亮暗色主题适配
-    final defaultBgColor = extColors?.glassBg ??
+    final defaultBgColor =
+        extColors?.glassBg ??
         (isDark
             ? theme.colorScheme.surface.withValues(alpha: 0.65)
             : theme.colorScheme.surface.withValues(alpha: 0.70));
 
     // 默认边缘反光线颜色
-    final defaultBorderColor = extColors?.glassBorder ??
+    final defaultBorderColor =
+        extColors?.glassBorder ??
         (isDark
             ? Colors.white.withValues(alpha: 0.08)
             : theme.colorScheme.primary.withValues(alpha: 0.12));

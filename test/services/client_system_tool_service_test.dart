@@ -23,38 +23,42 @@ void main() {
     expect(result['note'], contains('Android-only'));
   });
 
-  test('permission status marks Android battery optimization support',
-      () async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+  test(
+    'permission status marks Android battery optimization support',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
 
-    final result = await service.getPermissionStatus();
+      final result = await service.getPermissionStatus();
 
-    expect(result['execution'], 'client');
-    expect(result['supportsBatteryOptimizationExemption'], isTrue);
-    expect(result.containsKey('ignoringBatteryOptimizations'), isTrue);
-  });
+      expect(result['execution'], 'client');
+      expect(result['supportsBatteryOptimizationExemption'], isTrue);
+      expect(result.containsKey('ignoringBatteryOptimizations'), isTrue);
+    },
+  );
 
-  test('queryLogs filters, limits, truncates, and returns redacted entries',
-      () async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-    AppLogService.instance.clear();
-    AppLogService.instance.warning('older warning');
-    AppLogService.instance.warning('latest warning password=secret-token');
-    AppLogService.instance.info('info entry password=ignore-me');
+  test(
+    'queryLogs filters, limits, truncates, and returns redacted entries',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      AppLogService.instance.clear();
+      AppLogService.instance.warning('older warning');
+      AppLogService.instance.warning('latest warning password=secret-token');
+      AppLogService.instance.info('info entry password=ignore-me');
 
-    final result = await service.queryLogs(
-      level: 'warning',
-      contains: 'warning',
-      limit: 1,
-    );
-    final entries = result['entries'] as List<dynamic>;
-    final first = entries.single as Map<String, dynamic>;
+      final result = await service.queryLogs(
+        level: 'warning',
+        contains: 'warning',
+        limit: 1,
+      );
+      final entries = result['entries'] as List<dynamic>;
+      final first = entries.single as Map<String, dynamic>;
 
-    expect(result['matched'], 2);
-    expect(result['truncated'], isTrue);
-    expect(first['message'], contains('latest warning'));
-    expect(first['message'], contains('[REDACTED]'));
-    expect(first['message'], isNot(contains('secret-token')));
-    expect(result['note'], contains('redacted'));
-  });
+      expect(result['matched'], 2);
+      expect(result['truncated'], isTrue);
+      expect(first['message'], contains('latest warning'));
+      expect(first['message'], contains('[REDACTED]'));
+      expect(first['message'], isNot(contains('secret-token')));
+      expect(result['note'], contains('redacted'));
+    },
+  );
 }

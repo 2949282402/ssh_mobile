@@ -7,6 +7,13 @@ on:
       - main
       - master
 
+permissions:
+  contents: read
+
+concurrency:
+  group: flutter-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   analyze-and-test:
     runs-on: ubuntu-latest
@@ -14,10 +21,23 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: '3.44.2'
           cache: true
       - name: Install dependencies
         run: flutter pub get
+      - name: Check generated app icons
+        run: |
+          dart run tool/generate_app_icons.dart
+          git diff --exit-code -- assets android ios macos web windows/runner/resources/app_icon.ico
+      - name: Check formatting
+        run: dart format --output=none --set-exit-if-changed lib test tool
+      - name: Check generated database code
+        run: |
+          dart run build_runner build
+          git diff --exit-code -- lib/data/database/app_database.g.dart
+      - name: Check shared agent skills
+        shell: pwsh
+        run: ./scripts/sync_agent_skills.ps1 -Mode Check
       - name: Security regression grep
         run: |
           if grep -R "SshIdentityCache" lib; then exit 1; fi
@@ -26,7 +46,11 @@ jobs:
       - name: Analyze
         run: flutter analyze
       - name: Test
-        run: flutter test --reporter expanded
+        run: flutter test --coverage --reporter expanded
+      - name: Check coverage floor
+        run: dart run tool/check_coverage.dart --minimum=35
+      - name: Build Android debug APK
+        run: flutter build apk --debug --no-pub
 
   windows-build:
     runs-on: windows-latest
@@ -34,7 +58,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: '3.44.2'
           cache: true
       - name: Enable Windows desktop
         run: flutter config --enable-windows-desktop
@@ -51,7 +75,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: '3.44.2'
           cache: true
       - name: Enable macOS desktop
         run: flutter config --enable-macos-desktop
@@ -61,3 +85,5 @@ jobs:
         run: flutter test --reporter expanded
       - name: Build macOS
         run: flutter build macos
+      - name: Build iOS without signing
+        run: flutter build ios --release --no-codesign --no-pub

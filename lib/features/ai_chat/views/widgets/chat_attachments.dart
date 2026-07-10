@@ -41,9 +41,7 @@ class ChatAttachmentPicker {
     AiChatViewModel viewModel,
   ) async {
     try {
-      final result = await FilePicker.pickFiles(
-        type: FileType.image,
-      );
+      final result = await FilePicker.pickFiles(type: FileType.image);
       if (result == null || result.files.isEmpty) return;
 
       final settings = await viewModel.loadAiConnectionSettings();
@@ -55,10 +53,12 @@ class ChatAttachmentPicker {
           if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text(strings.imageTooLarge(
-                  file.name,
-                  AiUploadSizeLimit.label(maxBytes),
-                )),
+                content: Text(
+                  strings.imageTooLarge(
+                    file.name,
+                    AiUploadSizeLimit.label(maxBytes),
+                  ),
+                ),
               ),
             );
           }
@@ -67,12 +67,14 @@ class ChatAttachmentPicker {
         final bytes = await file.readAsBytes();
         if (bytes.isEmpty) continue;
         final mimeType = _guessMimeType(file.name, fallback: 'image/png');
-        viewModel.addAttachment(AiChatAttachment(
-          fileName: file.name,
-          mimeType: mimeType,
-          sizeBytes: file.size,
-          dataBase64: base64Encode(bytes),
-        ));
+        viewModel.addAttachment(
+          AiChatAttachment(
+            fileName: file.name,
+            mimeType: mimeType,
+            sizeBytes: file.size,
+            dataBase64: base64Encode(bytes),
+          ),
+        );
       }
     } catch (e, stackTrace) {
       AppLogService.instance.error(
@@ -101,10 +103,12 @@ class ChatAttachmentPicker {
           if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text(strings.fileTooLarge(
-                  file.name,
-                  AiUploadSizeLimit.label(maxBytes),
-                )),
+                content: Text(
+                  strings.fileTooLarge(
+                    file.name,
+                    AiUploadSizeLimit.label(maxBytes),
+                  ),
+                ),
               ),
             );
           }
@@ -113,12 +117,14 @@ class ChatAttachmentPicker {
         final bytes = await file.readAsBytes();
         if (bytes.isEmpty) continue;
         final mimeType = _guessMimeType(file.name);
-        viewModel.addAttachment(AiChatAttachment(
-          fileName: file.name,
-          mimeType: mimeType,
-          sizeBytes: file.size,
-          dataBase64: base64Encode(bytes),
-        ));
+        viewModel.addAttachment(
+          AiChatAttachment(
+            fileName: file.name,
+            mimeType: mimeType,
+            sizeBytes: file.size,
+            dataBase64: base64Encode(bytes),
+          ),
+        );
       }
     } catch (e, stackTrace) {
       AppLogService.instance.error(
@@ -129,8 +135,10 @@ class ChatAttachmentPicker {
     }
   }
 
-  static String _guessMimeType(String fileName,
-      {String fallback = 'application/octet-stream'}) {
+  static String _guessMimeType(
+    String fileName, {
+    String fallback = 'application/octet-stream',
+  }) {
     final lower = fileName.toLowerCase();
     if (lower.endsWith('.png')) return 'image/png';
     if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';

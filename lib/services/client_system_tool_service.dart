@@ -79,8 +79,9 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
   static final ClientSystemToolService instance = ClientSystemToolService._();
 
   static const String _channelId = 'ssh_mobile_client_tools';
-  static const MethodChannel _systemChannel =
-      MethodChannel('ssh_mobile/client_system');
+  static const MethodChannel _systemChannel = MethodChannel(
+    'ssh_mobile/client_system',
+  );
 
   final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
@@ -158,17 +159,9 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
       final result = await _systemChannel.invokeMapMethod<String, dynamic>(
         'getNetworkInfo',
       );
-      return {
-        ...base,
-        'supported': true,
-        ...?result,
-      };
+      return {...base, 'supported': true, ...?result};
     } catch (e) {
-      return {
-        ...base,
-        'supported': true,
-        'error': e.toString(),
-      };
+      return {...base, 'supported': true, 'error': e.toString()};
     }
   }
 
@@ -192,17 +185,9 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
       final result = await _systemChannel.invokeMapMethod<String, dynamic>(
         'getBatteryStatus',
       );
-      return {
-        ...base,
-        'supported': true,
-        ...?result,
-      };
+      return {...base, 'supported': true, ...?result};
     } catch (e) {
-      return {
-        ...base,
-        'supported': true,
-        'error': e.toString(),
-      };
+      return {...base, 'supported': true, 'error': e.toString()};
     }
   }
 
@@ -216,7 +201,8 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
     }
     final androidTarget =
         !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
-    final supportsBackgroundService = !kIsWeb &&
+    final supportsBackgroundService =
+        !kIsWeb &&
         (defaultTargetPlatform == TargetPlatform.android ||
             defaultTargetPlatform == TargetPlatform.iOS);
     bool? ignoringBatteryOptimizations;
@@ -256,10 +242,8 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
       };
     }
     try {
-      final opened = await _systemChannel.invokeMethod<bool>(
-            'openAppSettings',
-          ) ??
-          false;
+      final opened =
+          await _systemChannel.invokeMethod<bool>('openAppSettings') ?? false;
       return {
         'execution': 'client',
         'target': 'client_device',
@@ -306,8 +290,9 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
       delayMinutes: delayMinutes,
     );
     final title = 'SSH Mobile';
-    final body =
-        (label?.trim().isNotEmpty == true) ? label!.trim() : 'Client reminder';
+    final body = (label?.trim().isNotEmpty == true)
+        ? label!.trim()
+        : 'Client reminder';
     final id = 'client_alarm_${now.microsecondsSinceEpoch}';
     final notificationId = _nextNotificationId++;
     final duration = fireAt.difference(now);
@@ -412,17 +397,20 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
     final normalizedLimit = limit.clamp(1, 200).toInt();
     final normalizedLevel = level?.trim().toLowerCase();
     final needle = contains?.trim().toLowerCase();
-    final allEntries = normalizedLevel == null ||
+    final allEntries =
+        normalizedLevel == null ||
             normalizedLevel.isEmpty ||
             normalizedLevel == AppLogLevel.all.name
         ? AppLogService.instance.entries
         : AppLogService.instance.entriesForLevel(
             AppLogLevel.fromName(normalizedLevel),
           );
-    final filtered = allEntries.where((entry) {
-      if (needle == null || needle.isEmpty) return true;
-      return entry.text.toLowerCase().contains(needle);
-    }).toList(growable: false);
+    final filtered = allEntries
+        .where((entry) {
+          if (needle == null || needle.isEmpty) return true;
+          return entry.text.toLowerCase().contains(needle);
+        })
+        .toList(growable: false);
     final visible = filtered.take(normalizedLimit).toList(growable: false);
     return {
       'execution': 'client',
@@ -571,7 +559,8 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
     );
     await _notifications
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
+          AndroidFlutterLocalNotificationsPlugin
+        >()
         ?.createNotificationChannel(channel);
   }
 
@@ -635,9 +624,7 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
     final parsed = DateTime.tryParse(value);
     if (parsed != null) return parsed.toLocal();
 
-    final match = RegExp(r'^(\d{1,2}):(\d{2})(?::(\d{2}))?$').firstMatch(
-      value,
-    );
+    final match = RegExp(r'^(\d{1,2}):(\d{2})(?::(\d{2}))?$').firstMatch(value);
     if (match == null) return null;
     final hour = int.tryParse(match.group(1)!);
     final minute = int.tryParse(match.group(2)!);
@@ -686,15 +673,13 @@ class ClientSystemToolService implements ClientSystemToolAdapter {
       };
     }
     try {
-      final scheduled = await _systemChannel.invokeMethod<bool>(
-            'setSystemAlarm',
-            {
-              'hour': fireAt.hour,
-              'minute': fireAt.minute,
-              'message': label,
-              'skipUi': false,
-            },
-          ) ??
+      final scheduled =
+          await _systemChannel.invokeMethod<bool>('setSystemAlarm', {
+            'hour': fireAt.hour,
+            'minute': fireAt.minute,
+            'message': label,
+            'skipUi': false,
+          }) ??
           false;
       return {
         'requested': true,

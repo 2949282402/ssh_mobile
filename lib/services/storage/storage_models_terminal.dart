@@ -35,7 +35,8 @@ class RestorableTmuxSession {
       displayName: json['displayName'] as String? ?? 'SSH',
       tmuxSessionName: json['tmuxSessionName'] as String? ?? 'ssh_mobile',
       fontSize: (json['fontSize'] as num?)?.toDouble() ?? 14,
-      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
+      updatedAt:
+          DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
           DateTime.now(),
     );
   }
@@ -93,9 +94,11 @@ class TerminalHistoryRecord {
       tmuxSessionName: json['tmuxSessionName'] as String?,
       state: json['state'] as String? ?? 'disconnected',
       errorMessage: json['errorMessage'] as String?,
-      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+      createdAt:
+          DateTime.tryParse(json['createdAt'] as String? ?? '') ??
           DateTime.now(),
-      updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
+      updatedAt:
+          DateTime.tryParse(json['updatedAt'] as String? ?? '') ??
           DateTime.now(),
     );
   }

@@ -5,10 +5,7 @@ class _LlmSettingsGroup extends StatelessWidget {
   final String title;
   final List<Widget> children;
 
-  const _LlmSettingsGroup({
-    required this.title,
-    required this.children,
-  });
+  const _LlmSettingsGroup({required this.title, required this.children});
 
   @override
   Widget build(BuildContext context) {
@@ -18,7 +15,8 @@ class _LlmSettingsGroup extends StatelessWidget {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side: BorderSide(
-            color: colorScheme.outlineVariant.withValues(alpha: 0.72)),
+          color: colorScheme.outlineVariant.withValues(alpha: 0.72),
+        ),
       ),
       clipBehavior: Clip.antiAlias,
       child: Padding(
@@ -115,19 +113,18 @@ class _LlmApiConfigSection extends StatelessWidget {
       children: [
         DropdownButtonFormField<LlmApiFormat>(
           initialValue: apiFormat,
-          decoration: InputDecoration(
-            labelText: strings.apiFormat,
-          ),
-          items: const [
-            LlmApiFormat.openAiChatCompletions,
-            LlmApiFormat.geminiOpenAiCompatible,
-            LlmApiFormat.anthropicMessages,
-          ].map((format) {
-            return DropdownMenuItem<LlmApiFormat>(
-              value: format,
-              child: Text(strings.apiFormatLabel(format)),
-            );
-          }).toList(),
+          decoration: InputDecoration(labelText: strings.apiFormat),
+          items:
+              const [
+                LlmApiFormat.openAiChatCompletions,
+                LlmApiFormat.geminiOpenAiCompatible,
+                LlmApiFormat.anthropicMessages,
+              ].map((format) {
+                return DropdownMenuItem<LlmApiFormat>(
+                  value: format,
+                  child: Text(strings.apiFormatLabel(format)),
+                );
+              }).toList(),
           onChanged: saving ? null : onApiFormatChanged,
         ),
         const SizedBox(height: 14),
@@ -154,9 +151,9 @@ class _LlmApiConfigSection extends StatelessWidget {
               Expanded(
                 child: Text(
                   '${strings.recommendedBaseUrl}: $recommendedBaseUrl',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.grey,
-                      ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: Colors.grey),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
@@ -179,8 +176,8 @@ class _LlmApiConfigSection extends StatelessWidget {
             helperText: selectedApiKeyMasked != null
                 ? strings.apiKeySelected(selectedApiKeyMasked!)
                 : (apiKeyHistory.isNotEmpty
-                    ? strings.apiKeyHistoryHint
-                    : strings.apiKeyReplaceHint),
+                      ? strings.apiKeyHistoryHint
+                      : strings.apiKeyReplaceHint),
             helperMaxLines: 2,
             suffixIcon: IconButton(
               tooltip: strings.apiKeyHistory,
@@ -298,9 +295,7 @@ class _LlmApiConfigSection extends StatelessWidget {
         DropdownButtonFormField<String>(
           initialValue: AgentModelFallbackPolicy.normalize(modelFallbackPolicy),
           isExpanded: true,
-          decoration: InputDecoration(
-            labelText: strings.modelFallbackPolicy,
-          ),
+          decoration: InputDecoration(labelText: strings.modelFallbackPolicy),
           items: [
             for (final value in AgentModelFallbackPolicy.values)
               DropdownMenuItem(
@@ -389,15 +384,10 @@ class _LlmAgentConfigSection extends StatelessWidget {
         DropdownButtonFormField<int>(
           initialValue: AiMultiAgentMaxAgents.normalize(multiAgentMaxAgents),
           isExpanded: true,
-          decoration: InputDecoration(
-            labelText: strings.multiAgentMaxAgents,
-          ),
+          decoration: InputDecoration(labelText: strings.multiAgentMaxAgents),
           items: [
             for (final value in AiMultiAgentMaxAgents.values)
-              DropdownMenuItem(
-                value: value,
-                child: Text('$value'),
-              ),
+              DropdownMenuItem(value: value, child: Text('$value')),
           ],
           onChanged: saving || !multiAgentEnabled
               ? null
@@ -406,12 +396,16 @@ class _LlmAgentConfigSection extends StatelessWidget {
         const SizedBox(height: 14),
         SwitchListTile.adaptive(
           contentPadding: EdgeInsets.zero,
-          title: Text(strings.language == AppLanguage.en
-              ? 'Post-tool review agent'
-              : '异常恢复审查 Agent'),
-          subtitle: Text(strings.language == AppLanguage.en
-              ? 'Runs a review agent after tool errors, approval rejection, unavailable approval, budget audit rejection, or loop guard blocking.'
-              : '工具失败、审批拒绝、审批不可用、预算审计拒绝或循环阻断时，自动调用审查 Agent 分析原因并给出下一步建议。'),
+          title: Text(
+            strings.language == AppLanguage.en
+                ? 'Post-tool review agent'
+                : '异常恢复审查 Agent',
+          ),
+          subtitle: Text(
+            strings.language == AppLanguage.en
+                ? 'Runs a review agent after tool errors, approval rejection, unavailable approval, budget audit rejection, or loop guard blocking.'
+                : '工具失败、审批拒绝、审批不可用、预算审计拒绝或循环阻断时，自动调用审查 Agent 分析原因并给出下一步建议。',
+          ),
           value: postToolReviewEnabled,
           onChanged: saving ? null : onPostToolReviewEnabledChanged,
         ),
@@ -450,15 +444,13 @@ class _LlmAgentConfigSection extends StatelessWidget {
             for (final value in AiAgentLoopMode.values)
               DropdownMenuItem(
                 value: value,
-                child: Text(
-                  switch (value) {
-                    AiAgentLoopMode.deep =>
-                      strings.language == AppLanguage.en ? 'Deep' : '深度',
-                    AiAgentLoopMode.unlimited =>
-                      strings.language == AppLanguage.en ? 'Unlimited' : '无限制',
-                    _ => strings.language == AppLanguage.en ? 'Balanced' : '均衡',
-                  },
-                ),
+                child: Text(switch (value) {
+                  AiAgentLoopMode.deep =>
+                    strings.language == AppLanguage.en ? 'Deep' : '深度',
+                  AiAgentLoopMode.unlimited =>
+                    strings.language == AppLanguage.en ? 'Unlimited' : '无限制',
+                  _ => strings.language == AppLanguage.en ? 'Balanced' : '均衡',
+                }),
               ),
           ],
           onChanged: saving ? null : onAgentLoopModeChanged,
@@ -516,8 +508,9 @@ class _LlmReasoningConfigSection extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           DropdownButtonFormField<String>(
-            initialValue:
-                DeepSeekReasoningEffort.normalize(deepSeekReasoningEffort),
+            initialValue: DeepSeekReasoningEffort.normalize(
+              deepSeekReasoningEffort,
+            ),
             isExpanded: true,
             decoration: InputDecoration(
               labelText: strings.deepSeekReasoningEffort,
@@ -536,8 +529,9 @@ class _LlmReasoningConfigSection extends StatelessWidget {
         ],
         if (showsOpenAiReasoningControls) ...[
           DropdownButtonFormField<String>(
-            initialValue:
-                OpenAiReasoningEffort.normalize(openAiReasoningEffort),
+            initialValue: OpenAiReasoningEffort.normalize(
+              openAiReasoningEffort,
+            ),
             isExpanded: true,
             decoration: InputDecoration(
               labelText: strings.openAiReasoningEffort,
@@ -602,9 +596,7 @@ class _LlmSearchConfigSection extends StatelessWidget {
         DropdownButtonFormField<String>(
           initialValue: webSearchEngine,
           isExpanded: true,
-          decoration: InputDecoration(
-            labelText: strings.webSearchEngine,
-          ),
+          decoration: InputDecoration(labelText: strings.webSearchEngine),
           items: [
             for (final value in AiWebSearchEngine.values)
               DropdownMenuItem(
@@ -612,8 +604,9 @@ class _LlmSearchConfigSection extends StatelessWidget {
                 child: Text(strings.webSearchEngineLabel(value)),
               ),
           ],
-          onChanged:
-              saving || !webSearchEnabled ? null : onWebSearchEngineChanged,
+          onChanged: saving || !webSearchEnabled
+              ? null
+              : onWebSearchEngineChanged,
         ),
         if (webSearchEnabled && webSearchEngine == AiWebSearchEngine.quark) ...[
           const SizedBox(height: 14),
@@ -647,13 +640,11 @@ class _LlmSearchConfigSection extends StatelessWidget {
           decoration: InputDecoration(labelText: strings.webSearchMaxResults),
           items: [
             for (final value in AiWebSearchMaxResults.values)
-              DropdownMenuItem(
-                value: value,
-                child: Text('$value'),
-              ),
+              DropdownMenuItem(value: value, child: Text('$value')),
           ],
-          onChanged:
-              saving || !webSearchEnabled ? null : onWebSearchMaxResultsChanged,
+          onChanged: saving || !webSearchEnabled
+              ? null
+              : onWebSearchMaxResultsChanged,
         ),
       ],
     );
@@ -697,9 +688,7 @@ class _LlmRagConfigSection extends StatelessWidget {
           DropdownButtonFormField<String>(
             initialValue: ragSearchMode,
             isExpanded: true,
-            decoration: InputDecoration(
-              labelText: strings.ragSearchMode,
-            ),
+            decoration: InputDecoration(labelText: strings.ragSearchMode),
             items: [
               DropdownMenuItem(
                 value: 'bm25',

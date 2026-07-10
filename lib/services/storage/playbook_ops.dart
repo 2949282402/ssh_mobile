@@ -17,10 +17,11 @@ extension PlaybookOps on StorageService {
 
     try {
       final list = jsonDecode(jsonStr) as List<dynamic>;
-      final playbooks = list
-          .map((item) => Playbook.fromJson(item as Map<String, dynamic>))
-          .toList()
-        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      final playbooks =
+          list
+              .map((item) => Playbook.fromJson(item as Map<String, dynamic>))
+              .toList()
+            ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       return _playbooksCache = List.unmodifiable(playbooks);
     } catch (e) {
       AppLogService.instance.error('Failed to load playbooks', error: e);

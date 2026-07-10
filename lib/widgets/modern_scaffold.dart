@@ -24,19 +24,14 @@ class ModernScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final content = Padding(
-      padding: padding,
-      child: body,
-    );
+    final content = Padding(padding: padding, child: body);
 
     return Scaffold(
-      appBar: appBar ??
+      appBar:
+          appBar ??
           (title == null
               ? null
-              : AppBar(
-                  title: Text(title!),
-                  actions: actions,
-                )),
+              : AppBar(title: Text(title!), actions: actions)),
       floatingActionButton: floatingActionButton,
       bottomNavigationBar: bottomNavigationBar,
       body: useSafeArea ? SafeArea(child: content) : content,

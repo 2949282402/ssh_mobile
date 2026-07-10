@@ -27,7 +27,8 @@ class SftpRecentPathRecord {
       id: json['id'] as String? ?? _traceUuid.v4(),
       connectionId: json['connectionId'] as String? ?? '',
       path: json['path'] as String? ?? '.',
-      visitedAt: DateTime.tryParse(json['visitedAt'] as String? ?? '') ??
+      visitedAt:
+          DateTime.tryParse(json['visitedAt'] as String? ?? '') ??
           DateTime.now(),
     );
   }
@@ -50,10 +51,7 @@ class SftpFavoritePathRecord {
     required this.updatedAt,
   });
 
-  SftpFavoritePathRecord copyWith({
-    String? name,
-    DateTime? updatedAt,
-  }) {
+  SftpFavoritePathRecord copyWith({String? name, DateTime? updatedAt}) {
     return SftpFavoritePathRecord(
       id: id,
       connectionId: connectionId,

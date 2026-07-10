@@ -9,8 +9,9 @@ extension _TerminalWindowsInput on _TerminalScreenState {
   ) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final colorScheme = Theme.of(context).colorScheme;
-    final borderColor =
-        isDark ? const Color(0xFF30363D) : const Color(0xFFD0D7DE);
+    final borderColor = isDark
+        ? const Color(0xFF30363D)
+        : const Color(0xFFD0D7DE);
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -26,7 +27,10 @@ extension _TerminalWindowsInput on _TerminalScreenState {
               child: Focus(
                 onKeyEvent: (focusNode, event) =>
                     _handleWindowsCommandInputKeyEvent(
-                        focusNode, event, viewModel),
+                      focusNode,
+                      event,
+                      viewModel,
+                    ),
                 child: TextField(
                   controller: viewModel.commandInputController,
                   focusNode: viewModel.commandInputFocusNode,
@@ -121,7 +125,9 @@ extension _TerminalWindowsInput on _TerminalScreenState {
   }
 
   void _insertWindowsCommandInputText(
-      TerminalSessionViewModel viewModel, String text) {
+    TerminalSessionViewModel viewModel,
+    String text,
+  ) {
     final value = viewModel.commandInputController.value;
     final selection = value.selection.isValid
         ? value.selection

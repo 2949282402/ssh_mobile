@@ -72,66 +72,76 @@ class AiToolService implements AiToolExecutor {
     this.appSettings,
     this.playbookService,
     this.clientWebViewSessionId,
-  })  : clientSystemToolService =
-            clientSystemToolService ?? ClientSystemToolService.instance,
-        clientHealthAdvisor = clientHealthAdvisor ??
-            ClientHealthAdvisor(
-              clientSystemToolService:
-                  clientSystemToolService ?? ClientSystemToolService.instance,
-              secretPolicy: secretPolicy ?? const ToolSecretPolicy(),
-            ),
-        clientWebViewService =
-            clientWebViewService ?? ClientWebViewService.instance,
-        serverCatalogService = serverCatalogService ??
-            ServerCatalogService(
-              storageService: storageService,
-              sshService: sshService,
-              sftpService: sftpService,
-            ),
-        performanceMonitorToolService = performanceMonitorToolService ??
-            const _UnavailablePerformanceMonitorToolService(),
-        serverDiagnosticsService = serverDiagnosticsService ??
-            ServerDiagnosticsService(
-              storageService: storageService,
-              sshService: sshService,
-            ),
-        secretPolicy = secretPolicy ?? const ToolSecretPolicy(),
-        skillDomainService = skillDomainService ?? const SkillDomainService(),
-        providers = providers ??
-            _buildDefaultProviders(
-              storageService: storageService,
-              sshService: sshService,
-              sftpService: sftpService,
-              clientSystemToolService:
-                  clientSystemToolService ?? ClientSystemToolService.instance,
-              clientHealthAdvisor: clientHealthAdvisor ??
-                  ClientHealthAdvisor(
-                    clientSystemToolService: clientSystemToolService ??
-                        ClientSystemToolService.instance,
-                    secretPolicy: secretPolicy ?? const ToolSecretPolicy(),
-                  ),
-              clientWebViewService:
-                  clientWebViewService ?? ClientWebViewService.instance,
-              serverCatalogService: serverCatalogService ??
-                  ServerCatalogService(
-                    storageService: storageService,
-                    sshService: sshService,
-                    sftpService: sftpService,
-                  ),
-              performanceMonitorToolService: performanceMonitorToolService ??
-                  const _UnavailablePerformanceMonitorToolService(),
-              serverDiagnosticsService: serverDiagnosticsService ??
-                  ServerDiagnosticsService(
-                    storageService: storageService,
-                    sshService: sshService,
-                  ),
-              secretPolicy: secretPolicy ?? const ToolSecretPolicy(),
-              skillDomainService:
-                  skillDomainService ?? const SkillDomainService(),
-              appSettings: appSettings,
-              playbookService: playbookService,
-              clientWebViewSessionId: clientWebViewSessionId,
-            );
+  }) : clientSystemToolService =
+           clientSystemToolService ?? ClientSystemToolService.instance,
+       clientHealthAdvisor =
+           clientHealthAdvisor ??
+           ClientHealthAdvisor(
+             clientSystemToolService:
+                 clientSystemToolService ?? ClientSystemToolService.instance,
+             secretPolicy: secretPolicy ?? const ToolSecretPolicy(),
+           ),
+       clientWebViewService =
+           clientWebViewService ?? ClientWebViewService.instance,
+       serverCatalogService =
+           serverCatalogService ??
+           ServerCatalogService(
+             storageService: storageService,
+             sshService: sshService,
+             sftpService: sftpService,
+           ),
+       performanceMonitorToolService =
+           performanceMonitorToolService ??
+           const _UnavailablePerformanceMonitorToolService(),
+       serverDiagnosticsService =
+           serverDiagnosticsService ??
+           ServerDiagnosticsService(
+             storageService: storageService,
+             sshService: sshService,
+           ),
+       secretPolicy = secretPolicy ?? const ToolSecretPolicy(),
+       skillDomainService = skillDomainService ?? const SkillDomainService(),
+       providers =
+           providers ??
+           _buildDefaultProviders(
+             storageService: storageService,
+             sshService: sshService,
+             sftpService: sftpService,
+             clientSystemToolService:
+                 clientSystemToolService ?? ClientSystemToolService.instance,
+             clientHealthAdvisor:
+                 clientHealthAdvisor ??
+                 ClientHealthAdvisor(
+                   clientSystemToolService:
+                       clientSystemToolService ??
+                       ClientSystemToolService.instance,
+                   secretPolicy: secretPolicy ?? const ToolSecretPolicy(),
+                 ),
+             clientWebViewService:
+                 clientWebViewService ?? ClientWebViewService.instance,
+             serverCatalogService:
+                 serverCatalogService ??
+                 ServerCatalogService(
+                   storageService: storageService,
+                   sshService: sshService,
+                   sftpService: sftpService,
+                 ),
+             performanceMonitorToolService:
+                 performanceMonitorToolService ??
+                 const _UnavailablePerformanceMonitorToolService(),
+             serverDiagnosticsService:
+                 serverDiagnosticsService ??
+                 ServerDiagnosticsService(
+                   storageService: storageService,
+                   sshService: sshService,
+                 ),
+             secretPolicy: secretPolicy ?? const ToolSecretPolicy(),
+             skillDomainService:
+                 skillDomainService ?? const SkillDomainService(),
+             appSettings: appSettings,
+             playbookService: playbookService,
+             clientWebViewSessionId: clientWebViewSessionId,
+           );
 
   static List<AiToolProvider> _buildDefaultProviders({
     required StorageService storageService,
@@ -199,10 +209,7 @@ class AiToolService implements AiToolExecutor {
   }
 
   @override
-  AiCommandReview reviewCommand(
-    String command, {
-    ServerPlatform? platform,
-  }) {
+  AiCommandReview reviewCommand(String command, {ServerPlatform? platform}) {
     final normalized = command.trim().toLowerCase();
     if (normalized.isEmpty) {
       return const AiCommandReview.blocked('Command is empty.');
@@ -463,8 +470,9 @@ class AiToolService implements AiToolExecutor {
         final buildResult = skillDomainService.buildCreateSkill(
           title: title.isEmpty ? null : title,
           summary: summary,
-          content:
-              details.trim().isEmpty ? null : '$summary\n\n${details.trim()}',
+          content: details.trim().isEmpty
+              ? null
+              : '$summary\n\n${details.trim()}',
           references: inputReferences,
         );
         final dummyRecord = AiSkillRecord(
@@ -533,15 +541,18 @@ class AiToolService implements AiToolExecutor {
         final buffer = StringBuffer();
         if (preview.beforeName != preview.afterName) {
           buffer.writeln(
-              'Name: "${preview.beforeName}" -> "${preview.afterName}"');
+            'Name: "${preview.beforeName}" -> "${preview.afterName}"',
+          );
         }
         if (preview.beforeDescription != preview.afterDescription) {
           buffer.writeln(
-              'Description: "${preview.beforeDescription}" -> "${preview.afterDescription}"');
+            'Description: "${preview.beforeDescription}" -> "${preview.afterDescription}"',
+          );
         }
         if (preview.beforeEnabled != preview.afterEnabled) {
           buffer.writeln(
-              'Enabled: ${preview.beforeEnabled} -> ${preview.afterEnabled}');
+            'Enabled: ${preview.beforeEnabled} -> ${preview.afterEnabled}',
+          );
         }
         if (preview.beforeContentSnippet != preview.afterContentSnippet) {
           buffer.writeln('Content modified');
@@ -759,8 +770,10 @@ class AiToolService implements AiToolExecutor {
     final availableTools = await tools();
     final hasTool = availableTools.any((t) => t.name == name);
     if (!hasTool) {
-      AppLogService.instance
-          .warning('Unknown AI tool requested', details: name);
+      AppLogService.instance.warning(
+        'Unknown AI tool requested',
+        details: name,
+      );
       return jsonEncode({'error': 'Unknown tool: $name'});
     }
 
@@ -776,7 +789,7 @@ class AiToolService implements AiToolExecutor {
           'code': 'connection_required',
           'tool': name,
           'nextAction':
-              'Ask the user to select a server connection before running this tool.'
+              'Ask the user to select a server connection before running this tool.',
         });
       }
     }
@@ -815,8 +828,9 @@ class AiToolService implements AiToolExecutor {
         }
       }
 
-      rawResult ??=
-          jsonEncode({'error': 'Execution handler missing for tool: $name'});
+      rawResult ??= jsonEncode({
+        'error': 'Execution handler missing for tool: $name',
+      });
 
       final result = secretPolicy.redactJsonText(rawResult);
       AppLogService.instance.info(
@@ -850,9 +864,9 @@ class AiToolService implements AiToolExecutor {
     return {
       'type': 'integer',
       'description': description,
-      if (minimum != null) 'minimum': minimum,
-      if (maximum != null) 'maximum': maximum,
-      if (defaultValue != null) 'default': defaultValue,
+      'minimum': ?minimum,
+      'maximum': ?maximum,
+      'default': ?defaultValue,
     };
   }
 
@@ -868,7 +882,7 @@ class AiToolService implements AiToolExecutor {
       'type': 'array',
       'description': description,
       'items': {'type': 'string'},
-      if (minimumItems != null) 'minItems': minimumItems,
+      'minItems': ?minimumItems,
     };
   }
 
@@ -880,7 +894,7 @@ class AiToolService implements AiToolExecutor {
       'type': 'array',
       'description': description,
       'items': {'type': 'integer'},
-      if (minimumItems != null) 'minItems': minimumItems,
+      'minItems': ?minimumItems,
     };
   }
 }

@@ -79,18 +79,25 @@ class _PlaybookScreenState extends State<PlaybookScreen>
               icon: const Icon(Icons.close_rounded),
               onPressed: () => viewModel.cancelEditing(),
             ),
-          ]
+          ],
         ],
       ),
       body: LayoutBuilder(
         builder: (context, constraints) {
           final wide = constraints.maxWidth >= 760;
-          final listWidget =
-              _buildPlaybooksList(viewModel, strings, colorScheme);
+          final listWidget = _buildPlaybooksList(
+            viewModel,
+            strings,
+            colorScheme,
+          );
           final rightWidget = viewModel.isEditing
               ? _buildPlaybookEditor(viewModel, strings, colorScheme)
               : _buildExecutionDashboard(
-                  viewModel, connections, strings, colorScheme);
+                  viewModel,
+                  connections,
+                  strings,
+                  colorScheme,
+                );
 
           if (wide) {
             return Row(
@@ -111,9 +118,10 @@ class _PlaybookScreenState extends State<PlaybookScreen>
                   tabs: [
                     Tab(text: strings.playbooksList),
                     Tab(
-                        text: viewModel.isEditing
-                            ? strings.editPlaybook
-                            : strings.execution),
+                      text: viewModel.isEditing
+                          ? strings.editPlaybook
+                          : strings.execution,
+                    ),
                   ],
                 ),
               ),

@@ -100,8 +100,9 @@ class TerminalShortcutPanel extends StatelessWidget {
         tooltip: tooltip,
         padding: EdgeInsets.zero,
         style: IconButton.styleFrom(
-          backgroundColor:
-              Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
+          backgroundColor: Theme.of(
+            context,
+          ).colorScheme.primary.withValues(alpha: 0.1),
           foregroundColor: Theme.of(context).colorScheme.primary,
         ),
         onPressed: onPressed,
@@ -115,9 +116,10 @@ class TerminalShortcutPanel extends StatelessWidget {
     context.select<ShortcutCommandService, int>(
       (service) => service.orderVersion,
     );
-    final customCommands =
-        context.select<ShortcutCommandService, List<ShortcutCommand>>(
-            (service) => service.customCommands);
+    final customCommands = context
+        .select<ShortcutCommandService, List<ShortcutCommand>>(
+          (service) => service.customCommands,
+        );
 
     final allBuiltin = [
       const ShortcutCommand(id: 'tab', label: 'TAB', code: '\t'),
@@ -148,10 +150,11 @@ class TerminalShortcutPanel extends StatelessWidget {
       'down',
       'left',
       'right',
-      'ctrl_c'
+      'ctrl_c',
     };
-    final primaryCommands =
-        sortedAll.where((c) => primaryIds.contains(c.id) || c.custom).toList();
+    final primaryCommands = sortedAll
+        .where((c) => primaryIds.contains(c.id) || c.custom)
+        .toList();
     final secondaryCommands = sortedAll
         .where((c) => !primaryIds.contains(c.id) && !c.custom)
         .toList();
@@ -203,8 +206,9 @@ class TerminalShortcutPanel extends StatelessWidget {
               ),
             ),
             backgroundColor: colorScheme.primary.withValues(alpha: 0.08),
-            side:
-                BorderSide(color: colorScheme.primary.withValues(alpha: 0.35)),
+            side: BorderSide(
+              color: colorScheme.primary.withValues(alpha: 0.35),
+            ),
             padding: EdgeInsets.symmetric(
               horizontal: (7 * scale).clamp(4.0, 8.0),
               vertical: (3 * scale).clamp(1.5, 4.0),
@@ -241,7 +245,7 @@ class TerminalShortcutPanel extends StatelessWidget {
               'Consolas',
               'Microsoft YaHei',
               'PingFang SC',
-              'sans-serif'
+              'sans-serif',
             ],
             fontWeight: FontWeight.w700,
           ),
@@ -250,9 +254,7 @@ class TerminalShortcutPanel extends StatelessWidget {
           color: ctrlActive ? activeForeground : normalForeground,
         ),
         backgroundColor: ctrlActive ? activeBackground : normalBackground,
-        side: BorderSide(
-          color: ctrlActive ? activeBorder : normalBorder,
-        ),
+        side: BorderSide(color: ctrlActive ? activeBorder : normalBorder),
         padding: EdgeInsets.symmetric(
           horizontal: (7 * scale).clamp(4.0, 8.0),
           vertical: (3 * scale).clamp(1.5, 4.0),
@@ -286,7 +288,7 @@ class TerminalShortcutPanel extends StatelessWidget {
               'Consolas',
               'Microsoft YaHei',
               'PingFang SC',
-              'sans-serif'
+              'sans-serif',
             ],
             fontWeight: FontWeight.w700,
           ),
@@ -295,9 +297,7 @@ class TerminalShortcutPanel extends StatelessWidget {
           color: altActive ? activeForeground : normalForeground,
         ),
         backgroundColor: altActive ? activeBackground : normalBackground,
-        side: BorderSide(
-          color: altActive ? activeBorder : normalBorder,
-        ),
+        side: BorderSide(color: altActive ? activeBorder : normalBorder),
         padding: EdgeInsets.symmetric(
           horizontal: (7 * scale).clamp(4.0, 8.0),
           vertical: (3 * scale).clamp(1.5, 4.0),
@@ -321,7 +321,7 @@ class TerminalShortcutPanel extends StatelessWidget {
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: commands.length,
-        separatorBuilder: (_, __) => SizedBox(width: 4 * scale),
+        separatorBuilder: (_, _) => SizedBox(width: 4 * scale),
         itemBuilder: (context, index) {
           return _quickKey(context, commands[index], scale);
         },
@@ -330,14 +330,19 @@ class TerminalShortcutPanel extends StatelessWidget {
   }
 
   Widget _quickKey(
-      BuildContext context, ShortcutCommand command, double scale) {
+    BuildContext context,
+    ShortcutCommand command,
+    double scale,
+  ) {
     final colorScheme = Theme.of(context).colorScheme;
-    final normalBackground =
-        colorScheme.surfaceContainerHighest.withValues(alpha: 0.5);
+    final normalBackground = colorScheme.surfaceContainerHighest.withValues(
+      alpha: 0.5,
+    );
     final normalBorder = colorScheme.outlineVariant;
     final customBackground = colorScheme.primary.withValues(alpha: 0.12);
-    final customBorder =
-        command.custom ? AppTheme.terminalCyan : colorScheme.primary;
+    final customBorder = command.custom
+        ? AppTheme.terminalCyan
+        : colorScheme.primary;
     final foreground = colorScheme.onSurfaceVariant;
 
     return Padding(
@@ -355,7 +360,7 @@ class TerminalShortcutPanel extends StatelessWidget {
                 'Consolas',
                 'Microsoft YaHei',
                 'PingFang SC',
-                'sans-serif'
+                'sans-serif',
               ],
               fontWeight: FontWeight.w700,
               color: command.custom ? customBorder : foreground,
@@ -363,9 +368,7 @@ class TerminalShortcutPanel extends StatelessWidget {
           ),
         ),
         backgroundColor: command.custom ? customBackground : normalBackground,
-        side: BorderSide(
-          color: command.custom ? customBorder : normalBorder,
-        ),
+        side: BorderSide(color: command.custom ? customBorder : normalBorder),
         padding: EdgeInsets.symmetric(
           horizontal: (7 * scale).clamp(4.0, 8.0),
           vertical: (3 * scale).clamp(1.5, 4.0),
@@ -425,12 +428,13 @@ class TerminalShortcutPanel extends StatelessWidget {
                         ),
                       ),
                       onPressed: () {
-                        context
-                            .read<ShortcutCommandService>()
-                            .recordUse(cmd.id);
-                        context
-                            .read<SshService>()
-                            .sendData(sessionId, cmd.code);
+                        context.read<ShortcutCommandService>().recordUse(
+                          cmd.id,
+                        );
+                        context.read<SshService>().sendData(
+                          sessionId,
+                          cmd.code,
+                        );
                         terminalFocusNode.requestFocus();
                       },
                     );
@@ -451,9 +455,7 @@ class TerminalShortcutPanel extends StatelessWidget {
       showDragHandle: true,
       builder: (ctx) {
         return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.viewInsetsOf(ctx).bottom,
-          ),
+          padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
           child: SafeArea(
             child: SingleChildScrollView(
               child: Padding(
@@ -479,17 +481,14 @@ class TerminalShortcutPanel extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    _keyGroup(
-                        context,
-                        [
-                          const _KeySpec('HOME', '\x1b[H'),
-                          const _KeySpec('END', '\x1b[F'),
-                          const _KeySpec('PGUP', '\x1b[5~'),
-                          const _KeySpec('PGDN', '\x1b[6~'),
-                          const _KeySpec('CTRL+D', '\x04'),
-                          const _KeySpec('CTRL+L', '\x0c'),
-                        ],
-                        scale),
+                    _keyGroup(context, [
+                      const _KeySpec('HOME', '\x1b[H'),
+                      const _KeySpec('END', '\x1b[F'),
+                      const _KeySpec('PGUP', '\x1b[5~'),
+                      const _KeySpec('PGDN', '\x1b[6~'),
+                      const _KeySpec('CTRL+D', '\x04'),
+                      const _KeySpec('CTRL+L', '\x0c'),
+                    ], scale),
                     const SizedBox(height: 16),
                     Text(
                       strings.editControl,
@@ -500,25 +499,22 @@ class TerminalShortcutPanel extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    _keyGroup(
-                        context,
-                        [
-                          const _KeySpec('INS', '\x1b[2~'),
-                          const _KeySpec('DEL', '\x1b[3~'),
-                          const _KeySpec('SPACE', ' '),
-                          const _KeySpec('CTRL+A', '\x01'),
-                          const _KeySpec('CTRL+E', '\x05'),
-                          const _KeySpec('CTRL+U', '\x15'),
-                          const _KeySpec('CTRL+K', '\x0b'),
-                          const _KeySpec('CTRL+W', '\x17'),
-                          const _KeySpec('CTRL+R', '\x12'),
-                          const _KeySpec('CTRL+Z', '\x1a'),
-                          const _KeySpec('CTRL+\\', '\x1c'),
-                          const _KeySpec('ALT+B', '\x1bb'),
-                          const _KeySpec('ALT+F', '\x1bf'),
-                          const _KeySpec('ALT+D', '\x1bd'),
-                        ],
-                        scale),
+                    _keyGroup(context, [
+                      const _KeySpec('INS', '\x1b[2~'),
+                      const _KeySpec('DEL', '\x1b[3~'),
+                      const _KeySpec('SPACE', ' '),
+                      const _KeySpec('CTRL+A', '\x01'),
+                      const _KeySpec('CTRL+E', '\x05'),
+                      const _KeySpec('CTRL+U', '\x15'),
+                      const _KeySpec('CTRL+K', '\x0b'),
+                      const _KeySpec('CTRL+W', '\x17'),
+                      const _KeySpec('CTRL+R', '\x12'),
+                      const _KeySpec('CTRL+Z', '\x1a'),
+                      const _KeySpec('CTRL+\\', '\x1c'),
+                      const _KeySpec('ALT+B', '\x1bb'),
+                      const _KeySpec('ALT+F', '\x1bf'),
+                      const _KeySpec('ALT+D', '\x1bd'),
+                    ], scale),
                     const SizedBox(height: 16),
                     Text(
                       strings.functionKeys,
@@ -529,23 +525,20 @@ class TerminalShortcutPanel extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    _keyGroup(
-                        context,
-                        [
-                          const _KeySpec('F1', '\x1bOP'),
-                          const _KeySpec('F2', '\x1bOQ'),
-                          const _KeySpec('F3', '\x1bOR'),
-                          const _KeySpec('F4', '\x1bOS'),
-                          const _KeySpec('F5', '\x1b[15~'),
-                          const _KeySpec('F6', '\x1b[17~'),
-                          const _KeySpec('F7', '\x1b[18~'),
-                          const _KeySpec('F8', '\x1b[19~'),
-                          const _KeySpec('F9', '\x1b[20~'),
-                          const _KeySpec('F10', '\x1b[21~'),
-                          const _KeySpec('F11', '\x1b[23~'),
-                          const _KeySpec('F12', '\x1b[24~'),
-                        ],
-                        scale),
+                    _keyGroup(context, [
+                      const _KeySpec('F1', '\x1bOP'),
+                      const _KeySpec('F2', '\x1bOQ'),
+                      const _KeySpec('F3', '\x1bOR'),
+                      const _KeySpec('F4', '\x1bOS'),
+                      const _KeySpec('F5', '\x1b[15~'),
+                      const _KeySpec('F6', '\x1b[17~'),
+                      const _KeySpec('F7', '\x1b[18~'),
+                      const _KeySpec('F8', '\x1b[19~'),
+                      const _KeySpec('F9', '\x1b[20~'),
+                      const _KeySpec('F10', '\x1b[21~'),
+                      const _KeySpec('F11', '\x1b[23~'),
+                      const _KeySpec('F12', '\x1b[24~'),
+                    ], scale),
                     const SizedBox(height: 16),
                     Row(
                       children: [
@@ -578,12 +571,12 @@ class TerminalShortcutPanel extends StatelessWidget {
                             icon: Icon(Icons.send, size: 20 * scale),
                             tooltip: strings.send,
                             style: IconButton.styleFrom(
-                              backgroundColor: Theme.of(context)
-                                  .colorScheme
-                                  .primary
-                                  .withValues(alpha: 0.1),
-                              foregroundColor:
-                                  Theme.of(context).colorScheme.primary,
+                              backgroundColor: Theme.of(
+                                context,
+                              ).colorScheme.primary.withValues(alpha: 0.1),
+                              foregroundColor: Theme.of(
+                                context,
+                              ).colorScheme.primary,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(8),
                               ),
@@ -656,9 +649,10 @@ class TerminalShortcutPanel extends StatelessWidget {
 
     if (result == null || !context.mounted) return;
 
-    await context
-        .read<ShortcutCommandService>()
-        .addCustomCommand(result.$1, result.$2);
+    await context.read<ShortcutCommandService>().addCustomCommand(
+      result.$1,
+      result.$2,
+    );
   }
 
   Future<void> _confirmRemoveShortcut(
@@ -685,9 +679,9 @@ class TerminalShortcutPanel extends StatelessWidget {
     );
 
     if (confirmed != true || !context.mounted) return;
-    await context
-        .read<ShortcutCommandService>()
-        .removeCustomCommand(command.id);
+    await context.read<ShortcutCommandService>().removeCustomCommand(
+      command.id,
+    );
   }
 
   void _sendComplexInput(BuildContext context) {

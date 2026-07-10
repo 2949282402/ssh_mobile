@@ -23,8 +23,10 @@ void main() {
     await storageService.init();
 
     sshService = SshService(storageService);
-    playbookService =
-        PlaybookService(storageService: storageService, sshService: sshService);
+    playbookService = PlaybookService(
+      storageService: storageService,
+      sshService: sshService,
+    );
   });
 
   tearDown(() {

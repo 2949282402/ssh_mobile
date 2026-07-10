@@ -13,7 +13,8 @@ extension ConnectionOps on StorageService {
       final list = jsonDecode(jsonStr) as List<dynamic>;
       _connections = list
           .map(
-              (item) => ConnectionConfig.fromJson(item as Map<String, dynamic>))
+            (item) => ConnectionConfig.fromJson(item as Map<String, dynamic>),
+          )
           .toList();
       _refreshConnectionsView();
     } catch (e) {
@@ -25,8 +26,9 @@ extension ConnectionOps on StorageService {
 
   Future<void> _saveConnections() async {
     if (!_initialized || _prefs == null) return;
-    final jsonStr =
-        jsonEncode(_connections.map((item) => item.toJson()).toList());
+    final jsonStr = jsonEncode(
+      _connections.map((item) => item.toJson()).toList(),
+    );
     await _writeProtectedPref(StorageService._connectionsKey, jsonStr);
   }
 

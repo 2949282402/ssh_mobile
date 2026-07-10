@@ -144,10 +144,7 @@ class ClientWebViewService extends ChangeNotifier
     }
 
     final uri = _searchUri(trimmedQuery, engine: engine);
-    final token = _beginAiBrowsing(
-      session,
-      'Searching "$trimmedQuery"',
-    );
+    final token = _beginAiBrowsing(session, 'Searching "$trimmedQuery"');
     try {
       final now = DateTime.now();
       session
@@ -404,8 +401,9 @@ class ClientWebViewService extends ChangeNotifier
               state: await getState(chatId),
             );
           }
-          final blockedReason =
-              ClientWebViewSecurityPolicy.blockedInputReason(trimmedInput);
+          final blockedReason = ClientWebViewSecurityPolicy.blockedInputReason(
+            trimmedInput,
+          );
           if (blockedReason != null) {
             session
               .._lastError = blockedReason

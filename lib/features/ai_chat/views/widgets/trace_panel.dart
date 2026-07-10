@@ -7,11 +7,7 @@ class TracePanel extends StatelessWidget {
   final List<AiMessageTrace> traces;
   final String storageKey;
 
-  const TracePanel({
-    super.key,
-    required this.traces,
-    required this.storageKey,
-  });
+  const TracePanel({super.key, required this.traces, required this.storageKey});
 
   @override
   Widget build(BuildContext context) {
@@ -100,10 +96,7 @@ class TraceEntry extends StatelessWidget {
             '$index. ${_traceTitle(trace)}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-            ),
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
           ),
           children: [
             Align(
@@ -119,7 +112,7 @@ class TraceEntry extends StatelessWidget {
                     'Consolas',
                     'Microsoft YaHei',
                     'PingFang SC',
-                    'sans-serif'
+                    'sans-serif',
                   ],
                 ),
               ),

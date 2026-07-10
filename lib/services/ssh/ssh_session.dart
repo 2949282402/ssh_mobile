@@ -1,11 +1,6 @@
 part of '../ssh_service.dart';
 
-enum SshConnectionState {
-  disconnected,
-  connecting,
-  connected,
-  error,
-}
+enum SshConnectionState { disconnected, connecting, connected, error }
 
 class SshConnectionOverview {
   static const empty = SshConnectionOverview(
@@ -46,8 +41,8 @@ class SshServerOverviewSnapshot {
   });
 
   const SshServerOverviewSnapshot.empty()
-      : byConnection = const {},
-        windowCount = 0;
+    : byConnection = const {},
+      windowCount = 0;
 
   SshConnectionOverview forConnection(String connectionId) {
     return byConnection[connectionId] ?? SshConnectionOverview.empty;
@@ -68,13 +63,11 @@ class SshServerOverviewSnapshot {
 
   @override
   int get hashCode => Object.hash(
-        windowCount,
-        Object.hashAllUnordered(
-          byConnection.entries.map(
-            (entry) => Object.hash(entry.key, entry.value),
-          ),
-        ),
-      );
+    windowCount,
+    Object.hashAllUnordered(
+      byConnection.entries.map((entry) => Object.hash(entry.key, entry.value)),
+    ),
+  );
 }
 
 abstract interface class SshClientAdapter {
@@ -114,10 +107,7 @@ abstract interface class SshClientAdapter {
     SshHostKeyConfirmation? onUnknownHostKey,
   });
 
-  Future<bool> ensureSessionConnected(
-    String sessionId,
-    String connectionId,
-  );
+  Future<bool> ensureSessionConnected(String sessionId, String connectionId);
 
   Future<bool> ensureConnected(String connectionId);
 
@@ -181,9 +171,9 @@ class SshSession {
     this.errorMessage,
     DateTime? createdAt,
     DateTime? updatedAt,
-  })  : displayName = displayName ?? connectionName,
-        createdAt = createdAt ?? DateTime.now(),
-        updatedAt = updatedAt ?? DateTime.now();
+  }) : displayName = displayName ?? connectionName,
+       createdAt = createdAt ?? DateTime.now(),
+       updatedAt = updatedAt ?? DateTime.now();
 
   Stream<String> get output => outputController.stream;
   bool get isConnected => state == SshConnectionState.connected;
@@ -207,8 +197,8 @@ class SshSession {
     } else {
       _outputChunks.add(data);
       _outputCharCount += data.length;
-      while (
-          _outputCharCount > maxOutputCacheChars && _outputChunks.isNotEmpty) {
+      while (_outputCharCount > maxOutputCacheChars &&
+          _outputChunks.isNotEmpty) {
         final overflow = _outputCharCount - maxOutputCacheChars;
         final first = _outputChunks.removeFirst();
         if (first.length <= overflow) {

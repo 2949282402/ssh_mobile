@@ -156,62 +156,62 @@ void main() {
 
       token.cancel();
       expect(token.isCancelled, isTrue);
-      expect(() => token.throwIfCancelled(),
-          throwsA(isA<LlmCancelledException>()));
+      expect(
+        () => token.throwIfCancelled(),
+        throwsA(isA<LlmCancelledException>()),
+      );
     });
 
     test(
-        'stream with cancelled token during compression throws LlmCancelledException',
-        () async {
-      final storage = StorageService();
-      await storage.init();
+      'stream with cancelled token during compression throws LlmCancelledException',
+      () async {
+        final storage = StorageService();
+        await storage.init();
 
-      await storage.saveAiConnectionSettings(
-        baseUrl: 'https://api.example.com',
-        model: 'demo-model',
-        apiKey: 'dummy-key',
-      );
+        await storage.saveAiConnectionSettings(
+          baseUrl: 'https://api.example.com',
+          model: 'demo-model',
+          apiKey: 'dummy-key',
+        );
 
-      final ssh = SshService(storage);
-      final sftp = SftpService(storage);
-      final diagnostics = ServerDiagnosticsService(
-        storageService: storage,
-        sshService: ssh,
-      );
-      final monitor = PerformanceMonitorService(ssh, storage);
-      final tools = AiToolService(
-        storageService: storage,
-        sshService: ssh,
-        sftpService: sftp,
-        serverDiagnosticsService: diagnostics,
-        performanceMonitorToolService: PerformanceMonitorToolService(monitor),
-      );
+        final ssh = SshService(storage);
+        final sftp = SftpService(storage);
+        final diagnostics = ServerDiagnosticsService(
+          storageService: storage,
+          sshService: ssh,
+        );
+        final monitor = PerformanceMonitorService(ssh, storage);
+        final tools = AiToolService(
+          storageService: storage,
+          sshService: ssh,
+          sftpService: sftp,
+          serverDiagnosticsService: diagnostics,
+          performanceMonitorToolService: PerformanceMonitorToolService(monitor),
+        );
 
-      final llm = LlmChatService(
-        storageService: storage,
-        toolService: tools,
-      );
+        final llm = LlmChatService(storageService: storage, toolService: tools);
 
-      final token = LlmCancellationToken();
-      token.cancel();
+        final token = LlmCancellationToken();
+        token.cancel();
 
-      final messages = [
-        {'role': 'user', 'content': 'hello'},
-      ];
+        final messages = [
+          {'role': 'user', 'content': 'hello'},
+        ];
 
-      expect(
-        () => llm
-            .stream(
-              messages: messages,
-              cancellationToken: token,
-              forceContextCompression: true,
-            )
-            .toList(),
-        throwsA(isA<LlmCancelledException>()),
-      );
+        expect(
+          () => llm
+              .stream(
+                messages: messages,
+                cancellationToken: token,
+                forceContextCompression: true,
+              )
+              .toList(),
+          throwsA(isA<LlmCancelledException>()),
+        );
 
-      storage.dispose();
-    });
+        storage.dispose();
+      },
+    );
   });
 
   group('LlmToolBudgetController', () {
@@ -363,160 +363,167 @@ void main() {
   });
 
   group('LlmChatService Plan Mode', () {
-    test('systemPromptFor appends plan mode instructions when planMode is true',
-        () {
-      final storage = StorageService();
-      final llmZh = LlmChatService(
-        storageService: storage,
-        toolService: _MockAiToolExecutor(),
-        language: AppLanguage.zh,
-      );
-      final llmEn = LlmChatService(
-        storageService: storage,
-        toolService: _MockAiToolExecutor(),
-        language: AppLanguage.en,
-      );
+    test(
+      'systemPromptFor appends plan mode instructions when planMode is true',
+      () {
+        final storage = StorageService();
+        final llmZh = LlmChatService(
+          storageService: storage,
+          toolService: _MockAiToolExecutor(),
+          language: AppLanguage.zh,
+        );
+        final llmEn = LlmChatService(
+          storageService: storage,
+          toolService: _MockAiToolExecutor(),
+          language: AppLanguage.en,
+        );
 
-      final zhNormal = llmZh.systemPromptFor(planMode: false);
-      final zhPlan = llmZh.systemPromptFor(planMode: true);
-      expect(zhNormal, isNot(contains('[PLAN MODE ACTIVE]')));
-      expect(zhPlan, contains('[PLAN MODE ACTIVE]'));
-      expect(zhPlan, contains('todoSteps'));
-      expect(zhPlan, contains('不会自动创建已保存的可复用 Playbook'));
+        final zhNormal = llmZh.systemPromptFor(planMode: false);
+        final zhPlan = llmZh.systemPromptFor(planMode: true);
+        expect(zhNormal, isNot(contains('[PLAN MODE ACTIVE]')));
+        expect(zhPlan, contains('[PLAN MODE ACTIVE]'));
+        expect(zhPlan, contains('todoSteps'));
+        expect(zhPlan, contains('不会自动创建已保存的可复用 Playbook'));
 
-      final enNormal = llmEn.systemPromptFor(planMode: false);
-      final enPlan = llmEn.systemPromptFor(planMode: true);
-      expect(enNormal, isNot(contains('[PLAN MODE ACTIVE]')));
-      expect(enPlan, contains('[PLAN MODE ACTIVE]'));
-      expect(
-          enPlan, contains('does not create a saved reusable Playbook record'));
-    });
+        final enNormal = llmEn.systemPromptFor(planMode: false);
+        final enPlan = llmEn.systemPromptFor(planMode: true);
+        expect(enNormal, isNot(contains('[PLAN MODE ACTIVE]')));
+        expect(enPlan, contains('[PLAN MODE ACTIVE]'));
+        expect(
+          enPlan,
+          contains('does not create a saved reusable Playbook record'),
+        );
+      },
+    );
 
-    test('filters state-changing and execution-only tools out of plan mode',
-        () async {
-      Future<String> noop(Map<String, dynamic> _) async => '{}';
+    test(
+      'filters state-changing and execution-only tools out of plan mode',
+      () async {
+        Future<String> noop(Map<String, dynamic> _) async => '{}';
 
-      final executor = _MockAiToolExecutor([
-        AiTool(
-          name: 'list_servers',
-          description: 'read',
-          properties: const {},
-          handler: noop,
-        ),
-        AiTool(
-          name: 'client_set_clipboard',
-          description: 'write',
-          properties: const {},
-          executionMode: AiToolExecutionMode.stateChanging,
-          handler: noop,
-        ),
-        AiTool(
-          name: 'client_set_alarm',
-          description: 'write',
-          properties: const {},
-          executionMode: AiToolExecutionMode.stateChanging,
-          handler: noop,
-        ),
-        AiTool(
-          name: 'client_cancel_alarm',
-          description: 'write',
-          properties: const {},
-          executionMode: AiToolExecutionMode.stateChanging,
-          handler: noop,
-        ),
-        AiTool(
-          name: 'client_open_app_settings',
-          description: 'write',
-          properties: const {},
-          executionMode: AiToolExecutionMode.stateChanging,
-          handler: noop,
-        ),
-        AiTool(
-          name: 'ssh_rename_session',
-          description: 'write',
-          properties: const {},
-          executionMode: AiToolExecutionMode.stateChanging,
-          handler: noop,
-        ),
-        AiTool(
-          name: 'update_server_metadata',
-          description: 'write',
-          properties: const {},
-          executionMode: AiToolExecutionMode.stateChanging,
-          handler: noop,
-        ),
-        AiTool(
-          name: 'monitor_start',
-          description: 'write',
-          properties: const {},
-          executionMode: AiToolExecutionMode.stateChanging,
-          handler: noop,
-        ),
-        AiTool(
-          name: 'create_playbook',
-          description: 'write',
-          properties: const {},
-          executionMode: AiToolExecutionMode.stateChanging,
-          handler: noop,
-        ),
-        AiTool(
-          name: 'run_playbook',
-          description: 'write',
-          properties: const {},
-          executionMode: AiToolExecutionMode.stateChanging,
-          handler: noop,
-        ),
-        AiTool(
-          name: 'client_task_create',
-          description: 'plan',
-          properties: const {},
-          executionMode: AiToolExecutionMode.planOnly,
-          handler: noop,
-        ),
-        AiTool(
-          name: 'client_task_update',
-          description: 'exec',
-          properties: const {},
-          executionMode: AiToolExecutionMode.executionOnly,
-          handler: noop,
-        ),
-        AiTool(
-          name: 'client_set_plan_mode',
-          description: 'control',
-          properties: const {},
-          executionMode: AiToolExecutionMode.planControl,
-          handler: noop,
-        ),
-      ]);
-      final llm = LlmChatService(
-        storageService: StorageService(),
-        toolService: executor,
-        language: AppLanguage.en,
-      );
+        final executor = _MockAiToolExecutor([
+          AiTool(
+            name: 'list_servers',
+            description: 'read',
+            properties: const {},
+            handler: noop,
+          ),
+          AiTool(
+            name: 'client_set_clipboard',
+            description: 'write',
+            properties: const {},
+            executionMode: AiToolExecutionMode.stateChanging,
+            handler: noop,
+          ),
+          AiTool(
+            name: 'client_set_alarm',
+            description: 'write',
+            properties: const {},
+            executionMode: AiToolExecutionMode.stateChanging,
+            handler: noop,
+          ),
+          AiTool(
+            name: 'client_cancel_alarm',
+            description: 'write',
+            properties: const {},
+            executionMode: AiToolExecutionMode.stateChanging,
+            handler: noop,
+          ),
+          AiTool(
+            name: 'client_open_app_settings',
+            description: 'write',
+            properties: const {},
+            executionMode: AiToolExecutionMode.stateChanging,
+            handler: noop,
+          ),
+          AiTool(
+            name: 'ssh_rename_session',
+            description: 'write',
+            properties: const {},
+            executionMode: AiToolExecutionMode.stateChanging,
+            handler: noop,
+          ),
+          AiTool(
+            name: 'update_server_metadata',
+            description: 'write',
+            properties: const {},
+            executionMode: AiToolExecutionMode.stateChanging,
+            handler: noop,
+          ),
+          AiTool(
+            name: 'monitor_start',
+            description: 'write',
+            properties: const {},
+            executionMode: AiToolExecutionMode.stateChanging,
+            handler: noop,
+          ),
+          AiTool(
+            name: 'create_playbook',
+            description: 'write',
+            properties: const {},
+            executionMode: AiToolExecutionMode.stateChanging,
+            handler: noop,
+          ),
+          AiTool(
+            name: 'run_playbook',
+            description: 'write',
+            properties: const {},
+            executionMode: AiToolExecutionMode.stateChanging,
+            handler: noop,
+          ),
+          AiTool(
+            name: 'client_task_create',
+            description: 'plan',
+            properties: const {},
+            executionMode: AiToolExecutionMode.planOnly,
+            handler: noop,
+          ),
+          AiTool(
+            name: 'client_task_update',
+            description: 'exec',
+            properties: const {},
+            executionMode: AiToolExecutionMode.executionOnly,
+            handler: noop,
+          ),
+          AiTool(
+            name: 'client_set_plan_mode',
+            description: 'control',
+            properties: const {},
+            executionMode: AiToolExecutionMode.planControl,
+            handler: noop,
+          ),
+        ]);
+        final llm = LlmChatService(
+          storageService: StorageService(),
+          toolService: executor,
+          language: AppLanguage.en,
+        );
 
-      final names = llm
-          .filterVisibleTools(
-            await executor.tools(),
-            planMode: true,
-          )
-          .map((tool) => tool.name)
-          .toList();
+        final names = llm
+            .filterVisibleTools(await executor.tools(), planMode: true)
+            .map((tool) => tool.name)
+            .toList();
 
-      expect(
+        expect(
           names,
-          containsAll(
-              ['list_servers', 'client_task_create', 'client_set_plan_mode']));
-      expect(names, isNot(contains('client_set_clipboard')));
-      expect(names, isNot(contains('client_set_alarm')));
-      expect(names, isNot(contains('client_cancel_alarm')));
-      expect(names, isNot(contains('client_open_app_settings')));
-      expect(names, isNot(contains('ssh_rename_session')));
-      expect(names, isNot(contains('update_server_metadata')));
-      expect(names, isNot(contains('monitor_start')));
-      expect(names, isNot(contains('create_playbook')));
-      expect(names, isNot(contains('run_playbook')));
-      expect(names, isNot(contains('client_task_update')));
-    });
+          containsAll([
+            'list_servers',
+            'client_task_create',
+            'client_set_plan_mode',
+          ]),
+        );
+        expect(names, isNot(contains('client_set_clipboard')));
+        expect(names, isNot(contains('client_set_alarm')));
+        expect(names, isNot(contains('client_cancel_alarm')));
+        expect(names, isNot(contains('client_open_app_settings')));
+        expect(names, isNot(contains('ssh_rename_session')));
+        expect(names, isNot(contains('update_server_metadata')));
+        expect(names, isNot(contains('monitor_start')));
+        expect(names, isNot(contains('create_playbook')));
+        expect(names, isNot(contains('run_playbook')));
+        expect(names, isNot(contains('client_task_update')));
+      },
+    );
   });
 }
 
@@ -534,13 +541,16 @@ class _MockAiToolExecutor implements AiToolExecutor {
 
   @override
   Future<AiToolApprovalRequest?> approvalRequestFor(
-          String name, Map<String, dynamic> arguments) async =>
-      null;
+    String name,
+    Map<String, dynamic> arguments,
+  ) async => null;
 
   @override
-  Future<String> execute(String name, Map<String, dynamic> arguments,
-          {bool approvedWrite = false}) async =>
-      '';
+  Future<String> execute(
+    String name,
+    Map<String, dynamic> arguments, {
+    bool approvedWrite = false,
+  }) async => '';
 
   @override
   AiCommandReview reviewCommand(String command, {ServerPlatform? platform}) =>

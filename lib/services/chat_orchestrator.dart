@@ -59,7 +59,8 @@ class ChatOrchestrator {
     final approvedPlanMessage = approvedPlanRef == null
         ? null
         : approvedPlanMessageForChat(
-            chat.copyWith(approvedPlan: approvedPlanRef));
+            chat.copyWith(approvedPlan: approvedPlanRef),
+          );
     final userContextText = await contextAssembler.buildUserContext(
       userText: text,
       language: language,
@@ -77,12 +78,11 @@ class ChatOrchestrator {
           title: language == AppLanguage.en
               ? 'Knowledge Base Retrieval (RAG)'
               : '知识库检索 (RAG)',
-          content: memory.ragChunks.map((chunk) {
-            return [
-              'Source: ${chunk.documentName}',
-              chunk.text,
-            ].join('\n');
-          }).join('\n\n---\n\n'),
+          content: memory.ragChunks
+              .map((chunk) {
+                return ['Source: ${chunk.documentName}', chunk.text].join('\n');
+              })
+              .join('\n\n---\n\n'),
           createdAt: createdAt,
         ),
       );
@@ -147,8 +147,10 @@ class ChatOrchestrator {
 
     final finalizedAssistant = assistantMessage.copyWith(
       text: answerText,
-      contextText: contextAssembler.buildAssistantContext(answerText,
-          traces: nextTraces),
+      contextText: contextAssembler.buildAssistantContext(
+        answerText,
+        traces: nextTraces,
+      ),
       traces: nextTraces,
       todoSteps: todoSteps,
     );
@@ -187,14 +189,16 @@ class ChatOrchestrator {
             isPlaybookValid = false;
             break;
           }
-          parsedSteps.add(AiTodoStep(
-            id: buildStableTodoStepId(assistantCreatedAt, idx),
-            name: name,
-            command: item['command']?.toString() ?? '',
-            description: item['description']?.toString() ?? '',
-            status: StepStatus.pending,
-            connectionId: item['connectionId']?.toString(),
-          ));
+          parsedSteps.add(
+            AiTodoStep(
+              id: buildStableTodoStepId(assistantCreatedAt, idx),
+              name: name,
+              command: item['command']?.toString() ?? '',
+              description: item['description']?.toString() ?? '',
+              status: StepStatus.pending,
+              connectionId: item['connectionId']?.toString(),
+            ),
+          );
         }
 
         if (isPlaybookValid && parsedSteps.isNotEmpty) {

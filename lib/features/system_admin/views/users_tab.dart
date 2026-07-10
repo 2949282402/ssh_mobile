@@ -1,4 +1,4 @@
-﻿part of 'system_admin_screen.dart';
+part of 'system_admin_screen.dart';
 
 class _UsersTab extends StatefulWidget {
   final AppStrings strings;
@@ -40,8 +40,10 @@ class _UsersTabState extends State<_UsersTab>
             children: [
               Text(
                 widget.strings.userAccounts,
-                style:
-                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
               ),
               FilledButton.icon(
                 icon: const Icon(Icons.person_add),
@@ -77,37 +79,48 @@ class _UsersTabState extends State<_UsersTab>
                           ),
                           title: Row(
                             children: [
-                              Text(account.username,
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold)),
+                              Text(
+                                account.username,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                               const SizedBox(width: 8),
-                              Text('(${account.uid}/${account.gid})',
-                                  style: TextStyle(
-                                      fontSize: 12,
-                                      color:
-                                          widget.colorScheme.onSurfaceVariant)),
+                              Text(
+                                '(${account.uid}/${account.gid})',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: widget.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
                               const Spacer(),
                               if (account.isLocked)
                                 Container(
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 6, vertical: 2),
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
                                   decoration: BoxDecoration(
-                                    color: widget.colorScheme.error
-                                        .withValues(alpha: 0.1),
+                                    color: widget.colorScheme.error.withValues(
+                                      alpha: 0.1,
+                                    ),
                                     borderRadius: BorderRadius.circular(4),
                                   ),
                                   child: Text(
                                     widget.strings.lockUser,
                                     style: TextStyle(
-                                        color: widget.colorScheme.error,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold),
+                                      color: widget.colorScheme.error,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
                                 )
                               else
                                 Container(
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 6, vertical: 2),
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: widget.colorScheme.primary
                                         .withValues(alpha: 0.1),
@@ -116,9 +129,10 @@ class _UsersTabState extends State<_UsersTab>
                                   child: Text(
                                     widget.strings.unlockUser,
                                     style: TextStyle(
-                                        color: widget.colorScheme.primary,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold),
+                                      color: widget.colorScheme.primary,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
                                 ),
                             ],
@@ -129,8 +143,9 @@ class _UsersTabState extends State<_UsersTab>
                             maxLines: 1,
                             style: TextStyle(
                               fontSize: 12,
-                              color: widget.colorScheme.onSurface
-                                  .withValues(alpha: 0.58),
+                              color: widget.colorScheme.onSurface.withValues(
+                                alpha: 0.58,
+                              ),
                             ),
                           ),
                           children: [
@@ -152,13 +167,13 @@ class _UsersTabState extends State<_UsersTab>
   }
 
   void _openCreateUserDialog(
-      AppStrings strings, SystemAdminViewModel viewModel) {
+    AppStrings strings,
+    SystemAdminViewModel viewModel,
+  ) {
     showDialog(
       context: context,
-      builder: (context) => _CreateUserDialog(
-        viewModel: viewModel,
-        strings: strings,
-      ),
+      builder: (context) =>
+          _CreateUserDialog(viewModel: viewModel, strings: strings),
     );
   }
 }
@@ -193,8 +208,9 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
   }
 
   Future<void> _loadStorageInfo() async {
-    final size =
-        await widget.viewModel.getUserHomeStorageUsage(widget.account.homeDir);
+    final size = await widget.viewModel.getUserHomeStorageUsage(
+      widget.account.homeDir,
+    );
     if (!mounted) return;
     setState(() {
       _storageUsed = size;
@@ -202,8 +218,9 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
   }
 
   Future<void> _loadSudoInfo() async {
-    final isAdmin =
-        await widget.viewModel.checkUserSudo(widget.account.username);
+    final isAdmin = await widget.viewModel.checkUserSudo(
+      widget.account.username,
+    );
     if (!mounted) return;
     setState(() {
       _isAdmin = isAdmin;
@@ -219,8 +236,9 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _loadingSudo = false);
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Failed: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed: $e')));
     }
   }
 
@@ -233,20 +251,27 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
         children: [
           Row(
             children: [
-              Text('${widget.strings.storageUsed}: ',
-                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text(
+                '${widget.strings.storageUsed}: ',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
               Text(_storageUsed),
               const SizedBox(width: 24),
-              Text('${widget.strings.sudoStatus}: ',
-                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              Text(
+                '${widget.strings.sudoStatus}: ',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
               _loadingSudo
                   ? const SizedBox(
                       width: 12,
                       height: 12,
-                      child: CircularProgressIndicator(strokeWidth: 1.5))
-                  : Text(_isAdmin
-                      ? widget.strings.administrator
-                      : widget.strings.normalUser),
+                      child: CircularProgressIndicator(strokeWidth: 1.5),
+                    )
+                  : Text(
+                      _isAdmin
+                          ? widget.strings.administrator
+                          : widget.strings.normalUser,
+                    ),
             ],
           ),
           const SizedBox(height: 16),
@@ -256,10 +281,13 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
             children: [
               ElevatedButton.icon(
                 icon: Icon(
-                    widget.account.isLocked ? Icons.lock_open : Icons.lock),
-                label: Text(widget.account.isLocked
-                    ? widget.strings.unlockUser
-                    : widget.strings.lockUser),
+                  widget.account.isLocked ? Icons.lock_open : Icons.lock,
+                ),
+                label: Text(
+                  widget.account.isLocked
+                      ? widget.strings.unlockUser
+                      : widget.strings.lockUser,
+                ),
                 onPressed: _toggleUserLock,
               ),
               ElevatedButton.icon(
@@ -280,9 +308,11 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
               if (!_loadingSudo)
                 ElevatedButton.icon(
                   icon: Icon(_isAdmin ? Icons.gpp_bad : Icons.verified_user),
-                  label: Text(_isAdmin
-                      ? widget.strings.revokeSudo
-                      : widget.strings.grantSudo),
+                  label: Text(
+                    _isAdmin
+                        ? widget.strings.revokeSudo
+                        : widget.strings.grantSudo,
+                  ),
                   onPressed: _toggleSudoPrivilege,
                 ),
             ],
@@ -301,8 +331,9 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Failed: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed: $e')));
     }
   }
 
@@ -385,7 +416,8 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
               ? const SizedBox(
                   width: 16,
                   height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2))
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : Text(widget.strings.save),
         ),
       ],
@@ -398,10 +430,7 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
 
     setState(() => _busy = true);
     try {
-      await widget.viewModel.changePassword(
-        widget.username,
-        newPwd,
-      );
+      await widget.viewModel.changePassword(widget.username, newPwd);
       if (!mounted) return;
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -410,9 +439,9 @@ class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _busy = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed: $e')));
     }
   }
 }
@@ -457,7 +486,9 @@ class _HomeDirectoryExplorerDialogState
     try {
       final sftpService = context.read<SftpService>();
       final items = await sftpService.listDirectoryForConnection(
-          widget.connectionId, path);
+        widget.connectionId,
+        path,
+      );
       if (!mounted) return;
       setState(() {
         _currentPath = path;
@@ -487,15 +518,16 @@ class _HomeDirectoryExplorerDialogState
             child: Text(
               _currentPath,
               style: const TextStyle(
-                  fontSize: 12,
-                  fontFamily: 'monospace',
-                  fontFamilyFallback: [
-                    'Consolas',
-                    'Microsoft YaHei',
-                    'PingFang SC',
-                    'sans-serif'
-                  ],
-                  fontWeight: FontWeight.normal),
+                fontSize: 12,
+                fontFamily: 'monospace',
+                fontFamilyFallback: [
+                  'Consolas',
+                  'Microsoft YaHei',
+                  'PingFang SC',
+                  'sans-serif',
+                ],
+                fontWeight: FontWeight.normal,
+              ),
             ),
           ),
         ],
@@ -555,8 +587,10 @@ class _HomeDirectoryExplorerDialogState
             entry.isDirectory ? Icons.folder : Icons.insert_drive_file,
             color: entry.isDirectory ? Colors.amber : colorScheme.primary,
           ),
-          title: Text(entry.name,
-              style: const TextStyle(fontWeight: FontWeight.bold)),
+          title: Text(
+            entry.name,
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
           subtitle: entry.isDirectory ? null : Text(entry.sizeLabel),
           onTap: () {
             if (entry.isDirectory) {
@@ -629,8 +663,9 @@ class _UserProcessesDialogState extends State<_UserProcessesDialog> {
 
   Future<void> _loadProcesses() async {
     setState(() => _loading = true);
-    final list =
-        await widget.viewModel.getUserProcessesAndMemory(widget.username);
+    final list = await widget.viewModel.getUserProcessesAndMemory(
+      widget.username,
+    );
 
     // Sum memory
     int totalBytes = 0;
@@ -672,8 +707,9 @@ class _UserProcessesDialogState extends State<_UserProcessesDialog> {
                         Text(
                           '${widget.strings.memoryUsed}:',
                           style: TextStyle(
-                              color: colorScheme.onSecondaryContainer,
-                              fontWeight: FontWeight.bold),
+                            color: colorScheme.onSecondaryContainer,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                         Text(
                           '${_totalMemoryMB.toStringAsFixed(2)} MB',
@@ -708,19 +744,22 @@ class _UserProcessesDialogState extends State<_UserProcessesDialog> {
                                     selectable: false,
                                     maxLines: 1,
                                     style: const TextStyle(
-                                        fontFamily: 'monospace',
-                                        fontFamilyFallback: [
-                                          'Consolas',
-                                          'Microsoft YaHei',
-                                          'PingFang SC',
-                                          'sans-serif'
-                                        ],
-                                        fontSize: 12),
+                                      fontFamily: 'monospace',
+                                      fontFamilyFallback: [
+                                        'Consolas',
+                                        'Microsoft YaHei',
+                                        'PingFang SC',
+                                        'sans-serif',
+                                      ],
+                                      fontSize: 12,
+                                    ),
                                   ),
                                   subtitle: Text(
-                                      'PID: ${p.pid}  •  CPU: ${p.cpuPercent}%  •  RAM: ${p.memPercent}%'),
-                                  trailing:
-                                      Text('${memMB.toStringAsFixed(1)} M'),
+                                    'PID: ${p.pid}  •  CPU: ${p.cpuPercent}%  •  RAM: ${p.memPercent}%',
+                                  ),
+                                  trailing: Text(
+                                    '${memMB.toStringAsFixed(1)} M',
+                                  ),
                                 ),
                               );
                             },
@@ -730,10 +769,7 @@ class _UserProcessesDialogState extends State<_UserProcessesDialog> {
               ),
       ),
       actions: [
-        IconButton(
-          icon: const Icon(Icons.refresh),
-          onPressed: _loadProcesses,
-        ),
+        IconButton(icon: const Icon(Icons.refresh), onPressed: _loadProcesses),
         TextButton(
           child: Text(widget.strings.close),
           onPressed: () => Navigator.pop(context),
@@ -747,10 +783,7 @@ class _CreateUserDialog extends StatefulWidget {
   final SystemAdminViewModel viewModel;
   final AppStrings strings;
 
-  const _CreateUserDialog({
-    required this.viewModel,
-    required this.strings,
-  });
+  const _CreateUserDialog({required this.viewModel, required this.strings});
 
   @override
   State<_CreateUserDialog> createState() => _CreateUserDialogState();
@@ -816,7 +849,8 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
               ? const SizedBox(
                   width: 16,
                   height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2))
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : Text(widget.strings.save),
         ),
       ],
@@ -831,11 +865,7 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
 
     setState(() => _busy = true);
     try {
-      await widget.viewModel.createUser(
-        user,
-        pwd,
-        shell: sh,
-      );
+      await widget.viewModel.createUser(user, pwd, shell: sh);
       if (!mounted) return;
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -844,9 +874,9 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _busy = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed: $e')));
     }
   }
 }

@@ -15,8 +15,11 @@ extension _PlaybookScreenPlaybooksList on _PlaybookScreenState {
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Icon(Icons.auto_awesome_motion_outlined,
-                size: 64, color: colorScheme.primary.withValues(alpha: 0.5)),
+            Icon(
+              Icons.auto_awesome_motion_outlined,
+              size: 64,
+              color: colorScheme.primary.withValues(alpha: 0.5),
+            ),
             const SizedBox(height: 16),
             Text(
               strings.emptyTitle,
@@ -27,9 +30,10 @@ extension _PlaybookScreenPlaybooksList on _PlaybookScreenState {
             Text(
               strings.emptyHint,
               style: TextStyle(
-                  color: colorScheme.onSurfaceVariant,
-                  fontSize: 13,
-                  height: 1.35),
+                color: colorScheme.onSurfaceVariant,
+                fontSize: 13,
+                height: 1.35,
+              ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 24),
@@ -51,7 +55,7 @@ extension _PlaybookScreenPlaybooksList on _PlaybookScreenState {
     return ListView.separated(
       padding: const EdgeInsets.all(12),
       itemCount: playbooks.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      separatorBuilder: (_, _) => const SizedBox(height: 8),
       itemBuilder: (context, index) {
         final playbook = playbooks[index];
         final isSelected = viewModel.activePlaybook?.id == playbook.id;
@@ -61,8 +65,9 @@ extension _PlaybookScreenPlaybooksList on _PlaybookScreenState {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(8),
             side: BorderSide(
-              color:
-                  isSelected ? colorScheme.primary : colorScheme.outlineVariant,
+              color: isSelected
+                  ? colorScheme.primary
+                  : colorScheme.outlineVariant,
               width: isSelected ? 1.5 : 1,
             ),
           ),
@@ -116,7 +121,9 @@ extension _PlaybookScreenPlaybooksList on _PlaybookScreenState {
                     Text(
                       playbook.description,
                       style: TextStyle(
-                          fontSize: 12, color: colorScheme.onSurfaceVariant),
+                        fontSize: 12,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -141,8 +148,10 @@ extension _PlaybookScreenPlaybooksList on _PlaybookScreenState {
                               onTap:
                                   () {}, // Prevent tap bubble to parent InkWell
                               child: IconButton(
-                                icon: const Icon(Icons.edit_note_outlined,
-                                    size: 18),
+                                icon: const Icon(
+                                  Icons.edit_note_outlined,
+                                  size: 18,
+                                ),
                                 visualDensity: VisualDensity.compact,
                                 padding: EdgeInsets.zero,
                                 onPressed: () {
@@ -157,12 +166,18 @@ extension _PlaybookScreenPlaybooksList on _PlaybookScreenState {
                               onTap:
                                   () {}, // Prevent tap bubble to parent InkWell
                               child: IconButton(
-                                icon: const Icon(Icons.delete_outline_rounded,
-                                    size: 18, color: Colors.red),
+                                icon: const Icon(
+                                  Icons.delete_outline_rounded,
+                                  size: 18,
+                                  color: Colors.red,
+                                ),
                                 visualDensity: VisualDensity.compact,
                                 padding: EdgeInsets.zero,
                                 onPressed: () => _confirmDeletePlaybook(
-                                    viewModel, playbook, strings),
+                                  viewModel,
+                                  playbook,
+                                  strings,
+                                ),
                               ),
                             ),
                           ],

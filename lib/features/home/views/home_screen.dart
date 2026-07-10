@@ -33,6 +33,7 @@ import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/mcp/mcp_port_probe.dart';
 import 'package:ssh_mobile/services/mcp/mcp_server_controller.dart';
 import 'package:ssh_mobile/services/mcp/mcp_server_settings.dart';
+import 'package:ssh_mobile/features/home/views/widgets/home_navigation_semantics.dart';
 
 part 'widgets/home_settings_strings.dart';
 part 'widgets/settings_panel.dart';
@@ -201,10 +202,9 @@ class _HomeScreenState extends State<HomeScreen> {
             desktop ? _buildDesktopShell(context, content, strings) : content,
             if (isBusy)
               ColoredBox(
-                color: Theme.of(context)
-                    .colorScheme
-                    .surface
-                    .withValues(alpha: 0.72),
+                color: Theme.of(
+                  context,
+                ).colorScheme.surface.withValues(alpha: 0.72),
                 child: _buildLoadingState(),
               ),
           ],
@@ -219,8 +219,8 @@ class _HomeScreenState extends State<HomeScreen> {
           : null,
       bottomNavigationBar:
           desktop || (_selectedIndex == _aiPage && _aiHistoryVisible)
-              ? null
-              : _buildBottomNavigation(context, strings),
+          ? null
+          : _buildBottomNavigation(context, strings),
     );
   }
 
@@ -286,9 +286,7 @@ class _HomeScreenState extends State<HomeScreen> {
           thickness: 1,
           color: colorScheme.outlineVariant,
         ),
-        Expanded(
-          child: content,
-        ),
+        Expanded(child: content),
       ],
     );
   }
@@ -300,7 +298,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final extColors = theme.extension<ExtendedColors>();
     final glassBg =
         extColors?.glassBg ?? colorScheme.surface.withValues(alpha: 0.72);
-    final glassBorder = extColors?.glassBorder ??
+    final glassBorder =
+        extColors?.glassBorder ??
         colorScheme.outlineVariant.withValues(alpha: 0.3);
 
     return ClipPath(
@@ -343,8 +342,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   _buildNavItem(
                     context: context,
                     icon: const Icon(Icons.admin_panel_settings_outlined),
-                    selectedIcon:
-                        const Icon(Icons.admin_panel_settings_rounded),
+                    selectedIcon: const Icon(
+                      Icons.admin_panel_settings_rounded,
+                    ),
                     label: strings.admin,
                     index: _adminPage,
                   ),
@@ -376,58 +376,64 @@ class _HomeScreenState extends State<HomeScreen> {
     final colorScheme = theme.colorScheme;
 
     return Expanded(
-      child: TactileFeedback(
+      child: HomeNavigationSemantics(
+        semanticsKey: ValueKey<String>('home-nav-$index'),
+        label: label,
+        selected: isSelected,
         onTap: () => _switchNavigationPage(index),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 250),
-              curve: Curves.easeOutCubic,
-              transform: Matrix4.translationValues(0, isSelected ? -3 : 0, 0),
-              child: Stack(
-                alignment: Alignment.center,
-                clipBehavior: Clip.none,
-                children: [
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 250),
-                    curve: Curves.easeOutCubic,
-                    width: 56,
-                    height: 28,
-                    decoration: BoxDecoration(
-                      color: isSelected
-                          ? colorScheme.primary.withValues(alpha: 0.08)
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(14),
+        child: TactileFeedback(
+          onTap: () => _switchNavigationPage(index),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOutCubic,
+                transform: Matrix4.translationValues(0, isSelected ? -3 : 0, 0),
+                child: Stack(
+                  alignment: Alignment.center,
+                  clipBehavior: Clip.none,
+                  children: [
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeOutCubic,
+                      width: 56,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? colorScheme.primary.withValues(alpha: 0.08)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                     ),
-                  ),
-                  IconTheme(
-                    data: IconThemeData(
-                      color: isSelected
-                          ? colorScheme.primary
-                          : colorScheme.onSurfaceVariant,
-                      size: 20,
+                    IconTheme(
+                      data: IconThemeData(
+                        color: isSelected
+                            ? colorScheme.primary
+                            : colorScheme.onSurfaceVariant,
+                        size: 20,
+                      ),
+                      child: isSelected ? selectedIcon : icon,
                     ),
-                    child: isSelected ? selectedIcon : icon,
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 2),
-            AnimatedDefaultTextStyle(
-              duration: const Duration(milliseconds: 250),
-              curve: Curves.easeOutCubic,
-              style: TextStyle(
-                color: isSelected
-                    ? colorScheme.primary
-                    : colorScheme.onSurfaceVariant,
-                fontSize: 11,
-                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                letterSpacing: 0,
+              const SizedBox(height: 2),
+              AnimatedDefaultTextStyle(
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOutCubic,
+                style: TextStyle(
+                  color: isSelected
+                      ? colorScheme.primary
+                      : colorScheme.onSurfaceVariant,
+                  fontSize: 11,
+                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                  letterSpacing: 0,
+                ),
+                child: Text(label),
               ),
-              child: Text(label),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -444,46 +450,52 @@ class _HomeScreenState extends State<HomeScreen> {
     final colorScheme = theme.colorScheme;
 
     return Expanded(
-      child: TactileFeedback(
+      child: HomeNavigationSemantics(
+        semanticsKey: ValueKey<String>('home-nav-$index'),
+        label: 'AI',
+        selected: isSelected,
         onTap: () => _switchNavigationPage(index),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 250),
-              curve: Curves.easeOutCubic,
-              transform: Matrix4.translationValues(0, isSelected ? -3 : 0, 0),
-              child: Stack(
-                alignment: Alignment.center,
-                clipBehavior: Clip.none,
-                children: [
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 250),
-                    curve: Curves.easeOutCubic,
-                    width: 56,
-                    height: 28,
-                    decoration: BoxDecoration(
-                      color: isSelected
-                          ? colorScheme.primary.withValues(alpha: 0.08)
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(14),
+        child: TactileFeedback(
+          onTap: () => _switchNavigationPage(index),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOutCubic,
+                transform: Matrix4.translationValues(0, isSelected ? -3 : 0, 0),
+                child: Stack(
+                  alignment: Alignment.center,
+                  clipBehavior: Clip.none,
+                  children: [
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeOutCubic,
+                      width: 56,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? colorScheme.primary.withValues(alpha: 0.08)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                     ),
-                  ),
-                  IconTheme(
-                    data: IconThemeData(
-                      color: isSelected
-                          ? colorScheme.primary
-                          : colorScheme.onSurfaceVariant,
-                      size: 20,
+                    IconTheme(
+                      data: IconThemeData(
+                        color: isSelected
+                            ? colorScheme.primary
+                            : colorScheme.onSurfaceVariant,
+                        size: 20,
+                      ),
+                      child: isSelected ? selectedIcon : icon,
                     ),
-                    child: isSelected ? selectedIcon : icon,
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 2),
-            _buildAiLabel(context, isSelected),
-          ],
+              const SizedBox(height: 2),
+              _buildAiLabel(context, isSelected),
+            ],
+          ),
         ),
       ),
     );
@@ -499,7 +511,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ? [colorScheme.primary, colorScheme.tertiary]
               : [
                   colorScheme.primary.withValues(alpha: 0.15),
-                  colorScheme.tertiary.withValues(alpha: 0.15)
+                  colorScheme.tertiary.withValues(alpha: 0.15),
                 ],
         ),
         borderRadius: BorderRadius.circular(8),
@@ -509,7 +521,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   color: colorScheme.primary.withValues(alpha: 0.25),
                   blurRadius: 8,
                   offset: const Offset(0, 2),
-                )
+                ),
               ]
             : null,
       ),
@@ -559,11 +571,13 @@ class _HomeScreenState extends State<HomeScreen> {
               selectedId != _lastSynchronizedAdminConnectionId)) {
         _lastSynchronizedAdminConnectionId = selectedId;
         if (sftpVm.connectionId != selectedId) {
-          unawaited(sftpVm.connect(
-            selectedId,
-            onUnknownHostKey: (request) =>
-                showSshHostKeyTrustDialog(context, request),
-          ));
+          unawaited(
+            sftpVm.connect(
+              selectedId,
+              onUnknownHostKey: (request) =>
+                  showSshHostKeyTrustDialog(context, request),
+            ),
+          );
         }
       }
     }
@@ -590,11 +604,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildPage(
-    BuildContext context,
-    int index,
-    AppStrings strings,
-  ) {
+  Widget _buildPage(BuildContext context, int index, AppStrings strings) {
     final active = _selectedIndex == index;
     return _pageShell(
       index,
@@ -641,10 +651,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _exportAppData(
-    BuildContext context,
-    AppStrings strings,
-  ) async {
+  Future<void> _exportAppData(BuildContext context, AppStrings strings) async {
     final messenger = ScaffoldMessenger.of(context);
     final settingsVm = context.read<SettingsViewModel>();
     try {
@@ -657,22 +664,15 @@ class _HomeScreenState extends State<HomeScreen> {
       });
       if (!context.mounted) return;
       if (success) {
-        messenger.showSnackBar(
-          SnackBar(content: Text(strings.exportComplete)),
-        );
+        messenger.showSnackBar(SnackBar(content: Text(strings.exportComplete)));
       }
     } catch (e) {
       if (!context.mounted) return;
-      messenger.showSnackBar(
-        SnackBar(content: Text(strings.exportFailed(e))),
-      );
+      messenger.showSnackBar(SnackBar(content: Text(strings.exportFailed(e))));
     }
   }
 
-  Future<void> _importAppData(
-    BuildContext context,
-    AppStrings strings,
-  ) async {
+  Future<void> _importAppData(BuildContext context, AppStrings strings) async {
     final messenger = ScaffoldMessenger.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
@@ -703,16 +703,12 @@ class _HomeScreenState extends State<HomeScreen> {
       });
       if (!context.mounted) return;
       if (success) {
-        messenger.showSnackBar(
-          SnackBar(content: Text(strings.importComplete)),
-        );
+        messenger.showSnackBar(SnackBar(content: Text(strings.importComplete)));
         _switchPage(_serverPage);
       }
     } catch (e) {
       if (!context.mounted) return;
-      messenger.showSnackBar(
-        SnackBar(content: Text(strings.importFailed(e))),
-      );
+      messenger.showSnackBar(SnackBar(content: Text(strings.importFailed(e))));
     }
   }
 
@@ -805,10 +801,7 @@ class _DeferredNavPageState extends State<_DeferredNavPage> {
       _scheduleActivation();
       return widget.loading;
     }
-    return _AnimatedPageFadeIn(
-      active: true,
-      child: widget.builder(context),
-    );
+    return _AnimatedPageFadeIn(active: true, child: widget.builder(context));
   }
 }
 

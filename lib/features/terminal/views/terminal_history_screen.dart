@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'package:ssh_mobile/features/terminal/viewmodels/terminal_history_viewmodel.dart';
@@ -33,9 +33,8 @@ class _TerminalHistoryPageState extends State<TerminalHistoryPage> {
     final strings = AppStrings(language);
 
     return ChangeNotifierProvider<TerminalHistoryViewModel>(
-      create: (context) => TerminalHistoryViewModel(
-        sshService: context.read<SshService>(),
-      ),
+      create: (context) =>
+          TerminalHistoryViewModel(sshService: context.read<SshService>()),
       child: Consumer<TerminalHistoryViewModel>(
         builder: (context, viewModel, child) {
           return Column(
@@ -86,7 +85,7 @@ class _TerminalHistoryPageState extends State<TerminalHistoryPage> {
                     return ListView.separated(
                       padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
                       itemCount: records.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 10),
+                      separatorBuilder: (_, _) => const SizedBox(height: 10),
                       itemBuilder: (context, index) => _HistoryItem(
                         record: records[index],
                         strings: strings,
@@ -184,8 +183,9 @@ class _HistoryItem extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
                 decoration: BoxDecoration(
-                  color: colorScheme.surfaceContainerHighest
-                      .withValues(alpha: 0.72),
+                  color: colorScheme.surfaceContainerHighest.withValues(
+                    alpha: 0.72,
+                  ),
                   borderRadius: BorderRadius.circular(6),
                   border: Border.all(color: colorScheme.outlineVariant),
                 ),
@@ -208,7 +208,7 @@ class _HistoryItem extends StatelessWidget {
                             'Consolas',
                             'Microsoft YaHei',
                             'PingFang SC',
-                            'sans-serif'
+                            'sans-serif',
                           ],
                           fontSize: 11,
                           color: colorScheme.onSurface.withValues(alpha: 0.78),
@@ -228,9 +228,9 @@ class _HistoryItem extends StatelessWidget {
   Future<void> _copyCommand(BuildContext context, String command) async {
     await viewModel.copyCleanupCommand(command);
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(strings.copiedCleanupCommand)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(strings.copiedCleanupCommand)));
   }
 
   Future<void> _deleteRecord(BuildContext context) async {

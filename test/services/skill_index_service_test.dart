@@ -58,30 +58,32 @@ void main() {
       expect(entry.tokens.contains('/etc/nginx/nginx.conf'), isTrue);
     });
 
-    test('token extraction handles Chinese characters with bigram slide window',
-        () {
-      final skills = [
-        AiSkillRecord(
-          id: 'skill-1',
-          name: '机器学习运维',
-          description: '部署模型',
-          content: '使用 Docker 容器。',
-          enabled: true,
-          createdAt: DateTime.now(),
-          updatedAt: DateTime.now(),
-        ),
-      ];
+    test(
+      'token extraction handles Chinese characters with bigram slide window',
+      () {
+        final skills = [
+          AiSkillRecord(
+            id: 'skill-1',
+            name: '机器学习运维',
+            description: '部署模型',
+            content: '使用 Docker 容器。',
+            enabled: true,
+            createdAt: DateTime.now(),
+            updatedAt: DateTime.now(),
+          ),
+        ];
 
-      indexService.updateIndex(skills);
-      final entry = indexService.entries.first;
+        indexService.updateIndex(skills);
+        final entry = indexService.entries.first;
 
-      // "机器学习运维" -> "机器学习运维" (length>=2)
-      // "学习" (length>=2), "机器" (bigram), "器学" (bigram), "学习" (bigram), "习运" (bigram), "运维" (bigram)
-      expect(entry.tokens.contains('机器学习运维'), isTrue);
-      expect(entry.tokens.contains('机器'), isTrue);
-      expect(entry.tokens.contains('学习'), isTrue);
-      expect(entry.tokens.contains('运维'), isTrue);
-    });
+        // "机器学习运维" -> "机器学习运维" (length>=2)
+        // "学习" (length>=2), "机器" (bigram), "器学" (bigram), "学习" (bigram), "习运" (bigram), "运维" (bigram)
+        expect(entry.tokens.contains('机器学习运维'), isTrue);
+        expect(entry.tokens.contains('机器'), isTrue);
+        expect(entry.tokens.contains('学习'), isTrue);
+        expect(entry.tokens.contains('运维'), isTrue);
+      },
+    );
 
     test('search calculates score matching path weighting rules', () {
       final skills = [
@@ -133,7 +135,9 @@ void main() {
           enabled: true,
           references: [
             SkillReferenceItem(
-                title: 'Ref title $i', content: 'Instruction code config $i'),
+              title: 'Ref title $i',
+              content: 'Instruction code config $i',
+            ),
           ],
           createdAt: DateTime.now(),
           updatedAt: DateTime.now(),
@@ -142,21 +146,30 @@ void main() {
 
       // Benchmark 100 skills
       indexService.updateIndex(mockSkills.take(100).toList());
-      final hits100 =
-          indexService.search({'docker', 'nginx', '/var/log/nginx/error.log'});
+      final hits100 = indexService.search({
+        'docker',
+        'nginx',
+        '/var/log/nginx/error.log',
+      });
       expect(hits100.length, 100);
 
       // Benchmark 500 skills
       indexService.updateIndex(mockSkills.take(500).toList());
-      final hits500 =
-          indexService.search({'docker', 'nginx', '/var/log/nginx/error.log'});
+      final hits500 = indexService.search({
+        'docker',
+        'nginx',
+        '/var/log/nginx/error.log',
+      });
       expect(hits500.length, 500);
 
       // Benchmark 1000 skills
       indexService.updateIndex(mockSkills);
       final watchSearch3 = Stopwatch()..start();
-      final hits1000 =
-          indexService.search({'docker', 'nginx', '/var/log/nginx/error.log'});
+      final hits1000 = indexService.search({
+        'docker',
+        'nginx',
+        '/var/log/nginx/error.log',
+      });
       watchSearch3.stop();
       final search1000Time = watchSearch3.elapsedMilliseconds;
 

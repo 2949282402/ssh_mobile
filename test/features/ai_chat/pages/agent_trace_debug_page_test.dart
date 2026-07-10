@@ -18,8 +18,9 @@ void main() {
     AppLogService.instance.clear();
   });
 
-  testWidgets('shows overview, timeline, filters, and raw content',
-      (tester) async {
+  testWidgets('shows overview, timeline, filters, and raw content', (
+    tester,
+  ) async {
     final database = db.AppDatabase.forTesting();
     addTearDown(database.close);
     final storage = StorageService(database: database);
@@ -125,52 +126,60 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('No persisted trace events found for this run.'),
-        findsOneWidget);
+    expect(
+      find.text('No persisted trace events found for this run.'),
+      findsOneWidget,
+    );
     expect(find.text('missing-run'), findsOneWidget);
   });
 
-  testWidgets('shows metrics overview when events are empty but metrics exist',
-      (tester) async {
-    final database = db.AppDatabase.forTesting();
-    addTearDown(database.close);
-    final storage = StorageService(database: database);
-    addTearDown(storage.dispose);
-    await storage.init();
+  testWidgets(
+    'shows metrics overview when events are empty but metrics exist',
+    (tester) async {
+      final database = db.AppDatabase.forTesting();
+      addTearDown(database.close);
+      final storage = StorageService(database: database);
+      addTearDown(storage.dispose);
+      await storage.init();
 
-    final now = DateTime.utc(2026, 6, 22, 10);
-    await storage.saveAgentRunMetrics(
-      AgentRunMetrics(
-        id: 'run-metrics-only',
-        startedAt: now,
-        finishedAt: now.add(const Duration(seconds: 2)),
-        model: 'main-model',
-        helperModel: 'helper-model',
-        auditModel: 'audit-model',
-        promptTokens: 10,
-        completionTokens: 5,
-        totalTokens: 15,
-        elapsedMs: 2000,
-        toolCalls: 1,
-        approvalCount: 1,
-      ),
-    );
-
-    await tester.pumpWidget(
-      ChangeNotifierProvider<StorageService>.value(
-        value: storage,
-        child: const MaterialApp(
-          home:
-              AgentTraceDebugPage(chatId: 'chat-1', runId: 'run-metrics-only'),
+      final now = DateTime.utc(2026, 6, 22, 10);
+      await storage.saveAgentRunMetrics(
+        AgentRunMetrics(
+          id: 'run-metrics-only',
+          startedAt: now,
+          finishedAt: now.add(const Duration(seconds: 2)),
+          model: 'main-model',
+          helperModel: 'helper-model',
+          auditModel: 'audit-model',
+          promptTokens: 10,
+          completionTokens: 5,
+          totalTokens: 15,
+          elapsedMs: 2000,
+          toolCalls: 1,
+          approvalCount: 1,
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
 
-    expect(find.text('Overview'), findsOneWidget);
-    expect(find.textContaining('Model: main-model'), findsOneWidget);
-    expect(find.text('No persisted trace events found for this run.'),
-        findsOneWidget);
-    expect(find.text('run-metrics-only'), findsOneWidget);
-  });
+      await tester.pumpWidget(
+        ChangeNotifierProvider<StorageService>.value(
+          value: storage,
+          child: const MaterialApp(
+            home: AgentTraceDebugPage(
+              chatId: 'chat-1',
+              runId: 'run-metrics-only',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Overview'), findsOneWidget);
+      expect(find.textContaining('Model: main-model'), findsOneWidget);
+      expect(
+        find.text('No persisted trace events found for this run.'),
+        findsOneWidget,
+      );
+      expect(find.text('run-metrics-only'), findsOneWidget);
+    },
+  );
 }

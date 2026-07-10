@@ -41,8 +41,9 @@ extension DriftOps on StorageService {
   Future<bool> _migrateAiChatsToDrift() async {
     final database = _database;
     if (!_driftReady || database == null) return false;
-    if (await database.migrationMetaDao
-        .isComplete(StorageService._driftAiChatsMigratedKey)) {
+    if (await database.migrationMetaDao.isComplete(
+      StorageService._driftAiChatsMigratedKey,
+    )) {
       return true;
     }
     try {
@@ -50,8 +51,9 @@ extension DriftOps on StorageService {
       final chats = _decodeLegacyRecordList(jsonStr, AiChatRecord.fromJson)
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       await _replaceDriftAiChats(chats);
-      await database.migrationMetaDao
-          .markComplete(StorageService._driftAiChatsMigratedKey);
+      await database.migrationMetaDao.markComplete(
+        StorageService._driftAiChatsMigratedKey,
+      );
       return true;
     } catch (e, stackTrace) {
       AppLogService.instance.error(
@@ -66,18 +68,21 @@ extension DriftOps on StorageService {
   Future<bool> _migrateAgentMetricsToDrift() async {
     final database = _database;
     if (!_driftReady || database == null) return false;
-    if (await database.migrationMetaDao
-        .isComplete(StorageService._driftAgentMetricsMigratedKey)) {
+    if (await database.migrationMetaDao.isComplete(
+      StorageService._driftAgentMetricsMigratedKey,
+    )) {
       return true;
     }
     try {
-      final jsonStr =
-          await _readProtectedPref(StorageService._agentRunMetricsKey);
+      final jsonStr = await _readProtectedPref(
+        StorageService._agentRunMetricsKey,
+      );
       final metrics = _decodeLegacyRecordList(jsonStr, AgentRunMetrics.fromJson)
         ..sort((a, b) => b.finishedAt.compareTo(a.finishedAt));
       await _replaceDriftAgentRunMetrics(metrics);
-      await database.migrationMetaDao
-          .markComplete(StorageService._driftAgentMetricsMigratedKey);
+      await database.migrationMetaDao.markComplete(
+        StorageService._driftAgentMetricsMigratedKey,
+      );
       return true;
     } catch (e, stackTrace) {
       AppLogService.instance.error(
@@ -92,20 +97,23 @@ extension DriftOps on StorageService {
   Future<bool> _migrateTerminalHistoryToDrift() async {
     final database = _database;
     if (!_driftReady || database == null) return false;
-    if (await database.migrationMetaDao
-        .isComplete(StorageService._driftTerminalHistoryMigratedKey)) {
+    if (await database.migrationMetaDao.isComplete(
+      StorageService._driftTerminalHistoryMigratedKey,
+    )) {
       return true;
     }
     try {
       final jsonStr = await _readProtectedPref(
         StorageService._terminalHistoryRecordsKey,
       );
-      final records =
-          _decodeLegacyRecordList(jsonStr, TerminalHistoryRecord.fromJson)
-            ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      final records = _decodeLegacyRecordList(
+        jsonStr,
+        TerminalHistoryRecord.fromJson,
+      )..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       await _replaceDriftTerminalHistoryRecords(records);
-      await database.migrationMetaDao
-          .markComplete(StorageService._driftTerminalHistoryMigratedKey);
+      await database.migrationMetaDao.markComplete(
+        StorageService._driftTerminalHistoryMigratedKey,
+      );
       return true;
     } catch (e, stackTrace) {
       AppLogService.instance.error(
@@ -120,8 +128,9 @@ extension DriftOps on StorageService {
   Future<bool> _migratePlaybooksToDrift() async {
     final database = _database;
     if (!_driftReady || database == null) return false;
-    if (await database.migrationMetaDao
-        .isComplete(StorageService._driftPlaybooksMigratedKey)) {
+    if (await database.migrationMetaDao.isComplete(
+      StorageService._driftPlaybooksMigratedKey,
+    )) {
       return true;
     }
     try {
@@ -129,8 +138,9 @@ extension DriftOps on StorageService {
       final playbooks = _decodeLegacyRecordList(jsonStr, Playbook.fromJson)
         ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       await _replaceDriftPlaybooks(playbooks);
-      await database.migrationMetaDao
-          .markComplete(StorageService._driftPlaybooksMigratedKey);
+      await database.migrationMetaDao.markComplete(
+        StorageService._driftPlaybooksMigratedKey,
+      );
       return true;
     } catch (e, stackTrace) {
       AppLogService.instance.error(
@@ -152,8 +162,9 @@ extension DriftOps on StorageService {
     }
 
     try {
-      final aiMessageRows =
-          await _reencryptAiChatMessageRowsInBatches(database);
+      final aiMessageRows = await _reencryptAiChatMessageRowsInBatches(
+        database,
+      );
       final playbookRows = await _reencryptPlaybookRowsInBatches(database);
       await database.migrationMetaDao.markComplete(
         StorageService._driftSensitiveFieldsEncryptedKey,
@@ -176,9 +187,11 @@ extension DriftOps on StorageService {
   ) async {
     final rows = await database.aiChatDao.loadAllMessagesForReencryption();
     var updated = 0;
-    for (var start = 0;
-        start < rows.length;
-        start += _driftSensitiveReencryptBatchSize) {
+    for (
+      var start = 0;
+      start < rows.length;
+      start += _driftSensitiveReencryptBatchSize
+    ) {
       final end = (start + _driftSensitiveReencryptBatchSize)
           .clamp(0, rows.length)
           .toInt();
@@ -200,12 +213,14 @@ extension DriftOps on StorageService {
       final encryptedContext = row.contextText == null
           ? null
           : await _encryptIfPlaintext(row.contextText!);
-      final encryptedAttachments =
-          await _encryptIfPlaintext(row.attachmentsJson);
+      final encryptedAttachments = await _encryptIfPlaintext(
+        row.attachmentsJson,
+      );
       final encryptedTraces = await _encryptIfPlaintext(row.tracesJson);
       final encryptedTodoSteps = await _encryptIfPlaintext(row.todoStepsJson);
 
-      final changed = encryptedText != row.textContent ||
+      final changed =
+          encryptedText != row.textContent ||
           encryptedContext != row.contextText ||
           encryptedAttachments != row.attachmentsJson ||
           encryptedTraces != row.tracesJson ||
@@ -225,14 +240,14 @@ extension DriftOps on StorageService {
     return updated;
   }
 
-  Future<int> _reencryptPlaybookRowsInBatches(
-    db.AppDatabase database,
-  ) async {
+  Future<int> _reencryptPlaybookRowsInBatches(db.AppDatabase database) async {
     final rows = await database.playbookDao.loadAllPlaybooksForReencryption();
     var updated = 0;
-    for (var start = 0;
-        start < rows.length;
-        start += _driftSensitiveReencryptBatchSize) {
+    for (
+      var start = 0;
+      start < rows.length;
+      start += _driftSensitiveReencryptBatchSize
+    ) {
       final end = (start + _driftSensitiveReencryptBatchSize)
           .clamp(0, rows.length)
           .toInt();

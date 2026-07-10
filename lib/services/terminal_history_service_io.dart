@@ -22,8 +22,10 @@ class TerminalHistoryService {
   Future<void> append(String sessionId, String data) {
     if (data.isEmpty) return Future.value();
 
-    final pending =
-        _pendingWrites.putIfAbsent(sessionId, _PendingHistoryWrite.new);
+    final pending = _pendingWrites.putIfAbsent(
+      sessionId,
+      _PendingHistoryWrite.new,
+    );
     pending.buffer.write(data);
     pending.timer?.cancel();
 
@@ -50,8 +52,9 @@ class TerminalHistoryService {
     }
 
     final previous = _writeQueues[sessionId] ?? Future<void>.value();
-    final next =
-        previous.catchError((_) {}).then((_) => _appendNow(sessionId, data));
+    final next = previous
+        .catchError((_) {})
+        .then((_) => _appendNow(sessionId, data));
 
     late final Future<void> queued;
     queued = next.whenComplete(() {
@@ -179,8 +182,10 @@ class TerminalHistoryService {
     final raf = await file.open(mode: FileMode.read);
     try {
       final sampleLength = length > 128 ? 128 : length;
-      final sample =
-          utf8.decode(await raf.read(sampleLength), allowMalformed: true);
+      final sample = utf8.decode(
+        await raf.read(sampleLength),
+        allowMalformed: true,
+      );
       if (sample.startsWith(DataProtectionService.encryptedPrefix)) return;
     } finally {
       await raf.close();

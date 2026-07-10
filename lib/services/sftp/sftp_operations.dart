@@ -42,7 +42,11 @@ extension SftpServiceOperations on SftpService {
           : DateTime.fromMillisecondsSinceEpoch(attrs.modifyTime! * 1000);
 
       final cachedBytes = await SftpFileCache.get(
-          connectionId, absolutePath, attrs.size, modifiedAt);
+        connectionId,
+        absolutePath,
+        attrs.size,
+        modifiedAt,
+      );
       if (cachedBytes != null) {
         return compute(SftpService._decodeUtf8, cachedBytes);
       }
@@ -59,7 +63,12 @@ extension SftpServiceOperations on SftpService {
         );
 
         await SftpFileCache.put(
-            connectionId, absolutePath, attrs.size, modifiedAt, bytes);
+          connectionId,
+          absolutePath,
+          attrs.size,
+          modifiedAt,
+          bytes,
+        );
 
         return compute(SftpService._decodeUtf8, bytes);
       } finally {
@@ -86,7 +95,11 @@ extension SftpServiceOperations on SftpService {
           : DateTime.fromMillisecondsSinceEpoch(attrs.modifyTime! * 1000);
 
       final cachedBytes = await SftpFileCache.get(
-          connectionId, absolutePath, attrs.size, modifiedAt);
+        connectionId,
+        absolutePath,
+        attrs.size,
+        modifiedAt,
+      );
       if (cachedBytes != null) {
         return cachedBytes;
       }
@@ -103,7 +116,12 @@ extension SftpServiceOperations on SftpService {
         );
 
         await SftpFileCache.put(
-            connectionId, absolutePath, attrs.size, modifiedAt, bytes);
+          connectionId,
+          absolutePath,
+          attrs.size,
+          modifiedAt,
+          bytes,
+        );
 
         return bytes;
       } finally {
@@ -126,7 +144,8 @@ extension SftpServiceOperations on SftpService {
       try {
         file = await sftp.open(
           absolutePath,
-          mode: SftpFileOpenMode.create |
+          mode:
+              SftpFileOpenMode.create |
               SftpFileOpenMode.truncate |
               SftpFileOpenMode.write,
         );
@@ -178,7 +197,8 @@ extension SftpServiceOperations on SftpService {
       try {
         file = await sftp.open(
           absolutePath,
-          mode: SftpFileOpenMode.create |
+          mode:
+              SftpFileOpenMode.create |
               SftpFileOpenMode.truncate |
               SftpFileOpenMode.write,
         );

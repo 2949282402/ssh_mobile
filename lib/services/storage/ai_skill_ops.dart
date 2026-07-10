@@ -12,10 +12,13 @@ extension AiSkillOps on StorageService {
 
     try {
       final list = jsonDecode(jsonStr) as List<dynamic>;
-      final skills = list
-          .map((item) => AiSkillRecord.fromJson(item as Map<String, dynamic>))
-          .toList()
-        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      final skills =
+          list
+              .map(
+                (item) => AiSkillRecord.fromJson(item as Map<String, dynamic>),
+              )
+              .toList()
+            ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       return _aiSkillsCache = List.unmodifiable(skills);
     } catch (e) {
       AppLogService.instance.error('Failed to load AI skills', error: e);
@@ -25,10 +28,7 @@ extension AiSkillOps on StorageService {
 
   Future<void> _saveAiSkill(AiSkillRecord skill) async {
     if (!_initialized || _prefs == null) return;
-    final skills = upsertAiSkillRecordsByUpdatedAt(
-      await loadAiSkills(),
-      skill,
-    );
+    final skills = upsertAiSkillRecordsByUpdatedAt(await loadAiSkills(), skill);
     await _saveAiSkills(skills, alreadySorted: true);
     notifyStorageListeners();
   }

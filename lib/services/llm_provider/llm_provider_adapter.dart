@@ -1,10 +1,7 @@
 import 'llm_provider_types.dart';
 
 abstract interface class LlmProviderAdapter {
-  Future<List<String>> fetchModels({
-    required String baseUrl,
-    String? apiKey,
-  });
+  Future<List<String>> fetchModels({required String baseUrl, String? apiKey});
 
   Future<LlmProviderResult> complete(LlmProviderRequest request);
 

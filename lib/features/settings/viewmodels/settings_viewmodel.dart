@@ -15,12 +15,10 @@ class SettingsViewModel extends ChangeNotifier {
   final McpServerController? _mcpServerController;
 
   SettingsViewModel({
-    required AppSettings appSettings,
-    required StorageService storageService,
-    McpServerController? mcpServerController,
-  })  : _appSettings = appSettings,
-        _storageService = storageService,
-        _mcpServerController = mcpServerController {
+    required this._appSettings,
+    required this._storageService,
+    this._mcpServerController,
+  }) {
     // 监听底层 AppSettings 的更新，联动通知监听 SettingsViewModel 的视图
     _appSettings.addListener(notifyListeners);
     _storageService.addListener(notifyListeners);
@@ -63,15 +61,12 @@ class SettingsViewModel extends ChangeNotifier {
     return snapshot?.running == true && snapshot!.port != mcpServerPort;
   }
 
-  String get mcpCodexConfig => McpConfigTemplates.codex(
-        _appSettings.mcpSettings,
-      );
-  String get mcpClaudeCodeCommand => McpConfigTemplates.claudeCode(
-        _appSettings.mcpSettings,
-      );
-  String get mcpGeminiCliConfig => McpConfigTemplates.geminiCli(
-        _appSettings.mcpSettings,
-      );
+  String get mcpCodexConfig =>
+      McpConfigTemplates.codex(_appSettings.mcpSettings);
+  String get mcpClaudeCodeCommand =>
+      McpConfigTemplates.claudeCode(_appSettings.mcpSettings);
+  String get mcpGeminiCliConfig =>
+      McpConfigTemplates.geminiCli(_appSettings.mcpSettings);
 
   // 秘钥缓存设置暴露
   bool get secretCacheEnabled => _storageService.isSecretCacheEnabled;
@@ -199,8 +194,8 @@ class SettingsViewModel extends ChangeNotifier {
   String? get lastOperationMessage => _lastOperationMessage;
 
   Future<bool> exportAppData(
-      Future<String?> Function(String fileName, List<int> bytes)
-          saveFileCallback) async {
+    Future<String?> Function(String fileName, List<int> bytes) saveFileCallback,
+  ) async {
     _isExporting = true;
     _lastOperationMessage = null;
     notifyListeners();
@@ -230,7 +225,8 @@ class SettingsViewModel extends ChangeNotifier {
   }
 
   Future<bool> importAppData(
-      Future<List<int>?> Function() pickFileCallback) async {
+    Future<List<int>?> Function() pickFileCallback,
+  ) async {
     _isImporting = true;
     _lastOperationMessage = null;
     notifyListeners();

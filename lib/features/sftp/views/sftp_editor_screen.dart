@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'package:ssh_mobile/features/sftp/viewmodels/sftp_viewmodel.dart';
@@ -8,10 +8,7 @@ import 'package:ssh_mobile/services/sftp_service.dart';
 class SftpEditorScreen extends StatefulWidget {
   final SftpEntry entry;
 
-  const SftpEditorScreen({
-    super.key,
-    required this.entry,
-  });
+  const SftpEditorScreen({super.key, required this.entry});
 
   @override
   State<SftpEditorScreen> createState() => _SftpEditorScreenState();
@@ -45,9 +42,9 @@ class _SftpEditorScreenState extends State<SftpEditorScreen> {
 
   Future<void> _load() async {
     final text = await context.read<SftpViewModel>().readTextFile(
-          widget.entry,
-          maxBytes: context.read<AppSettings>().sftpTextEditLimitBytes,
-        );
+      widget.entry,
+      maxBytes: context.read<AppSettings>().sftpTextEditLimitBytes,
+    );
     _originalText = text;
     _controller.text = text;
   }
@@ -96,20 +93,23 @@ class _SftpEditorScreenState extends State<SftpEditorScreen> {
               icon: const Icon(Icons.text_decrease_rounded),
               onPressed: _saving
                   ? null
-                  : () =>
-                      setState(() => _fontSize = (_fontSize - 1).clamp(10, 28)),
+                  : () => setState(
+                      () => _fontSize = (_fontSize - 1).clamp(10, 28),
+                    ),
             ),
             IconButton(
               tooltip: strings.largerFont,
               icon: const Icon(Icons.text_increase_rounded),
               onPressed: _saving
                   ? null
-                  : () =>
-                      setState(() => _fontSize = (_fontSize + 1).clamp(10, 28)),
+                  : () => setState(
+                      () => _fontSize = (_fontSize + 1).clamp(10, 28),
+                    ),
             ),
             IconButton(
-              tooltip:
-                  _wrapLines ? strings.disableLineWrap : strings.enableLineWrap,
+              tooltip: _wrapLines
+                  ? strings.disableLineWrap
+                  : strings.enableLineWrap,
               icon: Icon(
                 _wrapLines ? Icons.wrap_text_rounded : Icons.notes_rounded,
               ),
@@ -164,8 +164,11 @@ class _SftpEditorScreenState extends State<SftpEditorScreen> {
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.format_size_rounded,
-                          size: 18, color: colorScheme.primary),
+                      Icon(
+                        Icons.format_size_rounded,
+                        size: 18,
+                        color: colorScheme.primary,
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Slider(
@@ -215,7 +218,7 @@ class _SftpEditorScreenState extends State<SftpEditorScreen> {
           'Consolas',
           'Microsoft YaHei',
           'PingFang SC',
-          'sans-serif'
+          'sans-serif',
         ],
         fontSize: _fontSize,
         height: 1.35,
@@ -223,10 +226,7 @@ class _SftpEditorScreenState extends State<SftpEditorScreen> {
     );
 
     if (_wrapLines) {
-      return Scrollbar(
-        controller: _verticalController,
-        child: editor,
-      );
+      return Scrollbar(controller: _verticalController, child: editor);
     }
 
     return Scrollbar(
@@ -237,10 +237,7 @@ class _SftpEditorScreenState extends State<SftpEditorScreen> {
         scrollDirection: Axis.horizontal,
         child: SizedBox(
           width: 1600,
-          child: Scrollbar(
-            controller: _verticalController,
-            child: editor,
-          ),
+          child: Scrollbar(controller: _verticalController, child: editor),
         ),
       ),
     );
@@ -250,29 +247,26 @@ class _SftpEditorScreenState extends State<SftpEditorScreen> {
     setState(() => _saving = true);
     try {
       await context.read<SftpViewModel>().saveTextFile(
-            widget.entry,
-            _controller.text,
-          );
+        widget.entry,
+        _controller.text,
+      );
       _originalText = _controller.text;
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(strings.saveComplete)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(strings.saveComplete)));
       Navigator.pop(context, true);
     } catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(strings.saveFailed(e))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(strings.saveFailed(e))));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
-  Future<bool> _confirmDiscard(
-    BuildContext context,
-    AppStrings strings,
-  ) async {
+  Future<bool> _confirmDiscard(BuildContext context, AppStrings strings) async {
     return await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(

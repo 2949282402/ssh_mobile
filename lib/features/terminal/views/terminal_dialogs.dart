@@ -7,9 +7,7 @@ extension _TerminalDialogs on _TerminalScreenState {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(strings.openNewWindow),
-        content: Text(
-          strings.createFrom(_serverName ?? strings.currentServer),
-        ),
+        content: Text(strings.createFrom(_serverName ?? strings.currentServer)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
@@ -100,12 +98,7 @@ extension _TerminalDialogs on _TerminalScreenState {
     if (sessionId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            _formatConnectionFailure(
-              strings,
-              ssh.errorMessage,
-            ),
-          ),
+          content: Text(_formatConnectionFailure(strings, ssh.errorMessage)),
           backgroundColor: colorScheme.error,
         ),
       );
@@ -155,7 +148,7 @@ extension _TerminalDialogs on _TerminalScreenState {
         child: ListView.separated(
           shrinkWrap: true,
           itemCount: sessions.length,
-          separatorBuilder: (_, __) => const Divider(height: 1),
+          separatorBuilder: (_, _) => const Divider(height: 1),
           itemBuilder: (context, index) {
             final session = sessions[index];
             final current = session.id == widget.sessionId;
@@ -175,15 +168,14 @@ extension _TerminalDialogs on _TerminalScreenState {
                 current
                     ? strings.currentWindow
                     : '${session.connectionName} - '
-                        '${session.isConnected ? strings.connected : session.errorMessage ?? strings.disconnected}',
+                          '${session.isConnected ? strings.connected : session.errorMessage ?? strings.disconnected}',
                 selectable: false,
                 maxLines: 1,
                 style: TextStyle(
                   fontSize: 12,
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurface
-                      .withValues(alpha: 0.58),
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withValues(alpha: 0.58),
                 ),
               ),
               trailing: Row(
@@ -311,7 +303,8 @@ extension _TerminalDialogs on _TerminalScreenState {
   }
 
   Future<void> _showSelectableCopyLayer(
-      TerminalSessionViewModel viewModel) async {
+    TerminalSessionViewModel viewModel,
+  ) async {
     final strings = _strings(context);
     final text = viewModel.terminal.buffer.getText().trimRight();
     if (text.isEmpty) return;

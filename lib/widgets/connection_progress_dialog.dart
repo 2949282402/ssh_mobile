@@ -38,10 +38,7 @@ class ConnectionProgressDialog extends StatelessWidget {
           builder: (context, value, child) {
             return Opacity(
               opacity: value,
-              child: Transform.scale(
-                scale: 0.96 + value * 0.04,
-                child: child,
-              ),
+              child: Transform.scale(scale: 0.96 + value * 0.04, child: child),
             );
           },
           child: Material(
@@ -63,9 +60,10 @@ class ConnectionProgressDialog extends StatelessWidget {
                       height: 42,
                       child: CircularProgressIndicator(
                         strokeWidth: 3,
-                        color: Theme.of(context)
-                                .extension<ExtendedColors>()
-                                ?.success ??
+                        color:
+                            Theme.of(
+                              context,
+                            ).extension<ExtendedColors>()?.success ??
                             AppTheme.terminalGreen,
                       ),
                     ),
@@ -74,17 +72,17 @@ class ConnectionProgressDialog extends StatelessWidget {
                       title,
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     Text(
                       message,
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: colorScheme.onSurface.withValues(alpha: 0.7),
-                            height: 1.35,
-                          ),
+                        color: colorScheme.onSurface.withValues(alpha: 0.7),
+                        height: 1.35,
+                      ),
                     ),
                   ],
                 ),

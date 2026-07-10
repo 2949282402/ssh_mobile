@@ -80,7 +80,11 @@ class SftpFileCache {
   }
 
   static Future<Uint8List?> get(
-      String connectionId, String path, int? size, DateTime? modifiedAt) async {
+    String connectionId,
+    String path,
+    int? size,
+    DateTime? modifiedAt,
+  ) async {
     if (!isCacheablePath(path)) {
       await invalidate(connectionId, path);
       return null;
@@ -96,16 +100,20 @@ class SftpFileCache {
           if (cachedSize == size &&
               cachedTime == (modifiedAt?.millisecondsSinceEpoch ?? 0)) {
             final encryptedBytes = await cachedFile.readAsBytes();
-            if (!DataProtectionService.instance
-                .isEncryptedBytes(encryptedBytes)) {
+            if (!DataProtectionService.instance.isEncryptedBytes(
+              encryptedBytes,
+            )) {
               await cachedFile.delete();
               return null;
             }
             try {
-              final bytes = await DataProtectionService.instance
-                  .decryptBytes(encryptedBytes);
-              AppLogService.instance.info('SFTP preview Cache hit',
-                  details: 'path=$path size=${bytes.length}');
+              final bytes = await DataProtectionService.instance.decryptBytes(
+                encryptedBytes,
+              );
+              AppLogService.instance.info(
+                'SFTP preview Cache hit',
+                details: 'path=$path size=${bytes.length}',
+              );
               return bytes;
             } catch (_) {
               await cachedFile.delete();
@@ -129,8 +137,13 @@ class SftpFileCache {
     return null;
   }
 
-  static Future<void> put(String connectionId, String path, int? size,
-      DateTime? modifiedAt, Uint8List bytes) async {
+  static Future<void> put(
+    String connectionId,
+    String path,
+    int? size,
+    DateTime? modifiedAt,
+    Uint8List bytes,
+  ) async {
     if (!isCacheablePath(path)) {
       await invalidate(connectionId, path);
       AppLogService.instance.info(
@@ -150,13 +163,20 @@ class SftpFileCache {
       final pathHash = _getPathHash(connectionId, path);
       final sizeStr = (size ?? 0).toString();
       final timeStr = (modifiedAt?.millisecondsSinceEpoch ?? 0).toString();
-      final file = File(p.join(tempDir.path,
-          'sftp_cache_${connectionHash}_${pathHash}_${sizeStr}_$timeStr'));
-      final encryptedBytes =
-          await DataProtectionService.instance.encryptBytes(bytes);
+      final file = File(
+        p.join(
+          tempDir.path,
+          'sftp_cache_${connectionHash}_${pathHash}_${sizeStr}_$timeStr',
+        ),
+      );
+      final encryptedBytes = await DataProtectionService.instance.encryptBytes(
+        bytes,
+      );
       await file.writeAsBytes(encryptedBytes);
-      AppLogService.instance.info('SFTP preview Cache written',
-          details: 'path=$path size=${bytes.length}');
+      AppLogService.instance.info(
+        'SFTP preview Cache written',
+        details: 'path=$path size=${bytes.length}',
+      );
     } catch (e) {
       AppLogService.instance.warning('SFTP Cache write failed: $e');
     }
@@ -167,8 +187,10 @@ class SftpFileCache {
       final cachedFile = await _findCachedFile(connectionId, path);
       if (cachedFile != null) {
         await cachedFile.delete();
-        AppLogService.instance
-            .info('SFTP preview Cache invalidated', details: 'path=$path');
+        AppLogService.instance.info(
+          'SFTP preview Cache invalidated',
+          details: 'path=$path',
+        );
       }
     } catch (_) {
       // ignore

@@ -48,7 +48,8 @@ class RagDocumentMetadata {
       name: json['name'] as String? ?? '',
       mimeType: json['mimeType'] as String? ?? 'application/octet-stream',
       sizeBytes: json['sizeBytes'] as int? ?? 0,
-      uploadedAt: DateTime.tryParse(json['uploadedAt'] as String? ?? '') ??
+      uploadedAt:
+          DateTime.tryParse(json['uploadedAt'] as String? ?? '') ??
           DateTime.now(),
       chunkCount: json['chunkCount'] as int? ?? 0,
     );
@@ -125,8 +126,9 @@ class RagService extends ChangeNotifier {
 
         // 5. 删除 legacy 文件
         await legacyFile.delete();
-        AppLogService.instance
-            .info('RAG: Migration completed and legacy file deleted.');
+        AppLogService.instance.info(
+          'RAG: Migration completed and legacy file deleted.',
+        );
       } else if (await metadataFile.exists()) {
         final content = await metadataFile.readAsString();
         final json = jsonDecode(content) as Map<String, dynamic>;
@@ -220,8 +222,10 @@ class RagService extends ChangeNotifier {
                 ? chunkTexts.length
                 : i + batchSize;
             final batch = chunkTexts.sublist(i, endIdx);
-            final batchEmbeddings =
-                await client.getEmbeddings(batch, textType: 'document');
+            final batchEmbeddings = await client.getEmbeddings(
+              batch,
+              textType: 'document',
+            );
             embeddings.addAll(batchEmbeddings);
           }
 
@@ -231,11 +235,13 @@ class RagService extends ChangeNotifier {
               chunks[i].metadata['embedding'] = embeddings[i];
             }
           }
-          AppLogService.instance
-              .info('RAG: Generated embeddings successfully via Aliyun');
+          AppLogService.instance.info(
+            'RAG: Generated embeddings successfully via Aliyun',
+          );
         } catch (e) {
           AppLogService.instance.warning(
-              'RAG: Failed to generate vectors via Aliyun: $e. Falling back to pure BM25 index.');
+            'RAG: Failed to generate vectors via Aliyun: $e. Falling back to pure BM25 index.',
+          );
         }
       }
 
@@ -352,17 +358,31 @@ class RagService extends ChangeNotifier {
       // 如果选了向量/混合搜索，但没有配 Aliyun 密钥，则回退为 BM25 搜索
       if (searchMode == 'bm25' || aliyunKey == null || aliyunKey.isEmpty) {
         return await _retrieveBm25Isolated(
-            query, limit, filterDocumentIds, supportDir.path);
+          query,
+          limit,
+          filterDocumentIds,
+          supportDir.path,
+        );
       }
 
       if (searchMode == 'vector') {
         return await _retrieveVectorIsolated(
-            query, aliyunKey, limit, filterDocumentIds, supportDir.path);
+          query,
+          aliyunKey,
+          limit,
+          filterDocumentIds,
+          supportDir.path,
+        );
       }
 
       // 混合搜索模式 (Hybrid Search using RRF)
       return await _retrieveHybridIsolated(
-          query, aliyunKey, limit, filterDocumentIds, supportDir.path);
+        query,
+        aliyunKey,
+        limit,
+        filterDocumentIds,
+        supportDir.path,
+      );
     } catch (e, stackTrace) {
       AppLogService.instance.error(
         'RAG retrieval failed',
@@ -374,7 +394,11 @@ class RagService extends ChangeNotifier {
       try {
         final supportDir = await getApplicationSupportDirectory();
         return await _retrieveBm25Isolated(
-            query, limit, filterDocumentIds, supportDir.path);
+          query,
+          limit,
+          filterDocumentIds,
+          supportDir.path,
+        );
       } catch (ex) {
         return const [];
       }
@@ -419,8 +443,8 @@ class RagService extends ChangeNotifier {
 
     final List<String> targetDocIds =
         filterDocumentIds != null && filterDocumentIds.isNotEmpty
-            ? filterDocumentIds.toList()
-            : _documents.map((d) => d.id).toList();
+        ? filterDocumentIds.toList()
+        : _documents.map((d) => d.id).toList();
 
     final List<dynamic> results = await compute(_vectorSearchTask, {
       'queryVector': queryVector,
@@ -449,8 +473,8 @@ class RagService extends ChangeNotifier {
 
     final List<String> targetDocIds =
         filterDocumentIds != null && filterDocumentIds.isNotEmpty
-            ? filterDocumentIds.toList()
-            : _documents.map((d) => d.id).toList();
+        ? filterDocumentIds.toList()
+        : _documents.map((d) => d.id).toList();
 
     final searchEngineJson = _searchEngine.toJson();
     searchEngineJson.remove('chunks');
@@ -519,8 +543,9 @@ Map<String, dynamic> _rebuildIndexTask(Map<String, dynamic> args) {
 List<Map<String, dynamic>> _bm25SearchTask(Map<String, dynamic> args) {
   final query = args['query'] as String;
   final limit = args['limit'] as int;
-  final filterDocumentIds =
-      (args['filterDocumentIds'] as List?)?.cast<String>().toSet();
+  final filterDocumentIds = (args['filterDocumentIds'] as List?)
+      ?.cast<String>()
+      .toSet();
   final supportDirPath = args['supportDirPath'] as String;
   final searchEngineJson = args['searchEngineJson'] as Map<String, dynamic>;
 
@@ -582,8 +607,9 @@ List<Map<String, dynamic>> _vectorSearchTask(Map<String, dynamic> args) {
     final chunkEmbedding = chunk.metadata['embedding'] as List<dynamic>?;
     if (chunkEmbedding == null || chunkEmbedding.isEmpty) continue;
 
-    final vector =
-        chunkEmbedding.map((val) => (val as num).toDouble()).toList();
+    final vector = chunkEmbedding
+        .map((val) => (val as num).toDouble())
+        .toList();
     final score = VectorMath.dotProduct(queryVector, vector);
     scoredList.add(ScoredRagChunk(chunk: chunk, score: score));
   }
@@ -625,14 +651,17 @@ List<Map<String, dynamic>> _hybridSearchTask(Map<String, dynamic> args) {
     final chunkEmbedding = chunk.metadata['embedding'] as List<dynamic>?;
     if (chunkEmbedding == null || chunkEmbedding.isEmpty) continue;
 
-    final vector =
-        chunkEmbedding.map((val) => (val as num).toDouble()).toList();
+    final vector = chunkEmbedding
+        .map((val) => (val as num).toDouble())
+        .toList();
     final score = VectorMath.dotProduct(queryVector, vector);
     scoredList.add(ScoredRagChunk(chunk: chunk, score: score));
   }
   scoredList.sort((a, b) => b.score.compareTo(a.score));
-  final vectorRank =
-      scoredList.map((sc) => sc.chunk.id).take(limit * 4).toList();
+  final vectorRank = scoredList
+      .map((sc) => sc.chunk.id)
+      .take(limit * 4)
+      .toList();
 
   if (bm25Rank.isEmpty && vectorRank.isEmpty) return const [];
 

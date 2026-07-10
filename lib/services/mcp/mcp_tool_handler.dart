@@ -94,10 +94,7 @@ class McpToolHandler {
     final tools = await aiToolService.tools();
     final matches = tools.where((tool) => tool.name == name).toList();
     if (matches.isEmpty) {
-      return _toolError({
-        'error': 'unknown_tool',
-        'tool': name,
-      });
+      return _toolError({'error': 'unknown_tool', 'tool': name});
     }
 
     final tool = matches.first;
@@ -127,8 +124,10 @@ class McpToolHandler {
       return _approvalRequired(name, decision);
     }
 
-    final approvalRequest =
-        await aiToolService.approvalRequestFor(name, arguments);
+    final approvalRequest = await aiToolService.approvalRequestFor(
+      name,
+      arguments,
+    );
     if (approvalRequest != null) {
       AppLogService.instance.warning(
         'MCP approval-aware tool blocked',

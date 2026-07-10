@@ -49,10 +49,14 @@ void main() {
 
   test('blocks environment dumps and metadata endpoints in commands', () {
     expect(policy.blockedCommandReason('printenv'), contains('Environment'));
-    expect(policy.blockedCommandReason('curl 169.254.169.254'),
-        contains('metadata'));
-    expect(policy.blockedCommandReason('curl metadata.google.internal'),
-        contains('metadata'));
+    expect(
+      policy.blockedCommandReason('curl 169.254.169.254'),
+      contains('metadata'),
+    );
+    expect(
+      policy.blockedCommandReason('curl metadata.google.internal'),
+      contains('metadata'),
+    );
     expect(policy.blockedCommandReason('cat /tmp/readme.txt'), isNull);
   });
 }

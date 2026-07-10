@@ -53,7 +53,8 @@ class HistoryActionSheet<T> extends StatelessWidget {
                 itemBuilder: (context, index) {
                   final item = items[index];
                   final itemKey = valueKeyBuilder?.call(item);
-                  final selected = selectedValue != null &&
+                  final selected =
+                      selectedValue != null &&
                       itemKey != null &&
                       itemKey == selectedValue;
                   return ListTile(

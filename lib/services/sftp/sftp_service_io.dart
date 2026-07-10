@@ -36,8 +36,9 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   static const Duration _notifyCoalesceDelay = Duration(milliseconds: 16);
 
   final StorageService _storageService;
-  late final SshClientFactory _clientFactory =
-      SshClientFactory(_storageService);
+  late final SshClientFactory _clientFactory = SshClientFactory(
+    _storageService,
+  );
 
   final Map<String, _SftpSession> _sessions = {};
   final Map<String, String> _lastPaths = {};
@@ -104,9 +105,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     return _storageService.loadRecentPaths(connectionId, limit: limit);
   }
 
-  Future<List<SftpFavoritePathRecord>> loadFavoritePaths(
-    String connectionId,
-  ) {
+  Future<List<SftpFavoritePathRecord>> loadFavoritePaths(String connectionId) {
     return _storageService.loadFavoritePaths(connectionId);
   }
 
@@ -130,10 +129,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   }
 
   @override
-  Future<void> connect(
-    String connectionId, {
-    dynamic onUnknownHostKey,
-  }) async {
+  Future<void> connect(String connectionId, {dynamic onUnknownHostKey}) async {
     final config = _storageService.getConnection(connectionId);
     if (config == null) {
       _activeConnectionId = connectionId;
@@ -175,11 +171,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     session.state = SftpConnectionState.connecting;
     session.errorMessage = null;
     notifyListeners();
-    final task = _connect(
-      session,
-      config,
-      onUnknownHostKey: onUnknownHostKey,
-    );
+    final task = _connect(session, config, onUnknownHostKey: onUnknownHostKey);
     _connectTasks[connectionId] = task;
     try {
       await task;
@@ -285,7 +277,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       raf = await localFile.open(mode: FileMode.read);
       remoteFile = await sftp.open(
         remotePath,
-        mode: SftpFileOpenMode.create |
+        mode:
+            SftpFileOpenMode.create |
             SftpFileOpenMode.truncate |
             SftpFileOpenMode.write,
       );
@@ -298,8 +291,9 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
           throw const SftpTransferCancelledException();
         }
 
-        final len =
-            (totalSize - offset) < chunkSize ? (totalSize - offset) : chunkSize;
+        final len = (totalSize - offset) < chunkSize
+            ? (totalSize - offset)
+            : chunkSize;
         final chunk = await raf.read(len);
         if (chunk.isEmpty) break;
 
@@ -477,7 +471,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     try {
       file = await sftp.open(
         remotePath,
-        mode: SftpFileOpenMode.create |
+        mode:
+            SftpFileOpenMode.create |
             SftpFileOpenMode.truncate |
             SftpFileOpenMode.write,
       );
@@ -559,7 +554,11 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     _assertWithinMemoryLimit(entry.size, 'download', maxBytes: maxBytes);
 
     final cachedBytes = await SftpFileCache.get(
-        entry.connectionId, entry.path, entry.size, entry.modifiedAt);
+      entry.connectionId,
+      entry.path,
+      entry.size,
+      entry.modifiedAt,
+    );
     if (cachedBytes != null) {
       return cachedBytes;
     }
@@ -581,7 +580,12 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       );
 
       await SftpFileCache.put(
-          entry.connectionId, entry.path, entry.size, entry.modifiedAt, bytes);
+        entry.connectionId,
+        entry.path,
+        entry.size,
+        entry.modifiedAt,
+        bytes,
+      );
 
       if (updateState) {
         session.state = SftpConnectionState.connected;
@@ -606,8 +610,10 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     }
   }
 
-  Future<String> readTextFile(SftpEntry entry,
-      {int maxBytes = maxTextEditBytes}) async {
+  Future<String> readTextFile(
+    SftpEntry entry, {
+    int maxBytes = maxTextEditBytes,
+  }) async {
     final sftp = _sessionForEntry(entry).sftp;
     if (sftp == null) throw StateError('SFTP is not connected');
     _assertWithinMemoryLimit(entry.size, 'edit', maxBytes: maxBytes);
@@ -636,7 +642,8 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     try {
       file = await sftp.open(
         entry.path,
-        mode: SftpFileOpenMode.create |
+        mode:
+            SftpFileOpenMode.create |
             SftpFileOpenMode.truncate |
             SftpFileOpenMode.write,
       );
@@ -674,32 +681,29 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   Future<List<SftpEntry>> listDirectoryForConnection(
     String connectionId,
     String path,
-  ) =>
-      _listDirectoryForConnectionImpl(connectionId, path);
+  ) => _listDirectoryForConnectionImpl(connectionId, path);
 
   @override
   Future<String> readTextPathForConnection({
     required String connectionId,
     required String path,
     int maxBytes = maxTextPreviewBytes,
-  }) =>
-      _readTextPathForConnectionImpl(
-        connectionId: connectionId,
-        path: path,
-        maxBytes: maxBytes,
-      );
+  }) => _readTextPathForConnectionImpl(
+    connectionId: connectionId,
+    path: path,
+    maxBytes: maxBytes,
+  );
 
   @override
   Future<Uint8List> downloadPathForConnection({
     required String connectionId,
     required String path,
     int maxBytes = maxDownloadBytes,
-  }) =>
-      _downloadPathForConnectionImpl(
-        connectionId: connectionId,
-        path: path,
-        maxBytes: maxBytes,
-      );
+  }) => _downloadPathForConnectionImpl(
+    connectionId: connectionId,
+    path: path,
+    maxBytes: maxBytes,
+  );
 
   @override
   Future<void> writeTextPathForConnection({
@@ -707,23 +711,18 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     required String path,
     required String text,
     int maxBytes = maxTextEditBytes,
-  }) =>
-      _writeTextPathForConnectionImpl(
-        connectionId: connectionId,
-        path: path,
-        text: text,
-        maxBytes: maxBytes,
-      );
+  }) => _writeTextPathForConnectionImpl(
+    connectionId: connectionId,
+    path: path,
+    text: text,
+    maxBytes: maxBytes,
+  );
 
   @override
   Future<SftpPathInfo> statPathForConnection({
     required String connectionId,
     required String path,
-  }) =>
-      _statPathForConnectionImpl(
-        connectionId: connectionId,
-        path: path,
-      );
+  }) => _statPathForConnectionImpl(connectionId: connectionId, path: path);
 
   @override
   Future<void> uploadBytesPathForConnection({
@@ -731,45 +730,38 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     required String path,
     required Uint8List bytes,
     int maxBytes = maxUploadBytes,
-  }) =>
-      _uploadBytesPathForConnectionImpl(
-        connectionId: connectionId,
-        path: path,
-        bytes: bytes,
-        maxBytes: maxBytes,
-      );
+  }) => _uploadBytesPathForConnectionImpl(
+    connectionId: connectionId,
+    path: path,
+    bytes: bytes,
+    maxBytes: maxBytes,
+  );
 
   @override
   Future<void> createDirectoryPathForConnection({
     required String connectionId,
     required String path,
-  }) =>
-      _createDirectoryPathForConnectionImpl(
-        connectionId: connectionId,
-        path: path,
-      );
+  }) => _createDirectoryPathForConnectionImpl(
+    connectionId: connectionId,
+    path: path,
+  );
 
   @override
   Future<void> renamePathForConnection({
     required String connectionId,
     required String path,
     required String newPath,
-  }) =>
-      _renamePathForConnectionImpl(
-        connectionId: connectionId,
-        path: path,
-        newPath: newPath,
-      );
+  }) => _renamePathForConnectionImpl(
+    connectionId: connectionId,
+    path: path,
+    newPath: newPath,
+  );
 
   @override
   Future<void> deletePathForConnection({
     required String connectionId,
     required String path,
-  }) =>
-      _deletePathForConnectionImpl(
-        connectionId: connectionId,
-        path: path,
-      );
+  }) => _deletePathForConnectionImpl(connectionId: connectionId, path: path);
 
   Future<void> _openPath(_SftpSession session, String path) async {
     final sftp = session.sftp;
@@ -962,9 +954,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       if (name.filename == '.' || name.filename == '..') continue;
       final modifiedAt = name.attr.modifyTime == null
           ? null
-          : DateTime.fromMillisecondsSinceEpoch(
-              name.attr.modifyTime! * 1000,
-            );
+          : DateTime.fromMillisecondsSinceEpoch(name.attr.modifyTime! * 1000);
       entries.add(
         SftpEntry(
           connectionId: connectionId,
@@ -976,8 +966,9 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
           size: name.attr.size,
           sizeLabel: _formatBytes(name.attr.size),
           modifiedAt: modifiedAt,
-          modifiedLabel:
-              modifiedAt == null ? null : _formatTimestamp(modifiedAt),
+          modifiedLabel: modifiedAt == null
+              ? null
+              : _formatTimestamp(modifiedAt),
         ),
       );
     }
@@ -1038,10 +1029,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     try {
       await file.close();
     } catch (e) {
-      AppLogService.instance.warning(
-        'SFTP file close failed',
-        details: '$e',
-      );
+      AppLogService.instance.warning('SFTP file close failed', details: '$e');
     }
   }
 }

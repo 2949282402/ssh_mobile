@@ -26,12 +26,9 @@ class ClientWebViewSession {
     required this.controller,
     required this.createdAt,
     required this.supported,
-    required DateTime updatedAt,
-    required String? url,
-    String searchEngine = 'baidu',
-  })  : _updatedAt = updatedAt,
-        _url = url,
-        _searchEngine = searchEngine;
+    required this._updatedAt,
+    required this._url,
+  }) : _searchEngine = 'baidu';
 
   String? get url => _url;
   String? get title => _title;
@@ -109,12 +106,7 @@ class ClientWebViewSnapshot {
 }
 
 class ClientWebViewSecurityPolicy {
-  static const _blockedSchemes = {
-    'file',
-    'data',
-    'javascript',
-    'intent',
-  };
+  static const _blockedSchemes = {'file', 'data', 'javascript', 'intent'};
 
   const ClientWebViewSecurityPolicy._();
 
@@ -358,11 +350,7 @@ class ClientWebViewSearchItem {
   }
 
   Map<String, dynamic> toJson() {
-    return {
-      'title': title,
-      'url': url,
-      'snippet': snippet,
-    };
+    return {'title': title, 'url': url, 'snippet': snippet};
   }
 }
 

@@ -23,10 +23,9 @@ class PlaybookViewModel extends ChangeNotifier {
   String? _selectedConnectionId;
 
   PlaybookViewModel({
-    required PlaybookService playbookService,
-    required StorageService storageService,
-  })  : _playbookService = playbookService,
-        _storageService = storageService {
+    required this._playbookService,
+    required this._storageService,
+  }) {
     _playbookService.addListener(_onServiceChanged);
     _initializeDefaultConnection();
   }
@@ -114,8 +113,9 @@ class PlaybookViewModel extends ChangeNotifier {
   // Editor Actions
   void _clearStepControllers() {
     if (stepControllers.isEmpty) return;
-    final controllersToDispose =
-        List<Map<String, TextEditingController>>.from(stepControllers);
+    final controllersToDispose = List<Map<String, TextEditingController>>.from(
+      stepControllers,
+    );
     stepControllers.clear();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -135,8 +135,9 @@ class PlaybookViewModel extends ChangeNotifier {
         'name': TextEditingController(text: step.name),
         'command': TextEditingController(text: step.command),
         'description': TextEditingController(text: step.description),
-        'expectedOutcomeRegex':
-            TextEditingController(text: step.expectedOutcomeRegex ?? ''),
+        'expectedOutcomeRegex': TextEditingController(
+          text: step.expectedOutcomeRegex ?? '',
+        ),
       });
     }
   }
@@ -210,27 +211,29 @@ class PlaybookViewModel extends ChangeNotifier {
       final description = stepControllers[i]['description']!.text.trim();
       final regex = stepControllers[i]['expectedOutcomeRegex']!.text.trim();
 
-      steps.add(PlaybookStep(
-        id: i < _editingPlaybook!.steps.length
-            ? _editingPlaybook!.steps[i].id
-            : 'step_${DateTime.now().millisecondsSinceEpoch}_$i',
-        name: name,
-        command: command,
-        description: description,
-        expectedOutcomeRegex: regex.isEmpty ? null : regex,
-        status: i < _editingPlaybook!.steps.length
-            ? _editingPlaybook!.steps[i].status
-            : StepStatus.pending,
-        stdout: i < _editingPlaybook!.steps.length
-            ? _editingPlaybook!.steps[i].stdout
-            : null,
-        stderr: i < _editingPlaybook!.steps.length
-            ? _editingPlaybook!.steps[i].stderr
-            : null,
-        exitCode: i < _editingPlaybook!.steps.length
-            ? _editingPlaybook!.steps[i].exitCode
-            : null,
-      ));
+      steps.add(
+        PlaybookStep(
+          id: i < _editingPlaybook!.steps.length
+              ? _editingPlaybook!.steps[i].id
+              : 'step_${DateTime.now().millisecondsSinceEpoch}_$i',
+          name: name,
+          command: command,
+          description: description,
+          expectedOutcomeRegex: regex.isEmpty ? null : regex,
+          status: i < _editingPlaybook!.steps.length
+              ? _editingPlaybook!.steps[i].status
+              : StepStatus.pending,
+          stdout: i < _editingPlaybook!.steps.length
+              ? _editingPlaybook!.steps[i].stdout
+              : null,
+          stderr: i < _editingPlaybook!.steps.length
+              ? _editingPlaybook!.steps[i].stderr
+              : null,
+          exitCode: i < _editingPlaybook!.steps.length
+              ? _editingPlaybook!.steps[i].exitCode
+              : null,
+        ),
+      );
     }
 
     final updated = _editingPlaybook!.copyWith(

@@ -42,12 +42,9 @@ class OpenAiChatProvider implements LlmProviderAdapter {
     );
 
     try {
-      final response = await client.get(
-        endpoint,
-        headers: {
-          'Authorization': 'Bearer $apiKey',
-        },
-      ).timeout(const Duration(seconds: 30));
+      final response = await client
+          .get(endpoint, headers: {'Authorization': 'Bearer $apiKey'})
+          .timeout(const Duration(seconds: 30));
 
       final body = response.body;
 
@@ -58,9 +55,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
               'status=${response.statusCode} elapsedMs=${DateTime.now().difference(startedAt).inMilliseconds} bodyChars=${body.length}',
         );
 
-        throw StateError(
-          'Fetch models failed (${response.statusCode}): $body',
-        );
+        throw StateError('Fetch models failed (${response.statusCode}): $body');
       }
 
       final data = jsonDecode(body);
@@ -106,7 +101,8 @@ class OpenAiChatProvider implements LlmProviderAdapter {
     _assertValidHeaderApiKey(request.apiKey);
 
     final endpoint = Uri.parse(
-        resolveOpenAiCompatibleUrl(request.baseUrl, '/chat/completions'));
+      resolveOpenAiCompatibleUrl(request.baseUrl, '/chat/completions'),
+    );
 
     for (var attempt = 0; attempt <= 3; attempt++) {
       final client = http.Client();
@@ -170,22 +166,24 @@ class OpenAiChatProvider implements LlmProviderAdapter {
                   'endpoint=$endpoint model=${request.model} bodyChars=${body.length}',
             );
 
-            return complete(LlmProviderRequest(
-              baseUrl: request.baseUrl,
-              apiKey: request.apiKey,
-              model: request.model,
-              messages: request.messages,
-              tools: request.tools,
-              openAiReasoningEffort: request.openAiReasoningEffort,
-              deepSeekThinkingEnabled: request.deepSeekThinkingEnabled,
-              deepSeekReasoningEffort: request.deepSeekReasoningEffort,
-              includeTools: request.includeTools,
-              includeUsage: request.includeUsage,
-              includeReasoningParams: false,
-              cancellationToken: request.cancellationToken,
-              onTextDelta: request.onTextDelta,
-              timeoutSeconds: request.timeoutSeconds,
-            ));
+            return complete(
+              LlmProviderRequest(
+                baseUrl: request.baseUrl,
+                apiKey: request.apiKey,
+                model: request.model,
+                messages: request.messages,
+                tools: request.tools,
+                openAiReasoningEffort: request.openAiReasoningEffort,
+                deepSeekThinkingEnabled: request.deepSeekThinkingEnabled,
+                deepSeekReasoningEffort: request.deepSeekReasoningEffort,
+                includeTools: request.includeTools,
+                includeUsage: request.includeUsage,
+                includeReasoningParams: false,
+                cancellationToken: request.cancellationToken,
+                onTextDelta: request.onTextDelta,
+                timeoutSeconds: request.timeoutSeconds,
+              ),
+            );
           }
 
           if (useTools && looksLikeToolUnsupportedError(body)) {
@@ -195,22 +193,24 @@ class OpenAiChatProvider implements LlmProviderAdapter {
                   'endpoint=$endpoint model=${request.model} bodyChars=${body.length}',
             );
 
-            return complete(LlmProviderRequest(
-              baseUrl: request.baseUrl,
-              apiKey: request.apiKey,
-              model: request.model,
-              messages: request.messages,
-              tools: const [],
-              openAiReasoningEffort: request.openAiReasoningEffort,
-              deepSeekThinkingEnabled: request.deepSeekThinkingEnabled,
-              deepSeekReasoningEffort: request.deepSeekReasoningEffort,
-              includeTools: false,
-              includeUsage: request.includeUsage,
-              includeReasoningParams: request.includeReasoningParams,
-              cancellationToken: request.cancellationToken,
-              onTextDelta: request.onTextDelta,
-              timeoutSeconds: request.timeoutSeconds,
-            ));
+            return complete(
+              LlmProviderRequest(
+                baseUrl: request.baseUrl,
+                apiKey: request.apiKey,
+                model: request.model,
+                messages: request.messages,
+                tools: const [],
+                openAiReasoningEffort: request.openAiReasoningEffort,
+                deepSeekThinkingEnabled: request.deepSeekThinkingEnabled,
+                deepSeekReasoningEffort: request.deepSeekReasoningEffort,
+                includeTools: false,
+                includeUsage: request.includeUsage,
+                includeReasoningParams: request.includeReasoningParams,
+                cancellationToken: request.cancellationToken,
+                onTextDelta: request.onTextDelta,
+                timeoutSeconds: request.timeoutSeconds,
+              ),
+            );
           }
 
           AppLogService.instance.warning(
@@ -264,11 +264,9 @@ class OpenAiChatProvider implements LlmProviderAdapter {
 
               final args = (function?['arguments'] as String?) ?? '';
 
-              toolCalls.add(LlmProviderToolCall(
-                id: id,
-                name: name,
-                argumentsJson: args,
-              ));
+              toolCalls.add(
+                LlmProviderToolCall(id: id, name: name, argumentsJson: args),
+              );
             }
           }
         }
@@ -329,7 +327,8 @@ class OpenAiChatProvider implements LlmProviderAdapter {
     _assertValidHeaderApiKey(request.apiKey);
 
     final endpoint = Uri.parse(
-        resolveOpenAiCompatibleUrl(request.baseUrl, '/chat/completions'));
+      resolveOpenAiCompatibleUrl(request.baseUrl, '/chat/completions'),
+    );
 
     for (var attempt = 0; attempt <= 3; attempt++) {
       final client = http.Client();
@@ -392,9 +391,9 @@ class OpenAiChatProvider implements LlmProviderAdapter {
         });
         httpRequest.bodyBytes = bodyBytes;
 
-        final response = await client.send(httpRequest).timeout(
-              Duration(seconds: request.timeoutSeconds),
-            );
+        final response = await client
+            .send(httpRequest)
+            .timeout(Duration(seconds: request.timeoutSeconds));
 
         if (response.statusCode < 200 || response.statusCode >= 300) {
           final body = await response.stream.bytesToString();
@@ -409,22 +408,24 @@ class OpenAiChatProvider implements LlmProviderAdapter {
                   'endpoint=$endpoint model=${request.model} bodyChars=${body.length}',
             );
 
-            return streamChat(LlmProviderRequest(
-              baseUrl: request.baseUrl,
-              apiKey: request.apiKey,
-              model: request.model,
-              messages: request.messages,
-              tools: request.tools,
-              openAiReasoningEffort: request.openAiReasoningEffort,
-              deepSeekThinkingEnabled: request.deepSeekThinkingEnabled,
-              deepSeekReasoningEffort: request.deepSeekReasoningEffort,
-              includeTools: request.includeTools,
-              includeUsage: false,
-              includeReasoningParams: request.includeReasoningParams,
-              cancellationToken: request.cancellationToken,
-              onTextDelta: request.onTextDelta,
-              timeoutSeconds: request.timeoutSeconds,
-            ));
+            return streamChat(
+              LlmProviderRequest(
+                baseUrl: request.baseUrl,
+                apiKey: request.apiKey,
+                model: request.model,
+                messages: request.messages,
+                tools: request.tools,
+                openAiReasoningEffort: request.openAiReasoningEffort,
+                deepSeekThinkingEnabled: request.deepSeekThinkingEnabled,
+                deepSeekReasoningEffort: request.deepSeekReasoningEffort,
+                includeTools: request.includeTools,
+                includeUsage: false,
+                includeReasoningParams: request.includeReasoningParams,
+                cancellationToken: request.cancellationToken,
+                onTextDelta: request.onTextDelta,
+                timeoutSeconds: request.timeoutSeconds,
+              ),
+            );
           }
 
           if (useTools &&
@@ -436,22 +437,24 @@ class OpenAiChatProvider implements LlmProviderAdapter {
                   'endpoint=$endpoint model=${request.model} bodyChars=${body.length}',
             );
 
-            return streamChat(LlmProviderRequest(
-              baseUrl: request.baseUrl,
-              apiKey: request.apiKey,
-              model: request.model,
-              messages: request.messages,
-              tools: const [],
-              openAiReasoningEffort: request.openAiReasoningEffort,
-              deepSeekThinkingEnabled: request.deepSeekThinkingEnabled,
-              deepSeekReasoningEffort: request.deepSeekReasoningEffort,
-              includeTools: false,
-              includeUsage: request.includeUsage,
-              includeReasoningParams: request.includeReasoningParams,
-              cancellationToken: request.cancellationToken,
-              onTextDelta: request.onTextDelta,
-              timeoutSeconds: request.timeoutSeconds,
-            ));
+            return streamChat(
+              LlmProviderRequest(
+                baseUrl: request.baseUrl,
+                apiKey: request.apiKey,
+                model: request.model,
+                messages: request.messages,
+                tools: const [],
+                openAiReasoningEffort: request.openAiReasoningEffort,
+                deepSeekThinkingEnabled: request.deepSeekThinkingEnabled,
+                deepSeekReasoningEffort: request.deepSeekReasoningEffort,
+                includeTools: false,
+                includeUsage: request.includeUsage,
+                includeReasoningParams: request.includeReasoningParams,
+                cancellationToken: request.cancellationToken,
+                onTextDelta: request.onTextDelta,
+                timeoutSeconds: request.timeoutSeconds,
+              ),
+            );
           }
 
           if (request.includeReasoningParams &&
@@ -463,22 +466,24 @@ class OpenAiChatProvider implements LlmProviderAdapter {
                   'endpoint=$endpoint model=${request.model} bodyChars=${body.length}',
             );
 
-            return streamChat(LlmProviderRequest(
-              baseUrl: request.baseUrl,
-              apiKey: request.apiKey,
-              model: request.model,
-              messages: request.messages,
-              tools: request.tools,
-              openAiReasoningEffort: request.openAiReasoningEffort,
-              deepSeekThinkingEnabled: request.deepSeekThinkingEnabled,
-              deepSeekReasoningEffort: request.deepSeekReasoningEffort,
-              includeTools: request.includeTools,
-              includeUsage: request.includeUsage,
-              includeReasoningParams: false,
-              cancellationToken: request.cancellationToken,
-              onTextDelta: request.onTextDelta,
-              timeoutSeconds: request.timeoutSeconds,
-            ));
+            return streamChat(
+              LlmProviderRequest(
+                baseUrl: request.baseUrl,
+                apiKey: request.apiKey,
+                model: request.model,
+                messages: request.messages,
+                tools: request.tools,
+                openAiReasoningEffort: request.openAiReasoningEffort,
+                deepSeekThinkingEnabled: request.deepSeekThinkingEnabled,
+                deepSeekReasoningEffort: request.deepSeekReasoningEffort,
+                includeTools: request.includeTools,
+                includeUsage: request.includeUsage,
+                includeReasoningParams: false,
+                cancellationToken: request.cancellationToken,
+                onTextDelta: request.onTextDelta,
+                timeoutSeconds: request.timeoutSeconds,
+              ),
+            );
           }
 
           AppLogService.instance.warning(
@@ -486,9 +491,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
             details: 'status=${response.statusCode} bodyChars=${body.length}',
           );
 
-          throw StateError(
-            'LLM stream failed (${response.statusCode}): $body',
-          );
+          throw StateError('LLM stream failed (${response.statusCode}): $body');
         }
 
         final lines = response.stream
@@ -517,8 +520,9 @@ class OpenAiChatProvider implements LlmProviderAdapter {
           final usageJson = parsed['usage'];
 
           if (usageJson is Map) {
-            usage =
-                LlmTokenUsage.fromJson(Map<String, dynamic>.from(usageJson));
+            usage = LlmTokenUsage.fromJson(
+              Map<String, dynamic>.from(usageJson),
+            );
           }
 
           final choices = parsed['choices'] as List?;
@@ -584,14 +588,15 @@ class OpenAiChatProvider implements LlmProviderAdapter {
         final calls = toolCalls.entries
             .where((entry) => entry.value.name.trim().isNotEmpty)
             .map((entry) {
-          final call = entry.value;
+              final call = entry.value;
 
-          if (call.id.trim().isEmpty) {
-            call.id = 'call_${entry.key}';
-          }
+              if (call.id.trim().isEmpty) {
+                call.id = 'call_${entry.key}';
+              }
 
-          return call;
-        }).toList();
+              return call;
+            })
+            .toList();
 
         AppLogService.instance.info(
           'LLM stream response completed',
@@ -603,11 +608,13 @@ class OpenAiChatProvider implements LlmProviderAdapter {
           text: contentChunks.join(),
           reasoningContent: reasoningContent.toString(),
           toolCalls: calls
-              .map((c) => LlmProviderToolCall(
-                    id: c.id,
-                    name: c.name,
-                    argumentsJson: c.arguments,
-                  ))
+              .map(
+                (c) => LlmProviderToolCall(
+                  id: c.id,
+                  name: c.name,
+                  argumentsJson: c.arguments,
+                ),
+              )
               .toList(),
           usage: usage,
         );
@@ -622,7 +629,8 @@ class OpenAiChatProvider implements LlmProviderAdapter {
           throw const LlmCancelledException();
         }
 
-        final canRetry = _isRetryableNetworkError(e) &&
+        final canRetry =
+            _isRetryableNetworkError(e) &&
             contentChunks.isEmpty &&
             reasoningContent.isEmpty &&
             toolCalls.isEmpty &&
@@ -662,10 +670,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
           {
             'id': call.id,
             'type': 'function',
-            'function': {
-              'name': call.name,
-              'arguments': call.argumentsJson,
-            },
+            'function': {'name': call.name, 'arguments': call.argumentsJson},
           },
       ],
       if (reasoningContent != null && reasoningContent.trim().isNotEmpty)
@@ -678,11 +683,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
     required LlmProviderToolCall call,
     required String result,
   }) {
-    return {
-      'role': 'tool',
-      'tool_call_id': call.id,
-      'content': result,
-    };
+    return {'role': 'tool', 'tool_call_id': call.id, 'content': result};
   }
 
   static String resolveOpenAiCompatibleUrl(String baseUrl, String path) {
@@ -702,9 +703,7 @@ class OpenAiChatProvider implements LlmProviderAdapter {
   }) {
     if (isDeepSeekModelId(model) || _isDeepSeekBaseUrl(baseUrl)) {
       final params = <String, dynamic>{
-        'thinking': {
-          'type': deepSeekThinkingEnabled ? 'enabled' : 'disabled',
-        },
+        'thinking': {'type': deepSeekThinkingEnabled ? 'enabled' : 'disabled'},
       };
 
       if (deepSeekThinkingEnabled) {

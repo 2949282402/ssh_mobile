@@ -30,7 +30,7 @@ class PdfTextExtractor {
       114,
       101,
       97,
-      109
+      109,
     ]; // "endstream"
 
     int start = 0;

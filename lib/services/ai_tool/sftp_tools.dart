@@ -85,11 +85,8 @@ class SftpToolsProvider implements AiToolProvider {
         },
         required: const ['connectionId', 'path'],
         executionMode: AiToolExecutionMode.stateChanging,
-        handler: (arguments) => _sftpUploadLocalFile(
-          service,
-          arguments,
-          approvedWrite: false,
-        ),
+        handler: (arguments) =>
+            _sftpUploadLocalFile(service, arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'sftp_create_directory',
@@ -101,11 +98,8 @@ class SftpToolsProvider implements AiToolProvider {
         },
         required: const ['connectionId', 'path'],
         executionMode: AiToolExecutionMode.stateChanging,
-        handler: (arguments) => _sftpCreateDirectory(
-          service,
-          arguments,
-          approvedWrite: false,
-        ),
+        handler: (arguments) =>
+            _sftpCreateDirectory(service, arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'sftp_rename_entry',
@@ -118,11 +112,8 @@ class SftpToolsProvider implements AiToolProvider {
         },
         required: const ['connectionId', 'path', 'newPath'],
         executionMode: AiToolExecutionMode.stateChanging,
-        handler: (arguments) => _sftpRenameEntry(
-          service,
-          arguments,
-          approvedWrite: false,
-        ),
+        handler: (arguments) =>
+            _sftpRenameEntry(service, arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'sftp_delete_entry',
@@ -134,11 +125,8 @@ class SftpToolsProvider implements AiToolProvider {
         },
         required: const ['connectionId', 'path'],
         executionMode: AiToolExecutionMode.stateChanging,
-        handler: (arguments) => _sftpDeleteEntry(
-          service,
-          arguments,
-          approvedWrite: false,
-        ),
+        handler: (arguments) =>
+            _sftpDeleteEntry(service, arguments, approvedWrite: false),
       ),
     ];
   }
@@ -158,35 +146,54 @@ class SftpToolsProvider implements AiToolProvider {
       case 'sftp_read_text':
         return _readText(service, arguments, approvedRead: approvedWrite);
       case 'sftp_download_file':
-        return _sftpDownloadFile(service, arguments,
-            approvedRead: approvedWrite);
+        return _sftpDownloadFile(
+          service,
+          arguments,
+          approvedRead: approvedWrite,
+        );
       case 'sftp_write_text':
         return _sftpWriteText(service, arguments, approvedWrite: approvedWrite);
       case 'sftp_upload_local_file':
-        return _sftpUploadLocalFile(service, arguments,
-            approvedWrite: approvedWrite);
+        return _sftpUploadLocalFile(
+          service,
+          arguments,
+          approvedWrite: approvedWrite,
+        );
       case 'sftp_create_directory':
-        return _sftpCreateDirectory(service, arguments,
-            approvedWrite: approvedWrite);
+        return _sftpCreateDirectory(
+          service,
+          arguments,
+          approvedWrite: approvedWrite,
+        );
       case 'sftp_rename_entry':
-        return _sftpRenameEntry(service, arguments,
-            approvedWrite: approvedWrite);
+        return _sftpRenameEntry(
+          service,
+          arguments,
+          approvedWrite: approvedWrite,
+        );
       case 'sftp_delete_entry':
-        return _sftpDeleteEntry(service, arguments,
-            approvedWrite: approvedWrite);
+        return _sftpDeleteEntry(
+          service,
+          arguments,
+          approvedWrite: approvedWrite,
+        );
       default:
         return null;
     }
   }
 
   Future<String> _listDir(
-      AiToolService service, Map<String, dynamic> arguments) async {
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
     final connectionId = service._arg(arguments, 'connectionId');
     final path = service._optionalString(arguments, 'path') ?? '.';
     final blocked = service._secretPathBlocked(path);
     if (blocked != null) return blocked;
-    final entries =
-        await sftpService.listDirectoryForConnection(connectionId, path);
+    final entries = await sftpService.listDirectoryForConnection(
+      connectionId,
+      path,
+    );
     return jsonEncode({
       'path': path,
       'entries': entries
@@ -209,7 +216,9 @@ class SftpToolsProvider implements AiToolProvider {
   }
 
   Future<String> _sftpGetEntryInfo(
-      AiToolService service, Map<String, dynamic> arguments) async {
+    AiToolService service,
+    Map<String, dynamic> arguments,
+  ) async {
     final path = service._arg(arguments, 'path');
     final blocked = service._secretPathBlocked(path);
     if (blocked != null) return blocked;
@@ -272,10 +281,7 @@ class SftpToolsProvider implements AiToolProvider {
       bytes: bytes,
       dialogTitle: 'Download file',
     );
-    return jsonEncode({
-      ...saveResult,
-      'remotePath': path,
-    });
+    return jsonEncode({...saveResult, 'remotePath': path});
   }
 
   Future<String> _sftpWriteText(
@@ -301,11 +307,7 @@ class SftpToolsProvider implements AiToolProvider {
       text: content,
       maxBytes: service._sftpTextEditLimitBytes,
     );
-    return jsonEncode({
-      'path': path,
-      'bytes': bytes,
-      'written': true,
-    });
+    return jsonEncode({'path': path, 'bytes': bytes, 'written': true});
   }
 
   Future<String> _sftpUploadLocalFile(
@@ -369,10 +371,7 @@ class SftpToolsProvider implements AiToolProvider {
       connectionId: connectionId,
       path: path,
     );
-    return jsonEncode({
-      'created': true,
-      'path': path,
-    });
+    return jsonEncode({'created': true, 'path': path});
   }
 
   Future<String> _sftpRenameEntry(
@@ -398,11 +397,7 @@ class SftpToolsProvider implements AiToolProvider {
       path: path,
       newPath: newPath,
     );
-    return jsonEncode({
-      'renamed': true,
-      'path': path,
-      'newPath': newPath,
-    });
+    return jsonEncode({'renamed': true, 'path': path, 'newPath': newPath});
   }
 
   Future<String> _sftpDeleteEntry(
@@ -424,10 +419,7 @@ class SftpToolsProvider implements AiToolProvider {
       connectionId: connectionId,
       path: path,
     );
-    return jsonEncode({
-      'deleted': true,
-      'path': path,
-    });
+    return jsonEncode({'deleted': true, 'path': path});
   }
 
   String _resolveRemoteUploadPath(String requestedPath, String pickedName) {

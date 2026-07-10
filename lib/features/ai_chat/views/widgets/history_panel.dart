@@ -106,8 +106,10 @@ class _HistoryPanelState extends State<HistoryPanel> {
                     )
                   : null,
               isDense: true,
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 8,
+              ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
               ),
@@ -124,58 +126,55 @@ class _HistoryPanelState extends State<HistoryPanel> {
                   ),
                 )
               : filtered.isEmpty
-                  ? Center(
-                      child: Text(
-                        _searchQuery.isNotEmpty
-                            ? (widget.strings.language == AppLanguage.en
-                                ? 'No results'
-                                : '无搜索结果')
-                            : (widget.strings.language == AppLanguage.en
-                                ? 'No history'
-                                : '暂无历史记录'),
+              ? Center(
+                  child: Text(
+                    _searchQuery.isNotEmpty
+                        ? (widget.strings.language == AppLanguage.en
+                              ? 'No results'
+                              : '无搜索结果')
+                        : (widget.strings.language == AppLanguage.en
+                              ? 'No history'
+                              : '暂无历史记录'),
+                    style: TextStyle(color: colorScheme.onSurfaceVariant),
+                  ),
+                )
+              : ListView.separated(
+                  itemCount: filtered.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final chat = filtered[index];
+                    final selected = chat.id == widget.activeChatId;
+                    return ListTile(
+                      selected: selected,
+                      leading: Icon(
+                        selected
+                            ? Icons.chat_bubble_rounded
+                            : Icons.chat_bubble_outline_rounded,
+                        color: selected ? colorScheme.primary : null,
+                      ),
+                      title: OverflowScrollText(
+                        chat.title,
+                        selectable: false,
+                        maxLines: 1,
+                      ),
+                      subtitle: OverflowScrollText(
+                        widget.formatTime(chat.updatedAt),
+                        selectable: false,
+                        maxLines: 1,
                         style: TextStyle(
-                          color: colorScheme.onSurfaceVariant,
+                          fontSize: 12,
+                          color: colorScheme.onSurface.withValues(alpha: 0.58),
                         ),
                       ),
-                    )
-                  : ListView.separated(
-                      itemCount: filtered.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (context, index) {
-                        final chat = filtered[index];
-                        final selected = chat.id == widget.activeChatId;
-                        return ListTile(
-                          selected: selected,
-                          leading: Icon(
-                            selected
-                                ? Icons.chat_bubble_rounded
-                                : Icons.chat_bubble_outline_rounded,
-                            color: selected ? colorScheme.primary : null,
-                          ),
-                          title: OverflowScrollText(
-                            chat.title,
-                            selectable: false,
-                            maxLines: 1,
-                          ),
-                          subtitle: OverflowScrollText(
-                            widget.formatTime(chat.updatedAt),
-                            selectable: false,
-                            maxLines: 1,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color:
-                                  colorScheme.onSurface.withValues(alpha: 0.58),
-                            ),
-                          ),
-                          trailing: IconButton(
-                            tooltip: widget.strings.delete,
-                            icon: const Icon(Icons.delete_outline),
-                            onPressed: () => widget.onDeleteChat(chat),
-                          ),
-                          onTap: () => widget.onSelectChat(chat.id),
-                        );
-                      },
-                    ),
+                      trailing: IconButton(
+                        tooltip: widget.strings.delete,
+                        icon: const Icon(Icons.delete_outline),
+                        onPressed: () => widget.onDeleteChat(chat),
+                      ),
+                      onTap: () => widget.onSelectChat(chat.id),
+                    );
+                  },
+                ),
         ),
       ],
     );

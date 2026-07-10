@@ -62,32 +62,34 @@ void main() {
       expect(viewModel.connections.first.name, equals('Test Server'));
     });
 
-    test('deleteConnectionWithCleanup triggers disconnects and deletes',
-        () async {
-      final viewModel = ConnectionViewModel(
-        connectionRepository: storageService,
-        sshService: sshService,
-        sftpService: sftpService,
-        performanceService: performanceService,
-      );
+    test(
+      'deleteConnectionWithCleanup triggers disconnects and deletes',
+      () async {
+        final viewModel = ConnectionViewModel(
+          connectionRepository: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceService: performanceService,
+        );
 
-      final config = ConnectionConfig(
-        id: 'conn_1',
-        name: 'Test Server',
-        host: '127.0.0.1',
-        port: 22,
-        username: 'test',
-        authMethod: AuthMethod.password,
-      );
-      await storageService.addConnection(config);
-      await viewModel.fetchConnections();
-      expect(viewModel.connections, hasLength(1));
+        final config = ConnectionConfig(
+          id: 'conn_1',
+          name: 'Test Server',
+          host: '127.0.0.1',
+          port: 22,
+          username: 'test',
+          authMethod: AuthMethod.password,
+        );
+        await storageService.addConnection(config);
+        await viewModel.fetchConnections();
+        expect(viewModel.connections, hasLength(1));
 
-      await viewModel.deleteConnectionWithCleanup('conn_1');
+        await viewModel.deleteConnectionWithCleanup('conn_1');
 
-      await viewModel.fetchConnections();
-      expect(viewModel.connections, isEmpty);
-    });
+        await viewModel.fetchConnections();
+        expect(viewModel.connections, isEmpty);
+      },
+    );
 
     test('deleteConnectionsWithCleanup batch delete', () async {
       final viewModel = ConnectionViewModel(
@@ -123,18 +125,22 @@ void main() {
       expect(viewModel.connections, isEmpty);
     });
 
-    test('openTerminalSession handle error or returns null/session id',
-        () async {
-      final viewModel = ConnectionViewModel(
-        connectionRepository: storageService,
-        sshService: sshService,
-        sftpService: sftpService,
-        performanceService: performanceService,
-      );
+    test(
+      'openTerminalSession handle error or returns null/session id',
+      () async {
+        final viewModel = ConnectionViewModel(
+          connectionRepository: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceService: performanceService,
+        );
 
-      final sessionId =
-          await viewModel.openTerminalSession('conn_1', 'my_window');
-      expect(sessionId, isNull);
-    });
+        final sessionId = await viewModel.openTerminalSession(
+          'conn_1',
+          'my_window',
+        );
+        expect(sessionId, isNull);
+      },
+    );
   });
 }

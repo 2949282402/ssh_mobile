@@ -19,8 +19,9 @@ class _ServicesManageSnapshot {
     return _ServicesManageSnapshot(
       isConnecting: vm.isConnectingSelectedConnection,
       isManageModeAvailable: vm.canManageSelectedConnection,
-      errorMessage:
-          vm.hasManagementErrorForSelectedConnection ? vm.errorMessage : null,
+      errorMessage: vm.hasManagementErrorForSelectedConnection
+          ? vm.errorMessage
+          : null,
       loadingServices: vm.loadingServices,
       services: vm.services,
     );
@@ -38,12 +39,12 @@ class _ServicesManageSnapshot {
 
   @override
   int get hashCode => Object.hash(
-        isConnecting,
-        isManageModeAvailable,
-        errorMessage,
-        loadingServices,
-        Object.hashAll(services),
-      );
+    isConnecting,
+    isManageModeAvailable,
+    errorMessage,
+    loadingServices,
+    Object.hashAll(services),
+  );
 }
 
 class _ServicesTab extends StatefulWidget {
@@ -110,7 +111,9 @@ class _ServicesTabState extends State<_ServicesTab>
   }
 
   Future<Map<String, List<ServiceStatusSnapshot>>> _loadServices(
-      PerformanceMonitorViewModel monitorViewModel, String connectionId) async {
+    PerformanceMonitorViewModel monitorViewModel,
+    String connectionId,
+  ) async {
     final list = await monitorViewModel.fetchServices(
       connectionId,
       onUnknownHostKey: (request) =>
@@ -184,8 +187,17 @@ class _ServicesTabState extends State<_ServicesTab>
   void _rebuildVisibleManageServicesCache(List<SystemdService> services) {
     final query = _serviceSearchController.text.trim().toLowerCase();
     final connectionId = widget.viewModel.selectedConnectionId;
-    final servicesHash = Object.hashAll(services.map((s) => Object.hash(
-        s.name, s.loadState, s.activeState, s.subState, s.description)));
+    final servicesHash = Object.hashAll(
+      services.map(
+        (s) => Object.hash(
+          s.name,
+          s.loadState,
+          s.activeState,
+          s.subState,
+          s.description,
+        ),
+      ),
+    );
     final key = '$connectionId|$query|$servicesHash';
 
     if (_lastManageFilterKey == key) return;
@@ -218,7 +230,8 @@ class _ServicesTabState extends State<_ServicesTab>
 
     final mode = _isManageMode && _isLinux ? 'manage' : 'snapshot';
     final modeKey = '$id:$mode';
-    final snapshotReady = mode == 'snapshot' &&
+    final snapshotReady =
+        mode == 'snapshot' &&
         _servicesFuture != null &&
         _servicesSelectionKey == id;
     if (_lastActivatedModeKey == modeKey && snapshotReady) return;
@@ -239,7 +252,8 @@ class _ServicesTabState extends State<_ServicesTab>
 
     final mode = _isManageMode && _isLinux ? 'manage' : 'snapshot';
     final modeKey = '$id:$mode';
-    final snapshotReady = mode == 'snapshot' &&
+    final snapshotReady =
+        mode == 'snapshot' &&
         _servicesFuture != null &&
         _servicesSelectionKey == id;
     if (_lastActivatedModeKey == modeKey && snapshotReady) return;
@@ -274,9 +288,11 @@ class _ServicesTabState extends State<_ServicesTab>
       return {connectionId: list};
     }
     final filtered = list
-        .where((s) =>
-            s.name.toLowerCase().contains(query) ||
-            s.displayName.toLowerCase().contains(query))
+        .where(
+          (s) =>
+              s.name.toLowerCase().contains(query) ||
+              s.displayName.toLowerCase().contains(query),
+        )
         .toList();
     return {connectionId: filtered};
   }
@@ -315,14 +331,16 @@ class _ServicesTabState extends State<_ServicesTab>
                 ButtonSegment(
                   value: true,
                   icon: const Icon(Icons.admin_panel_settings_rounded),
-                  label:
-                      Text(_monitorText(widget.strings, 'Manage Mode', '管理模式')),
+                  label: Text(
+                    _monitorText(widget.strings, 'Manage Mode', '管理模式'),
+                  ),
                 ),
                 ButtonSegment(
                   value: false,
                   icon: const Icon(Icons.analytics_rounded),
                   label: Text(
-                      _monitorText(widget.strings, 'Snapshot Mode', '快照模式')),
+                    _monitorText(widget.strings, 'Snapshot Mode', '快照模式'),
+                  ),
                 ),
               ],
               selected: {_isManageMode},
@@ -337,9 +355,10 @@ class _ServicesTabState extends State<_ServicesTab>
           ),
         ],
         Expanded(
-            child: _isManageMode && _isLinux
-                ? _buildManageView(id)
-                : _buildSnapshotView(id)),
+          child: _isManageMode && _isLinux
+              ? _buildManageView(id)
+              : _buildSnapshotView(id),
+        ),
       ],
     );
   }
@@ -408,14 +427,15 @@ class _ServicesTabState extends State<_ServicesTab>
                                 color: service.isRunning
                                     ? widget.colorScheme.secondary
                                     : widget.colorScheme.onSurfaceVariant
-                                        .withValues(alpha: 0.5),
+                                          .withValues(alpha: 0.5),
                               ),
                               title: OverflowScrollText(
                                 service.name,
                                 selectable: false,
                                 maxLines: 1,
                                 style: const TextStyle(
-                                    fontWeight: FontWeight.bold),
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                               subtitle: OverflowScrollText(
                                 '${service.activeState} (${service.subState}) • ${service.description}',
@@ -432,23 +452,25 @@ class _ServicesTabState extends State<_ServicesTab>
                                     _manageService(service.name, action),
                                 itemBuilder: (context) => [
                                   PopupMenuItem(
-                                      value: 'start',
-                                      child: Text(widget.strings.serviceStart)),
+                                    value: 'start',
+                                    child: Text(widget.strings.serviceStart),
+                                  ),
                                   PopupMenuItem(
-                                      value: 'stop',
-                                      child: Text(widget.strings.serviceStop)),
+                                    value: 'stop',
+                                    child: Text(widget.strings.serviceStop),
+                                  ),
                                   PopupMenuItem(
-                                      value: 'restart',
-                                      child:
-                                          Text(widget.strings.serviceRestart)),
+                                    value: 'restart',
+                                    child: Text(widget.strings.serviceRestart),
+                                  ),
                                   PopupMenuItem(
-                                      value: 'enable',
-                                      child:
-                                          Text(widget.strings.serviceEnable)),
+                                    value: 'enable',
+                                    child: Text(widget.strings.serviceEnable),
+                                  ),
                                   PopupMenuItem(
-                                      value: 'disable',
-                                      child:
-                                          Text(widget.strings.serviceDisable)),
+                                    value: 'disable',
+                                    child: Text(widget.strings.serviceDisable),
+                                  ),
                                 ],
                               ),
                             ),
@@ -464,8 +486,9 @@ class _ServicesTabState extends State<_ServicesTab>
   }
 
   Widget _buildSnapshotView(String id) {
-    final currentConfigList =
-        widget.viewModel.connections.where((c) => c.id == id).toList();
+    final currentConfigList = widget.viewModel.connections
+        .where((c) => c.id == id)
+        .toList();
     final snapshotData = _filteredSnapshotData;
 
     return Column(
@@ -483,7 +506,8 @@ class _ServicesTabState extends State<_ServicesTab>
           ),
         ),
         Expanded(
-          child: snapshotData.values.expand((e) => e).isEmpty &&
+          child:
+              snapshotData.values.expand((e) => e).isEmpty &&
                   _snapshotSearchController.text.isNotEmpty
               ? ListView(
                   physics: const AlwaysScrollableScrollPhysics(),
@@ -496,7 +520,10 @@ class _ServicesTabState extends State<_ServicesTab>
                   strings: widget.strings,
                   connections: currentConfigList,
                   emptyText: _monitorText(
-                      widget.strings, 'No running services found', '未发现运行中的服务'),
+                    widget.strings,
+                    'No running services found',
+                    '未发现运行中的服务',
+                  ),
                   future: _servicesFuture,
                   dataOverride: _rawSnapshotData.isEmpty ? null : snapshotData,
                   onRefresh: () =>
@@ -544,8 +571,9 @@ class _ServicesTabState extends State<_ServicesTab>
       await widget.viewModel.manageSystemdService(name, action);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Action failed: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Action failed: $e')));
     }
   }
 }
