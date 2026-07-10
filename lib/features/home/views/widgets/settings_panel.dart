@@ -279,44 +279,20 @@ class _SettingsPanelState extends State<_SettingsPanel> {
       minLeadingWidth: 28,
       horizontalTitleGap: 10,
       iconColor: colorScheme.onSurfaceVariant,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+      ),
       child: DefaultTextStyle.merge(
         style: const TextStyle(fontSize: 14),
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+          padding: const EdgeInsets.fromLTRB(18, 14, 18, 30),
           children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.settings_outlined,
-                  color: colorScheme.primary,
-                  size: 21,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.appTitle,
-                        style: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      Text(
-                        strings.settings,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: colorScheme.onSurfaceVariant,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+            AppPageHeader(
+              title: widget.appTitle,
+              subtitle: strings.settings,
+              icon: Icons.tune_rounded,
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 18),
             _AppearanceSettingsSection(
               appSnapshot: appSnapshot,
               strings: strings,
@@ -586,12 +562,22 @@ class _SettingsPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: Text(strings.settings),
-        backgroundColor: colorScheme.surface,
+        leading: IconButton(
+          tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
+          icon: const Icon(Icons.close_rounded),
+          onPressed: () => Navigator.of(context).maybePop(),
+        ),
+        backgroundColor: colorScheme.surface.withValues(alpha: 0.92),
+        shape: Border(
+          bottom: BorderSide(color: colorScheme.outline.withValues(alpha: 0.7)),
+        ),
       ),
-      body: _SettingsPanel(
-        appTitle: appTitle,
-        onExport: onExport,
-        onImport: onImport,
+      body: AppPageSurface(
+        child: _SettingsPanel(
+          appTitle: appTitle,
+          onExport: onExport,
+          onImport: onImport,
+        ),
       ),
     );
   }

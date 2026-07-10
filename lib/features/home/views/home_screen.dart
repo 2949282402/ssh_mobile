@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -22,6 +21,7 @@ import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
 import 'package:ssh_mobile/widgets/ssh_host_key_trust_dialog.dart';
 import 'package:ssh_mobile/widgets/tactile_feedback.dart';
 import 'package:ssh_mobile/widgets/window_name_dialog.dart';
+import 'package:ssh_mobile/widgets/app_surface.dart';
 import 'package:ssh_mobile/theme/app_theme.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:ssh_mobile/features/developer_log/views/developer_log_screen.dart';
@@ -63,7 +63,6 @@ class _HomeScreenState extends State<HomeScreen> {
   late final PageController _pageController;
   late int _selectedIndex;
   late int _settledIndex;
-  double _scrollPosition = 0.0;
   bool _aiHistoryVisible = false;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
@@ -72,25 +71,11 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _selectedIndex = widget.initialIndex.clamp(_firstPage, _lastPage);
     _settledIndex = _selectedIndex;
-    _scrollPosition = _selectedIndex.toDouble();
     _pageController = PageController(initialPage: _selectedIndex);
-    _pageController.addListener(_handleScroll);
-  }
-
-  void _handleScroll() {
-    if (_pageController.hasClients) {
-      final page = _pageController.page;
-      if (page != null && page != _scrollPosition) {
-        setState(() {
-          _scrollPosition = page;
-        });
-      }
-    }
   }
 
   @override
   void dispose() {
-    _pageController.removeListener(_handleScroll);
     _pageController.dispose();
     super.dispose();
   }
@@ -108,6 +93,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final desktop = isDesktopLayout(context);
     final isBusy = context.select<SettingsViewModel, bool>(
       (vm) => vm.isImporting || vm.isExporting,
+    );
+    final hasConnections = context.select<ConnectionViewModel, bool>(
+      (vm) => vm.connections.isNotEmpty,
     );
 
     final content = NotificationListener<OpenSettingsNotification>(
@@ -191,9 +179,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Scaffold(
       key: _scaffoldKey,
-      drawer: _selectedIndex == _serverPage
-          ? _buildSettingsDrawer(context, strings)
-          : null,
+      extendBody: !desktop,
+      drawer: _buildSettingsDrawer(context, strings),
       drawerEnableOpenDragGesture: _selectedIndex == _serverPage,
       body: SafeArea(
         bottom: false,
@@ -210,7 +197,8 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
       ),
-      floatingActionButton: _selectedIndex == _serverPage
+      floatingActionButton:
+          _selectedIndex == _serverPage && !desktop && hasConnections
           ? FloatingActionButton(
               onPressed: () => Navigator.pushNamed(context, '/add'),
               tooltip: strings.addConnection,
@@ -235,130 +223,197 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Row(
       children: [
-        NavigationRail(
-          extended: extended,
-          labelType: extended ? null : NavigationRailLabelType.all,
-          selectedIndex: _navigationIndex,
-          onDestinationSelected: _switchNavigationPage,
-          trailing: Expanded(
-            child: Align(
-              alignment: Alignment.bottomCenter,
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 16),
-                child: IconButton(
-                  tooltip: strings.settings,
-                  icon: const Icon(Icons.settings_outlined),
-                  onPressed: () => _openSettings(context),
+        Container(
+          margin: const EdgeInsets.fromLTRB(12, 12, 0, 12),
+          decoration: BoxDecoration(
+            color: colorScheme.surface.withValues(alpha: 0.92),
+            borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+            border: Border.all(
+              color: colorScheme.outline.withValues(alpha: 0.72),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(
+                  alpha: Theme.of(context).brightness == Brightness.dark
+                      ? 0.20
+                      : 0.045,
+                ),
+                blurRadius: 26,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: NavigationRail(
+            backgroundColor: Colors.transparent,
+            extended: extended,
+            labelType: extended ? null : NavigationRailLabelType.all,
+            selectedIndex: _navigationIndex,
+            onDestinationSelected: _switchNavigationPage,
+            leading: _buildRailBrand(context, extended),
+            trailing: Expanded(
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: IconButton(
+                    tooltip: strings.settings,
+                    icon: const Icon(Icons.settings_outlined),
+                    style: IconButton.styleFrom(
+                      foregroundColor: colorScheme.primary,
+                      backgroundColor: colorScheme.primary.withValues(
+                        alpha: 0.1,
+                      ),
+                    ),
+                    onPressed: () => _openSettings(context),
+                  ),
                 ),
               ),
             ),
+            destinations: [
+              NavigationRailDestination(
+                icon: const Icon(Icons.dns_outlined),
+                selectedIcon: const Icon(Icons.dns_rounded),
+                label: Text(strings.servers),
+              ),
+              NavigationRailDestination(
+                icon: const Icon(Icons.folder_open_outlined),
+                selectedIcon: const Icon(Icons.folder_open_rounded),
+                label: Text(strings.sftp),
+              ),
+              NavigationRailDestination(
+                icon: const Icon(Icons.auto_awesome_outlined),
+                selectedIcon: const Icon(Icons.auto_awesome_rounded),
+                label: _buildAiLabel(context, _selectedIndex == _aiPage),
+              ),
+              NavigationRailDestination(
+                icon: const Icon(Icons.monitor_heart_outlined),
+                selectedIcon: const Icon(Icons.monitor_heart_rounded),
+                label: Text(strings.admin),
+              ),
+              NavigationRailDestination(
+                icon: const Icon(Icons.article_outlined),
+                selectedIcon: const Icon(Icons.article_rounded),
+                label: Text(strings.logs),
+              ),
+            ],
           ),
-          destinations: [
-            NavigationRailDestination(
-              icon: const Icon(Icons.dns_outlined),
-              selectedIcon: const Icon(Icons.dns_rounded),
-              label: Text(strings.servers),
-            ),
-            NavigationRailDestination(
-              icon: const Icon(Icons.folder_open_outlined),
-              selectedIcon: const Icon(Icons.folder_open_rounded),
-              label: Text(strings.sftp),
-            ),
-            NavigationRailDestination(
-              icon: const Icon(Icons.smart_toy_outlined),
-              selectedIcon: const Icon(Icons.smart_toy_rounded),
-              label: _buildAiLabel(context, _selectedIndex == _aiPage),
-            ),
-            NavigationRailDestination(
-              icon: const Icon(Icons.admin_panel_settings_outlined),
-              selectedIcon: const Icon(Icons.admin_panel_settings_rounded),
-              label: Text(strings.admin),
-            ),
-            NavigationRailDestination(
-              icon: const Icon(Icons.terminal_outlined),
-              selectedIcon: const Icon(Icons.terminal_rounded),
-              label: Text(strings.logs),
-            ),
-          ],
         ),
-        VerticalDivider(
-          width: 1,
-          thickness: 1,
-          color: colorScheme.outlineVariant,
-        ),
+        const SizedBox(width: 12),
         Expanded(child: content),
       ],
+    );
+  }
+
+  Widget _buildRailBrand(BuildContext context, bool extended) {
+    final colors = Theme.of(context).colorScheme;
+    final mark = Container(
+      width: 42,
+      height: 42,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [colors.primary, colors.tertiary],
+        ),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: colors.primary.withValues(alpha: 0.22),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      alignment: Alignment.center,
+      child: const Icon(Icons.terminal_rounded, color: Colors.white, size: 23),
+    );
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
+      child: extended
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                mark,
+                const SizedBox(width: 12),
+                const Flexible(
+                  child: Text(
+                    'SSH Mobile',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ],
+            )
+          : mark,
     );
   }
 
   Widget _buildBottomNavigation(BuildContext context, AppStrings strings) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final mediaQuery = MediaQuery.of(context);
-    final extColors = theme.extension<ExtendedColors>();
-    final glassBg =
-        extColors?.glassBg ?? colorScheme.surface.withValues(alpha: 0.72);
-    final glassBorder =
-        extColors?.glassBorder ??
-        colorScheme.outlineVariant.withValues(alpha: 0.3);
+    final isDark = theme.brightness == Brightness.dark;
 
-    return ClipPath(
-      clipper: BottomNavCurveClipper(scrollPosition: _scrollPosition),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 15.0, sigmaY: 15.0),
-        child: CustomPaint(
-          painter: BottomNavCurvePainter(
-            scrollPosition: _scrollPosition,
-            backgroundColor: glassBg,
-            borderColor: glassBorder,
+    return SafeArea(
+      top: false,
+      minimum: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+      child: Container(
+        height: 68,
+        decoration: BoxDecoration(
+          color: colorScheme.surface.withValues(alpha: isDark ? 0.94 : 0.97),
+          borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+          border: Border.all(
+            color: colorScheme.outline.withValues(alpha: 0.76),
           ),
-          child: Container(
-            height: 64.0 + mediaQuery.padding.bottom,
-            color: Colors.transparent,
-            child: SafeArea(
-              top: false,
-              child: Row(
-                children: [
-                  _buildNavItem(
-                    context: context,
-                    icon: const Icon(Icons.dns_outlined),
-                    selectedIcon: const Icon(Icons.dns_rounded),
-                    label: strings.servers,
-                    index: _serverPage,
-                  ),
-                  _buildNavItem(
-                    context: context,
-                    icon: const Icon(Icons.folder_open_outlined),
-                    selectedIcon: const Icon(Icons.folder_open_rounded),
-                    label: strings.sftp,
-                    index: _sftpPage,
-                  ),
-                  _buildAiNavItem(
-                    context: context,
-                    icon: const Icon(Icons.smart_toy_outlined),
-                    selectedIcon: const Icon(Icons.smart_toy_rounded),
-                    index: _aiPage,
-                  ),
-                  _buildNavItem(
-                    context: context,
-                    icon: const Icon(Icons.admin_panel_settings_outlined),
-                    selectedIcon: const Icon(
-                      Icons.admin_panel_settings_rounded,
-                    ),
-                    label: strings.admin,
-                    index: _adminPage,
-                  ),
-                  _buildNavItem(
-                    context: context,
-                    icon: const Icon(Icons.terminal_outlined),
-                    selectedIcon: const Icon(Icons.terminal_rounded),
-                    label: strings.logs,
-                    index: _logPage,
-                  ),
-                ],
-              ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: isDark ? 0.28 : 0.10),
+              blurRadius: 30,
+              offset: const Offset(0, 12),
             ),
-          ),
+          ],
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Row(
+          children: [
+            _buildNavItem(
+              context: context,
+              icon: const Icon(Icons.dns_outlined),
+              selectedIcon: const Icon(Icons.dns_rounded),
+              label: strings.servers,
+              index: _serverPage,
+            ),
+            _buildNavItem(
+              context: context,
+              icon: const Icon(Icons.folder_open_outlined),
+              selectedIcon: const Icon(Icons.folder_open_rounded),
+              label: strings.sftp,
+              index: _sftpPage,
+            ),
+            _buildNavItem(
+              context: context,
+              icon: const Icon(Icons.auto_awesome_outlined),
+              selectedIcon: const Icon(Icons.auto_awesome_rounded),
+              label: 'AI',
+              index: _aiPage,
+            ),
+            _buildNavItem(
+              context: context,
+              icon: const Icon(Icons.monitor_heart_outlined),
+              selectedIcon: const Icon(Icons.monitor_heart_rounded),
+              label: strings.admin,
+              index: _adminPage,
+            ),
+            _buildNavItem(
+              context: context,
+              icon: const Icon(Icons.article_outlined),
+              selectedIcon: const Icon(Icons.article_rounded),
+              label: strings.logs,
+              index: _logPage,
+            ),
+          ],
         ),
       ),
     );
@@ -387,23 +442,23 @@ class _HomeScreenState extends State<HomeScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               AnimatedContainer(
-                duration: const Duration(milliseconds: 250),
+                duration: const Duration(milliseconds: 200),
                 curve: Curves.easeOutCubic,
-                transform: Matrix4.translationValues(0, isSelected ? -3 : 0, 0),
                 child: Stack(
                   alignment: Alignment.center,
-                  clipBehavior: Clip.none,
                   children: [
                     AnimatedContainer(
-                      duration: const Duration(milliseconds: 250),
+                      duration: const Duration(milliseconds: 200),
                       curve: Curves.easeOutCubic,
-                      width: 56,
-                      height: 28,
+                      width: 48,
+                      height: 30,
                       decoration: BoxDecoration(
                         color: isSelected
-                            ? colorScheme.primary.withValues(alpha: 0.08)
+                            ? colorScheme.primary.withValues(alpha: 0.12)
                             : Colors.transparent,
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(
+                          AppTheme.radiusPill,
+                        ),
                       ),
                     ),
                     IconTheme(
@@ -411,22 +466,22 @@ class _HomeScreenState extends State<HomeScreen> {
                         color: isSelected
                             ? colorScheme.primary
                             : colorScheme.onSurfaceVariant,
-                        size: 20,
+                        size: 21,
                       ),
                       child: isSelected ? selectedIcon : icon,
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 2),
+              const SizedBox(height: 1),
               AnimatedDefaultTextStyle(
-                duration: const Duration(milliseconds: 250),
+                duration: const Duration(milliseconds: 200),
                 curve: Curves.easeOutCubic,
                 style: TextStyle(
                   color: isSelected
                       ? colorScheme.primary
                       : colorScheme.onSurfaceVariant,
-                  fontSize: 11,
+                  fontSize: 10.5,
                   fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
                   letterSpacing: 0,
                 ),
@@ -439,102 +494,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildAiNavItem({
-    required BuildContext context,
-    required Widget icon,
-    required Widget selectedIcon,
-    required int index,
-  }) {
-    final isSelected = _selectedIndex == index;
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-
-    return Expanded(
-      child: HomeNavigationSemantics(
-        semanticsKey: ValueKey<String>('home-nav-$index'),
-        label: 'AI',
-        selected: isSelected,
-        onTap: () => _switchNavigationPage(index),
-        child: TactileFeedback(
-          onTap: () => _switchNavigationPage(index),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 250),
-                curve: Curves.easeOutCubic,
-                transform: Matrix4.translationValues(0, isSelected ? -3 : 0, 0),
-                child: Stack(
-                  alignment: Alignment.center,
-                  clipBehavior: Clip.none,
-                  children: [
-                    AnimatedContainer(
-                      duration: const Duration(milliseconds: 250),
-                      curve: Curves.easeOutCubic,
-                      width: 56,
-                      height: 28,
-                      decoration: BoxDecoration(
-                        color: isSelected
-                            ? colorScheme.primary.withValues(alpha: 0.08)
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    IconTheme(
-                      data: IconThemeData(
-                        color: isSelected
-                            ? colorScheme.primary
-                            : colorScheme.onSurfaceVariant,
-                        size: 20,
-                      ),
-                      child: isSelected ? selectedIcon : icon,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 2),
-              _buildAiLabel(context, isSelected),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildAiLabel(BuildContext context, bool isSelected) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: isSelected
-              ? [colorScheme.primary, colorScheme.tertiary]
-              : [
-                  colorScheme.primary.withValues(alpha: 0.15),
-                  colorScheme.tertiary.withValues(alpha: 0.15),
-                ],
-        ),
-        borderRadius: BorderRadius.circular(8),
-        boxShadow: isSelected
-            ? [
-                BoxShadow(
-                  color: colorScheme.primary.withValues(alpha: 0.25),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ]
-            : null,
-      ),
-      child: Text(
-        'AI',
-        style: TextStyle(
-          color: isSelected ? Colors.white : colorScheme.primary,
-          fontSize: 11,
-          fontWeight: FontWeight.bold,
-          letterSpacing: 0.5,
-        ),
-      ),
-    );
+    return const Text('AI');
   }
 
   int get _navigationIndex {
@@ -592,8 +553,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildSettingsDrawer(BuildContext context, AppStrings strings) {
+    final viewportWidth = MediaQuery.sizeOf(context).width;
+    final desktop = isDesktopLayout(context);
+    final width = (viewportWidth * (desktop ? 0.46 : 0.92))
+        .clamp(320.0, desktop ? 560.0 : 420.0)
+        .toDouble();
     return SizedBox(
-      width: MediaQuery.sizeOf(context).width * 0.85,
+      width: width,
       child: Drawer(
         child: _SettingsPage(
           appTitle: strings.appTitle,
@@ -647,7 +613,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _pageShell(int index, Widget child) {
     return TickerMode(
       enabled: _selectedIndex == index || _settledIndex == index,
-      child: RepaintBoundary(child: child),
+      child: RepaintBoundary(child: AppPageSurface(child: child)),
     );
   }
 
@@ -819,224 +785,4 @@ class _AnimatedPageFadeIn extends StatelessWidget {
 
 class SwitchToAiTabNotification extends Notification {
   const SwitchToAiTabNotification();
-}
-
-class BottomNavCurvePainter extends CustomPainter {
-  final double scrollPosition;
-  final Color backgroundColor;
-  final Color borderColor;
-  final double domeWidth;
-  final double domeHeight;
-
-  BottomNavCurvePainter({
-    required this.scrollPosition,
-    required this.backgroundColor,
-    required this.borderColor,
-    this.domeWidth = 100.0,
-    this.domeHeight = 5.0,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = backgroundColor
-      ..style = PaintingStyle.fill;
-
-    final double tabWidth = size.width / 5;
-    final double centerX = (scrollPosition + 0.5) * tabWidth;
-
-    // Smoothly scale down dome height near the left/right boundaries
-    // to prevent overlapping with the edges.
-    final double threshold = domeWidth / 2;
-    double currentDomeHeight = domeHeight;
-
-    if (centerX < threshold) {
-      if (centerX <= 0) {
-        currentDomeHeight = 0.0;
-      } else {
-        final double t = centerX / threshold;
-        currentDomeHeight = domeHeight * (t * t); // Quadratic easing
-      }
-    } else if (size.width - centerX < threshold) {
-      final double distToRight = size.width - centerX;
-      if (distToRight <= 0) {
-        currentDomeHeight = 0.0;
-      } else {
-        final double t = distToRight / threshold;
-        currentDomeHeight = domeHeight * (t * t); // Quadratic easing
-      }
-    }
-
-    double domeStart = centerX - domeWidth / 2;
-    double domeEnd = centerX + domeWidth / 2;
-
-    if (domeStart < 0) {
-      domeStart = 0;
-    }
-    if (domeEnd > size.width) {
-      domeEnd = size.width;
-    }
-
-    final path = Path();
-    path.moveTo(0, 0);
-
-    // Line to dome start
-    path.lineTo(domeStart, 0);
-
-    // Draw the dome (only if height > 0)
-    if (currentDomeHeight > 0) {
-      path.cubicTo(
-        centerX - domeWidth * 0.35,
-        0,
-        centerX - domeWidth * 0.22,
-        -currentDomeHeight,
-        centerX,
-        -currentDomeHeight,
-      );
-      path.cubicTo(
-        centerX + domeWidth * 0.22,
-        -currentDomeHeight,
-        centerX + domeWidth * 0.35,
-        0,
-        domeEnd,
-        0,
-      );
-    }
-
-    // Line to top-right corner
-    path.lineTo(size.width, 0);
-    path.lineTo(size.width, size.height);
-    path.lineTo(0, size.height);
-    path.close();
-
-    // 1. Draw a very soft drop shadow under the top edge for elegant depth
-    final shadowPath = Path();
-    shadowPath.moveTo(0, 0);
-    if (domeStart > 0) {
-      shadowPath.lineTo(domeStart, 0);
-    }
-    if (currentDomeHeight > 0) {
-      shadowPath.cubicTo(
-        centerX - domeWidth * 0.35,
-        0,
-        centerX - domeWidth * 0.22,
-        -currentDomeHeight,
-        centerX,
-        -currentDomeHeight,
-      );
-      shadowPath.cubicTo(
-        centerX + domeWidth * 0.22,
-        -currentDomeHeight,
-        centerX + domeWidth * 0.35,
-        0,
-        domeEnd,
-        0,
-      );
-    }
-    shadowPath.lineTo(size.width, 0);
-
-    final shadowPaint = Paint()
-      ..color = Colors.black.withValues(alpha: 0.05)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0;
-    shadowPaint.maskFilter = const MaskFilter.blur(BlurStyle.normal, 1.5);
-    canvas.drawPath(shadowPath, shadowPaint);
-
-    // 2. Draw the solid background
-    canvas.drawPath(path, paint);
-
-    // 3. Draw the top border line
-    final borderPaint = Paint()
-      ..color = borderColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0;
-    canvas.drawPath(shadowPath, borderPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant BottomNavCurvePainter oldDelegate) {
-    return oldDelegate.scrollPosition != scrollPosition ||
-        oldDelegate.backgroundColor != backgroundColor ||
-        oldDelegate.borderColor != borderColor;
-  }
-}
-
-class BottomNavCurveClipper extends CustomClipper<Path> {
-  final double scrollPosition;
-  final double domeWidth;
-  final double domeHeight;
-
-  BottomNavCurveClipper({
-    required this.scrollPosition,
-    this.domeWidth = 100.0,
-    this.domeHeight = 5.0,
-  });
-
-  @override
-  Path getClip(Size size) {
-    final double tabWidth = size.width / 5;
-    final double centerX = (scrollPosition + 0.5) * tabWidth;
-
-    final double threshold = domeWidth / 2;
-    double currentDomeHeight = domeHeight;
-
-    if (centerX < threshold) {
-      if (centerX <= 0) {
-        currentDomeHeight = 0.0;
-      } else {
-        final double t = centerX / threshold;
-        currentDomeHeight = domeHeight * (t * t);
-      }
-    } else if (size.width - centerX < threshold) {
-      final double distToRight = size.width - centerX;
-      if (distToRight <= 0) {
-        currentDomeHeight = 0.0;
-      } else {
-        final double t = distToRight / threshold;
-        currentDomeHeight = domeHeight * (t * t);
-      }
-    }
-
-    double domeStart = centerX - domeWidth / 2;
-    double domeEnd = centerX + domeWidth / 2;
-
-    if (domeStart < 0) {
-      domeStart = 0;
-    }
-    if (domeEnd > size.width) {
-      domeEnd = size.width;
-    }
-
-    final path = Path();
-    path.moveTo(0, -10);
-    path.lineTo(domeStart, -10);
-    if (currentDomeHeight > 0) {
-      path.cubicTo(
-        centerX - domeWidth * 0.35,
-        -10,
-        centerX - domeWidth * 0.22,
-        -currentDomeHeight - 10,
-        centerX,
-        -currentDomeHeight - 10,
-      );
-      path.cubicTo(
-        centerX + domeWidth * 0.22,
-        -currentDomeHeight - 10,
-        centerX + domeWidth * 0.35,
-        -10,
-        domeEnd,
-        -10,
-      );
-    }
-    path.lineTo(size.width, -10);
-    path.lineTo(size.width, size.height);
-    path.lineTo(0, size.height);
-    path.close();
-    return path;
-  }
-
-  @override
-  bool shouldReclip(covariant BottomNavCurveClipper oldClipper) {
-    return oldClipper.scrollPosition != scrollPosition;
-  }
 }

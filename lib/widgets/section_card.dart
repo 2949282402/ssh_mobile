@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:shadcn_ui/shadcn_ui.dart';
+
+import 'package:ssh_mobile/theme/app_theme.dart';
 
 class SectionCard extends StatelessWidget {
   final String title;
@@ -22,29 +23,34 @@ class SectionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return ShadCard(
-      title: Text(
-        title,
-        style: TextStyle(
-          fontSize: 16,
-          fontWeight: FontWeight.w700,
-          color: colorScheme.primary,
-        ),
+    final theme = Theme.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: colorScheme.surface.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+        border: Border.all(color: colorScheme.outline.withValues(alpha: 0.72)),
       ),
-      trailing: isCollapsible && onToggle != null
-          ? IconButton(
-              icon: Icon(
-                isExpanded
-                    ? Icons.expand_less_rounded
-                    : Icons.expand_more_rounded,
-              ),
-              onPressed: onToggle,
-            )
-          : trailing,
+      padding: const EdgeInsets.all(18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (isExpanded) ...[const SizedBox(height: 8), ...children],
+          Row(
+            children: [
+              Expanded(child: Text(title, style: theme.textTheme.titleMedium)),
+              if (isCollapsible && onToggle != null)
+                IconButton(
+                  icon: Icon(
+                    isExpanded
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                  ),
+                  onPressed: onToggle,
+                )
+              else
+                ?trailing,
+            ],
+          ),
+          if (isExpanded) ...[const SizedBox(height: 12), ...children],
         ],
       ),
     );

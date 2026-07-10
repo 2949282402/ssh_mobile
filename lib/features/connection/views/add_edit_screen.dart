@@ -8,6 +8,8 @@ import '../models/connection.dart';
 import '../../../../services/app_log_service.dart';
 import '../../../../services/app_settings.dart';
 import '../../../../utils/responsive.dart';
+import '../../../../theme/app_theme.dart';
+import '../../../../widgets/app_surface.dart';
 import '../../../../widgets/ssh_host_key_trust_dialog.dart';
 import '../viewmodels/connection_viewmodel.dart';
 
@@ -132,6 +134,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   @override
   Widget build(BuildContext context) {
     final strings = _strings(context);
+    final colorScheme = Theme.of(context).colorScheme;
     final isSaving = context.select<ConnectionViewModel, bool>(
       (vm) => vm.isSaving,
     );
@@ -172,31 +175,41 @@ class _AddEditScreenState extends State<AddEditScreen> {
             ],
           );
 
-    final stickyActionBar = SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-        child: SizedBox(
-          width: double.infinity,
-          height: 48,
-          child: FilledButton(
-            onPressed: isSaving || _isLoadingSecrets ? null : _save,
-            child: isSaving
-                ? Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(strings.saving),
-                    ],
-                  )
-                : Text(strings.verifyAndSave),
+    final stickyActionBar = Container(
+      decoration: BoxDecoration(
+        color: colorScheme.surface.withValues(alpha: 0.96),
+        border: Border(
+          top: BorderSide(color: colorScheme.outline.withValues(alpha: 0.72)),
+        ),
+      ),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+          child: Center(
+            heightFactor: 1,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 760),
+              child: SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: FilledButton.icon(
+                  onPressed: isSaving || _isLoadingSecrets ? null : _save,
+                  icon: isSaving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.verified_outlined),
+                  label: Text(
+                    isSaving ? strings.saving : strings.verifyAndSave,
+                  ),
+                ),
+              ),
+            ),
           ),
         ),
       ),
@@ -205,171 +218,175 @@ class _AddEditScreenState extends State<AddEditScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(isEditing ? strings.editConnection : strings.addConnection),
-        actions: [
-          IconButton(
-            onPressed: isSaving || _isLoadingSecrets ? null : _save,
-            icon: isSaving
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.check),
-            tooltip: strings.save,
-          ),
-        ],
       ),
       bottomNavigationBar: MediaQuery.viewInsetsOf(context).bottom > 0
           ? null
           : stickyActionBar,
-      body: _isLoadingSecrets
-          ? const Center(
-              child: SizedBox(
-                width: 28,
-                height: 28,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            )
-          : Form(
-              key: _formKey,
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
-                children: [
-                  // 基础信息分组
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: ShadCard(
-                      title: _section(strings.basicInfo),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const SizedBox(height: 10),
-                          _buildNameField(),
-                        ],
+      body: AppPageSurface(
+        child: _isLoadingSecrets
+            ? const Center(
+                child: SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            : Align(
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 800),
+                  child: Form(
+                    key: _formKey,
+                    child: ListView(
+                      padding: const EdgeInsets.fromLTRB(
+                        AppTheme.pagePadding,
+                        18,
+                        AppTheme.pagePadding,
+                        30,
                       ),
-                    ),
-                  ),
-
-                  // 连接信息分组
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: ShadCard(
-                      title: _section(strings.connectionInfo),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const SizedBox(height: 10),
-                          _buildHostField(),
-                          const SizedBox(height: 12),
-                          portAndUserRow,
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  // 认证信息分组
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: ShadCard(
-                      title: _section(strings.authMethod),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const SizedBox(height: 10),
-                          _buildAuthMethodSelector(),
-                          const SizedBox(height: 12),
-                          if (_authMethod == AuthMethod.password ||
-                              _authMethod == AuthMethod.both) ...[
-                            _buildPasswordField(),
-                            const SizedBox(height: 12),
-                          ],
-                          if (_authMethod == AuthMethod.privateKey ||
-                              _authMethod == AuthMethod.both) ...[
-                            _buildPrivateKeyField(),
-                            const SizedBox(height: 12),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  // 跳板机分组（默认折叠）
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: ShadCard(
-                      title: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          _section(strings.jumpHostOptional),
-                          IconButton(
-                            icon: Icon(
-                              _jumpHostExpanded
-                                  ? Icons.expand_less_rounded
-                                  : Icons.expand_more_rounded,
-                            ),
-                            onPressed: () => setState(
-                              () => _jumpHostExpanded = !_jumpHostExpanded,
-                            ),
-                          ),
-                        ],
-                      ),
-                      child: _jumpHostExpanded
-                          ? Column(
+                      children: [
+                        // 基础信息分组
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: ShadCard(
+                            title: _section(strings.basicInfo),
+                            child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 const SizedBox(height: 10),
-                                _buildJumpHostField(),
-                                const SizedBox(height: 12),
-                                jumpPortAndUserRow,
+                                _buildNameField(),
                               ],
-                            )
-                          : const SizedBox.shrink(),
-                    ),
-                  ),
-
-                  // 高级选项分组（默认折叠）
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 16),
-                    child: ShadCard(
-                      title: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          _section(strings.advancedOptions),
-                          IconButton(
-                            icon: Icon(
-                              _advancedOptionsExpanded
-                                  ? Icons.expand_less_rounded
-                                  : Icons.expand_more_rounded,
-                            ),
-                            onPressed: () => setState(
-                              () => _advancedOptionsExpanded =
-                                  !_advancedOptionsExpanded,
                             ),
                           ),
-                        ],
-                      ),
-                      child: _advancedOptionsExpanded
-                          ? Column(
+                        ),
+
+                        // 连接信息分组
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: ShadCard(
+                            title: _section(strings.connectionInfo),
+                            child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 const SizedBox(height: 10),
-                                _buildServerPlatformSelector(),
-                                const SizedBox(height: 16),
-                                _buildLaunchModeSelector(),
-                                if (_launchMode == TerminalLaunchMode.tmux) ...[
+                                _buildHostField(),
+                                const SizedBox(height: 12),
+                                portAndUserRow,
+                              ],
+                            ),
+                          ),
+                        ),
+
+                        // 认证信息分组
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: ShadCard(
+                            title: _section(strings.authMethod),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const SizedBox(height: 10),
+                                _buildAuthMethodSelector(),
+                                const SizedBox(height: 12),
+                                if (_authMethod == AuthMethod.password ||
+                                    _authMethod == AuthMethod.both) ...[
+                                  _buildPasswordField(),
                                   const SizedBox(height: 12),
-                                  _buildTmuxAutoDeleteField(),
                                 ],
-                                const SizedBox(height: 12),
-                                _buildKeepAliveSwitch(),
+                                if (_authMethod == AuthMethod.privateKey ||
+                                    _authMethod == AuthMethod.both) ...[
+                                  _buildPrivateKeyField(),
+                                  const SizedBox(height: 12),
+                                ],
                               ],
-                            )
-                          : const SizedBox.shrink(),
+                            ),
+                          ),
+                        ),
+
+                        // 跳板机分组（默认折叠）
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: ShadCard(
+                            title: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                _section(strings.jumpHostOptional),
+                                IconButton(
+                                  icon: Icon(
+                                    _jumpHostExpanded
+                                        ? Icons.expand_less_rounded
+                                        : Icons.expand_more_rounded,
+                                  ),
+                                  onPressed: () => setState(
+                                    () =>
+                                        _jumpHostExpanded = !_jumpHostExpanded,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            child: _jumpHostExpanded
+                                ? Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      const SizedBox(height: 10),
+                                      _buildJumpHostField(),
+                                      const SizedBox(height: 12),
+                                      jumpPortAndUserRow,
+                                    ],
+                                  )
+                                : const SizedBox.shrink(),
+                          ),
+                        ),
+
+                        // 高级选项分组（默认折叠）
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: ShadCard(
+                            title: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                _section(strings.advancedOptions),
+                                IconButton(
+                                  icon: Icon(
+                                    _advancedOptionsExpanded
+                                        ? Icons.expand_less_rounded
+                                        : Icons.expand_more_rounded,
+                                  ),
+                                  onPressed: () => setState(
+                                    () => _advancedOptionsExpanded =
+                                        !_advancedOptionsExpanded,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            child: _advancedOptionsExpanded
+                                ? Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      const SizedBox(height: 10),
+                                      _buildServerPlatformSelector(),
+                                      const SizedBox(height: 16),
+                                      _buildLaunchModeSelector(),
+                                      if (_launchMode ==
+                                          TerminalLaunchMode.tmux) ...[
+                                        const SizedBox(height: 12),
+                                        _buildTmuxAutoDeleteField(),
+                                      ],
+                                      const SizedBox(height: 12),
+                                      _buildKeepAliveSwitch(),
+                                    ],
+                                  )
+                                : const SizedBox.shrink(),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
+                ),
               ),
-            ),
+      ),
     );
   }
 

@@ -32,6 +32,8 @@ class AiStrings {
   String get welcome => _en
       ? 'Ask me about your servers, logs, status, or a remote file.'
       : '可以问我服务器状态、日志、远程文件等。';
+  String get composerHint =>
+      _en ? 'Describe a task or type / for commands' : '描述任务，或输入 / 查看命令';
   String get history => _en ? 'Chat history' : '聊天历史';
   String get newChat => _en ? 'New chat' : '新聊天';
   String get delete => _en ? 'Delete' : '删除';

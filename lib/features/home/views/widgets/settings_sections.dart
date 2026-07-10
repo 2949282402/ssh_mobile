@@ -47,14 +47,14 @@ class _SettingsSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return Material(
-      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.32),
+      color: colorScheme.surface.withValues(alpha: 0.88),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: BorderSide(color: colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+        side: BorderSide(color: colorScheme.outline.withValues(alpha: 0.72)),
       ),
       clipBehavior: Clip.antiAlias,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -63,9 +63,10 @@ class _SettingsSection extends StatelessWidget {
               child: Text(
                 title,
                 style: TextStyle(
-                  color: colorScheme.onSurfaceVariant,
-                  fontSize: 11,
+                  color: colorScheme.primary,
+                  fontSize: 12,
                   fontWeight: FontWeight.w800,
+                  letterSpacing: 0.2,
                 ),
               ),
             ),

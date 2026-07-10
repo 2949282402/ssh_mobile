@@ -19,6 +19,7 @@ import 'package:ssh_mobile/services/server_status_probe.dart';
 import 'package:ssh_mobile/utils/responsive.dart';
 import 'package:ssh_mobile/widgets/tactile_feedback.dart';
 import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
+import 'package:ssh_mobile/widgets/app_surface.dart';
 import 'package:ssh_mobile/widgets/system_power_confirm_flow.dart';
 import 'package:ssh_mobile/widgets/ssh_host_key_trust_dialog.dart';
 import 'package:ssh_mobile/theme/app_theme.dart';
@@ -109,6 +110,19 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
           );
         }
 
+        if (snapshot.connections.isEmpty) {
+          return AppEmptyState(
+            icon: Icons.monitor_heart_outlined,
+            title: strings.systemOmAdmin,
+            message: strings.selectServerToManage,
+            action: FilledButton.icon(
+              onPressed: () => Navigator.pushNamed(context, '/add'),
+              icon: const Icon(Icons.add_rounded),
+              label: Text(strings.addConnection),
+            ),
+          );
+        }
+
         final desktop = isDesktopLayout(context);
         final colorScheme = Theme.of(context).colorScheme;
 
@@ -119,6 +133,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
         );
 
         return Scaffold(
+          backgroundColor: Colors.transparent,
           body: ValueListenableBuilder<int>(
             valueListenable: _activeTabIndex,
             builder: (context, activeIndex, _) {
@@ -645,50 +660,12 @@ class _AdminEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 72,
-              height: 72,
-              decoration: BoxDecoration(
-                color: colorScheme.primary.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: colorScheme.primary.withValues(alpha: 0.18),
-                ),
-              ),
-              child: Icon(
-                Icons.admin_panel_settings_outlined,
-                color: colorScheme.primary,
-                size: 36,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              strings.systemOmAdmin,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: colorScheme.onSurface,
-                fontSize: 17,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              strings.selectServerToManage,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: colorScheme.onSurfaceVariant,
-                fontSize: 13,
-              ),
-            ),
-          ],
-        ),
+    return LayoutBuilder(
+      builder: (context, constraints) => AppEmptyState(
+        icon: Icons.monitor_heart_outlined,
+        title: strings.systemOmAdmin,
+        message: strings.selectServerToManage,
+        compact: constraints.maxWidth < 420,
       ),
     );
   }
@@ -714,21 +691,10 @@ class _MonitorResponsiveEmptyState extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (showIcon) ...[
-                  Container(
-                    width: compact ? 44 : 72,
-                    height: compact ? 44 : 72,
-                    decoration: BoxDecoration(
-                      color: colorScheme.primary.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: colorScheme.primary.withValues(alpha: 0.18),
-                      ),
-                    ),
-                    child: Icon(
-                      Icons.monitor_heart_outlined,
-                      color: colorScheme.primary,
-                      size: compact ? 24 : 34,
-                    ),
+                  AppIconBadge(
+                    icon: Icons.monitor_heart_outlined,
+                    size: compact ? 44 : 72,
+                    iconSize: compact ? 24 : 34,
                   ),
                   SizedBox(height: compact ? 8 : 14),
                 ],

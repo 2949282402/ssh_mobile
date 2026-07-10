@@ -73,10 +73,14 @@ class _ChatComposerState extends State<_ChatComposer> {
         final activeChat = viewModel.activeChat!;
 
         return Container(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+          padding: const EdgeInsets.fromLTRB(14, 11, 14, 14),
           decoration: BoxDecoration(
-            color: colorScheme.surfaceContainer,
-            border: Border(top: BorderSide(color: colorScheme.outlineVariant)),
+            color: colorScheme.surface.withValues(alpha: 0.94),
+            border: Border(
+              top: BorderSide(
+                color: colorScheme.outline.withValues(alpha: 0.72),
+              ),
+            ),
           ),
           child: SingleChildScrollView(
             reverse: true,
@@ -176,7 +180,13 @@ class _ChatComposerState extends State<_ChatComposer> {
                         minLines: 1,
                         maxLines: 3,
                         textInputAction: TextInputAction.newline,
-                        decoration: const InputDecoration(isDense: true),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          hintText: strings.composerHint,
+                          hintStyle: TextStyle(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
                         onSubmitted: state._isDesktopPlatform
                             ? null
                             : (_) => widget.onSubmit(),
@@ -188,6 +198,12 @@ class _ChatComposerState extends State<_ChatComposer> {
                     const SizedBox(width: 8),
                     IconButton(
                       tooltip: strings.tools,
+                      style: IconButton.styleFrom(
+                        foregroundColor: colorScheme.primary,
+                        backgroundColor: colorScheme.primary.withValues(
+                          alpha: 0.1,
+                        ),
+                      ),
                       icon: AnimatedRotation(
                         turns: widget.toolsExpanded ? 0.125 : 0,
                         duration: const Duration(milliseconds: 180),

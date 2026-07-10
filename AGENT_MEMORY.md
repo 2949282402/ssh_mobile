@@ -19,6 +19,13 @@ across sessions.
 
 ## Notes
 
+- 2026-07-10: Primary UI workspaces share the modern design system in
+  `lib/theme/app_theme.dart` and `lib/widgets/app_surface.dart`. Reuse
+  `AppPageSurface`, `AppPageHeader`, `AppIconBadge`, and `AppEmptyState`
+  instead of introducing page-local palette, shadows, icon tiles, or empty
+  states. Main navigation is Servers, SFTP, AI, System Admin, Logs; desktop app
+  settings open from the rail on every main page, while AI settings remain
+  separate.
 - 2026-07-10: Portfolio hardening pins the Dart/Flutter dependency baseline,
   adds CI formatting/coverage/Android/iOS gates, ignores generated coverage,
   and replaces default platform icons through `tool/generate_app_icons.dart`.

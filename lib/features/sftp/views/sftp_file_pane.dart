@@ -1058,50 +1058,12 @@ class _SftpEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 72,
-              height: 72,
-              decoration: BoxDecoration(
-                color: colorScheme.primary.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                border: Border.all(
-                  color: colorScheme.primary.withValues(alpha: 0.18),
-                ),
-              ),
-              child: Icon(
-                Icons.folder_open_rounded,
-                color: colorScheme.primary,
-                size: 36,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              strings.sftpEmptyTitle,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: colorScheme.onSurface,
-                fontSize: 17,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              strings.sftpEmptyHint,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: colorScheme.onSurface.withValues(alpha: 0.64),
-                height: 1.35,
-              ),
-            ),
-          ],
-        ),
+    return LayoutBuilder(
+      builder: (context, constraints) => AppEmptyState(
+        icon: Icons.folder_open_rounded,
+        title: strings.sftpEmptyTitle,
+        message: strings.sftpEmptyHint,
+        compact: constraints.maxWidth < 420,
       ),
     );
   }

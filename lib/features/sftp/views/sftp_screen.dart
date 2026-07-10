@@ -16,6 +16,7 @@ import 'package:ssh_mobile/theme/app_theme.dart';
 import 'package:ssh_mobile/utils/responsive.dart';
 import 'package:ssh_mobile/widgets/tactile_feedback.dart';
 import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
+import 'package:ssh_mobile/widgets/app_surface.dart';
 import 'package:ssh_mobile/widgets/ssh_host_key_trust_dialog.dart';
 import 'package:ssh_mobile/features/sftp/views/sftp_editor_screen.dart';
 import 'package:ssh_mobile/features/sftp/views/sftp_file_viewer_screen.dart';
@@ -78,6 +79,19 @@ class _SftpScreenState extends State<SftpScreen> {
           width: 28,
           height: 28,
           child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+
+    if (connections.isEmpty) {
+      return AppEmptyState(
+        icon: Icons.folder_open_rounded,
+        title: strings.sftpEmptyTitle,
+        message: strings.sftpEmptyHint,
+        action: FilledButton.icon(
+          onPressed: () => Navigator.pushNamed(context, '/add'),
+          icon: const Icon(Icons.add_rounded),
+          label: Text(strings.addConnection),
         ),
       );
     }

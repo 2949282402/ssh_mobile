@@ -50,6 +50,10 @@ or maintenance lesson should be shared across Codex and Claude Code sessions.
 - Route SSH, SFTP, LLM, AI tool, and failure logs through `AppLogService`.
 - Keep shared UI behavior aligned with `lib/theme/app_theme.dart` and
   `AppSettings`.
+- Build primary workspaces from the shared design system in
+  `lib/theme/app_theme.dart` and `lib/widgets/app_surface.dart`. Prefer
+  `AppPageSurface`, `AppPageHeader`, `AppIconBadge`, and `AppEmptyState` over
+  page-local colors, shadows, icon tiles, and empty-state layouts.
 - Validate SSH credentials before saving a server.
 - Respect `serverPlatform`: Linux can use tmux; native Windows servers use plain
   SSH unless the user is really targeting WSL or another Linux-like shell.
@@ -223,10 +227,12 @@ its child widgets.
 - `lib/features/settings/viewmodels/settings_viewmodel.dart` bridges
   `AppSettings` plus `StorageService`, while `lib/features/home/views/home_screen.dart`
   remains the navigation shell and settings entry surface.
-- Main page order is AI, Servers, SFTP, Performance Monitor, then Logs.
-- App launch still lands on Servers even though AI is the first navigation item.
-- The shell has no global top app bar. App settings open from the AI page's
-  explicit settings button, and LLM settings stay separate.
+- Main page order is Servers, SFTP, AI, System Admin, then Logs, and app launch
+  lands on Servers.
+- The shell has no global top app bar. On desktop, the navigation rail's
+  settings button opens app settings from every main page. On mobile, app
+  settings remain reachable from the Servers page. The AI header's settings
+  button opens LLM settings and stays separate from app settings.
 - Keep deferred page activation so heavy pages mount only when selected.
 - Keep the AI chat page alive across page switches.
 - Keep custom mobile navigation items exposed as a single semantic button with

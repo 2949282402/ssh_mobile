@@ -30,11 +30,36 @@ class _ServerListPaneState extends State<ServerListPane> {
           (vm) => vm.connections,
         );
 
-    return connections.isEmpty
-        ? storageReady
-              ? _ServerEmptyState(strings: strings)
-              : const _ServerSkeletalLoader()
-        : _buildConnectionList(context, connections, strings);
+    if (connections.isNotEmpty) {
+      return _buildConnectionList(context, connections, strings);
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final desktop = constraints.maxWidth >= AppBreakpoints.desktop;
+        final horizontalPadding = desktop
+            ? AppTheme.pagePadding
+            : AppTheme.compactPagePadding;
+        return Column(
+          children: [
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                desktop ? 20 : 12,
+                horizontalPadding,
+                8,
+              ),
+              child: _buildOverviewHeader(context, connections, strings),
+            ),
+            Expanded(
+              child: storageReady
+                  ? _ServerEmptyState(strings: strings)
+                  : const _ServerSkeletalLoader(),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Widget _buildConnectionList(
@@ -49,7 +74,9 @@ class _ServerListPaneState extends State<ServerListPane> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final desktop = constraints.maxWidth >= AppBreakpoints.desktop;
-        final horizontalPadding = desktop ? 24.0 : 12.0;
+        final horizontalPadding = desktop
+            ? AppTheme.pagePadding
+            : AppTheme.compactPagePadding;
         final maxContentWidth = desktop ? 1480.0 : double.infinity;
         final isGrid = layoutMode == 'grid';
 
@@ -379,44 +406,23 @@ class _ServerListPaneState extends State<ServerListPane> {
     List<ConnectionConfig> connections,
     AppStrings strings,
   ) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
     final activeCount = connections.length;
+    final subtitle = strings.language == AppLanguage.en
+        ? '$activeCount saved server${activeCount == 1 ? "" : "s"}'
+        : '已保存 $activeCount 台服务器';
+    final showDesktopAdd = isDesktopLayout(context) && activeCount > 0;
 
-    return Row(
-      children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              strings.servers,
-              style: textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w800,
-                fontSize: 24,
-                letterSpacing: -0.5,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              strings.language == AppLanguage.en
-                  ? '$activeCount saved server${activeCount == 1 ? "" : "s"}'
-                  : '已保存 $activeCount 台服务器',
-              style: TextStyle(
-                color: colorScheme.onSurfaceVariant,
-                fontSize: 13,
-              ),
-            ),
-          ],
-        ),
-        const Spacer(),
-        if (!_serverSelectionMode) ...[
-          IconButton(
-            tooltip: strings.addConnection,
-            icon: const Icon(Icons.add_circle_outline_rounded),
-            onPressed: () => Navigator.pushNamed(context, '/add'),
-          ),
-        ],
-      ],
+    return AppPageHeader(
+      title: strings.servers,
+      subtitle: subtitle,
+      icon: Icons.dns_rounded,
+      trailing: !_serverSelectionMode && showDesktopAdd
+          ? FilledButton.icon(
+              onPressed: () => Navigator.pushNamed(context, '/add'),
+              icon: const Icon(Icons.add_rounded),
+              label: Text(strings.addConnection),
+            )
+          : null,
     );
   }
 }

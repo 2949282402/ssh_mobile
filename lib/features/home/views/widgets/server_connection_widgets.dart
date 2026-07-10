@@ -65,58 +65,14 @@ class _ServerEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 84,
-              height: 84,
-              decoration: BoxDecoration(
-                color: colorScheme.primary.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                border: Border.all(
-                  color: colorScheme.primary.withValues(alpha: 0.18),
-                ),
-              ),
-              child: Icon(
-                Icons.terminal_rounded,
-                size: 42,
-                color: colorScheme.primary,
-              ),
-            ),
-            const SizedBox(height: 18),
-            Text(
-              strings.noConnections,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: colorScheme.onSurface,
-                fontSize: 17,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              strings.addHint,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: colorScheme.onSurface.withValues(alpha: 0.62),
-                fontSize: 14,
-                height: 1.35,
-              ),
-            ),
-            const SizedBox(height: 18),
-            ElevatedButton.icon(
-              onPressed: () => Navigator.pushNamed(context, '/add'),
-              icon: const Icon(Icons.add),
-              label: Text(strings.addConnection),
-            ),
-          ],
-        ),
+    return AppEmptyState(
+      icon: Icons.terminal_rounded,
+      title: strings.noConnections,
+      message: strings.addHint,
+      action: FilledButton.icon(
+        onPressed: () => Navigator.pushNamed(context, '/add'),
+        icon: const Icon(Icons.add_rounded),
+        label: Text(strings.addConnection),
       ),
     );
   }
@@ -335,229 +291,233 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final extColors = Theme.of(context).extension<ExtendedColors>();
 
-    // Visual design optimizations (glass reflection border, high contrast shadow, micro scale hover)
     final boxBorderColor = _isHovered
         ? (extColors?.cardHoverBorder ??
-              colorScheme.primary.withValues(alpha: 0.40))
+              colorScheme.primary.withValues(alpha: 0.34))
         : activeBorderColor;
 
     final boxBgColor = _isHovered
-        ? (isDark
-              ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.15)
-              : colorScheme.surfaceContainerHighest.withValues(alpha: 0.40))
+        ? Color.alphaBlend(
+            colorScheme.primary.withValues(alpha: isDark ? 0.06 : 0.035),
+            cardBgColor,
+          )
         : cardBgColor;
 
     return MouseRegion(
           onEnter: (_) => setState(() => _isHovered = true),
           onExit: (_) => setState(() => _isHovered = false),
-          child: AnimatedScale(
-            scale: _isHovered ? 1.015 : 1.0,
-            duration: const Duration(milliseconds: 150),
-            curve: Curves.easeOutCubic,
-            child: TactileFeedback(
-              onTap: widget.onTap,
-              onLongPress: widget.onLongPress,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                curve: Curves.easeOutCubic,
-                margin: EdgeInsets.only(
-                  bottom: widget.isGrid ? 0 : (10 * scale),
-                ),
-                padding: EdgeInsets.all(
-                  widget.isGrid ? 10 * scale : 14 * scale,
-                ),
-                decoration: BoxDecoration(
-                  color: boxBgColor,
-                  borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-                  border: Border.all(color: boxBorderColor, width: 1),
-                  boxShadow: _isHovered
-                      ? [
-                          BoxShadow(
-                            color: colorScheme.primary.withValues(
-                              alpha: isDark ? 0.12 : 0.05,
+          child: TactileFeedback(
+            onTap: widget.onTap,
+            onLongPress: widget.onLongPress,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              curve: Curves.easeOutCubic,
+              margin: EdgeInsets.only(bottom: widget.isGrid ? 0 : (10 * scale)),
+              padding: EdgeInsets.all(widget.isGrid ? 10 * scale : 14 * scale),
+              decoration: BoxDecoration(
+                color: boxBgColor,
+                borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+                border: Border.all(color: boxBorderColor, width: 1),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(
+                      alpha: _isHovered
+                          ? (isDark ? 0.22 : 0.055)
+                          : (isDark ? 0.16 : 0.025),
+                    ),
+                    blurRadius: _isHovered ? 18 : 10,
+                    offset: Offset(0, _isHovered ? 7 : 3),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      if (!widget.serverSelectionMode && !widget.isGrid)
+                        ReorderableDragStartListener(
+                          index: widget.connIndex,
+                          child: Padding(
+                            padding: EdgeInsets.only(right: 8 * scale),
+                            child: Icon(
+                              Icons.drag_handle,
+                              size: 20 * scale,
+                              color: mutedTextColor.withValues(alpha: 0.5),
                             ),
-                            blurRadius: 8,
-                            offset: const Offset(0, 4),
-                          ),
-                        ]
-                      : [
-                          BoxShadow(
-                            color: Colors.black.withValues(
-                              alpha: isDark ? 0.25 : 0.04,
-                            ),
-                            blurRadius: 4,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        if (!widget.serverSelectionMode && !widget.isGrid)
-                          ReorderableDragStartListener(
-                            index: widget.connIndex,
-                            child: Padding(
-                              padding: EdgeInsets.only(right: 8 * scale),
-                              child: Icon(
-                                Icons.drag_handle,
-                                size: 20 * scale,
-                                color: mutedTextColor.withValues(alpha: 0.5),
-                              ),
-                            ),
-                          ),
-                        if (widget.serverSelectionMode)
-                          Checkbox(
-                            value: widget.isSelected,
-                            onChanged: widget.onSelectedChanged,
-                          ),
-                        Container(
-                          width: 36 * scale,
-                          height: 36 * scale,
-                          decoration: BoxDecoration(
-                            color: isActive
-                                ? success.withValues(alpha: 0.15)
-                                : primary.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(
-                              AppTheme.radiusSmall,
-                            ),
-                          ),
-                          child: Icon(
-                            _getStatusIcon(widget.conn, latestState),
-                            color: isActive ? success : primary,
-                            size: 20 * scale,
                           ),
                         ),
-                        SizedBox(width: 12 * scale),
-                        Expanded(
-                          child: OverflowScrollText(
-                            widget.conn.name,
-                            selectable: false,
-                            maxLines: 1,
+                      if (widget.serverSelectionMode)
+                        Checkbox(
+                          value: widget.isSelected,
+                          onChanged: widget.onSelectedChanged,
+                        ),
+                      Container(
+                        width: 36 * scale,
+                        height: 36 * scale,
+                        decoration: BoxDecoration(
+                          color: isActive
+                              ? success.withValues(alpha: 0.15)
+                              : primary.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(
+                            AppTheme.radiusSmall,
+                          ),
+                        ),
+                        child: Icon(
+                          _getStatusIcon(widget.conn, latestState),
+                          color: isActive ? success : primary,
+                          size: 20 * scale,
+                        ),
+                      ),
+                      SizedBox(width: 12 * scale),
+                      Expanded(
+                        child: OverflowScrollText(
+                          widget.conn.name,
+                          selectable: false,
+                          maxLines: 1,
+                          style: TextStyle(
+                            color: textColor,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      if (latestState != null &&
+                          latestState != SshConnectionState.disconnected) ...[
+                        SizedBox(width: 8 * scale),
+                        _buildConnectionStatusChip(
+                          context,
+                          latestState,
+                          widget.strings,
+                          scale,
+                        ),
+                      ],
+                    ],
+                  ),
+                  SizedBox(height: 8 * scale),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.dns_outlined,
+                        size: 13 * scale,
+                        color: mutedTextColor.withValues(alpha: 0.72),
+                      ),
+                      SizedBox(width: 5 * scale),
+                      Flexible(
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Text(
+                            '${widget.conn.username}@${widget.conn.host}:${widget.conn.port}',
                             style: TextStyle(
-                              color: textColor,
-                              fontSize: 16,
+                              fontSize: 13,
+                              color: mutedTextColor,
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (sessionCount > 0) ...[
+                        SizedBox(width: 8 * scale),
+                        Container(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 6 * scale,
+                            vertical: 2 * scale,
+                          ),
+                          decoration: BoxDecoration(
+                            color: success.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(
+                              AppTheme.radiusPill,
+                            ),
+                          ),
+                          child: Text(
+                            widget.strings.language == AppLanguage.en
+                                ? '$sessionCount window${sessionCount == 1 ? "" : "s"}'
+                                : '$sessionCount 个窗口',
+                            style: TextStyle(
+                              color: success,
+                              fontSize: 11,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
                         ),
-                        if (latestState != null &&
-                            latestState != SshConnectionState.disconnected) ...[
-                          SizedBox(width: 8 * scale),
-                          _buildConnectionStatusChip(
-                            context,
-                            latestState,
-                            widget.strings,
-                            scale,
+                      ],
+                    ],
+                  ),
+                  SizedBox(height: 6 * scale),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child:
+                        Selector<
+                          PerformanceMonitorService,
+                          ServerHealthSnapshot
+                        >(
+                          selector: (_, monitor) =>
+                              monitor.healthFor(widget.conn.id),
+                          builder: (context, health, _) =>
+                              _buildHealthChip(context, health, widget.strings),
+                        ),
+                  ),
+                  SizedBox(height: 12 * scale),
+                  Divider(height: 1, color: colorScheme.outlineVariant),
+                  SizedBox(height: 8 * scale),
+                  Row(
+                    children: [
+                      if (widget.isGrid) ...[
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          tooltip: widget.strings.newWindow,
+                          icon: Icon(
+                            Icons.add_to_photos_outlined,
+                            size: 16 * scale,
+                          ),
+                          onPressed: widget.onOpenNewTerminal,
+                        ),
+                        if (sessionCount > 0) ...[
+                          const SizedBox(width: 4),
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            tooltip: widget.strings.windows,
+                            icon: Icon(
+                              Icons.terminal_outlined,
+                              size: 16 * scale,
+                            ),
+                            onPressed: () => Navigator.pushNamed(
+                              context,
+                              '/terminal-windows',
+                              arguments: widget.conn.id,
+                            ),
                           ),
                         ],
-                      ],
-                    ),
-                    SizedBox(height: 8 * scale),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.dns_outlined,
-                          size: 13 * scale,
-                          color: mutedTextColor.withValues(alpha: 0.72),
-                        ),
-                        SizedBox(width: 5 * scale),
-                        Flexible(
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Text(
-                              '${widget.conn.username}@${widget.conn.host}:${widget.conn.port}',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: mutedTextColor,
-                              ),
+                      ] else ...[
+                        TextButton.icon(
+                          onPressed: widget.onOpenNewTerminal,
+                          icon: Icon(
+                            Icons.add_to_photos_outlined,
+                            size: 16 * scale,
+                          ),
+                          label: Text(widget.strings.newWindow),
+                          style: TextButton.styleFrom(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 8 * scale,
+                              vertical: 4 * scale,
                             ),
+                            visualDensity: VisualDensity.compact,
                           ),
                         ),
                         if (sessionCount > 0) ...[
                           SizedBox(width: 8 * scale),
-                          Container(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 6 * scale,
-                              vertical: 2 * scale,
-                            ),
-                            decoration: BoxDecoration(
-                              color: success.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(
-                                AppTheme.radiusPill,
-                              ),
-                            ),
-                            child: Text(
-                              widget.strings.language == AppLanguage.en
-                                  ? '$sessionCount window${sessionCount == 1 ? "" : "s"}'
-                                  : '$sessionCount 个窗口',
-                              style: TextStyle(
-                                color: success,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    SizedBox(height: 6 * scale),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child:
-                          Selector<
-                            PerformanceMonitorService,
-                            ServerHealthSnapshot
-                          >(
-                            selector: (_, monitor) =>
-                                monitor.healthFor(widget.conn.id),
-                            builder: (context, health, _) => _buildHealthChip(
-                              context,
-                              health,
-                              widget.strings,
-                            ),
-                          ),
-                    ),
-                    SizedBox(height: 12 * scale),
-                    Divider(height: 1, color: colorScheme.outlineVariant),
-                    SizedBox(height: 8 * scale),
-                    Row(
-                      children: [
-                        if (widget.isGrid) ...[
-                          IconButton(
-                            visualDensity: VisualDensity.compact,
-                            tooltip: widget.strings.newWindow,
-                            icon: Icon(
-                              Icons.add_to_photos_outlined,
-                              size: 16 * scale,
-                            ),
-                            onPressed: widget.onOpenNewTerminal,
-                          ),
-                          if (sessionCount > 0) ...[
-                            const SizedBox(width: 4),
-                            IconButton(
-                              visualDensity: VisualDensity.compact,
-                              tooltip: widget.strings.windows,
-                              icon: Icon(
-                                Icons.terminal_outlined,
-                                size: 16 * scale,
-                              ),
-                              onPressed: () => Navigator.pushNamed(
-                                context,
-                                '/terminal-windows',
-                                arguments: widget.conn.id,
-                              ),
-                            ),
-                          ],
-                        ] else ...[
                           TextButton.icon(
-                            onPressed: widget.onOpenNewTerminal,
+                            onPressed: widget.onToggleConnectionWindows,
                             icon: Icon(
-                              Icons.add_to_photos_outlined,
+                              widget.windowsExpanded
+                                  ? Icons.expand_less_rounded
+                                  : Icons.expand_more_rounded,
                               size: 16 * scale,
                             ),
-                            label: Text(widget.strings.newWindow),
+                            label: Text(
+                              widget.strings.language == AppLanguage.en
+                                  ? 'Window List · $sessionCount'
+                                  : '窗口列表 · $sessionCount',
+                            ),
                             style: TextButton.styleFrom(
                               padding: EdgeInsets.symmetric(
                                 horizontal: 8 * scale,
@@ -566,85 +526,59 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                               visualDensity: VisualDensity.compact,
                             ),
                           ),
-                          if (sessionCount > 0) ...[
-                            SizedBox(width: 8 * scale),
-                            TextButton.icon(
-                              onPressed: widget.onToggleConnectionWindows,
-                              icon: Icon(
-                                widget.windowsExpanded
-                                    ? Icons.expand_less_rounded
-                                    : Icons.expand_more_rounded,
-                                size: 16 * scale,
+                        ],
+                      ],
+                      const Spacer(),
+                      if (!widget.serverSelectionMode)
+                        PopupMenuButton<String>(
+                          icon: Icon(
+                            Icons.more_vert,
+                            color: mutedTextColor,
+                            size: 20 * scale,
+                          ),
+                          onSelected: widget.onAction,
+                          itemBuilder: (_) => [
+                            PopupMenuItem(
+                              value: 'edit',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.edit, size: 18 * scale),
+                                  SizedBox(width: 8 * scale),
+                                  Text(widget.strings.edit),
+                                ],
                               ),
-                              label: Text(
-                                widget.strings.language == AppLanguage.en
-                                    ? 'Window List · $sessionCount'
-                                    : '窗口列表 · $sessionCount',
-                              ),
-                              style: TextButton.styleFrom(
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: 8 * scale,
-                                  vertical: 4 * scale,
-                                ),
-                                visualDensity: VisualDensity.compact,
+                            ),
+                            PopupMenuItem(
+                              value: 'delete',
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.delete,
+                                    size: 18 * scale,
+                                    color: colorScheme.error,
+                                  ),
+                                  SizedBox(width: 8 * scale),
+                                  Text(
+                                    widget.strings.delete,
+                                    style: TextStyle(color: colorScheme.error),
+                                  ),
+                                ],
                               ),
                             ),
                           ],
-                        ],
-                        const Spacer(),
-                        if (!widget.serverSelectionMode)
-                          PopupMenuButton<String>(
-                            icon: Icon(
-                              Icons.more_vert,
-                              color: mutedTextColor,
-                              size: 20 * scale,
-                            ),
-                            onSelected: widget.onAction,
-                            itemBuilder: (_) => [
-                              PopupMenuItem(
-                                value: 'edit',
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.edit, size: 18 * scale),
-                                    SizedBox(width: 8 * scale),
-                                    Text(widget.strings.edit),
-                                  ],
-                                ),
-                              ),
-                              PopupMenuItem(
-                                value: 'delete',
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      Icons.delete,
-                                      size: 18 * scale,
-                                      color: colorScheme.error,
-                                    ),
-                                    SizedBox(width: 8 * scale),
-                                    Text(
-                                      widget.strings.delete,
-                                      style: TextStyle(
-                                        color: colorScheme.error,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                      ],
-                    ),
-                    if (actualWindowsExpanded)
-                      TerminalWindowsPage(
-                        key: PageStorageKey<String>(
-                          'server-windows-${widget.conn.id}',
                         ),
-                        connectionId: widget.conn.id,
-                        showHeader: false,
-                        embedded: true,
+                    ],
+                  ),
+                  if (actualWindowsExpanded)
+                    TerminalWindowsPage(
+                      key: PageStorageKey<String>(
+                        'server-windows-${widget.conn.id}',
                       ),
-                  ],
-                ),
+                      connectionId: widget.conn.id,
+                      showHeader: false,
+                      embedded: true,
+                    ),
+                ],
               ),
             ),
           ),

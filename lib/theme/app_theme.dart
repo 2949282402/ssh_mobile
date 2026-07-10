@@ -69,10 +69,13 @@ class ExtendedColors extends ThemeExtension<ExtendedColors> {
 }
 
 class AppTheme {
-  static const radiusSmall = 10.0;
-  static const radiusMedium = 16.0;
-  static const radiusLarge = 24.0;
+  static const radiusSmall = 12.0;
+  static const radiusMedium = 18.0;
+  static const radiusLarge = 28.0;
   static const radiusPill = 999.0;
+
+  static const pagePadding = 20.0;
+  static const compactPagePadding = 14.0;
 
   // 终端配色静态常量，用于保持与其他已有组件的向后兼容性
   static const terminalBg = Color(0xFF0F172A);
@@ -114,7 +117,7 @@ class AppTheme {
   static final lightTheme = ThemeData(
     useMaterial3: true,
     brightness: Brightness.light,
-    scaffoldBackgroundColor: const Color(0xFFF8FAFC),
+    scaffoldBackgroundColor: const Color(0xFFF6F7FB),
     pageTransitionsTheme: const PageTransitionsTheme(
       builders: {
         TargetPlatform.android: FadeThroughPageTransitionsBuilder(),
@@ -125,20 +128,20 @@ class AppTheme {
       },
     ),
     colorScheme: const ColorScheme.light(
-      primary: Color(0xFF2563EB),
-      secondary: Color(0xFF0F766E),
+      primary: Color(0xFF4F46E5),
+      secondary: Color(0xFF0F9F87),
       tertiary: Color(0xFF7C3AED),
-      surface: Color(0xFFFFFFFF),
-      surfaceContainer: Color(0xFFF1F5F9),
-      surfaceContainerHighest: Color(0xFFE2E8F0),
-      outline: Color(0xFFE2E8F0),
-      outlineVariant: Color(0xFFCBD5E1),
-      error: Color(0xFFDC2626),
+      surface: Color(0xFFFEFEFF),
+      surfaceContainer: Color(0xFFF0F2F8),
+      surfaceContainerHighest: Color(0xFFE6E9F1),
+      outline: Color(0xFFDDE1EB),
+      outlineVariant: Color(0xFFC9CEDA),
+      error: Color(0xFFD92D4B),
       onPrimary: Colors.white,
       onSecondary: Colors.white,
       onTertiary: Colors.white,
-      onSurface: Color(0xFF0F172A),
-      onSurfaceVariant: Color(0xFF64748B),
+      onSurface: Color(0xFF171923),
+      onSurfaceVariant: Color(0xFF656B7A),
       onError: Colors.white,
     ),
     extensions: const [
@@ -149,57 +152,59 @@ class AppTheme {
         terminalCyan: Color(0xFF06B6D4),
         success: Color(0xFF10B981),
         warning: Color(0xFFF59E0B),
-        glassBg: Color(0x99FFFFFF),
-        glassBorder: Color(0x1FE2E8F0),
-        cardHoverBorder: Color(0x662563EB),
+        glassBg: Color(0xD9FEFEFF),
+        glassBorder: Color(0x66FFFFFF),
+        cardHoverBorder: Color(0x664F46E5),
       ),
     ],
-    textTheme: _textTheme(const Color(0xFF0F172A)),
+    textTheme: _textTheme(const Color(0xFF171923)),
     appBarTheme: _appBarTheme(
-      background: const Color(0xFFF8FAFC),
-      foreground: const Color(0xFF0F172A),
+      background: const Color(0xFFF6F7FB),
+      foreground: const Color(0xFF171923),
     ),
     cardTheme: _cardTheme(
-      surface: Colors.white,
-      outline: const Color(0xFFE2E8F0),
+      surface: const Color(0xFFFEFEFF),
+      outline: const Color(0xFFDDE1EB),
     ),
     navigationBarTheme: _navigationBarTheme(
-      surface: const Color(0xFFFFFFFF),
-      primary: const Color(0xFF2563EB),
-      onSurfaceVariant: const Color(0xFF64748B),
+      surface: const Color(0xFFFEFEFF),
+      primary: const Color(0xFF4F46E5),
+      onSurfaceVariant: const Color(0xFF656B7A),
     ),
     navigationRailTheme: _navigationRailTheme(
-      surface: const Color(0xFFFFFFFF),
-      primary: const Color(0xFF2563EB),
-      onSurfaceVariant: const Color(0xFF64748B),
+      surface: const Color(0xFFFEFEFF),
+      primary: const Color(0xFF4F46E5),
+      onSurfaceVariant: const Color(0xFF656B7A),
     ),
     listTileTheme: _listTileTheme(
-      iconColor: const Color(0xFF64748B),
-      textColor: const Color(0xFF0F172A),
+      iconColor: const Color(0xFF656B7A),
+      textColor: const Color(0xFF171923),
     ),
     floatingActionButtonTheme: const FloatingActionButtonThemeData(
-      backgroundColor: Color(0xFF2563EB),
+      backgroundColor: Color(0xFF4F46E5),
       foregroundColor: Colors.white,
-      elevation: 0,
+      elevation: 2,
+      focusElevation: 3,
+      hoverElevation: 4,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.all(Radius.circular(radiusSmall)),
+        borderRadius: BorderRadius.all(Radius.circular(radiusMedium)),
       ),
     ),
     filledButtonTheme: _filledButtonTheme(),
-    outlinedButtonTheme: _outlinedButtonTheme(const Color(0xFFE2E8F0)),
-    textButtonTheme: _textButtonTheme(const Color(0xFF2563EB)),
-    iconButtonTheme: _iconButtonTheme(const Color(0xFF334155)),
+    outlinedButtonTheme: _outlinedButtonTheme(const Color(0xFFDDE1EB)),
+    textButtonTheme: _textButtonTheme(const Color(0xFF4F46E5)),
+    iconButtonTheme: _iconButtonTheme(const Color(0xFF444A59)),
     chipTheme: _chipTheme(
-      background: const Color(0xFFF1F5F9),
-      selected: const Color(0xFFDBEAFE),
-      outline: const Color(0xFFE2E8F0),
-      label: const Color(0xFF334155),
+      background: const Color(0xFFF0F2F8),
+      selected: const Color(0xFFE6E4FF),
+      outline: const Color(0xFFDDE1EB),
+      label: const Color(0xFF444A59),
     ),
     inputDecorationTheme: _inputDecorationTheme(
-      fill: const Color(0xFFF8FAFC),
-      outline: const Color(0xFFE2E8F0),
-      focused: const Color(0xFF2563EB),
-      label: const Color(0xFF64748B),
+      fill: const Color(0xFFF0F2F8),
+      outline: const Color(0xFFDDE1EB),
+      focused: const Color(0xFF4F46E5),
+      label: const Color(0xFF656B7A),
     ),
     snackBarTheme: _snackBarTheme(
       background: const Color(0xFF0F172A),
@@ -207,31 +212,31 @@ class AppTheme {
     ),
     dialogTheme: _dialogTheme(Colors.white),
     popupMenuTheme: _popupMenuTheme(Colors.white),
-    drawerTheme: _drawerTheme(Colors.white, const Color(0xFFE2E8F0)),
+    drawerTheme: _drawerTheme(const Color(0xFFFEFEFF), const Color(0xFFDDE1EB)),
     bottomSheetTheme: _bottomSheetTheme(
       background: Colors.white,
-      outline: const Color(0xFFE2E8F0),
+      outline: const Color(0xFFDDE1EB),
     ),
     segmentedButtonTheme: _segmentedButtonTheme(
-      primary: const Color(0xFF2563EB),
-      outline: const Color(0xFFE2E8F0),
-      surface: Colors.white,
-      foreground: const Color(0xFF334155),
+      primary: const Color(0xFF4F46E5),
+      outline: const Color(0xFFDDE1EB),
+      surface: const Color(0xFFFEFEFF),
+      foreground: const Color(0xFF444A59),
     ),
     expansionTileTheme: _expansionTileTheme(
-      foreground: const Color(0xFF0F172A),
-      muted: const Color(0xFF64748B),
+      foreground: const Color(0xFF171923),
+      muted: const Color(0xFF656B7A),
     ),
     progressIndicatorTheme: _progressIndicatorTheme(
-      primary: const Color(0xFF2563EB),
-      track: const Color(0xFFE2E8F0),
+      primary: const Color(0xFF4F46E5),
+      track: const Color(0xFFDDE1EB),
     ),
     scrollbarTheme: _scrollbarTheme(
-      thumb: const Color(0xFF94A3B8),
-      track: const Color(0xFFE2E8F0),
+      thumb: const Color(0xFF8C93A5),
+      track: const Color(0xFFDDE1EB),
     ),
     dividerTheme: const DividerThemeData(
-      color: Color(0xFFE2E8F0),
+      color: Color(0xFFDDE1EB),
       thickness: 1,
       space: 1,
     ),
@@ -240,16 +245,16 @@ class AppTheme {
   static ThemeData buildDarkTheme({bool oledDark = false}) {
     final bgColor = oledDark
         ? const Color(0xFF000000)
-        : const Color(0xFF030712);
+        : const Color(0xFF090B11);
     final surfaceColor = oledDark
         ? const Color(0xFF000000)
-        : const Color(0xFF0B0F19);
+        : const Color(0xFF11141C);
     final surfaceContainerColor = oledDark
         ? const Color(0xFF050505)
-        : const Color(0xFF111827);
+        : const Color(0xFF171B25);
     final outlineColor = oledDark
         ? const Color(0xFF111111)
-        : const Color(0xFF1F2937);
+        : const Color(0xFF282E3A);
 
     return ThemeData(
       useMaterial3: true,
@@ -267,24 +272,24 @@ class AppTheme {
         },
       ),
       colorScheme: ColorScheme.dark(
-        primary: const Color(0xFF3B82F6),
-        secondary: const Color(0xFF14B8A6),
-        tertiary: const Color(0xFFA78BFA),
+        primary: const Color(0xFF8B87FF),
+        secondary: const Color(0xFF48CFB5),
+        tertiary: const Color(0xFFC4B5FD),
         surface: surfaceColor,
         surfaceContainer: surfaceContainerColor,
         surfaceContainerHighest: oledDark
             ? const Color(0xFF111111)
-            : const Color(0xFF1F2937),
+            : const Color(0xFF202633),
         outline: outlineColor,
         outlineVariant: oledDark
             ? const Color(0xFF222222)
-            : const Color(0xFF374151),
+            : const Color(0xFF343B49),
         error: const Color(0xFFF87171),
-        onPrimary: const Color(0xFF030712),
-        onSecondary: const Color(0xFF030712),
-        onTertiary: const Color(0xFF030712),
-        onSurface: const Color(0xFFF9FAFB),
-        onSurfaceVariant: const Color(0xFF94A3B8),
+        onPrimary: const Color(0xFF11102E),
+        onSecondary: const Color(0xFF071D19),
+        onTertiary: const Color(0xFF21183B),
+        onSurface: const Color(0xFFF4F5F8),
+        onSurfaceVariant: const Color(0xFFA7ADBA),
         onError: const Color(0xFF190A0A),
       ),
       extensions: [
@@ -295,11 +300,11 @@ class AppTheme {
           terminalCyan: const Color(0xFF22D3EE),
           success: const Color(0xFF34D399),
           warning: const Color(0xFFFBBF24),
-          glassBg: oledDark ? const Color(0xB3000000) : const Color(0x800B0F19),
+          glassBg: oledDark ? const Color(0xD9000000) : const Color(0xD911141C),
           glassBorder: oledDark
               ? const Color(0x26111111)
               : const Color(0x261F2937),
-          cardHoverBorder: const Color(0x663B82F6),
+          cardHoverBorder: const Color(0x668B87FF),
         ),
       ],
       textTheme: _textTheme(const Color(0xFFF9FAFB)),
@@ -310,12 +315,12 @@ class AppTheme {
       cardTheme: _cardTheme(surface: surfaceColor, outline: outlineColor),
       navigationBarTheme: _navigationBarTheme(
         surface: surfaceColor,
-        primary: const Color(0xFF3B82F6),
+        primary: const Color(0xFF8B87FF),
         onSurfaceVariant: const Color(0xFF94A3B8),
       ),
       navigationRailTheme: _navigationRailTheme(
         surface: surfaceColor,
-        primary: const Color(0xFF3B82F6),
+        primary: const Color(0xFF8B87FF),
         onSurfaceVariant: const Color(0xFF94A3B8),
       ),
       listTileTheme: _listTileTheme(
@@ -323,29 +328,31 @@ class AppTheme {
         textColor: const Color(0xFFF9FAFB),
       ),
       floatingActionButtonTheme: const FloatingActionButtonThemeData(
-        backgroundColor: Color(0xFF3B82F6),
-        foregroundColor: Color(0xFF030712),
-        elevation: 0,
+        backgroundColor: Color(0xFF8B87FF),
+        foregroundColor: Color(0xFF11102E),
+        elevation: 2,
+        focusElevation: 3,
+        hoverElevation: 4,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(Radius.circular(radiusSmall)),
+          borderRadius: BorderRadius.all(Radius.circular(radiusMedium)),
         ),
       ),
       filledButtonTheme: _filledButtonTheme(),
       outlinedButtonTheme: _outlinedButtonTheme(outlineColor),
-      textButtonTheme: _textButtonTheme(const Color(0xFF3B82F6)),
+      textButtonTheme: _textButtonTheme(const Color(0xFF8B87FF)),
       iconButtonTheme: _iconButtonTheme(const Color(0xFFCBD5E1)),
       chipTheme: _chipTheme(
         background: oledDark
             ? const Color(0xFF050505)
             : const Color(0xFF111827),
-        selected: oledDark ? const Color(0xFF111111) : const Color(0xFF1F2937),
-        outline: oledDark ? const Color(0xFF111111) : const Color(0xFF1F2937),
+        selected: oledDark ? const Color(0xFF111111) : const Color(0xFF252B38),
+        outline: oledDark ? const Color(0xFF111111) : const Color(0xFF282E3A),
         label: const Color(0xFFF9FAFB),
       ),
       inputDecorationTheme: _inputDecorationTheme(
         fill: surfaceColor,
         outline: outlineColor,
-        focused: const Color(0xFF3B82F6),
+        focused: const Color(0xFF8B87FF),
         label: const Color(0xFF94A3B8),
       ),
       snackBarTheme: _snackBarTheme(
@@ -360,7 +367,7 @@ class AppTheme {
         outline: outlineColor,
       ),
       segmentedButtonTheme: _segmentedButtonTheme(
-        primary: const Color(0xFF3B82F6),
+        primary: const Color(0xFF8B87FF),
         outline: outlineColor,
         surface: surfaceColor,
         foreground: const Color(0xFFF9FAFB),
@@ -370,7 +377,7 @@ class AppTheme {
         muted: const Color(0xFF94A3B8),
       ),
       progressIndicatorTheme: _progressIndicatorTheme(
-        primary: const Color(0xFF3B82F6),
+        primary: const Color(0xFF8B87FF),
         track: outlineColor,
       ),
       scrollbarTheme: _scrollbarTheme(
@@ -387,20 +394,86 @@ class AppTheme {
 
   static TextTheme _textTheme(Color color) {
     return TextTheme(
-      titleLarge: TextStyle(
+      displaySmall: TextStyle(
         color: color,
+        fontSize: 36,
+        height: 1.12,
+        fontWeight: FontWeight.w700,
+        letterSpacing: -1.1,
+      ),
+      headlineLarge: TextStyle(
+        color: color,
+        fontSize: 30,
+        height: 1.18,
+        fontWeight: FontWeight.w700,
+        letterSpacing: -0.9,
+      ),
+      headlineMedium: TextStyle(
+        color: color,
+        fontSize: 26,
+        height: 1.2,
+        fontWeight: FontWeight.w700,
+        letterSpacing: -0.7,
+      ),
+      headlineSmall: TextStyle(
+        color: color,
+        fontSize: 22,
+        height: 1.24,
         fontWeight: FontWeight.w700,
         letterSpacing: -0.5,
       ),
+      titleLarge: TextStyle(
+        color: color,
+        fontSize: 20,
+        height: 1.25,
+        fontWeight: FontWeight.w700,
+        letterSpacing: -0.35,
+      ),
       titleMedium: TextStyle(
         color: color,
+        fontSize: 16,
+        height: 1.3,
         fontWeight: FontWeight.w600,
-        letterSpacing: -0.2,
+        letterSpacing: -0.1,
       ),
-      bodyMedium: TextStyle(color: color, letterSpacing: 0, height: 1.4),
+      titleSmall: TextStyle(
+        color: color,
+        fontSize: 14,
+        height: 1.35,
+        fontWeight: FontWeight.w600,
+      ),
+      bodyLarge: TextStyle(
+        color: color,
+        fontSize: 16,
+        height: 1.5,
+        letterSpacing: 0,
+      ),
+      bodyMedium: TextStyle(
+        color: color,
+        fontSize: 14,
+        height: 1.45,
+        letterSpacing: 0,
+      ),
+      bodySmall: TextStyle(
+        color: color,
+        fontSize: 12,
+        height: 1.4,
+        letterSpacing: 0.1,
+      ),
       labelLarge: const TextStyle(
+        fontSize: 14,
         fontWeight: FontWeight.w700,
         letterSpacing: 0,
+      ),
+      labelMedium: const TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 0.1,
+      ),
+      labelSmall: const TextStyle(
+        fontSize: 11,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 0.2,
       ),
     );
   }
@@ -419,9 +492,9 @@ class AppTheme {
       shadowColor: Colors.transparent,
       titleTextStyle: TextStyle(
         color: foreground,
-        fontSize: 22,
+        fontSize: 21,
         fontWeight: FontWeight.w700,
-        letterSpacing: -0.5,
+        letterSpacing: -0.4,
       ),
     );
   }
@@ -449,8 +522,13 @@ class AppTheme {
   }) {
     return NavigationBarThemeData(
       backgroundColor: surface,
-      indicatorColor: primary.withValues(alpha: 0.08),
+      indicatorColor: primary.withValues(alpha: 0.12),
+      height: 72,
       elevation: 0,
+      surfaceTintColor: Colors.transparent,
+      indicatorShape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(radiusPill),
+      ),
       labelTextStyle: WidgetStateProperty.resolveWith(
         (states) => TextStyle(
           color: states.contains(WidgetState.selected)
@@ -481,8 +559,15 @@ class AppTheme {
   }) {
     return NavigationRailThemeData(
       backgroundColor: surface,
-      indicatorColor: primary.withValues(alpha: 0.08),
+      indicatorColor: primary.withValues(alpha: 0.12),
+      useIndicator: true,
+      minWidth: 82,
+      minExtendedWidth: 224,
+      groupAlignment: -0.72,
       elevation: 0,
+      indicatorShape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(radiusSmall),
+      ),
       selectedIconTheme: IconThemeData(color: primary),
       unselectedIconTheme: IconThemeData(color: onSurfaceVariant),
       selectedLabelTextStyle: TextStyle(
@@ -506,18 +591,19 @@ class AppTheme {
       iconColor: iconColor,
       textColor: textColor,
       selectedColor: textColor,
+      selectedTileColor: iconColor.withValues(alpha: 0.08),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(radiusSmall),
       ),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
     );
   }
 
   static FilledButtonThemeData _filledButtonTheme() {
     return FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        minimumSize: const Size(44, 44),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        minimumSize: const Size(46, 46),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radiusSmall),
         ),
@@ -533,8 +619,8 @@ class AppTheme {
   static OutlinedButtonThemeData _outlinedButtonTheme(Color outline) {
     return OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        minimumSize: const Size(44, 44),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        minimumSize: const Size(46, 46),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
         side: BorderSide(color: outline),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radiusSmall),
@@ -566,6 +652,7 @@ class AppTheme {
     return IconButtonThemeData(
       style: IconButton.styleFrom(
         foregroundColor: foreground,
+        minimumSize: const Size(42, 42),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radiusSmall),
         ),
@@ -581,7 +668,7 @@ class AppTheme {
   }) {
     return ChipThemeData(
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(radiusSmall),
+        borderRadius: BorderRadius.circular(radiusPill),
       ),
       side: BorderSide(color: outline),
       backgroundColor: background,
@@ -591,7 +678,7 @@ class AppTheme {
         fontWeight: FontWeight.w500,
         fontSize: 13,
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
     );
   }
 
@@ -605,7 +692,7 @@ class AppTheme {
       filled: true,
       fillColor: fill,
       isDense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 15),
       labelStyle: TextStyle(color: label, fontWeight: FontWeight.w500),
       floatingLabelStyle: TextStyle(
         color: focused,
@@ -666,9 +753,9 @@ class AppTheme {
     return PopupMenuThemeData(
       color: background,
       surfaceTintColor: Colors.transparent,
-      elevation: 2,
+      elevation: 4,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(radiusSmall),
+        borderRadius: BorderRadius.circular(radiusMedium),
       ),
     );
   }

@@ -52,12 +52,12 @@ class _ChatHeader extends StatelessWidget {
           child: BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
             child: Container(
-              padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+              padding: const EdgeInsets.fromLTRB(14, 9, 12, 9),
               decoration: BoxDecoration(
-                color: Theme.of(context).scaffoldBackgroundColor,
+                color: colorScheme.surface.withValues(alpha: 0.9),
                 border: Border(
                   bottom: BorderSide(
-                    color: colorScheme.outlineVariant.withValues(alpha: 0.4),
+                    color: colorScheme.outline.withValues(alpha: 0.72),
                   ),
                 ),
               ),
@@ -66,8 +66,15 @@ class _ChatHeader extends StatelessWidget {
                   IconButton(
                     tooltip: strings.history,
                     icon: const Icon(Icons.menu_rounded),
+                    style: IconButton.styleFrom(
+                      foregroundColor: colorScheme.primary,
+                      backgroundColor: colorScheme.primary.withValues(
+                        alpha: 0.1,
+                      ),
+                    ),
                     onPressed: onShowHistory,
                   ),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: TweenAnimationBuilder<double>(
                       key: ValueKey('chat-title-${snapshot.chatId}'),
@@ -91,8 +98,9 @@ class _ChatHeader extends StatelessWidget {
                             selectable: false,
                             maxLines: 1,
                             style: const TextStyle(
-                              fontSize: 16,
+                              fontSize: 17,
                               fontWeight: FontWeight.w800,
+                              letterSpacing: -0.2,
                             ),
                           ),
                           OverflowScrollText(
@@ -104,9 +112,7 @@ class _ChatHeader extends StatelessWidget {
                             selectable: false,
                             maxLines: 1,
                             style: TextStyle(
-                              color: colorScheme.onSurface.withValues(
-                                alpha: 0.62,
-                              ),
+                              color: colorScheme.onSurfaceVariant,
                               fontSize: 12,
                             ),
                           ),

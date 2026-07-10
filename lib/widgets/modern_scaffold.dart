@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:ssh_mobile/widgets/app_surface.dart';
+
 class ModernScaffold extends StatelessWidget {
   final String? title;
   final PreferredSizeWidget? appBar;
@@ -24,7 +26,9 @@ class ModernScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final content = Padding(padding: padding, child: body);
+    final content = AppPageSurface(
+      child: Padding(padding: padding, child: body),
+    );
 
     return Scaffold(
       appBar:

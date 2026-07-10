@@ -5,6 +5,8 @@ import 'package:provider/provider.dart';
 import 'package:ssh_mobile/features/developer_log/viewmodels/developer_log_viewmodel.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
+import 'package:ssh_mobile/theme/app_theme.dart';
+import 'package:ssh_mobile/widgets/app_surface.dart';
 import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
 
 extension _DeveloperLogStrings on AppStrings {
@@ -87,10 +89,14 @@ class _DeveloperLogToolbar extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 8, 8, 10),
+      padding: const EdgeInsets.fromLTRB(20, 14, 12, 12),
       decoration: BoxDecoration(
-        color: Theme.of(context).scaffoldBackgroundColor,
-        border: Border(bottom: BorderSide(color: colorScheme.outlineVariant)),
+        color: colorScheme.surface.withValues(alpha: 0.88),
+        border: Border(
+          bottom: BorderSide(
+            color: colorScheme.outline.withValues(alpha: 0.72),
+          ),
+        ),
       ),
       child: Column(
         children: [
@@ -102,8 +108,9 @@ class _DeveloperLogToolbar extends StatelessWidget {
                       ? strings.selectedLogs(viewModel.selectedIds.length)
                       : strings.developerLogs,
                   style: const TextStyle(
-                    fontSize: 16,
+                    fontSize: 20,
                     fontWeight: FontWeight.w800,
+                    letterSpacing: -0.3,
                   ),
                 ),
               ),
@@ -189,11 +196,19 @@ class _DeveloperLogList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (!viewModel.hasEntries) {
-      return Center(child: Text(strings.noLogs));
+      return AppEmptyState(
+        icon: Icons.article_outlined,
+        title: strings.developerLogs,
+        message: strings.noLogs,
+      );
     }
     final entries = viewModel.filteredEntries;
     if (entries.isEmpty) {
-      return Center(child: Text(strings.noLogsForLevel));
+      return AppEmptyState(
+        icon: Icons.filter_alt_off_outlined,
+        title: strings.developerLogs,
+        message: strings.noLogsForLevel,
+      );
     }
     return ListView.separated(
       scrollCacheExtent: const ScrollCacheExtent.pixels(900.0),
@@ -259,7 +274,7 @@ class _LogEntryTileState extends State<_LogEntryTile> {
     final isLong = _isLong(entry.text);
 
     return InkWell(
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
       onTap: widget.selectionMode
           ? widget.onTap
           : isLong
@@ -267,15 +282,22 @@ class _LogEntryTileState extends State<_LogEntryTile> {
           : null,
       onLongPress: widget.onLongPress,
       child: Container(
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: colorScheme.surface,
-          borderRadius: BorderRadius.circular(8),
+          color: colorScheme.surface.withValues(alpha: 0.92),
+          borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
           border: Border.all(
             color: widget.selected
                 ? colorScheme.primary
-                : colorScheme.outlineVariant,
+                : colorScheme.outline.withValues(alpha: 0.76),
           ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.025),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
