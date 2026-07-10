@@ -52,8 +52,10 @@ or maintenance lesson should be shared across Codex and Claude Code sessions.
   `AppSettings`.
 - Build primary workspaces from the shared design system in
   `lib/theme/app_theme.dart` and `lib/widgets/app_surface.dart`. Prefer
-  `AppPageSurface`, `AppPageHeader`, `AppIconBadge`, and `AppEmptyState` over
-  page-local colors, shadows, icon tiles, and empty-state layouts.
+  `AppPageSurface`, `AppPageHeader`, `AppIconBadge`, `AppSectionCard`, and
+  `AppEmptyState` over page-local colors, shadows, icon tiles, section cards,
+  and empty-state layouts. Interactive `AppSectionCard` headers must expose the
+  localized title, expanded state, tap action, and at least a 48 dp target.
 - Validate SSH credentials before saving a server.
 - Respect `serverPlatform`: Linux can use tmux; native Windows servers use plain
   SSH unless the user is really targeting WSL or another Linux-like shell.

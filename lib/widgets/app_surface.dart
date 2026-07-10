@@ -139,6 +139,126 @@ class AppPageHeader extends StatelessWidget {
   }
 }
 
+class AppSectionCard extends StatelessWidget {
+  const AppSectionCard({
+    super.key,
+    required this.title,
+    this.child,
+    this.icon,
+    this.subtitle,
+    this.trailing,
+    this.onHeaderTap,
+    this.expanded,
+    this.padding,
+    this.contentGap = 14,
+  }) : assert(
+         onHeaderTap == null || expanded != null,
+         'expanded must be provided when the header is interactive',
+       );
+
+  final String title;
+  final Widget? child;
+  final IconData? icon;
+  final String? subtitle;
+  final Widget? trailing;
+  final VoidCallback? onHeaderTap;
+  final bool? expanded;
+  final EdgeInsetsGeometry? padding;
+  final double contentGap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final effectivePadding = padding ?? const EdgeInsets.all(20);
+
+    final headerContent = Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        if (icon != null) ...[
+          AppIconBadge(icon: icon!, size: 36, iconSize: 18),
+          const SizedBox(width: 12),
+        ],
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  color: colors.primary,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0,
+                ),
+              ),
+              if (subtitle != null && subtitle!.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  subtitle!,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        if (onHeaderTap != null)
+          ExcludeSemantics(
+            child: Icon(
+              expanded! ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+              color: colors.onSurfaceVariant,
+            ),
+          )
+        else if (trailing != null) ...[
+          const SizedBox(width: 12),
+          trailing!,
+        ],
+      ],
+    );
+
+    final header = onHeaderTap == null
+        ? headerContent
+        : Semantics(
+            container: true,
+            label: title,
+            button: true,
+            expanded: expanded,
+            onTap: onHeaderTap,
+            child: ExcludeSemantics(
+              child: InkWell(
+                onTap: onHeaderTap,
+                borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 48),
+                  child: headerContent,
+                ),
+              ),
+            ),
+          );
+
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: effectivePadding,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            header,
+            if (child != null) ...[SizedBox(height: contentGap), child!],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class AppEmptyState extends StatelessWidget {
   const AppEmptyState({
     super.key,

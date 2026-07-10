@@ -42,6 +42,11 @@ unchanged for accessibility.
   semantically labeled on both profiles after applying the shared metrics. The
   1280 px profile uses slightly tighter chrome; the 1440 px profile keeps the
   standard 68 dp navigation height.
+- The connection form uses shared icon-led section cards on both profiles. Its
+  collapsible jump-host and advanced headers expose full-width semantic button
+  targets, the password visibility action is labeled, and focusing an input
+  hides the sticky save bar so the keyboard does not cover the active field.
+  Long English authentication choices wrap without overflow.
 - The first-launch background-service guide and less common routes still need a
   consistency pass against the shared page-surface components.
 - Cold startup remained on the native black launch surface for a noticeable

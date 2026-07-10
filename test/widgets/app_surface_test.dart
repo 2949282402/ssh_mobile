@@ -75,4 +75,64 @@ void main() {
     expect(find.byIcon(Icons.dns_rounded), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('section card exposes a full expandable header target', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    try {
+      var expanded = false;
+
+      await tester.pumpWidget(
+        host(
+          StatefulBuilder(
+            builder: (context, setState) => SizedBox(
+              width: 320,
+              child: AppSectionCard(
+                title: 'Advanced options',
+                icon: Icons.tune_rounded,
+                expanded: expanded,
+                onHeaderTap: () => setState(() => expanded = !expanded),
+                child: expanded ? const Text('Keep alive') : null,
+              ),
+            ),
+          ),
+        ),
+      );
+      final header = find.byWidgetPredicate(
+        (widget) =>
+            widget is Semantics &&
+            widget.properties.label == 'Advanced options',
+      );
+
+      expect(find.text('Keep alive'), findsNothing);
+      expect(
+        tester.getSemantics(header),
+        matchesSemantics(
+          label: 'Advanced options',
+          isButton: true,
+          hasExpandedState: true,
+          hasTapAction: true,
+        ),
+      );
+
+      await tester.tap(header);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Keep alive'), findsOneWidget);
+      expect(
+        tester.getSemantics(header),
+        matchesSemantics(
+          label: 'Advanced options',
+          isButton: true,
+          hasExpandedState: true,
+          isExpanded: true,
+          hasTapAction: true,
+        ),
+      );
+      expect(tester.takeException(), isNull);
+    } finally {
+      semantics.dispose();
+    }
+  });
 }

@@ -140,6 +140,13 @@ class _AddEditScreenState extends State<AddEditScreen> {
     );
 
     final isDesktop = isDesktopLayout(context);
+    final mobileMetrics = mobileUiMetricsOf(context);
+    final layoutScale = isDesktop ? 1.0 : mobileMetrics.controlScale;
+    final outerPadding = isDesktop
+        ? AppTheme.pagePadding
+        : 16 * mobileMetrics.chromeScale;
+    final cardPadding = EdgeInsets.all(20 * layoutScale);
+    final sectionGap = 14 * layoutScale;
 
     final portAndUserRow = isDesktop
         ? Row(
@@ -184,7 +191,12 @@ class _AddEditScreenState extends State<AddEditScreen> {
       ),
       child: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+          padding: EdgeInsets.fromLTRB(
+            outerPadding,
+            8 * layoutScale,
+            outerPadding,
+            10 * layoutScale,
+          ),
           child: Center(
             heightFactor: 1,
             child: ConstrainedBox(
@@ -238,37 +250,36 @@ class _AddEditScreenState extends State<AddEditScreen> {
                   child: Form(
                     key: _formKey,
                     child: ListView(
-                      padding: const EdgeInsets.fromLTRB(
-                        AppTheme.pagePadding,
-                        18,
-                        AppTheme.pagePadding,
-                        30,
+                      padding: EdgeInsets.fromLTRB(
+                        outerPadding,
+                        14 * layoutScale,
+                        outerPadding,
+                        24 * layoutScale,
                       ),
                       children: [
                         // 基础信息分组
                         Padding(
-                          padding: const EdgeInsets.only(bottom: 16),
-                          child: ShadCard(
-                            title: _section(strings.basicInfo),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const SizedBox(height: 10),
-                                _buildNameField(),
-                              ],
-                            ),
+                          padding: EdgeInsets.only(bottom: sectionGap),
+                          child: AppSectionCard(
+                            title: strings.basicInfo,
+                            icon: Icons.badge_outlined,
+                            padding: cardPadding,
+                            contentGap: 12 * layoutScale,
+                            child: _buildNameField(),
                           ),
                         ),
 
                         // 连接信息分组
                         Padding(
-                          padding: const EdgeInsets.only(bottom: 16),
-                          child: ShadCard(
-                            title: _section(strings.connectionInfo),
+                          padding: EdgeInsets.only(bottom: sectionGap),
+                          child: AppSectionCard(
+                            title: strings.connectionInfo,
+                            icon: Icons.lan_outlined,
+                            padding: cardPadding,
+                            contentGap: 12 * layoutScale,
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const SizedBox(height: 10),
                                 _buildHostField(),
                                 const SizedBox(height: 12),
                                 portAndUserRow,
@@ -279,13 +290,15 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
                         // 认证信息分组
                         Padding(
-                          padding: const EdgeInsets.only(bottom: 16),
-                          child: ShadCard(
-                            title: _section(strings.authMethod),
+                          padding: EdgeInsets.only(bottom: sectionGap),
+                          child: AppSectionCard(
+                            title: strings.authMethod,
+                            icon: Icons.shield_outlined,
+                            padding: cardPadding,
+                            contentGap: 12 * layoutScale,
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const SizedBox(height: 10),
                                 _buildAuthMethodSelector(),
                                 const SizedBox(height: 12),
                                 if (_authMethod == AuthMethod.password ||
@@ -305,67 +318,48 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
                         // 跳板机分组（默认折叠）
                         Padding(
-                          padding: const EdgeInsets.only(bottom: 16),
-                          child: ShadCard(
-                            title: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                _section(strings.jumpHostOptional),
-                                IconButton(
-                                  icon: Icon(
-                                    _jumpHostExpanded
-                                        ? Icons.expand_less_rounded
-                                        : Icons.expand_more_rounded,
-                                  ),
-                                  onPressed: () => setState(
-                                    () =>
-                                        _jumpHostExpanded = !_jumpHostExpanded,
-                                  ),
-                                ),
-                              ],
+                          padding: EdgeInsets.only(bottom: sectionGap),
+                          child: AppSectionCard(
+                            title: strings.jumpHostOptional,
+                            icon: Icons.hub_outlined,
+                            padding: cardPadding,
+                            contentGap: 12 * layoutScale,
+                            expanded: _jumpHostExpanded,
+                            onHeaderTap: () => setState(
+                              () => _jumpHostExpanded = !_jumpHostExpanded,
                             ),
                             child: _jumpHostExpanded
                                 ? Column(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      const SizedBox(height: 10),
                                       _buildJumpHostField(),
                                       const SizedBox(height: 12),
                                       jumpPortAndUserRow,
                                     ],
                                   )
-                                : const SizedBox.shrink(),
+                                : null,
                           ),
                         ),
 
                         // 高级选项分组（默认折叠）
                         Padding(
-                          padding: const EdgeInsets.only(bottom: 16),
-                          child: ShadCard(
-                            title: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                _section(strings.advancedOptions),
-                                IconButton(
-                                  icon: Icon(
-                                    _advancedOptionsExpanded
-                                        ? Icons.expand_less_rounded
-                                        : Icons.expand_more_rounded,
-                                  ),
-                                  onPressed: () => setState(
-                                    () => _advancedOptionsExpanded =
-                                        !_advancedOptionsExpanded,
-                                  ),
-                                ),
-                              ],
+                          padding: EdgeInsets.only(bottom: sectionGap),
+                          child: AppSectionCard(
+                            title: strings.advancedOptions,
+                            icon: Icons.tune_rounded,
+                            padding: cardPadding,
+                            contentGap: 12 * layoutScale,
+                            expanded: _advancedOptionsExpanded,
+                            onHeaderTap: () => setState(
+                              () => _advancedOptionsExpanded =
+                                  !_advancedOptionsExpanded,
                             ),
                             child: _advancedOptionsExpanded
                                 ? Column(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      const SizedBox(height: 10),
                                       _buildServerPlatformSelector(),
                                       const SizedBox(height: 16),
                                       _buildLaunchModeSelector(),
@@ -378,7 +372,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
                                       _buildKeepAliveSwitch(),
                                     ],
                                   )
-                                : const SizedBox.shrink(),
+                                : null,
                           ),
                         ),
                       ],
@@ -386,18 +380,6 @@ class _AddEditScreenState extends State<AddEditScreen> {
                   ),
                 ),
               ),
-      ),
-    );
-  }
-
-  Widget _section(String title) {
-    return Text(
-      title,
-      style: TextStyle(
-        fontSize: 13,
-        fontWeight: FontWeight.w800,
-        color: Theme.of(context).colorScheme.primary,
-        letterSpacing: 0.6,
       ),
     );
   }
@@ -481,6 +463,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
         ChoiceChip(
           label: Text(strings.password),
           avatar: const Icon(Icons.lock_outline, size: 16),
+          showCheckmark: false,
           selected: _authMethod == AuthMethod.password,
           onSelected: (selected) {
             if (selected) setState(() => _authMethod = AuthMethod.password);
@@ -489,6 +472,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
         ChoiceChip(
           label: Text(strings.privateKey),
           avatar: const Icon(Icons.key, size: 16),
+          showCheckmark: false,
           selected: _authMethod == AuthMethod.privateKey,
           onSelected: (selected) {
             if (selected) setState(() => _authMethod = AuthMethod.privateKey);
@@ -497,6 +481,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
         ChoiceChip(
           label: Text(strings.privateKeyPassword),
           avatar: const Icon(Icons.enhanced_encryption, size: 16),
+          showCheckmark: false,
           selected: _authMethod == AuthMethod.both,
           onSelected: (selected) {
             if (selected) setState(() => _authMethod = AuthMethod.both);
@@ -519,6 +504,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
         child: Icon(Icons.lock_outline, size: 18),
       ),
       trailing: IconButton(
+        tooltip: _obscurePassword ? strings.showPassword : strings.hidePassword,
         icon: Icon(
           _obscurePassword ? Icons.visibility_off : Icons.visibility,
           size: 18,
@@ -526,7 +512,9 @@ class _AddEditScreenState extends State<AddEditScreen> {
         onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
       ),
       validator: (value) {
-        if (_authMethod == AuthMethod.password && value.trim().isEmpty) {
+        if ((_authMethod == AuthMethod.password ||
+                _authMethod == AuthMethod.both) &&
+            value.trim().isEmpty) {
           return strings.passwordRequired;
         }
         return null;
@@ -574,7 +562,9 @@ class _AddEditScreenState extends State<AddEditScreen> {
             child: Icon(Icons.key, size: 18),
           ),
           validator: (value) {
-            if (_authMethod == AuthMethod.privateKey && value.trim().isEmpty) {
+            if ((_authMethod == AuthMethod.privateKey ||
+                    _authMethod == AuthMethod.both) &&
+                value.trim().isEmpty) {
               return strings.privateKeyRequired;
             }
             return null;
@@ -605,6 +595,15 @@ class _AddEditScreenState extends State<AddEditScreen> {
       controller: _jumpPortController,
       label: Text(strings.jumpPort),
       placeholder: const Text('22'),
+      keyboardType: TextInputType.number,
+      validator: (value) {
+        if (_jumpHostController.text.trim().isEmpty) return null;
+        final port = int.tryParse(value.trim());
+        if (port == null || port < 1 || port > 65535) {
+          return strings.invalidPort;
+        }
+        return null;
+      },
     );
   }
 
@@ -756,7 +755,6 @@ class _AddEditScreenState extends State<AddEditScreen> {
           style: const TextStyle(fontSize: 12),
         ),
         value: _keepAlive,
-        activeThumbColor: Theme.of(context).colorScheme.secondary,
         onChanged: (value) => setState(() => _keepAlive = value),
       ),
     );

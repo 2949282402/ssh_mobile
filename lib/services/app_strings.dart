@@ -95,6 +95,8 @@ class AppStrings {
   String get privateKey => _en ? 'Private key' : '私钥';
   String get privateKeyPassword => _en ? 'Private key + password' : '私钥+密码';
   String get passwordHint => _en ? 'Enter SSH password' : '输入 SSH 密码';
+  String get showPassword => _en ? 'Show password' : '显示密码';
+  String get hidePassword => _en ? 'Hide password' : '隐藏密码';
   String get passwordRequired =>
       _en ? 'Password authentication requires a password' : '密码认证需要输入密码';
   String get sshPrivateKey => _en ? 'SSH private key' : 'SSH 私钥';

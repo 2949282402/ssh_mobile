@@ -27,9 +27,11 @@ across sessions.
   user's system text scale.
 - 2026-07-10: Primary UI workspaces share the modern design system in
   `lib/theme/app_theme.dart` and `lib/widgets/app_surface.dart`. Reuse
-  `AppPageSurface`, `AppPageHeader`, `AppIconBadge`, and `AppEmptyState`
-  instead of introducing page-local palette, shadows, icon tiles, or empty
-  states. Main navigation is Servers, SFTP, AI, System Admin, Logs; desktop app
+  `AppPageSurface`, `AppPageHeader`, `AppIconBadge`, `AppSectionCard`, and
+  `AppEmptyState` instead of introducing page-local palette, shadows, icon
+  tiles, section cards, or empty states. Interactive section headers expose a
+  localized button label, expanded state, tap action, and at least a 48 dp
+  target. Main navigation is Servers, SFTP, AI, System Admin, Logs; desktop app
   settings open from the rail on every main page, while AI settings remain
   separate.
 - 2026-07-10: Portfolio hardening pins the Dart/Flutter dependency baseline,
