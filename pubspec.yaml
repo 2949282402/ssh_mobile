@@ -34,7 +34,7 @@ dependencies:
   animations: ^2.2.0
   drift: ^2.34.0
   drift_flutter: ^0.3.0
-  shadcn_ui: ^0.50.3
+  shadcn_ui: ^0.55.0
   flutter_animate: ^4.5.2
   http: ^1.6.0
   archive: ^4.0.9
