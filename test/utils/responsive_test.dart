@@ -11,6 +11,12 @@ void main() {
     expect(supportsServerGridForWidth(720), isTrue);
     expect(usesExpandedLayoutForWidth(839.9), isFalse);
     expect(usesExpandedLayoutForWidth(840), isTrue);
+    expect(settingsDrawerWidthFor(viewportWidth: 280, desktop: false), 280);
+    expect(
+      settingsDrawerWidthFor(viewportWidth: 411, desktop: false),
+      closeTo(378.12, 0.001),
+    );
+    expect(settingsDrawerWidthFor(viewportWidth: 1600, desktop: true), 560);
   });
 
   group('MobileUiMetrics', () {

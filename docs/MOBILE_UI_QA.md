@@ -54,6 +54,11 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
 - Both landscape profiles exceed 840 dp width but remain below 480 dp height,
   so they consistently use the icon-only compact rail. All five destinations
   plus Settings remain visible with no RenderFlex overflow on either AVD.
+- The Settings drawer stays within both portrait viewports and removes the
+  duplicate in-panel page header. Language exposes one semantic button with
+  its current value, the list/grid control remains on one line in Chinese and
+  English, custom-font helper text may wrap to two lines, cache timeout displays
+  its value only once, and the final import row clears the gesture inset.
 - The connection form uses shared icon-led section cards on both profiles. Its
   collapsible jump-host and advanced headers expose full-width semantic button
   targets, the password visibility action is labeled, and focusing an input

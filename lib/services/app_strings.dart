@@ -10,6 +10,9 @@ class AppStrings {
   String get appTitle => 'SSH Mobile';
   String get switchToChinese => '中文';
   String get switchToEnglish => 'EN';
+  String get languageLabel => _en ? 'Language' : '语言';
+  String get currentLanguageName => _en ? 'English' : '中文';
+  String get defaultOption => _en ? 'Default' : '默认';
   String get switchToLightMode => _en ? 'Switch to light mode' : '切换到浅色主题';
   String get switchToDarkMode => _en ? 'Switch to dark mode' : '切换到深色主题';
   String get oledDarkMode => _en ? 'OLED Black Mode' : 'OLED 纯黑模式';

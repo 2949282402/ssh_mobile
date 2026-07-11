@@ -584,14 +584,14 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildSettingsDrawer(BuildContext context, AppStrings strings) {
     final viewportWidth = MediaQuery.sizeOf(context).width;
     final desktop = isDesktopLayout(context);
-    final width = (viewportWidth * (desktop ? 0.46 : 0.92))
-        .clamp(320.0, desktop ? 560.0 : 420.0)
-        .toDouble();
+    final width = settingsDrawerWidthFor(
+      viewportWidth: viewportWidth,
+      desktop: desktop,
+    );
     return SizedBox(
       width: width,
       child: Drawer(
         child: _SettingsPage(
-          appTitle: strings.appTitle,
           onExport: () => _exportAppData(context, strings),
           onImport: () => _importAppData(context, strings),
         ),

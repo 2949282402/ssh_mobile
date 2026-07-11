@@ -62,13 +62,12 @@ extension _HomeSettingsStrings on AppStrings {
   String get security => language == AppLanguage.en ? 'Security' : '安全';
   String get credentialCache => language == AppLanguage.en
       ? 'Cache SSH credentials in memory'
-      : '缓存 SSH 凭证到内存。';
+      : '缓存 SSH 凭证到内存';
   String get credentialCacheHint => language == AppLanguage.en
       ? 'Reduce repeated Keychain prompts by caching passwords, private keys, and API keys in-memory during this session.'
       : '在本次会话内缓存密码、私钥和 API Key，可减少重复的密钥链弹窗。';
-  String credentialCacheTimeoutLabel(int minutes) => language == AppLanguage.en
-      ? 'Cache timeout (${minutes}m)'
-      : '缓存时长 (${minutes}m)';
+  String get credentialCacheTimeout =>
+      language == AppLanguage.en ? 'Cache timeout' : '缓存时长';
   String get notificationServerNames => language == AppLanguage.en
       ? 'Show server names in background notifications'
       : '后台通知显示服务器名';

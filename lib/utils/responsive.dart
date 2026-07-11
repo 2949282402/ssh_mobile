@@ -86,6 +86,16 @@ bool usesExpandedLayoutForWidth(double width) {
   return width >= AppBreakpoints.desktop;
 }
 
+double settingsDrawerWidthFor({
+  required double viewportWidth,
+  required bool desktop,
+}) {
+  final desiredWidth = (viewportWidth * (desktop ? 0.46 : 0.92))
+      .clamp(320.0, desktop ? 560.0 : 420.0)
+      .toDouble();
+  return desiredWidth > viewportWidth ? viewportWidth : desiredWidth;
+}
+
 bool isDesktopLayout(BuildContext context) {
   final width = MediaQuery.sizeOf(context).width;
   return usesExpandedLayoutForWidth(width) ||

@@ -252,6 +252,11 @@ its child widgets.
   drag handles also stay 48 dp even when visual content uses mobile density
   correction; reserve enough bottom scroll padding for app navigation and the
   system inset.
+- Compute drawer width with `settingsDrawerWidthFor` so viewports below 320 dp
+  are never over-constrained. Settings lists add `MediaQuery.viewPadding.bottom`
+  to their final padding, language rows announce the localized label and current
+  value, and segmented layout choices use the available row width instead of a
+  fixed trailing box.
 - Backup/import/export covers saved servers, restorable windows, terminal
   history, AI settings, AI chats, AgentRunMetrics, Playbooks, SFTP
   recent/favorite paths, and custom skills, but never passwords, private keys,

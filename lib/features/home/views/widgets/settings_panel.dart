@@ -1,15 +1,10 @@
 part of '../home_screen.dart';
 
 class _SettingsPanel extends StatefulWidget {
-  final String appTitle;
   final VoidCallback onExport;
   final VoidCallback onImport;
 
-  const _SettingsPanel({
-    required this.appTitle,
-    required this.onExport,
-    required this.onImport,
-  });
+  const _SettingsPanel({required this.onExport, required this.onImport});
 
   @override
   State<_SettingsPanel> createState() => _SettingsPanelState();
@@ -265,6 +260,7 @@ class _SettingsPanelState extends State<_SettingsPanel> {
     final settings = context.read<SettingsViewModel>();
     final strings = AppStrings(appSnapshot.language);
     final colorScheme = Theme.of(context).colorScheme;
+    final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
     _syncMcpPortController(settings);
 
     if (_lastSyncedTerminalFont != appSnapshot.terminalFontFamily) {
@@ -285,14 +281,8 @@ class _SettingsPanelState extends State<_SettingsPanel> {
       child: DefaultTextStyle.merge(
         style: const TextStyle(fontSize: 14),
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 30),
+          padding: EdgeInsets.fromLTRB(18, 14, 18, 20 + bottomInset),
           children: [
-            AppPageHeader(
-              title: widget.appTitle,
-              subtitle: strings.settings,
-              icon: Icons.tune_rounded,
-            ),
-            const SizedBox(height: 18),
             _AppearanceSettingsSection(
               appSnapshot: appSnapshot,
               strings: strings,
@@ -545,15 +535,10 @@ class _SettingsMcpSnapshot {
 }
 
 class _SettingsPage extends StatelessWidget {
-  final String appTitle;
   final VoidCallback onExport;
   final VoidCallback onImport;
 
-  const _SettingsPage({
-    required this.appTitle,
-    required this.onExport,
-    required this.onImport,
-  });
+  const _SettingsPage({required this.onExport, required this.onImport});
 
   @override
   Widget build(BuildContext context) {
@@ -573,11 +558,7 @@ class _SettingsPage extends StatelessWidget {
         ),
       ),
       body: AppPageSurface(
-        child: _SettingsPanel(
-          appTitle: appTitle,
-          onExport: onExport,
-          onImport: onImport,
-        ),
+        child: _SettingsPanel(onExport: onExport, onImport: onImport),
       ),
     );
   }

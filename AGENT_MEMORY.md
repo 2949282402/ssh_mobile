@@ -19,6 +19,11 @@ across sessions.
 
 ## Notes
 
+- 2026-07-11: Settings drawers use `settingsDrawerWidthFor` and cannot exceed
+  the viewport. Their scroll padding includes the system bottom inset; language
+  rows expose the localized label plus current value, and the Servers
+  list/grid selector is full-width so Chinese, English, and larger text do not
+  wrap into vertical fragments.
 - 2026-07-10: `MobileUiMetrics` in `lib/utils/responsive.dart` is the single
   source for mobile control, chrome, and visual-density correction. It
   interpolates physical short edges from 1280 to 1440 px: the 1.5K baseline

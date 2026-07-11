@@ -99,22 +99,45 @@ class _AppearanceSettingsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    void changeLanguage() {
+      settings.changeLanguage(
+        settings.language == AppLanguage.en ? AppLanguage.zh : AppLanguage.en,
+      );
+    }
+
     return _SettingsSection(
       title: strings.appearance,
       children: [
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.translate_rounded, size: 20),
-          title: Text(
-            appSnapshot.isEnglish
-                ? strings.switchToChinese
-                : strings.switchToEnglish,
-            style: const TextStyle(fontSize: 13),
-          ),
-          onTap: () => settings.changeLanguage(
-            settings.language == AppLanguage.en
-                ? AppLanguage.zh
-                : AppLanguage.en,
+        Semantics(
+          container: true,
+          button: true,
+          label: '${strings.languageLabel}: ${strings.currentLanguageName}',
+          onTap: changeLanguage,
+          child: ExcludeSemantics(
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.translate_rounded, size: 20),
+              title: Text(
+                strings.languageLabel,
+                style: const TextStyle(fontSize: 13),
+              ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    strings.currentLanguageName,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  const Icon(Icons.chevron_right_rounded, size: 18),
+                ],
+              ),
+              onTap: changeLanguage,
+            ),
           ),
         ),
         SwitchListTile(
@@ -160,12 +183,21 @@ class _AppearanceSettingsSection extends StatelessWidget {
                 isDense: true,
                 isExpanded: true,
                 value: appSnapshot.terminalThemeId,
-                items: const [
-                  DropdownMenuItem(value: 'default', child: Text('Default')),
-                  DropdownMenuItem(value: 'monokai', child: Text('Monokai')),
-                  DropdownMenuItem(value: 'nord', child: Text('Nord')),
-                  DropdownMenuItem(value: 'gruvbox', child: Text('Gruvbox')),
+                items: [
                   DropdownMenuItem(
+                    value: 'default',
+                    child: Text(strings.defaultOption),
+                  ),
+                  const DropdownMenuItem(
+                    value: 'monokai',
+                    child: Text('Monokai'),
+                  ),
+                  const DropdownMenuItem(value: 'nord', child: Text('Nord')),
+                  const DropdownMenuItem(
+                    value: 'gruvbox',
+                    child: Text('Gruvbox'),
+                  ),
+                  const DropdownMenuItem(
                     value: 'solarized',
                     child: Text('Solarized Dark'),
                   ),
@@ -189,39 +221,45 @@ class _AppearanceSettingsSection extends StatelessWidget {
               isDense: true,
               labelText: strings.customTerminalFont,
               helperText: strings.customTerminalFontHint,
+              helperMaxLines: 2,
               border: const OutlineInputBorder(),
             ),
             onChanged: onTerminalFontChanged,
           ),
         ),
         const Divider(height: 18),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.grid_view, size: 20),
-          title: Text(
-            strings.serverListLayout,
-            style: const TextStyle(fontSize: 13),
-          ),
-          trailing: SizedBox(
-            width: 140,
-            child: SegmentedButton<String>(
-              segments: [
-                ButtonSegment(
-                  value: 'list',
-                  label: Text(strings.layoutList),
-                  icon: const Icon(Icons.list, size: 16),
-                ),
-                ButtonSegment(
-                  value: 'grid',
-                  label: Text(strings.layoutGrid),
-                  icon: const Icon(Icons.grid_on, size: 16),
-                ),
-              ],
-              selected: {appSnapshot.serverListLayoutMode},
-              onSelectionChanged: (selection) {
-                settings.setServerListLayoutMode(selection.first);
-              },
+        Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.grid_view, size: 20),
+            title: Text(
+              strings.serverListLayout,
+              style: const TextStyle(fontSize: 13),
             ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(left: 30, bottom: 6),
+          child: SegmentedButton<String>(
+            expandedInsets: EdgeInsets.zero,
+            showSelectedIcon: false,
+            segments: [
+              ButtonSegment(
+                value: 'list',
+                label: Text(strings.layoutList),
+                icon: const Icon(Icons.list_rounded, size: 16),
+              ),
+              ButtonSegment(
+                value: 'grid',
+                label: Text(strings.layoutGrid),
+                icon: const Icon(Icons.grid_view_rounded, size: 16),
+              ),
+            ],
+            selected: {appSnapshot.serverListLayoutMode},
+            onSelectionChanged: (selection) {
+              settings.setServerListLayoutMode(selection.first);
+            },
           ),
         ),
       ],
@@ -545,9 +583,7 @@ class _SecuritySettingsSection extends StatelessWidget {
           contentPadding: EdgeInsets.zero,
           leading: const Icon(Icons.timer_outlined, size: 20),
           title: Text(
-            strings.credentialCacheTimeoutLabel(
-              secretSnapshot.cacheTimeoutMinutes,
-            ),
+            strings.credentialCacheTimeout,
             style: const TextStyle(fontSize: 13),
           ),
           trailing: SizedBox(
