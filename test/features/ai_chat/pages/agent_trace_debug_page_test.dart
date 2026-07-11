@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -107,6 +108,194 @@ void main() {
     await tester.tap(find.textContaining('Tool result: run_command'));
     await tester.pumpAndSettle();
     expect(find.textContaining('uptime ok'), findsWidgets);
+  });
+
+  testWidgets('lazily builds a large trace on a narrow mobile viewport', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final database = db.AppDatabase.forTesting();
+    addTearDown(database.close);
+    final storage = StorageService(database: database);
+    addTearDown(storage.dispose);
+    await storage.init();
+
+    final now = DateTime.utc(2026, 6, 22, 10);
+    await storage.saveAgentTraceEvents([
+      for (var index = 0; index < agentTraceEventsPerRunLimit; index++)
+        AgentTraceEvent(
+          id: 'event-$index',
+          runId: 'run-large',
+          chatId: 'chat-1',
+          createdAt: now.add(Duration(milliseconds: index)),
+          sequence: index,
+          kind: 'tool_result',
+          title: 'Event $index',
+          content: 'Result $index',
+          toolName: 'run_command',
+          status: 'success',
+        ),
+    ]);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<StorageService>.value(
+        value: storage,
+        child: const MaterialApp(
+          home: AgentTraceDebugPage(chatId: 'chat-1', runId: 'run-large'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final initiallyBuilt = find.byType(ExpansionTile).evaluate().length;
+    expect(initiallyBuilt, lessThan(agentTraceEventsPerRunLimit));
+    expect(tester.takeException(), isNull);
+
+    final traceScroll = find
+        .descendant(
+          of: find.byKey(const ValueKey('agent-trace-scroll')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    final allFilter = find.byKey(const ValueKey('trace-filter-all'));
+    await tester.scrollUntilVisible(allFilter, 300, scrollable: traceScroll);
+    expect(tester.getSize(allFilter).height, greaterThanOrEqualTo(48));
+
+    final firstEvent = find.byKey(const ValueKey('trace-event-event-0'));
+    await tester.scrollUntilVisible(firstEvent, 300, scrollable: traceScroll);
+    expect(find.byType(ExpansionTile), findsAtLeastNWidgets(1));
+    expect(
+      find.byType(ExpansionTile).evaluate().length,
+      lessThan(agentTraceEventsPerRunLimit),
+    );
+
+    final lastEvent = find.byKey(const ValueKey('trace-event-event-299'));
+    await tester.scrollUntilVisible(
+      lastEvent,
+      800,
+      scrollable: traceScroll,
+      maxScrolls: 80,
+    );
+    await tester.pumpAndSettle();
+
+    expect(lastEvent, findsOneWidget);
+    expect(find.text('299. Event 299'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('bounds long raw content and keeps trace actions accessible', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    String? copiedText;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (
+      methodCall,
+    ) async {
+      if (methodCall.method == 'Clipboard.setData') {
+        copiedText =
+            (methodCall.arguments as Map<Object?, Object?>)['text'] as String?;
+      }
+      return null;
+    });
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+    );
+
+    final database = db.AppDatabase.forTesting();
+    addTearDown(database.close);
+    final storage = StorageService(database: database);
+    addTearDown(storage.dispose);
+    await storage.init();
+
+    final rawInput = List.generate(
+      160,
+      (index) => 'line $index ${List.filled(96, 'x').join()}',
+    ).join('\n');
+    final event = AgentTraceEvent(
+      id: 'event-long',
+      runId: 'run-long',
+      chatId: 'chat-1',
+      createdAt: DateTime.utc(2026, 6, 22, 10),
+      sequence: 0,
+      kind: 'tool_result',
+      title: 'Long raw event',
+      content: rawInput,
+      toolName: 'run_command',
+      status: 'success',
+    );
+    await storage.saveAgentTraceEvents([event]);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<StorageService>.value(
+        value: storage,
+        child: const MaterialApp(
+          home: AgentTraceDebugPage(chatId: 'chat-1', runId: 'run-long'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final traceScroll = find
+        .descendant(
+          of: find.byKey(const ValueKey('agent-trace-scroll')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    final expansion = find.byKey(
+      const PageStorageKey<String>('trace-expansion-event-long'),
+    );
+    await tester.scrollUntilVisible(expansion, 300, scrollable: traceScroll);
+    expect(tester.getSize(expansion).height, greaterThanOrEqualTo(48));
+    await tester.tap(find.text('0. Long raw event'));
+    await tester.pumpAndSettle();
+
+    final raw = find.byKey(const ValueKey('trace-raw-event-long'));
+    expect(raw, findsOneWidget);
+    expect(tester.getSize(raw).height, lessThanOrEqualTo(280));
+    await tester.scrollUntilVisible(raw, 300, scrollable: traceScroll);
+    await tester.pumpAndSettle();
+
+    final verticalRawScroll = find.descendant(
+      of: raw,
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is SingleChildScrollView &&
+            widget.scrollDirection == Axis.vertical,
+      ),
+    );
+    final horizontalRawScroll = find.descendant(
+      of: raw,
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is SingleChildScrollView &&
+            widget.scrollDirection == Axis.horizontal,
+      ),
+    );
+    expect(verticalRawScroll, findsOneWidget);
+    expect(horizontalRawScroll, findsOneWidget);
+    await tester.drag(verticalRawScroll, const Offset(0, -120));
+    await tester.dragFrom(
+      tester.getTopLeft(raw) + const Offset(120, 40),
+      const Offset(-120, 0),
+    );
+    await tester.pump();
+
+    final copy = find.byKey(const ValueKey('trace-copy-event-long'));
+    expect(tester.getSize(copy).height, greaterThanOrEqualTo(48));
+    await tester.tap(copy);
+    await tester.pump();
+    expect(copiedText, event.content);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('shows empty trace state', (tester) async {

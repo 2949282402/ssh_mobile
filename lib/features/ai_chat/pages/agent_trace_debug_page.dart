@@ -4,8 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../../services/app_log_service.dart';
 import '../../../services/storage_service.dart';
 import '../../../theme/app_theme.dart';
+import '../../../widgets/app_surface.dart';
+import '../../../widgets/overflow_scroll_text.dart';
 import '../models/agent_trace_event.dart';
 
 enum _TraceFilter { all, tools, approvals, blocked, errors }
@@ -35,97 +38,68 @@ class _AgentTraceDebugPageState extends State<AgentTraceDebugPage> {
   }
 
   Future<_TraceDebugData> _load() async {
-    final storage = context.read<StorageService>();
-    final events = await storage.loadAgentTraceEvents(widget.runId);
-    final metrics = await storage.loadAgentRunMetrics();
-    return _TraceDebugData(
-      events: events,
-      metrics: metrics.cast<AgentRunMetrics?>().firstWhere(
-        (metric) => metric?.id == widget.runId,
-        orElse: () => null,
-      ),
-    );
+    try {
+      final storage = context.read<StorageService>();
+      final events = await storage.loadAgentTraceEvents(widget.runId);
+      final metrics = await storage.loadAgentRunMetrics();
+      return _TraceDebugData(
+        events: events,
+        metrics: metrics.cast<AgentRunMetrics?>().firstWhere(
+          (metric) => metric?.id == widget.runId,
+          orElse: () => null,
+        ),
+      );
+    } catch (error, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to load agent trace',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  void _retry() {
+    setState(() => _future = _load());
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Agent Trace')),
-      body: FutureBuilder<_TraceDebugData>(
-        future: _future,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          final data = snapshot.data;
-          if (snapshot.hasError) {
-            return Center(
-              child: Text('Failed to load trace: ${snapshot.error}'),
-            );
-          }
-          if (data == null || (data.events.isEmpty && data.metrics == null)) {
-            return _EmptyTrace(runId: widget.runId);
-          }
-          final events = _filteredEvents(data.events);
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              _OverviewSection(
-                runId: widget.runId,
-                events: data.events,
-                metrics: data.metrics,
-              ),
-              const SizedBox(height: 14),
-              if (data.events.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 36),
-                  child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.account_tree_outlined, size: 42),
-                        const SizedBox(height: 12),
-                        const Text(
-                          'No persisted trace events found for this run.',
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          widget.runId,
-                          style: TextStyle(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              else ...[
-                _FilterBar(
-                  selected: _filter,
-                  onSelected: (value) => setState(() => _filter = value),
+      body: AppPageSurface(
+        child: FutureBuilder<_TraceDebugData>(
+          future: _future,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            final data = snapshot.data;
+            if (snapshot.hasError) {
+              return AppEmptyState(
+                icon: Icons.error_outline_rounded,
+                title: 'Failed to load trace',
+                message: 'Trace data could not be loaded. Try again.',
+                action: FilledButton.icon(
+                  style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
+                  onPressed: _retry,
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('Retry'),
                 ),
-                const SizedBox(height: 10),
-                if (events.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 36),
-                    child: Center(child: Text('No events match this filter.')),
-                  )
-                else
-                  for (final event in events)
-                    _TraceTimelineItem(
-                      event: event,
-                      offset: event.createdAt.difference(
-                        data.events.first.createdAt,
-                      ),
-                    ),
-              ],
-            ],
-          );
-        },
+              );
+            }
+            if (data == null || (data.events.isEmpty && data.metrics == null)) {
+              return _EmptyTrace(runId: widget.runId);
+            }
+            return _TraceDebugBody(
+              runId: widget.runId,
+              data: data,
+              events: _filteredEvents(data.events),
+              selectedFilter: _filter,
+              onFilterSelected: (value) => setState(() => _filter = value),
+            );
+          },
+        ),
       ),
     );
   }
@@ -163,6 +137,135 @@ class _TraceDebugData {
   const _TraceDebugData({required this.events, required this.metrics});
 }
 
+class _TraceDebugBody extends StatelessWidget {
+  final String runId;
+  final _TraceDebugData data;
+  final List<AgentTraceEvent> events;
+  final _TraceFilter selectedFilter;
+  final ValueChanged<_TraceFilter> onFilterSelected;
+
+  const _TraceDebugBody({
+    required this.runId,
+    required this.data,
+    required this.events,
+    required this.selectedFilter,
+    required this.onFilterSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final horizontalPadding = MediaQuery.sizeOf(context).width < 600
+        ? AppTheme.compactPagePadding
+        : AppTheme.pagePadding;
+    final bottomPadding = MediaQuery.paddingOf(context).bottom + 16;
+
+    return CustomScrollView(
+      key: const ValueKey('agent-trace-scroll'),
+      slivers: [
+        SliverPadding(
+          padding: EdgeInsets.fromLTRB(
+            horizontalPadding,
+            horizontalPadding,
+            horizontalPadding,
+            0,
+          ),
+          sliver: SliverToBoxAdapter(
+            child: _TraceContentWidth(
+              child: _OverviewSection(
+                runId: runId,
+                events: data.events,
+                metrics: data.metrics,
+              ),
+            ),
+          ),
+        ),
+        if (data.events.isEmpty)
+          SliverPadding(
+            padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+            sliver: SliverToBoxAdapter(
+              child: _TraceContentWidth(child: _EmptyTrace(runId: runId)),
+            ),
+          )
+        else ...[
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(
+              horizontalPadding,
+              14,
+              horizontalPadding,
+              0,
+            ),
+            sliver: SliverToBoxAdapter(
+              child: _TraceContentWidth(
+                child: _FilterBar(
+                  selected: selectedFilter,
+                  onSelected: onFilterSelected,
+                ),
+              ),
+            ),
+          ),
+          if (events.isEmpty)
+            SliverPadding(
+              padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+              sliver: const SliverToBoxAdapter(
+                child: _TraceContentWidth(
+                  child: AppEmptyState(
+                    icon: Icons.filter_alt_off_outlined,
+                    title: 'No matching events',
+                    message: 'No events match this filter.',
+                    compact: true,
+                    contained: false,
+                  ),
+                ),
+              ),
+            )
+          else
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                10,
+                horizontalPadding,
+                0,
+              ),
+              sliver: SliverList.builder(
+                itemCount: events.length,
+                itemBuilder: (context, index) {
+                  final event = events[index];
+                  return _TraceContentWidth(
+                    key: ValueKey('trace-event-${event.id}'),
+                    child: _TraceTimelineItem(
+                      key: ValueKey(event.id),
+                      event: event,
+                      offset: event.createdAt.difference(
+                        data.events.first.createdAt,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+        ],
+        SliverToBoxAdapter(child: SizedBox(height: bottomPadding)),
+      ],
+    );
+  }
+}
+
+class _TraceContentWidth extends StatelessWidget {
+  final Widget child;
+
+  const _TraceContentWidth({super.key, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 900),
+        child: SizedBox(width: double.infinity, child: child),
+      ),
+    );
+  }
+}
+
 class _OverviewSection extends StatelessWidget {
   final String runId;
   final List<AgentTraceEvent> events;
@@ -176,7 +279,6 @@ class _OverviewSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     final summary = _summaryJson(events);
     final finalOutcome = summary['finalOutcome'] as String?;
     final selectedTools = (metrics?.selectedToolSet.isNotEmpty == true)
@@ -185,30 +287,15 @@ class _OverviewSection extends StatelessWidget {
     final memorySources = (metrics?.memorySources.isNotEmpty == true)
         ? metrics!.memorySources
         : _stringList(summary['memorySources']);
-    return Container(
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.32),
-        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-        border: Border.all(color: colorScheme.outlineVariant),
-      ),
+    return AppSectionCard(
+      title: 'Overview',
+      icon: Icons.analytics_outlined,
+      trailing: Text('${events.length} events'),
       padding: const EdgeInsets.all(14),
+      contentGap: 10,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(Icons.analytics_outlined, color: colorScheme.primary),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'Overview',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-                ),
-              ),
-              Text('${events.length} events'),
-            ],
-          ),
-          const Divider(height: 18),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -363,9 +450,12 @@ class _FilterBar extends StatelessWidget {
       children: [
         for (final value in _TraceFilter.values)
           ChoiceChip(
+            key: ValueKey('trace-filter-${value.name}'),
             label: Text(_filterLabel(value)),
             selected: selected == value,
             onSelected: (_) => onSelected(value),
+            visualDensity: VisualDensity.standard,
+            materialTapTargetSize: MaterialTapTargetSize.padded,
           ),
       ],
     );
@@ -376,7 +466,11 @@ class _TraceTimelineItem extends StatelessWidget {
   final AgentTraceEvent event;
   final Duration offset;
 
-  const _TraceTimelineItem({required this.event, required this.offset});
+  const _TraceTimelineItem({
+    super.key,
+    required this.event,
+    required this.offset,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -394,6 +488,8 @@ class _TraceTimelineItem extends StatelessWidget {
             side: BorderSide(color: colorScheme.outlineVariant),
           ),
           child: ExpansionTile(
+            key: PageStorageKey<String>('trace-expansion-${event.id}'),
+            minTileHeight: 48,
             tilePadding: const EdgeInsets.symmetric(horizontal: 12),
             childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
             leading: Icon(
@@ -433,17 +529,14 @@ class _TraceTimelineItem extends StatelessWidget {
               ],
             ),
             children: [
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  preview,
-                  style: TextStyle(color: colorScheme.onSurfaceVariant),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Row(
+              Wrap(
+                alignment: WrapAlignment.start,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
                 children: [
                   TextButton.icon(
+                    key: ValueKey('trace-copy-${event.id}'),
+                    style: TextButton.styleFrom(minimumSize: const Size(0, 48)),
                     onPressed: () {
                       Clipboard.setData(ClipboardData(text: event.content));
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -454,40 +547,77 @@ class _TraceTimelineItem extends StatelessWidget {
                     label: const Text('Copy raw'),
                   ),
                   if (event.truncated)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8),
-                      child: Text(
-                        'truncated',
-                        style: TextStyle(color: colorScheme.error),
-                      ),
+                    Text(
+                      'truncated',
+                      style: TextStyle(color: colorScheme.error),
                     ),
                 ],
               ),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: colorScheme.surfaceContainerHighest.withValues(
-                    alpha: 0.4,
-                  ),
-                  borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                ),
-                child: SelectableText(
-                  event.content.isEmpty ? '-' : event.content,
-                  style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontFamilyFallback: [
-                      'Consolas',
-                      'Microsoft YaHei',
-                      'PingFang SC',
-                      'sans-serif',
-                    ],
-                    fontSize: 12,
-                    height: 1.35,
-                  ),
-                ),
+              _TraceRawContent(
+                key: ValueKey('trace-raw-content-${event.id}'),
+                event: event,
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TraceRawContent extends StatefulWidget {
+  final AgentTraceEvent event;
+
+  const _TraceRawContent({super.key, required this.event});
+
+  @override
+  State<_TraceRawContent> createState() => _TraceRawContentState();
+}
+
+class _TraceRawContentState extends State<_TraceRawContent> {
+  late final ScrollController _verticalController;
+
+  @override
+  void initState() {
+    super.initState();
+    _verticalController = ScrollController(keepScrollOffset: false);
+  }
+
+  @override
+  void dispose() {
+    _verticalController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      key: ValueKey('trace-raw-${widget.event.id}'),
+      width: double.infinity,
+      constraints: const BoxConstraints(maxHeight: 280),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+      ),
+      child: Scrollbar(
+        controller: _verticalController,
+        child: SingleChildScrollView(
+          controller: _verticalController,
+          child: OverflowScrollText(
+            widget.event.content,
+            style: const TextStyle(
+              fontFamily: 'monospace',
+              fontFamilyFallback: [
+                'Consolas',
+                'Microsoft YaHei',
+                'PingFang SC',
+                'sans-serif',
+              ],
+              fontSize: 12,
+              height: 1.35,
+            ),
           ),
         ),
       ),
@@ -504,16 +634,24 @@ class _MetricPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-      decoration: BoxDecoration(
-        color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-        border: Border.all(color: colorScheme.outlineVariant),
-      ),
-      child: Text(
-        '$label: $value',
-        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+    final maxWidth = (MediaQuery.sizeOf(context).width - 28)
+        .clamp(160.0, 420.0)
+        .toDouble();
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+        decoration: BoxDecoration(
+          color: colorScheme.surface,
+          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+          border: Border.all(color: colorScheme.outlineVariant),
+        ),
+        child: Text(
+          '$label: $value',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
       ),
     );
   }
@@ -529,6 +667,8 @@ class _SmallLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       '$label: $value',
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
       style: TextStyle(
         fontSize: 12,
         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -544,25 +684,12 @@ class _EmptyTrace extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.account_tree_outlined, size: 42),
-            const SizedBox(height: 12),
-            const Text('No persisted trace events found for this run.'),
-            const SizedBox(height: 6),
-            Text(
-              runId,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
-      ),
+    return AppEmptyState(
+      icon: Icons.account_tree_outlined,
+      title: 'No persisted trace events found for this run.',
+      message: runId,
+      compact: true,
+      contained: false,
     );
   }
 }

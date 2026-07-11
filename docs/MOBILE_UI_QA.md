@@ -95,6 +95,11 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   resubmissions without dismissing the draft. Embedded execution traces use
   bilingual 48 dp expansion rows, real Material ink surfaces, and a 280 dp
   vertically scrollable ceiling so long diagnostics do not inflate a message.
+  The standalone Agent Trace debugger uses the shared page/card surfaces and a
+  lazy sliver timeline, preserves expansion state by event ID, bounds raw JSON
+  at 280 dp with two-axis scrolling, and keeps filter/copy/retry targets at
+  48 dp. A 320 dp regression covers the 300-event retention ceiling without
+  eagerly building every row or exposing storage errors in the UI.
   Prompt customization keeps the active draft when switching type or toggling
   customization, confirms before discarding unsaved text, exposes retry/save
   failures, and reduces compact-height layouts to a 48 dp type selector plus
