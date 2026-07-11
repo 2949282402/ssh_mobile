@@ -91,6 +91,10 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   resubmissions without dismissing the draft. Embedded execution traces use
   bilingual 48 dp expansion rows, real Material ink surfaces, and a 280 dp
   vertically scrollable ceiling so long diagnostics do not inflate a message.
+  Prompt customization keeps the active draft when switching type or toggling
+  customization, confirms before discarding unsaved text, exposes retry/save
+  failures, and reduces compact-height layouts to a 48 dp type selector plus
+  the flexible editor so a landscape keyboard cannot hide the work area.
 - LLM settings intercept Android Back and the close affordance when edits are
   pending, then require an explicit discard confirmation. Saving
   temporarily disables route dismissal, while model-refresh and save failures

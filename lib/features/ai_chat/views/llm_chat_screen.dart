@@ -668,7 +668,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     await showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _PromptCustomizerDialog(strings: strings),
+      builder: (_) => PromptCustomizerDialog(strings: strings),
     );
   }
 
