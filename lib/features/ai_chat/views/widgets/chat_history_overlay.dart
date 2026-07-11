@@ -1,5 +1,29 @@
 part of '../llm_chat_screen.dart';
 
+class ChatHistoryBackScope extends StatelessWidget {
+  const ChatHistoryBackScope({
+    super.key,
+    required this.historyVisible,
+    required this.onCloseHistory,
+    required this.child,
+  });
+
+  final bool historyVisible;
+  final VoidCallback onCloseHistory;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: !historyVisible,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && historyVisible) onCloseHistory();
+      },
+      child: child,
+    );
+  }
+}
+
 class _ChatHistoryOverlay extends StatelessWidget {
   final AiStrings strings;
 
@@ -8,7 +32,7 @@ class _ChatHistoryOverlay extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = context.findAncestorStateOfType<_LlmChatScreenBodyState>()!;
-    final width = state._historyPanelWidth(context);
+    final width = MediaQuery.sizeOf(context).width;
     final colorScheme = Theme.of(context).colorScheme;
 
     return Selector<AiChatViewModel, _HistoryPanelSnapshot>(
@@ -20,63 +44,85 @@ class _ChatHistoryOverlay extends StatelessWidget {
       builder: (context, snapshot, _) {
         final viewModel = context.read<AiChatViewModel>();
         return ValueListenableBuilder<double>(
-          valueListenable: state._historyPanelExtent,
-          builder: (context, rawExtent, _) {
-            final extent = rawExtent.clamp(0.0, width);
-            if (extent <= 0.5) return const SizedBox.shrink();
-            final progress = width == 0 ? 0.0 : extent / width;
+          valueListenable: state._historyPanelProgress,
+          builder: (context, rawProgress, _) {
+            final progress = rawProgress.clamp(0.0, 1.0);
+            if (progress <= 0.001) return const SizedBox.shrink();
             return Positioned.fill(
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: GestureDetector(
-                      onTap: () => state._closeHistoryPanel(context),
-                      child: ColoredBox(
-                        color: Colors.black.withValues(alpha: 0.28 * progress),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    top: 0,
-                    bottom: 0,
-                    left: extent - width,
-                    width: width,
-                    child: SafeArea(
-                      child: Material(
-                        color: colorScheme.surface,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            border: Border(
-                              right: BorderSide(
-                                color: colorScheme.outlineVariant,
-                                width: 1,
+              child: BlockSemantics(
+                child: Semantics(
+                  container: true,
+                  scopesRoute: true,
+                  namesRoute: true,
+                  explicitChildNodes: true,
+                  label: strings.history,
+                  child: FocusScope(
+                    autofocus: true,
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: Semantics(
+                            button: true,
+                            label: strings.close,
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              excludeFromSemantics: true,
+                              onTap: state._closeHistoryPanel,
+                              child: ColoredBox(
+                                color: Colors.black.withValues(
+                                  alpha: 0.28 * progress,
+                                ),
                               ),
                             ),
                           ),
-                          child: HistoryPanel(
-                            chats: snapshot.savedHistoryChats,
-                            activeChatId: snapshot.activeChatId,
-                            loading: snapshot.historyLoading,
-                            strings: strings,
-                            formatTime: state._formatTime,
-                            onClose: () => state._closeHistoryPanel(context),
-                            onNewChat: () {
-                              state._closeHistoryPanel(context);
-                              viewModel.createChatFromSettings();
-                            },
-                            onDeleteChat: (chat) async {
-                              await state._deleteChat(chat);
-                            },
-                            onSelectChat: (chatId) {
-                              viewModel.selectChat(chatId);
-                              state._closeHistoryPanel(context);
-                            },
+                        ),
+                        Positioned(
+                          top: 0,
+                          bottom: 0,
+                          left: historyPanelLeadingOffsetFor(
+                            width: width,
+                            progress: progress,
+                          ),
+                          width: width,
+                          child: SafeArea(
+                            child: Material(
+                              color: colorScheme.surface,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  border: Border(
+                                    right: BorderSide(
+                                      color: colorScheme.outlineVariant,
+                                      width: 1,
+                                    ),
+                                  ),
+                                ),
+                                child: HistoryPanel(
+                                  chats: snapshot.savedHistoryChats,
+                                  activeChatId: snapshot.activeChatId,
+                                  loading: snapshot.historyLoading,
+                                  strings: strings,
+                                  formatTime: state._formatTime,
+                                  onClose: state._closeHistoryPanel,
+                                  onNewChat: () {
+                                    state._closeHistoryPanel();
+                                    viewModel.createChatFromSettings();
+                                  },
+                                  onDeleteChat: (chat) async {
+                                    await state._deleteChat(chat);
+                                  },
+                                  onSelectChat: (chatId) {
+                                    viewModel.selectChat(chatId);
+                                    state._closeHistoryPanel();
+                                  },
+                                ),
+                              ),
+                            ),
                           ),
                         ),
-                      ),
+                      ],
                     ),
                   ),
-                ],
+                ),
               ),
             );
           },

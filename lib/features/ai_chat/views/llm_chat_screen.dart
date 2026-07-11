@@ -86,6 +86,15 @@ double toolApprovalPanelMaxHeightFor({
 }
 
 @visibleForTesting
+double historyPanelLeadingOffsetFor({
+  required double width,
+  required double progress,
+}) {
+  final normalizedProgress = progress.clamp(0.0, 1.0);
+  return (normalizedProgress - 1) * width;
+}
+
+@visibleForTesting
 List<String> resolveFetchedModelOptions({
   required Iterable<String> fetchedModels,
   required Iterable<String> fallbackModels,
@@ -298,7 +307,9 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
   final ScrollController _scrollController = ScrollController();
   late final AnimationController _historySlideController;
   Animation<double>? _historySlideAnimation;
-  final ValueNotifier<double> _historyPanelExtent = ValueNotifier(0);
+  double _historyAnimationTarget = 0;
+  final ValueNotifier<double> _historyPanelProgress = ValueNotifier(0);
+  bool _historyVisible = false;
   bool _toolsExpanded = false;
   final ValueNotifier<bool> _isUserAtBottom = ValueNotifier(true);
   bool _scrollToBottomScheduled = false;
@@ -318,13 +329,21 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     _inputFocusNode.addListener(_onInputFocusChanged);
     _historySlideController =
         AnimationController(
-          vsync: this,
-          duration: const Duration(milliseconds: 240),
-        )..addListener(() {
-          final animation = _historySlideAnimation;
-          if (animation == null || !mounted) return;
-          _setHistoryPanelExtent(animation.value);
-        });
+            vsync: this,
+            duration: const Duration(milliseconds: 240),
+          )
+          ..addListener(() {
+            final animation = _historySlideAnimation;
+            if (animation == null || !mounted) return;
+            _setHistoryPanelProgress(animation.value);
+          })
+          ..addStatusListener((status) {
+            if (status != AnimationStatus.completed || !mounted) return;
+            _historyPanelProgress.value = _historyAnimationTarget;
+            if (_historyAnimationTarget <= 0.001) {
+              _setHistoryVisibility(false);
+            }
+          });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -350,7 +369,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
   void dispose() {
     _scrollSubscription?.cancel();
     _historySlideController.dispose();
-    _historyPanelExtent.dispose();
+    _historyPanelProgress.dispose();
     _isUserAtBottom.dispose();
     _inputFocusNode.removeListener(_onInputFocusChanged);
     _inputFocusNode.dispose();
@@ -407,89 +426,93 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
       keyboardInset: mediaQuery.viewInsets.bottom,
     );
 
-    return Selector<AiChatViewModel, _ChatShellSnapshot>(
-      selector: (context, vm) => _ChatShellSnapshot(
-        loading: vm.loading,
-        hasActiveChat: vm.activeChat != null,
-        activeChatId: vm.activeChatId,
-      ),
-      builder: (context, snapshot, child) {
-        if (snapshot.loading || !snapshot.hasActiveChat) {
-          return const Scaffold(
-            body: Center(
-              child: SizedBox(
-                width: 28,
-                height: 28,
-                child: CircularProgressIndicator(strokeWidth: 2),
+    return ChatHistoryBackScope(
+      historyVisible: _historyVisible,
+      onCloseHistory: _closeHistoryPanel,
+      child: Selector<AiChatViewModel, _ChatShellSnapshot>(
+        selector: (context, vm) => _ChatShellSnapshot(
+          loading: vm.loading,
+          hasActiveChat: vm.activeChat != null,
+          activeChatId: vm.activeChatId,
+        ),
+        builder: (context, snapshot, child) {
+          if (snapshot.loading || !snapshot.hasActiveChat) {
+            return const Scaffold(
+              body: Center(
+                child: SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
               ),
+            );
+          }
+
+          return Scaffold(
+            body: Stack(
+              children: [
+                Column(
+                  children: [
+                    if (!compactKeyboardLayout)
+                      _ChatHeader(
+                        onShowHistory: () => _showHistory(context, strings),
+                        onShowSettings: () => _showSettings(context, strings),
+                      ),
+                    Expanded(
+                      child: Stack(
+                        children: [
+                          _ChatMessageList(
+                            scrollController: _scrollController,
+                            onUserScroll: _updateUserScrollPosition,
+                            onSuggestionSelected: _selectSuggestedPrompt,
+                            onEditUser: (index) =>
+                                _editUserMessage(index, strings),
+                            onRegenerate: (index) =>
+                                _confirmRegenerateAssistant(index, strings),
+                            onBranch: (index) =>
+                                _confirmBranchFromAssistant(index, strings),
+                            onContinueTimeout: () =>
+                                _continueAfterTimeout(strings),
+                            onApprovePlanExecute: (createdAt) =>
+                                approvePlanAndExecute(createdAt),
+                            onRevisePlan: (chat) =>
+                                LlmChatCommandsHelper.setPlanModeFromUi(
+                                  context: context,
+                                  chat: chat,
+                                  enabled: true,
+                                  strings: strings,
+                                ),
+                          ),
+                          _ChatJumpToBottomButton(
+                            scrollController: _scrollController,
+                            isUserAtBottom: _isUserAtBottom,
+                            onPressed: () => _scrollToBottom(jump: true),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const _ChatToolApprovalArea(),
+                    SafeArea(
+                      top: false,
+                      child: _ChatComposer(
+                        inputController: _inputController,
+                        inputFocusNode: _inputFocusNode,
+                        toolsExpanded: _toolsExpanded,
+                        onToolsExpandedChanged: (expanded) {
+                          setState(() => _toolsExpanded = expanded);
+                        },
+                        onSubmit: () => _send(context, strings),
+                        onStop: _stopGeneration,
+                      ),
+                    ),
+                  ],
+                ),
+                _ChatHistoryOverlay(strings: strings),
+              ],
             ),
           );
-        }
-
-        return Scaffold(
-          body: Stack(
-            children: [
-              Column(
-                children: [
-                  if (!compactKeyboardLayout)
-                    _ChatHeader(
-                      onShowHistory: () => _showHistory(context, strings),
-                      onShowSettings: () => _showSettings(context, strings),
-                    ),
-                  Expanded(
-                    child: Stack(
-                      children: [
-                        _ChatMessageList(
-                          scrollController: _scrollController,
-                          onUserScroll: _updateUserScrollPosition,
-                          onSuggestionSelected: _selectSuggestedPrompt,
-                          onEditUser: (index) =>
-                              _editUserMessage(index, strings),
-                          onRegenerate: (index) =>
-                              _confirmRegenerateAssistant(index, strings),
-                          onBranch: (index) =>
-                              _confirmBranchFromAssistant(index, strings),
-                          onContinueTimeout: () =>
-                              _continueAfterTimeout(strings),
-                          onApprovePlanExecute: (createdAt) =>
-                              approvePlanAndExecute(createdAt),
-                          onRevisePlan: (chat) =>
-                              LlmChatCommandsHelper.setPlanModeFromUi(
-                                context: context,
-                                chat: chat,
-                                enabled: true,
-                                strings: strings,
-                              ),
-                        ),
-                        _ChatJumpToBottomButton(
-                          scrollController: _scrollController,
-                          isUserAtBottom: _isUserAtBottom,
-                          onPressed: () => _scrollToBottom(jump: true),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const _ChatToolApprovalArea(),
-                  SafeArea(
-                    top: false,
-                    child: _ChatComposer(
-                      inputController: _inputController,
-                      inputFocusNode: _inputFocusNode,
-                      toolsExpanded: _toolsExpanded,
-                      onToolsExpandedChanged: (expanded) {
-                        setState(() => _toolsExpanded = expanded);
-                      },
-                      onSubmit: () => _send(context, strings),
-                      onStop: _stopGeneration,
-                    ),
-                  ),
-                ],
-              ),
-              _ChatHistoryOverlay(strings: strings),
-            ],
-          ),
-        );
-      },
+        },
+      ),
     );
   }
 
@@ -744,31 +767,28 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
   }
 
   Future<void> _showHistory(BuildContext context, AiStrings strings) async {
-    _openHistoryPanel(context);
+    _openHistoryPanel();
     final viewModel = context.read<AiChatViewModel>();
     unawaited(viewModel.loadHistoryChatsIfNeeded());
   }
 
-  double _historyPanelWidth(BuildContext context) {
-    return MediaQuery.sizeOf(context).width;
-  }
-
-  void _openHistoryPanel(BuildContext context) {
+  void _openHistoryPanel() {
     final viewModel = context.read<AiChatViewModel>();
-    _animateHistoryPanel(context, _historyPanelWidth(context));
+    _setHistoryVisibility(true);
+    _animateHistoryPanel(1);
     unawaited(viewModel.loadHistoryChatsIfNeeded());
   }
 
-  void _closeHistoryPanel(BuildContext context) {
-    _animateHistoryPanel(context, 0);
+  void _closeHistoryPanel() {
+    _animateHistoryPanel(0);
   }
 
-  void _animateHistoryPanel(BuildContext context, double target) {
-    final width = _historyPanelWidth(context);
-    final safeTarget = target.clamp(0.0, width);
+  void _animateHistoryPanel(double target) {
+    final safeTarget = target.clamp(0.0, 1.0);
+    _historyAnimationTarget = safeTarget;
     _historySlideAnimation =
         Tween<double>(
-          begin: _historyPanelExtent.value.clamp(0.0, width),
+          begin: _historyPanelProgress.value.clamp(0.0, 1.0),
           end: safeTarget,
         ).animate(
           CurvedAnimation(
@@ -780,14 +800,19 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     _historySlideController.forward(from: 0);
   }
 
-  void _setHistoryPanelExtent(double extent) {
-    if ((_historyPanelExtent.value - extent).abs() < 0.5) return;
-    final wasVisible = _historyPanelExtent.value > 0.5;
-    _historyPanelExtent.value = extent;
-    final isVisible = extent > 0.5;
-    if (wasVisible != isVisible) {
-      widget.onHistoryVisibilityChanged?.call(isVisible);
+  void _setHistoryPanelProgress(double progress) {
+    final normalizedProgress = progress.clamp(0.0, 1.0);
+    if ((_historyPanelProgress.value - normalizedProgress).abs() < 0.001) {
+      return;
     }
+    _historyPanelProgress.value = normalizedProgress;
+    if (normalizedProgress <= 0.001) _setHistoryVisibility(false);
+  }
+
+  void _setHistoryVisibility(bool visible) {
+    if (_historyVisible == visible) return;
+    setState(() => _historyVisible = visible);
+    widget.onHistoryVisibilityChanged?.call(visible);
   }
 
   String _formatTime(DateTime time) {

@@ -46,6 +46,12 @@ void main() {
     });
   });
 
+  test('history panel offset follows the current viewport width', () {
+    expect(historyPanelLeadingOffsetFor(width: 411, progress: 1), 0);
+    expect(historyPanelLeadingOffsetFor(width: 411, progress: 0.5), -205.5);
+    expect(historyPanelLeadingOffsetFor(width: 891, progress: 0.5), -445.5);
+  });
+
   test('chat starter suggestions are localized and actionable', () {
     const en = AiStrings(AppLanguage.en);
     const zh = AiStrings(AppLanguage.zh);

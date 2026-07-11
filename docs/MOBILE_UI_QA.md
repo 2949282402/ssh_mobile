@@ -77,6 +77,9 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   Tool approvals keep the full risk reason, target, path, command, and preview
   in one scrollable details region while 48 dp Reject and Approve actions stay
   fixed and reachable on compact-height layouts.
+  Chat history animates with normalized progress so an open panel remains full
+  width after rotation. It blocks background semantics and Android Back closes
+  the history layer before attempting to leave the current route.
 - The first-launch background-service guide and less common routes still need a
   consistency pass against the shared page-surface components.
 - Cold startup remained on the native black launch surface for a noticeable
