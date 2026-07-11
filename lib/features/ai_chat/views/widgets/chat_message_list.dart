@@ -3,6 +3,7 @@ part of '../llm_chat_screen.dart';
 class _ChatMessageList extends StatelessWidget {
   final ScrollController scrollController;
   final ValueChanged<ScrollMetrics> onUserScroll;
+  final ValueChanged<String> onSuggestionSelected;
   final void Function(int index) onEditUser;
   final void Function(int index) onRegenerate;
   final void Function(int index) onBranch;
@@ -14,6 +15,7 @@ class _ChatMessageList extends StatelessWidget {
   const _ChatMessageList({
     required this.scrollController,
     required this.onUserScroll,
+    required this.onSuggestionSelected,
     required this.onEditUser,
     required this.onRegenerate,
     required this.onBranch,
@@ -44,16 +46,6 @@ class _ChatMessageList extends StatelessWidget {
         );
       },
       builder: (context, snapshot, child) {
-        final visibleMessages = snapshot.messages.isEmpty
-            ? [
-                AiChatMessageRecord(
-                  role: 'assistant',
-                  text: strings.welcome,
-                  createdAt: DateTime.now(),
-                ),
-              ]
-            : snapshot.messages;
-
         final viewModel = context.read<AiChatViewModel>();
 
         return TweenAnimationBuilder<double>(
@@ -79,60 +71,168 @@ class _ChatMessageList extends StatelessWidget {
               }
               return false;
             },
-            child: ListView.builder(
-              controller: scrollController,
-              scrollCacheExtent: const ScrollCacheExtent.pixels(900.0),
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
-              itemCount: visibleMessages.length,
-              itemBuilder: (context, index) {
-                final message = visibleMessages[index];
-                final streamingTextListenable = viewModel.streamingTextFor(
-                  snapshot.chatId,
-                  message,
-                );
-                final streamingStatusListenable = viewModel.streamingStatusFor(
-                  snapshot.chatId,
-                  message,
-                );
+            child: snapshot.messages.isEmpty
+                ? LayoutBuilder(
+                    builder: (context, constraints) =>
+                        _buildEmptyList(context, constraints, strings),
+                  )
+                : ListView.builder(
+                    controller: scrollController,
+                    scrollCacheExtent: const ScrollCacheExtent.pixels(900.0),
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
+                    itemCount: snapshot.messages.length,
+                    itemBuilder: (context, index) {
+                      final message = snapshot.messages[index];
+                      final streamingTextListenable = viewModel
+                          .streamingTextFor(snapshot.chatId, message);
+                      final streamingStatusListenable = viewModel
+                          .streamingStatusFor(snapshot.chatId, message);
 
-                return RepaintBoundary(
-                  key: ValueKey(
-                    '${message.role}-${message.createdAt.microsecondsSinceEpoch}',
+                      return RepaintBoundary(
+                        key: ValueKey(
+                          '${message.role}-${message.createdAt.microsecondsSinceEpoch}',
+                        ),
+                        child: MessageBubble(
+                          chatId: snapshot.chatId,
+                          index: index,
+                          message: message,
+                          streamingTextListenable: streamingTextListenable,
+                          streamingStatusListenable: streamingStatusListenable,
+                          canAct: !snapshot.sending,
+                          onEditUser: message.role == 'user'
+                              ? () => onEditUser(index)
+                              : null,
+                          onRegenerate: message.role == 'assistant'
+                              ? () => onRegenerate(index)
+                              : null,
+                          onBranch: message.role == 'assistant'
+                              ? () => onBranch(index)
+                              : null,
+                          onContinueTimeout:
+                              message.role == 'error' &&
+                                  index == snapshot.messages.length - 1 &&
+                                  _isTimeoutError(message.text)
+                              ? onContinueTimeout
+                              : null,
+                          onApproveExecute: () =>
+                              onApprovePlanExecute(message.createdAt),
+                          onRevisePlan: () =>
+                              onRevisePlan(viewModel.activeChat!),
+                        ),
+                      );
+                    },
                   ),
-                  child: MessageBubble(
-                    chatId: snapshot.chatId,
-                    index: index,
-                    message: message,
-                    streamingTextListenable: streamingTextListenable,
-                    streamingStatusListenable: streamingStatusListenable,
-                    canAct:
-                        !snapshot.sending &&
-                        snapshot.messages == visibleMessages,
-                    onEditUser: message.role == 'user'
-                        ? () => onEditUser(index)
-                        : null,
-                    onRegenerate: message.role == 'assistant'
-                        ? () => onRegenerate(index)
-                        : null,
-                    onBranch: message.role == 'assistant'
-                        ? () => onBranch(index)
-                        : null,
-                    onContinueTimeout:
-                        message.role == 'error' &&
-                            index == visibleMessages.length - 1 &&
-                            _isTimeoutError(message.text)
-                        ? onContinueTimeout
-                        : null,
-                    onApproveExecute: () =>
-                        onApprovePlanExecute(message.createdAt),
-                    onRevisePlan: () => onRevisePlan(viewModel.activeChat!),
-                  ),
-                );
-              },
-            ),
           ),
         );
       },
+    );
+  }
+
+  Widget _buildEmptyList(
+    BuildContext context,
+    BoxConstraints constraints,
+    AiStrings strings,
+  ) {
+    final minimumHeight = (constraints.maxHeight - 30).clamp(
+      0.0,
+      double.infinity,
+    );
+    return ListView(
+      controller: scrollController,
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 18),
+      children: [
+        ConstrainedBox(
+          constraints: BoxConstraints(minHeight: minimumHeight),
+          child: AppEmptyState(
+            icon: Icons.auto_awesome_rounded,
+            title: strings.welcomeTitle,
+            message: strings.welcome,
+            compact: true,
+            contained: false,
+            action: _ChatStarterSuggestions(
+              strings: strings,
+              onSelected: onSuggestionSelected,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ChatStarterSuggestions extends StatelessWidget {
+  const _ChatStarterSuggestions({
+    required this.strings,
+    required this.onSelected,
+  });
+
+  final AiStrings strings;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    final availableWidth = (mediaQuery.size.width - 96).clamp(240.0, 520.0);
+    final compactHeight = usesCompactRailForHeight(mediaQuery.size.height);
+    final tileWidth = compactHeight
+        ? (availableWidth - 10) / 2
+        : availableWidth.clamp(240.0, 360.0);
+
+    return SizedBox(
+      width: availableWidth,
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        spacing: 10,
+        runSpacing: 10,
+        children: [
+          _suggestionButton(
+            width: tileWidth,
+            icon: Icons.monitor_heart_outlined,
+            label: strings.checkServersSuggestion,
+            prompt: strings.checkServersPrompt,
+          ),
+          _suggestionButton(
+            width: tileWidth,
+            icon: Icons.article_outlined,
+            label: strings.reviewLogsSuggestion,
+            prompt: strings.reviewLogsPrompt,
+          ),
+          _suggestionButton(
+            width: tileWidth,
+            icon: Icons.description_outlined,
+            label: strings.remoteFileSuggestion,
+            prompt: strings.remoteFilePrompt,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _suggestionButton({
+    required double width,
+    required IconData icon,
+    required String label,
+    required String prompt,
+  }) {
+    return SizedBox(
+      width: width,
+      height: 48,
+      child: OutlinedButton(
+        onPressed: () => onSelected(prompt),
+        style: OutlinedButton.styleFrom(
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 18),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(label, maxLines: 2, overflow: TextOverflow.ellipsis),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

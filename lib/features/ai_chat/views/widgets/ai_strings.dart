@@ -32,6 +32,19 @@ class AiStrings {
   String get welcome => _en
       ? 'Ask me about your servers, logs, status, or a remote file.'
       : '可以问我服务器状态、日志、远程文件等。';
+  String get welcomeTitle => _en ? 'What can I help with?' : '今天想处理什么？';
+  String get checkServersSuggestion => _en ? 'Check server health' : '检查服务器状态';
+  String get checkServersPrompt => _en
+      ? 'Check my servers and highlight anything that needs attention.'
+      : '检查我的服务器，并指出需要关注的问题。';
+  String get reviewLogsSuggestion => _en ? 'Review recent logs' : '查看近期日志';
+  String get reviewLogsPrompt => _en
+      ? 'Review the recent logs and summarize important errors or warnings.'
+      : '查看近期日志，并总结重要的错误或警告。';
+  String get remoteFileSuggestion => _en ? 'Work with a remote file' : '处理远程文件';
+  String get remoteFilePrompt => _en
+      ? 'Help me inspect or update a file on a remote server.'
+      : '帮我检查或更新远程服务器上的文件。';
   String get composerHint =>
       _en ? 'Describe a task or type / for commands' : '描述任务，或输入 / 查看命令';
   String get history => _en ? 'Chat history' : '聊天历史';

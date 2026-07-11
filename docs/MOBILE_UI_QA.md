@@ -72,6 +72,8 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   hint, and a height-limited scrolling area for plan, command, attachment, and
   tool content. On compact-height keyboard layouts, tools collapse and the
   decorative chat header and rail stop consuming the remaining input space.
+  New chats use a centered bilingual empty state with three 48 dp starter
+  actions; selecting one only fills and focuses the composer for review.
 - The first-launch background-service guide and less common routes still need a
   consistency pass against the shared page-surface components.
 - Cold startup remained on the native black launch surface for a noticeable

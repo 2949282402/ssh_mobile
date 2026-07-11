@@ -31,6 +31,7 @@ import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:ssh_mobile/utils/responsive.dart';
 import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
 import 'package:ssh_mobile/widgets/destructive_confirm_dialog.dart';
+import 'package:ssh_mobile/widgets/app_surface.dart';
 import 'package:ssh_mobile/theme/app_theme.dart';
 import 'widgets/history_action_sheet.dart';
 
@@ -430,6 +431,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
                         _ChatMessageList(
                           scrollController: _scrollController,
                           onUserScroll: _updateUserScrollPosition,
+                          onSuggestionSelected: _selectSuggestedPrompt,
                           onEditUser: (index) =>
                               _editUserMessage(index, strings),
                           onRegenerate: (index) =>
@@ -491,6 +493,14 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     return strings.language == AppLanguage.en
         ? '${viewModel.selectedConnectionIds.length} Servers'
         : '${viewModel.selectedConnectionIds.length} 台服务器';
+  }
+
+  void _selectSuggestedPrompt(String prompt) {
+    _inputController.value = TextEditingValue(
+      text: prompt,
+      selection: TextSelection.collapsed(offset: prompt.length),
+    );
+    _inputFocusNode.requestFocus();
   }
 
   Future<void> _selectTargetServer(AiStrings strings) async {

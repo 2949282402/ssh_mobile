@@ -27,6 +27,20 @@ void main() {
     });
   });
 
+  test('chat starter suggestions are localized and actionable', () {
+    const en = AiStrings(AppLanguage.en);
+    const zh = AiStrings(AppLanguage.zh);
+
+    expect(en.welcomeTitle, isNotEmpty);
+    expect(zh.welcomeTitle, isNot(en.welcomeTitle));
+    expect({
+      en.checkServersPrompt,
+      en.reviewLogsPrompt,
+      en.remoteFilePrompt,
+    }, hasLength(3));
+    expect(zh.checkServersSuggestion, contains('服务器'));
+  });
+
   test('fetched models replace default fallback models', () {
     final resolved = resolveFetchedModelOptions(
       fetchedModels: const ['gpt-4o', 'gpt-4.1', 'gpt-4o'],
