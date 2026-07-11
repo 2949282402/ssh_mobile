@@ -95,6 +95,9 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   customization, confirms before discarding unsaved text, exposes retry/save
   failures, and reduces compact-height layouts to a 48 dp type selector plus
   the flexible editor so a landscape keyboard cannot hide the work area.
+  The chat RAG sheet follows the global drag-handle and corner treatment,
+  preserves the system navigation safe area, wraps at 1.3× text scale, and
+  guards asynchronous preference updates when the sheet closes mid-write.
 - LLM settings intercept Android Back and the close affordance when edits are
   pending, then require an explicit discard confirmation. Saving
   temporarily disables route dismissal, while model-refresh and save failures

@@ -123,6 +123,7 @@ class AiStrings {
       ? 'Expose a web_search tool that uses the current chat WebView on this device. No search API key is required.'
       : '通过当前聊天绑定的本机 WebView 给模型提供 web_search 工具，不需要搜索 API Key。';
   String get ragTitle => _en ? 'RAG Ops Knowledge Base' : 'RAG 运维知识库';
+  String get ragSettings => _en ? 'Knowledge retrieval' : '知识检索';
   String get ragHint => _en
       ? 'Locally retrieve relevant context from uploaded operational manuals based on your query.'
       : '根据问题自动在本地检索运维手册与文档，并作为参考上下文喂给 AI 助手。';
