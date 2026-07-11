@@ -1,12 +1,13 @@
 part of '../llm_chat_screen.dart';
 
-class _ToolApprovalPanel extends StatelessWidget {
+class ToolApprovalPanel extends StatelessWidget {
   final PendingToolApproval pending;
   final AiStrings strings;
   final VoidCallback onApprove;
   final VoidCallback onReject;
 
-  const _ToolApprovalPanel({
+  const ToolApprovalPanel({
+    super.key,
     required this.pending,
     required this.strings,
     required this.onApprove,
@@ -53,190 +54,216 @@ class _ToolApprovalPanel extends StatelessWidget {
     final approve = isAgentLoopBudget
         ? (en ? 'Continue' : '继续')
         : (en ? 'Approve' : '同意');
-    final maxCommandHeight = (MediaQuery.sizeOf(context).height * 0.24).clamp(
-      96.0,
-      180.0,
-    );
     final targetLabel = en ? 'Target' : '目标';
     final pathLabel = en ? 'Path' : '路径';
     final bytesLabel = en ? 'Bytes' : '字节';
+    final commandLabel = en ? 'Command' : '命令';
     final previewLabel = en ? 'Preview' : '预览';
     final destructiveLabel = en ? 'This action is destructive.' : '这是一个破坏性操作。';
     final preview = pending.request.contentPreview?.trim();
 
-    Widget metaRow(String label, String value) {
-      return Row(
+    Widget metaBlock(String label, String value) {
+      return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 56,
-            child: Text(
-              label,
-              style: TextStyle(
-                color: colorScheme.onSurfaceVariant,
-                fontWeight: FontWeight.w700,
-              ),
+          Text(
+            label,
+            style: TextStyle(
+              color: colorScheme.onSurfaceVariant,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: OverflowScrollText(
-              value,
-              selectable: true,
-              maxLines: 1,
-              style: TextStyle(color: colorScheme.onSurface),
-            ),
+          const SizedBox(height: 3),
+          SelectableText(
+            value,
+            style: TextStyle(color: colorScheme.onSurface, height: 1.35),
           ),
         ],
+      );
+    }
+
+    Widget codeBlock(String value, {required double surfaceAlpha}) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: colorScheme.surface.withValues(alpha: surfaceAlpha),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: colorScheme.outlineVariant),
+        ),
+        child: SelectableText(
+          value,
+          style: TextStyle(
+            fontFamily: 'monospace',
+            fontFamilyFallback: const [
+              'Consolas',
+              'Microsoft YaHei',
+              'PingFang SC',
+              'sans-serif',
+            ],
+            color: colorScheme.onSurface,
+            height: 1.4,
+          ),
+        ),
       );
     }
 
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: colorScheme.errorContainer.withValues(alpha: 0.34),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: colorScheme.error.withValues(alpha: 0.42)),
       ),
+      clipBehavior: Clip.antiAlias,
       child: Column(
         mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Icon(Icons.security_rounded, size: 20, color: colorScheme.error),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w800),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.security_rounded,
+                  size: 20,
+                  color: colorScheme.error,
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            description,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: colorScheme.onSurface.withValues(alpha: 0.72),
-              height: 1.35,
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ],
             ),
           ),
-          if (pending.request.destructive) ...[
-            const SizedBox(height: 8),
-            Text(
-              destructiveLabel,
-              style: TextStyle(
-                color: colorScheme.error,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-          const SizedBox(height: 8),
-          if (!isBudgetAudit && !isAgentLoopBudget) ...[
-            metaRow(targetLabel, pending.request.connectionName),
-            const SizedBox(height: 8),
-          ],
-          if (pending.request.targetPath != null) ...[
-            metaRow(pathLabel, pending.request.targetPath!),
-            const SizedBox(height: 8),
-          ],
-          if (pending.request.byteLength != null) ...[
-            metaRow(bytesLabel, '${pending.request.byteLength}'),
-            const SizedBox(height: 8),
-          ],
-          if (!isBudgetAudit && !isAgentLoopBudget)
-            ConstrainedBox(
-              constraints: BoxConstraints(maxHeight: maxCommandHeight),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: colorScheme.surface.withValues(alpha: 0.78),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: colorScheme.outlineVariant),
-                ),
-                child: Scrollbar(
-                  child: SingleChildScrollView(
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: SelectableText(
-                        pending.request.command,
-                        style: TextStyle(
-                          fontFamily: 'monospace',
-                          fontFamilyFallback: [
-                            'Consolas',
-                            'Microsoft YaHei',
-                            'PingFang SC',
-                            'sans-serif',
-                          ],
-                          color: colorScheme.onSurface,
-                        ),
+          Divider(height: 1, color: colorScheme.error.withValues(alpha: 0.2)),
+          Flexible(
+            fit: FlexFit.loose,
+            child: SingleChildScrollView(
+              key: const ValueKey<String>('tool-approval-details'),
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    description,
+                    key: const ValueKey<String>('tool-approval-description'),
+                    style: TextStyle(
+                      color: colorScheme.onSurface.withValues(alpha: 0.78),
+                      height: 1.4,
+                    ),
+                  ),
+                  if (pending.request.destructive) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 7,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colorScheme.error.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.warning_amber_rounded,
+                            size: 18,
+                            color: colorScheme.error,
+                          ),
+                          const SizedBox(width: 7),
+                          Expanded(
+                            child: Text(
+                              destructiveLabel,
+                              style: TextStyle(
+                                color: colorScheme.error,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-                ),
-              ),
-            ),
-          if (preview != null && preview.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Text(
-              previewLabel,
-              style: TextStyle(
-                color: colorScheme.onSurfaceVariant,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Container(
-              width: double.infinity,
-              constraints: const BoxConstraints(maxHeight: 120),
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: colorScheme.surface.withValues(alpha: 0.62),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: colorScheme.outlineVariant),
-              ),
-              child: Scrollbar(
-                child: SingleChildScrollView(
-                  child: SelectableText(
-                    preview,
-                    style: TextStyle(
-                      fontFamily: 'monospace',
-                      fontFamilyFallback: [
-                        'Consolas',
-                        'Microsoft YaHei',
-                        'PingFang SC',
-                        'sans-serif',
-                      ],
-                      color: colorScheme.onSurface,
+                  ],
+                  if (!isBudgetAudit && !isAgentLoopBudget) ...[
+                    const SizedBox(height: 12),
+                    metaBlock(targetLabel, pending.request.connectionName),
+                  ],
+                  if (pending.request.targetPath != null) ...[
+                    const SizedBox(height: 12),
+                    metaBlock(pathLabel, pending.request.targetPath!),
+                  ],
+                  if (pending.request.byteLength != null) ...[
+                    const SizedBox(height: 12),
+                    metaBlock(bytesLabel, '${pending.request.byteLength}'),
+                  ],
+                  if (!isBudgetAudit && !isAgentLoopBudget) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      commandLabel,
+                      style: TextStyle(
+                        color: colorScheme.onSurfaceVariant,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
-                ),
+                    const SizedBox(height: 6),
+                    codeBlock(pending.request.command, surfaceAlpha: 0.78),
+                  ],
+                  if (preview != null && preview.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      previewLabel,
+                      style: TextStyle(
+                        color: colorScheme.onSurfaceVariant,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    codeBlock(preview, surfaceAlpha: 0.62),
+                  ],
+                ],
               ),
             ),
-          ],
-          const SizedBox(height: 10),
-          Wrap(
-            alignment: WrapAlignment.end,
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              OutlinedButton.icon(
-                onPressed: onReject,
-                icon: const Icon(Icons.close_rounded),
-                label: Text(reject),
-              ),
-              FilledButton.icon(
-                onPressed: onApprove,
-                icon: const Icon(Icons.check_rounded),
-                label: Text(approve),
-              ),
-            ],
+          ),
+          Divider(height: 1, color: colorScheme.error.withValues(alpha: 0.2)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    key: const ValueKey<String>('tool-approval-reject'),
+                    onPressed: onReject,
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(48),
+                    ),
+                    icon: const Icon(Icons.close_rounded),
+                    label: Text(reject),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: FilledButton.icon(
+                    key: const ValueKey<String>('tool-approval-approve'),
+                    onPressed: onApprove,
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(48),
+                    ),
+                    icon: const Icon(Icons.check_rounded),
+                    label: Text(approve),
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),

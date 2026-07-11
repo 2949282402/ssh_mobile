@@ -23,15 +23,25 @@ class _ChatToolApprovalArea extends StatelessWidget {
           return const SizedBox.shrink();
         }
 
+        final mediaQuery = MediaQuery.of(context);
+        final compactHeight = usesCompactRailForHeight(mediaQuery.size.height);
+        if (compactHeight && mediaQuery.viewInsets.bottom > 0) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            FocusManager.instance.primaryFocus?.unfocus();
+          });
+          return const SizedBox.shrink();
+        }
+
         final viewModel = context.read<AiChatViewModel>();
 
         return ConstrainedBox(
           constraints: BoxConstraints(
-            maxHeight: MediaQuery.sizeOf(context).height < 700
-                ? MediaQuery.sizeOf(context).height * 0.52
-                : 420,
+            maxHeight: toolApprovalPanelMaxHeightFor(
+              viewportHeight: mediaQuery.size.height,
+              compactHeight: compactHeight,
+            ),
           ),
-          child: _ToolApprovalPanel(
+          child: ToolApprovalPanel(
             pending: pending,
             strings: strings,
             onApprove: () => viewModel.resolvePendingApproval(approved: true),

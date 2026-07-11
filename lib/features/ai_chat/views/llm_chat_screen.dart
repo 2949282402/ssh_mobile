@@ -75,6 +75,17 @@ double chatComposerMaxHeightFor({
 }
 
 @visibleForTesting
+double toolApprovalPanelMaxHeightFor({
+  required double viewportHeight,
+  required bool compactHeight,
+}) {
+  if (compactHeight) {
+    return (viewportHeight * 0.58).clamp(180.0, 300.0);
+  }
+  return (viewportHeight * 0.46).clamp(240.0, 420.0);
+}
+
+@visibleForTesting
 List<String> resolveFetchedModelOptions({
   required Iterable<String> fetchedModels,
   required Iterable<String> fallbackModels,

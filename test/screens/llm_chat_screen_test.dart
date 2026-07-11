@@ -27,6 +27,25 @@ void main() {
     });
   });
 
+  group('tool approval panel height', () {
+    test('reserves a bounded panel on compact landscape screens', () {
+      expect(
+        toolApprovalPanelMaxHeightFor(viewportHeight: 411, compactHeight: true),
+        closeTo(238.38, 0.01),
+      );
+    });
+
+    test('caps the panel on tall portrait screens', () {
+      expect(
+        toolApprovalPanelMaxHeightFor(
+          viewportHeight: 952,
+          compactHeight: false,
+        ),
+        420,
+      );
+    });
+  });
+
   test('chat starter suggestions are localized and actionable', () {
     const en = AiStrings(AppLanguage.en);
     const zh = AiStrings(AppLanguage.zh);
