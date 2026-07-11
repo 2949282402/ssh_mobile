@@ -63,6 +63,7 @@ class _HomeScreenState extends State<HomeScreen> {
   late final PageController _pageController;
   late int _selectedIndex;
   late int _settledIndex;
+  bool? _usesDesktopShell;
   bool _aiHistoryVisible = false;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
@@ -78,6 +79,24 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _pageController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final usesDesktopShell = isDesktopLayout(context);
+    final shellChanged =
+        _usesDesktopShell != null && _usesDesktopShell != usesDesktopShell;
+    _usesDesktopShell = usesDesktopShell;
+    if (!shellChanged) return;
+
+    // The navigation rail changes the PageView viewport width. Re-align its
+    // pixel offset after a phone rotates across the desktop breakpoint so the
+    // selected page does not land in the gap between two pages.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_pageController.hasClients) return;
+      _pageController.jumpToPage(_selectedIndex);
+    });
   }
 
   void updateState(VoidCallback fn) {

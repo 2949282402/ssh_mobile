@@ -28,7 +28,7 @@ class _ChatJumpToBottomButton extends StatelessWidget {
 
         return Positioned(
           right: 14,
-          bottom: 106,
+          bottom: 12,
           child: FloatingActionButton.small(
             onPressed: onPressed,
             child: const Icon(Icons.keyboard_arrow_down_rounded),

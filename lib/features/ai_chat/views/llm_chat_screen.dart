@@ -394,25 +394,40 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
             children: [
               Column(
                 children: [
+                  _ChatHeader(
+                    onShowHistory: () => _showHistory(context, strings),
+                    onShowSettings: () => _showSettings(context, strings),
+                  ),
                   Expanded(
-                    child: _ChatMessageList(
-                      scrollController: _scrollController,
-                      onUserScroll: _updateUserScrollPosition,
-                      onEditUser: (index) => _editUserMessage(index, strings),
-                      onRegenerate: (index) =>
-                          _confirmRegenerateAssistant(index, strings),
-                      onBranch: (index) =>
-                          _confirmBranchFromAssistant(index, strings),
-                      onContinueTimeout: () => _continueAfterTimeout(strings),
-                      onApprovePlanExecute: (createdAt) =>
-                          approvePlanAndExecute(createdAt),
-                      onRevisePlan: (chat) =>
-                          LlmChatCommandsHelper.setPlanModeFromUi(
-                            context: context,
-                            chat: chat,
-                            enabled: true,
-                            strings: strings,
-                          ),
+                    child: Stack(
+                      children: [
+                        _ChatMessageList(
+                          scrollController: _scrollController,
+                          onUserScroll: _updateUserScrollPosition,
+                          onEditUser: (index) =>
+                              _editUserMessage(index, strings),
+                          onRegenerate: (index) =>
+                              _confirmRegenerateAssistant(index, strings),
+                          onBranch: (index) =>
+                              _confirmBranchFromAssistant(index, strings),
+                          onContinueTimeout: () =>
+                              _continueAfterTimeout(strings),
+                          onApprovePlanExecute: (createdAt) =>
+                              approvePlanAndExecute(createdAt),
+                          onRevisePlan: (chat) =>
+                              LlmChatCommandsHelper.setPlanModeFromUi(
+                                context: context,
+                                chat: chat,
+                                enabled: true,
+                                strings: strings,
+                              ),
+                        ),
+                        _ChatJumpToBottomButton(
+                          scrollController: _scrollController,
+                          isUserAtBottom: _isUserAtBottom,
+                          onPressed: () => _scrollToBottom(jump: true),
+                        ),
+                      ],
                     ),
                   ),
                   const _ChatToolApprovalArea(),
@@ -431,21 +446,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
                   ),
                 ],
               ),
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: _ChatHeader(
-                  onShowHistory: () => _showHistory(context, strings),
-                  onShowSettings: () => _showSettings(context, strings),
-                ),
-              ),
               _ChatHistoryOverlay(strings: strings),
-              _ChatJumpToBottomButton(
-                scrollController: _scrollController,
-                isUserAtBottom: _isUserAtBottom,
-                onPressed: () => _scrollToBottom(jump: true),
-              ),
             ],
           ),
         );
