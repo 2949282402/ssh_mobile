@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ssh_mobile/theme/app_theme.dart';
 
 class HistoryActionSheet<T> extends StatelessWidget {
   final String title;
@@ -57,24 +58,40 @@ class HistoryActionSheet<T> extends StatelessWidget {
                       selectedValue != null &&
                       itemKey != null &&
                       itemKey == selectedValue;
-                  return ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                    leading: selected
-                        ? Icon(
-                            Icons.check_circle_rounded,
-                            color: colorScheme.primary,
-                          )
-                        : const Icon(Icons.history_rounded),
-                    title: Text(
-                      labelBuilder(item),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    onTap: () => onSelect(item),
-                    trailing: IconButton(
-                      tooltip: deleteTooltip,
-                      onPressed: () => onDelete(item),
-                      icon: const Icon(Icons.delete_outline_rounded),
+                  return Semantics(
+                    key: ValueKey<String>('history-action-item-$index'),
+                    selected: selected,
+                    child: ListTile(
+                      selected: selected,
+                      selectedTileColor: colorScheme.primaryContainer
+                          .withValues(alpha: 0.28),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(
+                          AppTheme.radiusSmall,
+                        ),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                      leading: selected
+                          ? Icon(
+                              Icons.check_circle_rounded,
+                              color: colorScheme.primary,
+                            )
+                          : const Icon(Icons.history_rounded),
+                      title: Text(
+                        labelBuilder(item),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      onTap: () => onSelect(item),
+                      trailing: SizedBox(
+                        width: 48,
+                        height: 48,
+                        child: IconButton(
+                          tooltip: deleteTooltip,
+                          onPressed: () => onDelete(item),
+                          icon: const Icon(Icons.delete_outline_rounded),
+                        ),
+                      ),
                     ),
                   );
                 },

@@ -107,7 +107,9 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   model routing and low-frequency groups behind semantic 48 dp headers. Its
   quiet filled fields avoid repeated card-within-field outlines on mobile.
   Settled 1.5K and 2K AVD captures show the same hierarchy and materially
-  equivalent proportions without clipped labels or horizontal overflow.
+  equivalent proportions without clipped labels or horizontal overflow. Base
+  URL and API-key history sheets expose the active row through both selection
+  semantics and theme color, with explicit 48 dp delete targets.
 - The first-launch background-service guide and less common routes still need a
   consistency pass against the shared page-surface components.
 - Cold startup remained on the native black launch surface for a noticeable

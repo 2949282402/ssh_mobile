@@ -310,6 +310,8 @@ class _LlmSettingsScreenState extends State<LlmSettingsScreen> {
           deleteTooltip: strings.delete,
           items: _baseUrlHistory,
           labelBuilder: (value) => value,
+          selectedValue: _baseUrlController.text.trim(),
+          valueKeyBuilder: (value) => value,
           onSelect: (value) =>
               Navigator.pop(sheetContext, _SettingsHistoryAction.select(value)),
           onDelete: (value) =>
