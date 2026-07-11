@@ -1,43 +1,74 @@
 part of '../llm_chat_screen.dart';
 
-// --- Shared Group / Card Container for LLM Settings sections ---
-class _LlmSettingsGroup extends StatelessWidget {
+// --- Shared expandable card for LLM Settings sections ---
+class _LlmSettingsGroup extends StatefulWidget {
   final String title;
+  final IconData icon;
   final List<Widget> children;
+  final bool initiallyExpanded;
 
-  const _LlmSettingsGroup({required this.title, required this.children});
+  const _LlmSettingsGroup({
+    super.key,
+    required this.title,
+    required this.icon,
+    required this.children,
+    this.initiallyExpanded = false,
+  });
+
+  @override
+  State<_LlmSettingsGroup> createState() => _LlmSettingsGroupState();
+}
+
+class _LlmSettingsGroupState extends State<_LlmSettingsGroup> {
+  late bool _expanded;
+
+  @override
+  void initState() {
+    super.initState();
+    _expanded = widget.initiallyExpanded;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Material(
-      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.28),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.72),
-        ),
+    final scale = mobileUiScaleOf(context);
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final quietBorder = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+      borderSide: BorderSide.none,
+    );
+    return AppSectionCard(
+      title: widget.title,
+      icon: widget.icon,
+      expanded: _expanded,
+      onHeaderTap: () {
+        if (_expanded) FocusScope.of(context).unfocus();
+        setState(() => _expanded = !_expanded);
+      },
+      padding: EdgeInsets.symmetric(
+        horizontal: 16 * scale,
+        vertical: 13 * scale,
       ),
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: TextStyle(
-                color: colorScheme.primary,
-                fontSize: 13,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.2,
+      contentGap: 12 * scale,
+      child: _expanded
+          ? Theme(
+              data: theme.copyWith(
+                inputDecorationTheme: theme.inputDecorationTheme.copyWith(
+                  fillColor: Color.alphaBlend(
+                    colors.surfaceContainerHighest.withValues(alpha: 0.58),
+                    colors.surface,
+                  ),
+                  border: quietBorder,
+                  enabledBorder: quietBorder,
+                  disabledBorder: quietBorder,
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            ...children,
-          ],
-        ),
-      ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: widget.children,
+              ),
+            )
+          : null,
     );
   }
 }
@@ -108,230 +139,265 @@ class _LlmApiConfigSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _LlmSettingsGroup(
-      title: strings.apiFormat,
+    return Column(
       children: [
-        DropdownButtonFormField<LlmApiFormat>(
-          initialValue: apiFormat,
-          decoration: InputDecoration(labelText: strings.apiFormat),
-          items:
-              const [
-                LlmApiFormat.openAiChatCompletions,
-                LlmApiFormat.geminiOpenAiCompatible,
-                LlmApiFormat.anthropicMessages,
-              ].map((format) {
-                return DropdownMenuItem<LlmApiFormat>(
-                  value: format,
-                  child: Text(strings.apiFormatLabel(format)),
-                );
-              }).toList(),
-          onChanged: saving ? null : onApiFormatChanged,
-        ),
-        const SizedBox(height: 14),
-        TextField(
-          controller: baseUrlController,
-          enabled: !saving,
-          decoration: InputDecoration(
-            labelText: strings.baseUrl,
-            helperText: baseUrlHistory.isEmpty
-                ? null
-                : strings.savedCount(baseUrlHistory.length),
-            suffixIcon: IconButton(
-              tooltip: strings.baseUrlHistory,
-              onPressed: saving ? null : onOpenBaseUrlHistory,
-              icon: const Icon(Icons.arrow_drop_down_rounded),
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(top: 4, bottom: 4),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                child: Text(
-                  '${strings.recommendedBaseUrl}: $recommendedBaseUrl',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: Colors.grey),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              TextButton(
-                onPressed: saving ? null : onUseRecommendedBaseUrl,
-                child: Text(strings.useRecommendedBaseUrl),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 10),
-        TextField(
-          controller: apiKeyController,
-          enabled: !saving,
-          obscureText: true,
-          decoration: InputDecoration(
-            labelText: selectedApiKeyMasked != null
-                ? strings.apiKeySaved
-                : strings.apiKeyRequired,
-            helperText: selectedApiKeyMasked != null
-                ? strings.apiKeySelected(selectedApiKeyMasked!)
-                : (apiKeyHistory.isNotEmpty
-                      ? strings.apiKeyHistoryHint
-                      : strings.apiKeyReplaceHint),
-            helperMaxLines: 2,
-            suffixIcon: IconButton(
-              tooltip: strings.apiKeyHistory,
-              onPressed: saving ? null : onOpenApiKeyHistory,
-              icon: const Icon(Icons.arrow_drop_down_rounded),
-            ),
-          ),
-        ),
-        if (apiKeyHistory.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final entry in apiKeyHistory)
-                ChoiceChip(
-                  label: Text(entry.maskedValue),
-                  selected: entry.id == selectedApiKeyId,
-                  onSelected: saving
-                      ? null
-                      : (_) => onSelectApiKeyHistoryEntry(entry.id),
-                ),
-            ],
-          ),
-          if (selectedApiKeyMasked != null) ...[
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                strings.apiKeyMaskedPreview(selectedApiKeyMasked!),
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ),
-          ],
-        ],
-        const SizedBox(height: 14),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        _LlmSettingsGroup(
+          key: const ValueKey<String>('llm-settings-group-connection'),
+          title: strings.connectionAndModel,
+          icon: Icons.hub_outlined,
+          initiallyExpanded: true,
           children: [
-            Expanded(
-              child: DropdownButtonFormField<String>(
-                initialValue: models.contains(modelController.text)
-                    ? modelController.text
-                    : models.first,
-                isExpanded: true,
-                decoration: InputDecoration(labelText: strings.model),
-                selectedItemBuilder: (context) => [
-                  for (final model in models)
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        model,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        softWrap: false,
-                      ),
-                    ),
-                ],
-                items: [
-                  for (final model in models)
-                    DropdownMenuItem(
-                      value: model,
-                      child: Text(
-                        model,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        softWrap: false,
-                      ),
-                    ),
-                ],
-                onChanged: saving
+            DropdownButtonFormField<LlmApiFormat>(
+              initialValue: apiFormat,
+              isExpanded: true,
+              decoration: InputDecoration(labelText: strings.apiFormat),
+              items:
+                  const [
+                    LlmApiFormat.openAiChatCompletions,
+                    LlmApiFormat.geminiOpenAiCompatible,
+                    LlmApiFormat.anthropicMessages,
+                  ].map((format) {
+                    return DropdownMenuItem<LlmApiFormat>(
+                      value: format,
+                      child: Text(strings.apiFormatLabel(format)),
+                    );
+                  }).toList(),
+              onChanged: saving ? null : onApiFormatChanged,
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: baseUrlController,
+              enabled: !saving,
+              decoration: InputDecoration(
+                labelText: strings.baseUrl,
+                helperText: baseUrlHistory.isEmpty
                     ? null
-                    : (value) {
-                        if (value != null) {
-                          modelController.text = value;
-                        }
-                      },
+                    : strings.savedCount(baseUrlHistory.length),
+                suffixIcon: IconButton(
+                  tooltip: strings.baseUrlHistory,
+                  onPressed: saving ? null : onOpenBaseUrlHistory,
+                  icon: const Icon(Icons.arrow_drop_down_rounded),
+                ),
               ),
             ),
-            const SizedBox(width: 8),
-            IconButton.filledTonal(
-              tooltip: strings.refreshModels,
-              onPressed: loadingModels || saving ? null : onRefreshModels,
-              icon: loadingModels
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.sync_rounded),
+            Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 4),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final colors = Theme.of(context).colorScheme;
+                  final recommendation = Text(
+                    '${strings.recommendedBaseUrl}: $recommendedBaseUrl',
+                    maxLines: constraints.maxWidth < 520 ? 2 : 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: colors.onSurfaceVariant,
+                    ),
+                  );
+                  final action = TextButton(
+                    onPressed: saving ? null : onUseRecommendedBaseUrl,
+                    child: Text(strings.useRecommendedBaseUrl),
+                  );
+
+                  if (constraints.maxWidth < 520) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        recommendation,
+                        Align(alignment: Alignment.centerRight, child: action),
+                      ],
+                    );
+                  }
+                  return Row(
+                    children: [
+                      Expanded(child: recommendation),
+                      const SizedBox(width: 8),
+                      action,
+                    ],
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: apiKeyController,
+              enabled: !saving,
+              obscureText: true,
+              decoration: InputDecoration(
+                labelText: selectedApiKeyMasked != null
+                    ? strings.apiKeySaved
+                    : strings.apiKeyRequired,
+                helperText: selectedApiKeyMasked != null
+                    ? strings.apiKeySelected(selectedApiKeyMasked!)
+                    : (apiKeyHistory.isNotEmpty
+                          ? strings.apiKeyHistoryHint
+                          : strings.apiKeyReplaceHint),
+                helperMaxLines: 2,
+                suffixIcon: IconButton(
+                  tooltip: strings.apiKeyHistory,
+                  onPressed: saving ? null : onOpenApiKeyHistory,
+                  icon: const Icon(Icons.arrow_drop_down_rounded),
+                ),
+              ),
+            ),
+            if (apiKeyHistory.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final entry in apiKeyHistory)
+                    ChoiceChip(
+                      label: Text(entry.maskedValue),
+                      selected: entry.id == selectedApiKeyId,
+                      onSelected: saving
+                          ? null
+                          : (_) => onSelectApiKeyHistoryEntry(entry.id),
+                    ),
+                ],
+              ),
+              if (selectedApiKeyMasked != null) ...[
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    strings.apiKeyMaskedPreview(selectedApiKeyMasked!),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ],
+            const SizedBox(height: 14),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: models.contains(modelController.text)
+                        ? modelController.text
+                        : models.first,
+                    isExpanded: true,
+                    decoration: InputDecoration(labelText: strings.model),
+                    selectedItemBuilder: (context) => [
+                      for (final model in models)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            model,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            softWrap: false,
+                          ),
+                        ),
+                    ],
+                    items: [
+                      for (final model in models)
+                        DropdownMenuItem(
+                          value: model,
+                          child: Text(
+                            model,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            softWrap: false,
+                          ),
+                        ),
+                    ],
+                    onChanged: saving
+                        ? null
+                        : (value) {
+                            if (value != null) {
+                              modelController.text = value;
+                            }
+                          },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.filledTonal(
+                  tooltip: strings.refreshModels,
+                  onPressed: loadingModels || saving ? null : onRefreshModels,
+                  icon: loadingModels
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.sync_rounded),
+                ),
+              ],
             ),
           ],
         ),
         const SizedBox(height: 14),
-        TextField(
-          controller: helperModelController,
-          enabled: !saving,
-          decoration: InputDecoration(
-            labelText: strings.helperModel,
-            helperText: strings.helperModelHint,
-            helperMaxLines: 2,
-          ),
-        ),
-        const SizedBox(height: 14),
-        TextField(
-          controller: auditModelController,
-          enabled: !saving,
-          decoration: InputDecoration(
-            labelText: strings.auditModel,
-            helperText: strings.auditModelHint,
-            helperMaxLines: 2,
-          ),
-        ),
-        const SizedBox(height: 14),
-        DropdownButtonFormField<String>(
-          initialValue: AgentModelFallbackPolicy.normalize(modelFallbackPolicy),
-          isExpanded: true,
-          decoration: InputDecoration(labelText: strings.modelFallbackPolicy),
-          items: [
-            for (final value in AgentModelFallbackPolicy.values)
-              DropdownMenuItem(
-                value: value,
-                child: Text(strings.modelFallbackPolicyLabel(value)),
+        _LlmSettingsGroup(
+          key: const ValueKey<String>('llm-settings-group-model-options'),
+          title: strings.advancedModelOptions,
+          icon: Icons.tune_rounded,
+          children: [
+            TextField(
+              controller: helperModelController,
+              enabled: !saving,
+              decoration: InputDecoration(
+                labelText: strings.helperModel,
+                helperText: strings.helperModelHint,
+                helperMaxLines: 2,
               ),
-          ],
-          onChanged: saving ? null : onModelFallbackPolicyChanged,
-        ),
-        const SizedBox(height: 14),
-        DropdownButtonFormField<int>(
-          initialValue: contextWindowTokens,
-          isExpanded: true,
-          decoration: const InputDecoration(labelText: 'Context window'),
-          items: [
-            for (final value in AiContextWindowSize.values)
-              DropdownMenuItem(
-                value: value,
-                child: Text(AiContextWindowSize.label(value)),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: auditModelController,
+              enabled: !saving,
+              decoration: InputDecoration(
+                labelText: strings.auditModel,
+                helperText: strings.auditModelHint,
+                helperMaxLines: 2,
               ),
-          ],
-          onChanged: saving ? null : onContextWindowTokensChanged,
-        ),
-        const SizedBox(height: 14),
-        DropdownButtonFormField<int>(
-          initialValue: timeoutSeconds,
-          isExpanded: true,
-          decoration: InputDecoration(labelText: strings.requestTimeout),
-          items: [
-            for (final value in AiRequestTimeout.values)
-              DropdownMenuItem(
-                value: value,
-                child: Text(AiRequestTimeout.label(value)),
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<String>(
+              initialValue: AgentModelFallbackPolicy.normalize(
+                modelFallbackPolicy,
               ),
+              isExpanded: true,
+              decoration: InputDecoration(
+                labelText: strings.modelFallbackPolicy,
+              ),
+              items: [
+                for (final value in AgentModelFallbackPolicy.values)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text(strings.modelFallbackPolicyLabel(value)),
+                  ),
+              ],
+              onChanged: saving ? null : onModelFallbackPolicyChanged,
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<int>(
+              initialValue: contextWindowTokens,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Context window'),
+              items: [
+                for (final value in AiContextWindowSize.values)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text(AiContextWindowSize.label(value)),
+                  ),
+              ],
+              onChanged: saving ? null : onContextWindowTokensChanged,
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<int>(
+              initialValue: timeoutSeconds,
+              isExpanded: true,
+              decoration: InputDecoration(labelText: strings.requestTimeout),
+              items: [
+                for (final value in AiRequestTimeout.values)
+                  DropdownMenuItem(
+                    value: value,
+                    child: Text(AiRequestTimeout.label(value)),
+                  ),
+              ],
+              onChanged: saving ? null : onTimeoutSecondsChanged,
+            ),
           ],
-          onChanged: saving ? null : onTimeoutSecondsChanged,
         ),
       ],
     );
@@ -371,7 +437,9 @@ class _LlmAgentConfigSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _LlmSettingsGroup(
-      title: strings.multiAgent,
+      key: const ValueKey<String>('llm-settings-group-agent'),
+      title: strings.agentBehavior,
+      icon: Icons.account_tree_outlined,
       children: [
         SwitchListTile.adaptive(
           contentPadding: EdgeInsets.zero,
@@ -494,9 +562,9 @@ class _LlmReasoningConfigSection extends StatelessWidget {
     }
 
     return _LlmSettingsGroup(
-      title: strings.language == AppLanguage.en
-          ? 'Reasoning & Thinking'
-          : '推理与思考设置',
+      key: const ValueKey<String>('llm-settings-group-reasoning'),
+      title: strings.reasoningSettings,
+      icon: Icons.psychology_alt_outlined,
       children: [
         if (showsDeepSeekControls) ...[
           SwitchListTile.adaptive(
@@ -583,7 +651,9 @@ class _LlmSearchConfigSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _LlmSettingsGroup(
-      title: strings.webSearch,
+      key: const ValueKey<String>('llm-settings-group-search'),
+      title: strings.searchTools,
+      icon: Icons.travel_explore_rounded,
       children: [
         SwitchListTile.adaptive(
           contentPadding: EdgeInsets.zero,
@@ -674,7 +744,9 @@ class _LlmRagConfigSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _LlmSettingsGroup(
-      title: strings.ragTitle,
+      key: const ValueKey<String>('llm-settings-group-rag'),
+      title: strings.knowledgeBaseSettings,
+      icon: Icons.menu_book_outlined,
       children: [
         SwitchListTile.adaptive(
           contentPadding: EdgeInsets.zero,
@@ -751,7 +823,9 @@ class _LlmUploadLimitsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _LlmSettingsGroup(
-      title: strings.language == AppLanguage.en ? 'Upload Limits' : '上传文件限制',
+      key: const ValueKey<String>('llm-settings-group-upload-limits'),
+      title: strings.uploadLimits,
+      icon: Icons.attach_file_rounded,
       children: [
         DropdownButtonFormField<int>(
           initialValue: AiUploadSizeLimit.normalizeImage(maxImageSizeBytes),

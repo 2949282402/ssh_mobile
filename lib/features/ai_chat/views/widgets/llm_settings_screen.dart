@@ -528,10 +528,6 @@ class _LlmSettingsScreenState extends State<LlmSettingsScreen> {
           title: Text(strings.settings),
           actions: _hasChanges()
               ? [
-                  TextButton(
-                    onPressed: _saving ? null : () => _requestClose(strings),
-                    child: Text(strings.cancel),
-                  ),
                   Padding(
                     padding: const EdgeInsets.only(right: 12),
                     child: FilledButton(
@@ -546,208 +542,233 @@ class _LlmSettingsScreenState extends State<LlmSettingsScreen> {
                     ),
                   ),
                 ]
-              : [
-                  Padding(
-                    padding: const EdgeInsets.only(right: 12),
-                    child: TextButton(
-                      onPressed: () => _requestClose(strings),
-                      child: Text(strings.close),
-                    ),
-                  ),
-                ],
+              : null,
         ),
-        body: SafeArea(
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
-            children: [
-              if (_errorText != null) ...[
-                DecoratedBox(
-                  key: const ValueKey<String>('llm-settings-error'),
-                  decoration: BoxDecoration(
-                    color: colorScheme.errorContainer.withValues(alpha: 0.36),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: colorScheme.error.withValues(alpha: 0.42),
-                    ),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Text(
-                      _errorText!,
-                      style: TextStyle(color: colorScheme.error),
+        body: AppPageSurface(
+          child: SafeArea(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(
+                AppTheme.compactPagePadding,
+                AppTheme.compactPagePadding,
+                AppTheme.compactPagePadding,
+                28,
+              ),
+              children: [
+                Center(
+                  child: ConstrainedBox(
+                    key: const ValueKey<String>('llm-settings-form'),
+                    constraints: const BoxConstraints(maxWidth: 760),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (_errorText != null) ...[
+                          DecoratedBox(
+                            key: const ValueKey<String>('llm-settings-error'),
+                            decoration: BoxDecoration(
+                              color: colorScheme.errorContainer.withValues(
+                                alpha: 0.36,
+                              ),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: colorScheme.error.withValues(
+                                  alpha: 0.42,
+                                ),
+                              ),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Text(
+                                _errorText!,
+                                style: TextStyle(color: colorScheme.error),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                        ],
+                        _LlmApiConfigSection(
+                          strings: strings,
+                          saving: _saving,
+                          apiFormat: _apiFormat,
+                          onApiFormatChanged: (value) {
+                            if (value == null) return;
+                            setState(() {
+                              _apiFormat = value;
+                            });
+                          },
+                          baseUrlController: _baseUrlController,
+                          baseUrlHistory: _baseUrlHistory,
+                          onOpenBaseUrlHistory: () =>
+                              _openBaseUrlHistory(strings),
+                          recommendedBaseUrl: _getRecommendedBaseUrl(
+                            _apiFormat,
+                          ),
+                          onUseRecommendedBaseUrl: () {
+                            setState(() {
+                              _baseUrlController.text = _getRecommendedBaseUrl(
+                                _apiFormat,
+                              );
+                            });
+                          },
+                          apiKeyController: _apiKeyController,
+                          selectedApiKeyMasked: _selectedApiKeyMasked,
+                          apiKeyHistory: _apiKeyHistory,
+                          selectedApiKeyId: _selectedApiKeyId,
+                          onOpenApiKeyHistory: () =>
+                              _openApiKeyHistory(strings),
+                          onSelectApiKeyHistoryEntry: _selectApiKeyHistoryEntry,
+                          models: _models,
+                          modelController: _modelController,
+                          loadingModels: _loadingModels,
+                          onRefreshModels: () => _refreshModels(strings),
+                          helperModelController: _helperModelController,
+                          auditModelController: _auditModelController,
+                          modelFallbackPolicy: _modelFallbackPolicy,
+                          onModelFallbackPolicyChanged: (value) {
+                            if (value != null) {
+                              setState(() => _modelFallbackPolicy = value);
+                            }
+                          },
+                          contextWindowTokens: _contextWindowTokens,
+                          onContextWindowTokensChanged: (value) {
+                            if (value != null) {
+                              setState(() => _contextWindowTokens = value);
+                            }
+                          },
+                          timeoutSeconds: _timeoutSeconds,
+                          onTimeoutSecondsChanged: (value) {
+                            if (value != null) {
+                              setState(() => _timeoutSeconds = value);
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 14),
+                        _LlmAgentConfigSection(
+                          strings: strings,
+                          saving: _saving,
+                          multiAgentEnabled: _multiAgentEnabled,
+                          onMultiAgentEnabledChanged: (value) {
+                            setState(() => _multiAgentEnabled = value);
+                          },
+                          multiAgentMaxAgents: _multiAgentMaxAgents,
+                          onMultiAgentMaxAgentsChanged: (value) {
+                            if (value != null) {
+                              setState(() => _multiAgentMaxAgents = value);
+                            }
+                          },
+                          postToolReviewEnabled: _postToolReviewEnabled,
+                          onPostToolReviewEnabledChanged: (value) {
+                            setState(() => _postToolReviewEnabled = value);
+                          },
+                          toolCallBudget: _toolCallBudget,
+                          onToolCallBudgetChanged: (value) {
+                            if (value != null) {
+                              setState(() => _toolCallBudget = value);
+                            }
+                          },
+                          agentLoopMode: _agentLoopMode,
+                          onAgentLoopModeChanged: (value) {
+                            if (value != null) {
+                              setState(
+                                () => _agentLoopMode =
+                                    AiAgentLoopMode.normalize(value),
+                              );
+                            }
+                          },
+                        ),
+                        if (_showsDeepSeekControls ||
+                            _showsOpenAiReasoningControls) ...[
+                          const SizedBox(height: 14),
+                          _LlmReasoningConfigSection(
+                            strings: strings,
+                            saving: _saving,
+                            showsDeepSeekControls: _showsDeepSeekControls,
+                            deepSeekThinkingEnabled: _deepSeekThinkingEnabled,
+                            onDeepSeekThinkingChanged: (value) {
+                              setState(() => _deepSeekThinkingEnabled = value);
+                            },
+                            deepSeekReasoningEffort: _deepSeekReasoningEffort,
+                            onDeepSeekReasoningEffortChanged: (value) {
+                              if (value != null) {
+                                setState(
+                                  () => _deepSeekReasoningEffort = value,
+                                );
+                              }
+                            },
+                            showsOpenAiReasoningControls:
+                                _showsOpenAiReasoningControls,
+                            openAiReasoningEffort: _openAiReasoningEffort,
+                            onOpenAiReasoningEffortChanged: (value) {
+                              if (value != null) {
+                                setState(() => _openAiReasoningEffort = value);
+                              }
+                            },
+                          ),
+                        ],
+                        const SizedBox(height: 14),
+                        _LlmSearchConfigSection(
+                          strings: strings,
+                          saving: _saving,
+                          webSearchEnabled: _webSearchEnabled,
+                          onWebSearchEnabledChanged: (value) {
+                            setState(() => _webSearchEnabled = value);
+                          },
+                          webSearchEngine: _webSearchEngine,
+                          onWebSearchEngineChanged: (value) {
+                            if (value != null) {
+                              setState(() => _webSearchEngine = value);
+                            }
+                          },
+                          hasQuarkApiKey: widget.initialSettings.hasQuarkApiKey,
+                          quarkApiKeyController: _quarkApiKeyController,
+                          quarkEndpointController: _quarkEndpointController,
+                          webSearchMaxResults: _webSearchMaxResults,
+                          onWebSearchMaxResultsChanged: (value) {
+                            if (value != null) {
+                              setState(() => _webSearchMaxResults = value);
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 14),
+                        _LlmRagConfigSection(
+                          strings: strings,
+                          saving: _saving,
+                          ragEnabled: _ragEnabled,
+                          onRagEnabledChanged: (value) {
+                            setState(() => _ragEnabled = value);
+                          },
+                          ragSearchMode: _ragSearchMode,
+                          onRagSearchModeChanged: (value) {
+                            if (value != null) {
+                              setState(() => _ragSearchMode = value);
+                            }
+                          },
+                          onManageRag: () {
+                            Navigator.pushNamed(context, '/rag-knowledge');
+                          },
+                        ),
+                        const SizedBox(height: 14),
+                        _LlmUploadLimitsSection(
+                          strings: strings,
+                          saving: _saving,
+                          maxImageSizeBytes: _maxImageSizeBytes,
+                          onMaxImageSizeBytesChanged: (value) {
+                            if (value != null) {
+                              setState(() => _maxImageSizeBytes = value);
+                            }
+                          },
+                          maxFileSizeBytes: _maxFileSizeBytes,
+                          onMaxFileSizeBytesChanged: (value) {
+                            if (value != null) {
+                              setState(() => _maxFileSizeBytes = value);
+                            }
+                          },
+                        ),
+                      ],
                     ),
                   ),
                 ),
-                const SizedBox(height: 14),
               ],
-              _LlmApiConfigSection(
-                strings: strings,
-                saving: _saving,
-                apiFormat: _apiFormat,
-                onApiFormatChanged: (value) {
-                  if (value == null) return;
-                  setState(() {
-                    _apiFormat = value;
-                  });
-                },
-                baseUrlController: _baseUrlController,
-                baseUrlHistory: _baseUrlHistory,
-                onOpenBaseUrlHistory: () => _openBaseUrlHistory(strings),
-                recommendedBaseUrl: _getRecommendedBaseUrl(_apiFormat),
-                onUseRecommendedBaseUrl: () {
-                  setState(() {
-                    _baseUrlController.text = _getRecommendedBaseUrl(
-                      _apiFormat,
-                    );
-                  });
-                },
-                apiKeyController: _apiKeyController,
-                selectedApiKeyMasked: _selectedApiKeyMasked,
-                apiKeyHistory: _apiKeyHistory,
-                selectedApiKeyId: _selectedApiKeyId,
-                onOpenApiKeyHistory: () => _openApiKeyHistory(strings),
-                onSelectApiKeyHistoryEntry: _selectApiKeyHistoryEntry,
-                models: _models,
-                modelController: _modelController,
-                loadingModels: _loadingModels,
-                onRefreshModels: () => _refreshModels(strings),
-                helperModelController: _helperModelController,
-                auditModelController: _auditModelController,
-                modelFallbackPolicy: _modelFallbackPolicy,
-                onModelFallbackPolicyChanged: (value) {
-                  if (value != null) {
-                    setState(() => _modelFallbackPolicy = value);
-                  }
-                },
-                contextWindowTokens: _contextWindowTokens,
-                onContextWindowTokensChanged: (value) {
-                  if (value != null) {
-                    setState(() => _contextWindowTokens = value);
-                  }
-                },
-                timeoutSeconds: _timeoutSeconds,
-                onTimeoutSecondsChanged: (value) {
-                  if (value != null) {
-                    setState(() => _timeoutSeconds = value);
-                  }
-                },
-              ),
-              const SizedBox(height: 14),
-              _LlmAgentConfigSection(
-                strings: strings,
-                saving: _saving,
-                multiAgentEnabled: _multiAgentEnabled,
-                onMultiAgentEnabledChanged: (value) {
-                  setState(() => _multiAgentEnabled = value);
-                },
-                multiAgentMaxAgents: _multiAgentMaxAgents,
-                onMultiAgentMaxAgentsChanged: (value) {
-                  if (value != null) {
-                    setState(() => _multiAgentMaxAgents = value);
-                  }
-                },
-                postToolReviewEnabled: _postToolReviewEnabled,
-                onPostToolReviewEnabledChanged: (value) {
-                  setState(() => _postToolReviewEnabled = value);
-                },
-                toolCallBudget: _toolCallBudget,
-                onToolCallBudgetChanged: (value) {
-                  if (value != null) {
-                    setState(() => _toolCallBudget = value);
-                  }
-                },
-                agentLoopMode: _agentLoopMode,
-                onAgentLoopModeChanged: (value) {
-                  if (value != null) {
-                    setState(
-                      () => _agentLoopMode = AiAgentLoopMode.normalize(value),
-                    );
-                  }
-                },
-              ),
-              const SizedBox(height: 14),
-              _LlmReasoningConfigSection(
-                strings: strings,
-                saving: _saving,
-                showsDeepSeekControls: _showsDeepSeekControls,
-                deepSeekThinkingEnabled: _deepSeekThinkingEnabled,
-                onDeepSeekThinkingChanged: (value) {
-                  setState(() => _deepSeekThinkingEnabled = value);
-                },
-                deepSeekReasoningEffort: _deepSeekReasoningEffort,
-                onDeepSeekReasoningEffortChanged: (value) {
-                  if (value != null) {
-                    setState(() => _deepSeekReasoningEffort = value);
-                  }
-                },
-                showsOpenAiReasoningControls: _showsOpenAiReasoningControls,
-                openAiReasoningEffort: _openAiReasoningEffort,
-                onOpenAiReasoningEffortChanged: (value) {
-                  if (value != null) {
-                    setState(() => _openAiReasoningEffort = value);
-                  }
-                },
-              ),
-              const SizedBox(height: 14),
-              _LlmSearchConfigSection(
-                strings: strings,
-                saving: _saving,
-                webSearchEnabled: _webSearchEnabled,
-                onWebSearchEnabledChanged: (value) {
-                  setState(() => _webSearchEnabled = value);
-                },
-                webSearchEngine: _webSearchEngine,
-                onWebSearchEngineChanged: (value) {
-                  if (value != null) {
-                    setState(() => _webSearchEngine = value);
-                  }
-                },
-                hasQuarkApiKey: widget.initialSettings.hasQuarkApiKey,
-                quarkApiKeyController: _quarkApiKeyController,
-                quarkEndpointController: _quarkEndpointController,
-                webSearchMaxResults: _webSearchMaxResults,
-                onWebSearchMaxResultsChanged: (value) {
-                  if (value != null) {
-                    setState(() => _webSearchMaxResults = value);
-                  }
-                },
-              ),
-              const SizedBox(height: 14),
-              _LlmRagConfigSection(
-                strings: strings,
-                saving: _saving,
-                ragEnabled: _ragEnabled,
-                onRagEnabledChanged: (value) {
-                  setState(() => _ragEnabled = value);
-                },
-                ragSearchMode: _ragSearchMode,
-                onRagSearchModeChanged: (value) {
-                  if (value != null) {
-                    setState(() => _ragSearchMode = value);
-                  }
-                },
-                onManageRag: () {
-                  Navigator.pushNamed(context, '/rag-knowledge');
-                },
-              ),
-              const SizedBox(height: 14),
-              _LlmUploadLimitsSection(
-                strings: strings,
-                saving: _saving,
-                maxImageSizeBytes: _maxImageSizeBytes,
-                onMaxImageSizeBytesChanged: (value) {
-                  if (value != null) {
-                    setState(() => _maxImageSizeBytes = value);
-                  }
-                },
-                maxFileSizeBytes: _maxFileSizeBytes,
-                onMaxFileSizeBytesChanged: (value) {
-                  if (value != null) {
-                    setState(() => _maxFileSizeBytes = value);
-                  }
-                },
-              ),
-            ],
+            ),
           ),
         ),
       ),

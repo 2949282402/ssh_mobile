@@ -8,6 +8,13 @@ class AiStrings {
   bool get _en => language == AppLanguage.en;
 
   String get apiFormat => _en ? 'API Format' : 'API 协议格式';
+  String get connectionAndModel => _en ? 'Connection & model' : '连接与模型';
+  String get advancedModelOptions => _en ? 'Advanced model options' : '高级模型选项';
+  String get agentBehavior => _en ? 'Agent behavior' : 'Agent 行为';
+  String get reasoningSettings => _en ? 'Reasoning & thinking' : '推理与思考';
+  String get searchTools => _en ? 'Search tools' : '搜索工具';
+  String get knowledgeBaseSettings => _en ? 'Knowledge base' : '知识库';
+  String get uploadLimits => _en ? 'Upload limits' : '上传限制';
   String get apiFormatUnsupported => _en
       ? 'The selected API format is currently unsupported. Switched back to OpenAI Chat Completions.'
       : '所选 API 格式暂不支持，已切换回 OpenAI Chat Completions。';
