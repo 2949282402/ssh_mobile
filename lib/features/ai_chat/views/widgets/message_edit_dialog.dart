@@ -17,10 +17,18 @@ class EditUserMessageDialog extends StatefulWidget {
 class EditUserMessageDialogState extends State<EditUserMessageDialog> {
   late final TextEditingController _controller;
 
+  bool get _canSubmit => _controller.text.trim().isNotEmpty;
+
   @override
   void initState() {
     super.initState();
-    _controller = TextEditingController(text: widget.initialText);
+    _controller = TextEditingController(text: widget.initialText)
+      ..selection = TextSelection.collapsed(offset: widget.initialText.length)
+      ..addListener(_handleTextChanged);
+  }
+
+  void _handleTextChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -31,28 +39,95 @@ class EditUserMessageDialogState extends State<EditUserMessageDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.strings.editMessage),
-      content: SizedBox(
-        width: 520,
-        child: TextField(
-          controller: _controller,
-          autofocus: true,
-          minLines: 3,
-          maxLines: 8,
-          decoration: const InputDecoration(),
+    final mediaQuery = MediaQuery.of(context);
+    final availableHeight =
+        mediaQuery.size.height -
+        mediaQuery.viewInsets.bottom -
+        mediaQuery.padding.vertical;
+    final compactHeight = availableHeight < 360;
+    final dialogHeight = (availableHeight - (compactHeight ? 8 : 24))
+        .clamp(112.0, 640.0)
+        .toDouble();
+    final actionStyle = TextButton.styleFrom(
+      minimumSize: const Size(0, 48),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+    );
+
+    return Semantics(
+      namesRoute: true,
+      label: widget.strings.editMessage,
+      child: Dialog(
+        insetPadding: EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: compactHeight ? 4 : 12,
+        ),
+        child: SizedBox(
+          width: 560,
+          height: dialogHeight,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              compactHeight ? 12 : 20,
+              compactHeight ? 8 : 18,
+              compactHeight ? 12 : 20,
+              compactHeight ? 8 : 16,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (!compactHeight) ...[
+                  Text(
+                    widget.strings.editMessage,
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 14),
+                ],
+                Expanded(
+                  child: TextField(
+                    key: const ValueKey<String>('edit-message-field'),
+                    controller: _controller,
+                    autofocus: true,
+                    expands: true,
+                    minLines: null,
+                    maxLines: null,
+                    keyboardType: TextInputType.multiline,
+                    textInputAction: TextInputAction.newline,
+                    textAlignVertical: TextAlignVertical.top,
+                    decoration: InputDecoration(
+                      labelText: widget.strings.messageContent,
+                      alignLabelWithHint: true,
+                    ),
+                  ),
+                ),
+                SizedBox(height: compactHeight ? 6 : 14),
+                Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    TextButton(
+                      key: const ValueKey<String>('edit-message-cancel'),
+                      style: actionStyle,
+                      onPressed: () => Navigator.pop(context),
+                      child: Text(widget.strings.cancel),
+                    ),
+                    FilledButton(
+                      key: const ValueKey<String>('edit-message-submit'),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 48),
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                      ),
+                      onPressed: _canSubmit
+                          ? () => Navigator.pop(context, _controller.text)
+                          : null,
+                      child: Text(widget.strings.saveAndSend),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: Text(widget.strings.cancel),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(context, _controller.text),
-          child: Text(widget.strings.saveAndSend),
-        ),
-      ],
     );
   }
 }

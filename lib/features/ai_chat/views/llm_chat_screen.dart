@@ -226,6 +226,8 @@ extension AiMessageActionStrings on AiStrings {
       language == AppLanguage.en ? 'Save and send' : '保存并发送';
   String get editMessage =>
       language == AppLanguage.en ? 'Edit message' : '编辑消息';
+  String get messageContent =>
+      language == AppLanguage.en ? 'Message content' : '消息内容';
   String get branchSuffix => language == AppLanguage.en ? 'Branch' : '分支';
 }
 

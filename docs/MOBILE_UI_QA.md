@@ -85,7 +85,10 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   removal actions at 48 dp while long filenames ellipsize safely.
   Message copy, edit, retry, branch, and trace controls expose 48 dp targets;
   action groups wrap on narrow messages, sent attachment names stay bounded,
-  and trace summaries localize without overflowing their message column.
+  and trace summaries localize without overflowing their message column. The
+  message editor derives its height from the keyboard-visible viewport, keeps
+  both actions at 48 dp in compact landscape, and rejects whitespace-only
+  resubmissions without dismissing the draft.
 - LLM settings intercept Android Back and the close affordance when edits are
   pending, then require an explicit discard confirmation. Saving
   temporarily disables route dismissal, while model-refresh and save failures
