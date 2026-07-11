@@ -216,6 +216,67 @@ class AppStrings {
   String get expandFullLog => _en ? 'Tap to expand full log' : '点击展开完整日志';
   String get copiedSingleLog => _en ? 'Log copied' : '已复制单条日志';
 
+  String get agentTraceTitle => _en ? 'Agent Trace' : 'Agent 执行轨迹';
+  String get agentTraceLoadFailedTitle =>
+      _en ? 'Failed to load trace' : '无法加载执行轨迹';
+  String get agentTraceLoadFailedMessage =>
+      _en ? 'Trace data could not be loaded. Try again.' : '无法读取执行轨迹数据，请重试。';
+  String get agentTraceOverview => _en ? 'Overview' : '执行概览';
+  String agentTraceEventCount(int count) =>
+      _en ? '$count events' : '$count 个事件';
+  String get agentTraceNoMatchingTitle =>
+      _en ? 'No matching events' : '没有匹配的事件';
+  String get agentTraceNoMatchingMessage =>
+      _en ? 'No events match this filter.' : '当前筛选条件下没有事件。';
+  String get agentTraceEmptyTitle =>
+      _en ? 'No persisted trace events found for this run.' : '未找到本次运行保存的执行轨迹。';
+  String get agentTraceFilterAll => _en ? 'All' : '全部';
+  String get agentTraceFilterTools => _en ? 'Tools' : '工具';
+  String get agentTraceFilterApprovals => _en ? 'Approvals' : '审批';
+  String get agentTraceFilterBlocked => _en ? 'Blocked' : '已拦截';
+  String get agentTraceFilterErrors => _en ? 'Errors' : '错误';
+  String get agentTraceMetricStatus => _en ? 'Status' : '状态';
+  String get agentTraceMetricRun => _en ? 'Run' : '运行 ID';
+  String get agentTraceMetricModel => _en ? 'Model' : '模型';
+  String get agentTraceMetricHelper => _en ? 'Helper' : '辅助模型';
+  String get agentTraceMetricAudit => _en ? 'Audit' : '审计模型';
+  String get agentTraceMetricElapsed => _en ? 'Elapsed' : '耗时';
+  String get agentTraceMetricPrompt => _en ? 'Prompt' : '输入 Token';
+  String get agentTraceMetricCompletion => _en ? 'Completion' : '输出 Token';
+  String get agentTraceMetricTotal => _en ? 'Total' : '总 Token';
+  String get agentTraceMetricTools => _en ? 'Tools' : '工具调用';
+  String get agentTraceMetricCacheHits => _en ? 'Cache hits' : '缓存命中';
+  String get agentTraceMetricDedupBlocked => _en ? 'Dedup blocked' : '去重拦截';
+  String get agentTraceMetricApprovals => _en ? 'Approvals' : '审批';
+  String get agentTraceMetricApproved => _en ? 'Approved' : '已批准';
+  String get agentTraceMetricAudits => _en ? 'Audits' : '安全审计';
+  String get agentTraceMetricHelperFanout => _en ? 'Helper fanout' : '辅助 Agent';
+  String get agentTraceSelectedTools => _en ? 'Selected tools' : '已选工具';
+  String get agentTraceMemorySources => _en ? 'Memory sources' : '记忆来源';
+  String get agentTraceFinalReason => _en ? 'Final reason' : '最终原因';
+  String get agentTraceCopyRaw => _en ? 'Copy raw' : '复制原始内容';
+  String get agentTraceCopied => _en ? 'Trace content copied' : '已复制轨迹原始内容';
+  String get agentTraceTruncated => _en ? 'truncated' : '已截断';
+  String get agentTraceStatusSuccess => _en ? 'Success' : '成功';
+  String get agentTraceStatusFailed => _en ? 'Failed' : '失败';
+  String get agentTraceOutcomeCancelled => _en ? 'Cancelled by user' : '用户已取消';
+  String get agentTraceOutcomeModelError =>
+      _en ? 'Model request failed' : '模型请求失败';
+  String get agentTraceOutcomeToolError =>
+      _en ? 'Tool execution failed' : '工具执行失败';
+  String get agentTraceOutcomeApprovalRejected =>
+      _en ? 'User rejected approval' : '用户拒绝审批';
+  String get agentTraceOutcomeApprovalUnavailable =>
+      _en ? 'Approval UI unavailable' : '审批界面不可用';
+  String get agentTraceOutcomeBudgetAuditRejected =>
+      _en ? 'Tool budget audit rejected' : '工具预算审计未通过';
+  String get agentTraceOutcomeLoopGuardBlocked =>
+      _en ? 'Tool loop guard blocked execution' : '工具循环保护已拦截执行';
+  String get agentTraceOutcomePlanModeBlocked =>
+      _en ? 'Plan Mode blocked execution' : '规划模式已拦截执行';
+  String get agentTraceOutcomePlanExecutionBlocked =>
+      _en ? 'Plan execution gate blocked execution' : '计划执行门禁已拦截执行';
+
   String get noConnectionHistory => _en ? 'No connection history' : '暂无连接历史';
   String get deleteHistoryRecord => _en ? 'Delete history record' : '删除历史记录';
 

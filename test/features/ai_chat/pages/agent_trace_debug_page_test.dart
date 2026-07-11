@@ -8,6 +8,7 @@ import 'package:ssh_mobile/data/database/app_database.dart' as db;
 import 'package:ssh_mobile/features/ai_chat/models/agent_trace_event.dart';
 import 'package:ssh_mobile/features/ai_chat/pages/agent_trace_debug_page.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
+import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 
 void main() {
@@ -82,14 +83,7 @@ void main() {
       ),
     ]);
 
-    await tester.pumpWidget(
-      ChangeNotifierProvider<StorageService>.value(
-        value: storage,
-        child: const MaterialApp(
-          home: AgentTraceDebugPage(chatId: 'chat-1', runId: 'run-1'),
-        ),
-      ),
-    );
+    await tester.pumpWidget(_traceTestApp(storage: storage, runId: 'run-1'));
     await tester.pumpAndSettle();
 
     expect(find.text('Overview'), findsOneWidget);
@@ -142,12 +136,7 @@ void main() {
     ]);
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<StorageService>.value(
-        value: storage,
-        child: const MaterialApp(
-          home: AgentTraceDebugPage(chatId: 'chat-1', runId: 'run-large'),
-        ),
-      ),
+      _traceTestApp(storage: storage, runId: 'run-large'),
     );
     await tester.pumpAndSettle();
 
@@ -235,14 +224,7 @@ void main() {
     );
     await storage.saveAgentTraceEvents([event]);
 
-    await tester.pumpWidget(
-      ChangeNotifierProvider<StorageService>.value(
-        value: storage,
-        child: const MaterialApp(
-          home: AgentTraceDebugPage(chatId: 'chat-1', runId: 'run-long'),
-        ),
-      ),
-    );
+    await tester.pumpWidget(_traceTestApp(storage: storage, runId: 'run-long'));
     await tester.pumpAndSettle();
 
     final traceScroll = find
@@ -306,12 +288,7 @@ void main() {
     await storage.init();
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<StorageService>.value(
-        value: storage,
-        child: const MaterialApp(
-          home: AgentTraceDebugPage(chatId: 'chat-1', runId: 'missing-run'),
-        ),
-      ),
+      _traceTestApp(storage: storage, runId: 'missing-run'),
     );
     await tester.pumpAndSettle();
 
@@ -350,15 +327,7 @@ void main() {
       );
 
       await tester.pumpWidget(
-        ChangeNotifierProvider<StorageService>.value(
-          value: storage,
-          child: const MaterialApp(
-            home: AgentTraceDebugPage(
-              chatId: 'chat-1',
-              runId: 'run-metrics-only',
-            ),
-          ),
-        ),
+        _traceTestApp(storage: storage, runId: 'run-metrics-only'),
       );
       await tester.pumpAndSettle();
 
@@ -371,4 +340,109 @@ void main() {
       expect(find.text('run-metrics-only'), findsOneWidget);
     },
   );
+
+  testWidgets('updates trace chrome when the app language changes', (
+    tester,
+  ) async {
+    final database = db.AppDatabase.forTesting();
+    addTearDown(database.close);
+    final storage = StorageService(database: database);
+    addTearDown(storage.dispose);
+    await storage.init();
+
+    await storage.saveAgentTraceEvents([
+      AgentTraceEvent(
+        id: 'event-language',
+        runId: 'run-language',
+        chatId: 'chat-1',
+        createdAt: DateTime.utc(2026, 6, 22, 10),
+        sequence: 0,
+        kind: 'agent_run_summary',
+        title: 'Agent run summary',
+        content:
+            '{"finalOutcome":"modelError","selectedToolSet":["run_command"],"memorySources":["rag:ops"]}',
+        toolName: 'run_command',
+        status: 'failed',
+      ),
+    ]);
+    final settings = _TestAppSettings(AppLanguage.en);
+    addTearDown(settings.dispose);
+
+    await tester.pumpWidget(
+      _traceTestApp(
+        storage: storage,
+        runId: 'run-language',
+        settings: settings,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Agent Trace'), findsOneWidget);
+    expect(find.text('Overview'), findsOneWidget);
+
+    settings.setLanguageForTest(AppLanguage.zh);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Agent 执行轨迹'), findsOneWidget);
+    expect(find.text('执行概览'), findsOneWidget);
+    expect(find.text('1 个事件'), findsOneWidget);
+    expect(find.text('状态: 模型请求失败'), findsOneWidget);
+    expect(find.text('已选工具: run_command'), findsOneWidget);
+    expect(find.text('记忆来源: rag:ops'), findsOneWidget);
+    expect(find.text('最终原因: 模型请求失败'), findsOneWidget);
+    expect(find.text('全部'), findsOneWidget);
+    expect(find.text('工具'), findsOneWidget);
+    expect(find.text('审批'), findsOneWidget);
+    expect(find.text('已拦截'), findsOneWidget);
+    expect(find.text('错误'), findsOneWidget);
+
+    final traceScroll = find
+        .descendant(
+          of: find.byKey(const ValueKey('agent-trace-scroll')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    final eventTitle = find.text('0. Agent run summary');
+    await tester.scrollUntilVisible(eventTitle, 300, scrollable: traceScroll);
+    await tester.tap(eventTitle);
+    await tester.pumpAndSettle();
+    expect(find.text('复制原始内容'), findsOneWidget);
+    expect(find.textContaining('agent_run_summary'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+}
+
+Widget _traceTestApp({
+  required StorageService storage,
+  required String runId,
+  AppLanguage language = AppLanguage.en,
+  _TestAppSettings? settings,
+}) {
+  final app = MaterialApp(
+    home: AgentTraceDebugPage(chatId: 'chat-1', runId: runId),
+  );
+  final withSettings = settings == null
+      ? ChangeNotifierProvider<AppSettings>(
+          create: (_) => _TestAppSettings(language),
+          child: app,
+        )
+      : ChangeNotifierProvider<AppSettings>.value(value: settings, child: app);
+  return ChangeNotifierProvider<StorageService>.value(
+    value: storage,
+    child: withSettings,
+  );
+}
+
+class _TestAppSettings extends AppSettings {
+  _TestAppSettings(this._testLanguage);
+
+  AppLanguage _testLanguage;
+
+  @override
+  AppLanguage get language => _testLanguage;
+
+  void setLanguageForTest(AppLanguage value) {
+    if (value == _testLanguage) return;
+    _testLanguage = value;
+    notifyListeners();
+  }
 }

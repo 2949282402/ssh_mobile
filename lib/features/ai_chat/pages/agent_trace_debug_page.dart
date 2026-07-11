@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../../services/app_log_service.dart';
+import '../../../services/app_settings.dart';
 import '../../../services/storage_service.dart';
 import '../../../theme/app_theme.dart';
 import '../../../widgets/app_surface.dart';
@@ -65,8 +66,12 @@ class _AgentTraceDebugPageState extends State<AgentTraceDebugPage> {
 
   @override
   Widget build(BuildContext context) {
+    final language = context.select<AppSettings, AppLanguage>(
+      (settings) => settings.language,
+    );
+    final strings = AppStrings(language);
     return Scaffold(
-      appBar: AppBar(title: const Text('Agent Trace')),
+      appBar: AppBar(title: Text(strings.agentTraceTitle)),
       body: AppPageSurface(
         child: FutureBuilder<_TraceDebugData>(
           future: _future,
@@ -78,23 +83,24 @@ class _AgentTraceDebugPageState extends State<AgentTraceDebugPage> {
             if (snapshot.hasError) {
               return AppEmptyState(
                 icon: Icons.error_outline_rounded,
-                title: 'Failed to load trace',
-                message: 'Trace data could not be loaded. Try again.',
+                title: strings.agentTraceLoadFailedTitle,
+                message: strings.agentTraceLoadFailedMessage,
                 action: FilledButton.icon(
                   style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
                   onPressed: _retry,
                   icon: const Icon(Icons.refresh_rounded),
-                  label: const Text('Retry'),
+                  label: Text(strings.retry),
                 ),
               );
             }
             if (data == null || (data.events.isEmpty && data.metrics == null)) {
-              return _EmptyTrace(runId: widget.runId);
+              return _EmptyTrace(runId: widget.runId, strings: strings);
             }
             return _TraceDebugBody(
               runId: widget.runId,
               data: data,
               events: _filteredEvents(data.events),
+              strings: strings,
               selectedFilter: _filter,
               onFilterSelected: (value) => setState(() => _filter = value),
             );
@@ -141,6 +147,7 @@ class _TraceDebugBody extends StatelessWidget {
   final String runId;
   final _TraceDebugData data;
   final List<AgentTraceEvent> events;
+  final AppStrings strings;
   final _TraceFilter selectedFilter;
   final ValueChanged<_TraceFilter> onFilterSelected;
 
@@ -148,6 +155,7 @@ class _TraceDebugBody extends StatelessWidget {
     required this.runId,
     required this.data,
     required this.events,
+    required this.strings,
     required this.selectedFilter,
     required this.onFilterSelected,
   });
@@ -175,6 +183,7 @@ class _TraceDebugBody extends StatelessWidget {
                 runId: runId,
                 events: data.events,
                 metrics: data.metrics,
+                strings: strings,
               ),
             ),
           ),
@@ -183,7 +192,9 @@ class _TraceDebugBody extends StatelessWidget {
           SliverPadding(
             padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
             sliver: SliverToBoxAdapter(
-              child: _TraceContentWidth(child: _EmptyTrace(runId: runId)),
+              child: _TraceContentWidth(
+                child: _EmptyTrace(runId: runId, strings: strings),
+              ),
             ),
           )
         else ...[
@@ -199,6 +210,7 @@ class _TraceDebugBody extends StatelessWidget {
                 child: _FilterBar(
                   selected: selectedFilter,
                   onSelected: onFilterSelected,
+                  strings: strings,
                 ),
               ),
             ),
@@ -206,12 +218,12 @@ class _TraceDebugBody extends StatelessWidget {
           if (events.isEmpty)
             SliverPadding(
               padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
-              sliver: const SliverToBoxAdapter(
+              sliver: SliverToBoxAdapter(
                 child: _TraceContentWidth(
                   child: AppEmptyState(
                     icon: Icons.filter_alt_off_outlined,
-                    title: 'No matching events',
-                    message: 'No events match this filter.',
+                    title: strings.agentTraceNoMatchingTitle,
+                    message: strings.agentTraceNoMatchingMessage,
                     compact: true,
                     contained: false,
                   ),
@@ -235,6 +247,7 @@ class _TraceDebugBody extends StatelessWidget {
                     child: _TraceTimelineItem(
                       key: ValueKey(event.id),
                       event: event,
+                      strings: strings,
                       offset: event.createdAt.difference(
                         data.events.first.createdAt,
                       ),
@@ -270,11 +283,13 @@ class _OverviewSection extends StatelessWidget {
   final String runId;
   final List<AgentTraceEvent> events;
   final AgentRunMetrics? metrics;
+  final AppStrings strings;
 
   const _OverviewSection({
     required this.runId,
     required this.events,
     required this.metrics,
+    required this.strings,
   });
 
   @override
@@ -288,9 +303,9 @@ class _OverviewSection extends StatelessWidget {
         ? metrics!.memorySources
         : _stringList(summary['memorySources']);
     return AppSectionCard(
-      title: 'Overview',
+      title: strings.agentTraceOverview,
       icon: Icons.analytics_outlined,
-      trailing: Text('${events.length} events'),
+      trailing: Text(strings.agentTraceEventCount(events.length)),
       padding: const EdgeInsets.all(14),
       contentGap: 10,
       child: Column(
@@ -300,74 +315,89 @@ class _OverviewSection extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
-              _MetricPill('Status', _statusLabel(metrics, finalOutcome)),
-              _MetricPill('Run', runId),
               _MetricPill(
-                'Model',
+                strings.agentTraceMetricStatus,
+                _statusLabel(metrics, finalOutcome, strings),
+              ),
+              _MetricPill(strings.agentTraceMetricRun, runId),
+              _MetricPill(
+                strings.agentTraceMetricModel,
                 metrics?.model ?? '${summary['model'] ?? '-'}',
               ),
               _MetricPill(
-                'Helper',
+                strings.agentTraceMetricHelper,
                 metrics?.helperModel ?? '${summary['helperModel'] ?? '-'}',
               ),
               _MetricPill(
-                'Audit',
+                strings.agentTraceMetricAudit,
                 metrics?.auditModel ?? '${summary['auditModel'] ?? '-'}',
               ),
-              _MetricPill('Elapsed', _elapsed(metrics, summary)),
               _MetricPill(
-                'Prompt',
+                strings.agentTraceMetricElapsed,
+                _elapsed(metrics, summary),
+              ),
+              _MetricPill(
+                strings.agentTraceMetricPrompt,
                 '${metrics?.promptTokens ?? summary['promptTokens'] ?? 0}',
               ),
               _MetricPill(
-                'Completion',
+                strings.agentTraceMetricCompletion,
                 '${metrics?.completionTokens ?? summary['completionTokens'] ?? 0}',
               ),
               _MetricPill(
-                'Total',
+                strings.agentTraceMetricTotal,
                 '${metrics?.totalTokens ?? _totalTokens(summary)}',
               ),
               _MetricPill(
-                'Tools',
+                strings.agentTraceMetricTools,
                 '${metrics?.toolCalls ?? summary['toolCalls'] ?? _countKind(events, 'tool_request')}',
               ),
               _MetricPill(
-                'Cache hits',
+                strings.agentTraceMetricCacheHits,
                 '${metrics?.cacheHits ?? summary['cacheHits'] ?? 0}',
               ),
               _MetricPill(
-                'Dedup blocked',
+                strings.agentTraceMetricDedupBlocked,
                 '${metrics?.dedupBlockedCalls ?? summary['dedupBlockedCalls'] ?? 0}',
               ),
               _MetricPill(
-                'Approvals',
+                strings.agentTraceMetricApprovals,
                 '${metrics?.approvalCount ?? summary['approvalCount'] ?? _countKind(events, 'approval')}',
               ),
               _MetricPill(
-                'Approved',
+                strings.agentTraceMetricApproved,
                 '${metrics?.approvedCount ?? summary['approvedCount'] ?? 0}',
               ),
               _MetricPill(
-                'Audits',
+                strings.agentTraceMetricAudits,
                 '${metrics?.auditCount ?? summary['auditEscalationLevel'] ?? 0}',
               ),
               _MetricPill(
-                'Helper fanout',
+                strings.agentTraceMetricHelperFanout,
                 '${metrics?.helperFanout ?? summary['helperFanout'] ?? 0}',
               ),
             ],
           ),
           if (selectedTools.isNotEmpty) ...[
             const SizedBox(height: 10),
-            _SmallLabel('Selected tools', selectedTools.join(', ')),
+            _SmallLabel(
+              strings.agentTraceSelectedTools,
+              selectedTools.join(', '),
+            ),
           ],
           if (memorySources.isNotEmpty) ...[
             const SizedBox(height: 6),
-            _SmallLabel('Memory sources', memorySources.join(', ')),
+            _SmallLabel(
+              strings.agentTraceMemorySources,
+              memorySources.join(', '),
+            ),
           ],
           if (finalOutcome != null) ...[
             const SizedBox(height: 10),
-            _SmallLabel('Final reason', _finalOutcomeLabel(finalOutcome)),
+            _SmallLabel(
+              strings.agentTraceFinalReason,
+              _finalOutcomeLabel(finalOutcome, strings),
+            ),
           ],
         ],
       ),
@@ -392,10 +422,16 @@ class _OverviewSection extends StatelessWidget {
     return const {};
   }
 
-  static String _statusLabel(AgentRunMetrics? metrics, String? finalOutcome) {
-    if (finalOutcome != null) return _finalOutcomeLabel(finalOutcome);
-    if (metrics == null) return 'Unknown';
-    return metrics.success ? 'Success' : 'Failed';
+  static String _statusLabel(
+    AgentRunMetrics? metrics,
+    String? finalOutcome,
+    AppStrings strings,
+  ) {
+    if (finalOutcome != null) return _finalOutcomeLabel(finalOutcome, strings);
+    if (metrics == null) return strings.unknown;
+    return metrics.success
+        ? strings.agentTraceStatusSuccess
+        : strings.agentTraceStatusFailed;
   }
 
   static String _elapsed(
@@ -439,8 +475,13 @@ class _OverviewSection extends StatelessWidget {
 class _FilterBar extends StatelessWidget {
   final _TraceFilter selected;
   final ValueChanged<_TraceFilter> onSelected;
+  final AppStrings strings;
 
-  const _FilterBar({required this.selected, required this.onSelected});
+  const _FilterBar({
+    required this.selected,
+    required this.onSelected,
+    required this.strings,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -451,7 +492,7 @@ class _FilterBar extends StatelessWidget {
         for (final value in _TraceFilter.values)
           ChoiceChip(
             key: ValueKey('trace-filter-${value.name}'),
-            label: Text(_filterLabel(value)),
+            label: Text(_filterLabel(value, strings)),
             selected: selected == value,
             onSelected: (_) => onSelected(value),
             visualDensity: VisualDensity.standard,
@@ -465,11 +506,13 @@ class _FilterBar extends StatelessWidget {
 class _TraceTimelineItem extends StatelessWidget {
   final AgentTraceEvent event;
   final Duration offset;
+  final AppStrings strings;
 
   const _TraceTimelineItem({
     super.key,
     required this.event,
     required this.offset,
+    required this.strings,
   });
 
   @override
@@ -540,15 +583,15 @@ class _TraceTimelineItem extends StatelessWidget {
                     onPressed: () {
                       Clipboard.setData(ClipboardData(text: event.content));
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Trace content copied')),
+                        SnackBar(content: Text(strings.agentTraceCopied)),
                       );
                     },
                     icon: const Icon(Icons.copy_outlined, size: 16),
-                    label: const Text('Copy raw'),
+                    label: Text(strings.agentTraceCopyRaw),
                   ),
                   if (event.truncated)
                     Text(
-                      'truncated',
+                      strings.agentTraceTruncated,
                       style: TextStyle(color: colorScheme.error),
                     ),
                 ],
@@ -679,14 +722,15 @@ class _SmallLabel extends StatelessWidget {
 
 class _EmptyTrace extends StatelessWidget {
   final String runId;
+  final AppStrings strings;
 
-  const _EmptyTrace({required this.runId});
+  const _EmptyTrace({required this.runId, required this.strings});
 
   @override
   Widget build(BuildContext context) {
     return AppEmptyState(
       icon: Icons.account_tree_outlined,
-      title: 'No persisted trace events found for this run.',
+      title: strings.agentTraceEmptyTitle,
       message: runId,
       compact: true,
       contained: false,
@@ -694,18 +738,18 @@ class _EmptyTrace extends StatelessWidget {
   }
 }
 
-String _filterLabel(_TraceFilter value) {
+String _filterLabel(_TraceFilter value, AppStrings strings) {
   switch (value) {
     case _TraceFilter.all:
-      return 'All';
+      return strings.agentTraceFilterAll;
     case _TraceFilter.tools:
-      return 'Tools';
+      return strings.agentTraceFilterTools;
     case _TraceFilter.approvals:
-      return 'Approvals';
+      return strings.agentTraceFilterApprovals;
     case _TraceFilter.blocked:
-      return 'Blocked';
+      return strings.agentTraceFilterBlocked;
     case _TraceFilter.errors:
-      return 'Errors';
+      return strings.agentTraceFilterErrors;
   }
 }
 
@@ -754,28 +798,28 @@ String _formatDuration(Duration duration) {
   return '${(ms / 1000).toStringAsFixed(1)}s';
 }
 
-String _finalOutcomeLabel(String value) {
+String _finalOutcomeLabel(String value, AppStrings strings) {
   switch (value) {
     case 'success':
-      return 'Success';
+      return strings.agentTraceStatusSuccess;
     case 'cancelled':
-      return 'Cancelled by user';
+      return strings.agentTraceOutcomeCancelled;
     case 'modelError':
-      return 'Model request failed';
+      return strings.agentTraceOutcomeModelError;
     case 'toolError':
-      return 'Tool execution failed';
+      return strings.agentTraceOutcomeToolError;
     case 'approvalRejected':
-      return 'User rejected approval';
+      return strings.agentTraceOutcomeApprovalRejected;
     case 'approvalUnavailable':
-      return 'Approval UI unavailable';
+      return strings.agentTraceOutcomeApprovalUnavailable;
     case 'budgetAuditRejected':
-      return 'Tool budget audit rejected';
+      return strings.agentTraceOutcomeBudgetAuditRejected;
     case 'loopGuardBlocked':
-      return 'Tool loop guard blocked execution';
+      return strings.agentTraceOutcomeLoopGuardBlocked;
     case 'planModeBlocked':
-      return 'Plan Mode blocked execution';
+      return strings.agentTraceOutcomePlanModeBlocked;
     case 'planExecutionBlocked':
-      return 'Plan execution gate blocked execution';
+      return strings.agentTraceOutcomePlanExecutionBlocked;
     default:
       return value;
   }
