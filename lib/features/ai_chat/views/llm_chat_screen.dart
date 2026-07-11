@@ -95,6 +95,11 @@ double historyPanelLeadingOffsetFor({
 }
 
 @visibleForTesting
+int chatToolColumnCountFor(double availableWidth) {
+  return (availableWidth / 88).floor().clamp(3, 6);
+}
+
+@visibleForTesting
 List<String> resolveFetchedModelOptions({
   required Iterable<String> fetchedModels,
   required Iterable<String> fallbackModels,

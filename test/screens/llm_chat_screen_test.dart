@@ -52,6 +52,12 @@ void main() {
     expect(historyPanelLeadingOffsetFor(width: 891, progress: 0.5), -445.5);
   });
 
+  test('chat tool columns adapt from narrow portrait to wide landscape', () {
+    expect(chatToolColumnCountFor(300), 3);
+    expect(chatToolColumnCountFor(391), 4);
+    expect(chatToolColumnCountFor(720), 6);
+  });
+
   test('chat starter suggestions are localized and actionable', () {
     const en = AiStrings(AppLanguage.en);
     const zh = AiStrings(AppLanguage.zh);

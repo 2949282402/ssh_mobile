@@ -20,7 +20,7 @@ class _ChatAttachmentPreview extends StatelessWidget {
             runSpacing: 6,
             children: [
               for (var i = 0; i < pendingAttachments.length; i++)
-                _AttachmentChip(
+                AttachmentChip(
                   attachment: pendingAttachments[i],
                   onRemove: () {
                     viewModel.removeAttachmentAt(i);

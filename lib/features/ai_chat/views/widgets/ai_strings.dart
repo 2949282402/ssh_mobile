@@ -67,6 +67,7 @@ class AiStrings {
   String get appSettings => _en ? 'App settings' : '应用设置';
   String get settings => _en ? 'LLM settings' : '大模型设置';
   String get send => _en ? 'Send' : '发送';
+  String get removeAttachment => _en ? 'Remove attachment' : '移除附件';
   String get stop => _en ? 'Stop' : '停止';
   String get stopped => _en ? '[Stopped by user]' : '[用户已终止]';
   String get baseUrl => _en ? 'Base URL' : 'Base URL';

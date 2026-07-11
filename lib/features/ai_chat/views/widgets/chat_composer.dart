@@ -180,7 +180,7 @@ class _ChatComposerState extends State<_ChatComposer> {
           child: widget.toolsExpanded
               ? Padding(
                   padding: const EdgeInsets.only(bottom: 8),
-                  child: _ChatToolsBar(
+                  child: ChatToolsBar(
                     skillsLabel: strings.skills,
                     serverLabel: state._selectedServerLabel(strings),
                     webViewLabel: strings.webView,

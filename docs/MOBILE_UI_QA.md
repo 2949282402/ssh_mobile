@@ -80,6 +80,9 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   Chat history animates with normalized progress so an open panel remains full
   width after rotation. It blocks background semantics and Android Back closes
   the history layer before attempting to leave the current route.
+  The AI tools grid derives three to six columns from available width, shows
+  all rows through the composer's outer scrolling region, and keeps attachment
+  removal actions at 48 dp while long filenames ellipsize safely.
 - The first-launch background-service guide and less common routes still need a
   consistency pass against the shared page-surface components.
 - Cold startup remained on the native black launch surface for a noticeable
