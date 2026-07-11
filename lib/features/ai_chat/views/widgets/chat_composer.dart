@@ -52,6 +52,8 @@ class _ChatComposerState extends State<_ChatComposer> {
     );
     final strings = AiStrings(language);
     final state = context.findAncestorStateOfType<_LlmChatScreenBodyState>()!;
+    final mediaQuery = MediaQuery.of(context);
+    final mobileMetrics = mobileUiMetricsFor(mediaQuery);
 
     return Selector<AiChatViewModel, _ComposerSnapshot>(
       selector: (context, vm) {
@@ -71,221 +73,306 @@ class _ChatComposerState extends State<_ChatComposer> {
       builder: (context, snapshot, child) {
         final viewModel = context.read<AiChatViewModel>();
         final activeChat = viewModel.activeChat!;
+        final horizontalPadding = 12 * mobileMetrics.chromeScale;
+        final verticalPadding = 9 * mobileMetrics.chromeScale;
 
-        return Container(
-          padding: const EdgeInsets.fromLTRB(14, 11, 14, 14),
-          decoration: BoxDecoration(
-            color: colorScheme.surface.withValues(alpha: 0.94),
-            border: Border(
-              top: BorderSide(
-                color: colorScheme.outline.withValues(alpha: 0.72),
-              ),
+        return ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: chatComposerMaxHeightFor(
+              viewportHeight: mediaQuery.size.height,
+              keyboardInset: mediaQuery.viewInsets.bottom,
             ),
           ),
-          child: SingleChildScrollView(
-            reverse: true,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // 1. Plan Mode active banner
-                ValueListenableBuilder<String>(
-                  valueListenable: _textNotifier,
-                  builder: (context, text, _) {
-                    final isPlanInput = text.trim().startsWith('/plan');
-                    final showPlanMode = snapshot.planMode || isPlanInput;
-                    if (!showPlanMode) return const SizedBox.shrink();
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: colorScheme.primaryContainer,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: colorScheme.primary.withValues(alpha: 0.24),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: colorScheme.surface.withValues(alpha: 0.96),
+              border: Border(
+                top: BorderSide(
+                  color: colorScheme.outline.withValues(alpha: 0.56),
+                ),
+              ),
+            ),
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                verticalPadding,
+                horizontalPadding,
+                verticalPadding,
+              ),
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                heightFactor: 1,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 960),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Flexible(
+                        fit: FlexFit.loose,
+                        child: SingleChildScrollView(
+                          physics: const ClampingScrollPhysics(),
+                          child: _buildAuxiliaryContent(
+                            context: context,
+                            snapshot: snapshot,
+                            activeChat: activeChat,
+                            viewModel: viewModel,
+                            state: state,
+                            strings: strings,
+                            colorScheme: colorScheme,
+                          ),
                         ),
                       ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.edit_note_rounded,
-                            size: 18,
-                            color: colorScheme.onPrimaryContainer,
-                          ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              strings.language == AppLanguage.en
-                                  ? 'Plan Mode Active (Read-only diagnostics & planning)'
-                                  : '规划模式已启用 (仅进行只读诊断与方案规划)',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                                color: colorScheme.onPrimaryContainer,
-                              ),
-                            ),
-                          ),
-                          InkWell(
-                            onTap: () async {
-                              if (isPlanInput) {
-                                widget.inputController.clear();
-                              }
-                              if (snapshot.planMode) {
-                                await LlmChatCommandsHelper.setPlanModeFromUi(
-                                  context: context,
-                                  chat: activeChat,
-                                  enabled: false,
-                                  strings: strings,
-                                );
-                              }
-                            },
-                            child: Icon(
-                              Icons.close_rounded,
-                              size: 16,
-                              color: colorScheme.onPrimaryContainer,
-                            ),
-                          ),
-                        ],
+                      _buildInputSurface(
+                        colorScheme: colorScheme,
+                        strings: strings,
+                        state: state,
+                        sending: snapshot.sending,
                       ),
-                    );
-                  },
+                    ],
+                  ),
                 ),
-
-                // 2. Slash command suggestions panel
-                ValueListenableBuilder<String>(
-                  valueListenable: _textNotifier,
-                  builder: (context, text, _) {
-                    return ChatSlashCommandsPanel(
-                      inputController: state._inputController,
-                      strings: strings,
-                      onStateChanged: () {
-                        _textNotifier.value = state._inputController.text;
-                      },
-                    );
-                  },
-                ),
-
-                // 3. Attachment previews
-                const _ChatAttachmentPreview(),
-
-                // 4. Text Input & Send buttons Row
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: widget.inputController,
-                        focusNode: widget.inputFocusNode,
-                        minLines: 1,
-                        maxLines: 3,
-                        textInputAction: TextInputAction.newline,
-                        decoration: InputDecoration(
-                          isDense: true,
-                          hintText: strings.composerHint,
-                          hintStyle: TextStyle(
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                        onSubmitted: state._isDesktopPlatform
-                            ? null
-                            : (_) => widget.onSubmit(),
-                        onChanged: (val) {
-                          // Handled via listener in composer state
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      tooltip: strings.tools,
-                      style: IconButton.styleFrom(
-                        foregroundColor: colorScheme.primary,
-                        backgroundColor: colorScheme.primary.withValues(
-                          alpha: 0.1,
-                        ),
-                      ),
-                      icon: AnimatedRotation(
-                        turns: widget.toolsExpanded ? 0.125 : 0,
-                        duration: const Duration(milliseconds: 180),
-                        child: const Icon(Icons.add_rounded),
-                      ),
-                      onPressed: () {
-                        widget.onToolsExpandedChanged(!widget.toolsExpanded);
-                      },
-                    ),
-                    const SizedBox(width: 4),
-                    IconButton.filled(
-                      tooltip: snapshot.sending ? strings.stop : strings.send,
-                      icon: Icon(
-                        snapshot.sending
-                            ? Icons.stop_rounded
-                            : Icons.send_rounded,
-                      ),
-                      onPressed: snapshot.sending
-                          ? widget.onStop
-                          : widget.onSubmit,
-                    ),
-                  ],
-                ),
-
-                // 5. Tools expanded drawer
-                AnimatedSize(
-                  duration: const Duration(milliseconds: 220),
-                  curve: Curves.easeOutCubic,
-                  alignment: Alignment.topCenter,
-                  child: widget.toolsExpanded
-                      ? Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: _ChatToolsBar(
-                            skillsLabel: strings.skills,
-                            serverLabel: state._selectedServerLabel(strings),
-                            webViewLabel: strings.webView,
-                            imageLabel: strings.attachImage,
-                            fileLabel: strings.attachFile,
-                            ragLabel: strings.ragTitle,
-                            promptLabel: strings.promptLabel,
-                            planModeLabel: strings.planMode,
-                            playbooksLabel: strings.playbooks,
-                            isPlanModeActive: snapshot.planMode,
-                            onServerTap: () =>
-                                state._selectTargetServer(strings),
-                            onSkillsTap: () {
-                              Navigator.pushNamed(context, '/ai-skills');
-                            },
-                            onWebViewTap: () =>
-                                state._openClientWebView(snapshot.chatId),
-                            onImageTap: () => ChatAttachmentPicker.pickImage(
-                              context,
-                              strings,
-                              viewModel,
-                            ),
-                            onFileTap: () => ChatAttachmentPicker.pickFile(
-                              context,
-                              strings,
-                              viewModel,
-                            ),
-                            onRagTap: () => ChatRagSheet.show(context, strings),
-                            onPromptTap: () =>
-                                state._showPromptCustomizer(strings),
-                            onPlanModeTap: () =>
-                                LlmChatCommandsHelper.setPlanModeFromUi(
-                                  context: context,
-                                  chat: activeChat,
-                                  enabled: !snapshot.planMode,
-                                  strings: strings,
-                                ),
-                            onPlaybooksTap: () {
-                              Navigator.pushNamed(context, '/playbooks');
-                            },
-                          ),
-                        )
-                      : const SizedBox(width: double.infinity),
-                ),
-              ],
+              ),
             ),
           ),
         );
       },
+    );
+  }
+
+  Widget _buildAuxiliaryContent({
+    required BuildContext context,
+    required _ComposerSnapshot snapshot,
+    required AiChatRecord activeChat,
+    required AiChatViewModel viewModel,
+    required _LlmChatScreenBodyState state,
+    required AiStrings strings,
+    required ColorScheme colorScheme,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildPlanBanner(
+          context: context,
+          snapshot: snapshot,
+          activeChat: activeChat,
+          strings: strings,
+          colorScheme: colorScheme,
+        ),
+        ValueListenableBuilder<String>(
+          valueListenable: _textNotifier,
+          builder: (context, text, _) {
+            return ChatSlashCommandsPanel(
+              inputController: state._inputController,
+              strings: strings,
+              onStateChanged: () {
+                _textNotifier.value = state._inputController.text;
+              },
+            );
+          },
+        ),
+        const _ChatAttachmentPreview(),
+        AnimatedSize(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.bottomCenter,
+          child: widget.toolsExpanded
+              ? Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: _ChatToolsBar(
+                    skillsLabel: strings.skills,
+                    serverLabel: state._selectedServerLabel(strings),
+                    webViewLabel: strings.webView,
+                    imageLabel: strings.attachImage,
+                    fileLabel: strings.attachFile,
+                    ragLabel: strings.ragTitle,
+                    promptLabel: strings.promptLabel,
+                    planModeLabel: strings.planMode,
+                    playbooksLabel: strings.playbooks,
+                    isPlanModeActive: snapshot.planMode,
+                    onServerTap: () => state._selectTargetServer(strings),
+                    onSkillsTap: () {
+                      Navigator.pushNamed(context, '/ai-skills');
+                    },
+                    onWebViewTap: () =>
+                        state._openClientWebView(snapshot.chatId),
+                    onImageTap: () => ChatAttachmentPicker.pickImage(
+                      context,
+                      strings,
+                      viewModel,
+                    ),
+                    onFileTap: () => ChatAttachmentPicker.pickFile(
+                      context,
+                      strings,
+                      viewModel,
+                    ),
+                    onRagTap: () => ChatRagSheet.show(context, strings),
+                    onPromptTap: () => state._showPromptCustomizer(strings),
+                    onPlanModeTap: () =>
+                        LlmChatCommandsHelper.setPlanModeFromUi(
+                          context: context,
+                          chat: activeChat,
+                          enabled: !snapshot.planMode,
+                          strings: strings,
+                        ),
+                    onPlaybooksTap: () {
+                      Navigator.pushNamed(context, '/playbooks');
+                    },
+                  ),
+                )
+              : const SizedBox(width: double.infinity),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPlanBanner({
+    required BuildContext context,
+    required _ComposerSnapshot snapshot,
+    required AiChatRecord activeChat,
+    required AiStrings strings,
+    required ColorScheme colorScheme,
+  }) {
+    return ValueListenableBuilder<String>(
+      valueListenable: _textNotifier,
+      builder: (context, text, _) {
+        final isPlanInput = text.trim().startsWith('/plan');
+        final showPlanMode = snapshot.planMode || isPlanInput;
+        if (!showPlanMode) return const SizedBox.shrink();
+        return Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.only(left: 10),
+          decoration: BoxDecoration(
+            color: colorScheme.primaryContainer,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: colorScheme.primary.withValues(alpha: 0.24),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.edit_note_rounded,
+                size: 18,
+                color: colorScheme.onPrimaryContainer,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  strings.language == AppLanguage.en
+                      ? 'Plan Mode Active (Read-only diagnostics & planning)'
+                      : '规划模式已启用 (仅进行只读诊断与方案规划)',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: colorScheme.onPrimaryContainer,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: strings.close,
+                style: IconButton.styleFrom(
+                  minimumSize: const Size.square(48),
+                  foregroundColor: colorScheme.onPrimaryContainer,
+                ),
+                onPressed: () async {
+                  if (isPlanInput) widget.inputController.clear();
+                  if (snapshot.planMode) {
+                    await LlmChatCommandsHelper.setPlanModeFromUi(
+                      context: context,
+                      chat: activeChat,
+                      enabled: false,
+                      strings: strings,
+                    );
+                  }
+                },
+                icon: const Icon(Icons.close_rounded, size: 18),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildInputSurface({
+    required ColorScheme colorScheme,
+    required AiStrings strings,
+    required _LlmChatScreenBodyState state,
+    required bool sending,
+  }) {
+    return Container(
+      key: const ValueKey<String>('chat-composer-surface'),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.58),
+        borderRadius: BorderRadius.circular(26),
+        border: Border.all(color: colorScheme.outline.withValues(alpha: 0.62)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          IconButton(
+            key: const ValueKey<String>('chat-composer-tools'),
+            tooltip: strings.tools,
+            style: IconButton.styleFrom(
+              minimumSize: const Size.square(48),
+              foregroundColor: colorScheme.primary,
+            ),
+            icon: AnimatedRotation(
+              turns: widget.toolsExpanded ? 0.125 : 0,
+              duration: const Duration(milliseconds: 180),
+              child: const Icon(Icons.add_rounded),
+            ),
+            onPressed: () {
+              widget.onToolsExpandedChanged(!widget.toolsExpanded);
+            },
+          ),
+          Expanded(
+            child: TextField(
+              key: const ValueKey<String>('chat-composer-input'),
+              controller: widget.inputController,
+              focusNode: widget.inputFocusNode,
+              minLines: 1,
+              maxLines: 4,
+              textInputAction: TextInputAction.newline,
+              decoration: InputDecoration(
+                isCollapsed: true,
+                filled: false,
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                hintText: strings.composerHint,
+                hintMaxLines: 1,
+                hintStyle: TextStyle(
+                  color: colorScheme.onSurfaceVariant,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              onSubmitted: state._isDesktopPlatform
+                  ? null
+                  : (_) => widget.onSubmit(),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(4),
+            child: IconButton(
+              key: const ValueKey<String>('chat-composer-send'),
+              tooltip: sending ? strings.stop : strings.send,
+              style: IconButton.styleFrom(
+                minimumSize: const Size.square(48),
+                foregroundColor: colorScheme.onPrimary,
+                backgroundColor: colorScheme.primary,
+              ),
+              icon: Icon(
+                sending ? Icons.stop_rounded : Icons.arrow_upward_rounded,
+              ),
+              onPressed: sending ? widget.onStop : widget.onSubmit,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

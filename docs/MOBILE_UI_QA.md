@@ -64,6 +64,12 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   targets, the password visibility action is labeled, and focusing an input
   hides the sticky save bar so the keyboard does not cover the active field.
   Long English authentication choices wrap without overflow.
+- AI Chat keeps its header in normal document flow and re-aligns the selected
+  page when rotation crosses the 840 dp navigation breakpoint. The composer is
+  one rounded input surface with 48 dp Tools and Send targets, a single-line
+  hint, and a height-limited scrolling area for plan, command, attachment, and
+  tool content. On compact-height keyboard layouts, tools collapse and the
+  decorative chat header and rail stop consuming the remaining input space.
 - The first-launch background-service guide and less common routes still need a
   consistency pass against the shared page-surface components.
 - Cold startup remained on the native black launch surface for a noticeable

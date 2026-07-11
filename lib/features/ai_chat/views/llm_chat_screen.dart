@@ -28,6 +28,7 @@ import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 import 'package:ssh_mobile/services/playbook_service.dart';
 import 'package:ssh_mobile/services/rag_service.dart';
+import 'package:ssh_mobile/utils/responsive.dart';
 import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
 import 'package:ssh_mobile/widgets/destructive_confirm_dialog.dart';
 import 'package:ssh_mobile/theme/app_theme.dart';
@@ -56,6 +57,21 @@ part 'widgets/chat_history_overlay.dart';
 part 'widgets/chat_composer.dart';
 
 const List<String> _defaultModels = ['deepseek-v4-flash', 'deepseek-v4-pro'];
+
+@visibleForTesting
+double chatComposerMaxHeightFor({
+  required double viewportHeight,
+  required double keyboardInset,
+}) {
+  final visibleHeight = (viewportHeight - keyboardInset).clamp(
+    0.0,
+    double.infinity,
+  );
+  if (visibleHeight < 360) {
+    return (visibleHeight - 76).clamp(75.0, 200.0);
+  }
+  return (visibleHeight * 0.46).clamp(132.0, 360.0);
+}
 
 @visibleForTesting
 List<String> resolveFetchedModelOptions({
@@ -355,6 +371,10 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
 
   void _onInputFocusChanged() {
     if (_inputFocusNode.hasFocus) {
+      if (_toolsExpanded &&
+          usesCompactRailForHeight(MediaQuery.sizeOf(context).height)) {
+        setState(() => _toolsExpanded = false);
+      }
       Future.delayed(const Duration(milliseconds: 100), () {
         if (!mounted) return;
         _scrollToBottom(jump: false);
@@ -369,6 +389,11 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
       (settings) => settings.language,
     );
     final strings = AiStrings(language);
+    final mediaQuery = MediaQuery.of(context);
+    final compactKeyboardLayout = usesCompactKeyboardLayoutFor(
+      viewportHeight: mediaQuery.size.height,
+      keyboardInset: mediaQuery.viewInsets.bottom,
+    );
 
     return Selector<AiChatViewModel, _ChatShellSnapshot>(
       selector: (context, vm) => _ChatShellSnapshot(
@@ -394,10 +419,11 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
             children: [
               Column(
                 children: [
-                  _ChatHeader(
-                    onShowHistory: () => _showHistory(context, strings),
-                    onShowSettings: () => _showSettings(context, strings),
-                  ),
+                  if (!compactKeyboardLayout)
+                    _ChatHeader(
+                      onShowHistory: () => _showHistory(context, strings),
+                      onShowSettings: () => _showSettings(context, strings),
+                    ),
                   Expanded(
                     child: Stack(
                       children: [

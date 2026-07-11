@@ -110,6 +110,13 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     final strings = AppStrings(language);
     final desktop = isDesktopLayout(context);
+    final mediaQuery = MediaQuery.of(context);
+    final compactKeyboardLayout =
+        desktop &&
+        usesCompactKeyboardLayoutFor(
+          viewportHeight: mediaQuery.size.height,
+          keyboardInset: mediaQuery.viewInsets.bottom,
+        );
     final isBusy = context.select<SettingsViewModel, bool>(
       (vm) => vm.isImporting || vm.isExporting,
     );
@@ -205,7 +212,14 @@ class _HomeScreenState extends State<HomeScreen> {
         bottom: false,
         child: Stack(
           children: [
-            desktop ? _buildDesktopShell(context, content, strings) : content,
+            desktop
+                ? _buildDesktopShell(
+                    context,
+                    content,
+                    strings,
+                    compactKeyboardLayout: compactKeyboardLayout,
+                  )
+                : content,
             if (isBusy)
               ColoredBox(
                 color: Theme.of(
@@ -234,8 +248,9 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildDesktopShell(
     BuildContext context,
     Widget content,
-    AppStrings strings,
-  ) {
+    AppStrings strings, {
+    required bool compactKeyboardLayout,
+  }) {
     final colorScheme = Theme.of(context).colorScheme;
     final size = MediaQuery.sizeOf(context);
     final width = size.width;
@@ -258,83 +273,86 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Row(
       children: [
-        Container(
-          margin: railMargin,
-          decoration: BoxDecoration(
-            color: colorScheme.surface.withValues(alpha: 0.92),
-            borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
-            border: Border.all(
-              color: colorScheme.outline.withValues(alpha: 0.72),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(
-                  alpha: Theme.of(context).brightness == Brightness.dark
-                      ? 0.20
-                      : 0.045,
-                ),
-                blurRadius: 26,
-                offset: const Offset(0, 10),
+        if (compactKeyboardLayout)
+          const SizedBox(width: 80)
+        else
+          Container(
+            margin: railMargin,
+            decoration: BoxDecoration(
+              color: colorScheme.surface.withValues(alpha: 0.92),
+              borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+              border: Border.all(
+                color: colorScheme.outline.withValues(alpha: 0.72),
               ),
-            ],
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: NavigationRail(
-            backgroundColor: Colors.transparent,
-            extended: extended,
-            labelType: extended
-                ? null
-                : compactHeight
-                ? NavigationRailLabelType.none
-                : NavigationRailLabelType.all,
-            selectedIndex: _navigationIndex,
-            onDestinationSelected: _switchNavigationPage,
-            leading: compactHeight
-                ? const SizedBox(height: 4)
-                : _buildRailBrand(context, extended),
-            trailing: compactHeight
-                ? Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: settingsButton,
-                  )
-                : Expanded(
-                    child: Align(
-                      alignment: Alignment.bottomCenter,
-                      child: Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: settingsButton,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(
+                    alpha: Theme.of(context).brightness == Brightness.dark
+                        ? 0.20
+                        : 0.045,
+                  ),
+                  blurRadius: 26,
+                  offset: const Offset(0, 10),
+                ),
+              ],
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: NavigationRail(
+              backgroundColor: Colors.transparent,
+              extended: extended,
+              labelType: extended
+                  ? null
+                  : compactHeight
+                  ? NavigationRailLabelType.none
+                  : NavigationRailLabelType.all,
+              selectedIndex: _navigationIndex,
+              onDestinationSelected: _switchNavigationPage,
+              leading: compactHeight
+                  ? const SizedBox(height: 4)
+                  : _buildRailBrand(context, extended),
+              trailing: compactHeight
+                  ? Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: settingsButton,
+                    )
+                  : Expanded(
+                      child: Align(
+                        alignment: Alignment.bottomCenter,
+                        child: Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: settingsButton,
+                        ),
                       ),
                     ),
-                  ),
-            destinations: [
-              NavigationRailDestination(
-                icon: const Icon(Icons.dns_outlined),
-                selectedIcon: const Icon(Icons.dns_rounded),
-                label: Text(strings.servers),
-              ),
-              NavigationRailDestination(
-                icon: const Icon(Icons.folder_open_outlined),
-                selectedIcon: const Icon(Icons.folder_open_rounded),
-                label: Text(strings.sftp),
-              ),
-              NavigationRailDestination(
-                icon: const Icon(Icons.auto_awesome_outlined),
-                selectedIcon: const Icon(Icons.auto_awesome_rounded),
-                label: _buildAiLabel(context, _selectedIndex == _aiPage),
-              ),
-              NavigationRailDestination(
-                icon: const Icon(Icons.monitor_heart_outlined),
-                selectedIcon: const Icon(Icons.monitor_heart_rounded),
-                label: Text(strings.admin),
-              ),
-              NavigationRailDestination(
-                icon: const Icon(Icons.article_outlined),
-                selectedIcon: const Icon(Icons.article_rounded),
-                label: Text(strings.logs),
-              ),
-            ],
+              destinations: [
+                NavigationRailDestination(
+                  icon: const Icon(Icons.dns_outlined),
+                  selectedIcon: const Icon(Icons.dns_rounded),
+                  label: Text(strings.servers),
+                ),
+                NavigationRailDestination(
+                  icon: const Icon(Icons.folder_open_outlined),
+                  selectedIcon: const Icon(Icons.folder_open_rounded),
+                  label: Text(strings.sftp),
+                ),
+                NavigationRailDestination(
+                  icon: const Icon(Icons.auto_awesome_outlined),
+                  selectedIcon: const Icon(Icons.auto_awesome_rounded),
+                  label: _buildAiLabel(context, _selectedIndex == _aiPage),
+                ),
+                NavigationRailDestination(
+                  icon: const Icon(Icons.monitor_heart_outlined),
+                  selectedIcon: const Icon(Icons.monitor_heart_rounded),
+                  label: Text(strings.admin),
+                ),
+                NavigationRailDestination(
+                  icon: const Icon(Icons.article_outlined),
+                  selectedIcon: const Icon(Icons.article_rounded),
+                  label: Text(strings.logs),
+                ),
+              ],
+            ),
           ),
-        ),
         const SizedBox(width: 12),
         Expanded(child: content),
       ],

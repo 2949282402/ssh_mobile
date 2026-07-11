@@ -4,6 +4,29 @@ import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 
 void main() {
+  group('mobile chat composer height', () {
+    test('keeps auxiliary content bounded in portrait', () {
+      expect(
+        chatComposerMaxHeightFor(viewportHeight: 891, keyboardInset: 0),
+        360,
+      );
+    });
+
+    test('preserves message space on a short landscape screen', () {
+      expect(
+        chatComposerMaxHeightFor(viewportHeight: 411, keyboardInset: 0),
+        closeTo(189.06, 0.01),
+      );
+    });
+
+    test('keeps the input row reachable above a landscape keyboard', () {
+      expect(
+        chatComposerMaxHeightFor(viewportHeight: 411, keyboardInset: 260),
+        75,
+      );
+    });
+  });
+
   test('fetched models replace default fallback models', () {
     final resolved = resolveFetchedModelOptions(
       fetchedModels: const ['gpt-4o', 'gpt-4.1', 'gpt-4o'],

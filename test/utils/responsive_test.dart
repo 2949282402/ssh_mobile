@@ -4,6 +4,21 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/utils/responsive.dart';
 
 void main() {
+  test('compact keyboard layout is limited to short obscured viewports', () {
+    expect(
+      usesCompactKeyboardLayoutFor(viewportHeight: 411, keyboardInset: 260),
+      isTrue,
+    );
+    expect(
+      usesCompactKeyboardLayoutFor(viewportHeight: 891, keyboardInset: 300),
+      isFalse,
+    );
+    expect(
+      usesCompactKeyboardLayoutFor(viewportHeight: 411, keyboardInset: 0),
+      isFalse,
+    );
+  });
+
   test('adaptive width thresholds keep phone layouts readable', () {
     expect(usesCompactRailForHeight(479.9), isTrue);
     expect(usesCompactRailForHeight(480), isFalse);

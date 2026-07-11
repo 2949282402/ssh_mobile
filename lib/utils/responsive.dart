@@ -82,6 +82,13 @@ bool usesCompactRailForHeight(double height) {
   return height < AppBreakpoints.compactHeight;
 }
 
+bool usesCompactKeyboardLayoutFor({
+  required double viewportHeight,
+  required double keyboardInset,
+}) {
+  return keyboardInset > 0 && usesCompactRailForHeight(viewportHeight);
+}
+
 bool usesExpandedLayoutForWidth(double width) {
   return width >= AppBreakpoints.desktop;
 }
