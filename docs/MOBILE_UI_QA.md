@@ -86,6 +86,10 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   Message copy, edit, retry, branch, and trace controls expose 48 dp targets;
   action groups wrap on narrow messages, sent attachment names stay bounded,
   and trace summaries localize without overflowing their message column.
+- LLM settings intercept Android Back, the close affordance, and Cancel when
+  edits are pending, then require an explicit discard confirmation. Saving
+  temporarily disables route dismissal, while model-refresh and save failures
+  remain visible at the top of the form and in a floating snackbar.
 - The first-launch background-service guide and less common routes still need a
   consistency pass against the shared page-surface components.
 - Cold startup remained on the native black launch surface for a noticeable

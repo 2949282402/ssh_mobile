@@ -66,6 +66,11 @@ class AiStrings {
       : '确定删除这个 API Key 历史记录吗？\n$maskedValue';
   String get appSettings => _en ? 'App settings' : '应用设置';
   String get settings => _en ? 'LLM settings' : '大模型设置';
+  String get discardSettingsTitle =>
+      _en ? 'Discard settings changes?' : '放弃设置更改？';
+  String get discardSettingsContent =>
+      _en ? 'Your LLM settings changes have not been saved.' : '大模型设置中的更改尚未保存。';
+  String get discardChanges => _en ? 'Discard changes' : '放弃更改';
   String get send => _en ? 'Send' : '发送';
   String get removeAttachment => _en ? 'Remove attachment' : '移除附件';
   String get trace => _en ? 'Trace' : '轨迹';

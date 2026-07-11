@@ -727,7 +727,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
       final nextSettings = await Navigator.of(context).push<_PendingAiSettings>(
         MaterialPageRoute(
           fullscreenDialog: true,
-          builder: (_) => _LlmSettingsScreen(
+          builder: (_) => LlmSettingsScreen(
             initialSettings: settings,
             initialModels: buildInitialModelOptions(
               currentModel: settings.model,
