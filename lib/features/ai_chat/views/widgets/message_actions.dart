@@ -45,7 +45,7 @@ class MessageActions extends StatelessWidget {
       if (onEditUser != null)
         _actionButton(
           context,
-          tooltip: 'Edit and resend',
+          tooltip: en ? 'Edit and resend' : '编辑并重发',
           icon: Icons.edit_outlined,
           onPressed: onEditUser,
         ),
@@ -66,7 +66,7 @@ class MessageActions extends StatelessWidget {
       if (onContinueTimeout != null)
         _actionButton(
           context,
-          tooltip: 'Continue',
+          tooltip: en ? 'Continue' : '继续生成',
           icon: Icons.play_arrow_rounded,
           onPressed: onContinueTimeout,
         ),

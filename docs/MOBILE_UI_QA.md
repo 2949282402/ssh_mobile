@@ -84,7 +84,8 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   all rows through the composer's outer scrolling region, and keeps attachment
   removal actions at 48 dp while long filenames ellipsize safely.
   Message copy, edit, retry, branch, and trace controls expose 48 dp targets;
-  action groups wrap on narrow messages, sent attachment names stay bounded,
+  action groups wrap on narrow messages, every action tooltip is bilingual,
+  sent attachment names stay bounded,
   and trace summaries localize without overflowing their message column. The
   message editor derives its height from the keyboard-visible viewport, keeps
   both actions at 48 dp in compact landscape, and rejects whitespace-only

@@ -53,6 +53,36 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('user message actions localize edit and continue tooltips', (
+    tester,
+  ) async {
+    var edited = false;
+    var continued = false;
+    await tester.pumpWidget(
+      ChangeNotifierProvider(
+        create: (_) => AppSettings(),
+        child: MaterialApp(
+          home: Scaffold(
+            body: MessageActions(
+              isUser: true,
+              isError: false,
+              onEditUser: () => edited = true,
+              onContinueTimeout: () => continued = true,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byTooltip('编辑并重发'), findsOneWidget);
+    expect(find.byTooltip('继续生成'), findsOneWidget);
+    await tester.tap(find.byTooltip('编辑并重发'));
+    await tester.tap(find.byTooltip('继续生成'));
+    expect(edited, isTrue);
+    expect(continued, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('sent attachment names ellipsize inside the message width', (
     tester,
   ) async {
