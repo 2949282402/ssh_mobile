@@ -82,7 +82,10 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   the history layer before attempting to leave the current route.
   The AI tools grid derives three to six columns from available width, shows
   all rows through the composer's outer scrolling region, and keeps attachment
-  removal actions at 48 dp while long filenames ellipsize safely.
+  removal actions at 48 dp while long filenames ellipsize safely. Image
+  attachments decode once into DPR-sized thumbnails, degrade safely for broken
+  Base64, expose filename-specific semantics, and open a zoomable full-screen
+  preview that Android Back closes normally; file chips announce name/type/size.
   Message copy, edit, retry, branch, and trace controls expose 48 dp targets;
   action groups wrap on narrow messages, every action tooltip is bilingual,
   sent attachment names stay bounded,

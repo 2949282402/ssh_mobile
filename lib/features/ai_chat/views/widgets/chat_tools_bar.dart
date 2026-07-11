@@ -221,7 +221,8 @@ class AttachmentChip extends StatelessWidget {
     final language = context.select<AppSettings, AppLanguage>(
       (settings) => settings.language,
     );
-    final isImage = attachment.isImage && attachment.dataBase64.isNotEmpty;
+    final strings = AiStrings(language);
+    final isImage = attachment.isImage;
     final maxWidth = (MediaQuery.sizeOf(context).width * 0.72).clamp(
       180.0,
       260.0,
@@ -237,20 +238,16 @@ class AttachmentChip extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (isImage)
-            ClipRRect(
+            AiAttachmentImageThumbnail(
+              attachment: attachment,
+              width: 48,
+              height: 48,
               borderRadius: const BorderRadius.horizontal(
                 left: Radius.circular(7),
               ),
-              child: Image.memory(
-                base64Decode(attachment.dataBase64),
-                width: 44,
-                height: 44,
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => const SizedBox(
-                  width: 44,
-                  height: 44,
-                  child: Icon(Icons.broken_image_outlined, size: 18),
-                ),
+              previewSemanticLabel: strings.previewImage(attachment.fileName),
+              unavailableSemanticLabel: strings.imagePreviewUnavailable(
+                attachment.fileName,
               ),
             )
           else
@@ -275,7 +272,7 @@ class AttachmentChip extends StatelessWidget {
             ),
           ),
           IconButton(
-            tooltip: AiStrings(language).removeAttachment,
+            tooltip: strings.removeAttachmentNamed(attachment.fileName),
             style: IconButton.styleFrom(minimumSize: const Size.square(48)),
             iconSize: 18,
             icon: Icon(

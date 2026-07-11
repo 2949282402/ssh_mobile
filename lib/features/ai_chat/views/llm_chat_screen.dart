@@ -34,6 +34,7 @@ import 'package:ssh_mobile/widgets/destructive_confirm_dialog.dart';
 import 'package:ssh_mobile/widgets/app_surface.dart';
 import 'package:ssh_mobile/theme/app_theme.dart';
 import 'widgets/history_action_sheet.dart';
+import 'widgets/attachment_image_thumbnail.dart';
 
 import 'widgets/message_bubble.dart';
 

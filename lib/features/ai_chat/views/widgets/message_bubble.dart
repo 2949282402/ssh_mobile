@@ -127,6 +127,7 @@ class MessageBubble extends StatelessWidget {
                             if (isUser && message.attachments.isNotEmpty)
                               MessageAttachmentsWrap(
                                 attachments: message.attachments,
+                                isEnglish: language == AppLanguage.en,
                               ),
                             SelectableText(
                               message.text.isEmpty ? '...' : message.text,

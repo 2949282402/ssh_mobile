@@ -1,12 +1,18 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
+
+import 'package:ssh_mobile/features/ai_chat/views/widgets/attachment_image_thumbnail.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 import 'package:ssh_mobile/theme/app_theme.dart';
 
 class MessageAttachmentsWrap extends StatelessWidget {
-  final List<AiChatAttachment> attachments;
+  const MessageAttachmentsWrap({
+    super.key,
+    required this.attachments,
+    this.isEnglish = false,
+  });
 
-  const MessageAttachmentsWrap({super.key, required this.attachments});
+  final List<AiChatAttachment> attachments;
+  final bool isEnglish;
 
   @override
   Widget build(BuildContext context) {
@@ -25,67 +31,72 @@ class MessageAttachmentsWrap extends StatelessWidget {
         runSpacing: 6,
         children: [
           for (final attachment in attachments)
-            if (attachment.isImage && attachment.dataBase64.isNotEmpty)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                child: Image.memory(
-                  base64Decode(attachment.dataBase64),
-                  width: 120,
-                  height: 120,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => Container(
-                    width: 120,
-                    height: 40,
-                    alignment: Alignment.center,
+            if (attachment.isImage)
+              AiAttachmentImageThumbnail(
+                attachment: attachment,
+                width: 120,
+                height: 120,
+                previewSemanticLabel: isEnglish
+                    ? 'Preview image ${attachment.fileName}'
+                    : '预览图片 ${attachment.fileName}',
+                unavailableSemanticLabel: isEnglish
+                    ? 'Image preview unavailable for ${attachment.fileName}'
+                    : '图片预览不可用 ${attachment.fileName}',
+              )
+            else
+              Semantics(
+                container: true,
+                label: isEnglish
+                    ? 'File attachment ${attachment.fileName}, '
+                          '${attachment.mimeType}, ${_formatSize(attachment.sizeBytes)}'
+                    : '文件附件 ${attachment.fileName}，'
+                          '${attachment.mimeType}，${_formatSize(attachment.sizeBytes)}',
+                child: ExcludeSemantics(
+                  child: Container(
+                    constraints: BoxConstraints(maxWidth: fileChipMaxWidth),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
                       color: colorScheme.surfaceContainerHighest,
                       borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                     ),
-                    child: Text(
-                      attachment.fileName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                ),
-              )
-            else
-              Container(
-                constraints: BoxConstraints(maxWidth: fileChipMaxWidth),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.insert_drive_file_outlined,
-                      size: 14,
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: 4),
-                    Flexible(
-                      child: Text(
-                        attachment.fileName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.insert_drive_file_outlined,
+                          size: 14,
                           color: colorScheme.onSurfaceVariant,
                         ),
-                      ),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            attachment.fileName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
         ],
       ),
     );
+  }
+
+  String _formatSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    }
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 }

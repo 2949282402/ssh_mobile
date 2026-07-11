@@ -79,7 +79,12 @@ class AiStrings {
       _en ? 'Your LLM settings changes have not been saved.' : '大模型设置中的更改尚未保存。';
   String get discardChanges => _en ? 'Discard changes' : '放弃更改';
   String get send => _en ? 'Send' : '发送';
-  String get removeAttachment => _en ? 'Remove attachment' : '移除附件';
+  String removeAttachmentNamed(String name) =>
+      _en ? 'Remove attachment $name' : '移除附件 $name';
+  String previewImage(String name) =>
+      _en ? 'Preview image $name' : '预览图片 $name';
+  String imagePreviewUnavailable(String name) =>
+      _en ? 'Image preview unavailable for $name' : '图片预览不可用 $name';
   String get trace => _en ? 'Trace' : '轨迹';
   String traceEvents(int count) => _en ? '$count events' : '$count 个事件';
   String traceTools(int count) => _en ? '$count tools' : '$count 个工具';

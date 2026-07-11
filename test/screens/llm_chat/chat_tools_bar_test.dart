@@ -83,7 +83,7 @@ void main() {
       ),
     );
 
-    final removeFinder = find.byTooltip('移除附件');
+    final removeFinder = find.byTooltip('移除附件 $fileName');
     expect(tester.getSize(removeFinder).width, greaterThanOrEqualTo(48));
     expect(tester.getSize(removeFinder).height, greaterThanOrEqualTo(48));
     final fileNameText = tester.widget<Text>(find.text(fileName));
