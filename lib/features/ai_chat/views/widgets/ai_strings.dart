@@ -68,6 +68,10 @@ class AiStrings {
   String get settings => _en ? 'LLM settings' : '大模型设置';
   String get send => _en ? 'Send' : '发送';
   String get removeAttachment => _en ? 'Remove attachment' : '移除附件';
+  String get trace => _en ? 'Trace' : '轨迹';
+  String traceEvents(int count) => _en ? '$count events' : '$count 个事件';
+  String traceTools(int count) => _en ? '$count tools' : '$count 个工具';
+  String traceApprovals(int count) => _en ? '$count approvals' : '$count 次审批';
   String get stop => _en ? 'Stop' : '停止';
   String get stopped => _en ? '[Stopped by user]' : '[用户已终止]';
   String get baseUrl => _en ? 'Base URL' : 'Base URL';

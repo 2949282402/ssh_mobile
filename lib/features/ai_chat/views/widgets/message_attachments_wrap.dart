@@ -13,6 +13,10 @@ class MessageAttachmentsWrap extends StatelessWidget {
     if (attachments.isEmpty) return const SizedBox.shrink();
 
     final colorScheme = Theme.of(context).colorScheme;
+    final fileChipMaxWidth = (MediaQuery.sizeOf(context).width * 0.72).clamp(
+      180.0,
+      320.0,
+    );
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -39,6 +43,8 @@ class MessageAttachmentsWrap extends StatelessWidget {
                     ),
                     child: Text(
                       attachment.fileName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 11,
                         color: colorScheme.onSurfaceVariant,
@@ -49,6 +55,7 @@ class MessageAttachmentsWrap extends StatelessWidget {
               )
             else
               Container(
+                constraints: BoxConstraints(maxWidth: fileChipMaxWidth),
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: colorScheme.surfaceContainerHighest,
@@ -63,11 +70,15 @@ class MessageAttachmentsWrap extends StatelessWidget {
                       color: colorScheme.onSurfaceVariant,
                     ),
                     const SizedBox(width: 4),
-                    Text(
-                      attachment.fileName,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colorScheme.onSurfaceVariant,
+                    Flexible(
+                      child: Text(
+                        attachment.fileName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ),
                   ],

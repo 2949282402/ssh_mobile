@@ -1,6 +1,6 @@
 part of 'message_bubble.dart';
 
-class _MessageActions extends StatelessWidget {
+class MessageActions extends StatelessWidget {
   final bool isUser;
   final bool isError;
   final String? assistantText;
@@ -9,7 +9,8 @@ class _MessageActions extends StatelessWidget {
   final VoidCallback? onBranch;
   final VoidCallback? onContinueTimeout;
 
-  const _MessageActions({
+  const MessageActions({
+    super.key,
     required this.isUser,
     required this.isError,
     this.assistantText,
@@ -70,27 +71,39 @@ class _MessageActions extends StatelessWidget {
           onPressed: onContinueTimeout,
         ),
     ];
-    return Padding(
-      padding: const EdgeInsets.only(left: 2, right: 2, bottom: 4),
-      child: Row(
-        mainAxisAlignment: isUser && !isError
-            ? MainAxisAlignment.end
-            : MainAxisAlignment.start,
-        children: [
-          DecoratedBox(
-            decoration: BoxDecoration(
-              color: colorScheme.surfaceContainerHighest.withValues(
-                alpha: 0.36,
-              ),
-              borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-              border: Border.all(
-                color: colorScheme.outlineVariant.withValues(alpha: 0.72),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final desiredWidth = children.length * 48.0;
+        final availableWidth = constraints.maxWidth.isFinite
+            ? constraints.maxWidth
+            : desiredWidth;
+        final maxActionsWidth = availableWidth < 48
+            ? availableWidth
+            : desiredWidth.clamp(48.0, availableWidth);
+        return Padding(
+          padding: const EdgeInsets.only(left: 2, right: 2, bottom: 4),
+          child: Align(
+            alignment: isUser && !isError
+                ? Alignment.centerRight
+                : Alignment.centerLeft,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: maxActionsWidth),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHighest.withValues(
+                    alpha: 0.36,
+                  ),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                  border: Border.all(
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.72),
+                  ),
+                ),
+                child: Wrap(children: children),
               ),
             ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: children),
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -198,12 +211,11 @@ class _MessageActions extends StatelessWidget {
   }) {
     final colorScheme = Theme.of(context).colorScheme;
     return SizedBox(
-      width: 32,
-      height: 32,
+      width: 48,
+      height: 48,
       child: IconButton(
         tooltip: tooltip,
         padding: EdgeInsets.zero,
-        visualDensity: VisualDensity.compact,
         iconSize: 17,
         color: colorScheme.onSurfaceVariant,
         icon: Icon(icon),

@@ -83,6 +83,9 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   The AI tools grid derives three to six columns from available width, shows
   all rows through the composer's outer scrolling region, and keeps attachment
   removal actions at 48 dp while long filenames ellipsize safely.
+  Message copy, edit, retry, branch, and trace controls expose 48 dp targets;
+  action groups wrap on narrow messages, sent attachment names stay bounded,
+  and trace summaries localize without overflowing their message column.
 - The first-launch background-service guide and less common routes still need a
   consistency pass against the shared page-surface components.
 - Cold startup remained on the native black launch surface for a noticeable

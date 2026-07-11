@@ -194,7 +194,7 @@ class MessageBubble extends StatelessWidget {
                         onBranch != null ||
                         onContinueTimeout != null ||
                         canCopyAssistant))
-                  _MessageActions(
+                  MessageActions(
                     isUser: isUser,
                     isError: isError,
                     assistantText: isAssistant ? message.text : null,
@@ -256,7 +256,7 @@ class MessageBubble extends StatelessWidget {
           style: FilledButton.styleFrom(
             backgroundColor: extColors?.success ?? theme.colorScheme.primary,
             foregroundColor: Colors.white,
-            visualDensity: VisualDensity.compact,
+            minimumSize: const Size(0, 48),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             elevation: 0,
             shape: RoundedRectangleBorder(

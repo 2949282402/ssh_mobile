@@ -31,6 +31,7 @@ void main() {
 
       final appSettings = AppSettings();
       await appSettings.init();
+      await appSettings.toggleLanguage();
 
       final sshService = SshService(storageService);
       final sftpService = SftpService(storageService);
@@ -135,6 +136,13 @@ void main() {
 
         // There shouldn't be a trace link containing 'Trace' for the assistant message without runId
         expect(find.textContaining('Trace · '), findsNWidgets(2));
+        final traceLink = find
+            .ancestor(
+              of: find.textContaining('Trace · run-1'),
+              matching: find.byType(InkWell),
+            )
+            .first;
+        expect(tester.getSize(traceLink).height, greaterThanOrEqualTo(48));
       } finally {
         debugDefaultTargetPlatformOverride = originalPlatform;
         storageService.dispose();
