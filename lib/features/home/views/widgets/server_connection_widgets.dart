@@ -52,7 +52,7 @@ String _healthLabel(AppStrings strings, ServerHealthLevel level) {
     ServerHealthLevel.healthy => en ? 'Healthy' : '正常',
     ServerHealthLevel.warning => en ? 'Warning' : '警告',
     ServerHealthLevel.critical => en ? 'Critical' : '危险',
-    ServerHealthLevel.unknown => en ? 'No samples' : '暂无采样',
+    ServerHealthLevel.unknown => strings.noMonitoringData,
   };
 }
 
@@ -336,14 +336,23 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                   Row(
                     children: [
                       if (!widget.serverSelectionMode && !widget.isGrid)
-                        ReorderableDragStartListener(
-                          index: widget.connIndex,
-                          child: Padding(
-                            padding: EdgeInsets.only(right: 8 * scale),
-                            child: Icon(
-                              Icons.drag_handle,
-                              size: 20 * scale,
-                              color: mutedTextColor.withValues(alpha: 0.5),
+                        Padding(
+                          padding: EdgeInsets.only(right: 4 * scale),
+                          child: Tooltip(
+                            message: widget.strings.reorderServer,
+                            child: ReorderableDragStartListener(
+                              index: widget.connIndex,
+                              child: SizedBox.square(
+                                key: ValueKey(
+                                  'server-drag-handle-${widget.conn.id}',
+                                ),
+                                dimension: 48,
+                                child: Icon(
+                                  Icons.drag_handle_rounded,
+                                  size: 20 * scale,
+                                  color: mutedTextColor.withValues(alpha: 0.58),
+                                ),
+                              ),
                             ),
                           ),
                         ),
@@ -463,7 +472,11 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                     children: [
                       if (widget.isGrid) ...[
                         IconButton(
-                          visualDensity: VisualDensity.compact,
+                          visualDensity: VisualDensity.standard,
+                          constraints: const BoxConstraints(
+                            minWidth: 44,
+                            minHeight: 44,
+                          ),
                           tooltip: widget.strings.newWindow,
                           icon: Icon(
                             Icons.add_to_photos_outlined,
@@ -474,7 +487,11 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                         if (sessionCount > 0) ...[
                           const SizedBox(width: 4),
                           IconButton(
-                            visualDensity: VisualDensity.compact,
+                            visualDensity: VisualDensity.standard,
+                            constraints: const BoxConstraints(
+                              minWidth: 44,
+                              minHeight: 44,
+                            ),
                             tooltip: widget.strings.windows,
                             icon: Icon(
                               Icons.terminal_outlined,
@@ -500,7 +517,6 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                               horizontal: 8 * scale,
                               vertical: 4 * scale,
                             ),
-                            visualDensity: VisualDensity.compact,
                           ),
                         ),
                         if (sessionCount > 0) ...[
@@ -523,7 +539,6 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                                 horizontal: 8 * scale,
                                 vertical: 4 * scale,
                               ),
-                              visualDensity: VisualDensity.compact,
                             ),
                           ),
                         ],
@@ -647,6 +662,9 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
     final color = _healthColor(context, health.level);
     final label = _healthLabel(strings, health.level);
     final detail = health.details.isEmpty ? label : health.details.join(' / ');
+    final text = health.level == ServerHealthLevel.unknown
+        ? label
+        : '${strings.language == AppLanguage.en ? 'Health' : '健康'} ${health.score} · $detail';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
@@ -661,7 +679,7 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
           const SizedBox(width: 5),
           Flexible(
             child: Text(
-              '${strings.language == AppLanguage.en ? 'Health' : '健康'} ${health.score} · $detail',
+              text,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(

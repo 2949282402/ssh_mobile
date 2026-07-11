@@ -77,7 +77,7 @@ flowchart LR
 - 本地 MCP Server：Windows/macOS/desktop 端可在设置中开启 `127.0.0.1:<port>/mcp` Streamable HTTP + JSON-RPC 端点，并复制 Codex、Claude Code、Gemini CLI 配置。
 - 日志：集中记录 SSH、SFTP、LLM、AI tools 和异常信息，并统一脱敏常见凭据、令牌和私钥内容。
 - 设置与备份：支持语言、主题、AI 设置、聊天和窗口历史导入导出，但不导出密码、私钥或 API Key，导入会做大小、数量和 schema 校验。
-- 自适应界面：主导航顺序为 Servers、SFTP、AI、System Admin、Logs，启动仍落在 Servers。桌面导航轨可从任意主页面打开应用设置；移动端从 Servers 页面进入应用设置。AI 页顶部的调节按钮只负责独立的 LLM 设置。移动端由 `MobileUiMetrics` 统一适配 1280–1440 px 物理短边：1.5K 屏幕适度收紧控件与导航密度，2K 屏幕保持标准比例，同时不缩放系统文字。
+- 自适应界面：主导航顺序为 Servers、SFTP、AI、System Admin、Logs，启动仍落在 Servers。桌面导航轨可从任意主页面打开应用设置；移动端 Servers 页提供可见的设置入口。AI 页顶部的调节按钮只负责独立的 LLM 设置。移动端由 `MobileUiMetrics` 统一适配 1280–1440 px 物理短边：1.5K 屏幕适度收紧控件与导航密度，2K 屏幕保持标准比例，同时不缩放系统文字。宽度达到 840dp 时切换导航轨，高度低于 480dp 时使用紧凑图标轨；Servers 网格仅在至少 720dp 宽时启用。
 - 附加页面：包含系统管理、Playbook、RAG 知识库、AI Skills、终端历史和客户端 WebView。
 
 ## Project Structure

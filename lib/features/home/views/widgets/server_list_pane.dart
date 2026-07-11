@@ -78,7 +78,19 @@ class _ServerListPaneState extends State<ServerListPane> {
             ? AppTheme.pagePadding
             : AppTheme.compactPagePadding;
         final maxContentWidth = desktop ? 1480.0 : double.infinity;
-        final isGrid = layoutMode == 'grid';
+        final isGrid =
+            layoutMode == 'grid' &&
+            supportsServerGridForWidth(constraints.maxWidth);
+        final mobileMetrics = mobileUiMetricsOf(context);
+        final navigationClearance = desktop
+            ? 0.0
+            : mobileMetrics.navigationHeight +
+                  mobileMetrics.navigationBottomInset;
+        final scrollBottomPadding = desktop
+            ? 24.0
+            : navigationClearance +
+                  MediaQuery.viewPaddingOf(context).bottom +
+                  16;
 
         return SizedBox(
           width: maxContentWidth.isInfinite
@@ -103,14 +115,14 @@ class _ServerListPaneState extends State<ServerListPane> {
                           horizontalPadding,
                           0,
                           horizontalPadding,
-                          88,
+                          scrollBottomPadding,
                         ),
                         gridDelegate:
                             const SliverGridDelegateWithMaxCrossAxisExtent(
-                              maxCrossAxisExtent: 340,
-                              crossAxisSpacing: 10,
-                              mainAxisSpacing: 10,
-                              mainAxisExtent: 172,
+                              maxCrossAxisExtent: 480,
+                              crossAxisSpacing: 12,
+                              mainAxisSpacing: 12,
+                              mainAxisExtent: 190,
                             ),
                         itemCount: connections.length,
                         itemBuilder: (context, index) => _buildConnectionCard(
@@ -118,6 +130,7 @@ class _ServerListPaneState extends State<ServerListPane> {
                           connections[index],
                           strings,
                           connIndex: index,
+                          isGrid: true,
                         ),
                       )
                     : ReorderableListView.builder(
@@ -129,7 +142,7 @@ class _ServerListPaneState extends State<ServerListPane> {
                           horizontalPadding,
                           0,
                           horizontalPadding,
-                          88,
+                          scrollBottomPadding,
                         ),
                         itemCount: connections.length,
                         itemBuilder: (context, index) => _buildConnectionCard(
@@ -137,6 +150,7 @@ class _ServerListPaneState extends State<ServerListPane> {
                           connections[index],
                           strings,
                           connIndex: index,
+                          isGrid: false,
                         ),
                         onReorderItem: (oldIndex, newIndex) {
                           context
@@ -145,7 +159,11 @@ class _ServerListPaneState extends State<ServerListPane> {
                         },
                       ),
               ),
-              if (_serverSelectionMode) _buildSelectionBar(context, strings),
+              if (_serverSelectionMode)
+                Padding(
+                  padding: EdgeInsets.only(bottom: navigationClearance),
+                  child: _buildSelectionBar(context, strings),
+                ),
             ],
           ),
         );
@@ -172,14 +190,10 @@ class _ServerListPaneState extends State<ServerListPane> {
     ConnectionConfig conn,
     AppStrings strings, {
     int connIndex = 0,
+    required bool isGrid,
   }) {
     final windowsExpanded = _expandedConnectionWindowIds.contains(conn.id);
     final isSelected = _selectedServerIds.contains(conn.id);
-    final layoutMode = context.select<AppSettings, String>(
-      (s) => s.serverListLayoutMode,
-    );
-    final isGrid = layoutMode == 'grid';
-
     return RepaintBoundary(
       key: ValueKey('server-card-${conn.id}'),
       child: Selector<SshService, SshConnectionOverview>(
@@ -407,22 +421,43 @@ class _ServerListPaneState extends State<ServerListPane> {
     AppStrings strings,
   ) {
     final activeCount = connections.length;
+    final colorScheme = Theme.of(context).colorScheme;
     final subtitle = strings.language == AppLanguage.en
         ? '$activeCount saved server${activeCount == 1 ? "" : "s"}'
         : '已保存 $activeCount 台服务器';
-    final showDesktopAdd = isDesktopLayout(context) && activeCount > 0;
+    final desktop = isDesktopLayout(context);
+    final showDesktopAdd = desktop && activeCount > 0;
+
+    final Widget? trailing;
+    if (_serverSelectionMode) {
+      trailing = null;
+    } else if (showDesktopAdd) {
+      trailing = FilledButton.icon(
+        onPressed: () => Navigator.pushNamed(context, '/add'),
+        icon: const Icon(Icons.add_rounded),
+        label: Text(strings.addConnection),
+      );
+    } else if (!desktop) {
+      trailing = IconButton.filledTonal(
+        onPressed: () => const OpenSettingsNotification().dispatch(context),
+        tooltip: strings.settings,
+        style: IconButton.styleFrom(
+          minimumSize: const Size.square(48),
+          maximumSize: const Size.square(48),
+          foregroundColor: colorScheme.primary,
+          backgroundColor: colorScheme.primary.withValues(alpha: 0.1),
+        ),
+        icon: const Icon(Icons.settings_outlined),
+      );
+    } else {
+      trailing = null;
+    }
 
     return AppPageHeader(
       title: strings.servers,
       subtitle: subtitle,
       icon: Icons.dns_rounded,
-      trailing: !_serverSelectionMode && showDesktopAdd
-          ? FilledButton.icon(
-              onPressed: () => Navigator.pushNamed(context, '/add'),
-              icon: const Icon(Icons.add_rounded),
-              label: Text(strings.addConnection),
-            )
-          : null,
+      trailing: trailing,
     );
   }
 }

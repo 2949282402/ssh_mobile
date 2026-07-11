@@ -63,7 +63,11 @@ class AppStrings {
       _en ? 'Downloading $name' : '正在下载 $name';
   String get editConnection => _en ? 'Edit connection' : '编辑连接';
   String get noConnections => _en ? 'No saved servers yet' : '还没有保存的服务器';
-  String get addHint => _en ? 'Tap + to add a connection' : '点击右下角 + 添加连接';
+  String get addHint => _en
+      ? 'Add a connection to start a secure SSH session.'
+      : '添加连接，开始安全的 SSH 会话。';
+  String get reorderServer => _en ? 'Reorder server' : '调整服务器顺序';
+  String get noMonitoringData => _en ? 'No monitoring data' : '暂无监控数据';
   String get newWindow => _en ? 'New window' : '新建窗口';
   String connectingTo(String name) =>
       _en ? 'Connecting to $name' : '正在连接 $name';

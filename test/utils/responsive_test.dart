@@ -4,6 +4,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/utils/responsive.dart';
 
 void main() {
+  test('adaptive width thresholds keep phone layouts readable', () {
+    expect(usesCompactRailForHeight(479.9), isTrue);
+    expect(usesCompactRailForHeight(480), isFalse);
+    expect(supportsServerGridForWidth(719.9), isFalse);
+    expect(supportsServerGridForWidth(720), isTrue);
+    expect(usesExpandedLayoutForWidth(839.9), isFalse);
+    expect(usesExpandedLayoutForWidth(840), isTrue);
+  });
+
   group('MobileUiMetrics', () {
     test('keeps desktop metrics unchanged', () {
       final metrics = MobileUiMetrics.fromMetrics(

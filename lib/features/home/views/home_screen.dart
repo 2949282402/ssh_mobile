@@ -218,13 +218,29 @@ class _HomeScreenState extends State<HomeScreen> {
     AppStrings strings,
   ) {
     final colorScheme = Theme.of(context).colorScheme;
-    final width = MediaQuery.sizeOf(context).width;
+    final size = MediaQuery.sizeOf(context);
+    final width = size.width;
     final extended = width >= AppBreakpoints.wideDesktop;
+    final compactHeight = usesCompactRailForHeight(size.height);
+    final railMargin = compactHeight
+        ? const EdgeInsets.fromLTRB(8, 6, 0, 6)
+        : const EdgeInsets.fromLTRB(12, 12, 0, 12);
+
+    final settingsButton = IconButton(
+      tooltip: strings.settings,
+      icon: const Icon(Icons.settings_outlined),
+      style: IconButton.styleFrom(
+        minimumSize: const Size.square(44),
+        foregroundColor: colorScheme.primary,
+        backgroundColor: colorScheme.primary.withValues(alpha: 0.1),
+      ),
+      onPressed: () => _openSettings(context),
+    );
 
     return Row(
       children: [
         Container(
-          margin: const EdgeInsets.fromLTRB(12, 12, 0, 12),
+          margin: railMargin,
           decoration: BoxDecoration(
             color: colorScheme.surface.withValues(alpha: 0.92),
             borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
@@ -247,29 +263,30 @@ class _HomeScreenState extends State<HomeScreen> {
           child: NavigationRail(
             backgroundColor: Colors.transparent,
             extended: extended,
-            labelType: extended ? null : NavigationRailLabelType.all,
+            labelType: extended
+                ? null
+                : compactHeight
+                ? NavigationRailLabelType.none
+                : NavigationRailLabelType.all,
             selectedIndex: _navigationIndex,
             onDestinationSelected: _switchNavigationPage,
-            leading: _buildRailBrand(context, extended),
-            trailing: Expanded(
-              child: Align(
-                alignment: Alignment.bottomCenter,
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: IconButton(
-                    tooltip: strings.settings,
-                    icon: const Icon(Icons.settings_outlined),
-                    style: IconButton.styleFrom(
-                      foregroundColor: colorScheme.primary,
-                      backgroundColor: colorScheme.primary.withValues(
-                        alpha: 0.1,
+            leading: compactHeight
+                ? const SizedBox(height: 4)
+                : _buildRailBrand(context, extended),
+            trailing: compactHeight
+                ? Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: settingsButton,
+                  )
+                : Expanded(
+                    child: Align(
+                      alignment: Alignment.bottomCenter,
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: settingsButton,
                       ),
                     ),
-                    onPressed: () => _openSettings(context),
                   ),
-                ),
-              ),
-            ),
             destinations: [
               NavigationRailDestination(
                 icon: const Icon(Icons.dns_outlined),

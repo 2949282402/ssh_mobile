@@ -243,6 +243,15 @@ its child widgets.
   for mobile chrome and control density. Its 1280-1440 px physical-short-edge
   interpolation lightly tightens 1.5K layouts and reaches standard chrome at
   2K; never use it to scale the user's system text setting.
+- Keep adaptive window thresholds centralized in `AppBreakpoints`: server
+  grids require 720 dp, the expanded navigation rail starts at 840 dp, and
+  heights below 480 dp use the icon-only compact rail. Portrait phone grid
+  preferences must fall back to the reorderable list without changing the
+  stored preference.
+- Keep the mobile Servers settings action visible and at least 48 dp. List
+  drag handles also stay 48 dp even when visual content uses mobile density
+  correction; reserve enough bottom scroll padding for app navigation and the
+  system inset.
 - Backup/import/export covers saved servers, restorable windows, terminal
   history, AI settings, AI chats, AgentRunMetrics, Playbooks, SFTP
   recent/favorite paths, and custom skills, but never passwords, private keys,

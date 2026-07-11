@@ -10,7 +10,9 @@ import 'package:flutter/material.dart';
 /// adaptMobileMediaQuery() + mobileVisualDensityFor() 在 main.dart 的 builder 中
 /// 作为 MaterialApp 的全局 Adaptive MediaQuery 注入。
 class AppBreakpoints {
-  static const double desktop = 900;
+  static const double compactHeight = 480;
+  static const double serverGrid = 720;
+  static const double desktop = 840;
   static const double wideDesktop = 1280;
 
   const AppBreakpoints._();
@@ -72,9 +74,21 @@ class MobileUiMetrics {
   double get navigationLabelSize => 10.5 * chromeScale;
 }
 
+bool supportsServerGridForWidth(double width) {
+  return width >= AppBreakpoints.serverGrid;
+}
+
+bool usesCompactRailForHeight(double height) {
+  return height < AppBreakpoints.compactHeight;
+}
+
+bool usesExpandedLayoutForWidth(double width) {
+  return width >= AppBreakpoints.desktop;
+}
+
 bool isDesktopLayout(BuildContext context) {
   final width = MediaQuery.sizeOf(context).width;
-  return width >= AppBreakpoints.desktop ||
+  return usesExpandedLayoutForWidth(width) ||
       defaultTargetPlatform == TargetPlatform.windows ||
       defaultTargetPlatform == TargetPlatform.macOS ||
       defaultTargetPlatform == TargetPlatform.linux;

@@ -24,7 +24,9 @@ across sessions.
   interpolates physical short edges from 1280 to 1440 px: the 1.5K baseline
   uses 0.84 controls, 0.952 chrome, and -0.4 density; the 2K baseline uses 0.92
   controls and standard chrome/density. Never apply this correction to the
-  user's system text scale.
+  user's system text scale. `AppBreakpoints` also owns the 720 dp Servers-grid,
+  840 dp expanded-width, and 480 dp compact-height thresholds; short landscape
+  windows use an icon-only rail so 1.5K and 2K phones cannot overflow.
 - 2026-07-10: Primary UI workspaces share the modern design system in
   `lib/theme/app_theme.dart` and `lib/widgets/app_surface.dart`. Reuse
   `AppPageSurface`, `AppPageHeader`, `AppIconBadge`, `AppSectionCard`, and

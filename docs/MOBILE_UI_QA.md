@@ -18,6 +18,11 @@ Both AVDs use the Android 35 Google Play x86_64 system image. The 1280 px and
 visual-density corrections. It deliberately leaves the system text scale
 unchanged for accessibility.
 
+The layout thresholds follow Android's current
+[window size classes](https://developer.android.com/develop/adaptive-apps/guides/use-window-size-classes):
+expanded width starts at 840 dp and compact height ends at 480 dp. SSH Mobile
+uses an app-specific 720 dp minimum before rendering the denser Servers grid.
+
 ## Visual baseline
 
 - Verify the light and dark palettes match the desktop design tokens in
@@ -42,6 +47,13 @@ unchanged for accessibility.
   semantically labeled on both profiles after applying the shared metrics. The
   1280 px profile uses slightly tighter chrome; the 1440 px profile keeps the
   standard 68 dp navigation height.
+- The Servers header exposes a visible 48 dp settings action in portrait. A
+  saved Grid preference safely falls back to the reorderable list below 720 dp,
+  list drag handles remain 48 dp, unknown health no longer reads as score zero,
+  and scroll padding clears both app navigation and the system inset.
+- Both landscape profiles exceed 840 dp width but remain below 480 dp height,
+  so they consistently use the icon-only compact rail. All five destinations
+  plus Settings remain visible with no RenderFlex overflow on either AVD.
 - The connection form uses shared icon-led section cards on both profiles. Its
   collapsible jump-host and advanced headers expose full-width semantic button
   targets, the password visibility action is labeled, and focusing an input
