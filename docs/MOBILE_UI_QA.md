@@ -65,7 +65,9 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   hides the sticky save bar so the keyboard does not cover the active field.
   Long English authentication choices wrap without overflow.
 - AI Chat keeps its header in normal document flow and re-aligns the selected
-  page when rotation crosses the 840 dp navigation breakpoint. The composer is
+  page when rotation crosses the 840 dp navigation breakpoint. Its adaptive
+  shell keeps the page subtree stable so focus and unsent drafts survive the
+  bottom-navigation-to-rail transition. The composer is
   one rounded input surface with 48 dp Tools and Send targets, a single-line
   hint, and a height-limited scrolling area for plan, command, attachment, and
   tool content. On compact-height keyboard layouts, tools collapse and the

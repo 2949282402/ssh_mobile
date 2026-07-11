@@ -212,14 +212,13 @@ class _HomeScreenState extends State<HomeScreen> {
         bottom: false,
         child: Stack(
           children: [
-            desktop
-                ? _buildDesktopShell(
-                    context,
-                    content,
-                    strings,
-                    compactKeyboardLayout: compactKeyboardLayout,
-                  )
-                : content,
+            _buildAdaptiveShell(
+              context,
+              content,
+              strings,
+              desktop: desktop,
+              compactKeyboardLayout: compactKeyboardLayout,
+            ),
             if (isBusy)
               ColoredBox(
                 color: Theme.of(
@@ -245,10 +244,11 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildDesktopShell(
+  Widget _buildAdaptiveShell(
     BuildContext context,
     Widget content,
     AppStrings strings, {
+    required bool desktop,
     required bool compactKeyboardLayout,
   }) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -273,7 +273,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Row(
       children: [
-        if (compactKeyboardLayout)
+        if (!desktop)
+          const SizedBox.shrink()
+        else if (compactKeyboardLayout)
           const SizedBox(width: 80)
         else
           Container(
@@ -353,8 +355,13 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
-        const SizedBox(width: 12),
-        Expanded(child: content),
+        SizedBox(width: desktop ? 12 : 0),
+        Expanded(
+          child: KeyedSubtree(
+            key: const ValueKey<String>('home-navigation-content'),
+            child: content,
+          ),
+        ),
       ],
     );
   }
