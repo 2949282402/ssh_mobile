@@ -88,7 +88,9 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   and trace summaries localize without overflowing their message column. The
   message editor derives its height from the keyboard-visible viewport, keeps
   both actions at 48 dp in compact landscape, and rejects whitespace-only
-  resubmissions without dismissing the draft.
+  resubmissions without dismissing the draft. Embedded execution traces use
+  bilingual 48 dp expansion rows, real Material ink surfaces, and a 280 dp
+  vertically scrollable ceiling so long diagnostics do not inflate a message.
 - LLM settings intercept Android Back and the close affordance when edits are
   pending, then require an explicit discard confirmation. Saving
   temporarily disables route dismissal, while model-refresh and save failures
