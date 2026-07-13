@@ -96,6 +96,7 @@ class AiStrings {
   String traceTools(int count) => _en ? '$count tools' : '$count 个工具';
   String traceApprovals(int count) => _en ? '$count approvals' : '$count 次审批';
   String get stop => _en ? 'Stop' : '停止';
+  String get jumpToLatestMessage => _en ? 'Jump to latest message' : '跳转到最新消息';
   String get stopped => _en ? '[Stopped by user]' : '[用户已终止]';
   String get baseUrl => _en ? 'Base URL' : 'Base URL';
   String get baseUrlHistory => _en ? 'Base URL history' : 'Base URL 历史';

@@ -72,6 +72,10 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   hint, and a height-limited scrolling area for plan, command, attachment, and
   tool content. On compact-height keyboard layouts, tools collapse and the
   decorative chat header and rail stop consuming the remaining input space.
+  The 48 dp jump-to-latest action remains available after generation ends,
+  announces a bilingual accessibility label, respects the trailing safe area,
+  and stays above a 1.5K landscape keyboard. Background stream and completion
+  updates preserve the user's reading position until this action is selected.
   Slash-command suggestions use bilingual summaries, stable 48 dp rows, and a
   bounded scroll region; completing `/compact` or `/skills` drops stale
   arguments, while `/tools` and `/plan` preserve their supported arguments

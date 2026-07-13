@@ -517,10 +517,11 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
                                   strings: strings,
                                 ),
                           ),
-                          _ChatJumpToBottomButton(
+                          ChatJumpToBottomButton(
                             scrollController: _scrollController,
                             isUserAtBottom: _isUserAtBottom,
                             onPressed: () => _scrollToBottom(jump: true),
+                            strings: strings,
                           ),
                         ],
                       ),

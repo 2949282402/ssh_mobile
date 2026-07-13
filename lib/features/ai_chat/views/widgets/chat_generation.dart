@@ -1,6 +1,13 @@
 // ignore_for_file: invalid_use_of_protected_member, unused_element
 part of '../llm_chat_screen.dart';
 
+bool shouldFollowChatScrollRequest({
+  required bool explicit,
+  required bool isUserAtBottom,
+}) {
+  return explicit || isUserAtBottom;
+}
+
 extension _ChatGeneration on _LlmChatScreenBodyState {
   Future<void> _send(BuildContext context, AiStrings strings) async {
     final text = _inputController.text.trim();
@@ -228,7 +235,12 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
       _pendingScrollJump = false;
       if (!_scrollController.hasClients) return;
       final viewModel = context.read<AiChatViewModel>();
-      if (!shouldJump && viewModel.sending && !_isUserAtBottom.value) return;
+      if (!shouldFollowChatScrollRequest(
+        explicit: shouldJump,
+        isUserAtBottom: _isUserAtBottom.value,
+      )) {
+        return;
+      }
       if (shouldJump || viewModel.sending) {
         _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
         _setUserAtBottom(true);
