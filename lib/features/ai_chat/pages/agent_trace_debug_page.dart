@@ -801,25 +801,18 @@ String _formatDuration(Duration duration) {
 String _finalOutcomeLabel(String value, AppStrings strings) {
   switch (value) {
     case 'success':
-      return strings.agentTraceStatusSuccess;
+    case 'completed':
     case 'cancelled':
-      return strings.agentTraceOutcomeCancelled;
     case 'modelError':
-      return strings.agentTraceOutcomeModelError;
     case 'toolError':
-      return strings.agentTraceOutcomeToolError;
     case 'approvalRejected':
-      return strings.agentTraceOutcomeApprovalRejected;
     case 'approvalUnavailable':
-      return strings.agentTraceOutcomeApprovalUnavailable;
     case 'budgetAuditRejected':
-      return strings.agentTraceOutcomeBudgetAuditRejected;
     case 'loopGuardBlocked':
-      return strings.agentTraceOutcomeLoopGuardBlocked;
     case 'planModeBlocked':
-      return strings.agentTraceOutcomePlanModeBlocked;
     case 'planExecutionBlocked':
-      return strings.agentTraceOutcomePlanExecutionBlocked;
+    case 'agentLoopStopped':
+      return strings.agentTraceOutcomeLabel(value);
     default:
       return value;
   }

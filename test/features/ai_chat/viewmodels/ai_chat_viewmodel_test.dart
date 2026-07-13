@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -358,6 +360,116 @@ void main() {
     );
 
     test(
+      'normal return with blocked outcome embeds reason and records failure',
+      () async {
+        await storageService.saveAiConnectionSettings(
+          baseUrl: 'https://api.example.com',
+          model: 'demo-model',
+          apiKey: 'dummy-key',
+        );
+        final factory = FakeSuccessRuntimeFactory(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+          finalOutcome: 'loopGuardBlocked',
+        );
+        final viewModel = AiChatViewModel(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+          runtimeFactory: factory,
+        );
+
+        await viewModel.loadInitialDraft();
+        final result = await viewModel.sendText(text: 'inspect loop');
+        expect(result, isA<SendTextSuccess>());
+        await waitUntil(
+          () => viewModel.sending == false,
+          description: 'blocked outcome generation finishes',
+        );
+
+        final assistant = viewModel.activeChat!.messages.lastWhere(
+          (message) => message.role == 'assistant',
+        );
+        final summary = assistant.traces.lastWhere(
+          (trace) => trace.kind == 'agent_run_summary',
+        );
+        expect(jsonDecode(summary.content)['finalOutcome'], 'loopGuardBlocked');
+
+        var metrics = await storageService.loadAgentRunMetrics();
+        for (var attempt = 0; metrics.isEmpty && attempt < 20; attempt++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+          metrics = await storageService.loadAgentRunMetrics();
+        }
+        expect(metrics, isNotEmpty);
+        expect(metrics.first.success, isFalse);
+      },
+    );
+
+    test(
+      'normal return with missing outcome stays unknown and records failure',
+      () async {
+        await storageService.saveAiConnectionSettings(
+          baseUrl: 'https://api.example.com',
+          model: 'demo-model',
+          apiKey: 'dummy-key',
+        );
+        final factory = FakeSuccessRuntimeFactory(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+          finalOutcome: '',
+        );
+        final viewModel = AiChatViewModel(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+          runtimeFactory: factory,
+        );
+
+        await viewModel.loadInitialDraft();
+        final result = await viewModel.sendText(text: 'inspect missing result');
+        expect(result, isA<SendTextSuccess>());
+        await waitUntil(
+          () => viewModel.sending == false,
+          description: 'unknown outcome generation finishes',
+        );
+
+        final assistant = viewModel.activeChat!.messages.lastWhere(
+          (message) => message.role == 'assistant',
+        );
+        final summary = assistant.traces.lastWhere(
+          (trace) => trace.kind == 'agent_run_summary',
+        );
+        expect(jsonDecode(summary.content)['finalOutcome'], 'unknown');
+
+        var metrics = await storageService.loadAgentRunMetrics();
+        for (var attempt = 0; metrics.isEmpty && attempt < 20; attempt++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+          metrics = await storageService.loadAgentRunMetrics();
+        }
+        expect(metrics, isNotEmpty);
+        expect(metrics.first.success, isFalse);
+      },
+    );
+
+    test(
       'approvePlanAndExecute blocks when runtime health is blocking',
       () async {
         final viewModel = AiChatViewModel(
@@ -538,6 +650,12 @@ void main() {
         final errorMessage = messages.firstWhere((m) => m.role == 'error');
         expect(errorMessage.agentRunId, isNotNull);
         expect(errorMessage.agentRunId, isNotEmpty);
+        expect(errorMessage.traces, hasLength(1));
+        expect(errorMessage.traces.single.kind, 'agent_run_summary');
+        expect(
+          jsonDecode(errorMessage.traces.single.content)['finalOutcome'],
+          'modelError',
+        );
       },
     );
   });
@@ -585,8 +703,12 @@ class FailureLlmChatService extends LlmChatService {
 }
 
 class FakeSuccessLlmChatService extends LlmChatService {
-  FakeSuccessLlmChatService({required super.storageService})
-    : super(toolService: const _FakeAiToolExecutor());
+  final String finalOutcome;
+
+  FakeSuccessLlmChatService({
+    required super.storageService,
+    this.finalOutcome = 'success',
+  }) : super(toolService: const _FakeAiToolExecutor());
 
   @override
   Stream<String> stream({
@@ -610,10 +732,11 @@ class FakeSuccessLlmChatService extends LlmChatService {
   }) async* {
     if (onTrace != null) {
       onTrace(
-        const LlmTraceEvent(
+        LlmTraceEvent(
           kind: 'agent_run_summary',
           title: 'Run Summary',
-          content: '{"finalOutcome":"success","stepsCount":0,"durationMs":0}',
+          content:
+              '{"finalOutcome":"$finalOutcome","stepsCount":0,"durationMs":0}',
         ),
       );
     }
@@ -697,6 +820,8 @@ class FakeFailureRuntimeFactory extends AiChatRuntimeFactory {
 }
 
 class FakeSuccessRuntimeFactory extends AiChatRuntimeFactory {
+  final String finalOutcome;
+
   FakeSuccessRuntimeFactory({
     required super.storageService,
     required super.sshService,
@@ -705,6 +830,7 @@ class FakeSuccessRuntimeFactory extends AiChatRuntimeFactory {
     required super.playbookService,
     required super.ragService,
     required super.appSettings,
+    this.finalOutcome = 'success',
   });
 
   @override
@@ -713,6 +839,9 @@ class FakeSuccessRuntimeFactory extends AiChatRuntimeFactory {
     required String model,
     required String chatId,
   }) {
-    return FakeSuccessLlmChatService(storageService: storageService);
+    return FakeSuccessLlmChatService(
+      storageService: storageService,
+      finalOutcome: finalOutcome,
+    );
   }
 }

@@ -163,6 +163,8 @@ void main() {
       expect(result, isA<AiChatRunFailed>());
       final failed = result as AiChatRunFailed;
       expect(failed.runId, isNotEmpty);
+      expect(failed.finalOutcome, 'modelError');
+      expect(failed.succeeded, isFalse);
 
       final traceEvents = await storageService.loadAgentTraceEvents(
         failed.runId,

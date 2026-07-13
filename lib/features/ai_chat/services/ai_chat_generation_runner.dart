@@ -10,7 +10,12 @@ import 'ai_chat_runtime_factory.dart';
 
 sealed class AiChatRunResult {
   String get runId;
-  const AiChatRunResult();
+  final String finalOutcome;
+
+  bool get succeeded =>
+      finalOutcome == 'success' || finalOutcome == 'completed';
+
+  const AiChatRunResult({required this.finalOutcome});
 }
 
 class AiChatRunSuccess extends AiChatRunResult {
@@ -22,6 +27,7 @@ class AiChatRunSuccess extends AiChatRunResult {
     required this.runId,
     required this.answer,
     required this.runStats,
+    required super.finalOutcome,
   });
 }
 
@@ -29,7 +35,11 @@ class AiChatRunCancelled extends AiChatRunResult {
   @override
   final String runId;
   final String partialAnswer;
-  const AiChatRunCancelled({required this.runId, required this.partialAnswer});
+  const AiChatRunCancelled({
+    required this.runId,
+    required this.partialAnswer,
+    required super.finalOutcome,
+  });
 }
 
 class AiChatRunFailed extends AiChatRunResult {
@@ -41,6 +51,7 @@ class AiChatRunFailed extends AiChatRunResult {
     required this.runId,
     required this.error,
     required this.partialAnswer,
+    required super.finalOutcome,
   });
 }
 
@@ -113,14 +124,20 @@ class AiChatGenerationRunner {
         runId: runId,
         answer: answer.toString(),
         runStats: runStats,
+        finalOutcome: traceRecorder.finalOutcome ?? 'unknown',
       );
     } on LlmCancelledException {
-      return AiChatRunCancelled(runId: runId, partialAnswer: answer.toString());
+      return AiChatRunCancelled(
+        runId: runId,
+        partialAnswer: answer.toString(),
+        finalOutcome: traceRecorder.finalOutcome ?? 'cancelled',
+      );
     } catch (e) {
       return AiChatRunFailed(
         runId: runId,
         error: e,
         partialAnswer: answer.toString(),
+        finalOutcome: traceRecorder.finalOutcome ?? 'modelError',
       );
     } finally {
       try {

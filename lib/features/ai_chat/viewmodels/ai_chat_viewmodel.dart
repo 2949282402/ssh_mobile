@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import '../services/ai_chat_status_translator.dart';
@@ -1309,11 +1310,16 @@ class AiChatViewModel extends ChangeNotifier {
         final orchestrator = _runtimeFactory.createOrchestrator();
 
         if (assistantIndex >= 0) {
+          final completedTraces = _ensureAgentRunSummaryTrace(
+            completedMessages[assistantIndex].traces,
+            runResult.finalOutcome,
+            runStats: runResult.runStats,
+          );
           final completion = orchestrator.finalizeAssistantTurn(
             initialChat: initialChat,
             assistantMessage: completedMessages[assistantIndex],
             answerText: runResult.answer,
-            traces: [...completedMessages[assistantIndex].traces],
+            traces: completedTraces,
           );
           completedMessages[assistantIndex] = completion.assistantMessage
               .copyWith(
@@ -1360,7 +1366,7 @@ class AiChatViewModel extends ChangeNotifier {
           finishedAt: DateTime.now(),
           runStats: runResult.runStats,
           ragHits: ragHits,
-          success: true,
+          success: runResult.succeeded,
           runId: runResult.runId,
         );
       } else if (runResult is AiChatRunCancelled) {
@@ -1380,14 +1386,14 @@ class AiChatViewModel extends ChangeNotifier {
           final stoppedText = runResult.partialAnswer.trim().isEmpty
               ? stopStr
               : '${runResult.partialAnswer}\n\n$stopStr';
-          final traces = [
+          final traces = _ensureAgentRunSummaryTrace([
             ...cancelledMessages[assistantIndex].traces,
             AiMessageTrace.create(
               kind: 'approval',
               title: 'Stopped by user',
               content: stopStr,
             ),
-          ];
+          ], runResult.finalOutcome);
           cancelledMessages[assistantIndex] = cancelledMessages[assistantIndex]
               .copyWith(
                 text: stoppedText,
@@ -1430,7 +1436,15 @@ class AiChatViewModel extends ChangeNotifier {
               message.role == 'assistant' &&
               message.createdAt == assistantMessage.createdAt,
         );
+        AiMessageTrace? runSummaryTrace;
         if (assistantIndex >= 0) {
+          final traces = _ensureAgentRunSummaryTrace(
+            errorMessages[assistantIndex].traces,
+            runResult.finalOutcome,
+          );
+          runSummaryTrace = traces.lastWhere(
+            (trace) => trace.kind == 'agent_run_summary',
+          );
           final partialText = runResult.partialAnswer;
           if (partialText.trim().isEmpty &&
               errorMessages[assistantIndex].text.isEmpty) {
@@ -1441,23 +1455,30 @@ class AiChatViewModel extends ChangeNotifier {
                   text: partialText,
                   contextText: _contextTextForAssistant(
                     partialText,
-                    traces: errorMessages[assistantIndex].traces,
+                    traces: traces,
                   ),
+                  traces: traces,
                   agentRunId: runResult.runId,
                 );
           } else {
             errorMessages[assistantIndex] = errorMessages[assistantIndex]
-                .copyWith(agentRunId: runResult.runId);
+                .copyWith(traces: traces, agentRunId: runResult.runId);
           }
         }
+        final assistantOwnsRun = errorMessages.any(
+          (message) => message.agentRunId == runResult.runId,
+        );
         final errorChat = currentChat.copyWith(
           messages: [
             ...errorMessages,
             AiChatMessageRecord(
               role: 'error',
               text: translator.translateFailed(runResult.error),
+              traces: assistantOwnsRun || runSummaryTrace == null
+                  ? const []
+                  : [runSummaryTrace],
               createdAt: DateTime.now(),
-              agentRunId: runResult.runId,
+              agentRunId: assistantOwnsRun ? null : runResult.runId,
             ),
           ],
           updatedAt: DateTime.now(),
@@ -1579,6 +1600,43 @@ class AiChatViewModel extends ChangeNotifier {
     );
     notifyListeners();
     _triggerScroll();
+  }
+
+  List<AiMessageTrace> _ensureAgentRunSummaryTrace(
+    List<AiMessageTrace> traces,
+    String finalOutcome, {
+    LlmRunStats? runStats,
+  }) {
+    for (final trace in traces.reversed) {
+      if (trace.kind != 'agent_run_summary') continue;
+      try {
+        final decoded = jsonDecode(trace.content);
+        if (decoded is Map &&
+            '${decoded['finalOutcome'] ?? decoded['outcome'] ?? ''}'
+                .trim()
+                .isNotEmpty) {
+          return List<AiMessageTrace>.from(traces, growable: false);
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+    return [
+      ...traces,
+      AiMessageTrace.create(
+        kind: 'agent_run_summary',
+        title: 'Agent run summary',
+        content: jsonEncode({
+          'finalOutcome': finalOutcome,
+          if (runStats != null) ...{
+            'toolCalls': runStats.toolCalls,
+            'approvalCount': runStats.approvalCount,
+            'approvedCount': runStats.approvedCount,
+            'elapsedMs': runStats.elapsedMs,
+          },
+        }),
+      ),
+    ];
   }
 
   bool _consumeContextCompression(String chatId) {

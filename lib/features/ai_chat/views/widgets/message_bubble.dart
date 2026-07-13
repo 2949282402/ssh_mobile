@@ -187,7 +187,7 @@ class MessageBubble extends StatelessWidget {
                         ),
                 ),
                 if (!isUser && message.agentRunId?.trim().isNotEmpty == true)
-                  _AgentRunInlineSummary(runId: message.agentRunId!.trim()),
+                  AgentRunInlineSummary(message: message),
                 if (!isUser && message.agentRunId?.trim().isNotEmpty == true)
                   _AgentTraceLink(
                     chatId: chatId,

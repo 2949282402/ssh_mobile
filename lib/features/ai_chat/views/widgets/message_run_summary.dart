@@ -1,15 +1,17 @@
 part of 'message_bubble.dart';
 
-class _AgentRunInlineSummary extends StatefulWidget {
-  final String runId;
+class AgentRunInlineSummary extends StatefulWidget {
+  final AiChatMessageRecord message;
 
-  const _AgentRunInlineSummary({required this.runId});
+  const AgentRunInlineSummary({super.key, required this.message});
+
+  String get runId => message.agentRunId?.trim() ?? '';
 
   @override
-  State<_AgentRunInlineSummary> createState() => _AgentRunInlineSummaryState();
+  State<AgentRunInlineSummary> createState() => _AgentRunInlineSummaryState();
 }
 
-class _AgentRunInlineSummaryState extends State<_AgentRunInlineSummary> {
+class _AgentRunInlineSummaryState extends State<AgentRunInlineSummary> {
   late Future<_AgentRunInlineData?> _future;
 
   @override
@@ -19,16 +21,18 @@ class _AgentRunInlineSummaryState extends State<_AgentRunInlineSummary> {
   }
 
   @override
-  void didUpdateWidget(covariant _AgentRunInlineSummary oldWidget) {
+  void didUpdateWidget(covariant AgentRunInlineSummary oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.runId != widget.runId) {
+    if (!identical(oldWidget.message, widget.message)) {
       _future = _load();
     }
   }
 
   Future<_AgentRunInlineData?> _load() async {
+    final embedded = _AgentRunInlineData.fromMessage(widget.message);
+    if (embedded != null) return embedded;
+
     final storage = context.read<StorageService>();
-    final events = await storage.loadAgentTraceEvents(widget.runId);
     final metrics = await storage.loadAgentRunMetrics();
     AgentRunMetrics? metric;
     for (final item in metrics) {
@@ -37,8 +41,11 @@ class _AgentRunInlineSummaryState extends State<_AgentRunInlineSummary> {
         break;
       }
     }
-    if (metric == null && events.isEmpty) return null;
-    return _AgentRunInlineData.from(metric: metric, events: events);
+    if (metric != null) return _AgentRunInlineData.fromMetric(metric);
+
+    final events = await storage.loadAgentTraceEvents(widget.runId);
+    if (events.isEmpty) return null;
+    return _AgentRunInlineData.fromEvents(events);
   }
 
   @override
@@ -51,62 +58,77 @@ class _AgentRunInlineSummaryState extends State<_AgentRunInlineSummary> {
         final theme = Theme.of(context);
         final colorScheme = theme.colorScheme;
         final extColors = theme.extension<ExtendedColors>();
-        final isEn = context.read<AppSettings>().language == AppLanguage.en;
+        final language = context.select<AppSettings, AppLanguage>(
+          (settings) => settings.language,
+        );
+        final strings = AppStrings(language);
         final statusColor = data.success
             ? (extColors?.success ?? colorScheme.primary)
             : colorScheme.error;
         return Padding(
+          key: ValueKey('agent-run-summary-${widget.runId}'),
           padding: const EdgeInsets.only(left: 4, bottom: 2),
-          child: Wrap(
-            spacing: 6,
-            runSpacing: 4,
-            children: [
-              _RunSummaryChip(
-                icon: data.success
-                    ? Icons.check_circle_outline
-                    : Icons.error_outline,
-                label: data.success
-                    ? (isEn ? 'Run completed' : '运行完成')
-                    : (isEn ? 'Run needs attention' : '运行需处理'),
-                color: statusColor,
-              ),
-              if (data.toolCalls > 0)
+          child: LayoutBuilder(
+            builder: (context, constraints) => Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [
                 _RunSummaryChip(
-                  icon: Icons.build_outlined,
-                  label: isEn
-                      ? '${data.toolCalls} tools'
-                      : '${data.toolCalls} 个工具',
-                  color: colorScheme.primary,
+                  key: const ValueKey('run-summary-status'),
+                  icon: data.success
+                      ? Icons.check_circle_outline
+                      : Icons.error_outline,
+                  label: data.success
+                      ? strings.agentRunCompleted
+                      : strings.agentRunNeedsAttention,
+                  color: statusColor,
+                  maxWidth: constraints.maxWidth,
                 ),
-              if (data.approvalCount > 0)
-                _RunSummaryChip(
-                  icon: Icons.verified_user_outlined,
-                  label: isEn
-                      ? '${data.approvedCount}/${data.approvalCount} approvals'
-                      : '${data.approvedCount}/${data.approvalCount} 次审批',
-                  color: colorScheme.tertiary,
-                ),
-              if (data.blockedCount > 0)
-                _RunSummaryChip(
-                  icon: Icons.block_outlined,
-                  label: isEn
-                      ? '${data.blockedCount} blocked'
-                      : '${data.blockedCount} 次阻断',
-                  color: colorScheme.error,
-                ),
-              if (data.elapsedMs != null)
-                _RunSummaryChip(
-                  icon: Icons.timer_outlined,
-                  label: _formatRunElapsed(data.elapsedMs!),
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              if (data.finalOutcome != null)
-                _RunSummaryChip(
-                  icon: Icons.flag_outlined,
-                  label: data.finalOutcome!,
-                  color: colorScheme.onSurfaceVariant,
-                ),
-            ],
+                if (data.toolCalls > 0)
+                  _RunSummaryChip(
+                    key: const ValueKey('run-summary-tools'),
+                    icon: Icons.build_outlined,
+                    label: strings.agentRunTools(data.toolCalls),
+                    color: colorScheme.primary,
+                    maxWidth: constraints.maxWidth,
+                  ),
+                if (data.approvalCount > 0)
+                  _RunSummaryChip(
+                    key: const ValueKey('run-summary-approvals'),
+                    icon: Icons.verified_user_outlined,
+                    label: strings.agentRunApprovals(
+                      data.approvedCount,
+                      data.approvalCount,
+                    ),
+                    color: colorScheme.tertiary,
+                    maxWidth: constraints.maxWidth,
+                  ),
+                if (data.blockedCount > 0)
+                  _RunSummaryChip(
+                    key: const ValueKey('run-summary-blocked'),
+                    icon: Icons.block_outlined,
+                    label: strings.agentRunBlocked(data.blockedCount),
+                    color: colorScheme.error,
+                    maxWidth: constraints.maxWidth,
+                  ),
+                if (data.elapsedMs != null)
+                  _RunSummaryChip(
+                    key: const ValueKey('run-summary-elapsed'),
+                    icon: Icons.timer_outlined,
+                    label: _formatRunElapsed(data.elapsedMs!),
+                    color: colorScheme.onSurfaceVariant,
+                    maxWidth: constraints.maxWidth,
+                  ),
+                if (data.finalOutcome != null && !data.success)
+                  _RunSummaryChip(
+                    key: const ValueKey('run-summary-outcome'),
+                    icon: Icons.flag_outlined,
+                    label: strings.agentTraceOutcomeLabel(data.finalOutcome!),
+                    color: colorScheme.onSurfaceVariant,
+                    maxWidth: constraints.maxWidth,
+                  ),
+              ],
+            ),
           ),
         );
       },
@@ -138,61 +160,157 @@ class _AgentRunInlineData {
     required this.finalOutcome,
   });
 
-  factory _AgentRunInlineData.from({
-    required AgentRunMetrics? metric,
-    required List<AgentTraceEvent> events,
-  }) {
-    final blockedCount = events
-        .where(
-          (event) =>
-              event.kind.contains('blocked') ||
-              event.status.contains('blocked') ||
-              event.status.contains('rejected'),
-        )
-        .length;
-    final toolEvents = events
-        .where(
-          (event) =>
-              event.kind.contains('tool_result') ||
-              event.kind.contains('tool_request'),
-        )
-        .length;
+  factory _AgentRunInlineData.fromMetric(AgentRunMetrics metric) {
+    return _AgentRunInlineData(
+      success: metric.success,
+      toolCalls: metric.toolCalls,
+      approvalCount: metric.approvalCount,
+      approvedCount: metric.approvedCount,
+      blockedCount: 0,
+      elapsedMs: metric.elapsedMs,
+      finalOutcome: metric.success ? null : '',
+    );
+  }
+
+  static _AgentRunInlineData? fromMessage(AiChatMessageRecord message) {
+    var sawMalformedSummary = false;
+    for (final trace in message.traces.reversed) {
+      if (trace.kind != 'agent_run_summary') continue;
+      final summary = _decodeSummaryMap(trace.content);
+      if (summary == null) {
+        sawMalformedSummary = true;
+        continue;
+      }
+      final blockedCount = message.traces.where((item) {
+        if (item.kind == 'agent_run_summary') return false;
+        final searchable = '${item.kind} ${item.title}'.toLowerCase();
+        return searchable.contains('blocked') ||
+            searchable.contains('rejected');
+      }).length;
+      return _AgentRunInlineData._fromSummary(
+        summary,
+        blockedCount: blockedCount,
+        elapsedFallback: message.elapsedMs,
+        toolCallsFallback: _messageToolCount(message.traces),
+        approvalCountFallback: _messageKindCount(message.traces, 'approval'),
+      );
+    }
+    if (sawMalformedSummary) {
+      return _AgentRunInlineData._fromSummary(
+        const {},
+        blockedCount: 0,
+        elapsedFallback: message.elapsedMs,
+      );
+    }
+    return null;
+  }
+
+  factory _AgentRunInlineData.fromEvents(List<AgentTraceEvent> events) {
+    final blockedCount = events.where((event) {
+      final searchable = '${event.kind} ${event.status}'.toLowerCase();
+      return searchable.contains('blocked') || searchable.contains('rejected');
+    }).length;
+    final toolEvents = _traceToolCount(events);
     final approvalEvents = events
         .where((event) => event.kind.contains('approval'))
         .length;
-    final finalOutcome = _finalOutcomeFrom(events);
-    final success =
-        metric?.success ??
-        (finalOutcome == null ||
-            finalOutcome == 'success' ||
-            finalOutcome == 'completed');
+    for (final event in events.reversed) {
+      if (event.kind != 'agent_run_summary') continue;
+      final summary = _decodeSummaryMap(event.content);
+      if (summary == null) continue;
+      return _AgentRunInlineData._fromSummary(
+        summary,
+        blockedCount: blockedCount,
+        elapsedFallback: event.durationMs,
+        toolCallsFallback: toolEvents,
+        approvalCountFallback: approvalEvents,
+      );
+    }
 
     return _AgentRunInlineData(
-      success: success,
-      toolCalls: metric?.toolCalls ?? toolEvents,
-      approvalCount: metric?.approvalCount ?? approvalEvents,
-      approvedCount: metric?.approvedCount ?? 0,
+      success: false,
+      toolCalls: toolEvents,
+      approvalCount: approvalEvents,
+      approvedCount: 0,
       blockedCount: blockedCount,
-      elapsedMs: metric?.elapsedMs,
+      elapsedMs: null,
+      finalOutcome: '',
+    );
+  }
+
+  factory _AgentRunInlineData._fromSummary(
+    Map<String, dynamic> summary, {
+    required int blockedCount,
+    required int? elapsedFallback,
+    int toolCallsFallback = 0,
+    int approvalCountFallback = 0,
+  }) {
+    final finalOutcome =
+        '${summary['finalOutcome'] ?? summary['outcome'] ?? ''}'.trim();
+    final success = finalOutcome == 'success' || finalOutcome == 'completed';
+    final startedAt = DateTime.tryParse('${summary['startedAt'] ?? ''}');
+    final finishedAt = DateTime.tryParse('${summary['finishedAt'] ?? ''}');
+    final derivedElapsed = startedAt != null && finishedAt != null
+        ? finishedAt.difference(startedAt).inMilliseconds
+        : null;
+    return _AgentRunInlineData(
+      success: success,
+      toolCalls: _nullableIntValue(summary['toolCalls']) ?? toolCallsFallback,
+      approvalCount:
+          _nullableIntValue(summary['approvalCount']) ?? approvalCountFallback,
+      approvedCount: _intValue(summary['approvedCount']),
+      blockedCount: blockedCount,
+      elapsedMs:
+          _nullableIntValue(summary['elapsedMs']) ??
+          elapsedFallback ??
+          derivedElapsed,
       finalOutcome: finalOutcome,
     );
   }
 
-  static String? _finalOutcomeFrom(List<AgentTraceEvent> events) {
-    for (final event in events.reversed) {
-      if (event.kind != 'agent_run_summary') continue;
-      try {
-        final decoded = jsonDecode(event.content);
-        if (decoded is Map) {
-          final value = decoded['finalOutcome'] ?? decoded['outcome'];
-          if (value is String && value.trim().isNotEmpty) {
-            return value.trim();
-          }
-        }
-      } catch (_) {
-        return null;
-      }
+  static Map<String, dynamic>? _decodeSummaryMap(String content) {
+    try {
+      final decoded = jsonDecode(content);
+      return decoded is Map<String, dynamic>
+          ? decoded
+          : decoded is Map
+          ? {for (final entry in decoded.entries) '${entry.key}': entry.value}
+          : null;
+    } catch (_) {
+      return null;
     }
+  }
+
+  static int _intValue(Object? value) => _nullableIntValue(value) ?? 0;
+
+  static int _messageKindCount(List<AiMessageTrace> traces, String pattern) {
+    return traces
+        .where(
+          (trace) =>
+              trace.kind != 'agent_run_summary' && trace.kind.contains(pattern),
+        )
+        .length;
+  }
+
+  static int _messageToolCount(List<AiMessageTrace> traces) {
+    final requests = traces
+        .where((trace) => trace.kind == 'tool_request')
+        .length;
+    if (requests > 0) return requests;
+    return traces.where((trace) => trace.kind == 'tool_result').length;
+  }
+
+  static int _traceToolCount(List<AgentTraceEvent> events) {
+    final requests = events
+        .where((event) => event.kind == 'tool_request')
+        .length;
+    if (requests > 0) return requests;
+    return events.where((event) => event.kind == 'tool_result').length;
+  }
+
+  static int? _nullableIntValue(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
     return null;
   }
 }
@@ -201,36 +319,50 @@ class _RunSummaryChip extends StatelessWidget {
   final IconData icon;
   final String label;
   final Color color;
+  final double maxWidth;
 
   const _RunSummaryChip({
+    super.key,
     required this.icon,
     required this.label,
     required this.color,
+    required this.maxWidth,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.09),
-        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-        border: Border.all(color: color.withValues(alpha: 0.22)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: color),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 10.5,
-              fontWeight: FontWeight.w700,
-              color: color,
-            ),
+    return Semantics(
+      container: true,
+      label: label,
+      child: ExcludeSemantics(
+        child: Container(
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.09),
+            borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+            border: Border.all(color: color.withValues(alpha: 0.22)),
           ),
-        ],
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 14, color: color),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: color,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

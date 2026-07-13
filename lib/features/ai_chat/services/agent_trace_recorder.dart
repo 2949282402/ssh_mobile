@@ -23,6 +23,15 @@ class AgentTraceRecorder {
 
   List<AgentTraceEvent> get bufferedEvents => List.unmodifiable(_buffer);
 
+  String? get finalOutcome {
+    for (final event in _buffer.reversed) {
+      if (event.kind == 'agent_run_summary' && event.status.trim().isNotEmpty) {
+        return event.status.trim();
+      }
+    }
+    return null;
+  }
+
   void record(LlmTraceEvent event) {
     final redactedContent = _redactContent(event.content);
     final status = _deriveStatus(event, redactedContent);
@@ -108,7 +117,7 @@ class AgentTraceRecorder {
       if (outcome is String && outcome.trim().isNotEmpty) {
         return outcome.trim();
       }
-      return 'completed';
+      return 'unknown';
     }
     final decoded = _tryDecodeMap(content);
     final decodedStatus = decoded?['status'] ?? decoded?['outcome'];

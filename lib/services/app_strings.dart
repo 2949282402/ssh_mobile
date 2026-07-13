@@ -259,6 +259,13 @@ class AppStrings {
   String get agentTraceTruncated => _en ? 'truncated' : '已截断';
   String get agentTraceStatusSuccess => _en ? 'Success' : '成功';
   String get agentTraceStatusFailed => _en ? 'Failed' : '失败';
+  String get agentRunCompleted => _en ? 'Run completed' : '运行完成';
+  String get agentRunNeedsAttention => _en ? 'Run needs attention' : '运行需处理';
+  String agentRunTools(int count) =>
+      _en ? '$count ${count == 1 ? 'tool' : 'tools'}' : '$count 个工具';
+  String agentRunApprovals(int approved, int total) =>
+      _en ? '$approved/$total approvals' : '$approved/$total 次审批';
+  String agentRunBlocked(int count) => _en ? '$count blocked' : '$count 次阻断';
   String get agentTraceOutcomeCancelled => _en ? 'Cancelled by user' : '用户已取消';
   String get agentTraceOutcomeModelError =>
       _en ? 'Model request failed' : '模型请求失败';
@@ -276,6 +283,40 @@ class AppStrings {
       _en ? 'Plan Mode blocked execution' : '规划模式已拦截执行';
   String get agentTraceOutcomePlanExecutionBlocked =>
       _en ? 'Plan execution gate blocked execution' : '计划执行门禁已拦截执行';
+  String get agentTraceOutcomeAgentLoopStopped =>
+      _en ? 'Agent loop stopped' : 'Agent 循环已停止';
+  String get agentTraceOutcomeUnknown =>
+      _en ? 'Run ended with an unknown result' : '运行结果未知';
+
+  String agentTraceOutcomeLabel(String value) {
+    switch (value.trim()) {
+      case 'success':
+      case 'completed':
+        return agentTraceStatusSuccess;
+      case 'cancelled':
+        return agentTraceOutcomeCancelled;
+      case 'modelError':
+        return agentTraceOutcomeModelError;
+      case 'toolError':
+        return agentTraceOutcomeToolError;
+      case 'approvalRejected':
+        return agentTraceOutcomeApprovalRejected;
+      case 'approvalUnavailable':
+        return agentTraceOutcomeApprovalUnavailable;
+      case 'budgetAuditRejected':
+        return agentTraceOutcomeBudgetAuditRejected;
+      case 'loopGuardBlocked':
+        return agentTraceOutcomeLoopGuardBlocked;
+      case 'planModeBlocked':
+        return agentTraceOutcomePlanModeBlocked;
+      case 'planExecutionBlocked':
+        return agentTraceOutcomePlanExecutionBlocked;
+      case 'agentLoopStopped':
+        return agentTraceOutcomeAgentLoopStopped;
+      default:
+        return agentTraceOutcomeUnknown;
+    }
+  }
 
   String get noConnectionHistory => _en ? 'No connection history' : '暂无连接历史';
   String get deleteHistoryRecord => _en ? 'Delete history record' : '删除历史记录';

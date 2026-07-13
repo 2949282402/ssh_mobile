@@ -109,7 +109,13 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   action groups wrap on narrow messages, every action tooltip is bilingual,
   sent attachment names stay bounded,
   and trace summaries localize without overflowing their message column. The
-  message editor derives its height from the keyboard-visible viewport, keeps
+  inline Agent run summary reads the lightweight summary already embedded in
+  each persisted message without storage I/O, then falls back to compact run
+  metrics and finally legacy trace data only when needed. Its bounded two-line
+  chips retain full accessibility labels at 2× text scale, update with the live
+  language, and map unknown outcomes to a safe generic result instead of
+  exposing internal status codes. The message editor derives
+  its height from the keyboard-visible viewport, keeps
   both actions at 48 dp in compact landscape, and rejects whitespace-only
   resubmissions without dismissing the draft. Embedded execution traces use
   bilingual 48 dp expansion rows, real Material ink surfaces, and a 280 dp

@@ -133,7 +133,7 @@ void main() {
       expect(recorder.bufferedEvents.single.status, 'success');
     });
 
-    test('agent_run_summary without finalOutcome should become completed', () {
+    test('agent_run_summary without finalOutcome should become unknown', () {
       final recorder = AgentTraceRecorder(
         repository: _FakeAgentTraceRepository(),
         runId: 'run-1',
@@ -148,7 +148,8 @@ void main() {
         ),
       );
 
-      expect(recorder.bufferedEvents.single.status, 'completed');
+      expect(recorder.bufferedEvents.single.status, 'unknown');
+      expect(recorder.finalOutcome, 'unknown');
     });
   });
 }
