@@ -636,7 +636,7 @@ extension SettingsOps on StorageService {
         AppLogService.instance.warning(
           'LLM settings rejected invalid API key',
           details:
-              'baseUrl=$normalizedBaseUrl model=$normalizedModel inputLength=${replacementApiKey.length}',
+              'hasBaseUrl=${normalizedBaseUrl.isNotEmpty} modelConfigured=${normalizedModel.isNotEmpty} apiKeyProvided=${replacementApiKey.isNotEmpty}',
         );
         throw const FormatException('Invalid API key format.');
       }
@@ -679,7 +679,7 @@ extension SettingsOps on StorageService {
     AppLogService.instance.info(
       'LLM settings saved',
       details:
-          'baseUrl=$normalizedBaseUrl model=$normalizedModel helperModel=$normalizedHelperModel auditModel=$normalizedAuditModel fallbackPolicy=${AgentModelFallbackPolicy.normalize(modelFallbackPolicy ?? _prefs!.getString(StorageService._aiModelFallbackPolicyKey))} contextWindow=${AiContextWindowSize.normalize(contextWindowTokens)} timeoutSeconds=${AiRequestTimeout.normalize(timeoutSeconds)} deepSeekThinking=${deepSeekThinkingEnabled ?? (_prefs!.getBool(StorageService._aiDeepSeekThinkingEnabledKey) ?? true)} deepSeekEffort=${DeepSeekReasoningEffort.normalize(deepSeekReasoningEffort ?? _prefs!.getString(StorageService._aiDeepSeekReasoningEffortKey))} openAiEffort=${OpenAiReasoningEffort.normalize(openAiReasoningEffort ?? _prefs!.getString(StorageService._aiOpenAiReasoningEffortKey))} webSearch=${webSearchEnabled ?? (_prefs!.getBool(StorageService._aiWebSearchEnabledKey) ?? true)} webSearchEngine=${AiWebSearchEngine.normalize(webSearchEngine ?? _prefs!.getString(StorageService._aiWebSearchEngineKey))} quarkSearchEndpoint=${_prefs!.getString(StorageService._aiQuarkSearchEndpointKey)} quarkApiKeyUpdated=$quarkApiKeyUpdated multiAgent=${multiAgentEnabled ?? (_prefs!.getBool(StorageService._aiMultiAgentEnabledKey) ?? true)} maxAgents=${AiMultiAgentMaxAgents.normalize(multiAgentMaxAgents ?? _prefs!.getInt(StorageService._aiMultiAgentMaxAgentsKey))} toolCallBudget=${AiToolCallBudget.normalize(toolCallBudget ?? _prefs!.getInt(StorageService._aiToolCallBudgetKey))} agentLoopMode=${AiAgentLoopMode.normalize(agentLoopMode ?? _prefs!.getString(StorageService._aiAgentLoopModeKey))} apiKeyUpdated=$apiKeyUpdated useCustomPrompts=$useCustomPrompts',
+          'hasBaseUrl=${normalizedBaseUrl.isNotEmpty} modelConfigured=${normalizedModel.isNotEmpty} helperModelConfigured=${normalizedHelperModel.isNotEmpty} auditModelConfigured=${normalizedAuditModel.isNotEmpty} quarkEndpointConfigured=${_prefs!.getString(StorageService._aiQuarkSearchEndpointKey)?.trim().isNotEmpty == true} apiKeyUpdated=$apiKeyUpdated quarkApiKeyUpdated=$quarkApiKeyUpdated customPromptsUpdated=${useCustomPrompts != null}',
     );
   }
 

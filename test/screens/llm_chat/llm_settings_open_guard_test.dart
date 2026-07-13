@@ -283,6 +283,77 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(LlmSettingsScreen), findsNothing);
 
+      logs.clear();
+      const sensitiveSettingsValues = [
+        'https://private-save.example/v1?token=endpoint-secret',
+        'private-main-model',
+        'private-helper-model',
+        'private-audit-model',
+        'https://private-quark.example/search?token=quark-secret',
+      ];
+      await storage.saveAiConnectionSettings(
+        baseUrl: sensitiveSettingsValues[0],
+        model: sensitiveSettingsValues[1],
+        helperModel: sensitiveSettingsValues[2],
+        auditModel: sensitiveSettingsValues[3],
+        quarkSearchEndpoint: sensitiveSettingsValues[4],
+        apiKey: 'valid-api-key-marker-for-log-test',
+      );
+      final savedSettingsLog = logs.entries.singleWhere(
+        (entry) => entry.message == 'LLM settings saved',
+      );
+      expect(savedSettingsLog.details, contains('hasBaseUrl=true'));
+      expect(savedSettingsLog.details, contains('modelConfigured=true'));
+      expect(savedSettingsLog.details, contains('helperModelConfigured=true'));
+      expect(savedSettingsLog.details, contains('auditModelConfigured=true'));
+      expect(
+        savedSettingsLog.details,
+        contains('quarkEndpointConfigured=true'),
+      );
+      final savedSettingsLogText = logs.entries
+          .map((entry) => entry.text)
+          .join('\n');
+      for (final sensitiveFragment in [
+        'private-save.example',
+        'endpoint-secret',
+        'private-main-model',
+        'private-helper-model',
+        'private-audit-model',
+        'private-quark.example',
+        'quark-secret',
+        'valid-api-key-marker',
+      ]) {
+        expect(savedSettingsLogText, isNot(contains(sensitiveFragment)));
+      }
+
+      logs.clear();
+      const rejectedBaseUrl =
+          'https://private-rejected.example/v1?token=rejected-secret';
+      const rejectedModel = 'private-rejected-model';
+      await expectLater(
+        storage.saveAiConnectionSettings(
+          baseUrl: rejectedBaseUrl,
+          model: rejectedModel,
+          apiKey: 'invalid-key\nsecret',
+        ),
+        throwsA(isA<FormatException>()),
+      );
+      final rejectedSettingsLog = logs.entries.singleWhere(
+        (entry) => entry.message == 'LLM settings rejected invalid API key',
+      );
+      expect(rejectedSettingsLog.details, contains('hasBaseUrl=true'));
+      expect(rejectedSettingsLog.details, contains('modelConfigured=true'));
+      final rejectedSettingsLogText = logs.entries
+          .map((entry) => entry.text)
+          .join('\n');
+      expect(
+        rejectedSettingsLogText,
+        isNot(contains('private-rejected.example')),
+      );
+      expect(rejectedSettingsLogText, isNot(contains('rejected-secret')));
+      expect(rejectedSettingsLogText, isNot(contains(rejectedModel)));
+      expect(rejectedSettingsLogText, isNot(contains('invalid-key')));
+
       final disposeGate = storage.blockNextLoad();
       await tester.tap(openSettingsButton);
       await tester.pump();

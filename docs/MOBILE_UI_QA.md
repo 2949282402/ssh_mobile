@@ -160,7 +160,8 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   refresh persists before changing the in-memory chat, so a failed write stays
   retryable instead of leaving a false-success model selection. Settings-save
   failures likewise keep raw storage details out of the form and snackbar.
-  Developer logs record no Base URL, model, or raw storage-error value.
+  Settings navigation and persistence logs record no Base URL, model, endpoint,
+  API key, or raw storage-error value.
   The form uses the shared page and section surfaces, caps its desktop reading
   width at 760 dp, keeps connection essentials expanded, and folds advanced
   model routing and low-frequency groups behind semantic 48 dp headers. Its
