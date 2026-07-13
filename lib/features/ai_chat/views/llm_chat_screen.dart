@@ -14,6 +14,7 @@ import 'package:provider/provider.dart';
 import 'package:ssh_mobile/features/client_webview/views/client_webview_screen.dart';
 import 'package:ssh_mobile/features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
 import 'package:ssh_mobile/features/ai_chat/services/ai_chat_message_mapper.dart';
+import 'package:ssh_mobile/features/playbook/models/playbook.dart';
 import 'package:ssh_mobile/services/agent_model_profile.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';

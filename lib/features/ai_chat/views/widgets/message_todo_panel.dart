@@ -1,285 +1,275 @@
 part of 'message_bubble.dart';
 
-class _ChatTodoPanel extends StatefulWidget {
-  final String chatId;
+class ChatTodoPanel extends StatefulWidget {
   final AiChatMessageRecord message;
+  final AiStrings strings;
+  final String? Function(String connectionId) serverDisplayNameFor;
+  final Future<void> Function(String stepId) onRetryStep;
+  final Future<void> Function(String stepId, String reason) onSkipStep;
   final VoidCallback? onRevisePlan;
 
-  const _ChatTodoPanel({
-    required this.chatId,
+  const ChatTodoPanel({
+    super.key,
     required this.message,
+    required this.strings,
+    required this.serverDisplayNameFor,
+    required this.onRetryStep,
+    required this.onSkipStep,
     this.onRevisePlan,
   });
 
   @override
-  State<_ChatTodoPanel> createState() => _ChatTodoPanelState();
+  State<ChatTodoPanel> createState() => _ChatTodoPanelState();
 }
 
-class _ChatTodoPanelState extends State<_ChatTodoPanel> {
-  final Set<int> _expandedIndices = {};
+class _ChatTodoPanelState extends State<ChatTodoPanel> {
+  final Set<String> _expandedStepIds = {};
 
-  String? _getServerDisplayName(BuildContext context, String? connectionId) {
-    if (connectionId == null || connectionId.trim().isEmpty) return null;
-    try {
-      final viewModel = context.read<AiChatViewModel>();
-      final conn = viewModel.getConnection(connectionId);
-      return conn?.name ?? 'Server';
-    } catch (_) {
-      return 'Server';
-    }
+  @override
+  void didUpdateWidget(covariant ChatTodoPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final liveIds = widget.message.todoSteps.map((step) => step.id).toSet();
+    _expandedStepIds.removeWhere((id) => !liveIds.contains(id));
   }
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final isEn = context.read<AppSettings>().language == AppLanguage.en;
+    final snapshot = const PlanExecutionController().snapshot(
+      widget.message.todoSteps,
+    );
+    final currentStepId = snapshot.currentStep?.id;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.24),
+    return Material(
+      color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.24),
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-        border: Border.all(color: colorScheme.outlineVariant),
+        side: BorderSide(color: colorScheme.outlineVariant),
       ),
-      padding: const EdgeInsets.all(10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                Icons.rule_folder_outlined,
-                size: 18,
-                color: colorScheme.primary,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  isEn ? 'Operation Tasks (TODO)' : '规划的运维任务清单 (TODO)',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w800,
-                    color: colorScheme.onSurface,
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.rule_folder_outlined,
+                  size: 18,
+                  color: colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    widget.strings.todoTitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: colorScheme.onSurface,
+                    ),
                   ),
                 ),
-              ),
-            ],
-          ),
-          const Divider(height: 12),
-          for (var i = 0; i < widget.message.todoSteps.length; i++) ...[
-            _buildStepRow(
-              context,
-              i,
-              widget.message.todoSteps[i],
-              colorScheme,
-              isEn,
+              ],
             ),
-            if (i < widget.message.todoSteps.length - 1)
-              const SizedBox(height: 8),
+            const Divider(height: 12),
+            for (
+              var index = 0;
+              index < widget.message.todoSteps.length;
+              index++
+            ) ...[
+              _buildStepRow(
+                context,
+                widget.message.todoSteps[index],
+                currentStepId,
+                colorScheme,
+              ),
+              if (index < widget.message.todoSteps.length - 1)
+                const SizedBox(height: 8),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
 
   Widget _buildStepRow(
     BuildContext context,
-    int index,
     AiTodoStep step,
+    String? currentStepId,
     ColorScheme colorScheme,
-    bool isEn,
   ) {
-    final isExpanded = _expandedIndices.contains(index);
+    final isExpanded = _expandedStepIds.contains(step.id);
     final hasLogs =
-        (step.stdout?.isNotEmpty == true || step.stderr?.isNotEmpty == true);
-
-    final snapshot = const PlanExecutionController().snapshot(
-      widget.message.todoSteps,
-    );
-    final isCurrent = snapshot.currentStep?.id == step.id;
+        step.stdout?.isNotEmpty == true || step.stderr?.isNotEmpty == true;
+    final isCurrent = currentStepId == step.id;
     final isFailed = step.status == StepStatus.failed;
     final isRunning = step.status == StepStatus.running;
+    final connectionId = step.connectionId?.trim();
+    final resolvedServerName = connectionId?.isNotEmpty == true
+        ? widget.serverDisplayNameFor(connectionId!)?.trim()
+        : null;
+    final serverName = connectionId?.isNotEmpty == true
+        ? (resolvedServerName?.isNotEmpty == true
+              ? resolvedServerName!
+              : widget.strings.serverTarget)
+        : null;
+    final expandedIndent = MediaQuery.sizeOf(context).width < 360 ? 0.0 : 30.0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        InkWell(
-          onTap: () {
-            setState(() {
-              if (isExpanded) {
-                _expandedIndices.remove(index);
-              } else {
-                _expandedIndices.add(index);
-              }
-            });
-          },
-          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-          child: Container(
-            decoration: BoxDecoration(
-              color: isRunning
-                  ? colorScheme.primary.withValues(alpha: 0.08)
-                  : isFailed
-                  ? colorScheme.error.withValues(alpha: 0.08)
-                  : isCurrent && step.status == StepStatus.pending
-                  ? colorScheme.secondaryContainer.withValues(alpha: 0.3)
-                  : null,
-              borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-              border: Border.all(
+        Semantics(
+          container: true,
+          button: true,
+          expanded: isExpanded,
+          label: widget.strings.todoStepSemantics(step.name, step.status),
+          child: InkWell(
+            key: ValueKey('todo-step-${step.id}'),
+            onTap: () {
+              setState(() {
+                if (isExpanded) {
+                  _expandedStepIds.remove(step.id);
+                } else {
+                  _expandedStepIds.add(step.id);
+                }
+              });
+            },
+            borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+            child: Ink(
+              decoration: BoxDecoration(
                 color: isRunning
-                    ? colorScheme.primary.withValues(alpha: 0.24)
+                    ? colorScheme.primary.withValues(alpha: 0.08)
                     : isFailed
-                    ? colorScheme.error.withValues(alpha: 0.3)
+                    ? colorScheme.error.withValues(alpha: 0.08)
                     : isCurrent && step.status == StepStatus.pending
-                    ? colorScheme.secondary.withValues(alpha: 0.15)
-                    : Colors.transparent,
-              ),
-            ),
-            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: _buildStatusIcon(step.status, colorScheme),
+                    ? colorScheme.secondaryContainer.withValues(alpha: 0.3)
+                    : null,
+                borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+                border: Border.all(
+                  color: isRunning
+                      ? colorScheme.primary.withValues(alpha: 0.24)
+                      : isFailed
+                      ? colorScheme.error.withValues(alpha: 0.3)
+                      : isCurrent && step.status == StepStatus.pending
+                      ? colorScheme.secondary.withValues(alpha: 0.15)
+                      : Colors.transparent,
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
+              ),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 48),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 8,
+                  ),
+                  child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        step.name,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: step.status == StepStatus.success
-                              ? colorScheme.onSurface.withValues(alpha: 0.6)
-                              : colorScheme.onSurface,
-                          decoration: step.status == StepStatus.success
-                              ? TextDecoration.lineThrough
-                              : null,
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: _buildStatusIcon(
+                          context,
+                          step.status,
+                          colorScheme,
                         ),
                       ),
-                      if (step.description.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Text(
-                            step.description,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: colorScheme.onSurfaceVariant,
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              step.name,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: step.status == StepStatus.success
+                                    ? colorScheme.onSurface.withValues(
+                                        alpha: 0.6,
+                                      )
+                                    : colorScheme.onSurface,
+                                decoration: step.status == StepStatus.success
+                                    ? TextDecoration.lineThrough
+                                    : null,
+                              ),
                             ),
-                          ),
+                            if (step.description.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: Text(
+                                  step.description,
+                                  maxLines: 3,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
+                      ),
+                      if (serverName != null) ...[
+                        const SizedBox(width: 6),
+                        _TodoServerChip(
+                          key: ValueKey('todo-server-${step.id}'),
+                          name: serverName,
+                        ),
+                      ],
                     ],
                   ),
                 ),
-                if (step.connectionId != null &&
-                    _getServerDisplayName(context, step.connectionId) !=
-                        null) ...[
-                  Padding(
-                    padding: const EdgeInsets.only(left: 6),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 5,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: colorScheme.surfaceContainerHighest.withValues(
-                          alpha: 0.6,
-                        ),
-                        borderRadius: BorderRadius.circular(
-                          AppTheme.radiusSmall,
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.dns_outlined,
-                            size: 10,
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                          const SizedBox(width: 2),
-                          Text(
-                            _getServerDisplayName(context, step.connectionId)!,
-                            style: TextStyle(
-                              fontSize: 9.5,
-                              color: colorScheme.onSurfaceVariant,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ],
+              ),
             ),
           ),
         ),
         if (isExpanded)
           Padding(
-            padding: const EdgeInsets.only(left: 30, top: 4, right: 4),
+            padding: EdgeInsets.only(left: expandedIndent, top: 6, right: 4),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (step.command.isNotEmpty) ...[
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainerHighest.withValues(
-                        alpha: 0.48,
-                      ),
-                      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                      border: Border.all(color: colorScheme.outlineVariant),
-                    ),
-                    child: Text(
-                      step.command,
-                      style: TextStyle(
-                        fontFamily: 'monospace',
-                        fontFamilyFallback: [
-                          'Consolas',
-                          'Microsoft YaHei',
-                          'PingFang SC',
-                          'sans-serif',
-                        ],
-                        fontSize: 10.5,
-                        color: colorScheme.primary,
-                      ),
-                    ),
+                if (step.command.isNotEmpty)
+                  _TodoCodeBlock(
+                    key: ValueKey('todo-command-${step.id}'),
+                    text: step.command,
+                    semanticLabel: widget.strings.todoCommand,
+                    maxHeight: 160,
+                    backgroundColor: colorScheme.surfaceContainerHighest
+                        .withValues(alpha: 0.48),
+                    foregroundColor: colorScheme.primary,
+                    borderColor: colorScheme.outlineVariant,
+                    fontSize: 10.5,
                   ),
-                ],
                 if (isFailed) ...[
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 8),
                   Text(
-                    isEn
-                        ? 'Review the logs, retry after fixing the cause, skip only when it is safe, or return to Plan Mode to revise the remaining steps.'
-                        : '请先查看日志并修复原因后重试；仅在确认安全时跳过，也可以返回规划模式调整后续步骤。',
+                    widget.strings.todoFailureGuidance,
                     style: TextStyle(
                       fontSize: 10.5,
                       color: colorScheme.onSurfaceVariant,
                     ),
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 8),
                   Wrap(
                     spacing: 8,
-                    runSpacing: 6,
+                    runSpacing: 8,
                     children: [
-                      ElevatedButton.icon(
-                        onPressed: () {
-                          context.read<AiChatViewModel>().retryTodoStep(
-                            step.id,
-                          );
-                        },
-                        icon: const Icon(Icons.refresh, size: 13),
-                        label: Text(isEn ? 'Retry Step' : '重试此步骤'),
-                        style: ElevatedButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 6,
-                          ),
+                      FilledButton.icon(
+                        key: ValueKey('todo-retry-${step.id}'),
+                        onPressed: () => widget.onRetryStep(step.id),
+                        icon: const Icon(Icons.refresh, size: 16),
+                        label: Text(widget.strings.todoRetryStep),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(0, 48),
+                          visualDensity: VisualDensity.standard,
+                          tapTargetSize: MaterialTapTargetSize.padded,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
                           textStyle: const TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
@@ -287,79 +277,28 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                         ),
                       ),
                       OutlinedButton.icon(
-                        onPressed: () async {
-                          final reasonController = TextEditingController();
-                          final confirmed = await showDialog<bool>(
-                            context: context,
-                            builder: (dialogCtx) => AlertDialog(
-                              title: Text(isEn ? 'Skip Step' : '跳过步骤'),
-                              content: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    isEn
-                                        ? 'Provide a reason for skipping this task:'
-                                        : '请输入跳过此任务的原因：',
-                                  ),
-                                  const SizedBox(height: 8),
-                                  TextField(
-                                    controller: reasonController,
-                                    decoration: InputDecoration(
-                                      hintText: isEn
-                                          ? 'e.g. Completed manually'
-                                          : '例如：已手动完成',
-                                      border: const OutlineInputBorder(),
-                                    ),
-                                    autofocus: true,
-                                  ),
-                                ],
-                              ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () =>
-                                      Navigator.pop(dialogCtx, false),
-                                  child: Text(isEn ? 'Cancel' : '取消'),
-                                ),
-                                ElevatedButton(
-                                  onPressed: () =>
-                                      Navigator.pop(dialogCtx, true),
-                                  child: Text(isEn ? 'Skip' : '跳过'),
-                                ),
-                              ],
-                            ),
-                          );
-                          if (confirmed == true &&
-                              reasonController.text.trim().isNotEmpty) {
-                            if (context.mounted) {
-                              context.read<AiChatViewModel>().skipTodoStep(
-                                step.id,
-                                reasonController.text.trim(),
-                              );
-                            }
-                          }
-                        },
-                        icon: const Icon(Icons.skip_next, size: 13),
-                        label: Text(isEn ? 'Skip Step' : '跳过此步骤'),
+                        key: ValueKey('todo-skip-${step.id}'),
+                        onPressed: () => _skipStep(step),
+                        icon: const Icon(Icons.skip_next, size: 16),
+                        label: Text(widget.strings.todoSkipStep),
                         style: OutlinedButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 6,
-                          ),
+                          minimumSize: const Size(0, 48),
+                          visualDensity: VisualDensity.standard,
+                          tapTargetSize: MaterialTapTargetSize.padded,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
                           textStyle: const TextStyle(fontSize: 11),
                         ),
                       ),
                       OutlinedButton.icon(
+                        key: ValueKey('todo-revise-${step.id}'),
                         onPressed: widget.onRevisePlan,
-                        icon: const Icon(Icons.edit_note_outlined, size: 13),
-                        label: Text(isEn ? 'Revise Plan' : '调整计划'),
+                        icon: const Icon(Icons.edit_note_outlined, size: 16),
+                        label: Text(widget.strings.todoRevisePlan),
                         style: OutlinedButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 6,
-                          ),
+                          minimumSize: const Size(0, 48),
+                          visualDensity: VisualDensity.standard,
+                          tapTargetSize: MaterialTapTargetSize.padded,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
                           textStyle: const TextStyle(fontSize: 11),
                         ),
                       ),
@@ -367,31 +306,15 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
                   ),
                 ],
                 if (hasLogs) ...[
-                  const SizedBox(height: 4),
-                  Container(
-                    width: double.infinity,
-                    constraints: const BoxConstraints(maxHeight: 180),
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.84),
-                      borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-                    ),
-                    child: SingleChildScrollView(
-                      child: SelectableText(
-                        '${step.stdout ?? ''}\n${step.stderr ?? ''}'.trim(),
-                        style: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontFamilyFallback: [
-                            'Consolas',
-                            'Microsoft YaHei',
-                            'PingFang SC',
-                            'sans-serif',
-                          ],
-                          fontSize: 10,
-                          color: Colors.greenAccent,
-                        ),
-                      ),
-                    ),
+                  const SizedBox(height: 6),
+                  _TodoCodeBlock(
+                    key: ValueKey('todo-logs-${step.id}'),
+                    text: '${step.stdout ?? ''}\n${step.stderr ?? ''}'.trim(),
+                    semanticLabel: widget.strings.todoLogs,
+                    maxHeight: 180,
+                    backgroundColor: Colors.black.withValues(alpha: 0.84),
+                    foregroundColor: Colors.greenAccent,
+                    fontSize: 10,
                   ),
                 ],
               ],
@@ -401,7 +324,17 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
     );
   }
 
-  Widget _buildStatusIcon(StepStatus status, ColorScheme colorScheme) {
+  Future<void> _skipStep(AiTodoStep step) async {
+    final reason = await showTodoSkipReasonDialog(context, widget.strings);
+    if (!mounted || reason == null) return;
+    await widget.onSkipStep(step.id, reason);
+  }
+
+  Widget _buildStatusIcon(
+    BuildContext context,
+    StepStatus status,
+    ColorScheme colorScheme,
+  ) {
     switch (status) {
       case StepStatus.pending:
         return Icon(
@@ -431,5 +364,282 @@ class _ChatTodoPanelState extends State<_ChatTodoPanel> {
           color: colorScheme.onSurfaceVariant,
         );
     }
+  }
+}
+
+class _TodoServerChip extends StatelessWidget {
+  final String name;
+
+  const _TodoServerChip({super.key, required this.name});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final maxWidth = (MediaQuery.sizeOf(context).width * 0.3)
+        .clamp(68.0, 150.0)
+        .toDouble();
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.dns_outlined,
+              size: 12,
+              color: colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 3),
+            Flexible(
+              child: Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 9.5,
+                  color: colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TodoCodeBlock extends StatefulWidget {
+  final String text;
+  final String semanticLabel;
+  final double maxHeight;
+  final Color backgroundColor;
+  final Color foregroundColor;
+  final Color? borderColor;
+  final double fontSize;
+
+  const _TodoCodeBlock({
+    super.key,
+    required this.text,
+    required this.semanticLabel,
+    required this.maxHeight,
+    required this.backgroundColor,
+    required this.foregroundColor,
+    this.borderColor,
+    required this.fontSize,
+  });
+
+  @override
+  State<_TodoCodeBlock> createState() => _TodoCodeBlockState();
+}
+
+class _TodoCodeBlockState extends State<_TodoCodeBlock> {
+  late final ScrollController _verticalController;
+
+  @override
+  void initState() {
+    super.initState();
+    _verticalController = ScrollController(keepScrollOffset: false);
+  }
+
+  @override
+  void dispose() {
+    _verticalController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: widget.semanticLabel,
+      child: Container(
+        width: double.infinity,
+        constraints: BoxConstraints(maxHeight: widget.maxHeight),
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: widget.backgroundColor,
+          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+          border: widget.borderColor == null
+              ? null
+              : Border.all(color: widget.borderColor!),
+        ),
+        child: Scrollbar(
+          controller: _verticalController,
+          child: SingleChildScrollView(
+            controller: _verticalController,
+            child: OverflowScrollText(
+              widget.text,
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontFamilyFallback: const [
+                  'Consolas',
+                  'Microsoft YaHei',
+                  'PingFang SC',
+                  'sans-serif',
+                ],
+                fontSize: widget.fontSize,
+                color: widget.foregroundColor,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<String?> showTodoSkipReasonDialog(
+  BuildContext context,
+  AiStrings strings,
+) {
+  return showDialog<String>(
+    context: context,
+    builder: (_) => TodoSkipReasonDialog(strings: strings),
+  );
+}
+
+class TodoSkipReasonDialog extends StatefulWidget {
+  final AiStrings strings;
+
+  const TodoSkipReasonDialog({super.key, required this.strings});
+
+  @override
+  State<TodoSkipReasonDialog> createState() => _TodoSkipReasonDialogState();
+}
+
+class _TodoSkipReasonDialogState extends State<TodoSkipReasonDialog> {
+  late final TextEditingController _controller;
+
+  bool get _canSubmit => _controller.text.trim().isNotEmpty;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController()..addListener(_handleTextChanged);
+  }
+
+  @override
+  void dispose() {
+    _controller
+      ..removeListener(_handleTextChanged)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _handleTextChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _submit() {
+    final reason = _controller.text.trim();
+    if (reason.isEmpty) return;
+    Navigator.of(context).pop(reason);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final media = MediaQuery.of(context);
+    final visibleHeight = media.size.height - media.viewInsets.bottom;
+    final compact = visibleHeight < 320;
+
+    return Dialog(
+      key: const ValueKey('todo-skip-dialog'),
+      insetPadding: EdgeInsets.symmetric(
+        horizontal: 16,
+        vertical: compact ? 8 : 16,
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: Padding(
+          padding: EdgeInsets.all(compact ? 12 : 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.skip_next_rounded,
+                    size: compact ? 20 : 24,
+                    color: colorScheme.primary,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      widget.strings.todoSkipReasonTitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: compact ? 6 : 14),
+              Flexible(
+                child: SingleChildScrollView(
+                  key: const ValueKey('todo-skip-dialog-scroll'),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (!compact) ...[
+                        Text(widget.strings.todoSkipReasonPrompt),
+                        const SizedBox(height: 8),
+                      ],
+                      TextField(
+                        key: const ValueKey('todo-skip-reason-field'),
+                        controller: _controller,
+                        autofocus: true,
+                        minLines: 1,
+                        maxLines: compact ? 1 : 3,
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (_) {
+                          if (_canSubmit) _submit();
+                        },
+                        decoration: InputDecoration(
+                          labelText: compact
+                              ? widget.strings.todoSkipReasonPrompt
+                              : null,
+                          hintText: widget.strings.todoSkipReasonHint,
+                          border: const OutlineInputBorder(),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              SizedBox(height: compact ? 6 : 14),
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  TextButton(
+                    key: const ValueKey('todo-skip-cancel'),
+                    style: TextButton.styleFrom(minimumSize: const Size(0, 48)),
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: Text(widget.strings.cancel),
+                  ),
+                  FilledButton(
+                    key: const ValueKey('todo-skip-confirm'),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(0, 48),
+                    ),
+                    onPressed: _canSubmit ? _submit : null,
+                    child: Text(widget.strings.todoSkipConfirm),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

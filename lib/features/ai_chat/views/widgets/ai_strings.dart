@@ -264,4 +264,36 @@ class AiStrings {
       _en ? 'No tools match the search.' : '未找到匹配的工具。';
   String get approveAndExecutePlan =>
       _en ? 'Approve & Execute Plan' : '同意并执行计划';
+  String get todoTitle => _en ? 'Operation Tasks (TODO)' : '规划的运维任务清单 (TODO)';
+  String get todoFailureGuidance => _en
+      ? 'Review the logs, retry after fixing the cause, skip only when it is safe, or return to Plan Mode to revise the remaining steps.'
+      : '请先查看日志并修复原因后重试；仅在确认安全时跳过，也可以返回规划模式调整后续步骤。';
+  String get todoRetryStep => _en ? 'Retry step' : '重试此步骤';
+  String get todoSkipStep => _en ? 'Skip step' : '跳过此步骤';
+  String get todoRevisePlan => _en ? 'Revise plan' : '调整计划';
+  String get todoSkipReasonTitle => _en ? 'Skip step' : '跳过步骤';
+  String get todoSkipReasonPrompt =>
+      _en ? 'Provide a reason for skipping this task:' : '请输入跳过此任务的原因：';
+  String get todoSkipReasonHint => _en ? 'e.g. Completed manually' : '例如：已手动完成';
+  String get todoSkipConfirm => _en ? 'Skip' : '跳过';
+  String get todoCommand => _en ? 'Command' : '命令';
+  String get todoLogs => _en ? 'Execution logs' : '执行日志';
+  String todoStatusLabel(StepStatus status) {
+    switch (status) {
+      case StepStatus.pending:
+        return _en ? 'Pending' : '待执行';
+      case StepStatus.running:
+        return _en ? 'Running' : '执行中';
+      case StepStatus.success:
+        return _en ? 'Completed' : '已完成';
+      case StepStatus.failed:
+        return _en ? 'Failed' : '执行失败';
+      case StepStatus.skipped:
+        return _en ? 'Skipped' : '已跳过';
+    }
+  }
+
+  String todoStepSemantics(String name, StepStatus status) => _en
+      ? '$name, ${todoStatusLabel(status)}'
+      : '$name，${todoStatusLabel(status)}';
 }

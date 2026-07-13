@@ -102,6 +102,10 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   react to live Chinese/English changes while raw diagnostic fields stay
   unchanged. A 320 dp regression covers the 300-event retention ceiling
   without eagerly building every row or exposing storage errors in the UI.
+  Planned-operation TODO panels keep expansion state by task ID, constrain long
+  server names and command/log output, and expose 48 dp step/retry/skip/revise
+  targets. The skip-reason dialog disables blank confirmation and keeps its
+  field and actions above a 1.5K landscape keyboard.
   Prompt customization keeps the active draft when switching type or toggling
   customization, confirms before discarding unsaved text, exposes retry/save
   failures, and reduces compact-height layouts to a 48 dp type selector plus

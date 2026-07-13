@@ -14,6 +14,7 @@ import 'package:ssh_mobile/services/storage_service.dart';
 import 'package:ssh_mobile/services/agent/plan_execution_controller.dart';
 import 'package:ssh_mobile/theme/app_theme.dart';
 import 'package:ssh_mobile/features/ai_chat/pages/agent_trace_debug_page.dart';
+import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
 import 'trace_panel.dart';
 import 'message_attachments_wrap.dart';
 
@@ -151,9 +152,13 @@ class MessageBubble extends StatelessWidget {
                             ),
                             if (message.todoSteps.isNotEmpty) ...[
                               const SizedBox(height: 12),
-                              _ChatTodoPanel(
-                                chatId: chatId,
+                              ChatTodoPanel(
                                 message: message,
+                                strings: strings,
+                                serverDisplayNameFor: (connectionId) =>
+                                    viewModel.getConnection(connectionId)?.name,
+                                onRetryStep: viewModel.retryTodoStep,
+                                onSkipStep: viewModel.skipTodoStep,
                                 onRevisePlan: onRevisePlan,
                               ),
                               if (message.todoSteps.every(
