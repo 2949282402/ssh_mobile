@@ -72,6 +72,10 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   hint, and a height-limited scrolling area for plan, command, attachment, and
   tool content. On compact-height keyboard layouts, tools collapse and the
   decorative chat header and rail stop consuming the remaining input space.
+  Slash-command suggestions use bilingual summaries, stable 48 dp rows, and a
+  bounded scroll region; completing `/compact` or `/skills` drops stale
+  arguments, while `/tools` and `/plan` preserve their supported arguments
+  without joining command and text accidentally.
   New chats use a centered bilingual empty state with three 48 dp starter
   actions; selecting one only fills and focuses the composer for review.
   Tool approvals keep the full risk reason, target, path, command, and preview

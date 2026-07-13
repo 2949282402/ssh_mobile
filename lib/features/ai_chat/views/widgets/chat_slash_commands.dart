@@ -3,13 +3,11 @@ part of '../llm_chat_screen.dart';
 
 class SlashCommandMeta {
   final String command;
-  final String summary;
-  final String details;
+  final bool preservesArguments;
 
   const SlashCommandMeta({
     required this.command,
-    required this.summary,
-    required this.details,
+    this.preservesArguments = false,
   });
 }
 
@@ -21,27 +19,10 @@ class ToolOption {
 }
 
 const List<SlashCommandMeta> _defaultSlashCommands = [
-  SlashCommandMeta(
-    command: '/compact',
-    summary: 'Force compression on the next request.',
-    details: 'The next AI request will compress context before sending.',
-  ),
-  SlashCommandMeta(
-    command: '/tools',
-    summary: 'Limit tools for this chat.',
-    details: 'Restrict which tools the model can call in the current chat.',
-  ),
-  SlashCommandMeta(
-    command: '/skills',
-    summary: 'Open and manage local AI skills.',
-    details: 'View saved Skills and enable or disable them.',
-  ),
-  SlashCommandMeta(
-    command: '/plan',
-    summary: 'Enable Plan Mode and optionally submit a request.',
-    details:
-        'Enter read-only planning mode. If a request is provided, it will be sent in Plan Mode.',
-  ),
+  SlashCommandMeta(command: '/compact'),
+  SlashCommandMeta(command: '/tools', preservesArguments: true),
+  SlashCommandMeta(command: '/skills'),
+  SlashCommandMeta(command: '/plan', preservesArguments: true),
 ];
 
 class ChatSlashCommandsPanel extends StatelessWidget {
@@ -60,15 +41,15 @@ class ChatSlashCommandsPanel extends StatelessWidget {
     final text = inputController.text;
     if (!text.startsWith('/')) return false;
 
-    final firstSpace = text.indexOf(' ');
-    if (firstSpace == -1) {
+    final firstWhitespace = text.indexOf(RegExp(r'\s'));
+    if (firstWhitespace == -1) {
       return true;
     }
 
     final selection = inputController.selection;
     if (selection.isValid &&
         selection.isCollapsed &&
-        selection.baseOffset <= firstSpace) {
+        selection.baseOffset <= firstWhitespace) {
       return true;
     }
 
@@ -81,10 +62,10 @@ class ChatSlashCommandsPanel extends StatelessWidget {
     final text = inputController.text;
     if (text.isEmpty || !text.startsWith('/')) return const [];
 
-    final firstSpace = text.indexOf(' ');
-    final query = firstSpace == -1
+    final firstWhitespace = text.indexOf(RegExp(r'\s'));
+    final query = firstWhitespace == -1
         ? text.substring(1).toLowerCase()
-        : text.substring(1, firstSpace).toLowerCase();
+        : text.substring(1, firstWhitespace).toLowerCase();
 
     if (query.isEmpty) {
       return _defaultSlashCommands;
@@ -102,7 +83,7 @@ class ChatSlashCommandsPanel extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
 
     return Container(
-      constraints: const BoxConstraints(maxHeight: 180),
+      constraints: const BoxConstraints(maxHeight: 200),
       margin: const EdgeInsets.only(bottom: 8),
       child: Material(
         color: colorScheme.surfaceContainerHigh,
@@ -111,57 +92,75 @@ class ChatSlashCommandsPanel extends StatelessWidget {
           side: BorderSide(color: colorScheme.outlineVariant),
         ),
         clipBehavior: Clip.antiAlias,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final command in suggestions)
-                ListTile(
-                  dense: true,
-                  title: Text(
-                    command.command,
-                    style: TextStyle(
-                      color: colorScheme.primary,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  subtitle: Text(
-                    command.summary,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  onTap: () {
-                    final text = inputController.text;
-                    final firstSpace = text.indexOf(' ');
-                    final arguments = firstSpace == -1
-                        ? ''
-                        : text.substring(firstSpace + 1);
-
-                    final bool needsSpaceSuffix =
-                        command.command == '/tools' ||
-                        command.command == '/plan';
-                    final canonicalCmd = needsSpaceSuffix
-                        ? '${command.command} '
-                        : command.command;
-
-                    final nextText = '$canonicalCmd$arguments';
-                    inputController.text = nextText;
-
-                    final nextCursorOffset = arguments.isEmpty
-                        ? nextText.length
-                        : canonicalCmd.length;
-
-                    inputController.selection = TextSelection.collapsed(
-                      offset: nextCursorOffset,
-                    );
-                    onStateChanged();
-                  },
-                ),
-            ],
+        child: ListView.separated(
+          padding: EdgeInsets.zero,
+          shrinkWrap: true,
+          itemCount: suggestions.length,
+          separatorBuilder: (_, _) => Divider(
+            height: 1,
+            color: colorScheme.outlineVariant.withValues(alpha: 0.6),
           ),
+          itemBuilder: (context, index) {
+            final command = suggestions[index];
+            return ListTile(
+              key: ValueKey('slash-command-${command.command.substring(1)}'),
+              minTileHeight: 48,
+              minVerticalPadding: 8,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+              title: Text(
+                command.command,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: colorScheme.primary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              subtitle: Text(
+                _commandSummary(command),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              onTap: () => _selectCommand(command),
+            );
+          },
         ),
       ),
     );
+  }
+
+  String _commandSummary(SlashCommandMeta command) {
+    switch (command.command) {
+      case '/compact':
+        return strings.commandCompactSummary;
+      case '/tools':
+        return strings.commandToolsSummary;
+      case '/skills':
+        return strings.commandSkillsSummary;
+      case '/plan':
+        return strings.commandPlanSummary;
+      default:
+        return command.command;
+    }
+  }
+
+  void _selectCommand(SlashCommandMeta command) {
+    final text = inputController.text;
+    final firstWhitespace = text.indexOf(RegExp(r'\s'));
+    final arguments = firstWhitespace == -1
+        ? ''
+        : text.substring(firstWhitespace).trimLeft();
+    final nextText = command.preservesArguments
+        ? (arguments.isEmpty
+              ? '${command.command} '
+              : '${command.command} $arguments')
+        : command.command;
+
+    inputController.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: nextText.length),
+    );
+    onStateChanged();
   }
 }
 

@@ -241,6 +241,15 @@ class AiStrings {
   String get commandUnknownHint => _en
       ? 'Type a command to use. Available: /compact, /tools, /skills.'
       : '输入以 / 开头的命令，如 /compact、/tools 或 /skills';
+  String get commandCompactSummary =>
+      _en ? 'Compress context for the next request.' : '为下一次请求压缩上下文。';
+  String get commandToolsSummary =>
+      _en ? 'Limit the tools available in this chat.' : '限制当前对话可使用的工具。';
+  String get commandSkillsSummary =>
+      _en ? 'Open and manage local AI skills.' : '打开并管理本地 AI Skills。';
+  String get commandPlanSummary => _en
+      ? 'Enable Plan Mode and optionally submit a request.'
+      : '启用规划模式，并可同时提交请求。';
   String get commandUnknown => _en ? 'Unknown slash command.' : '未识别的斜杠命令。';
   String commandUnknownWithName(String command) =>
       _en ? 'Unknown command: /$command' : '未识别命令: /$command';
