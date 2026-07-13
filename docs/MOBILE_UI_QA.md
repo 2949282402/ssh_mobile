@@ -83,6 +83,9 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   Chat bootstrap failures no longer leave an infinite spinner: a bilingual,
   path-safe empty state exposes a real 48 dp retry action and recovers the
   draft when local settings become readable.
+  Agent runtime preflight dialogs localize every known health code, announce
+  warning/blocking severity without relying on color, keep long issue cards in
+  a bounded list, and pin 48 dp actions above a 1.5K landscape keyboard.
   New chats use a centered bilingual empty state with three 48 dp starter
   actions; selecting one only fills and focuses the composer for review.
   Tool approvals keep the full risk reason, target, path, command, and preview

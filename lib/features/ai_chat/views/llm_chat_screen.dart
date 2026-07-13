@@ -50,6 +50,7 @@ part 'widgets/chat_slash_commands.dart';
 part 'widgets/chat_attachments.dart';
 part 'widgets/chat_rag_sheet.dart';
 part 'widgets/chat_generation.dart';
+part 'widgets/runtime_health_dialog.dart';
 part 'widgets/prompt_customizer_dialog.dart';
 part 'widgets/chat_state_snapshots.dart';
 part 'widgets/chat_header.dart';

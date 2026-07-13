@@ -316,4 +316,211 @@ class AiStrings {
   String todoStepSemantics(String name, StepStatus status) => _en
       ? '$name, ${todoStatusLabel(status)}'
       : '$name，${todoStatusLabel(status)}';
+
+  String get runtimeWarningsTitle => _en ? 'Runtime warnings' : '运行环境风险';
+  String get runtimeBlockedTitle =>
+      _en ? 'Runtime check blocked execution' : '运行环境检查阻止执行';
+  String get runtimeWarningsMessage => _en
+      ? 'The plan can run, but client conditions may interrupt long agent work.'
+      : '计划可以继续执行，但客户端环境可能影响长时间 Agent 任务。';
+  String get runtimeBlockedMessage => _en
+      ? 'Fix the following client-side issues before running this plan.'
+      : '请先处理以下客户端问题，再执行此计划。';
+  String get runtimeBlockingLabel => _en ? 'Blocking' : '阻断';
+  String get runtimeWarningLabel => _en ? 'Warning' : '警告';
+  String get runtimeSystemSettings => _en ? 'System settings' : '系统设置';
+  String get runtimeContinue => _en ? 'Continue' : '继续执行';
+
+  ({String title, String detail, String recommendation}) runtimeHealthIssue(
+    ClientRuntimeHealthIssue issue,
+  ) {
+    switch (issue.code) {
+      case 'network_status_unavailable':
+        return _en
+            ? (
+                title: 'Network status unavailable',
+                detail: 'The client network state could not be read.',
+                recommendation:
+                    'Verify the device network before starting long agent work.',
+              )
+            : (
+                title: '网络状态不可用',
+                detail: '无法读取客户端网络状态。',
+                recommendation: '开始长时间 Agent 任务前，请手动确认设备网络正常。',
+              );
+      case 'network_disconnected':
+        return _en
+            ? (
+                title: 'No client network connection',
+                detail: 'The Android device has no active network connection.',
+                recommendation:
+                    'Connect to a stable network before executing the plan.',
+              )
+            : (
+                title: '客户端未连接网络',
+                detail: 'Android 设备当前没有活动网络连接。',
+                recommendation: '请先连接稳定网络，再执行计划。',
+              );
+      case 'network_not_validated':
+        return _en
+            ? (
+                title: 'Network has no validated internet access',
+                detail:
+                    'Android reports that the active network cannot reach the internet.',
+                recommendation:
+                    'Switch networks or complete captive-portal sign-in first.',
+              )
+            : (
+                title: '网络无法访问互联网',
+                detail: 'Android 报告当前网络尚未通过互联网可用性验证。',
+                recommendation: '请切换网络或先完成门户登录。',
+              );
+      case 'metered_network':
+        return _en
+            ? (
+                title: 'Metered network active',
+                detail: 'The client is using a metered network.',
+                recommendation:
+                    'Prefer Wi-Fi for large transfers or long monitoring sessions.',
+              )
+            : (
+                title: '当前使用按流量计费网络',
+                detail: '客户端正在使用按流量计费的网络。',
+                recommendation: '大文件传输或长时间监控时建议改用 Wi-Fi。',
+              );
+      case 'vpn_active':
+        return _en
+            ? (
+                title: 'VPN is active',
+                detail: 'A client-side VPN may affect SSH routing or latency.',
+                recommendation:
+                    'Confirm that the VPN route can reach the target servers.',
+              )
+            : (
+                title: 'VPN 已启用',
+                detail: '客户端 VPN 可能影响 SSH 路由或延迟。',
+                recommendation: '请确认 VPN 路由能够访问目标服务器。',
+              );
+      case 'http_proxy_active':
+        return _en
+            ? (
+                title: 'HTTP proxy detected',
+                detail: 'The active network has a client proxy configured.',
+                recommendation:
+                    'Confirm that the proxy does not interfere with model or web requests.',
+              )
+            : (
+                title: '检测到 HTTP 代理',
+                detail: '当前网络配置了客户端代理。',
+                recommendation: '请确认代理不会影响模型或网页请求。',
+              );
+      case 'permission_status_unavailable':
+        return _en
+            ? (
+                title: 'Permission status unavailable',
+                detail: 'The client permission state could not be read.',
+                recommendation:
+                    'Check system settings if notifications or background services fail.',
+              )
+            : (
+                title: '权限状态不可用',
+                detail: '无法读取客户端权限状态。',
+                recommendation: '如果通知或后台服务异常，请检查系统设置。',
+              );
+      case 'background_service_unavailable':
+        return _en
+            ? (
+                title: 'Background service unavailable',
+                detail:
+                    'This platform cannot keep long SSH work in a native service.',
+                recommendation:
+                    'Keep the app foregrounded or use a platform with background-service support.',
+              )
+            : (
+                title: '后台服务不可用',
+                detail: '当前平台无法通过原生服务维持长时间 SSH 任务。',
+                recommendation: '请保持应用在前台，或改用支持后台服务的平台。',
+              );
+      case 'notification_permission_denied':
+        return _en
+            ? (
+                title: 'Notification permission denied',
+                detail:
+                    'Long-running agent work needs notification permission for reliable status updates.',
+                recommendation:
+                    'Grant notification permission in system settings.',
+              )
+            : (
+                title: '通知权限被拒绝',
+                detail: '长时间 Agent 任务需要通知权限来可靠更新状态。',
+                recommendation: '请在系统设置中授予通知权限。',
+              );
+      case 'battery_optimization_active':
+        return _en
+            ? (
+                title: 'Battery optimization may stop background work',
+                detail:
+                    'Android may restrict the app while SSH or monitoring is running.',
+                recommendation:
+                    'Allow a battery-optimization exemption for long background execution.',
+              )
+            : (
+                title: '电池优化可能中断后台任务',
+                detail: 'SSH 或监控运行时，Android 可能限制本应用。',
+                recommendation: '长时间后台执行前，请允许本应用不受电池优化限制。',
+              );
+      case 'power_save_mode':
+        return _en
+            ? (
+                title: 'Power save mode is active',
+                detail:
+                    'Power save mode can delay network and background work.',
+                recommendation:
+                    'Disable power save mode before long SSH, SFTP, or monitoring tasks.',
+              )
+            : (
+                title: '省电模式已启用',
+                detail: '省电模式可能延迟网络与后台任务。',
+                recommendation: '长时间运行 SSH、SFTP 或监控前，请关闭省电模式。',
+              );
+      case 'low_battery':
+        return _en
+            ? (
+                title: 'Low battery',
+                detail: 'The device battery is low and it is not charging.',
+                recommendation:
+                    'Charge the device before long agent execution.',
+              )
+            : (
+                title: '设备电量较低',
+                detail: '设备电量较低且当前未充电。',
+                recommendation: '开始长时间 Agent 执行前，请先为设备充电。',
+              );
+      case 'thermal_pressure':
+        return _en
+            ? (
+                title: 'Device thermal pressure',
+                detail: 'Android reports elevated device temperature.',
+                recommendation:
+                    'Let the device cool down before long model or tool loops.',
+              )
+            : (
+                title: '设备温度较高',
+                detail: 'Android 报告设备当前存在温度压力。',
+                recommendation: '长时间模型或工具循环前，请先让设备降温。',
+              );
+      default:
+        return _en
+            ? (
+                title: issue.title,
+                detail: issue.detail,
+                recommendation: issue.recommendation,
+              )
+            : (
+                title: '客户端环境异常（${issue.code}）',
+                detail: '检测到未识别的客户端环境问题。',
+                recommendation: '请检查设备网络、权限、电量和后台运行设置。',
+              );
+    }
+  }
 }
