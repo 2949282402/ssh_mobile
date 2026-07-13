@@ -98,6 +98,175 @@ void main() {
     expect(find.byKey(const ValueKey('slash-command-plan')), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('tool selector stays above a 1.5K landscape keyboard', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    tester.view.physicalSize = const Size(2856, 1280);
+    tester.view.devicePixelRatio = 3;
+    tester.view.viewInsets = const FakeViewPadding(bottom: 660);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetViewInsets);
+
+    const longName =
+        'tool_with_an_extremely_long_name_that_must_not_overflow_the_selector';
+    await tester.pumpWidget(
+      _toolSelectorHost(
+        strings: const AiStrings(AppLanguage.en),
+        tools: const [
+          ToolOption(
+            name: longName,
+            description:
+                'A very long schema description that remains available without expanding one option across the whole compact sheet.',
+          ),
+          ToolOption(name: 'ToolTwo', description: 'Second tool'),
+        ],
+        initialTools: const {longName},
+        onClosed: (_) {},
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('open-tool-selector')));
+    await tester.pumpAndSettle();
+
+    final search = find.byKey(const ValueKey('tool-selector-search'));
+    final clearSelection = find.byKey(
+      const ValueKey('tool-selector-clear-selection'),
+    );
+    final cancel = find.byKey(const ValueKey('tool-selector-cancel'));
+    final save = find.byKey(const ValueKey('tool-selector-save'));
+    final option = find.byKey(const ValueKey('tool-option-$longName'));
+    for (final target in [search, clearSelection, cancel, save, option]) {
+      expect(target, findsOneWidget);
+      expect(tester.getSize(target).height, greaterThanOrEqualTo(48));
+    }
+
+    final visibleBottom =
+        tester.view.physicalSize.height / tester.view.devicePixelRatio -
+        tester.view.viewInsets.bottom / tester.view.devicePixelRatio;
+    expect(tester.getBottomRight(search).dy, lessThanOrEqualTo(visibleBottom));
+    expect(tester.getBottomRight(save).dy, lessThanOrEqualTo(visibleBottom));
+    final title = tester.widget<Text>(find.text(longName));
+    expect(title.maxLines, 1);
+    expect(title.overflow, TextOverflow.ellipsis);
+    expect(
+      tester.getSemantics(option),
+      matchesSemantics(
+        label:
+            '$longName, A very long schema description that remains available without expanding one option across the whole compact sheet.',
+        hasCheckedState: true,
+        isChecked: true,
+        hasTapAction: true,
+      ),
+    );
+
+    await tester.enterText(search, 'no-such-tool');
+    await tester.pump();
+    expect(find.text('No tools match the search.'), findsOneWidget);
+    final clearSearch = find.byKey(
+      const ValueKey('tool-selector-clear-search'),
+    );
+    expect(tester.getSize(clearSearch).height, greaterThanOrEqualTo(48));
+    await tester.tap(clearSearch);
+    await tester.pump();
+    expect(option, findsOneWidget);
+    expect(tester.takeException(), isNull);
+    semantics.dispose();
+  });
+
+  testWidgets('tool selector canonicalizes and saves only available tools', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    tester.view.padding = const FakeViewPadding(bottom: 24);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPadding);
+
+    Set<String>? result;
+    var closeCount = 0;
+    await tester.pumpWidget(
+      _toolSelectorHost(
+        strings: const AiStrings(AppLanguage.en),
+        tools: const [
+          ToolOption(name: 'ToolOne', description: ''),
+          ToolOption(
+            name: 'toolone',
+            description: 'Canonical option description',
+          ),
+          ToolOption(name: 'ToolTwo', description: 'Second tool'),
+        ],
+        initialTools: const {'toolone', 'stale'},
+        onClosed: (value) {
+          result = value;
+          closeCount += 1;
+        },
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('open-tool-selector')));
+    await tester.pumpAndSettle();
+
+    final option = find.byKey(const ValueKey('tool-option-toolone'));
+    expect(option, findsOneWidget);
+    expect(
+      tester
+          .widget<CheckboxListTile>(
+            find.descendant(
+              of: option,
+              matching: find.byType(CheckboxListTile),
+            ),
+          )
+          .value,
+      isTrue,
+    );
+    expect(find.text('1 selected'), findsOneWidget);
+    final description = tester.widget<Text>(
+      find.text('Canonical option description'),
+    );
+    expect(description.maxLines, 2);
+    expect(description.overflow, TextOverflow.ellipsis);
+
+    final save = find.byKey(const ValueKey('tool-selector-save'));
+    expect(tester.getBottomRight(save).dy, lessThanOrEqualTo(820));
+    await tester.tap(save);
+    await tester.tap(save, warnIfMissed: false);
+    await tester.pumpAndSettle();
+
+    expect(result, const {'ToolOne'});
+    expect(closeCount, 1);
+    expect(find.byKey(const ValueKey('host-sentinel')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('cancelling the tool selector discards temporary changes', (
+    tester,
+  ) async {
+    Set<String>? result = {'unchanged'};
+    await tester.pumpWidget(
+      _toolSelectorHost(
+        strings: const AiStrings(AppLanguage.zh),
+        tools: const [
+          ToolOption(name: 'ToolOne', description: '第一个工具'),
+          ToolOption(name: 'ToolTwo', description: '第二个工具'),
+        ],
+        initialTools: const {},
+        onClosed: (value) => result = value,
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('open-tool-selector')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('tool-option-tooltwo')));
+    await tester.pump();
+    expect(find.text('已选择 1 个'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('tool-selector-cancel')));
+    await tester.pumpAndSettle();
+
+    expect(result, isNull);
+    expect(find.byKey(const ValueKey('host-sentinel')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Widget _slashPanelApp({
@@ -121,6 +290,38 @@ Widget _slashPanelApp({
           strings: strings,
           onStateChanged: onStateChanged ?? () {},
         ),
+      ),
+    ),
+  );
+}
+
+Widget _toolSelectorHost({
+  required AiStrings strings,
+  required List<ToolOption> tools,
+  required Set<String> initialTools,
+  required ValueChanged<Set<String>?> onClosed,
+}) {
+  return MaterialApp(
+    home: Scaffold(
+      body: Column(
+        children: [
+          const Text('Host remains open', key: ValueKey('host-sentinel')),
+          Builder(
+            builder: (context) => FilledButton(
+              key: const ValueKey('open-tool-selector'),
+              onPressed: () async {
+                final result = await LlmChatCommandsHelper.openToolsSelector(
+                  context: context,
+                  strings: strings,
+                  availableTools: tools,
+                  initialTools: initialTools,
+                );
+                onClosed(result);
+              },
+              child: const Text('Open'),
+            ),
+          ),
+        ],
       ),
     ),
   );

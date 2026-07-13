@@ -271,6 +271,11 @@ class AiStrings {
   String get commandToolsSearch => _en ? 'Search tools' : '搜索工具';
   String get commandToolsNoResult =>
       _en ? 'No tools match the search.' : '未找到匹配的工具。';
+  String get commandToolsTitle => _en ? 'Choose tools' : '选择可用工具';
+  String commandToolsSelected(int count) =>
+      _en ? '$count selected' : '已选择 $count 个';
+  String get commandToolsClearSelection => _en ? 'Clear selection' : '清除选择';
+  String get commandToolsClearSearch => _en ? 'Clear search' : '清除搜索';
   String get approveAndExecutePlan =>
       _en ? 'Approve & Execute Plan' : '同意并执行计划';
   String get todoTitle => _en ? 'Operation Tasks (TODO)' : '规划的运维任务清单 (TODO)';

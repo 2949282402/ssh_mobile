@@ -76,6 +76,10 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   bounded scroll region; completing `/compact` or `/skills` drops stale
   arguments, while `/tools` and `/plan` preserve their supported arguments
   without joining command and text accidentally.
+  The tool selector canonicalizes names case-insensitively, removes stale
+  whitelist entries, and keeps search, selection, cancel, clear, and save
+  controls reachable above a 1.5K landscape keyboard and system safe area.
+  Long tool names/descriptions ellipsize without losing their full semantics.
   New chats use a centered bilingual empty state with three 48 dp starter
   actions; selecting one only fills and focuses the composer for review.
   Tool approvals keep the full risk reason, target, path, command, and preview

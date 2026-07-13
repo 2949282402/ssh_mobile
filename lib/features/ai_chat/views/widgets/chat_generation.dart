@@ -17,6 +17,7 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
     if (text.isEmpty) return;
     final viewModel = context.read<AiChatViewModel>();
     if (viewModel.sending) return;
+    final targetChatId = viewModel.activeChatId;
 
     final result = await viewModel.sendText(
       text: text,
@@ -46,8 +47,8 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
         availableTools: availableTools,
         initialTools: result.currentAllowedTools,
       );
-      if (next != null && context.mounted) {
-        viewModel.updateAllowedTools(viewModel.activeChatId!, next);
+      if (next != null && context.mounted && targetChatId != null) {
+        viewModel.updateAllowedTools(targetChatId, next);
         LlmChatCommandsHelper.showCommandFeedback(
           context,
           strings.commandToolsUpdated(next.length),
