@@ -251,8 +251,15 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   equivalent proportions without clipped labels or horizontal overflow. Base
   URL and API-key history sheets expose the active row through both selection
   semantics and theme color, with explicit 48 dp delete targets.
-- The first-launch background-service guide and less common routes still need a
-  consistency pass against the shared page-surface components.
+- The first-launch background-service guide now uses the shared page surface,
+  icon badge, theme typography, and a 640 dp reading-width ceiling. Its
+  unrestricted title, checklist, live status region, and naturally growing
+  48 dp actions remain scrollable at 320 dp with 200% English text and inside
+  1.5K landscape safe areas. The relaxed state promotes Continue to the primary
+  action; Continue for now skips only the current launch, matching the reminder
+  copy without permanently suppressing an unresolved warning.
+- Less common routes still need a consistency pass against the shared page
+  surface and section components.
 - Cold startup remained on the native black launch surface for a noticeable
   interval on fresh AVD data. Startup initialization and native launch styling
   require a dedicated performance-stage audit.

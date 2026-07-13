@@ -321,23 +321,30 @@ class AppStrings {
   String get noConnectionHistory => _en ? 'No connection history' : '暂无连接历史';
   String get deleteHistoryRecord => _en ? 'Delete history record' : '删除历史记录';
 
-  String get backgroundConnectionSettings =>
-      _en ? 'Background connection settings' : '后台连接设置';
+  String get backgroundConnectionSettings => _en ? 'Background access' : '后台运行';
   String get enableBackgroundPermission =>
-      _en ? 'Enable background connection permission' : '开启后台连接权限';
+      _en ? 'Keep SSH connected in the background' : '让 SSH 在后台保持连接';
   String get backgroundPermissionGuide => _en
-      ? 'The current platform has not confirmed unrestricted background power usage. SSH connections need background service and keep-alive support. Please allow SSH Mobile to run in the background, send notifications, and avoid power-saving rules that may interrupt background networking.'
-      : '检测到当前平台尚未确认后台耗电无限制。SSH 连接需要后台服务和保活心跳支持，请允许 SSH Mobile 后台运行、发送通知，并关闭可能中断后台网络的省电限制。';
-  String get adjustPowerLimit => _en ? 'Adjust power settings' : '调整省电限制';
+      ? 'Android may pause background networking to save power. Review these settings so SSH sessions and transfers are less likely to disconnect.'
+      : 'Android 可能会为了省电暂停后台网络。请检查以下设置，减少 SSH 会话和文件传输意外断开的情况。';
+  String get backgroundChecklistTitle => _en ? 'Recommended settings' : '建议设置';
+  String get allowBackgroundActivity =>
+      _en ? 'Allow background activity' : '允许后台活动';
+  String get allowNotifications => _en ? 'Allow notifications' : '允许发送通知';
+  String get relaxBatteryRestrictions =>
+      _en ? 'Remove battery restrictions' : '放宽电池限制';
+  String get adjustPowerLimit => _en ? 'Review battery settings' : '检查电池设置';
   String get openAppSettings => _en ? 'Open app settings' : '打开应用设置';
   String get settings => _en ? 'Settings' : '设置';
   String get backgroundGuideNote => _en
-      ? 'Setting names differ by platform. Look for permissions, battery, or background activity settings and allow SSH Mobile to keep running. You can continue this time; if the restriction is still detected next launch, this guide will appear again.'
-      : '不同平台的设置名称可能不同，请在应用权限、电池或后台运行相关设置中允许 SSH Mobile 持续运行。本次可继续进入应用；如果下次启动时仍未放宽限制，将再次显示此引导。';
-  String get enterApp => _en ? 'Enter app' : '进入应用';
-  String get powerLimitExempt => _en ? 'Power restrictions relaxed' : '已放宽省电限制';
+      ? 'Setting names vary by device. You can continue for now; if restrictions remain, this guide will remind you again next launch.'
+      : '不同设备的设置名称可能不同。你可以暂时继续；如果限制仍然存在，下次启动时会再次提醒。';
+  String get enterApp => _en ? 'Continue for now' : '暂时继续';
+  String get continueToApp => _en ? 'Continue to app' : '进入应用';
+  String get powerLimitExempt =>
+      _en ? 'Battery restrictions are relaxed' : '已放宽电池限制';
   String get powerLimitUnknown =>
-      _en ? 'Power restriction status not confirmed' : '尚未确认省电限制状态';
+      _en ? 'Battery restriction status needs review' : '需要检查电池限制状态';
 
   String get sftp => _en ? 'SFTP' : 'SFTP';
   String get sftpServers => _en ? 'SFTP servers' : 'SFTP 服务器';
