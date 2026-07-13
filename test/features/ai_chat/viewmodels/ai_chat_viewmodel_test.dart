@@ -81,6 +81,42 @@ void main() {
       expect(viewModel.activeChat!.messages, isEmpty);
     });
 
+    test('loadInitialDraft exposes failure and retry can recover', () async {
+      final retryStorage = _FailOnceInitialSettingsStorage();
+      await retryStorage.init();
+      addTearDown(retryStorage.dispose);
+      final retrySsh = SshService(retryStorage);
+      final retrySftp = SftpService(retryStorage);
+      final retryMonitor = PerformanceMonitorService(retrySsh, retryStorage);
+      final retryPlaybooks = PlaybookService(
+        storageService: retryStorage,
+        sshService: retrySsh,
+      );
+      final retryRag = RagService(storageService: retryStorage);
+      final viewModel = AiChatViewModel(
+        storageService: retryStorage,
+        sshService: retrySsh,
+        sftpService: retrySftp,
+        performanceMonitorService: retryMonitor,
+        playbookService: retryPlaybooks,
+        ragService: retryRag,
+        appSettings: appSettings,
+      );
+      addTearDown(viewModel.dispose);
+
+      await viewModel.loadInitialDraft();
+      expect(viewModel.loading, isFalse);
+      expect(viewModel.initialDraftFailed, isTrue);
+      expect(viewModel.activeChat, isNull);
+      expect(retryStorage.settingsLoadAttempts, 1);
+
+      await viewModel.retryInitialDraft();
+      expect(viewModel.loading, isFalse);
+      expect(viewModel.initialDraftFailed, isFalse);
+      expect(viewModel.activeChat, isNotNull);
+      expect(retryStorage.settingsLoadAttempts, 2);
+    });
+
     test('sendText returns SendTextEmptyText for empty text', () async {
       final viewModel = AiChatViewModel(
         storageService: storageService,
@@ -505,6 +541,19 @@ void main() {
       },
     );
   });
+}
+
+class _FailOnceInitialSettingsStorage extends StorageService {
+  int settingsLoadAttempts = 0;
+
+  @override
+  Future<AiConnectionSettings> loadAiConnectionSettings() async {
+    settingsLoadAttempts += 1;
+    if (settingsLoadAttempts == 1) {
+      throw StateError(r'failed to read C:\private\settings.db');
+    }
+    return super.loadAiConnectionSettings();
+  }
 }
 
 class FailureLlmChatService extends LlmChatService {

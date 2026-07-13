@@ -185,6 +185,7 @@ class AiChatViewModel extends ChangeNotifier {
   // 操作状态
   bool _loading = true;
   bool _settingsLoadStarted = false;
+  bool _initialDraftFailed = false;
   bool _historyLoadStarted = false;
   bool _historyLoading = false;
   bool _sending = false;
@@ -267,6 +268,7 @@ class AiChatViewModel extends ChangeNotifier {
   List<AiChatRecord> get savedHistoryChats => _savedHistoryChats;
   String? get activeChatId => _activeChatId;
   bool get loading => _loading;
+  bool get initialDraftFailed => _initialDraftFailed;
   bool get historyLoading => _historyLoading;
   bool get sending => _sending;
   bool get toolsExpanded => _toolsExpanded;
@@ -315,13 +317,32 @@ class AiChatViewModel extends ChangeNotifier {
   Future<void> loadInitialDraft() async {
     if (_settingsLoadStarted) return;
     _settingsLoadStarted = true;
-    final settings = await _storageService.loadAiConnectionSettings();
-    final draft = _newChatRecord(settings.model);
-    _chats = [draft];
-    _activeChatId = draft.id;
-    _contextWindowTokens = settings.contextWindowTokens;
-    _loading = false;
+    _loading = true;
+    _initialDraftFailed = false;
     notifyListeners();
+    try {
+      final settings = await _storageService.loadAiConnectionSettings();
+      final draft = _newChatRecord(settings.model);
+      _chats = [draft];
+      _activeChatId = draft.id;
+      _contextWindowTokens = settings.contextWindowTokens;
+    } catch (error, stackTrace) {
+      _initialDraftFailed = true;
+      AppLogService.instance.error(
+        'Failed to initialize AI chat',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> retryInitialDraft() async {
+    if (_loading || (!_initialDraftFailed && activeChat != null)) return;
+    _settingsLoadStarted = false;
+    await loadInitialDraft();
   }
 
   // 加载历史记录

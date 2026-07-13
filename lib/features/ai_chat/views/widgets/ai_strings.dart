@@ -40,6 +40,12 @@ class AiStrings {
       ? 'Ask me about your servers, logs, status, or a remote file.'
       : '可以问我服务器状态、日志、远程文件等。';
   String get welcomeTitle => _en ? 'What can I help with?' : '今天想处理什么？';
+  String get chatBootstrapFailedTitle =>
+      _en ? 'Unable to open AI chat' : '无法打开 AI 对话';
+  String get chatBootstrapFailedMessage => _en
+      ? 'Chat settings could not be loaded. Check local storage and try again.'
+      : '无法读取对话设置，请检查本地存储后重试。';
+  String get retry => _en ? 'Retry' : '重试';
   String get checkServersSuggestion => _en ? 'Check server health' : '检查服务器状态';
   String get checkServersPrompt => _en
       ? 'Check my servers and highlight anything that needs attention.'

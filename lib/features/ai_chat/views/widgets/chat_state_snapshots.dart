@@ -3,11 +3,13 @@ part of '../llm_chat_screen.dart';
 @immutable
 class _ChatShellSnapshot {
   final bool loading;
+  final bool initialDraftFailed;
   final bool hasActiveChat;
   final String? activeChatId;
 
   const _ChatShellSnapshot({
     required this.loading,
+    required this.initialDraftFailed,
     required this.hasActiveChat,
     required this.activeChatId,
   });
@@ -18,11 +20,13 @@ class _ChatShellSnapshot {
       other is _ChatShellSnapshot &&
           runtimeType == other.runtimeType &&
           loading == other.loading &&
+          initialDraftFailed == other.initialDraftFailed &&
           hasActiveChat == other.hasActiveChat &&
           activeChatId == other.activeChatId;
 
   @override
-  int get hashCode => Object.hash(loading, hasActiveChat, activeChatId);
+  int get hashCode =>
+      Object.hash(loading, initialDraftFailed, hasActiveChat, activeChatId);
 }
 
 @immutable

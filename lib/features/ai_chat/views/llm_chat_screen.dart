@@ -441,17 +441,39 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
       child: Selector<AiChatViewModel, _ChatShellSnapshot>(
         selector: (context, vm) => _ChatShellSnapshot(
           loading: vm.loading,
+          initialDraftFailed: vm.initialDraftFailed,
           hasActiveChat: vm.activeChat != null,
           activeChatId: vm.activeChatId,
         ),
         builder: (context, snapshot, child) {
-          if (snapshot.loading || !snapshot.hasActiveChat) {
+          if (snapshot.loading) {
             return const Scaffold(
               body: Center(
                 child: SizedBox(
                   width: 28,
                   height: 28,
                   child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            );
+          }
+          if (snapshot.initialDraftFailed || !snapshot.hasActiveChat) {
+            return Scaffold(
+              body: AppPageSurface(
+                child: AppEmptyState(
+                  icon: Icons.chat_bubble_outline_rounded,
+                  title: strings.chatBootstrapFailedTitle,
+                  message: strings.chatBootstrapFailedMessage,
+                  action: SizedBox(
+                    key: const ValueKey('chat-bootstrap-retry'),
+                    height: 48,
+                    child: FilledButton.icon(
+                      onPressed: () =>
+                          context.read<AiChatViewModel>().retryInitialDraft(),
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: Text(strings.retry),
+                    ),
+                  ),
                 ),
               ),
             );

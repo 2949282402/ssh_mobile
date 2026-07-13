@@ -80,6 +80,9 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   whitelist entries, and keeps search, selection, cancel, clear, and save
   controls reachable above a 1.5K landscape keyboard and system safe area.
   Long tool names/descriptions ellipsize without losing their full semantics.
+  Chat bootstrap failures no longer leave an infinite spinner: a bilingual,
+  path-safe empty state exposes a real 48 dp retry action and recovers the
+  draft when local settings become readable.
   New chats use a centered bilingual empty state with three 48 dp starter
   actions; selecting one only fills and focuses the composer for review.
   Tool approvals keep the full risk reason, target, path, command, and preview
