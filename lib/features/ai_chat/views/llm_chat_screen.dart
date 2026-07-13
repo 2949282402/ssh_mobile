@@ -14,6 +14,7 @@ import 'package:provider/provider.dart';
 import 'package:ssh_mobile/features/client_webview/views/client_webview_screen.dart';
 import 'package:ssh_mobile/features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
 import 'package:ssh_mobile/features/ai_chat/services/ai_chat_message_mapper.dart';
+import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/features/playbook/models/playbook.dart';
 import 'package:ssh_mobile/services/agent_model_profile.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
@@ -51,6 +52,7 @@ part 'widgets/chat_attachments.dart';
 part 'widgets/chat_rag_sheet.dart';
 part 'widgets/chat_generation.dart';
 part 'widgets/runtime_health_dialog.dart';
+part 'widgets/target_server_picker_sheet.dart';
 part 'widgets/prompt_customizer_dialog.dart';
 part 'widgets/chat_state_snapshots.dart';
 part 'widgets/chat_header.dart';
@@ -556,9 +558,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
       final connection = viewModel.getConnection(id);
       return connection == null ? strings.serverTarget : connection.name;
     }
-    return strings.language == AppLanguage.en
-        ? '${viewModel.selectedConnectionIds.length} Servers'
-        : '${viewModel.selectedConnectionIds.length} 台服务器';
+    return strings.selectedServers(viewModel.selectedConnectionIds.length);
   }
 
   void _selectSuggestedPrompt(String prompt) {
@@ -573,108 +573,18 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     final viewModel = context.read<AiChatViewModel>();
     if (viewModel.connections.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              strings.language == AppLanguage.en
-                  ? 'No configured servers.'
-                  : '没有配置服务器。',
-            ),
-          ),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(strings.noConfiguredServers)));
       }
       return;
     }
 
-    final selected = Set<String>.from(viewModel.selectedConnectionIds);
-    final result = await showModalBottomSheet<Set<String>?>(
+    final result = await showTargetServerPickerSheet(
       context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (ctx) => StatefulBuilder(
-        builder: (sheetContext, setSheetState) {
-          return SafeArea(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.7,
-              ),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            strings.language == AppLanguage.en
-                                ? 'Select target servers'
-                                : '选择目标服务器',
-                            style: Theme.of(sheetContext).textTheme.titleMedium
-                                ?.copyWith(fontWeight: FontWeight.w800),
-                          ),
-                        ),
-                        if (selected.isNotEmpty)
-                          TextButton(
-                            onPressed: () {
-                              setSheetState(() => selected.clear());
-                            },
-                            child: Text(
-                              strings.language == AppLanguage.en
-                                  ? 'Clear all'
-                                  : '清空全部',
-                            ),
-                          ),
-                      ],
-                    ),
-                    const Divider(),
-                    Flexible(
-                      child: ListView(
-                        shrinkWrap: true,
-                        children: [
-                          for (final connection in viewModel.connections)
-                            CheckboxListTile(
-                              value: selected.contains(connection.id),
-                              title: Text(connection.name),
-                              subtitle: Text(
-                                '${connection.username}@${connection.host}:${connection.port}',
-                              ),
-                              onChanged: (val) {
-                                setSheetState(() {
-                                  if (val == true) {
-                                    selected.add(connection.id);
-                                  } else {
-                                    selected.remove(connection.id);
-                                  }
-                                });
-                              },
-                            ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(sheetContext),
-                          child: Text(strings.cancel),
-                        ),
-                        const SizedBox(width: 8),
-                        FilledButton(
-                          onPressed: () =>
-                              Navigator.pop(sheetContext, selected),
-                          child: Text(strings.save),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-      ),
+      connections: List<ConnectionConfig>.unmodifiable(viewModel.connections),
+      initialSelection: viewModel.selectedConnectionIds,
+      strings: strings,
     );
 
     if (!mounted) return;

@@ -330,6 +330,11 @@ class AiStrings {
   String get runtimeWarningLabel => _en ? 'Warning' : '警告';
   String get runtimeSystemSettings => _en ? 'System settings' : '系统设置';
   String get runtimeContinue => _en ? 'Continue' : '继续执行';
+  String get noConfiguredServers => _en ? 'No configured servers.' : '没有配置服务器。';
+  String get selectTargetServers => _en ? 'Select target servers' : '选择目标服务器';
+  String get clearAll => _en ? 'Clear all' : '清空全部';
+  String selectedServers(int count) =>
+      _en ? '$count ${count == 1 ? 'server' : 'servers'}' : '$count 台服务器';
 
   ({String title, String detail, String recommendation}) runtimeHealthIssue(
     ClientRuntimeHealthIssue issue,

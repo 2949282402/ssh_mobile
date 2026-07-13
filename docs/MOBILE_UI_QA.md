@@ -80,6 +80,11 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   whitelist entries, and keeps search, selection, cancel, clear, and save
   controls reachable above a 1.5K landscape keyboard and system safe area.
   Long tool names/descriptions ellipsize without losing their full semantics.
+  The target-server picker removes stale connection IDs, formats IPv6 targets
+  unambiguously, lazily builds large server lists, and keeps full names and
+  addresses in accessibility semantics while visible rows ellipsize. Its
+  48 dp clear, cancel, and save actions remain reachable on 320 dp screens and
+  above a 1.5K landscape keyboard.
   Chat bootstrap failures no longer leave an infinite spinner: a bilingual,
   path-safe empty state exposes a real 48 dp retry action and recovers the
   draft when local settings become readable.
