@@ -90,6 +90,14 @@ class AiStrings {
       : '确定删除这个 API Key 历史记录吗？\n$maskedValue';
   String get appSettings => _en ? 'App settings' : '应用设置';
   String get settings => _en ? 'LLM settings' : '大模型设置';
+  String get settingsOpenFailed =>
+      _en ? 'Unable to open LLM settings. Try again.' : '无法打开大模型设置，请重试。';
+  String get settingsApplyFailed => _en
+      ? 'Settings were saved, but the active chat could not update. Try again or start a new chat.'
+      : '设置已保存，但当前对话未能更新。请重试或新建对话。';
+  String get settingsSaveFailed => _en
+      ? 'Unable to save LLM settings. Check the values and try again.'
+      : '无法保存大模型设置，请检查填写内容后重试。';
   String get discardSettingsTitle =>
       _en ? 'Discard settings changes?' : '放弃设置更改？';
   String get discardSettingsContent =>

@@ -324,6 +324,8 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
   final ValueNotifier<double> _historyPanelProgress = ValueNotifier(0);
   bool _historyVisible = false;
   bool _toolsExpanded = false;
+  bool _settingsOpening = false;
+  int _settingsPresentationEpoch = 0;
   final ValueNotifier<bool> _isUserAtBottom = ValueNotifier(true);
   bool _scrollToBottomScheduled = false;
   bool _pendingScrollJump = false;
@@ -370,6 +372,9 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
   @override
   void didUpdateWidget(covariant _LlmChatScreenBody oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!widget.active && oldWidget.active) {
+      _settingsPresentationEpoch += 1;
+    }
     if (widget.active && !oldWidget.active) {
       _scrollToBottom(jump: true);
     }
@@ -491,7 +496,8 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
                     if (!compactKeyboardLayout)
                       _ChatHeader(
                         onShowHistory: () => _showHistory(context, strings),
-                        onShowSettings: () => _showSettings(context, strings),
+                        onShowSettings: () => _showSettings(strings),
+                        settingsOpening: _settingsOpening,
                       ),
                     Expanded(
                       child: Stack(
@@ -650,49 +656,90 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     if (mounted) setState(fn);
   }
 
-  Future<void> _showSettings(BuildContext context, AiStrings strings) async {
-    final viewModel = context.read<AiChatViewModel>();
-    final settingsData = await viewModel.loadLlmSettingsData();
-    final settings = settingsData['settings'] as AiConnectionSettings;
-    final cachedModels = settingsData['cachedModels'] as List<String>;
-    final baseUrlHistory = settingsData['baseUrlHistory'] as List<String>;
-    final apiKeyHistory =
-        settingsData['apiKeyHistory'] as List<AiApiKeyHistoryEntry>;
+  Future<void> _showSettings(AiStrings strings) async {
+    if (_settingsOpening || !mounted || !widget.active) return;
+    final presentationEpoch = _settingsPresentationEpoch;
+    setState(() => _settingsOpening = true);
+    try {
+      late final AiChatViewModel viewModel;
+      late final _PendingAiSettings? nextSettings;
+      try {
+        viewModel = context.read<AiChatViewModel>();
+        final settingsData = await viewModel.loadLlmSettingsData();
+        final settings = settingsData['settings'] as AiConnectionSettings;
+        final cachedModels = settingsData['cachedModels'] as List<String>;
+        final baseUrlHistory = settingsData['baseUrlHistory'] as List<String>;
+        final apiKeyHistory =
+            settingsData['apiKeyHistory'] as List<AiApiKeyHistoryEntry>;
 
-    if (!context.mounted) return;
-    viewModel.logLlmSettingsOpened(settings);
-
-    if (mounted) {
-      final nextSettings = await Navigator.of(context).push<_PendingAiSettings>(
-        MaterialPageRoute(
-          fullscreenDialog: true,
-          builder: (_) => LlmSettingsScreen(
-            initialSettings: settings,
-            initialModels: buildInitialModelOptions(
-              currentModel: settings.model,
-              cachedModels: cachedModels,
+        if (!mounted || !_isSettingsPresentationCurrent(presentationEpoch)) {
+          return;
+        }
+        viewModel.logLlmSettingsOpened(settings);
+        nextSettings = await Navigator.of(context).push<_PendingAiSettings>(
+          MaterialPageRoute(
+            fullscreenDialog: true,
+            builder: (_) => ChangeNotifierProvider<AiChatViewModel>.value(
+              value: viewModel,
+              child: LlmSettingsScreen(
+                initialSettings: settings,
+                initialModels: buildInitialModelOptions(
+                  currentModel: settings.model,
+                  cachedModels: cachedModels,
+                ),
+                initialBaseUrlHistory: baseUrlHistory,
+                initialApiKeyHistory: apiKeyHistory,
+              ),
             ),
-            initialBaseUrlHistory: baseUrlHistory,
-            initialApiKeyHistory: apiKeyHistory,
           ),
-        ),
-      );
+        );
+      } catch (_, stackTrace) {
+        AppLogService.instance.error(
+          'Failed to open LLM settings',
+          stackTrace: stackTrace,
+        );
+        _showSettingsFailure(strings.settingsOpenFailed, presentationEpoch);
+        return;
+      }
+
       if (nextSettings == null) return;
       if (!mounted) return;
-      final activeChat = viewModel.activeChat;
-      final nextModel = nextSettings.model.trim();
-      if (activeChat != null &&
-          nextModel.isNotEmpty &&
-          activeChat.model != nextModel) {
-        final updatedChat = activeChat.copyWith(
-          model: nextModel,
-          updatedAt: DateTime.now(),
+      try {
+        final activeChat = viewModel.activeChat;
+        final nextModel = nextSettings.model.trim();
+        if (activeChat != null &&
+            nextModel.isNotEmpty &&
+            activeChat.model != nextModel) {
+          final updatedChat = activeChat.copyWith(
+            model: nextModel,
+            updatedAt: DateTime.now(),
+          );
+          await viewModel.updateActiveChat(updatedChat);
+        }
+        // Reload VM draft values.
+        await viewModel.loadInitialDraft();
+      } catch (_, stackTrace) {
+        AppLogService.instance.error(
+          'Failed to apply saved LLM settings',
+          stackTrace: stackTrace,
         );
-        await viewModel.updateActiveChat(updatedChat);
+        _showSettingsFailure(strings.settingsApplyFailed, presentationEpoch);
       }
-      // Reload VM draft values
-      await viewModel.loadInitialDraft();
+    } finally {
+      if (mounted) setState(() => _settingsOpening = false);
     }
+  }
+
+  bool _isSettingsPresentationCurrent(int presentationEpoch) {
+    return widget.active && presentationEpoch == _settingsPresentationEpoch;
+  }
+
+  void _showSettingsFailure(String message, int presentationEpoch) {
+    if (!mounted || !_isSettingsPresentationCurrent(presentationEpoch)) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _deleteChat(AiChatRecord chat) async {

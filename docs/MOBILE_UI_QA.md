@@ -149,6 +149,18 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   pending, then require an explicit discard confirmation. Saving
   temporarily disables route dismissal, while model-refresh and save failures
   remain visible at the top of the form and in a floating snackbar.
+  The chat header exposes a real 48 dp settings target and guards loading and
+  navigation as one single-flight action, so rapid taps cannot stack routes.
+  The pushed route retains the originating chat ViewModel scope, allowing save
+  actions to complete without provider lookup failures.
+  Leaving the kept-alive AI tab invalidates an in-flight open, so a completed
+  load cannot push a route or snackbar over another page. Load/open failures
+  restore the entry and show only a bilingual generic snackbar; failures after
+  a successful save explain that only the active-chat refresh failed. That
+  refresh persists before changing the in-memory chat, so a failed write stays
+  retryable instead of leaving a false-success model selection. Settings-save
+  failures likewise keep raw storage details out of the form and snackbar.
+  Developer logs record no Base URL, model, or raw storage-error value.
   The form uses the shared page and section surfaces, caps its desktop reading
   width at 760 dp, keeps connection essentials expanded, and folds advanced
   model routing and low-frequency groups behind semantic 48 dp headers. Its

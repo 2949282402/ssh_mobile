@@ -3,10 +3,12 @@ part of '../llm_chat_screen.dart';
 class _ChatHeader extends StatelessWidget {
   final VoidCallback onShowHistory;
   final VoidCallback onShowSettings;
+  final bool settingsOpening;
 
   const _ChatHeader({
     required this.onShowHistory,
     required this.onShowSettings,
+    required this.settingsOpening,
   });
 
   static String _compactTokens(int value) {
@@ -131,10 +133,15 @@ class _ChatHeader extends StatelessWidget {
                                 .createChatFromSettings();
                           },
                   ),
-                  IconButton(
-                    tooltip: strings.settings,
-                    icon: const Icon(Icons.tune_rounded),
-                    onPressed: onShowSettings,
+                  SizedBox.square(
+                    key: const ValueKey('chat-open-llm-settings'),
+                    dimension: 48,
+                    child: IconButton(
+                      key: const ValueKey('chat-open-llm-settings-button'),
+                      tooltip: strings.settings,
+                      icon: const Icon(Icons.tune_rounded),
+                      onPressed: settingsOpening ? null : onShowSettings,
+                    ),
                   ),
                 ],
               ),

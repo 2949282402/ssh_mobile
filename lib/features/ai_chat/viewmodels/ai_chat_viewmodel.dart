@@ -411,9 +411,9 @@ class AiChatViewModel extends ChangeNotifier {
   }
 
   Future<void> updateActiveChat(AiChatRecord chat) async {
+    await _storageService.saveAiChat(chat);
     _replaceChat(chat);
     notifyListeners();
-    await _storageService.saveAiChat(chat);
   }
 
   // 附件操作
@@ -474,7 +474,7 @@ class AiChatViewModel extends ChangeNotifier {
     AppLogService.instance.info(
       'LLM settings page opened',
       details:
-          'baseUrl=${settings.baseUrl} model=${settings.model} hasApiKey=${settings.hasApiKey}',
+          'hasBaseUrl=${settings.baseUrl.trim().isNotEmpty} modelConfigured=${settings.model.trim().isNotEmpty} hasApiKey=${settings.hasApiKey}',
     );
   }
 
@@ -558,12 +558,12 @@ class AiChatViewModel extends ChangeNotifier {
         apiFormat: apiFormat,
       );
       notifyListeners();
-    } catch (e, stackTrace) {
+    } catch (_, stackTrace) {
       AppLogService.instance.error(
         'LLM settings save failed',
-        error: e,
         stackTrace: stackTrace,
-        details: 'baseUrl=$baseUrl model=$model',
+        details:
+            'hasBaseUrl=${baseUrl.trim().isNotEmpty} modelConfigured=${model.trim().isNotEmpty} hasApiKeyInput=${apiKey?.trim().isNotEmpty == true} selectedApiKey=${selectedApiKeyId?.trim().isNotEmpty == true}',
       );
       rethrow;
     }

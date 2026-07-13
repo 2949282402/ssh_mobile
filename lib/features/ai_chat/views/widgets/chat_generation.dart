@@ -33,7 +33,7 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
     if (!context.mounted) return;
 
     if (result is SendTextApiKeyMissing) {
-      await _showSettings(context, strings);
+      await _showSettings(strings);
     } else if (result is SendTextSlashCommandOpenSkills) {
       await Navigator.of(context).pushNamed('/ai-skills');
       if (context.mounted) {

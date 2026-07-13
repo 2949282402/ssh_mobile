@@ -484,9 +484,9 @@ class _LlmSettingsScreenState extends State<LlmSettingsScreen> {
       }
       if (!mounted) return;
       Navigator.pop(context, pending);
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
-      final message = strings.failed(e);
+      final message = strings.settingsSaveFailed;
       setState(() {
         _saving = false;
         _errorText = message;
