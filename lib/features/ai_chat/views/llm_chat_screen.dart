@@ -51,6 +51,7 @@ part 'widgets/chat_slash_commands.dart';
 part 'widgets/chat_attachments.dart';
 part 'widgets/chat_rag_sheet.dart';
 part 'widgets/chat_generation.dart';
+part 'widgets/chat_action_confirm_dialog.dart';
 part 'widgets/runtime_health_dialog.dart';
 part 'widgets/target_server_picker_sheet.dart';
 part 'widgets/prompt_customizer_dialog.dart';

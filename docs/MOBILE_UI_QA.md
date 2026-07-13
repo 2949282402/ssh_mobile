@@ -113,7 +113,10 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   action groups wrap on narrow messages, every action tooltip is bilingual,
   sent attachment names stay bounded,
   and trace summaries localize without overflowing their message column. The
-  inline Agent run summary reads the lightweight summary already embedded in
+  regenerate and branch confirmations use centralized bilingual copy, scroll
+  safely at 2× text scale, dismiss composer focus, and keep 48 dp actions above
+  a 1.5K landscape keyboard. The inline Agent run summary reads the lightweight
+  summary already embedded in
   each persisted message without storage I/O, then falls back to compact run
   metrics and finally legacy trace data only when needed. Its bounded two-line
   chips retain full accessibility labels at 2× text scale, update with the live

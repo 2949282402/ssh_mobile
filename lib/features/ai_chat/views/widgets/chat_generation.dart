@@ -131,43 +131,15 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
     viewModel.stopGeneration();
   }
 
-  Future<bool> _confirmChatAction({
-    required String title,
-    required String content,
-    required String confirmLabel,
-    required AiStrings strings,
-  }) async {
-    final bool? result = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Text(content),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text(strings.cancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text(confirmLabel),
-          ),
-        ],
-      ),
-    );
-    return result == true;
-  }
-
   Future<void> _confirmRegenerateAssistant(
     int messageIndex,
     AiStrings strings,
   ) async {
-    final en = strings.language == AppLanguage.en;
-    final confirmed = await _confirmChatAction(
-      title: en ? 'Regenerate this reply?' : '确认重新生成这条回复吗？',
-      content: en
-          ? 'This will replace this assistant message and regenerate from this point. Continue?'
-          : '这会替换这条 AI 回复并从该位置重新生成。确定继续吗？',
-      confirmLabel: en ? 'Regenerate' : '重新生成',
+    final confirmed = await showChatActionConfirmation(
+      context: context,
+      title: strings.regenerateReplyTitle,
+      message: strings.regenerateReplyMessage,
+      confirmLabel: strings.regenerateReplyAction,
       strings: strings,
     );
     if (!confirmed) return;
@@ -178,13 +150,11 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
     int messageIndex,
     AiStrings strings,
   ) async {
-    final en = strings.language == AppLanguage.en;
-    final confirmed = await _confirmChatAction(
-      title: en ? 'Create a chat branch?' : '确认创建聊天分支吗？',
-      content: en
-          ? 'This creates a new chat thread from this message and continues independently from here.'
-          : '将从该消息创建一个新的聊天分支，并从这里继续新对话。',
-      confirmLabel: en ? 'Create branch' : '创建分支',
+    final confirmed = await showChatActionConfirmation(
+      context: context,
+      title: strings.createBranchTitle,
+      message: strings.createBranchMessage,
+      confirmLabel: strings.createBranchAction,
       strings: strings,
     );
     if (!confirmed) return;

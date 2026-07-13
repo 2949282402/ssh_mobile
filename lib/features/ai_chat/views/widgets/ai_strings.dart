@@ -67,6 +67,17 @@ class AiStrings {
   String deleteChatContent(String title) => _en
       ? 'Delete "$title"? This action cannot be undone.'
       : '确定删除“$title”吗？此操作不可恢复。';
+  String get regenerateReplyTitle =>
+      _en ? 'Regenerate this reply?' : '确认重新生成这条回复吗？';
+  String get regenerateReplyMessage => _en
+      ? 'This removes this reply and all messages after it, then regenerates from this point.'
+      : '这会删除当前回复及其后的所有消息，并从该位置重新生成。';
+  String get regenerateReplyAction => _en ? 'Regenerate' : '重新生成';
+  String get createBranchTitle => _en ? 'Create a chat branch?' : '确认创建聊天分支吗？';
+  String get createBranchMessage => _en
+      ? 'This creates a new chat from this message so you can continue independently.'
+      : '这会从当前消息创建新对话，之后可独立继续。';
+  String get createBranchAction => _en ? 'Create branch' : '创建分支';
   String get deleteBaseUrlHistoryTitle =>
       _en ? 'Delete history entry?' : '删除历史记录？';
   String deleteBaseUrlHistoryContent(String baseUrl) => _en
