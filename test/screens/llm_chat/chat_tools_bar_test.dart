@@ -6,8 +6,20 @@ import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 
 void main() {
-  Widget toolsHarness(double width) {
+  Widget toolsHarness(
+    double width, {
+    bool planModeActive = false,
+    bool planModeBusy = false,
+    double textScale = 1,
+    VoidCallback? onPlanModeTap,
+  }) {
     return MaterialApp(
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(
+          context,
+        ).copyWith(textScaler: TextScaler.linear(textScale)),
+        child: child!,
+      ),
       home: Scaffold(
         body: Align(
           alignment: Alignment.topLeft,
@@ -23,7 +35,8 @@ void main() {
               promptLabel: 'Prompt',
               planModeLabel: 'Plan',
               playbooksLabel: 'Playbooks',
-              isPlanModeActive: false,
+              isPlanModeActive: planModeActive,
+              isPlanModeBusy: planModeBusy,
               onServerTap: () {},
               onSkillsTap: () {},
               onWebViewTap: () {},
@@ -31,7 +44,7 @@ void main() {
               onFileTap: () {},
               onRagTap: () {},
               onPromptTap: () {},
-              onPlanModeTap: () {},
+              onPlanModeTap: onPlanModeTap ?? () {},
               onPlaybooksTap: () {},
             ),
           ),
@@ -93,5 +106,67 @@ void main() {
     await tester.tap(removeFinder);
     expect(removed, isTrue);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('plan tool exposes selected and busy semantics at 2x text', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    var taps = 0;
+
+    await tester.pumpWidget(
+      toolsHarness(
+        320,
+        planModeActive: true,
+        textScale: 2,
+        onPlanModeTap: () => taps += 1,
+      ),
+    );
+    await tester.pump();
+
+    final plan = find.byKey(const ValueKey<String>('chat-tool-plan-mode'));
+    expect(plan, findsOneWidget);
+    expect(tester.getSize(plan).height, greaterThanOrEqualTo(48));
+    expect(
+      tester.getSemantics(plan),
+      matchesSemantics(
+        label: 'Plan',
+        isButton: true,
+        hasEnabledState: true,
+        isEnabled: true,
+        hasSelectedState: true,
+        isSelected: true,
+        hasTapAction: true,
+      ),
+    );
+    await tester.tap(plan);
+    expect(taps, 1);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(
+      toolsHarness(
+        320,
+        planModeActive: true,
+        planModeBusy: true,
+        textScale: 2,
+        onPlanModeTap: () => taps += 1,
+      ),
+    );
+    await tester.pump();
+    expect(
+      tester.getSemantics(plan),
+      matchesSemantics(
+        label: 'Plan',
+        isButton: true,
+        hasEnabledState: true,
+        isEnabled: false,
+        hasSelectedState: true,
+        isSelected: true,
+      ),
+    );
+    await tester.tap(plan, warnIfMissed: false);
+    expect(taps, 1);
+    expect(tester.takeException(), isNull);
+    semantics.dispose();
   });
 }

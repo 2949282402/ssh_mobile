@@ -122,7 +122,22 @@ class MonitorToolsProvider implements AiToolProvider {
         'error': 'Starting performance monitoring requires user approval.',
       });
     }
-    return jsonEncode(await performanceMonitorToolService.start());
+    final binding = service.activeApprovalExecutionBinding;
+    final targets = binding?.connectionTargets ?? const {};
+    if (binding?.resourceKind != 'monitor_selection' ||
+        targets.isEmpty ||
+        performanceMonitorToolService is! BoundPerformanceMonitorToolAdapter) {
+      return jsonEncode({
+        'error':
+            'The approved monitor target set is no longer available. Review it and approve again.',
+        'code': 'approval_target_changed',
+      });
+    }
+    return jsonEncode(
+      await (performanceMonitorToolService
+              as BoundPerformanceMonitorToolAdapter)
+          .startWithTargets(targets),
+    );
   }
 
   Future<String> _monitorStop(

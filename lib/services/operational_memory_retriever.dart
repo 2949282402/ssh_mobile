@@ -50,6 +50,8 @@ class OperationalMemoryRetriever {
     Set<String> selectedConnectionIds = const {},
     bool ragEnabled = false,
     int ragLimit = 3,
+    String ragSearchMode = 'bm25',
+    String ragAliyunApiKey = '',
     int hitLimit = 4,
   }) async {
     final trimmedQuery = query.trim();
@@ -62,7 +64,12 @@ class OperationalMemoryRetriever {
     if (ragEnabled && ragService != null) {
       try {
         ragChunks.addAll(
-          await ragService!.retrieve(trimmedQuery, limit: ragLimit),
+          await ragService!.retrieve(
+            trimmedQuery,
+            limit: ragLimit,
+            searchMode: ragSearchMode,
+            aliyunApiKey: ragAliyunApiKey,
+          ),
         );
       } catch (e) {
         AppLogService.instance.warning(

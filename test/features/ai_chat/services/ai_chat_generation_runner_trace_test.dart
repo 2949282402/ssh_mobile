@@ -67,6 +67,7 @@ class FakeTraceRuntimeFactory extends AiChatRuntimeFactory {
     required AiConnectionSettings settings,
     required String model,
     required String chatId,
+    AppLanguage language = AppLanguage.zh,
   }) {
     return LlmChatService(
       storageService: storageService,

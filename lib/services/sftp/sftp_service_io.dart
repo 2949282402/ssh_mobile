@@ -13,6 +13,8 @@ import '../../features/connection/models/connection.dart';
 import '../app_log_service.dart';
 import '../../core/services/ssh_client_factory.dart';
 import '../../core/services/data_protection_service.dart';
+import '../connection_target_binding.dart';
+import '../remote_target_scope.dart';
 import '../storage_service.dart';
 import '../tool_secret_policy.dart';
 import '../sftp_service.dart';
@@ -130,8 +132,13 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
 
   @override
   Future<void> connect(String connectionId, {dynamic onUnknownHostKey}) async {
-    final config = _storageService.getConnection(connectionId);
-    if (config == null) {
+    ConnectionRuntimeTarget runtimeTarget;
+    try {
+      runtimeTarget = await RemoteTargetScope.resolveIfBound(
+        _storageService,
+        connectionId,
+      );
+    } on RemoteTargetScopeException catch (e) {
       _activeConnectionId = connectionId;
       final session = _sessions.putIfAbsent(
         connectionId,
@@ -142,12 +149,20 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
         ),
       );
       session.state = SftpConnectionState.error;
-      session.errorMessage = 'Connection config not found';
+      session.errorMessage = e.message;
       notifyListeners();
       return;
     }
+    final config = runtimeTarget.config;
 
-    final existing = _sessions[connectionId];
+    var existing = _sessions[connectionId];
+    if (existing != null &&
+        existing.targetBinding?.fingerprint !=
+            runtimeTarget.binding.fingerprint) {
+      existing.close();
+      _sessions.remove(connectionId);
+      existing = null;
+    }
     if (existing?.sftp != null) {
       _activeConnectionId = connectionId;
       notifyListeners();
@@ -165,13 +180,18 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       connectionId: connectionId,
       connectionName: config.name,
       currentPath: _lastPaths[connectionId] ?? '.',
+      targetBinding: runtimeTarget.binding,
     );
     _sessions[connectionId] = session;
     _activeConnectionId = connectionId;
     session.state = SftpConnectionState.connecting;
     session.errorMessage = null;
     notifyListeners();
-    final task = _connect(session, config, onUnknownHostKey: onUnknownHostKey);
+    final task = _connect(
+      session,
+      runtimeTarget,
+      onUnknownHostKey: onUnknownHostKey,
+    );
     _connectTasks[connectionId] = task;
     try {
       await task;
@@ -184,12 +204,18 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
 
   Future<void> _connect(
     _SftpSession session,
-    ConnectionConfig config, {
+    ConnectionRuntimeTarget target, {
     dynamic onUnknownHostKey,
   }) async {
+    final config = target.config;
+    final credentials = SshCredentials(
+      password: target.password,
+      privateKey: target.privateKey,
+    );
     try {
       final client = await _clientFactory.connectClient(
         config,
+        credentials: credentials,
         onUnknownHostKey: onUnknownHostKey,
       );
       if (!session.isCurrent(_sessions)) {
@@ -304,8 +330,15 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
         notifyListeners();
       }
 
-      _directoryCache.invalidate(activeSession.connectionId);
-      await SftpFileCache.invalidate(activeSession.connectionId, remotePath);
+      _directoryCache.invalidate(
+        activeSession.connectionId,
+        activeSession.targetFingerprint,
+      );
+      await SftpFileCache.invalidate(
+        activeSession.connectionId,
+        activeSession.targetFingerprint,
+        remotePath,
+      );
       AppLogService.instance.info(
         'SFTP file uploaded via stream',
         details: 'path=$remotePath bytes=$totalSize',
@@ -477,8 +510,15 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
             SftpFileOpenMode.write,
       );
       await file.writeBytes(bytes);
-      _directoryCache.invalidate(session.connectionId);
-      await SftpFileCache.invalidate(session.connectionId, remotePath);
+      _directoryCache.invalidate(
+        session.connectionId,
+        session.targetFingerprint,
+      );
+      await SftpFileCache.invalidate(
+        session.connectionId,
+        session.targetFingerprint,
+        remotePath,
+      );
       AppLogService.instance.info(
         'SFTP file uploaded',
         details: 'path=$remotePath bytes=${bytes.length}',
@@ -522,8 +562,12 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       } else {
         await sftp.remove(entry.path);
       }
-      _directoryCache.invalidate(entry.connectionId);
-      await SftpFileCache.invalidate(entry.connectionId, entry.path);
+      _directoryCache.invalidate(entry.connectionId, session.targetFingerprint);
+      await SftpFileCache.invalidate(
+        entry.connectionId,
+        session.targetFingerprint,
+        entry.path,
+      );
       AppLogService.instance.info(
         'SFTP entry deleted',
         details: 'path=${entry.path} directory=${entry.isDirectory}',
@@ -555,6 +599,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
 
     final cachedBytes = await SftpFileCache.get(
       entry.connectionId,
+      session.targetFingerprint,
       entry.path,
       entry.size,
       entry.modifiedAt,
@@ -581,6 +626,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
 
       await SftpFileCache.put(
         entry.connectionId,
+        session.targetFingerprint,
         entry.path,
         entry.size,
         entry.modifiedAt,
@@ -775,7 +821,11 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       final absolutePath = await sftp.absolute(path);
 
       // Check directory cache
-      final cached = _directoryCache.get(session.connectionId, absolutePath);
+      final cached = _directoryCache.get(
+        session.connectionId,
+        session.targetFingerprint,
+        absolutePath,
+      );
       if (cached != null) {
         session.currentPath = absolutePath;
         _lastPaths[session.connectionId] = absolutePath;
@@ -796,7 +846,12 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
         names: names,
       );
 
-      _directoryCache.set(session.connectionId, absolutePath, entries);
+      _directoryCache.set(
+        session.connectionId,
+        session.targetFingerprint,
+        absolutePath,
+        entries,
+      );
 
       session.currentPath = absolutePath;
       _lastPaths[session.connectionId] = absolutePath;
@@ -916,19 +971,32 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
 
   Future<T> _withDetachedSftp<T>(
     String connectionId,
-    Future<T> Function(SftpClient sftp, ConnectionConfig config) action,
+    Future<T> Function(
+      SftpClient sftp,
+      ConnectionConfig config,
+      ConnectionTargetBinding targetBinding,
+    )
+    action,
   ) async {
-    final config = _storageService.getConnection(connectionId);
-    if (config == null) {
-      throw StateError('Connection config not found');
-    }
+    final target = await RemoteTargetScope.resolveIfBound(
+      _storageService,
+      connectionId,
+    );
+    final config = target.config;
+    final credentials = SshCredentials(
+      password: target.password,
+      privateKey: target.privateKey,
+    );
 
     try {
-      final client = await _clientFactory.connectClient(config);
+      final client = await _clientFactory.connectClient(
+        config,
+        credentials: credentials,
+      );
       SftpClient? sftp;
       try {
         sftp = await client.sftp().timeout(const Duration(seconds: 15));
-        return await action(sftp, config);
+        return await action(sftp, config, target.binding);
       } finally {
         sftp?.close();
         client.close();
@@ -1037,6 +1105,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
 class _SftpSession {
   final String connectionId;
   final String connectionName;
+  final ConnectionTargetBinding? targetBinding;
   SSHClient? client;
   SftpClient? sftp;
   String currentPath;
@@ -1050,7 +1119,16 @@ class _SftpSession {
     required this.connectionId,
     required this.connectionName,
     required this.currentPath,
+    this.targetBinding,
   });
+
+  String get targetFingerprint {
+    final binding = targetBinding;
+    if (binding == null) {
+      throw StateError('SFTP session has no bound remote target');
+    }
+    return binding.fingerprint;
+  }
 
   void close() {
     _closed = true;

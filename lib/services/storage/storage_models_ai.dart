@@ -233,6 +233,24 @@ class AiConnectionSettings {
   }
 }
 
+/// Ephemeral, non-serializable runtime pairing of provider settings and secret.
+/// Keep this object in memory only and never include its keys in logs or traces.
+class AiRuntimeConnectionSnapshot {
+  final AiConnectionSettings settings;
+  final String apiKey;
+  final String quarkApiKey;
+  final String aliyunApiKey;
+
+  const AiRuntimeConnectionSnapshot({
+    required this.settings,
+    required this.apiKey,
+    this.quarkApiKey = '',
+    this.aliyunApiKey = '',
+  });
+
+  bool get hasApiKey => apiKey.isNotEmpty;
+}
+
 class AiApiKeyHistoryEntry {
   final String id;
   final String maskedValue;

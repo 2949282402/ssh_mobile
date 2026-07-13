@@ -138,6 +138,41 @@ class PlaybookToolsProvider implements AiToolProvider {
     final playbookId = service._arg(arguments, 'playbookId');
     final connectionId = service._arg(arguments, 'connectionId');
 
+    final approvalSnapshot =
+        service.activeApprovalExecutionBinding?.resourceSnapshot;
+    if (approvalSnapshot is _ApprovedPlaybookRun) {
+      final target = service
+          .activeApprovalExecutionBinding
+          ?.connectionTargets[connectionId];
+      if (target == null) {
+        return jsonEncode({
+          'error':
+              'The approved server target is unavailable. Review and approve the playbook again.',
+          'code': 'approval_target_changed',
+        });
+      }
+      final started = await playbookService!.startApprovedExecution(
+        playbook: approvalSnapshot.playbook,
+        actionFingerprint: approvalSnapshot.actionFingerprint,
+        connectionTarget: target,
+      );
+      if (!started) {
+        return jsonEncode({
+          'error':
+              'The playbook changed while approval was open. Review the latest steps and approve again.',
+          'code': 'approval_target_changed',
+          'playbookId': approvalSnapshot.playbook.id,
+        });
+      }
+      return jsonEncode({
+        'started': true,
+        'playbookId': approvalSnapshot.playbook.id,
+        'connectionId': connectionId,
+        'message':
+            'The approved playbook snapshot has started sequential execution.',
+      });
+    }
+
     final config = storageService.getConnection(connectionId);
     if (config == null) {
       return jsonEncode({

@@ -37,7 +37,7 @@ class _ChatHistoryOverlay extends StatelessWidget {
 
     return Selector<AiChatViewModel, _HistoryPanelSnapshot>(
       selector: (_, vm) => _HistoryPanelSnapshot(
-        savedHistoryChats: vm.savedHistoryChats,
+        chats: vm.chats,
         activeChatId: vm.activeChatId,
         historyLoading: vm.historyLoading,
       ),
@@ -97,7 +97,7 @@ class _ChatHistoryOverlay extends StatelessWidget {
                                   ),
                                 ),
                                 child: HistoryPanel(
-                                  chats: snapshot.savedHistoryChats,
+                                  chats: snapshot.chats,
                                   activeChatId: snapshot.activeChatId,
                                   loading: snapshot.historyLoading,
                                   strings: strings,
@@ -105,7 +105,7 @@ class _ChatHistoryOverlay extends StatelessWidget {
                                   onClose: state._closeHistoryPanel,
                                   onNewChat: () {
                                     state._closeHistoryPanel();
-                                    viewModel.createChatFromSettings();
+                                    unawaited(state._createNewChat());
                                   },
                                   onDeleteChat: (chat) async {
                                     await state._deleteChat(chat);

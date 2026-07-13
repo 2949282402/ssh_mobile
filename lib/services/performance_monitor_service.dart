@@ -11,6 +11,7 @@ import '../core/services/ssh_host_key_policy.dart';
 import 'server_status_probe.dart';
 import 'ssh_service.dart';
 import 'storage_service.dart';
+import 'connection_target_binding.dart';
 
 /// 服务器性能监控采样服务。
 ///
@@ -58,6 +59,7 @@ class PerformanceMonitorService extends ChangeNotifier {
   Duration _historyWindow = defaultHistoryWindow;
   final Set<String> _selectedConnectionIds = {};
   final Set<String> _monitoringConnectionIds = {};
+  Map<String, ConnectionTargetBinding>? _monitoringTargetBindings;
   final Set<String> _samplingConnectionIds = {};
   final Map<String, List<PerformanceSample>> _samplesByConnection = {};
   final Map<String, List<DiskUsageSnapshot>> _diskUsageByConnection = {};
@@ -289,8 +291,24 @@ class PerformanceMonitorService extends ChangeNotifier {
 
   Future<void> startMonitoring({
     SshHostKeyConfirmation? onUnknownHostKey,
+    Map<String, ConnectionTargetBinding>? targetBindings,
   }) async {
     if (_selectedConnectionIds.isEmpty) return;
+    if (targetBindings != null) {
+      final selected = _selectedConnectionIds.toSet();
+      if (targetBindings.keys.toSet().length != selected.length ||
+          !targetBindings.keys.toSet().containsAll(selected)) {
+        throw StateError(
+          'The performance monitor selection changed after approval.',
+        );
+      }
+      _monitoringTargetBindings =
+          Map<String, ConnectionTargetBinding>.unmodifiable({
+            for (final id in selected) id: targetBindings[id]!,
+          });
+    } else {
+      _monitoringTargetBindings = null;
+    }
     _running = true;
     _startedAt = DateTime.now();
     _monitoringConnectionIds
@@ -331,6 +349,7 @@ class PerformanceMonitorService extends ChangeNotifier {
     _startedAt = null;
     _samplingConnectionIds.clear();
     _monitoringConnectionIds.clear();
+    _monitoringTargetBindings = null;
     _errorsByConnection.clear();
     _failureCountsByConnection.clear();
     _previousCountersByConnection.clear();
@@ -619,6 +638,8 @@ class PerformanceMonitorService extends ChangeNotifier {
   }
 
   ServerPlatform _platformFor(String connectionId) {
+    final bound = _monitoringTargetBindings?[connectionId];
+    if (bound != null) return bound.serverPlatform;
     return _storageService.getConnection(connectionId)?.serverPlatform ??
         ServerPlatform.linux;
   }
@@ -629,13 +650,30 @@ class PerformanceMonitorService extends ChangeNotifier {
     required Duration timeout,
     SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
+    Future<RemoteCommandResult> run() {
+      final binding = _monitoringTargetBindings?[connectionId];
+      if (_monitoringTargetBindings != null && binding == null) {
+        throw StateError(
+          'Connection is not part of the approved monitor target set.',
+        );
+      }
+      return binding == null
+          ? _sshService.runOneShotCommand(
+              connectionId: connectionId,
+              command: command,
+              timeout: timeout,
+              onUnknownHostKey: onUnknownHostKey,
+            )
+          : _sshService.runOneShotCommandForBinding(
+              binding: binding,
+              command: command,
+              timeout: timeout,
+              onUnknownHostKey: onUnknownHostKey,
+            );
+    }
+
     try {
-      return await _sshService.runOneShotCommand(
-        connectionId: connectionId,
-        command: command,
-        timeout: timeout,
-        onUnknownHostKey: onUnknownHostKey,
-      );
+      return await run();
     } catch (firstError, firstStackTrace) {
       if (_disposed) {
         Error.throwWithStackTrace(firstError, firstStackTrace);
@@ -649,12 +687,7 @@ class PerformanceMonitorService extends ChangeNotifier {
         Error.throwWithStackTrace(firstError, firstStackTrace);
       }
       try {
-        return await _sshService.runOneShotCommand(
-          connectionId: connectionId,
-          command: command,
-          timeout: timeout,
-          onUnknownHostKey: onUnknownHostKey,
-        );
+        return await run();
       } catch (retryError) {
         throw StateError(
           'SSH reconnect failed after interruption: $retryError '

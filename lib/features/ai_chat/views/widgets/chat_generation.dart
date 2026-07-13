@@ -8,6 +8,78 @@ bool shouldFollowChatScrollRequest({
   return explicit || isUserAtBottom;
 }
 
+@visibleForTesting
+Future<void> runPlanApprovalUiFlow({
+  required AiStrings strings,
+  required Future<ApprovePlanExecutionResult> Function(bool forceAfterWarning)
+  approve,
+  required Future<bool> Function(
+    ClientRuntimeHealthReport report,
+    bool allowContinue,
+  )
+  showRuntimeHealth,
+  required Future<void> Function() openLlmSettings,
+  required void Function(String message) showFeedback,
+}) async {
+  Future<void> dispatch(
+    ApprovePlanExecutionResult result, {
+    required bool allowWarning,
+  }) async {
+    if (result is ApprovePlanExecutionStarted) {
+      showFeedback(strings.planApprovalStarting);
+      return;
+    }
+    if (result is ApprovePlanExecutionBlocked) {
+      final report = result.healthReport;
+      if (report == null) {
+        showFeedback(strings.planApprovalFailed);
+        return;
+      }
+      await showRuntimeHealth(report, false);
+      return;
+    }
+    if (result is ApprovePlanExecutionWarning) {
+      final report = result.healthReport;
+      if (report == null || !allowWarning) {
+        showFeedback(strings.planApprovalFailed);
+        return;
+      }
+      final confirmed = await showRuntimeHealth(report, true);
+      if (!confirmed) return;
+      final forcedResult = await approve(true);
+      await dispatch(forcedResult, allowWarning: false);
+      return;
+    }
+    if (result is ApprovePlanExecutionApiKeyMissing) {
+      showFeedback(strings.planApprovalApiKeyMissing);
+      await openLlmSettings();
+      return;
+    }
+    if (result is ApprovePlanExecutionPlanChanged) {
+      showFeedback(strings.planApprovalPlanChanged);
+      return;
+    }
+    if (result is ApprovePlanExecutionNoPlan) {
+      showFeedback(strings.planApprovalNoPlan);
+      return;
+    }
+    if (result is ApprovePlanExecutionFailed) {
+      showFeedback(strings.planApprovalFailed);
+      return;
+    }
+    if (result is ApprovePlanExecutionCancelled) {
+      showFeedback(strings.planApprovalCancelled);
+      return;
+    }
+    if (result is ApprovePlanExecutionAlreadySending) {
+      showFeedback(strings.aiActionInProgress);
+    }
+  }
+
+  final result = await approve(false);
+  await dispatch(result, allowWarning: true);
+}
+
 extension _ChatGeneration on _LlmChatScreenBodyState {
   Future<void> _send(BuildContext context, AiStrings strings) async {
     final text = _inputController.text.trim();
@@ -90,25 +162,35 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
   }
 
   Future<void> approvePlanAndExecute(DateTime assistantCreatedAt) async {
+    if (_planApprovalUiInFlight) return;
+    setState(() => _planApprovalUiInFlight = true);
     final viewModel = context.read<AiChatViewModel>();
-    final result = await viewModel.approvePlanAndExecute(assistantCreatedAt);
-    if (!mounted) return;
-    if (result is ApprovePlanExecutionBlocked) {
-      await _showRuntimeHealthDialog(
-        report: result.healthReport!,
-        allowContinue: false,
-      );
-    } else if (result is ApprovePlanExecutionWarning) {
-      final confirmed = await _showRuntimeHealthDialog(
-        report: result.healthReport!,
-        allowContinue: true,
-      );
-      if (confirmed && mounted) {
-        await viewModel.approvePlanAndExecute(
+    final strings = AiStrings(context.read<AppSettings>().language);
+    try {
+      await runPlanApprovalUiFlow(
+        strings: strings,
+        approve: (forceAfterWarning) => viewModel.approvePlanAndExecute(
           assistantCreatedAt,
-          forceAfterWarning: true,
-        );
-      }
+          forceAfterWarning: forceAfterWarning,
+        ),
+        showRuntimeHealth: (report, allowContinue) {
+          if (!mounted) return Future<bool>.value(false);
+          return _showRuntimeHealthDialog(
+            report: report,
+            allowContinue: allowContinue,
+          );
+        },
+        openLlmSettings: () async {
+          if (mounted) await _showSettings(strings);
+        },
+        showFeedback: (message) {
+          if (mounted) {
+            LlmChatCommandsHelper.showCommandFeedback(context, message);
+          }
+        },
+      );
+    } finally {
+      if (mounted) setState(() => _planApprovalUiInFlight = false);
     }
   }
 
@@ -192,7 +274,7 @@ extension _ChatGeneration on _LlmChatScreenBodyState {
 
   Future<void> _branchFromAssistant(int messageIndex, AiStrings strings) async {
     final viewModel = context.read<AiChatViewModel>();
-    viewModel.branchFromAssistant(messageIndex);
+    await viewModel.branchFromAssistant(messageIndex);
   }
 
   void _scrollToBottom({bool jump = false}) {

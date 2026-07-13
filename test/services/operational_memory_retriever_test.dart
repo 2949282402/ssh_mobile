@@ -3,8 +3,10 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/services/operational_memory_retriever.dart';
+import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 import 'package:ssh_mobile/services/skill/skill_index_service.dart';
+import 'package:ssh_mobile/utils/text_chunker.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -185,6 +187,49 @@ body instructions here''',
       expect(result.hits.first.title, equals('Nginx Service'));
     },
   );
+
+  test('forwards the turn-scoped RAG mode, limit, and key', () async {
+    final recordingRag = _RecordingRagService(storage: storage);
+    final scopedRetriever = OperationalMemoryRetriever(
+      storageService: storage,
+      ragService: recordingRag,
+    );
+
+    await scopedRetriever.retrieve(
+      query: 'nginx status',
+      ragEnabled: true,
+      ragLimit: 8,
+      ragSearchMode: 'hybrid',
+      ragAliyunApiKey: 'turn-key',
+    );
+
+    expect(recordingRag.receivedLimit, 8);
+    expect(recordingRag.receivedSearchMode, 'hybrid');
+    expect(recordingRag.receivedExpectedKey, isTrue);
+  });
+}
+
+class _RecordingRagService extends RagService {
+  int? receivedLimit;
+  String? receivedSearchMode;
+  bool receivedExpectedKey = false;
+
+  _RecordingRagService({required StorageService storage})
+    : super(storageService: storage);
+
+  @override
+  Future<List<RagChunk>> retrieve(
+    String query, {
+    int limit = 3,
+    Set<String>? filterDocumentIds,
+    String? searchMode,
+    String? aliyunApiKey,
+  }) async {
+    receivedLimit = limit;
+    receivedSearchMode = searchMode;
+    receivedExpectedKey = aliyunApiKey == 'turn-key';
+    return const [];
+  }
 }
 
 class _MockBrokenSkillIndexService extends SkillIndexService {

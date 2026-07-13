@@ -14,6 +14,8 @@ import 'package:provider/provider.dart';
 import 'package:ssh_mobile/features/client_webview/views/client_webview_screen.dart';
 import 'package:ssh_mobile/features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
 import 'package:ssh_mobile/features/ai_chat/services/ai_chat_message_mapper.dart';
+import 'package:ssh_mobile/features/ai_chat/services/plan_command_parser.dart';
+import 'package:ssh_mobile/features/ai_chat/services/plan_approval_eligibility.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/features/playbook/models/playbook.dart';
 import 'package:ssh_mobile/services/agent_model_profile.dart';
@@ -59,6 +61,7 @@ part 'widgets/chat_state_snapshots.dart';
 part 'widgets/chat_header.dart';
 part 'widgets/chat_message_list.dart';
 part 'widgets/tool_approval_area.dart';
+part 'widgets/plan_approval_area.dart';
 part 'widgets/jump_to_bottom_button.dart';
 part 'widgets/chat_history_overlay.dart';
 part 'widgets/chat_composer.dart';
@@ -69,15 +72,41 @@ const List<String> _defaultModels = ['deepseek-v4-flash', 'deepseek-v4-pro'];
 double chatComposerMaxHeightFor({
   required double viewportHeight,
   required double keyboardInset,
+  double textScale = 1,
 }) {
   final visibleHeight = (viewportHeight - keyboardInset).clamp(
     0.0,
     double.infinity,
   );
   if (visibleHeight < 360) {
-    return (visibleHeight - 76).clamp(75.0, 200.0);
+    final compactMinimum = 75 + ((textScale - 1).clamp(0.0, 1.0) * 25);
+    return (visibleHeight - 76).clamp(compactMinimum, 200.0);
   }
   return (visibleHeight * 0.46).clamp(132.0, 360.0);
+}
+
+@visibleForTesting
+bool shouldShowPlanApprovalForAvailableHeight({
+  required double availableHeight,
+  required double availableWidth,
+  required double textScale,
+}) {
+  final normalizedScale = textScale.clamp(1.0, 2.0);
+  final actionsStack = availableWidth < 400 || (14 * normalizedScale) > 18;
+  final baseMinimumHeight = actionsStack ? 360.0 : 340.0;
+  final minimumBottomControlsHeight =
+      baseMinimumHeight + ((normalizedScale - 1) * 100);
+  return availableHeight >= minimumBottomControlsHeight;
+}
+
+@visibleForTesting
+bool shouldShowPlanModeBannerForAvailableHeight({
+  required double availableHeight,
+  required double textScale,
+}) {
+  final normalizedScale = textScale.clamp(1.0, 2.0);
+  final minimumComposerHeight = 220 + ((normalizedScale - 1) * 40);
+  return availableHeight >= minimumComposerHeight;
 }
 
 @visibleForTesting
@@ -171,12 +200,14 @@ class LlmChatScreen extends StatelessWidget {
   final bool active;
   final ValueChanged<bool>? onHistoryVisibilityChanged;
   final String? initialText;
+  final AiChatViewModel Function(BuildContext context)? viewModelFactory;
 
   const LlmChatScreen({
     super.key,
     this.active = true,
     this.onHistoryVisibilityChanged,
     this.initialText,
+    @visibleForTesting this.viewModelFactory,
   });
 
   static List<Map<String, dynamic>> buildMultipartContent(
@@ -194,15 +225,21 @@ class LlmChatScreen extends StatelessWidget {
     // state alive using keepAliveAfterFirstBuild, ensuring it behaves as a
     // single instance while the app is running.
     return ChangeNotifierProvider<AiChatViewModel>(
-      create: (context) => AiChatViewModel(
-        storageService: context.read<StorageService>(),
-        sshService: context.read<SshService>(),
-        sftpService: context.read<SftpService>(),
-        performanceMonitorService: context.read<PerformanceMonitorService>(),
-        playbookService: context.read<PlaybookService>(),
-        ragService: context.read<RagService>(),
-        appSettings: context.read<AppSettings>(),
-      )..loadInitialDraft(),
+      create: (context) {
+        final viewModel =
+            viewModelFactory?.call(context) ??
+            AiChatViewModel(
+              storageService: context.read<StorageService>(),
+              sshService: context.read<SshService>(),
+              sftpService: context.read<SftpService>(),
+              performanceMonitorService: context
+                  .read<PerformanceMonitorService>(),
+              playbookService: context.read<PlaybookService>(),
+              ragService: context.read<RagService>(),
+              appSettings: context.read<AppSettings>(),
+            );
+        return viewModel..loadInitialDraft();
+      },
       child: _LlmChatScreenBody(
         active: active,
         onHistoryVisibilityChanged: onHistoryVisibilityChanged,
@@ -324,12 +361,17 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
   final ValueNotifier<double> _historyPanelProgress = ValueNotifier(0);
   bool _historyVisible = false;
   bool _toolsExpanded = false;
+  bool _planApprovalUiInFlight = false;
+  bool _newChatInFlight = false;
   bool _settingsOpening = false;
   int _settingsPresentationEpoch = 0;
   final ValueNotifier<bool> _isUserAtBottom = ValueNotifier(true);
   bool _scrollToBottomScheduled = false;
   bool _pendingScrollJump = false;
   StreamSubscription? _scrollSubscription;
+  AiChatViewModel? _observedViewModel;
+  String? _composerChatId;
+  final Map<String, String> _chatDrafts = <String, String>{};
 
   AiChatRecord? get _activeChat => context.read<AiChatViewModel>().activeChat;
 
@@ -363,6 +405,13 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final viewModel = context.read<AiChatViewModel>();
+      _observedViewModel = viewModel;
+      _composerChatId = viewModel.activeChatId;
+      final initialChatId = _composerChatId;
+      if (initialChatId != null && _inputController.text.isNotEmpty) {
+        _chatDrafts[initialChatId] = _inputController.text;
+      }
+      viewModel.addListener(_onChatViewModelChanged);
       _scrollSubscription = viewModel.scrollRequests.listen((_) {
         _scrollToBottom();
       });
@@ -386,6 +435,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
   @override
   void dispose() {
     _scrollSubscription?.cancel();
+    _observedViewModel?.removeListener(_onChatViewModelChanged);
     _historySlideController.dispose();
     _historyPanelProgress.dispose();
     _isUserAtBottom.dispose();
@@ -409,6 +459,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
   }
 
   void _checkPendingDiagnosticPrompt() {
+    if (_inputController.text.trim().isNotEmpty) return;
     try {
       final viewModel = context.read<AiChatViewModel>();
       final prompt = viewModel.checkPendingDiagnosticPrompt();
@@ -416,6 +467,33 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
         _inputController.text = prompt;
       }
     } catch (_) {}
+  }
+
+  void _onChatViewModelChanged() {
+    final viewModel = _observedViewModel;
+    if (!mounted || viewModel == null) return;
+    final nextChatId = viewModel.activeChatId;
+    final liveChatIds = viewModel.chats.map((chat) => chat.id).toSet();
+    _chatDrafts.removeWhere((chatId, _) => !liveChatIds.contains(chatId));
+    if (nextChatId == _composerChatId) return;
+
+    final previousChatId = _composerChatId;
+    if (previousChatId != null && liveChatIds.contains(previousChatId)) {
+      _chatDrafts[previousChatId] = _inputController.text;
+    } else if (previousChatId == null &&
+        nextChatId != null &&
+        _inputController.text.isNotEmpty) {
+      // The initial draft can arrive before the async chat bootstrap assigns
+      // an active chat. Attach it to that first chat instead of clearing it.
+      _chatDrafts.putIfAbsent(nextChatId, () => _inputController.text);
+    }
+    _composerChatId = nextChatId;
+    final nextText = nextChatId == null ? '' : _chatDrafts[nextChatId] ?? '';
+    if (_inputController.text == nextText) return;
+    _inputController.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: nextText.length),
+    );
   }
 
   void _onInputFocusChanged() {
@@ -489,68 +567,79 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
           }
 
           return Scaffold(
-            body: Stack(
-              children: [
-                Column(
+            body: LayoutBuilder(
+              builder: (context, bodyConstraints) {
+                final compactBodyLayout =
+                    compactKeyboardLayout || bodyConstraints.maxHeight < 360;
+                return Stack(
                   children: [
-                    if (!compactKeyboardLayout)
-                      _ChatHeader(
-                        onShowHistory: () => _showHistory(context, strings),
-                        onShowSettings: () => _showSettings(strings),
-                        settingsOpening: _settingsOpening,
-                      ),
-                    Expanded(
-                      child: Stack(
-                        children: [
-                          _ChatMessageList(
-                            scrollController: _scrollController,
-                            onUserScroll: _updateUserScrollPosition,
-                            onSuggestionSelected: _selectSuggestedPrompt,
-                            onEditUser: (index) =>
-                                _editUserMessage(index, strings),
-                            onRegenerate: (index) =>
-                                _confirmRegenerateAssistant(index, strings),
-                            onBranch: (index) =>
-                                _confirmBranchFromAssistant(index, strings),
-                            onContinueTimeout: () =>
-                                _continueAfterTimeout(strings),
-                            onApprovePlanExecute: (createdAt) =>
-                                approvePlanAndExecute(createdAt),
-                            onRevisePlan: (chat) =>
-                                LlmChatCommandsHelper.setPlanModeFromUi(
-                                  context: context,
-                                  chat: chat,
-                                  enabled: true,
-                                  strings: strings,
-                                ),
+                    Column(
+                      children: [
+                        if (!compactBodyLayout)
+                          _ChatHeader(
+                            onShowHistory: () => _showHistory(context, strings),
+                            onNewChat: () => unawaited(_createNewChat()),
+                            newChatInFlight: _newChatInFlight,
+                            onShowSettings: () => _showSettings(strings),
+                            settingsOpening: _settingsOpening,
                           ),
-                          ChatJumpToBottomButton(
-                            scrollController: _scrollController,
-                            isUserAtBottom: _isUserAtBottom,
-                            onPressed: () => _scrollToBottom(jump: true),
-                            strings: strings,
+                        Expanded(
+                          child: Stack(
+                            children: [
+                              _ChatMessageList(
+                                scrollController: _scrollController,
+                                onUserScroll: _updateUserScrollPosition,
+                                onSuggestionSelected: _selectSuggestedPrompt,
+                                onEditUser: (index) =>
+                                    _editUserMessage(index, strings),
+                                onRegenerate: (index) =>
+                                    _confirmRegenerateAssistant(index, strings),
+                                onBranch: (index) =>
+                                    _confirmBranchFromAssistant(index, strings),
+                                onContinueTimeout: () =>
+                                    _continueAfterTimeout(strings),
+                                onRevisePlan: (chat) =>
+                                    _revisePlan(chat, strings),
+                              ),
+                              ChatJumpToBottomButton(
+                                scrollController: _scrollController,
+                                isUserAtBottom: _isUserAtBottom,
+                                onPressed: () => _scrollToBottom(jump: true),
+                                strings: strings,
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
+                        ),
+                        _ChatPlanApprovalArea(
+                          availableHeight: bodyConstraints.maxHeight,
+                          availableWidth: bodyConstraints.maxWidth,
+                          inputController: _inputController,
+                          toolsExpanded: _toolsExpanded,
+                          uiBusy: _planApprovalUiInFlight,
+                          onApprove: approvePlanAndExecute,
+                          onRevise: (chat) => _revisePlan(chat, strings),
+                        ),
+                        const _ChatToolApprovalArea(),
+                        SafeArea(
+                          top: false,
+                          child: _ChatComposer(
+                            availableHeight: bodyConstraints.maxHeight,
+                            inputController: _inputController,
+                            inputFocusNode: _inputFocusNode,
+                            toolsExpanded: _toolsExpanded,
+                            onToolsExpandedChanged: (expanded) {
+                              setState(() => _toolsExpanded = expanded);
+                            },
+                            onSubmit: () => _send(context, strings),
+                            onStop: _stopGeneration,
+                          ),
+                        ),
+                      ],
                     ),
-                    const _ChatToolApprovalArea(),
-                    SafeArea(
-                      top: false,
-                      child: _ChatComposer(
-                        inputController: _inputController,
-                        inputFocusNode: _inputFocusNode,
-                        toolsExpanded: _toolsExpanded,
-                        onToolsExpandedChanged: (expanded) {
-                          setState(() => _toolsExpanded = expanded);
-                        },
-                        onSubmit: () => _send(context, strings),
-                        onStop: _stopGeneration,
-                      ),
-                    ),
+                    _ChatHistoryOverlay(strings: strings),
                   ],
-                ),
-                _ChatHistoryOverlay(strings: strings),
-              ],
+                );
+              },
             ),
           );
         },
@@ -575,6 +664,72 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
       selection: TextSelection.collapsed(offset: prompt.length),
     );
     _inputFocusNode.requestFocus();
+  }
+
+  Future<void> _createNewChat() async {
+    if (_newChatInFlight) return;
+    final requestedFromChatId = _composerChatId;
+    setState(() => _newChatInFlight = true);
+    final viewModel = context.read<AiChatViewModel>();
+    try {
+      final model = await viewModel.loadNewChatModel();
+      if (!mounted) return;
+      if (_composerChatId != requestedFromChatId) return;
+      final currentChatId = _composerChatId;
+      if (currentChatId != null) {
+        _chatDrafts[currentChatId] = _inputController.text;
+      }
+      final preserveChatIds = _chatDrafts.entries
+          .where((entry) => entry.value.isNotEmpty)
+          .map((entry) => entry.key)
+          .toSet();
+      final created = viewModel.createChat(
+        model,
+        preserveChatIds: preserveChatIds,
+      );
+      if (!created && mounted) {
+        final strings = AiStrings(context.read<AppSettings>().language);
+        LlmChatCommandsHelper.showCommandFeedback(context, strings.newChatBusy);
+      }
+    } catch (_, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to create AI chat draft',
+        stackTrace: stackTrace,
+      );
+      if (mounted) {
+        final strings = AiStrings(context.read<AppSettings>().language);
+        LlmChatCommandsHelper.showCommandFeedback(
+          context,
+          strings.newChatCreateFailed,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _newChatInFlight = false);
+      } else {
+        _newChatInFlight = false;
+      }
+    }
+  }
+
+  Future<void> _revisePlan(AiChatRecord chat, AiStrings strings) async {
+    final enabled = await LlmChatCommandsHelper.setPlanModeFromUi(
+      context: context,
+      chat: chat,
+      enabled: true,
+      strings: strings,
+    );
+    if (!mounted || !enabled) return;
+    if (_inputController.text.trim().isEmpty) {
+      _inputController.value = TextEditingValue(
+        text: strings.planRevisionPrompt,
+        selection: TextSelection.collapsed(
+          offset: strings.planRevisionPrompt.length,
+        ),
+      );
+    }
+    _inputFocusNode.requestFocus();
+    _scrollToBottom(jump: false);
   }
 
   Future<void> _selectTargetServer(AiStrings strings) async {

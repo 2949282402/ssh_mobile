@@ -38,7 +38,6 @@ class MessageBubble extends StatelessWidget {
   final VoidCallback? onRegenerate;
   final VoidCallback? onBranch;
   final VoidCallback? onContinueTimeout;
-  final VoidCallback? onApproveExecute;
   final VoidCallback? onRevisePlan;
 
   const MessageBubble({
@@ -53,19 +52,12 @@ class MessageBubble extends StatelessWidget {
     this.onRegenerate,
     this.onBranch,
     this.onContinueTimeout,
-    this.onApproveExecute,
     this.onRevisePlan,
   });
 
   @override
   Widget build(BuildContext context) {
     final viewModel = context.watch<AiChatViewModel>();
-    final activeChat = viewModel.activeChat;
-    final isLatestAssistant =
-        activeChat != null &&
-        activeChat.messages.lastIndexWhere((m) => m.role == 'assistant') ==
-            index;
-
     final language = context.select<AppSettings, AppLanguage>(
       (settings) => settings.language,
     );
@@ -161,27 +153,6 @@ class MessageBubble extends StatelessWidget {
                                 onSkipStep: viewModel.skipTodoStep,
                                 onRevisePlan: onRevisePlan,
                               ),
-                              if (message.todoSteps.every(
-                                    (s) => s.status == StepStatus.pending,
-                                  ) &&
-                                  isLatestAssistant) ...[
-                                const SizedBox(height: 8),
-                                _buildApproveButton(context),
-                                const SizedBox(height: 4),
-                                Center(
-                                  child: Text(
-                                    strings.language == AppLanguage.en
-                                        ? '💡 If you want to modify this plan, simply type your feedback to adjust it.'
-                                        : '💡 如果你想修改此计划，直接在下方输入框发送修改意见以进行调整。',
-                                    style: TextStyle(
-                                      fontSize: 10.5,
-                                      fontStyle: FontStyle.italic,
-                                      color: colorScheme.onSurfaceVariant
-                                          .withValues(alpha: 0.8),
-                                    ),
-                                  ),
-                                ),
-                              ],
                             ],
                           ],
                         ),
@@ -241,37 +212,6 @@ class MessageBubble extends StatelessWidget {
           duration: 200.ms,
           curve: Curves.easeOutQuad,
         );
-  }
-
-  Widget _buildApproveButton(BuildContext context) {
-    final settings = context.read<AppSettings>();
-    final strings = AiStrings(settings.language);
-    final theme = Theme.of(context);
-    final extColors = theme.extension<ExtendedColors>();
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 8, bottom: 4),
-      child: Center(
-        child: FilledButton.icon(
-          onPressed: onApproveExecute,
-          icon: const Icon(Icons.verified_user_outlined, size: 16),
-          label: Text(
-            strings.approveAndExecutePlan,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-          ),
-          style: FilledButton.styleFrom(
-            backgroundColor: extColors?.success ?? theme.colorScheme.primary,
-            foregroundColor: Colors.white,
-            minimumSize: const Size(0, 48),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-            ),
-          ),
-        ),
-      ),
-    );
   }
 
   String _messageStats(AiChatMessageRecord message) {

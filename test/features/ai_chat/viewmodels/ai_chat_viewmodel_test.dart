@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -5,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
+import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/client_health_advisor.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
@@ -13,6 +15,7 @@ import 'package:ssh_mobile/services/rag_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
+import 'package:ssh_mobile/utils/text_chunker.dart';
 import 'package:ssh_mobile/features/ai_chat/services/ai_chat_runtime_factory.dart';
 import 'package:ssh_mobile/services/ai_tool_service.dart';
 import 'package:ssh_mobile/features/ai_chat/services/llm_chat_service.dart';
@@ -35,7 +38,7 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
 
-    storageService = StorageService();
+    storageService = _GateNextChatSaveStorage();
     await storageService.init();
 
     appSettings = AppSettings();
@@ -338,9 +341,9 @@ void main() {
         expect(viewModel.activeChat!.planMode, isFalse);
 
         await storageService.saveAiConnectionSettings(
-          baseUrl: 'https://api.example.com',
-          model: 'demo-model',
-          apiKey: 'dummy-key',
+          baseUrl: 'https://api-a.example.com',
+          model: 'model-a',
+          apiKey: 'key-a',
         );
 
         final result = await viewModel.sendText(text: '/plan diagnose nginx');
@@ -356,6 +359,113 @@ void main() {
         final messages = viewModel.activeChat!.messages;
         final userMessage = messages.firstWhere((m) => m.role == 'user');
         expect(userMessage.text, equals('diagnose nginx'));
+      },
+    );
+
+    test(
+      '/plan snapshots turn inputs before its mode persistence await',
+      () async {
+        final recordingRag = _RecordingTurnRagService(
+          storageService: storageService,
+        );
+        final factory = FakeSuccessRuntimeFactory(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: recordingRag,
+          appSettings: appSettings,
+        );
+        final viewModel = AiChatViewModel(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+          runtimeFactory: factory,
+        );
+        await viewModel.loadInitialDraft();
+        await storageService.saveAiConnectionSettings(
+          baseUrl: 'https://api-a.example.com',
+          model: 'model-a',
+          apiKey: 'key-a',
+        );
+        await storageService.saveAliyunApiKey('rag-key-a');
+        await storageService.addConnection(
+          ConnectionConfig(
+            id: 'server-a',
+            name: 'Server A',
+            host: 'old.example.com',
+            username: 'ops',
+          ),
+        );
+        await appSettings.setRagEnabled(true);
+        await appSettings.setRagSearchMode('bm25');
+        await appSettings.setRagTopN(8);
+        const submittedAttachment = AiChatAttachment(
+          fileName: 'submitted.txt',
+          mimeType: 'text/plain',
+          sizeBytes: 1,
+          dataBase64: 'YQ==',
+        );
+        const nextAttachment = AiChatAttachment(
+          fileName: 'next.txt',
+          mimeType: 'text/plain',
+          sizeBytes: 1,
+          dataBase64: 'Yg==',
+        );
+        viewModel.addAttachment(submittedAttachment);
+        viewModel.updateSelectedConnections({'server-a'});
+        viewModel.updateAllowedTools(viewModel.activeChatId!, {'tool-a'});
+        final gatedStorage = storageService as _GateNextChatSaveStorage;
+        gatedStorage.gateNextChatSave();
+
+        final send = viewModel.sendText(text: '/plan diagnose nginx');
+        await gatedStorage.nextChatSaveStarted;
+        viewModel.addAttachment(nextAttachment);
+        viewModel.updateSelectedConnections({'server-b'});
+        viewModel.updateAllowedTools(viewModel.activeChatId!, {'tool-b'});
+        await storageService.updateConnection(
+          storageService
+              .getConnection('server-a')!
+              .copyWith(host: 'replacement.example.com'),
+        );
+        await appSettings.setRagSearchMode('vector');
+        await appSettings.setRagTopN(1);
+        await storageService.saveAliyunApiKey('rag-key-b');
+        await storageService.saveAiConnectionSettings(
+          baseUrl: 'https://api-b.example.com',
+          model: 'model-b',
+          apiKey: 'key-b',
+        );
+        gatedStorage.releaseChatSave();
+
+        expect(await send, isA<SendTextSuccess>());
+        final userMessage = viewModel.activeChat!.messages.lastWhere(
+          (message) => message.role == 'user',
+        );
+        expect(userMessage.attachments, [same(submittedAttachment)]);
+        expect(userMessage.contextText, contains('ops@old.example.com:22'));
+        expect(
+          userMessage.contextText,
+          isNot(contains('replacement.example.com')),
+        );
+        expect(viewModel.pendingAttachments, [same(nextAttachment)]);
+        await waitUntil(
+          () => viewModel.sending == false,
+          description: 'Plan request generation finishes',
+        );
+        expect(factory.lastSelectedConnectionIds, {'server-a'});
+        expect(factory.lastAllowedTools, {'tool-a'});
+        expect(factory.lastSettings?.baseUrl, 'https://api-a.example.com');
+        expect(factory.lastSettings?.model, 'model-a');
+        expect(recordingRag.receivedSearchMode, 'bm25');
+        expect(recordingRag.receivedLimit, 8);
+        expect(recordingRag.receivedExpectedKey, isTrue);
+        expect(viewModel.selectedConnectionIds, {'server-b'});
       },
     );
 
@@ -600,6 +710,190 @@ void main() {
     );
 
     test(
+      'forced warning continuation keeps the original approval inputs',
+      () async {
+        await storageService.saveAiConnectionSettings(
+          baseUrl: 'https://api.example.com',
+          model: 'demo-model',
+          apiKey: 'dummy-key',
+        );
+        final factory = FakeSuccessRuntimeFactory(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+        );
+        final healthAdvisor = _GatedHealthAdvisor(
+          ClientRuntimeHealthStatus.warning,
+        );
+        final viewModel = AiChatViewModel(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+          runtimeFactory: factory,
+          clientHealthAdvisor: healthAdvisor,
+        );
+
+        await viewModel.loadInitialDraft();
+        final assistantCreatedAt = DateTime.now();
+        await viewModel.updateActiveChat(
+          viewModel.activeChat!.copyWith(
+            planMode: false,
+            messages: [
+              AiChatMessageRecord(
+                role: 'assistant',
+                text: 'plan',
+                createdAt: assistantCreatedAt,
+                todoSteps: const [
+                  AiTodoStep(
+                    id: 'task-1',
+                    name: 'Check service',
+                    command: 'systemctl status nginx',
+                    description: 'Check service status',
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+        viewModel.updateSelectedConnections({'server-a'});
+        viewModel.updateAllowedTools(viewModel.activeChatId!, {'tool-a'});
+
+        final firstApproval = viewModel.approvePlanAndExecute(
+          assistantCreatedAt,
+        );
+        await healthAdvisor.started;
+        const nextMessageAttachment = AiChatAttachment(
+          fileName: 'next-message.txt',
+          mimeType: 'text/plain',
+          sizeBytes: 4,
+          dataBase64: 'bmV4dA==',
+        );
+        viewModel.addAttachment(nextMessageAttachment);
+        viewModel.updateSelectedConnections({'server-b'});
+        viewModel.updateAllowedTools(viewModel.activeChatId!, {'tool-b'});
+        await storageService.saveAiConnectionSettings(
+          baseUrl: 'https://api-b.example.com',
+          model: 'model-b',
+          apiKey: 'key-b',
+        );
+        healthAdvisor.release();
+
+        expect(await firstApproval, isA<ApprovePlanExecutionWarning>());
+        final forcedApproval = await viewModel.approvePlanAndExecute(
+          assistantCreatedAt,
+          forceAfterWarning: true,
+        );
+        expect(forcedApproval, isA<ApprovePlanExecutionStarted>());
+        final executionMessage = viewModel.activeChat!.messages.lastWhere(
+          (message) => message.role == 'user',
+        );
+        expect(executionMessage.attachments, isEmpty);
+        expect(viewModel.pendingAttachments, [same(nextMessageAttachment)]);
+        await waitUntil(
+          () => viewModel.sending == false,
+          description: 'forced warning execution finishes',
+        );
+        expect(factory.lastSelectedConnectionIds, {'server-a'});
+        expect(factory.lastAllowedTools, {'tool-a'});
+        expect(factory.lastSettings?.baseUrl, 'https://api.example.com');
+        expect(factory.lastSettings?.model, 'demo-model');
+        expect(viewModel.selectedConnectionIds, {'server-b'});
+      },
+    );
+
+    test(
+      'plan approval snapshots mutable turn inputs during health check',
+      () async {
+        await storageService.saveAiConnectionSettings(
+          baseUrl: 'https://api.example.com',
+          model: 'demo-model',
+          apiKey: 'dummy-key',
+        );
+        final factory = FakeSuccessRuntimeFactory(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+        );
+        final healthAdvisor = _GatedHealthAdvisor();
+        final viewModel = AiChatViewModel(
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+          runtimeFactory: factory,
+          clientHealthAdvisor: healthAdvisor,
+        );
+
+        await viewModel.loadInitialDraft();
+        final assistantCreatedAt = DateTime.now();
+        await viewModel.updateActiveChat(
+          viewModel.activeChat!.copyWith(
+            planMode: false,
+            messages: [
+              AiChatMessageRecord(
+                role: 'assistant',
+                text: 'plan',
+                createdAt: assistantCreatedAt,
+                todoSteps: const [
+                  AiTodoStep(
+                    id: 'task-1',
+                    name: 'Check service',
+                    command: 'systemctl status nginx',
+                    description: 'Check service status',
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+        viewModel.updateSelectedConnections({'server-a'});
+        viewModel.updateAllowedTools(viewModel.activeChatId!, {'tool-a'});
+
+        final approval = viewModel.approvePlanAndExecute(assistantCreatedAt);
+        await healthAdvisor.started;
+        const nextMessageAttachment = AiChatAttachment(
+          fileName: 'next-message.txt',
+          mimeType: 'text/plain',
+          sizeBytes: 4,
+          dataBase64: 'bmV4dA==',
+        );
+        viewModel.addAttachment(nextMessageAttachment);
+        viewModel.updateSelectedConnections({'server-b'});
+        viewModel.updateAllowedTools(viewModel.activeChatId!, {'tool-b'});
+        healthAdvisor.release();
+
+        expect(await approval, isA<ApprovePlanExecutionStarted>());
+        final executionMessage = viewModel.activeChat!.messages.lastWhere(
+          (message) => message.role == 'user',
+        );
+        expect(executionMessage.attachments, isEmpty);
+        expect(viewModel.pendingAttachments, [same(nextMessageAttachment)]);
+        await waitUntil(
+          () => viewModel.sending == false,
+          description: 'approved execution finishes',
+        );
+        expect(factory.lastSelectedConnectionIds, {'server-a'});
+        expect(factory.lastAllowedTools, {'tool-a'});
+        expect(viewModel.selectedConnectionIds, {'server-b'});
+      },
+    );
+
+    test(
       'generate assistant response failure with empty partialAnswer assigns agentRunId to error message',
       () async {
         await storageService.saveAiConnectionSettings(
@@ -658,6 +952,98 @@ void main() {
         );
       },
     );
+
+    test('Plan Mode transition is atomic and clears old approval', () async {
+      final viewModel = AiChatViewModel(
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+      );
+      addTearDown(viewModel.dispose);
+      await viewModel.loadInitialDraft();
+      final active = viewModel.activeChat!;
+      final approvedAt = DateTime.utc(2026, 7, 13, 12);
+      await viewModel.updateActiveChat(
+        active.copyWith(
+          approvedPlan: AiApprovedPlanRef(
+            assistantCreatedAt: approvedAt,
+            approvedAt: approvedAt,
+          ),
+        ),
+      );
+
+      final result = await viewModel.setPlanModeForActiveChat(
+        chatId: active.id,
+        enabled: true,
+      );
+
+      expect(result, SetPlanModeResult.updated);
+      expect(viewModel.activeChat!.planMode, isTrue);
+      expect(viewModel.activeChat!.approvedPlan, isNull);
+      final persisted = (await storageService.loadAiChats()).singleWhere(
+        (chat) => chat.id == active.id,
+      );
+      expect(persisted.planMode, isTrue);
+      expect(persisted.approvedPlan, isNull);
+    });
+
+    test('failed Plan Mode transition preserves memory and storage', () async {
+      final failingStorage = _FailPlanModeSaveStorage();
+      await failingStorage.init();
+      addTearDown(failingStorage.dispose);
+      final failingSsh = SshService(failingStorage);
+      final failingSftp = SftpService(failingStorage);
+      final failingMonitor = PerformanceMonitorService(
+        failingSsh,
+        failingStorage,
+      );
+      final failingPlaybooks = PlaybookService(
+        storageService: failingStorage,
+        sshService: failingSsh,
+      );
+      final failingRag = RagService(storageService: failingStorage);
+      final viewModel = AiChatViewModel(
+        storageService: failingStorage,
+        sshService: failingSsh,
+        sftpService: failingSftp,
+        performanceMonitorService: failingMonitor,
+        playbookService: failingPlaybooks,
+        ragService: failingRag,
+        appSettings: appSettings,
+      );
+      addTearDown(viewModel.dispose);
+      await viewModel.loadInitialDraft();
+      final active = viewModel.activeChat!;
+      await failingStorage.saveAiChat(active);
+      failingStorage.failNextAiChatSave = true;
+
+      final result = await viewModel.setPlanModeForActiveChat(
+        chatId: active.id,
+        enabled: true,
+      );
+
+      expect(result, SetPlanModeResult.failed);
+      expect(viewModel.activeChat!.planMode, isFalse);
+      expect(viewModel.activeChat!.approvedPlan, active.approvedPlan);
+      final persisted = (await failingStorage.loadAiChats()).singleWhere(
+        (chat) => chat.id == active.id,
+      );
+      expect(persisted.planMode, isFalse);
+      expect(persisted.approvedPlan, active.approvedPlan);
+
+      expect(
+        await viewModel.setPlanModeForActiveChat(
+          chatId: active.id,
+          enabled: true,
+        ),
+        SetPlanModeResult.updated,
+      );
+      expect(viewModel.activeChat!.planMode, isTrue);
+    });
   });
 }
 
@@ -671,6 +1057,19 @@ class _FailOnceInitialSettingsStorage extends StorageService {
       throw StateError(r'failed to read C:\private\settings.db');
     }
     return super.loadAiConnectionSettings();
+  }
+}
+
+class _FailPlanModeSaveStorage extends StorageService {
+  bool failNextAiChatSave = false;
+
+  @override
+  Future<void> saveAiChat(AiChatRecord chat) {
+    if (failNextAiChatSave) {
+      failNextAiChatSave = false;
+      throw StateError('Plan Mode save failed');
+    }
+    return super.saveAiChat(chat);
   }
 }
 
@@ -704,10 +1103,12 @@ class FailureLlmChatService extends LlmChatService {
 
 class FakeSuccessLlmChatService extends LlmChatService {
   final String finalOutcome;
+  final void Function(Set<String>, Set<String>?)? onStreamStarted;
 
   FakeSuccessLlmChatService({
     required super.storageService,
     this.finalOutcome = 'success',
+    this.onStreamStarted,
   }) : super(toolService: const _FakeAiToolExecutor());
 
   @override
@@ -730,6 +1131,10 @@ class FakeSuccessLlmChatService extends LlmChatService {
     bool planMode = false,
     AiChatMessageRecord? approvedPlanMessage,
   }) async* {
+    onStreamStarted?.call(
+      Set<String>.from(selectedConnectionIds),
+      allowedTools == null ? null : Set<String>.from(allowedTools),
+    );
     if (onTrace != null) {
       onTrace(
         LlmTraceEvent(
@@ -798,6 +1203,71 @@ class FakeHealthAdvisor implements ClientHealthAdvisorAdapter {
   }
 }
 
+class _GatedHealthAdvisor implements ClientHealthAdvisorAdapter {
+  final ClientRuntimeHealthStatus status;
+  final Completer<void> _started = Completer<void>();
+  final Completer<void> _release = Completer<void>();
+  var _checkCount = 0;
+
+  _GatedHealthAdvisor([this.status = ClientRuntimeHealthStatus.ok]);
+
+  Future<void> get started => _started.future;
+
+  void release() {
+    if (!_release.isCompleted) _release.complete();
+  }
+
+  @override
+  Future<ClientRuntimeHealthReport> check({
+    ClientHealthCheckProfile profile = ClientHealthCheckProfile.general,
+  }) async {
+    if (_checkCount++ == 0) {
+      if (!_started.isCompleted) _started.complete();
+      await _release.future;
+    }
+    return ClientRuntimeHealthReport(
+      status: status,
+      issues: status == ClientRuntimeHealthStatus.ok
+          ? const []
+          : [
+              ClientRuntimeHealthIssue(
+                code: 'battery_optimization_active',
+                severity: status,
+                title: 'Runtime warning',
+                detail: 'Runtime warning detail',
+                recommendation: 'Review runtime warning',
+              ),
+            ],
+      raw: const {},
+    );
+  }
+}
+
+class _GateNextChatSaveStorage extends StorageService {
+  Completer<void>? _chatSaveGate;
+  Completer<void>? _chatSaveStarted;
+
+  Future<void> get nextChatSaveStarted => _chatSaveStarted!.future;
+
+  void gateNextChatSave() {
+    _chatSaveGate = Completer<void>();
+    _chatSaveStarted = Completer<void>();
+  }
+
+  void releaseChatSave() => _chatSaveGate?.complete();
+
+  @override
+  Future<void> saveAiChat(AiChatRecord chat) async {
+    final gate = _chatSaveGate;
+    if (gate != null) {
+      _chatSaveStarted?.complete();
+      await gate.future;
+      _chatSaveGate = null;
+    }
+    return super.saveAiChat(chat);
+  }
+}
+
 class FakeFailureRuntimeFactory extends AiChatRuntimeFactory {
   FakeFailureRuntimeFactory({
     required super.storageService,
@@ -814,6 +1284,7 @@ class FakeFailureRuntimeFactory extends AiChatRuntimeFactory {
     required AiConnectionSettings settings,
     required String model,
     required String chatId,
+    AppLanguage language = AppLanguage.zh,
   }) {
     return FailureLlmChatService(storageService: storageService);
   }
@@ -821,6 +1292,9 @@ class FakeFailureRuntimeFactory extends AiChatRuntimeFactory {
 
 class FakeSuccessRuntimeFactory extends AiChatRuntimeFactory {
   final String finalOutcome;
+  Set<String>? lastSelectedConnectionIds;
+  Set<String>? lastAllowedTools;
+  AiConnectionSettings? lastSettings;
 
   FakeSuccessRuntimeFactory({
     required super.storageService,
@@ -838,10 +1312,38 @@ class FakeSuccessRuntimeFactory extends AiChatRuntimeFactory {
     required AiConnectionSettings settings,
     required String model,
     required String chatId,
+    AppLanguage language = AppLanguage.zh,
   }) {
+    lastSettings = settings;
     return FakeSuccessLlmChatService(
       storageService: storageService,
       finalOutcome: finalOutcome,
+      onStreamStarted: (selectedConnectionIds, allowedTools) {
+        lastSelectedConnectionIds = selectedConnectionIds;
+        lastAllowedTools = allowedTools;
+      },
     );
+  }
+}
+
+class _RecordingTurnRagService extends RagService {
+  String? receivedSearchMode;
+  int? receivedLimit;
+  bool receivedExpectedKey = false;
+
+  _RecordingTurnRagService({required super.storageService});
+
+  @override
+  Future<List<RagChunk>> retrieve(
+    String query, {
+    int limit = 3,
+    Set<String>? filterDocumentIds,
+    String? searchMode,
+    String? aliyunApiKey,
+  }) async {
+    receivedSearchMode = searchMode;
+    receivedLimit = limit;
+    receivedExpectedKey = aliyunApiKey == 'rag-key-a';
+    return const [];
   }
 }

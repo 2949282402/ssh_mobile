@@ -30,6 +30,36 @@ abstract interface class AiToolExecutor {
   AiCommandReview reviewCommand(String command, {ServerPlatform? platform});
 }
 
+/// Optional guard for binding a user approval to the exact remote target that
+/// was shown when the approval request was created.
+abstract interface class AiToolApprovalTargetGuard {
+  Future<bool> isApprovalTargetCurrent(AiToolApprovalRequest request);
+
+  Future<String> executeApproved(
+    AiToolApprovalRequest request,
+    Map<String, dynamic> arguments,
+  );
+}
+
+/// Immutable, non-secret authorization context captured before approval UI is
+/// shown. [resourceSnapshot] is process-local only and must never be logged or
+/// persisted.
+class AiToolApprovalExecutionBinding {
+  final Map<String, ConnectionTargetBinding> connectionTargets;
+  final String? resourceKind;
+  final String? resourceId;
+  final String? resourceFingerprint;
+  final Object? resourceSnapshot;
+
+  const AiToolApprovalExecutionBinding({
+    this.connectionTargets = const {},
+    this.resourceKind,
+    this.resourceId,
+    this.resourceFingerprint,
+    this.resourceSnapshot,
+  });
+}
+
 class AiToolApprovalRequest {
   final String toolName;
   final String approvalType;
@@ -41,6 +71,7 @@ class AiToolApprovalRequest {
   final int? byteLength;
   final String? contentPreview;
   final bool destructive;
+  final AiToolApprovalExecutionBinding? executionBinding;
 
   const AiToolApprovalRequest({
     required this.toolName,
@@ -53,7 +84,29 @@ class AiToolApprovalRequest {
     this.byteLength,
     this.contentPreview,
     this.destructive = false,
+    this.executionBinding,
   });
+
+  AiToolApprovalRequest copyWith({
+    String? connectionName,
+    String? command,
+    String? contentPreview,
+    AiToolApprovalExecutionBinding? executionBinding,
+  }) {
+    return AiToolApprovalRequest(
+      toolName: toolName,
+      approvalType: approvalType,
+      connectionId: connectionId,
+      connectionName: connectionName ?? this.connectionName,
+      command: command ?? this.command,
+      reason: reason,
+      targetPath: targetPath,
+      byteLength: byteLength,
+      contentPreview: contentPreview ?? this.contentPreview,
+      destructive: destructive,
+      executionBinding: executionBinding ?? this.executionBinding,
+    );
+  }
 }
 
 class AiToolApprovalDecision {

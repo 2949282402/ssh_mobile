@@ -12,29 +12,63 @@ class SftpDirectoryCacheEntry {
 }
 
 class SftpDirectoryCache {
-  final Map<String, SftpDirectoryCacheEntry> _cache = {};
+  final Map<String, Map<String, Map<String, SftpDirectoryCacheEntry>>> _cache =
+      {};
 
-  List<SftpEntry>? get(String connectionId, String path) {
-    final key = '$connectionId:$path';
-    final entry = _cache[key];
+  List<SftpEntry>? get(
+    String connectionId,
+    String targetFingerprint,
+    String path,
+  ) {
+    final targetCache = _cache[connectionId]?[targetFingerprint];
+    final entry = targetCache?[path];
     if (entry == null) return null;
     if (entry.isExpired) {
-      _cache.remove(key);
+      targetCache!.remove(path);
+      _prune(connectionId, targetFingerprint);
       return null;
     }
     return entry.entries;
   }
 
-  void set(String connectionId, String path, List<SftpEntry> entries) {
-    final key = '$connectionId:$path';
-    _cache[key] = SftpDirectoryCacheEntry(entries);
+  void set(
+    String connectionId,
+    String targetFingerprint,
+    String path,
+    List<SftpEntry> entries,
+  ) {
+    final connectionCache = _cache.putIfAbsent(connectionId, () => {});
+    final targetCache = connectionCache.putIfAbsent(
+      targetFingerprint,
+      () => {},
+    );
+    targetCache[path] = SftpDirectoryCacheEntry(entries);
   }
 
-  void invalidate(String connectionId, [String? path]) {
+  void invalidate(
+    String connectionId,
+    String targetFingerprint, [
+    String? path,
+  ]) {
     if (path != null) {
-      _cache.remove('$connectionId:$path');
+      _cache[connectionId]?[targetFingerprint]?.remove(path);
+      _prune(connectionId, targetFingerprint);
     } else {
-      _cache.removeWhere((key, _) => key.startsWith('$connectionId:'));
+      _cache[connectionId]?.remove(targetFingerprint);
+      if (_cache[connectionId]?.isEmpty ?? false) {
+        _cache.remove(connectionId);
+      }
+    }
+  }
+
+  void _prune(String connectionId, String targetFingerprint) {
+    final connectionCache = _cache[connectionId];
+    if (connectionCache == null) return;
+    if (connectionCache[targetFingerprint]?.isEmpty ?? false) {
+      connectionCache.remove(targetFingerprint);
+    }
+    if (connectionCache.isEmpty) {
+      _cache.remove(connectionId);
     }
   }
 
@@ -52,27 +86,46 @@ class SftpFileCache {
 
   static String _getConnectionHash(String connectionId) => _hash(connectionId);
 
-  static String _getPathHash(String connectionId, String path) =>
+  static String _getTargetHash(String targetFingerprint) =>
+      _hash(targetFingerprint);
+
+  static String _getPathHash(String path) => _hash(path);
+
+  static String _getLegacyPathHash(String connectionId, String path) =>
       _hash('$connectionId:$path');
 
   static bool isCacheablePath(String path) =>
       _secretPolicy.suspiciousPathReason(path) == null;
 
-  static Future<File?> _findCachedFile(String connectionId, String path) async {
+  static Future<File?> _findCachedFile(
+    String connectionId,
+    String targetFingerprint,
+    String path,
+  ) async {
     try {
       final tempDir = await getTemporaryDirectory();
       final connectionHash = _getConnectionHash(connectionId);
-      final pathHash = _getPathHash(connectionId, path);
-      final prefix = 'sftp_cache_${connectionHash}_${pathHash}_';
-      final legacyPrefix = 'sftp_cache_${pathHash}_';
+      final targetHash = _getTargetHash(targetFingerprint);
+      final pathHash = _getPathHash(path);
+      final prefix = 'sftp_cache_${connectionHash}_${targetHash}_${pathHash}_';
+      final legacyPathHash = _getLegacyPathHash(connectionId, path);
+      final previousPrefix = 'sftp_cache_${connectionHash}_${legacyPathHash}_';
+      final legacyPrefix = 'sftp_cache_${legacyPathHash}_';
+      File? legacyFile;
       final list = tempDir.listSync();
       for (final entity in list) {
         if (entity is! File) continue;
         final name = p.basename(entity.path);
-        if (name.startsWith(prefix) || name.startsWith(legacyPrefix)) {
+        if (name.startsWith(prefix)) {
           return entity;
         }
+        if (legacyFile == null &&
+            (name.startsWith(previousPrefix) ||
+                name.startsWith(legacyPrefix))) {
+          legacyFile = entity;
+        }
       }
+      return legacyFile;
     } catch (_) {
       // ignore
     }
@@ -81,22 +134,27 @@ class SftpFileCache {
 
   static Future<Uint8List?> get(
     String connectionId,
+    String targetFingerprint,
     String path,
     int? size,
     DateTime? modifiedAt,
   ) async {
     if (!isCacheablePath(path)) {
-      await invalidate(connectionId, path);
+      await invalidate(connectionId, targetFingerprint, path);
       return null;
     }
     try {
-      final cachedFile = await _findCachedFile(connectionId, path);
+      final cachedFile = await _findCachedFile(
+        connectionId,
+        targetFingerprint,
+        path,
+      );
       if (cachedFile != null) {
         final filename = p.basename(cachedFile.path);
         final parts = filename.split('_');
-        if (parts.length >= 6) {
-          final cachedSize = int.tryParse(parts[4]);
-          final cachedTime = int.tryParse(parts[5]);
+        if (parts.length >= 7) {
+          final cachedSize = int.tryParse(parts[5]);
+          final cachedTime = int.tryParse(parts[6]);
           if (cachedSize == size &&
               cachedTime == (modifiedAt?.millisecondsSinceEpoch ?? 0)) {
             final encryptedBytes = await cachedFile.readAsBytes();
@@ -120,14 +178,6 @@ class SftpFileCache {
               return null;
             }
           }
-        } else if (parts.length >= 5) {
-          final cachedSize = int.tryParse(parts[3]);
-          final cachedTime = int.tryParse(parts[4]);
-          if (cachedSize == size &&
-              cachedTime == (modifiedAt?.millisecondsSinceEpoch ?? 0)) {
-            await cachedFile.delete();
-            return null;
-          }
         }
         await cachedFile.delete();
       }
@@ -139,13 +189,14 @@ class SftpFileCache {
 
   static Future<void> put(
     String connectionId,
+    String targetFingerprint,
     String path,
     int? size,
     DateTime? modifiedAt,
     Uint8List bytes,
   ) async {
     if (!isCacheablePath(path)) {
-      await invalidate(connectionId, path);
+      await invalidate(connectionId, targetFingerprint, path);
       AppLogService.instance.info(
         'SFTP preview Cache skipped for sensitive path',
         details: 'path=$path',
@@ -153,20 +204,26 @@ class SftpFileCache {
       return;
     }
     try {
-      final stale = await _findCachedFile(connectionId, path);
+      final stale = await _findCachedFile(
+        connectionId,
+        targetFingerprint,
+        path,
+      );
       if (stale != null) {
         await stale.delete();
       }
 
       final tempDir = await getTemporaryDirectory();
       final connectionHash = _getConnectionHash(connectionId);
-      final pathHash = _getPathHash(connectionId, path);
+      final targetHash = _getTargetHash(targetFingerprint);
+      final pathHash = _getPathHash(path);
       final sizeStr = (size ?? 0).toString();
       final timeStr = (modifiedAt?.millisecondsSinceEpoch ?? 0).toString();
       final file = File(
         p.join(
           tempDir.path,
-          'sftp_cache_${connectionHash}_${pathHash}_${sizeStr}_$timeStr',
+          'sftp_cache_${connectionHash}_${targetHash}_${pathHash}_'
+          '${sizeStr}_$timeStr',
         ),
       );
       final encryptedBytes = await DataProtectionService.instance.encryptBytes(
@@ -182,9 +239,17 @@ class SftpFileCache {
     }
   }
 
-  static Future<void> invalidate(String connectionId, String path) async {
+  static Future<void> invalidate(
+    String connectionId,
+    String targetFingerprint,
+    String path,
+  ) async {
     try {
-      final cachedFile = await _findCachedFile(connectionId, path);
+      final cachedFile = await _findCachedFile(
+        connectionId,
+        targetFingerprint,
+        path,
+      );
       if (cachedFile != null) {
         await cachedFile.delete();
         AppLogService.instance.info(

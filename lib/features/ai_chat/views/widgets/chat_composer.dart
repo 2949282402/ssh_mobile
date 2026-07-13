@@ -1,6 +1,121 @@
 part of '../llm_chat_screen.dart';
 
+@visibleForTesting
+Future<bool> closePlanModeBannerForInput({
+  required TextEditingController controller,
+  required bool persistedPlanMode,
+  required Future<bool> Function() disablePersistedPlanMode,
+}) async {
+  if (persistedPlanMode) {
+    final disabled = await disablePersistedPlanMode();
+    if (!disabled) return false;
+  }
+  // Re-read after persistence: the user may keep editing while the save is in
+  // flight. Only remove a Plan token that is still present in the live draft.
+  final parsedCommand = parsePlanCommand(controller.text);
+  if (parsedCommand != null) {
+    final arguments = parsedCommand.arguments;
+    controller.value = TextEditingValue(
+      text: arguments,
+      selection: TextSelection.collapsed(offset: arguments.length),
+    );
+  }
+  return true;
+}
+
+class ChatPlanModeBanner extends StatelessWidget {
+  final AiStrings strings;
+  final bool persistedPlanMode;
+  final bool busy;
+  final VoidCallback? onClose;
+
+  const ChatPlanModeBanner({
+    super.key,
+    required this.strings,
+    required this.persistedPlanMode,
+    required this.busy,
+    required this.onClose,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final closeLabel = persistedPlanMode
+        ? strings.planModeDisableAction
+        : strings.planModeRemoveCommand;
+    return Semantics(
+      container: true,
+      selected: true,
+      label: '${strings.planMode}. ${strings.planModeReadOnlyHint}',
+      child: Material(
+        key: const ValueKey<String>('plan-mode-banner'),
+        color: colorScheme.surfaceContainerHigh,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: colorScheme.outlineVariant),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.only(left: 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.edit_note_rounded,
+                size: 20,
+                color: colorScheme.primary,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        strings.planMode,
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: colorScheme.onSurface,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        strings.planModeReadOnlyHint,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                          height: 1.25,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              IconButton(
+                key: const ValueKey<String>('plan-mode-banner-close'),
+                tooltip: closeLabel,
+                style: IconButton.styleFrom(
+                  minimumSize: const Size.square(48),
+                  foregroundColor: colorScheme.onSurfaceVariant,
+                ),
+                onPressed: busy ? null : onClose,
+                icon: busy
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.close_rounded, size: 20),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ChatComposer extends StatefulWidget {
+  final double availableHeight;
   final TextEditingController inputController;
   final FocusNode inputFocusNode;
   final bool toolsExpanded;
@@ -9,6 +124,7 @@ class _ChatComposer extends StatefulWidget {
   final VoidCallback onStop;
 
   const _ChatComposer({
+    required this.availableHeight,
     required this.inputController,
     required this.inputFocusNode,
     required this.toolsExpanded,
@@ -23,6 +139,7 @@ class _ChatComposer extends StatefulWidget {
 
 class _ChatComposerState extends State<_ChatComposer> {
   late final ValueNotifier<String> _textNotifier;
+  bool _planModeUiInFlight = false;
 
   @override
   void initState() {
@@ -44,6 +161,44 @@ class _ChatComposerState extends State<_ChatComposer> {
     }
   }
 
+  Future<bool> _setPlanMode({
+    required BuildContext context,
+    required AiChatRecord chat,
+    required bool enabled,
+    required AiStrings strings,
+  }) async {
+    if (_planModeUiInFlight) return false;
+    setState(() => _planModeUiInFlight = true);
+    try {
+      return await LlmChatCommandsHelper.setPlanModeFromUi(
+        context: context,
+        chat: chat,
+        enabled: enabled,
+        strings: strings,
+      );
+    } finally {
+      if (mounted) setState(() => _planModeUiInFlight = false);
+    }
+  }
+
+  Future<void> _closePlanModeBanner({
+    required BuildContext context,
+    required _ComposerSnapshot snapshot,
+    required AiChatRecord chat,
+    required AiStrings strings,
+  }) async {
+    await closePlanModeBannerForInput(
+      controller: widget.inputController,
+      persistedPlanMode: snapshot.planMode,
+      disablePersistedPlanMode: () => _setPlanMode(
+        context: context,
+        chat: chat,
+        enabled: false,
+        strings: strings,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -62,6 +217,7 @@ class _ChatComposerState extends State<_ChatComposer> {
           chatId: activeChat.id,
           planMode: activeChat.planMode,
           sending: vm.sending,
+          planApprovalInFlight: vm.planApprovalInFlight,
           hasPendingAttachments: vm.pendingAttachments.isNotEmpty,
           pendingAttachmentsCount: vm.pendingAttachments.length,
           selectedConnectionIds: Set<String>.unmodifiable(
@@ -79,8 +235,9 @@ class _ChatComposerState extends State<_ChatComposer> {
         return ConstrainedBox(
           constraints: BoxConstraints(
             maxHeight: chatComposerMaxHeightFor(
-              viewportHeight: mediaQuery.size.height,
-              keyboardInset: mediaQuery.viewInsets.bottom,
+              viewportHeight: widget.availableHeight,
+              keyboardInset: 0,
+              textScale: mediaQuery.textScaler.scale(14) / 14,
             ),
           ),
           child: DecoratedBox(
@@ -119,7 +276,6 @@ class _ChatComposerState extends State<_ChatComposer> {
                             viewModel: viewModel,
                             state: state,
                             strings: strings,
-                            colorScheme: colorScheme,
                           ),
                         ),
                       ),
@@ -147,7 +303,6 @@ class _ChatComposerState extends State<_ChatComposer> {
     required AiChatViewModel viewModel,
     required _LlmChatScreenBodyState state,
     required AiStrings strings,
-    required ColorScheme colorScheme,
   }) {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -158,7 +313,6 @@ class _ChatComposerState extends State<_ChatComposer> {
           snapshot: snapshot,
           activeChat: activeChat,
           strings: strings,
-          colorScheme: colorScheme,
         ),
         ValueListenableBuilder<String>(
           valueListenable: _textNotifier,
@@ -191,6 +345,10 @@ class _ChatComposerState extends State<_ChatComposer> {
                     planModeLabel: strings.planMode,
                     playbooksLabel: strings.playbooks,
                     isPlanModeActive: snapshot.planMode,
+                    isPlanModeBusy:
+                        _planModeUiInFlight ||
+                        snapshot.sending ||
+                        snapshot.planApprovalInFlight,
                     onServerTap: () => state._selectTargetServer(strings),
                     onSkillsTap: () {
                       Navigator.pushNamed(context, '/ai-skills');
@@ -209,13 +367,12 @@ class _ChatComposerState extends State<_ChatComposer> {
                     ),
                     onRagTap: () => ChatRagSheet.show(context, strings),
                     onPromptTap: () => state._showPromptCustomizer(strings),
-                    onPlanModeTap: () =>
-                        LlmChatCommandsHelper.setPlanModeFromUi(
-                          context: context,
-                          chat: activeChat,
-                          enabled: !snapshot.planMode,
-                          strings: strings,
-                        ),
+                    onPlanModeTap: () => _setPlanMode(
+                      context: context,
+                      chat: activeChat,
+                      enabled: !snapshot.planMode,
+                      strings: strings,
+                    ),
                     onPlaybooksTap: () {
                       Navigator.pushNamed(context, '/playbooks');
                     },
@@ -232,64 +389,35 @@ class _ChatComposerState extends State<_ChatComposer> {
     required _ComposerSnapshot snapshot,
     required AiChatRecord activeChat,
     required AiStrings strings,
-    required ColorScheme colorScheme,
   }) {
+    final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+    if (!shouldShowPlanModeBannerForAvailableHeight(
+      availableHeight: widget.availableHeight,
+      textScale: textScale,
+    )) {
+      return const SizedBox.shrink();
+    }
     return ValueListenableBuilder<String>(
       valueListenable: _textNotifier,
       builder: (context, text, _) {
-        final isPlanInput = text.trim().startsWith('/plan');
+        final isPlanInput = parsePlanCommand(text) != null;
         final showPlanMode = snapshot.planMode || isPlanInput;
         if (!showPlanMode) return const SizedBox.shrink();
-        return Container(
-          margin: const EdgeInsets.only(bottom: 8),
-          padding: const EdgeInsets.only(left: 10),
-          decoration: BoxDecoration(
-            color: colorScheme.primaryContainer,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: colorScheme.primary.withValues(alpha: 0.24),
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: ChatPlanModeBanner(
+            strings: strings,
+            persistedPlanMode: snapshot.planMode,
+            busy:
+                _planModeUiInFlight ||
+                snapshot.sending ||
+                snapshot.planApprovalInFlight,
+            onClose: () => _closePlanModeBanner(
+              context: context,
+              snapshot: snapshot,
+              chat: activeChat,
+              strings: strings,
             ),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                Icons.edit_note_rounded,
-                size: 18,
-                color: colorScheme.onPrimaryContainer,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  strings.language == AppLanguage.en
-                      ? 'Plan Mode Active (Read-only diagnostics & planning)'
-                      : '规划模式已启用 (仅进行只读诊断与方案规划)',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: colorScheme.onPrimaryContainer,
-                  ),
-                ),
-              ),
-              IconButton(
-                tooltip: strings.close,
-                style: IconButton.styleFrom(
-                  minimumSize: const Size.square(48),
-                  foregroundColor: colorScheme.onPrimaryContainer,
-                ),
-                onPressed: () async {
-                  if (isPlanInput) widget.inputController.clear();
-                  if (snapshot.planMode) {
-                    await LlmChatCommandsHelper.setPlanModeFromUi(
-                      context: context,
-                      chat: activeChat,
-                      enabled: false,
-                      strings: strings,
-                    );
-                  }
-                },
-                icon: const Icon(Icons.close_rounded, size: 18),
-              ),
-            ],
           ),
         );
       },

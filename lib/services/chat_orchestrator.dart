@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import '../features/playbook/models/playbook.dart';
 import 'chat_context_assembler.dart';
+import 'connection_target_binding.dart';
 import 'operational_memory_retriever.dart';
 import 'storage_service.dart';
 import 'app_settings.dart';
@@ -48,13 +49,20 @@ class ChatOrchestrator {
     required AppLanguage language,
     required List<AiChatAttachment> attachments,
     Set<String> selectedConnectionIds = const {},
+    Map<String, ConnectionTargetBinding> connectionTargets = const {},
     AiApprovedPlanRef? approvedPlanRef,
     bool ragEnabled = false,
+    String ragSearchMode = 'bm25',
+    int ragLimit = 3,
+    String ragAliyunApiKey = '',
   }) async {
     final memory = await memoryRetriever.retrieve(
       query: text,
       selectedConnectionIds: selectedConnectionIds,
       ragEnabled: ragEnabled,
+      ragSearchMode: ragSearchMode,
+      ragLimit: ragLimit,
+      ragAliyunApiKey: ragAliyunApiKey,
     );
     final approvedPlanMessage = approvedPlanRef == null
         ? null
@@ -65,6 +73,7 @@ class ChatOrchestrator {
       userText: text,
       language: language,
       selectedConnectionIds: selectedConnectionIds,
+      connectionTargets: connectionTargets,
       ragChunks: memory.ragChunks,
       memoryHits: memory.hits,
       approvedPlanMessage: approvedPlanMessage,

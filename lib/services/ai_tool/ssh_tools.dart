@@ -46,7 +46,11 @@ class SshToolsProvider implements AiToolProvider {
         },
         required: const ['sessionId', 'connectionId'],
         executionMode: AiToolExecutionMode.stateChanging,
-        handler: (args) => _sshEnsureSessionConnected(service, args),
+        handler: (arguments) => _sshEnsureSessionConnected(
+          service,
+          arguments,
+          approvedWrite: false,
+        ),
       ),
       AiTool(
         name: 'ssh_rename_session',
@@ -79,15 +83,6 @@ class SshToolsProvider implements AiToolProvider {
         executionMode: AiToolExecutionMode.stateChanging,
         handler: (arguments) =>
             _sshCloseServerSessions(service, arguments, approvedWrite: false),
-      ),
-      AiTool(
-        name: 'ssh_restore_tmux_sessions',
-        description:
-            'Restore saved tmux-backed SSH sessions after an app restart. Returns summary metadata only.',
-        properties: const {},
-        executionMode: AiToolExecutionMode.stateChanging,
-        handler: (arguments) =>
-            _sshRestoreTmuxSessions(service, arguments, approvedWrite: false),
       ),
       AiTool(
         name: 'ssh_list_terminal_history',
@@ -137,7 +132,11 @@ class SshToolsProvider implements AiToolProvider {
           approvedWrite: approvedWrite,
         );
       case 'ssh_ensure_session_connected':
-        return _sshEnsureSessionConnected(service, arguments);
+        return _sshEnsureSessionConnected(
+          service,
+          arguments,
+          approvedWrite: approvedWrite,
+        );
       case 'ssh_rename_session':
         return _sshRenameSession(service, arguments);
       case 'ssh_close_session':
@@ -231,10 +230,44 @@ class SshToolsProvider implements AiToolProvider {
 
   Future<String> _sshEnsureSessionConnected(
     AiToolService service,
-    Map<String, dynamic> arguments,
-  ) async {
+    Map<String, dynamic> arguments, {
+    required bool approvedWrite,
+  }) async {
     final sessionId = service._arg(arguments, 'sessionId');
     final connectionId = service._arg(arguments, 'connectionId');
+    if (!approvedWrite) {
+      return jsonEncode({
+        'error': 'Connecting an SSH session requires user approval.',
+        'sessionId': sessionId,
+        'connectionId': connectionId,
+      });
+    }
+    final approvalBinding = service.activeApprovalExecutionBinding;
+    if (approvalBinding?.resourceKind == 'ssh_session' &&
+        approvalBinding?.resourceId != sessionId) {
+      return jsonEncode({
+        'error':
+            'The approved SSH session changed before execution. Review it and approve again.',
+        'code': 'approval_target_changed',
+        'sessionId': sessionId,
+      });
+    }
+    final existing = sshService.getSession(sessionId);
+    if (existing == null) {
+      return jsonEncode({
+        'error': 'The SSH session no longer exists.',
+        'code': 'session_not_found',
+        'sessionId': sessionId,
+      });
+    }
+    if (existing.connectionId != connectionId) {
+      return jsonEncode({
+        'error': 'The SSH session does not belong to the approved server.',
+        'code': 'session_connection_mismatch',
+        'sessionId': sessionId,
+        'connectionId': connectionId,
+      });
+    }
     final connected = await sshService.ensureSessionConnected(
       sessionId,
       connectionId,

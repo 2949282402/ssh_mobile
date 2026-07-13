@@ -162,6 +162,10 @@ void main() {
 
         final firstApproval = viewModel.approvePlanAndExecute(planCreatedAt);
 
+        await waitUntil(
+          () => healthAdvisor.checks == 1,
+          description: 'approval reaches delayed health check',
+        );
         expect(healthAdvisor.checks, 1);
         expect(viewModel.planApprovalInFlight, isTrue);
         final duplicateApproval = await viewModel.approvePlanAndExecute(
@@ -820,15 +824,25 @@ class _GateNextSettingsLoadStorage extends StorageService {
     _settingsGate?.complete();
   }
 
-  @override
-  Future<AiConnectionSettings> loadAiConnectionSettings() async {
+  Future<void> _waitForSettingsGate() async {
     final gate = _settingsGate;
     if (gate != null) {
       _settingsStarted?.complete();
       await gate.future;
       _settingsGate = null;
     }
+  }
+
+  @override
+  Future<AiConnectionSettings> loadAiConnectionSettings() async {
+    await _waitForSettingsGate();
     return super.loadAiConnectionSettings();
+  }
+
+  @override
+  Future<AiRuntimeConnectionSnapshot> loadAiRuntimeConnectionSnapshot() async {
+    await _waitForSettingsGate();
+    return super.loadAiRuntimeConnectionSnapshot();
   }
 }
 
@@ -894,6 +908,7 @@ class _PlanRuntimeFactory extends AiChatRuntimeFactory {
     required AiConnectionSettings settings,
     required String model,
     required String chatId,
+    AppLanguage language = AppLanguage.zh,
   }) {
     return _PlanLlmChatService(
       storageService: storageService,

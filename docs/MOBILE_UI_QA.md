@@ -144,11 +144,81 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   their persisted state is committed.
   Missing credentials or storage failures leave the plan pending, partial
   plans that remain in Plan Mode cannot execute, and `/plan` always clears an
-  older approval. Client-tool TODO writes remain authoritative through success,
-  cancellation, and failure while streamed response text and traces are kept.
+  older approval. Attachments added while approval health checks are running
+  remain queued for the next ordinary message and are never consumed by the
+  synthetic approved-plan execution turn. The approved turn also keeps the
+  server targets, allowed tools, RAG enablement/mode/top-N, Aliyun RAG key, and
+  response language captured at approval time through both context preparation
+  and the generation runner; later composer or settings changes apply only to
+  the next message. Each selected server is represented by an immutable,
+  non-secret routing/authentication binding rather than an ID alone, so context
+  assembly and read-only tools cannot drift to a replacement server while a
+  turn is waiting. Provider URL, model, API format, provider key, and Quark
+  endpoint/key are loaded as one in-memory runtime snapshot at the
+  action's first asynchronous boundary. `/plan <request>` captures it before
+  Plan persistence, Plan approval captures it before runtime health checks,
+  and a forced warning continuation reuses the original snapshot. Tool schema
+  exposure and web-search execution use that same snapshot, so settings saved
+  while a turn is pending cannot mix providers, endpoints, or credentials.
+  Ordinary sends—including `/plan <request>`—capture composer inputs before
+  any slash-command persistence await, so a late picker result cannot change
+  the submitted turn. Client-tool TODO writes remain authoritative through
+  success, cancellation, and failure while streamed response text and traces
+  are kept.
   Stopping during send preparation prevents generation from starting, and
   deleting a streaming chat cancels its run without restoring the deleted
   record during asynchronous completion.
+  Plan Mode UI uses the same exact, case-insensitive `/plan` token parser as
+  the send path, so `/planet` and similar text remain ordinary input. Its
+  neutral status card and selected tool semantics expose 48 dp actions, block
+  mode changes during generation or approval, and preserve command arguments
+  when a persisted mode change fails. Execution approval stays in a fixed
+  decision area above the composer with explicit Revise and Approve actions;
+  it stacks safely at 320 dp/2K DPR with 200% text, announces busy state, and
+  dispatches every preflight result, including the forced result after a
+  warning. Remote tool approval binds the exact non-secret target snapshot and
+  resolves matching credentials atomically at the SSH/SFTP socket boundary;
+  replacing or editing a target while approval is open invalidates the action.
+  SSH reconnects also bind the exact session identity, while SFTP caches include
+  the target fingerprint so a reused connection ID cannot expose stale data.
+  Server-metadata approvals freeze both the full current and candidate
+  connection snapshots and apply the update with compare-and-swap semantics.
+  Playbook approvals additionally freeze command steps and compare-and-swap the
+  saved playbook before every next step; skipping an in-flight step waits for
+  that command rather than launching another command concurrently. Skill
+  updates use the same resource guard, and monitor approvals require and bind
+  the complete non-empty selected-server set across periodic samples and
+  retries. The redundant AI tmux-restore tool is not exposed; startup-owned
+  automatic restoration remains the sole path. Any target or resource drift
+  executes nothing further until the user reviews and approves again. Missing
+  API credentials open LLM settings once. Composer
+  drafts are stored per chat ID, remain selectable in history before the first
+  message, and survive creating another chat even after the user has switched to a
+  saved conversation. New-chat model loading is single-flight and captures
+  composer edits only after its asynchronous settings read, so text entered
+  during that wait remains attached to the original chat. A stale New-chat
+  request is discarded if the user selects another conversation while the
+  model loads. If a newer send or persisted state write owns the chat lock when
+  model loading completes, New chat reports a localized busy result instead of
+  silently dropping the request. Pending diagnostic prompts no longer replace
+  or consume an existing draft. On a nested-Scaffold
+  landscape keyboard viewport, the
+  actual body constraint—not a consumed MediaQuery inset—drives the compact
+  layout: the header, fixed approval card, and Plan status card yield before
+  any 48 dp action is clipped; the input remains reachable and the hidden Plan
+  controls return when sufficient height is restored. Narrow 320 dp approval
+  layouts account for stacked actions and scale their visibility threshold
+  from 360 dp at standard text to 460 dp at 200% text before becoming visible.
+  The decision card temporarily yields while the user is composing, browsing
+  slash commands or tools, or staging attachments, then returns with an empty
+  composer so auxiliary UI cannot collide with its actions.
+  Whole-chat writes now share one save transaction across Plan changes, TODO
+  retry/skip, regenerate, edit, and branch actions. Slow or failed persistence
+  cannot apply a stale record, reactivate the prior chat, or let a late history
+  snapshot replace a newer Plan state; streaming-chat deletion retains its
+  existing cancellation exception to that lock. Failed history loads always
+  clear their busy state and remain retryable, while branching before the
+  first history open still loads older persisted conversations.
   Prompt customization keeps the active draft when switching type or toggling
   customization, confirms before discarding unsaved text, exposes retry/save
   failures, and reduces compact-height layouts to a 48 dp type selector plus

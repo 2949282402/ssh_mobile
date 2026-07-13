@@ -8,6 +8,7 @@ import '../../../services/ai_tool_service.dart';
 import '../../../services/agent_model_profile.dart';
 import '../../../services/app_log_service.dart';
 import '../../../services/app_settings.dart';
+import '../../../services/connection_target_binding.dart';
 import '../../../services/multi_agent_coordinator.dart';
 import '../../../services/storage_service.dart';
 import '../../../services/tool_exposure_router.dart';
@@ -87,6 +88,8 @@ class LlmChatService implements LlmClientAdapter {
   final String customReviewerPrompt;
   final String customSummarizerPrompt;
   final String customCoordinatorPrompt;
+  AiConnectionSettings? _runtimeSettings;
+  String? _runtimeApiKey;
   final ToolSecretPolicy _toolSecretPolicy = const ToolSecretPolicy();
 
   LlmChatService({
@@ -106,6 +109,27 @@ class LlmChatService implements LlmClientAdapter {
   }) : multiAgentCoordinator =
            multiAgentCoordinator ?? const MultiAgentCoordinator(),
        toolExposureRouter = toolExposureRouter ?? const ToolExposureRouter();
+
+  /// Binds one immutable provider/key pair for a single generation run.
+  /// The secret is memory-only and must never be logged or serialized.
+  void bindRuntimeConnectionSnapshot(AiRuntimeConnectionSnapshot snapshot) {
+    _runtimeSettings = snapshot.settings;
+    _runtimeApiKey = snapshot.apiKey;
+    final executor = toolService;
+    if (executor is AiToolService) {
+      executor.bindRuntimeConnectionSnapshot(snapshot);
+    }
+  }
+
+  /// Binds the exact non-secret server targets selected when this turn began.
+  void bindConnectionTargets(
+    Map<String, ConnectionTargetBinding> connectionTargets,
+  ) {
+    final executor = toolService;
+    if (executor is AiToolService) {
+      executor.bindConnectionTargets(connectionTargets);
+    }
+  }
 
   String get systemPrompt {
     return systemPromptFor(planMode: false);

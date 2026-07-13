@@ -1,5 +1,6 @@
 import 'approved_plan_context.dart';
 import 'app_settings.dart';
+import 'connection_target_binding.dart';
 import 'operational_memory_retriever.dart';
 import 'storage_service.dart';
 import '../utils/text_chunker.dart';
@@ -13,19 +14,30 @@ class ChatContextAssembler {
     required String userText,
     required AppLanguage language,
     Set<String> selectedConnectionIds = const {},
+    Map<String, ConnectionTargetBinding> connectionTargets = const {},
     List<RagChunk> ragChunks = const [],
     List<OperationalMemoryHit> memoryHits = const [],
     AiChatMessageRecord? approvedPlanMessage,
   }) async {
     final lines = <String>[];
-    if (selectedConnectionIds.isNotEmpty) {
+    if (connectionTargets.isNotEmpty || selectedConnectionIds.isNotEmpty) {
       final serverInfos = <String>[];
-      for (final id in selectedConnectionIds) {
-        final connection = storageService.getConnection(id);
-        if (connection == null) continue;
-        serverInfos.add(
-          '- ${connection.name} (id: ${connection.id}, host: ${connection.username}@${connection.host}:${connection.port})',
-        );
+      final frozenTargets = connectionTargets.values;
+      if (frozenTargets.isNotEmpty) {
+        for (final target in frozenTargets) {
+          final connection = target.config;
+          serverInfos.add(
+            '- ${connection.name} (id: ${connection.id}, host: ${connection.username}@${connection.host}:${connection.port})',
+          );
+        }
+      } else {
+        for (final id in selectedConnectionIds) {
+          final connection = storageService.getConnection(id);
+          if (connection == null) continue;
+          serverInfos.add(
+            '- ${connection.name} (id: ${connection.id}, host: ${connection.username}@${connection.host}:${connection.port})',
+          );
+        }
       }
       if (serverInfos.isNotEmpty) {
         lines.add('Target servers:\n${serverInfos.join('\n')}');

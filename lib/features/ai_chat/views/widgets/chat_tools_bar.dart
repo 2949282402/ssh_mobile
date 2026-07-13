@@ -11,6 +11,7 @@ class ChatToolsBar extends StatelessWidget {
   final String planModeLabel;
   final String playbooksLabel;
   final bool isPlanModeActive;
+  final bool isPlanModeBusy;
   final VoidCallback onServerTap;
   final VoidCallback onSkillsTap;
   final VoidCallback onWebViewTap;
@@ -33,6 +34,7 @@ class ChatToolsBar extends StatelessWidget {
     required this.planModeLabel,
     required this.playbooksLabel,
     required this.isPlanModeActive,
+    this.isPlanModeBusy = false,
     required this.onServerTap,
     required this.onSkillsTap,
     required this.onWebViewTap,
@@ -115,11 +117,15 @@ class ChatToolsBar extends StatelessWidget {
                 onPressed: onPlaybooksTap,
               ),
               _ChatToolTile(
+                tileKey: const ValueKey<String>('chat-tool-plan-mode'),
                 width: tileWidth,
                 icon: Icons.edit_note_rounded,
                 label: Text(planModeLabel),
-                onPressed: onPlanModeTap,
+                onPressed: isPlanModeBusy ? null : onPlanModeTap,
                 isActive: isPlanModeActive,
+                isBusy: isPlanModeBusy,
+                semanticLabel: planModeLabel,
+                selected: isPlanModeActive,
               ),
             ],
           );
@@ -130,24 +136,33 @@ class ChatToolsBar extends StatelessWidget {
 }
 
 class _ChatToolTile extends StatelessWidget {
+  final Key? tileKey;
   final double width;
   final IconData icon;
   final Widget label;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
   final bool isActive;
+  final bool isBusy;
+  final String? semanticLabel;
+  final bool? selected;
 
   const _ChatToolTile({
+    this.tileKey,
     required this.width,
     required this.icon,
     required this.label,
     required this.onPressed,
     this.isActive = false,
+    this.isBusy = false,
+    this.semanticLabel,
+    this.selected,
   });
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return SizedBox(
+    final tile = SizedBox(
+      key: semanticLabel == null ? tileKey : null,
       width: width,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 64),
@@ -173,13 +188,18 @@ class _ChatToolTile extends StatelessWidget {
                           : colorScheme.outlineVariant,
                     ),
                   ),
-                  child: Icon(
-                    icon,
-                    size: 20,
-                    color: isActive
-                        ? colorScheme.onPrimaryContainer
-                        : colorScheme.primary,
-                  ),
+                  child: isBusy
+                      ? const Padding(
+                          padding: EdgeInsets.all(9),
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Icon(
+                          icon,
+                          size: 20,
+                          color: isActive
+                              ? colorScheme.onPrimaryContainer
+                              : colorScheme.primary,
+                        ),
                 ),
                 const SizedBox(height: 4),
                 DefaultTextStyle.merge(
@@ -201,6 +221,18 @@ class _ChatToolTile extends StatelessWidget {
           ),
         ),
       ),
+    );
+    if (semanticLabel == null) return tile;
+    return Semantics(
+      key: tileKey,
+      container: true,
+      button: true,
+      enabled: onPressed != null,
+      selected: selected,
+      label: semanticLabel,
+      excludeSemantics: true,
+      onTap: onPressed,
+      child: tile,
     );
   }
 }

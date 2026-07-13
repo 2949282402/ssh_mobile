@@ -345,18 +345,33 @@ class RagService extends ChangeNotifier {
     String query, {
     int limit = 3,
     Set<String>? filterDocumentIds,
+    String? searchMode,
+    String? aliyunApiKey,
   }) async {
     await init();
     if (_documents.isEmpty || query.trim().isEmpty) return const [];
 
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final searchMode = prefs.getString('rag_search_mode') ?? 'bm25';
-      final aliyunKey = await storageService.getAliyunApiKey();
+      final effectiveSearchMode = switch (searchMode) {
+        'vector' => 'vector',
+        'hybrid' => 'hybrid',
+        'bm25' => 'bm25',
+        _ => switch ((await SharedPreferences.getInstance()).getString(
+          'rag_search_mode',
+        )) {
+          'vector' => 'vector',
+          'hybrid' => 'hybrid',
+          _ => 'bm25',
+        },
+      };
+      final aliyunKey = effectiveSearchMode == 'bm25'
+          ? ''
+          : (aliyunApiKey ?? await storageService.getAliyunApiKey() ?? '')
+                .trim();
       final supportDir = await getApplicationSupportDirectory();
 
       // 如果选了向量/混合搜索，但没有配 Aliyun 密钥，则回退为 BM25 搜索
-      if (searchMode == 'bm25' || aliyunKey == null || aliyunKey.isEmpty) {
+      if (effectiveSearchMode == 'bm25' || aliyunKey.isEmpty) {
         return await _retrieveBm25Isolated(
           query,
           limit,
@@ -365,7 +380,7 @@ class RagService extends ChangeNotifier {
         );
       }
 
-      if (searchMode == 'vector') {
+      if (effectiveSearchMode == 'vector') {
         return await _retrieveVectorIsolated(
           query,
           aliyunKey,

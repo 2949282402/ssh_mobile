@@ -13,6 +13,8 @@ import 'app_settings.dart';
 import 'background_service.dart';
 import '../core/services/ssh_client_factory.dart';
 import '../core/services/ssh_host_key_policy.dart';
+import 'connection_target_binding.dart';
+import 'remote_target_scope.dart';
 import 'storage_service.dart';
 import 'terminal_history_service.dart';
 
@@ -38,6 +40,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
   final TerminalHistoryService _historyService = TerminalHistoryService();
 
   final Map<String, SshSession> _sessions = {};
+  final Map<String, ConnectionTargetBinding> _sessionTargetBindings = {};
   final Map<String, _LocalSshRuntime> _localRuntimes = {};
   final Map<String, Completer<void>> _connectCompleters = {};
   final Set<String> _closingSessionIds = {};
@@ -254,7 +257,14 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     String connectionId,
   ) async {
     final existing = _sessions[sessionId];
-    if (existing?.isConnected == true) {
+    if (existing == null || existing.connectionId != connectionId) {
+      AppLogService.instance.warning(
+        'SSH session reconnect target mismatch',
+        details: 'connectionId=$connectionId sessionId=$sessionId',
+      );
+      return false;
+    }
+    if (existing.isConnected) {
       _lastSessionId = sessionId;
       return true;
     }
@@ -282,22 +292,28 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     String? displayName,
     SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
-    final config = _storageService.getConnection(connectionId);
-    if (config == null) {
-      AppLogService.instance.error(
-        'Connection config not found',
-        details: 'connectionId=$connectionId sessionId=$sessionId',
-      );
-      _setSessionError(
-        sessionId ?? _createSessionId(connectionId),
+    final id = sessionId ?? _createSessionId(connectionId);
+    ConnectionRuntimeTarget runtimeTarget;
+    try {
+      runtimeTarget = await RemoteTargetScope.resolveIfBound(
+        _storageService,
         connectionId,
-        'Unknown',
-        'Connection config not found',
       );
+    } on RemoteTargetScopeException catch (e) {
+      AppLogService.instance.error(
+        'SSH connection target unavailable',
+        error: e,
+        details: 'connectionId=$connectionId sessionId=$id code=${e.code}',
+      );
+      _setSessionError(id, connectionId, 'Unknown', e.message);
       return;
     }
+    final config = runtimeTarget.config;
+    final credentials = SshCredentials(
+      password: runtimeTarget.password,
+      privateKey: runtimeTarget.privateKey,
+    );
 
-    final id = sessionId ?? _createSessionId(connectionId);
     final requestedDisplayName = displayName?.trim();
     if (requestedDisplayName?.isNotEmpty == true &&
         _isSessionNameTaken(requestedDisplayName!, exceptSessionId: id)) {
@@ -344,6 +360,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
       return;
     }
 
+    _sessionTargetBindings[id] = runtimeTarget.binding;
     session.state = SshConnectionState.connecting;
     session.errorMessage = null;
     session.tmuxAutoDeleteSeconds = config.tmuxAutoDeleteSeconds;
@@ -365,7 +382,6 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     try {
       // Allow UI to render the connecting state and connection dialog entrance
       await Future<void>.delayed(const Duration(milliseconds: 16));
-      final credentials = await _clientFactory.loadCredentials(config);
 
       if (launchMode == TerminalLaunchMode.tmux) {
         session.tmuxSessionName ??= _uniqueTmuxSessionName(
@@ -469,6 +485,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     }
     await session?.close();
     await _storageService.removeRestorableTmuxSession(sessionId);
+    _sessionTargetBindings.remove(sessionId);
     _connectCompleters.remove(sessionId);
     if (_lastSessionId == sessionId) {
       _lastSessionId = _sessions.isEmpty ? null : _sessions.keys.last;
@@ -489,6 +506,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     }
     await session?.close();
     await _storageService.removeRestorableTmuxSession(sessionId);
+    _sessionTargetBindings.remove(sessionId);
     _connectCompleters.remove(sessionId);
     if (_lastSessionId == sessionId) {
       _lastSessionId = _sessions.isEmpty ? null : _sessions.keys.last;
@@ -520,6 +538,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
       await session.close();
     }
     _sessions.clear();
+    _sessionTargetBindings.clear();
     _refreshSessionsView();
     _connectCompleters.clear();
     _lastSessionId = null;
@@ -574,14 +593,59 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     Duration timeout = const Duration(seconds: 15),
     SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
-    final config = _storageService.getConnection(connectionId);
-    if (config == null) {
-      throw StateError('Connection config not found');
+    final target = await RemoteTargetScope.resolveIfBound(
+      _storageService,
+      connectionId,
+    );
+    return _runOneShotCommandForTarget(
+      target: target,
+      command: command,
+      timeout: timeout,
+      onUnknownHostKey: onUnknownHostKey,
+    );
+  }
+
+  /// Executes against an explicitly approved target binding.
+  ///
+  /// Long-running Playbooks should call this for every step so a connection
+  /// edit between steps stops execution instead of silently changing servers.
+  Future<RemoteCommandResult> runOneShotCommandForBinding({
+    required ConnectionTargetBinding binding,
+    required String command,
+    Duration timeout = const Duration(seconds: 15),
+    SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
+    final target = await _storageService.resolveConnectionTarget(binding);
+    if (target == null) {
+      if (_storageService.getConnection(binding.id) == null) {
+        throw RemoteTargetScopeException.notFound(binding.id);
+      }
+      throw RemoteTargetScopeException.targetChanged(binding.id);
     }
+    return _runOneShotCommandForTarget(
+      target: target,
+      command: command,
+      timeout: timeout,
+      onUnknownHostKey: onUnknownHostKey,
+    );
+  }
+
+  Future<RemoteCommandResult> _runOneShotCommandForTarget({
+    required ConnectionRuntimeTarget target,
+    required String command,
+    required Duration timeout,
+    required SshHostKeyConfirmation? onUnknownHostKey,
+  }) async {
+    final config = target.config;
+    final credentials = SshCredentials(
+      password: target.password,
+      privateKey: target.privateKey,
+    );
     // AI tools and diagnostics must use plain SSH exec. Do not attach tmux or
     // reuse terminal sessions here; tmux is only for interactive terminal UI.
     final client = await _clientFactory.connectClient(
       config,
+      credentials: credentials,
       onUnknownHostKey: onUnknownHostKey,
     );
     try {
@@ -749,9 +813,26 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
           'Reconnecting local SSH session',
           details: 'sessionId=$sessionId attempt=$i',
         );
-        final config = _storageService.getConnection(session.connectionId);
-        if (config == null) return;
-        final credentials = await _clientFactory.loadCredentials(config);
+        final binding =
+            _sessionTargetBindings[sessionId] ??
+            _storageService.captureConnectionTargetBindings([
+              session.connectionId,
+            ])[session.connectionId];
+        if (binding == null) return;
+        final target = await _storageService.resolveConnectionTarget(binding);
+        if (target == null) {
+          session.state = SshConnectionState.error;
+          session.errorMessage =
+              'Saved connection target changed; reconnect stopped.';
+          _notifySessionMetadataChanged();
+          return;
+        }
+        _sessionTargetBindings[sessionId] = binding;
+        final config = target.config;
+        final credentials = SshCredentials(
+          password: target.password,
+          privateKey: target.privateKey,
+        );
         final launchMode = _effectiveLaunchMode(config);
         await _connectLocalSession(
           session: session,

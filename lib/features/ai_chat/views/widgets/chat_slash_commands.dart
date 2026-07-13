@@ -605,33 +605,29 @@ class LlmChatCommandsHelper {
     required AiStrings strings,
     bool showFeedback = true,
   }) async {
-    if (!enabled && !canExitPlanMode(chat, actor: PlanModeExitActor.userUi)) {
-      if (showFeedback) {
-        showCommandFeedback(
-          context,
-          strings.language == AppLanguage.en
-              ? 'Cannot exit Plan Mode until the latest assistant plan has persisted executable TODO steps.'
-              : '最新一条助手计划还没有持久化可执行 TODO 步骤，暂时不能退出规划模式。',
-        );
-      }
-      return false;
-    }
-
     final viewModel = context.read<AiChatViewModel>();
-    final updatedChat = chat.copyWith(
-      planMode: enabled,
-      updatedAt: DateTime.now(),
-      clearApprovedPlan: enabled,
+    final result = await viewModel.setPlanModeForActiveChat(
+      chatId: chat.id,
+      enabled: enabled,
     );
-    await viewModel.updateActiveChat(updatedChat);
+    final succeeded =
+        result == SetPlanModeResult.updated ||
+        result == SetPlanModeResult.unchanged;
+    if (!showFeedback || !context.mounted) return succeeded;
 
-    if (showFeedback && context.mounted) {
-      final msg = strings.language == AppLanguage.en
-          ? (enabled ? 'Plan Mode Enabled' : 'Plan Mode Disabled')
-          : (enabled ? '规划模式已启用' : '规划模式已关闭');
-      showCommandFeedback(context, msg);
+    switch (result) {
+      case SetPlanModeResult.updated:
+        showCommandFeedback(context, strings.planModeUpdated(enabled));
+      case SetPlanModeResult.unchanged:
+        break;
+      case SetPlanModeResult.busy:
+        showCommandFeedback(context, strings.aiActionInProgress);
+      case SetPlanModeResult.targetChanged:
+        showCommandFeedback(context, strings.planModeTargetChanged);
+      case SetPlanModeResult.failed:
+        showCommandFeedback(context, strings.planModeUpdateFailed);
     }
-    return true;
+    return succeeded;
   }
 
   static String? toolNameFromDefinition(Map<String, dynamic> definition) {

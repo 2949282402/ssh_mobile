@@ -9,7 +9,6 @@ class _ChatMessageList extends StatelessWidget {
   final void Function(int index) onBranch;
   final VoidCallback onContinueTimeout;
 
-  final void Function(DateTime createdAt) onApprovePlanExecute;
   final void Function(AiChatRecord chat) onRevisePlan;
 
   const _ChatMessageList({
@@ -20,7 +19,6 @@ class _ChatMessageList extends StatelessWidget {
     required this.onRegenerate,
     required this.onBranch,
     required this.onContinueTimeout,
-    required this.onApprovePlanExecute,
     required this.onRevisePlan,
   });
 
@@ -114,8 +112,6 @@ class _ChatMessageList extends StatelessWidget {
                                   _isTimeoutError(message.text)
                               ? onContinueTimeout
                               : null,
-                          onApproveExecute: () =>
-                              onApprovePlanExecute(message.createdAt),
                           onRevisePlan: () =>
                               onRevisePlan(viewModel.activeChat!),
                         ),

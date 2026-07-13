@@ -1,10 +1,12 @@
 import 'package:uuid/uuid.dart';
 
 import '../../../services/app_log_service.dart';
+import '../../../services/app_settings.dart';
 import 'llm_chat_service.dart';
 import '../../../services/llm_runtime/llm_runtime_types.dart';
 import '../../../services/storage_service.dart';
 import '../../../services/ai_tool_service.dart';
+import '../../../services/connection_target_binding.dart';
 import 'agent_trace_recorder.dart';
 import 'ai_chat_runtime_factory.dart';
 
@@ -70,11 +72,15 @@ class AiChatGenerationRunner {
     required bool forceContextCompression,
     required LlmCancellationToken cancellationToken,
     required Set<String> selectedConnectionIds,
+    Map<String, ConnectionTargetBinding> connectionTargets =
+        const <String, ConnectionTargetBinding>{},
+    AppLanguage language = AppLanguage.zh,
     required List<Map<String, dynamic>> requestMessagesJson,
     required void Function(String chunk) onTextChunk,
     required void Function(LlmTraceEvent event) onTrace,
     required Future<AiToolApprovalDecision> Function(AiToolApprovalRequest)
     requestToolApproval,
+    AiRuntimeConnectionSnapshot? runtimeConnectionSnapshot,
   }) async {
     final runId = 'run-${const Uuid().v4()}';
     final traceRecorder = AgentTraceRecorder(
@@ -82,11 +88,17 @@ class AiChatGenerationRunner {
       runId: runId,
       chatId: chatId,
     );
+    final runtimeSnapshot =
+        runtimeConnectionSnapshot ??
+        await _runtimeFactory.storageService.loadAiRuntimeConnectionSnapshot();
     final service = _runtimeFactory.createLlmChatService(
-      settings: await _runtimeFactory.storageService.loadAiConnectionSettings(),
+      settings: runtimeSnapshot.settings,
       model: model,
       chatId: chatId,
+      language: language,
     );
+    service.bindRuntimeConnectionSnapshot(runtimeSnapshot);
+    service.bindConnectionTargets(connectionTargets);
 
     final answer = StringBuffer();
 

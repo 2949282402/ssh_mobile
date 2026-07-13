@@ -85,12 +85,22 @@ class ServerToolsProvider implements AiToolProvider {
       });
     }
     final connectionId = service._arg(arguments, 'connectionId');
+    final binding = service.activeApprovalExecutionBinding;
+    final approvedUpdate = binding?.resourceSnapshot;
+    if (binding?.resourceKind == 'server_metadata_update' &&
+        approvedUpdate is! _ApprovedServerMetadataUpdate) {
+      return jsonEncode({
+        'error':
+            'The approved server update is no longer available. Review it and approve again.',
+        'code': 'approval_target_changed',
+      });
+    }
     final changes = <String, dynamic>{
       for (final entry in arguments.entries)
         if (entry.key != 'connectionId' && entry.value != null)
           entry.key: entry.value,
     };
-    if (changes.isEmpty) {
+    if (changes.isEmpty && approvedUpdate is! _ApprovedServerMetadataUpdate) {
       return jsonEncode({
         'updated': false,
         'error': 'No metadata fields were provided to update.',
@@ -99,7 +109,18 @@ class ServerToolsProvider implements AiToolProvider {
     return jsonEncode(
       await serverCatalogService.updateServerMetadata(
         connectionId: connectionId,
-        changes: changes,
+        changes: approvedUpdate is _ApprovedServerMetadataUpdate
+            ? const <String, dynamic>{}
+            : changes,
+        approvedTarget: approvedUpdate is _ApprovedServerMetadataUpdate
+            ? binding!.connectionTargets[connectionId]
+            : null,
+        approvedCurrent: approvedUpdate is _ApprovedServerMetadataUpdate
+            ? ConnectionConfig.fromJson(approvedUpdate.expected.toJson())
+            : null,
+        approvedCandidate: approvedUpdate is _ApprovedServerMetadataUpdate
+            ? ConnectionConfig.fromJson(approvedUpdate.candidate.toJson())
+            : null,
       ),
     );
   }

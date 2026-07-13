@@ -263,10 +263,30 @@ class AiStrings {
   String failed(Object error) => _en ? 'Failed: $error' : '失败：$error';
   String get commands => _en ? 'Commands' : '命令';
   String get planMode => _en ? 'Plan Mode' : '规划模式';
+  String get planModeReadOnlyHint =>
+      _en ? 'Read-only analysis and planning' : '仅进行只读分析与规划';
+  String get planModeDisableAction => _en ? 'Turn off Plan Mode' : '关闭规划模式';
+  String get planModeRemoveCommand =>
+      _en ? 'Remove the Plan Mode command' : '移除规划模式命令';
+  String planModeUpdated(bool enabled) => _en
+      ? (enabled ? 'Plan Mode enabled.' : 'Plan Mode disabled.')
+      : (enabled ? '规划模式已启用。' : '规划模式已关闭。');
+  String get planModeUpdateFailed =>
+      _en ? 'Unable to update Plan Mode. Try again.' : '无法更新规划模式，请重试。';
+  String get planModeTargetChanged => _en
+      ? 'The active chat changed. Try again in the current chat.'
+      : '当前对话已切换，请在当前对话中重试。';
+  String get newChatCreateFailed =>
+      _en ? 'Unable to create a new chat. Try again.' : '无法新建对话，请重试。';
+  String get newChatBusy => _en
+      ? 'Another chat update is in progress. Try New chat again.'
+      : '当前对话正在更新，请稍后重试新建对话。';
+  String get aiActionInProgress =>
+      _en ? 'Another AI action is in progress.' : '另一个 AI 操作正在进行中。';
   String get playbooks => _en ? 'Playbooks' : '运维剧本';
   String get commandUnknownHint => _en
-      ? 'Type a command to use. Available: /compact, /tools, /skills.'
-      : '输入以 / 开头的命令，如 /compact、/tools 或 /skills';
+      ? 'Type a command to use. Available: /compact, /tools, /skills, /plan.'
+      : '输入以 / 开头的命令，如 /compact、/tools、/skills 或 /plan';
   String get commandCompactSummary =>
       _en ? 'Compress context for the next request.' : '为下一次请求压缩上下文。';
   String get commandToolsSummary =>
@@ -304,6 +324,26 @@ class AiStrings {
   String get commandToolsClearSearch => _en ? 'Clear search' : '清除搜索';
   String get approveAndExecutePlan =>
       _en ? 'Approve & Execute Plan' : '同意并执行计划';
+  String get planApprovalChecking =>
+      _en ? 'Checking execution readiness…' : '正在检查执行条件…';
+  String get planApprovalHint =>
+      _en ? 'Approve or revise this plan.' : '执行或调整此计划。';
+  String get planApprovalStarting =>
+      _en ? 'Starting plan execution…' : '正在启动计划执行…';
+  String get planApprovalNoPlan => _en
+      ? 'This plan is no longer available. Review the latest plan and try again.'
+      : '当前计划已不可执行，请检查最新计划后重试。';
+  String get planApprovalApiKeyMissing => _en
+      ? 'Add an API key in LLM settings before executing the plan.'
+      : '请先在大模型设置中配置 API Key，再执行计划。';
+  String get planApprovalPlanChanged => _en
+      ? 'The plan changed during the runtime check. Review the latest plan and try again.'
+      : '运行环境检查期间计划已发生变化，请检查最新计划后重试。';
+  String get planApprovalFailed =>
+      _en ? 'Unable to start plan execution. Try again.' : '无法启动计划执行，请重试。';
+  String get planApprovalCancelled =>
+      _en ? 'Plan execution was cancelled.' : '计划执行已取消。';
+  String get planRevisionPrompt => _en ? 'Revise this plan: ' : '请按以下意见调整计划：';
   String get todoTitle => _en ? 'Operation Tasks (TODO)' : '规划的运维任务清单 (TODO)';
   String get todoFailureGuidance => _en
       ? 'Review the logs, retry after fixing the cause, skip only when it is safe, or return to Plan Mode to revise the remaining steps.'

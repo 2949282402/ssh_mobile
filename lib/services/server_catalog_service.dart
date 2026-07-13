@@ -1,8 +1,12 @@
+import 'dart:convert';
+
 import '../features/connection/models/connection.dart';
 import 'sftp_service.dart';
 import '../core/services/ssh_client_factory.dart';
 import 'ssh_service.dart';
 import 'storage_service.dart';
+import 'remote_target_scope.dart';
+import 'connection_target_binding.dart';
 
 abstract interface class ServerCatalogAdapter {
   List<Map<String, dynamic>> listServerSummaries();
@@ -12,6 +16,9 @@ abstract interface class ServerCatalogAdapter {
   Future<Map<String, dynamic>> updateServerMetadata({
     required String connectionId,
     required Map<String, dynamic> changes,
+    ConnectionTargetBinding? approvedTarget,
+    ConnectionConfig? approvedCurrent,
+    ConnectionConfig? approvedCandidate,
   });
 
   Future<Map<String, dynamic>> deleteServer(String connectionId);
@@ -86,13 +93,61 @@ class ServerCatalogService implements ServerCatalogAdapter {
   Future<Map<String, dynamic>> updateServerMetadata({
     required String connectionId,
     required Map<String, dynamic> changes,
+    ConnectionTargetBinding? approvedTarget,
+    ConnectionConfig? approvedCurrent,
+    ConnectionConfig? approvedCandidate,
   }) async {
-    final current = storageService.getConnection(connectionId);
-    if (current == null) {
-      throw StateError('Connection config not found.');
+    final target = await RemoteTargetScope.resolveIfBound(
+      storageService,
+      connectionId,
+    );
+    final current = target.config;
+    if (approvedTarget != null && !approvedTarget.matches(current)) {
+      throw RemoteTargetScopeException.targetChanged(connectionId);
     }
+    if (approvedCurrent != null &&
+        _configFingerprint(approvedCurrent) != _configFingerprint(current)) {
+      throw RemoteTargetScopeException.targetChanged(connectionId);
+    }
+    final next = approvedCandidate == null
+        ? buildUpdateCandidate(current, changes)
+        : ConnectionConfig.fromJson(approvedCandidate.toJson());
+    if (next.id != connectionId) {
+      throw StateError('Approved server candidate id does not match target.');
+    }
+    final client = await _clientFactory.connectClient(
+      next,
+      credentials: SshCredentials(
+        password: target.password,
+        privateKey: target.privateKey,
+      ),
+      timeout: const Duration(seconds: 10),
+    );
+    client.close();
+    final updated = approvedCurrent == null
+        ? await storageService.updateConnectionIfMatches(
+            target.binding,
+            next.copyWith(
+              password: target.password,
+              privateKey: target.privateKey,
+            ),
+          )
+        : await storageService.updateConnectionFromSnapshotIfUnchanged(
+            expected: approvedCurrent,
+            next: next,
+          );
+    if (!updated) {
+      throw RemoteTargetScopeException.targetChanged(connectionId);
+    }
+    return {'updated': true, 'server': _buildServerDetails(next)};
+  }
+
+  static ConnectionConfig buildUpdateCandidate(
+    ConnectionConfig current,
+    Map<String, dynamic> changes,
+  ) {
     _validateUpdateKeys(changes.keys);
-    final next = current.copyWith(
+    return current.copyWith(
       name: _readOptionalString(changes, 'name') ?? current.name,
       host: _readOptionalString(changes, 'host') ?? current.host,
       port: _readOptionalInt(changes, 'port') ?? current.port,
@@ -125,28 +180,30 @@ class ServerCatalogService implements ServerCatalogAdapter {
           ? _readOptionalString(changes, 'jumpUsername')
           : current.jumpUsername,
     );
-    final client = await _clientFactory.connectClient(
-      next,
-      timeout: const Duration(seconds: 10),
-    );
-    client.close();
-    await storageService.updateConnection(next);
-    return {'updated': true, 'server': _buildServerDetails(next)};
   }
+
+  static String _configFingerprint(ConnectionConfig config) =>
+      jsonEncode(config.toJson());
 
   @override
   Future<Map<String, dynamic>> deleteServer(String connectionId) async {
-    final config = storageService.getConnection(connectionId);
-    if (config == null) {
-      throw StateError('Connection config not found.');
-    }
+    final target = await RemoteTargetScope.resolveIfBound(
+      storageService,
+      connectionId,
+    );
+    final config = target.config;
     await sshService.disconnectSessionsForConnection(connectionId);
     await sftpService.disconnectConnection(
       connectionId,
       notify: false,
       forgetPath: true,
     );
-    await storageService.deleteConnection(connectionId);
+    final deleted = await storageService.deleteConnectionIfMatches(
+      target.binding,
+    );
+    if (!deleted) {
+      throw RemoteTargetScopeException.targetChanged(connectionId);
+    }
     return {'deleted': true, 'connectionId': connectionId, 'name': config.name};
   }
 
@@ -201,7 +258,7 @@ class ServerCatalogService implements ServerCatalogAdapter {
     };
   }
 
-  void _validateUpdateKeys(Iterable<Object?> keys) {
+  static void _validateUpdateKeys(Iterable<Object?> keys) {
     for (final rawKey in keys) {
       final key = rawKey?.toString() ?? '';
       if (_sensitiveFields.contains(key)) {
@@ -213,7 +270,7 @@ class ServerCatalogService implements ServerCatalogAdapter {
     }
   }
 
-  String? _readOptionalString(Map<String, dynamic> source, String key) {
+  static String? _readOptionalString(Map<String, dynamic> source, String key) {
     if (!source.containsKey(key)) return null;
     final value = source[key];
     if (value == null) return null;
@@ -224,7 +281,7 @@ class ServerCatalogService implements ServerCatalogAdapter {
     return trimmed.isEmpty ? null : trimmed;
   }
 
-  int? _readOptionalInt(Map<String, dynamic> source, String key) {
+  static int? _readOptionalInt(Map<String, dynamic> source, String key) {
     if (!source.containsKey(key)) return null;
     final value = source[key];
     if (value == null) return null;
@@ -233,7 +290,7 @@ class ServerCatalogService implements ServerCatalogAdapter {
     throw StateError('Field $key must be an integer.');
   }
 
-  bool? _readOptionalBool(Map<String, dynamic> source, String key) {
+  static bool? _readOptionalBool(Map<String, dynamic> source, String key) {
     if (!source.containsKey(key)) return null;
     final value = source[key];
     if (value == null) return null;

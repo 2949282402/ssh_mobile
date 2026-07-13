@@ -49,11 +49,12 @@ class AiChatRuntimeFactory {
     required AiConnectionSettings settings,
     required String model,
     required String chatId,
+    AppLanguage language = AppLanguage.zh,
   }) {
     return LlmChatService(
       storageService: storageService,
       toolService: createToolService(chatId: chatId),
-      language: appSettings.language,
+      language: language,
       useCustomPrompts: settings.useCustomPrompts,
       customSystemPrompt: settings.customSystemPrompt,
       customPlannerPrompt: settings.customPlannerPrompt,

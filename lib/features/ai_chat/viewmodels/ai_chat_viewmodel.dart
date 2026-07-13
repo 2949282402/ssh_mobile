@@ -16,6 +16,8 @@ import '../../../services/app_settings.dart';
 import '../services/ai_chat_runtime_factory.dart';
 import '../services/ai_chat_context_builder.dart';
 import '../services/ai_chat_message_mapper.dart';
+import '../services/plan_command_parser.dart';
+import '../services/plan_approval_eligibility.dart';
 import '../services/ai_chat_token_estimator.dart';
 import '../services/llm_chat_service.dart';
 import '../../../services/llm_runtime/llm_runtime_types.dart';
@@ -29,6 +31,7 @@ import '../../../services/storage_service.dart';
 import '../../../services/client_webview_service.dart';
 import '../../../services/client_health_advisor.dart';
 import '../../../services/client_system_tool_service.dart';
+import '../../../services/connection_target_binding.dart';
 import '../../../services/tool_secret_policy.dart';
 import '../../connection/models/connection.dart';
 import '../../../utils/text_chunker.dart';
@@ -147,6 +150,30 @@ class ApprovePlanExecutionCancelled extends ApprovePlanExecutionResult {
   const ApprovePlanExecutionCancelled({super.healthReport});
 }
 
+enum SetPlanModeResult { updated, unchanged, busy, targetChanged, failed }
+
+class _ChatTurnInputSnapshot {
+  final List<AiChatAttachment> attachments;
+  final Set<String> selectedConnectionIds;
+  final Map<String, ConnectionTargetBinding> connectionTargets;
+  final Set<String>? allowedTools;
+  final bool ragEnabled;
+  final String ragSearchMode;
+  final int ragTopN;
+  final AppLanguage language;
+
+  const _ChatTurnInputSnapshot({
+    required this.attachments,
+    required this.selectedConnectionIds,
+    required this.connectionTargets,
+    required this.allowedTools,
+    required this.ragEnabled,
+    required this.ragSearchMode,
+    required this.ragTopN,
+    required this.language,
+  });
+}
+
 class _StreamingAssistantTarget {
   final String chatId;
   final DateTime assistantCreatedAt;
@@ -220,6 +247,7 @@ class AiChatViewModel extends ChangeNotifier {
   bool _sendCommitInProgress = false;
   bool _cancelGenerationOnStart = false;
   bool _planApprovalInFlight = false;
+  _PlanApprovalSnapshot? _pendingPlanWarningSnapshot;
   int _chatStateWritesInFlight = 0;
   bool _toolsExpanded = false;
 
@@ -234,6 +262,7 @@ class AiChatViewModel extends ChangeNotifier {
   LlmCancellationToken? _activeCancellationToken;
   String? _activeGenerationChatId;
   final Set<String> _deletedGenerationChatIds = {};
+  final Set<String> _deletedChatIds = {};
   ClientRuntimeHealthReport? _lastRuntimeHealthReport;
 
   // 上下文限制
@@ -308,6 +337,25 @@ class AiChatViewModel extends ChangeNotifier {
   bool get planApprovalInFlight => _planApprovalInFlight;
   bool get _chatMutationLocked =>
       _sendPreparationInFlight || _chatStateWritesInFlight > 0;
+
+  bool _tryBeginChatStateWrite({
+    bool allowDuringGeneration = false,
+    bool allowDuringPlanApproval = false,
+  }) {
+    if (_chatMutationLocked ||
+        (!allowDuringGeneration && _sending) ||
+        (!allowDuringPlanApproval && _planApprovalInFlight)) {
+      return false;
+    }
+    _chatStateWritesInFlight += 1;
+    return true;
+  }
+
+  void _endChatStateWrite() {
+    assert(_chatStateWritesInFlight > 0);
+    _chatStateWritesInFlight -= 1;
+  }
+
   bool get toolsExpanded => _toolsExpanded;
   Set<String> get selectedConnectionIds =>
       Set.unmodifiable(_selectedConnectionIds);
@@ -387,32 +435,71 @@ class AiChatViewModel extends ChangeNotifier {
     if (_historyLoadStarted || _historyLoading) return;
     _historyLoading = true;
     notifyListeners();
+    try {
+      final chats = (await _storageService.loadAiChats())
+          .where((chat) => !_deletedChatIds.contains(chat.id))
+          .toList();
+      _historyLoadStarted = true;
+      final currentChats = List<AiChatRecord>.from(_chats);
+      final currentById = {for (final chat in currentChats) chat.id: chat};
+      final mergedHistory = <AiChatRecord>[];
+      final mergedIds = <String>{};
+      for (final storedChat in chats) {
+        final current = currentById[storedChat.id];
+        mergedHistory.add(
+          current != null && current.messages.isNotEmpty ? current : storedChat,
+        );
+        mergedIds.add(storedChat.id);
+      }
+      for (final current in currentChats) {
+        if (current.messages.isNotEmpty && mergedIds.add(current.id)) {
+          mergedHistory.add(current);
+        }
+      }
+      mergedHistory.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      _savedHistoryChats = mergedHistory;
 
-    final chats = await _storageService.loadAiChats();
-    _historyLoadStarted = true;
-    _historyLoading = false;
-    _savedHistoryChats = chats;
-
-    final drafts = _chats.where((chat) => chat.messages.isEmpty).toList();
-    final draftIds = drafts.map((chat) => chat.id).toSet();
-    _chats = [...drafts, ...chats.where((chat) => !draftIds.contains(chat.id))];
-    _activeChatId ??= _chats.isEmpty ? null : _chats.first.id;
-    notifyListeners();
+      final drafts = currentChats
+          .where((chat) => chat.messages.isEmpty)
+          .toList();
+      final draftIds = drafts.map((chat) => chat.id).toSet();
+      _chats = [
+        ...drafts,
+        ...mergedHistory.where((chat) => !draftIds.contains(chat.id)),
+      ];
+      _activeChatId ??= _chats.isEmpty ? null : _chats.first.id;
+    } catch (error, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to load AI chat history',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    } finally {
+      _historyLoading = false;
+      notifyListeners();
+    }
   }
 
   // 创建/切换/删除会话
-  Future<void> createChatFromSettings() async {
-    final settings = await _storageService.loadAiConnectionSettings();
-    createChat(settings.model);
-  }
+  Future<String> loadNewChatModel() async =>
+      (await _storageService.loadAiConnectionSettings()).model;
 
-  void createChat(String model) {
-    if (_chatMutationLocked) return;
+  bool createChat(
+    String model, {
+    Set<String> preserveChatIds = const <String>{},
+  }) {
+    if (_chatMutationLocked) return false;
     final chat = _newChatRecord(model);
-    _chats = [chat, ..._chats.where((item) => item.messages.isNotEmpty)];
+    _chats = [
+      chat,
+      ..._chats.where(
+        (item) => item.messages.isNotEmpty || preserveChatIds.contains(item.id),
+      ),
+    ];
     _activeChatId = chat.id;
     notifyListeners();
     _triggerScroll();
+    return true;
   }
 
   void selectChat(String id) {
@@ -424,8 +511,12 @@ class AiChatViewModel extends ChangeNotifier {
   }
 
   Future<void> deleteChat(String id) async {
-    if (_chatMutationLocked) return;
-    _chatStateWritesInFlight += 1;
+    if (!_tryBeginChatStateWrite(
+      allowDuringGeneration: true,
+      allowDuringPlanApproval: true,
+    )) {
+      return;
+    }
     try {
       if (_chats.isEmpty && _savedHistoryChats.isEmpty) return;
       if (_activeGenerationChatId == id) {
@@ -440,6 +531,7 @@ class AiChatViewModel extends ChangeNotifier {
         }
       }
       final deleted = _chatById(id);
+      if (deleted != null) _deletedChatIds.add(id);
       _chatAllowedTools.remove(id);
       _pendingForceCompressionChats.remove(id);
       final nextChats = _chats.where((chat) => chat.id != id).toList();
@@ -461,19 +553,52 @@ class AiChatViewModel extends ChangeNotifier {
       ClientWebViewService.instance.clearSession(id);
       _triggerScroll();
     } finally {
-      _chatStateWritesInFlight -= 1;
+      _endChatStateWrite();
     }
   }
 
-  Future<void> updateActiveChat(AiChatRecord chat) async {
-    if (_chatMutationLocked) return;
-    _chatStateWritesInFlight += 1;
+  Future<bool> updateActiveChat(AiChatRecord chat) async {
+    if (chat.id != _activeChatId || !_tryBeginChatStateWrite()) return false;
     try {
       await _storageService.saveAiChat(chat);
-      _replaceChat(chat);
+      _replaceChat(chat, activate: false);
       notifyListeners();
+      return true;
     } finally {
-      _chatStateWritesInFlight -= 1;
+      _endChatStateWrite();
+    }
+  }
+
+  Future<SetPlanModeResult> setPlanModeForActiveChat({
+    required String chatId,
+    required bool enabled,
+  }) async {
+    if (_sending || _planApprovalInFlight || _chatMutationLocked) {
+      return SetPlanModeResult.busy;
+    }
+    final chat = activeChat;
+    if (chat == null || chat.id != chatId || _activeChatId != chatId) {
+      return SetPlanModeResult.targetChanged;
+    }
+    if (chat.planMode == enabled && (!enabled || chat.approvedPlan == null)) {
+      return SetPlanModeResult.unchanged;
+    }
+
+    final updated = chat.copyWith(
+      planMode: enabled,
+      updatedAt: DateTime.now(),
+      clearApprovedPlan: enabled,
+    );
+    try {
+      final saved = await updateActiveChat(updated);
+      return saved ? SetPlanModeResult.updated : SetPlanModeResult.busy;
+    } catch (_, stackTrace) {
+      AppLogService.instance.error(
+        'Plan Mode update failed',
+        details: 'chatId=$chatId enabled=$enabled',
+        stackTrace: stackTrace,
+      );
+      return SetPlanModeResult.failed;
     }
   }
 
@@ -678,6 +803,7 @@ class AiChatViewModel extends ChangeNotifier {
       settings: settings,
       model: settings.model,
       chatId: _activeChatId ?? '',
+      language: _appSettings.language,
     );
 
     final fetched = await service.fetchModels(
@@ -699,7 +825,7 @@ class AiChatViewModel extends ChangeNotifier {
   }
 
   void updateAllowedTools(String chatId, Set<String> allowedTools) {
-    _chatAllowedTools[chatId] = allowedTools;
+    _chatAllowedTools[chatId] = Set<String>.from(allowedTools);
     notifyListeners();
   }
 
@@ -722,8 +848,7 @@ class AiChatViewModel extends ChangeNotifier {
   }
 
   Future<AiChatRecord?> _enablePlanModeForChat(AiChatRecord chat) async {
-    if (_chatMutationLocked) return null;
-    _chatStateWritesInFlight += 1;
+    if (chat.id != _activeChatId || !_tryBeginChatStateWrite()) return null;
     try {
       final updated = chat.copyWith(
         planMode: true,
@@ -731,11 +856,31 @@ class AiChatViewModel extends ChangeNotifier {
         clearApprovedPlan: true,
       );
       await _storageService.saveAiChat(updated);
-      _replaceChat(updated, activate: _activeChatId == chat.id);
+      _replaceChat(updated, activate: false);
       notifyListeners();
       return updated;
     } finally {
-      _chatStateWritesInFlight -= 1;
+      _endChatStateWrite();
+    }
+  }
+
+  Future<({AiChatRecord chat, AiRuntimeConnectionSnapshot runtimeConnection})?>
+  _preparePlanModeSend(AiChatRecord chat) async {
+    if (chat.id != _activeChatId || !_tryBeginChatStateWrite()) return null;
+    try {
+      final runtimeConnection = await _storageService
+          .loadAiRuntimeConnectionSnapshot();
+      final updated = chat.copyWith(
+        planMode: true,
+        updatedAt: DateTime.now(),
+        clearApprovedPlan: true,
+      );
+      await _storageService.saveAiChat(updated);
+      _replaceChat(updated, activate: false);
+      notifyListeners();
+      return (chat: updated, runtimeConnection: runtimeConnection);
+    } finally {
+      _endChatStateWrite();
     }
   }
 
@@ -753,18 +898,19 @@ class AiChatViewModel extends ChangeNotifier {
       return const SendTextAlreadySending();
     }
     if (activeChat == null) return const SendTextNoActiveChat();
+    final turnInputSnapshot = _captureTurnInputSnapshot(chatId: activeChat.id);
 
     var targetText = text.trim();
+    AiRuntimeConnectionSnapshot? capturedRuntimeConnection;
     if (targetText.startsWith('/')) {
-      final parts = targetText.split(' ');
-      final cmd = parts[0].toLowerCase();
-      final args = parts.sublist(1).join(' ').trim();
-      if (cmd == '/plan' && args.isNotEmpty) {
-        final updated = await _enablePlanModeForChat(activeChat);
-        if (updated == null) return const SendTextAlreadySending();
+      final planCommand = parsePlanCommand(targetText);
+      if (planCommand?.hasArguments == true) {
+        final prepared = await _preparePlanModeSend(activeChat);
+        if (prepared == null) return const SendTextAlreadySending();
 
-        activeChat = updated;
-        targetText = args;
+        activeChat = prepared.chat;
+        capturedRuntimeConnection = prepared.runtimeConnection;
+        targetText = planCommand!.arguments;
       } else {
         final handledResult = await _executeSlashCommand(
           chatId: activeChat.id,
@@ -778,13 +924,16 @@ class AiChatViewModel extends ChangeNotifier {
 
     _reserveSendPreparation();
     try {
-      final settings = await _storageService.loadAiConnectionSettings();
+      final runtimeConnection =
+          capturedRuntimeConnection ??
+          await _storageService.loadAiRuntimeConnectionSnapshot();
+      final settings = runtimeConnection.settings;
       if (_sendPreparationCancelled || !_sendPreparationInFlight) {
         _releaseSendPreparation();
         return const SendTextStartCancelled();
       }
       final currentModel = settings.model.trim();
-      if (!settings.hasApiKey) {
+      if (!runtimeConnection.hasApiKey) {
         AppLogService.instance.warning(
           'LLM chat blocked: API key missing or invalid',
           details: 'model=$currentModel',
@@ -796,8 +945,9 @@ class AiChatViewModel extends ChangeNotifier {
       return await _startTextGeneration(
         chat: activeChat,
         targetText: targetText,
-        settings: settings,
+        runtimeConnection: runtimeConnection,
         approvedPlanRef: approvedPlanRef,
+        turnInputSnapshot: turnInputSnapshot,
         preparationReserved: true,
       );
     } catch (_) {
@@ -809,8 +959,9 @@ class AiChatViewModel extends ChangeNotifier {
   Future<SendTextResult> _startTextGeneration({
     required AiChatRecord chat,
     required String targetText,
-    required AiConnectionSettings settings,
+    required AiRuntimeConnectionSnapshot runtimeConnection,
     AiApprovedPlanRef? approvedPlanRef,
+    _ChatTurnInputSnapshot? turnInputSnapshot,
     bool Function()? canCommit,
     bool preparationReserved = false,
   }) async {
@@ -833,23 +984,30 @@ class AiChatViewModel extends ChangeNotifier {
     }
 
     try {
+      final settings = runtimeConnection.settings;
       final currentModel = settings.model.trim();
       final chatId = chat.id;
       final now = DateTime.now();
+      final turnInput =
+          turnInputSnapshot ?? _captureTurnInputSnapshot(chatId: chatId);
 
       // RAG 检索
-      final attachments = List<AiChatAttachment>.from(_pendingAttachments);
+      final attachments = List<AiChatAttachment>.from(turnInput.attachments);
       final orchestrator = _runtimeFactory.createOrchestrator();
 
       final preparedTurn = await orchestrator.prepareTurn(
         chat: chat,
         text: targetText,
         createdAt: now,
-        language: _appSettings.language,
+        language: turnInput.language,
         attachments: attachments,
-        selectedConnectionIds: _selectedConnectionIds,
+        selectedConnectionIds: turnInput.selectedConnectionIds,
+        connectionTargets: turnInput.connectionTargets,
         approvedPlanRef: approvedPlanRef,
-        ragEnabled: _appSettings.ragEnabled,
+        ragEnabled: turnInput.ragEnabled,
+        ragSearchMode: turnInput.ragSearchMode,
+        ragLimit: turnInput.ragTopN,
+        ragAliyunApiKey: runtimeConnection.aliyunApiKey,
       );
       if (_sendPreparationCancelled || !_sendPreparationInFlight) {
         _releaseSendPreparation();
@@ -909,7 +1067,7 @@ class AiChatViewModel extends ChangeNotifier {
       await _storageService.saveAiChat(nextChat);
 
       _replaceChat(nextChat, activate: _activeChatId == chatId);
-      _pendingAttachments.clear();
+      _removePendingAttachmentSnapshot(attachments);
       _toolsExpanded = false;
       notifyListeners();
       _triggerScroll();
@@ -924,6 +1082,11 @@ class AiChatViewModel extends ChangeNotifier {
           userRequest: targetText,
           memorySources: preparedTurn.memorySources,
           ragHits: preparedTurn.ragHits,
+          selectedConnectionIds: turnInput.selectedConnectionIds,
+          connectionTargets: turnInput.connectionTargets,
+          allowedTools: turnInput.allowedTools,
+          runtimeConnection: runtimeConnection,
+          language: turnInput.language,
         ),
       );
       _sendCommitInProgress = false;
@@ -936,76 +1099,133 @@ class AiChatViewModel extends ChangeNotifier {
     }
   }
 
-  Future<void> retryTodoStep(String taskId) async {
-    final activeChat = this.activeChat;
-    if (activeChat == null) return;
-
-    final messages = [...activeChat.messages];
-    bool found = false;
-
-    for (var mIdx = 0; mIdx < messages.length; mIdx++) {
-      final msg = messages[mIdx];
-      if (msg.todoSteps.isEmpty) continue;
-
-      final sIdx = msg.todoSteps.indexWhere((s) => s.id == taskId);
-      if (sIdx != -1) {
-        final steps = [...msg.todoSteps];
-        steps[sIdx] = steps[sIdx].copyWith(
-          status: StepStatus.pending,
-          stdout: '',
-          stderr: '',
-          exitCode: null,
-        );
-        messages[mIdx] = msg.copyWith(todoSteps: steps);
-        found = true;
-        break;
+  void _removePendingAttachmentSnapshot(
+    Iterable<AiChatAttachment> consumedAttachments,
+  ) {
+    for (final consumed in consumedAttachments) {
+      final index = _pendingAttachments.indexWhere(
+        (pending) => identical(pending, consumed),
+      );
+      if (index >= 0) {
+        _pendingAttachments.removeAt(index);
       }
     }
+  }
 
-    if (found) {
-      final updated = activeChat.copyWith(
-        messages: messages,
-        updatedAt: DateTime.now(),
-      );
-      _replaceChat(updated, sort: false);
-      notifyListeners();
-      await _storageService.saveAiChat(updated);
+  _ChatTurnInputSnapshot _captureTurnInputSnapshot({
+    required String chatId,
+    bool includeAttachments = true,
+  }) {
+    final allowedTools = _chatAllowedTools[chatId];
+    final connectionTargets = <String, ConnectionTargetBinding>{};
+    for (final id in _selectedConnectionIds) {
+      final connection = _storageService.getConnection(id);
+      if (connection != null) {
+        connectionTargets[id] = ConnectionTargetBinding.fromConfig(connection);
+      }
+    }
+    return _ChatTurnInputSnapshot(
+      attachments: includeAttachments
+          ? List<AiChatAttachment>.unmodifiable(_pendingAttachments)
+          : const <AiChatAttachment>[],
+      selectedConnectionIds: Set<String>.unmodifiable(_selectedConnectionIds),
+      connectionTargets: Map<String, ConnectionTargetBinding>.unmodifiable(
+        connectionTargets,
+      ),
+      allowedTools: allowedTools == null
+          ? null
+          : Set<String>.unmodifiable(allowedTools),
+      ragEnabled: _appSettings.ragEnabled,
+      ragSearchMode: switch (_appSettings.ragSearchMode) {
+        'vector' => 'vector',
+        'hybrid' => 'hybrid',
+        _ => 'bm25',
+      },
+      ragTopN: _appSettings.ragTopN.clamp(1, 10),
+      language: _appSettings.language,
+    );
+  }
+
+  Future<void> retryTodoStep(String taskId) async {
+    if (!_tryBeginChatStateWrite()) return;
+    try {
+      final activeChat = this.activeChat;
+      if (activeChat == null) return;
+
+      final messages = [...activeChat.messages];
+      bool found = false;
+
+      for (var mIdx = 0; mIdx < messages.length; mIdx++) {
+        final msg = messages[mIdx];
+        if (msg.todoSteps.isEmpty) continue;
+
+        final sIdx = msg.todoSteps.indexWhere((s) => s.id == taskId);
+        if (sIdx != -1) {
+          final steps = [...msg.todoSteps];
+          steps[sIdx] = steps[sIdx].copyWith(
+            status: StepStatus.pending,
+            stdout: '',
+            stderr: '',
+            exitCode: null,
+          );
+          messages[mIdx] = msg.copyWith(todoSteps: steps);
+          found = true;
+          break;
+        }
+      }
+
+      if (found) {
+        final updated = activeChat.copyWith(
+          messages: messages,
+          updatedAt: DateTime.now(),
+        );
+        await _storageService.saveAiChat(updated);
+        _replaceChat(updated, sort: false, activate: false);
+        notifyListeners();
+      }
+    } finally {
+      _endChatStateWrite();
     }
   }
 
   Future<void> skipTodoStep(String taskId, String reason) async {
-    final activeChat = this.activeChat;
-    if (activeChat == null) return;
+    if (!_tryBeginChatStateWrite()) return;
+    try {
+      final activeChat = this.activeChat;
+      if (activeChat == null) return;
 
-    final messages = [...activeChat.messages];
-    bool found = false;
+      final messages = [...activeChat.messages];
+      bool found = false;
 
-    for (var mIdx = 0; mIdx < messages.length; mIdx++) {
-      final msg = messages[mIdx];
-      if (msg.todoSteps.isEmpty) continue;
+      for (var mIdx = 0; mIdx < messages.length; mIdx++) {
+        final msg = messages[mIdx];
+        if (msg.todoSteps.isEmpty) continue;
 
-      final sIdx = msg.todoSteps.indexWhere((s) => s.id == taskId);
-      if (sIdx != -1) {
-        final steps = [...msg.todoSteps];
-        steps[sIdx] = steps[sIdx].copyWith(
-          status: StepStatus.skipped,
-          stdout: 'Skipped: $reason',
-          exitCode: null,
-        );
-        messages[mIdx] = msg.copyWith(todoSteps: steps);
-        found = true;
-        break;
+        final sIdx = msg.todoSteps.indexWhere((s) => s.id == taskId);
+        if (sIdx != -1) {
+          final steps = [...msg.todoSteps];
+          steps[sIdx] = steps[sIdx].copyWith(
+            status: StepStatus.skipped,
+            stdout: 'Skipped: $reason',
+            exitCode: null,
+          );
+          messages[mIdx] = msg.copyWith(todoSteps: steps);
+          found = true;
+          break;
+        }
       }
-    }
 
-    if (found) {
-      final updated = activeChat.copyWith(
-        messages: messages,
-        updatedAt: DateTime.now(),
-      );
-      _replaceChat(updated, sort: false);
-      notifyListeners();
-      await _storageService.saveAiChat(updated);
+      if (found) {
+        final updated = activeChat.copyWith(
+          messages: messages,
+          updatedAt: DateTime.now(),
+        );
+        await _storageService.saveAiChat(updated);
+        _replaceChat(updated, sort: false, activate: false);
+        notifyListeners();
+      }
+    } finally {
+      _endChatStateWrite();
     }
   }
 
@@ -1034,51 +1254,74 @@ class AiChatViewModel extends ChangeNotifier {
   }
 
   Future<void> regenerateAssistant(int messageIndex) async {
-    final activeChat = this.activeChat;
-    if (_sending || activeChat == null) return;
-    if (messageIndex < 0 || messageIndex >= activeChat.messages.length) return;
-    final target = activeChat.messages[messageIndex];
-    if (target.role != 'assistant') return;
+    if (!_tryBeginChatStateWrite()) return;
+    late AiChatRecord nextChat;
+    late AiChatMessageRecord assistantMessage;
+    late List<AiChatMessageRecord> nextMessages;
+    late String nextModel;
+    late String userRequest;
+    late _ChatTurnInputSnapshot turnInputSnapshot;
+    late AiRuntimeConnectionSnapshot runtimeConnection;
+    try {
+      final activeChat = this.activeChat;
+      if (activeChat == null) return;
+      if (messageIndex < 0 || messageIndex >= activeChat.messages.length) {
+        return;
+      }
+      final target = activeChat.messages[messageIndex];
+      if (target.role != 'assistant') return;
+      turnInputSnapshot = _captureTurnInputSnapshot(
+        chatId: activeChat.id,
+        includeAttachments: false,
+      );
 
-    final settings = await _storageService.loadAiConnectionSettings();
-    if (!settings.hasApiKey) {
-      return;
+      runtimeConnection = await _storageService
+          .loadAiRuntimeConnectionSnapshot();
+      final settings = runtimeConnection.settings;
+      if (!runtimeConnection.hasApiKey) return;
+
+      final prefix = activeChat.messages.take(messageIndex).toList();
+      if (prefix.where((message) => message.role == 'user').isEmpty) return;
+      final now = DateTime.now();
+      assistantMessage = AiChatMessageRecord(
+        role: 'assistant',
+        text: '',
+        createdAt: now,
+      );
+      nextMessages = [...prefix, assistantMessage];
+      nextModel = settings.model.trim().isNotEmpty
+          ? settings.model
+          : activeChat.model;
+      nextChat = activeChat.copyWith(
+        model: nextModel,
+        messages: nextMessages,
+        updatedAt: now,
+      );
+      userRequest = prefix.lastWhere((message) => message.role == 'user').text;
+
+      await _storageService.saveAiChat(nextChat);
+      _replaceChat(nextChat, activate: false);
+      _sending = true;
+      notifyListeners();
+      _triggerScroll();
+    } finally {
+      _endChatStateWrite();
     }
 
-    final prefix = activeChat.messages.take(messageIndex).toList();
-    if (prefix.where((message) => message.role == 'user').isEmpty) return;
-    final now = DateTime.now();
-    final assistantMessage = AiChatMessageRecord(
-      role: 'assistant',
-      text: '',
-      createdAt: now,
-    );
-    final nextMessages = [...prefix, assistantMessage];
-    final nextModel = settings.model.trim().isNotEmpty
-        ? settings.model
-        : activeChat.model;
-    final nextChat = activeChat.copyWith(
-      model: nextModel,
-      messages: nextMessages,
-      updatedAt: now,
-    );
-
-    _replaceChat(nextChat);
-    _sending = true;
-    notifyListeners();
-    _triggerScroll();
-
-    await _storageService.saveAiChat(nextChat);
-
     await _generateAssistantResponse(
-      chatId: activeChat.id,
+      chatId: nextChat.id,
       initialChat: nextChat,
       assistantMessage: assistantMessage,
       model: nextModel,
       requestMessages: nextMessages,
-      userRequest: prefix.lastWhere((message) => message.role == 'user').text,
+      userRequest: userRequest,
       memorySources: const [],
       ragHits: 0,
+      selectedConnectionIds: turnInputSnapshot.selectedConnectionIds,
+      connectionTargets: turnInputSnapshot.connectionTargets,
+      allowedTools: turnInputSnapshot.allowedTools,
+      runtimeConnection: runtimeConnection,
+      language: turnInputSnapshot.language,
     );
   }
 
@@ -1086,63 +1329,78 @@ class AiChatViewModel extends ChangeNotifier {
     int messageIndex,
     String trimmedEditedText,
   ) async {
-    final activeChat = this.activeChat;
-    if (_sending || activeChat == null) return;
-    if (messageIndex < 0 || messageIndex >= activeChat.messages.length) return;
-    final target = activeChat.messages[messageIndex];
-    if (target.role != 'user') return;
-    if (trimmedEditedText.isEmpty) return;
+    if (trimmedEditedText.isEmpty || !_tryBeginChatStateWrite()) return;
+    late AiChatRecord nextChat;
+    late AiChatMessageRecord assistantMessage;
+    late List<AiChatMessageRecord> nextMessages;
+    late String nextModel;
+    late _ChatTurnInputSnapshot turnInputSnapshot;
+    late AiRuntimeConnectionSnapshot runtimeConnection;
+    try {
+      final activeChat = this.activeChat;
+      if (activeChat == null) return;
+      if (messageIndex < 0 || messageIndex >= activeChat.messages.length) {
+        return;
+      }
+      final target = activeChat.messages[messageIndex];
+      if (target.role != 'user') return;
+      turnInputSnapshot = _captureTurnInputSnapshot(
+        chatId: activeChat.id,
+        includeAttachments: false,
+      );
 
-    final targetIndex = activeChat.messages.indexWhere(
-      (message) =>
-          message.role == 'user' && message.createdAt == target.createdAt,
-    );
-    if (targetIndex < 0 || targetIndex >= activeChat.messages.length) {
-      return;
+      final targetIndex = activeChat.messages.indexWhere(
+        (message) =>
+            message.role == 'user' && message.createdAt == target.createdAt,
+      );
+      if (targetIndex < 0 || targetIndex >= activeChat.messages.length) {
+        return;
+      }
+
+      runtimeConnection = await _storageService
+          .loadAiRuntimeConnectionSnapshot();
+      final settings = runtimeConnection.settings;
+      if (!runtimeConnection.hasApiKey) return;
+
+      final currentTarget = activeChat.messages[targetIndex];
+      if (currentTarget.role != 'user') return;
+
+      final now = DateTime.now();
+      final editedUser = currentTarget.copyWith(
+        text: trimmedEditedText,
+        createdAt: now,
+      );
+      assistantMessage = AiChatMessageRecord(
+        role: 'assistant',
+        text: '',
+        createdAt: now,
+      );
+      nextMessages = [
+        ...activeChat.messages.take(targetIndex),
+        editedUser,
+        assistantMessage,
+      ];
+      nextModel = settings.model.trim().isNotEmpty
+          ? settings.model
+          : activeChat.model;
+      nextChat = activeChat.copyWith(
+        title: targetIndex == 0 ? _titleFrom(trimmedEditedText) : null,
+        model: nextModel,
+        messages: nextMessages,
+        updatedAt: now,
+      );
+
+      await _storageService.saveAiChat(nextChat);
+      _replaceChat(nextChat, activate: false);
+      _sending = true;
+      notifyListeners();
+      _triggerScroll();
+    } finally {
+      _endChatStateWrite();
     }
-
-    final settings = await _storageService.loadAiConnectionSettings();
-    if (!settings.hasApiKey) {
-      return;
-    }
-
-    final currentTarget = activeChat.messages[targetIndex];
-    if (currentTarget.role != 'user') return;
-
-    final now = DateTime.now();
-    final editedUser = currentTarget.copyWith(
-      text: trimmedEditedText,
-      createdAt: now,
-    );
-    final assistantMessage = AiChatMessageRecord(
-      role: 'assistant',
-      text: '',
-      createdAt: now,
-    );
-    final nextMessages = [
-      ...activeChat.messages.take(targetIndex),
-      editedUser,
-      assistantMessage,
-    ];
-    final nextModel = settings.model.trim().isNotEmpty
-        ? settings.model
-        : activeChat.model;
-    final nextChat = activeChat.copyWith(
-      title: targetIndex == 0 ? _titleFrom(trimmedEditedText) : null,
-      model: nextModel,
-      messages: nextMessages,
-      updatedAt: now,
-    );
-
-    _replaceChat(nextChat);
-    _sending = true;
-    notifyListeners();
-    _triggerScroll();
-
-    await _storageService.saveAiChat(nextChat);
 
     await _generateAssistantResponse(
-      chatId: activeChat.id,
+      chatId: nextChat.id,
       initialChat: nextChat,
       assistantMessage: assistantMessage,
       model: nextModel,
@@ -1150,37 +1408,47 @@ class AiChatViewModel extends ChangeNotifier {
       userRequest: trimmedEditedText,
       memorySources: const [],
       ragHits: 0,
+      selectedConnectionIds: turnInputSnapshot.selectedConnectionIds,
+      connectionTargets: turnInputSnapshot.connectionTargets,
+      allowedTools: turnInputSnapshot.allowedTools,
+      runtimeConnection: runtimeConnection,
+      language: turnInputSnapshot.language,
     );
   }
 
-  void branchFromAssistant(int messageIndex) {
-    final activeChat = this.activeChat;
-    if (_sending || activeChat == null) return;
-    if (messageIndex < 0 || messageIndex >= activeChat.messages.length) return;
-    final target = activeChat.messages[messageIndex];
-    if (target.role != 'assistant') return;
+  Future<void> branchFromAssistant(int messageIndex) async {
+    if (!_tryBeginChatStateWrite()) return;
+    try {
+      final activeChat = this.activeChat;
+      if (activeChat == null) return;
+      if (messageIndex < 0 || messageIndex >= activeChat.messages.length) {
+        return;
+      }
+      final target = activeChat.messages[messageIndex];
+      if (target.role != 'assistant') return;
 
-    final now = DateTime.now();
-    final isEn = _appSettings.language == AppLanguage.en;
-    final branch = AiChatRecord(
-      id: 'ai-${now.microsecondsSinceEpoch}',
-      title: '${activeChat.title} ${isEn ? 'Branch' : '分支'}',
-      model: activeChat.model,
-      messages: activeChat.messages.take(messageIndex + 1).toList(),
-      createdAt: now,
-      updatedAt: now,
-    );
+      final now = DateTime.now();
+      final isEn = _appSettings.language == AppLanguage.en;
+      final branch = AiChatRecord(
+        id: 'ai-${now.microsecondsSinceEpoch}',
+        title: '${activeChat.title} ${isEn ? 'Branch' : '分支'}',
+        model: activeChat.model,
+        messages: activeChat.messages.take(messageIndex + 1).toList(),
+        createdAt: now,
+        updatedAt: now,
+      );
 
-    _chats = [branch, ..._chats];
-    if (branch.messages.isNotEmpty) {
-      _savedHistoryChats = [branch, ..._savedHistoryChats];
-      _historyLoadStarted = true;
+      await _storageService.saveAiChat(branch);
+      _chats = [branch, ..._chats];
+      if (branch.messages.isNotEmpty) {
+        _savedHistoryChats = [branch, ..._savedHistoryChats];
+      }
+      _activeChatId = branch.id;
+      notifyListeners();
+      _triggerScroll();
+    } finally {
+      _endChatStateWrite();
     }
-    _activeChatId = branch.id;
-    notifyListeners();
-
-    _storageService.saveAiChat(branch);
-    _triggerScroll();
   }
 
   // 上下文 Token 压缩与估计逻辑 (吸收自原 chat_token_compression.dart)
@@ -1371,6 +1639,11 @@ class AiChatViewModel extends ChangeNotifier {
     required String userRequest,
     required List<String> memorySources,
     required int ragHits,
+    required Set<String> selectedConnectionIds,
+    required Map<String, ConnectionTargetBinding> connectionTargets,
+    required Set<String>? allowedTools,
+    required AiRuntimeConnectionSnapshot runtimeConnection,
+    required AppLanguage language,
   }) async {
     final cancellationToken = LlmCancellationToken();
     _activeCancellationToken = cancellationToken;
@@ -1381,7 +1654,7 @@ class AiChatViewModel extends ChangeNotifier {
     }
 
     try {
-      final settings = await _storageService.loadAiConnectionSettings();
+      final settings = runtimeConnection.settings;
       if (_deletedGenerationChatIds.contains(chatId)) return;
       final modelProfile = AgentModelProfile(
         mainModel: model,
@@ -1390,13 +1663,11 @@ class AiChatViewModel extends ChangeNotifier {
         fallbackPolicy: settings.modelFallbackPolicy,
       );
 
-      final translator = AiChatStatusTranslator(_appSettings.language);
+      final translator = AiChatStatusTranslator(language);
       final metricsRecorder = AiChatRunMetricsRecorder(_storageService);
       final runner = AiChatGenerationRunner(runtimeFactory: _runtimeFactory);
       final answer = StringBuffer();
       final forceContextCompression = _consumeContextCompression(chatId);
-      final allowedTools = _chatAllowedTools[chatId];
-
       _beginStreamingAssistant(
         chatId: chatId,
         assistantCreatedAt: assistantMessage.createdAt,
@@ -1414,7 +1685,10 @@ class AiChatViewModel extends ChangeNotifier {
         allowedTools: allowedTools,
         forceContextCompression: forceContextCompression,
         cancellationToken: cancellationToken,
-        selectedConnectionIds: _selectedConnectionIds,
+        selectedConnectionIds: selectedConnectionIds,
+        connectionTargets: connectionTargets,
+        language: language,
+        runtimeConnectionSnapshot: runtimeConnection,
         requestMessagesJson: _messagesForRequest(
           requestMessages,
           placeholder: assistantMessage,

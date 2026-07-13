@@ -589,6 +589,11 @@ class ToolLoopController {
         final approvalRequest = await chatService.toolService
             .approvalRequestFor(call.name, arguments);
         approvalRequired = approvalRequest != null;
+        final approvalTargetGuard =
+            chatService.toolService is AiToolApprovalTargetGuard
+            ? chatService.toolService as AiToolApprovalTargetGuard
+            : null;
+        AiToolApprovalRequest? approvedRequest;
 
         if (!dedupBlocked && !cacheHit && approvalRequest != null) {
           approvalCount += 1;
@@ -681,8 +686,42 @@ class ToolLoopController {
                     '\n\nTool action rejected. Operation stopped. You can tell me what to do next.';
                 _currentOutcome = AgentFinalOutcome.approvalRejected;
               }
+            } else if (approvalTargetGuard != null &&
+                !await approvalTargetGuard.isApprovalTargetCurrent(
+                  approvalRequest,
+                )) {
+              outcome = 'approval_target_changed';
+              result = jsonEncode({
+                'error':
+                    'The server connection changed after approval was requested. Review the current target and approve the action again.',
+                'code': 'approval_target_changed',
+                'command': approvalRequest.command,
+              });
+              stopAfterToolResult = true;
+              stopMessage =
+                  '\n\nServer connection changed while approval was open. No action was executed; review the target and approve again.';
+              _currentOutcome = AgentFinalOutcome.approvalRejected;
+              onTrace?.call(
+                LlmTraceEvent(
+                  kind: 'approval',
+                  title: 'Tool approval target changed',
+                  content: chatService._prettyJson({
+                    'tool': call.name,
+                    'status': 'target_changed',
+                    'approvalType': approvalRequest.approvalType,
+                    'server': approvalRequest.connectionName,
+                    'command': approvalRequest.command,
+                  }),
+                ),
+              );
+              AppLogService.instance.warning(
+                'AI tool approval target changed',
+                details:
+                    'tool=${call.name} connection=${approvalRequest.connectionName}',
+              );
             } else {
               approvedWrite = true;
+              approvedRequest = approvalRequest;
               approvedCount += 1;
               onTrace?.call(
                 LlmTraceEvent(
@@ -739,11 +778,19 @@ class ToolLoopController {
             }
           }
 
-          result = await chatService.toolService.execute(
-            call.name,
-            arguments,
-            approvedWrite: approvedWrite,
-          );
+          result =
+              approvedWrite &&
+                  approvedRequest != null &&
+                  approvalTargetGuard != null
+              ? await approvalTargetGuard.executeApproved(
+                  approvedRequest,
+                  arguments,
+                )
+              : await chatService.toolService.execute(
+                  call.name,
+                  arguments,
+                  approvedWrite: approvedWrite,
+                );
           cancellationToken?.throwIfCancelled();
           outcome = chatService._classifyToolResultOutcome(result);
           if (!planMode) {

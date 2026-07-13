@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:ssh_mobile/features/ai_chat/services/ai_chat_generation_runner.dart';
 import 'package:ssh_mobile/features/ai_chat/services/ai_chat_runtime_factory.dart';
 import 'package:ssh_mobile/services/ai_tool_service.dart';
+import 'package:ssh_mobile/services/connection_target_binding.dart';
 import 'package:ssh_mobile/features/ai_chat/services/llm_chat_service.dart';
 import 'package:ssh_mobile/services/llm_runtime/llm_runtime_types.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
@@ -23,6 +24,8 @@ class FakeLlmChatService implements LlmChatService {
 
   String? receivedRunId;
   bool? receivedForceContextCompression;
+  AiRuntimeConnectionSnapshot? receivedRuntimeConnectionSnapshot;
+  Map<String, ConnectionTargetBinding> receivedConnectionTargets = const {};
 
   FakeLlmChatService({
     required this.onStream,
@@ -35,6 +38,18 @@ class FakeLlmChatService implements LlmChatService {
     ],
     this.approvalRequest,
   });
+
+  @override
+  void bindRuntimeConnectionSnapshot(AiRuntimeConnectionSnapshot snapshot) {
+    receivedRuntimeConnectionSnapshot = snapshot;
+  }
+
+  @override
+  void bindConnectionTargets(
+    Map<String, ConnectionTargetBinding> connectionTargets,
+  ) {
+    receivedConnectionTargets = Map.unmodifiable(connectionTargets);
+  }
 
   @override
   Stream<String> stream({
@@ -99,6 +114,7 @@ class FakeLlmChatService implements LlmChatService {
 
 class FakeAiChatRuntimeFactory extends AiChatRuntimeFactory {
   final LlmChatService Function() serviceBuilder;
+  AiConnectionSettings? receivedSettings;
 
   FakeAiChatRuntimeFactory({
     required this.serviceBuilder,
@@ -116,7 +132,9 @@ class FakeAiChatRuntimeFactory extends AiChatRuntimeFactory {
     required AiConnectionSettings settings,
     required String model,
     required String chatId,
+    AppLanguage language = AppLanguage.zh,
   }) {
+    receivedSettings = settings;
     return serviceBuilder();
   }
 }
@@ -226,6 +244,101 @@ void main() {
       expect(traceEvents, hasLength(1));
       expect(traceEvents.single.kind, 'reasoning');
     });
+
+    test(
+      'run keeps the supplied runtime settings and secrets paired when storage changes',
+      () async {
+        final storedSettings = await storageService.loadAiConnectionSettings();
+        final suppliedSettings = storedSettings.copyWith(
+          baseUrl: 'https://provider-a.example/v1',
+          model: 'model-a',
+          quarkSearchEndpoint: 'https://search-a.example/v1',
+          hasApiKey: true,
+          hasQuarkApiKey: true,
+        );
+        final suppliedSnapshot = AiRuntimeConnectionSnapshot(
+          settings: suppliedSettings,
+          apiKey: 'test-primary-key-a',
+          quarkApiKey: 'test-quark-key-a',
+        );
+
+        await storageService.saveAiConnectionSettings(
+          baseUrl: 'https://provider-b.example/v1',
+          model: 'model-b',
+          apiKey: 'test-primary-key-b',
+          quarkSearchEndpoint: 'https://search-b.example/v1',
+          quarkApiKey: 'test-quark-key-b',
+        );
+        final currentSnapshot = await storageService
+            .loadAiRuntimeConnectionSnapshot();
+        expect(
+          currentSnapshot.settings.baseUrl,
+          'https://provider-b.example/v1',
+        );
+        expect(currentSnapshot.apiKey == 'test-primary-key-b', isTrue);
+        expect(currentSnapshot.quarkApiKey == 'test-quark-key-b', isTrue);
+
+        final fakeService = FakeLlmChatService(
+          onStream: (_) => Stream.value('done'),
+        );
+        final factory = FakeAiChatRuntimeFactory(
+          serviceBuilder: () => fakeService,
+          storageService: storageService,
+          sshService: sshService,
+          sftpService: sftpService,
+          performanceMonitorService: performanceMonitorService,
+          playbookService: playbookService,
+          ragService: ragService,
+          appSettings: appSettings,
+        );
+
+        final result = await AiChatGenerationRunner(runtimeFactory: factory)
+            .run(
+              chatId: 'test_chat',
+              initialChat: AiChatRecord(
+                id: 'test_chat',
+                title: 'Title',
+                messages: const [],
+                createdAt: DateTime.now(),
+                updatedAt: DateTime.now(),
+                model: suppliedSettings.model,
+              ),
+              model: suppliedSettings.model,
+              userRequest: 'hello',
+              memorySources: const [],
+              allowedTools: null,
+              forceContextCompression: false,
+              cancellationToken: LlmCancellationToken(),
+              selectedConnectionIds: const {},
+              requestMessagesJson: const [],
+              onTextChunk: (_) {},
+              onTrace: (_) {},
+              requestToolApproval: (_) async =>
+                  const AiToolApprovalDecision.approved(),
+              runtimeConnectionSnapshot: suppliedSnapshot,
+            );
+
+        expect(result, isA<AiChatRunSuccess>());
+        expect(identical(factory.receivedSettings, suppliedSettings), isTrue);
+        expect(
+          identical(
+            fakeService.receivedRuntimeConnectionSnapshot,
+            suppliedSnapshot,
+          ),
+          isTrue,
+        );
+        expect(
+          fakeService.receivedRuntimeConnectionSnapshot?.apiKey ==
+              suppliedSnapshot.apiKey,
+          isTrue,
+        );
+        expect(
+          fakeService.receivedRuntimeConnectionSnapshot?.quarkApiKey ==
+              suppliedSnapshot.quarkApiKey,
+          isTrue,
+        );
+      },
+    );
 
     test('run persists tool, approval, blocked, and compression traces', () async {
       final fakeService = FakeLlmChatService(

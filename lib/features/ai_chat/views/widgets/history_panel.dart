@@ -145,6 +145,7 @@ class _HistoryPanelState extends State<HistoryPanel> {
                     final chat = filtered[index];
                     final selected = chat.id == widget.activeChatId;
                     return ListTile(
+                      key: ValueKey<String>('history-chat-${chat.id}'),
                       selected: selected,
                       leading: Icon(
                         selected

@@ -103,6 +103,7 @@ void main() {
         settings: settings,
         model: 'gpt-4o',
         chatId: 'test-chat-id',
+        language: AppLanguage.zh,
       );
 
       expect(llmService, isA<LlmChatService>());

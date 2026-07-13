@@ -25,6 +25,126 @@ void main() {
         75,
       );
     });
+
+    test('reserves the scaled input row at 200 percent text', () {
+      expect(
+        chatComposerMaxHeightFor(
+          viewportHeight: 411,
+          keyboardInset: 260,
+          textScale: 2,
+        ),
+        100,
+      );
+    });
+  });
+
+  group('Plan approval viewport visibility', () {
+    test('hides the fixed approval area for a short 2x keyboard viewport', () {
+      expect(
+        shouldShowPlanApprovalForAvailableHeight(
+          availableHeight: 151,
+          availableWidth: 411,
+          textScale: 2,
+        ),
+        isFalse,
+      );
+    });
+
+    test('keeps the approval area visible with sufficient room', () {
+      expect(
+        shouldShowPlanApprovalForAvailableHeight(
+          availableHeight: 591,
+          availableWidth: 411,
+          textScale: 2,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldShowPlanApprovalForAvailableHeight(
+          availableHeight: 411,
+          availableWidth: 411,
+          textScale: 2,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldShowPlanApprovalForAvailableHeight(
+          availableHeight: 460,
+          availableWidth: 411,
+          textScale: 2,
+        ),
+        isTrue,
+      );
+    });
+
+    test('accounts for stacked actions on a 320dp viewport', () {
+      expect(
+        shouldShowPlanApprovalForAvailableHeight(
+          availableHeight: 250,
+          availableWidth: 320,
+          textScale: 1,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldShowPlanApprovalForAvailableHeight(
+          availableHeight: 260,
+          availableWidth: 320,
+          textScale: 1,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldShowPlanApprovalForAvailableHeight(
+          availableHeight: 360,
+          availableWidth: 320,
+          textScale: 1,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldShowPlanApprovalForAvailableHeight(
+          availableHeight: 339,
+          availableWidth: 411,
+          textScale: 1,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldShowPlanApprovalForAvailableHeight(
+          availableHeight: 340,
+          availableWidth: 411,
+          textScale: 1,
+        ),
+        isTrue,
+      );
+    });
+  });
+
+  group('Plan banner viewport visibility', () {
+    test('keeps the full 48dp close target out of clipped short composers', () {
+      expect(
+        shouldShowPlanModeBannerForAvailableHeight(
+          availableHeight: 151,
+          textScale: 2,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldShowPlanModeBannerForAvailableHeight(
+          availableHeight: 220,
+          textScale: 1,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldShowPlanModeBannerForAvailableHeight(
+          availableHeight: 260,
+          textScale: 2,
+        ),
+        isTrue,
+      );
+    });
   });
 
   group('tool approval panel height', () {

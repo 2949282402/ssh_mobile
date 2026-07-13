@@ -59,7 +59,8 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     bool planMode = false,
     AiChatMessageRecord? approvedPlanMessage,
   }) async* {
-    final settings = await storageService.loadAiConnectionSettings();
+    final settings =
+        _runtimeSettings ?? await storageService.loadAiConnectionSettings();
     final provider = LlmProviderFactory.fromSettings(settings);
     var planExecutionSnapshot = approvedPlanMessage == null
         ? null
@@ -79,7 +80,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
     final model = modelProfile.resolve(AgentModelRole.main);
     final helperModel = modelProfile.resolve(AgentModelRole.helper);
     final auditModel = modelProfile.resolve(AgentModelRole.audit);
-    final apiKey = await storageService.getAiApiKey();
+    final apiKey = _runtimeApiKey ?? await storageService.getAiApiKey();
     if (apiKey == null || apiKey.isEmpty) {
       AppLogService.instance.warning('LLM request blocked: API key missing');
       throw StateError('API key is not configured.');

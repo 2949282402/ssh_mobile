@@ -4,12 +4,28 @@ class _PlanApprovalSnapshot {
   final AiChatRecord chat;
   final DateTime assistantCreatedAt;
   final String fingerprint;
+  final _ChatTurnInputSnapshot turnInput;
+  final AiRuntimeConnectionSnapshot? runtimeConnection;
 
   const _PlanApprovalSnapshot({
     required this.chat,
     required this.assistantCreatedAt,
     required this.fingerprint,
+    required this.turnInput,
+    this.runtimeConnection,
   });
+
+  _PlanApprovalSnapshot withRuntimeConnection(
+    AiRuntimeConnectionSnapshot value,
+  ) {
+    return _PlanApprovalSnapshot(
+      chat: chat,
+      assistantCreatedAt: assistantCreatedAt,
+      fingerprint: fingerprint,
+      turnInput: turnInput,
+      runtimeConnection: value,
+    );
+  }
 }
 
 extension AiChatViewModelApprovals on AiChatViewModel {
@@ -20,13 +36,36 @@ extension AiChatViewModelApprovals on AiChatViewModel {
     if (_sending || _planApprovalInFlight || _chatStateWritesInFlight > 0) {
       return const ApprovePlanExecutionAlreadySending();
     }
-    final captured = _planApprovalSnapshotFor(assistantCreatedAt);
-    if (captured == null) return const ApprovePlanExecutionNoPlan();
+    _PlanApprovalSnapshot captured;
+    if (forceAfterWarning) {
+      final continuation = _pendingPlanWarningSnapshot;
+      _pendingPlanWarningSnapshot = null;
+      if (continuation == null ||
+          continuation.assistantCreatedAt != assistantCreatedAt ||
+          !_isPlanApprovalSnapshotCurrent(continuation)) {
+        return const ApprovePlanExecutionPlanChanged();
+      }
+      captured = continuation;
+    } else {
+      _pendingPlanWarningSnapshot = null;
+      final fresh = _planApprovalSnapshotFor(assistantCreatedAt);
+      if (fresh == null) return const ApprovePlanExecutionNoPlan();
+      captured = fresh;
+    }
 
     _planApprovalInFlight = true;
     notify();
     ClientRuntimeHealthReport? healthReport;
+    var preserveWarningContinuation = false;
     try {
+      if (captured.runtimeConnection == null) {
+        captured = captured.withRuntimeConnection(
+          await _storageService.loadAiRuntimeConnectionSnapshot(),
+        );
+        if (!_isPlanApprovalSnapshotCurrent(captured)) {
+          return const ApprovePlanExecutionPlanChanged();
+        }
+      }
       healthReport = await _clientHealthAdvisor.check(
         profile: ClientHealthCheckProfile.agentExecution,
       );
@@ -41,15 +80,17 @@ extension AiChatViewModelApprovals on AiChatViewModel {
       }
       if (healthReport.status == ClientRuntimeHealthStatus.warning &&
           !forceAfterWarning) {
+        _pendingPlanWarningSnapshot = captured;
+        preserveWarningContinuation = true;
         return ApprovePlanExecutionWarning(healthReport);
       }
 
-      final settings = await _storageService.loadAiConnectionSettings();
       final current = _matchingPlanApprovalSnapshot(captured);
       if (current == null) {
         return ApprovePlanExecutionPlanChanged(healthReport: healthReport);
       }
-      if (!settings.hasApiKey) {
+      final runtimeConnection = captured.runtimeConnection!;
+      if (!runtimeConnection.hasApiKey) {
         return ApprovePlanExecutionApiKeyMissing(healthReport: healthReport);
       }
 
@@ -63,12 +104,13 @@ extension AiChatViewModelApprovals on AiChatViewModel {
         approvedPlan: approvedPlan,
         updatedAt: approvedAt,
       );
-      final isEn = _appSettings.language == AppLanguage.en;
+      final isEn = captured.turnInput.language == AppLanguage.en;
       final sendResult = await _startTextGeneration(
         chat: approvedChat,
         targetText: isEn ? 'Execute the approved plan.' : '执行已批准的计划。',
-        settings: settings,
+        runtimeConnection: runtimeConnection,
         approvedPlanRef: approvedPlan,
+        turnInputSnapshot: captured.turnInput,
         canCommit: () => _isPlanApprovalSnapshotCurrent(captured),
       );
       if (sendResult is SendTextSuccess) {
@@ -91,6 +133,10 @@ extension AiChatViewModelApprovals on AiChatViewModel {
       );
       return ApprovePlanExecutionFailed(healthReport: healthReport);
     } finally {
+      if (!preserveWarningContinuation &&
+          identical(_pendingPlanWarningSnapshot, captured)) {
+        _pendingPlanWarningSnapshot = null;
+      }
       _planApprovalInFlight = false;
       notify();
     }
@@ -105,19 +151,19 @@ extension AiChatViewModelApprovals on AiChatViewModel {
         chat.approvedPlan != null) {
       return null;
     }
-    final latestAssistant = latestAssistantMessageForChat(chat);
+    final latestAssistant = approvablePlanMessageForChat(chat);
     if (latestAssistant == null ||
-        latestAssistant.createdAt != assistantCreatedAt ||
-        latestAssistant.todoSteps.isEmpty ||
-        !latestAssistant.todoSteps.every(
-          (step) => step.status == StepStatus.pending,
-        )) {
+        latestAssistant.createdAt != assistantCreatedAt) {
       return null;
     }
     return _PlanApprovalSnapshot(
       chat: chat,
       assistantCreatedAt: assistantCreatedAt,
       fingerprint: _planApprovalFingerprint(chat, latestAssistant),
+      turnInput: _captureTurnInputSnapshot(
+        chatId: chat.id,
+        includeAttachments: false,
+      ),
     );
   }
 

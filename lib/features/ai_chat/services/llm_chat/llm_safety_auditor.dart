@@ -19,7 +19,8 @@ extension LlmChatServiceSafetyAuditor on LlmChatService {
         ? toolLedger
         : toolLedger.sublist(toolLedger.length - 12);
     try {
-      final settings = await storageService.loadAiConnectionSettings();
+      final settings =
+          _runtimeSettings ?? await storageService.loadAiConnectionSettings();
       final provider = LlmProviderFactory.fromSettings(settings);
       final response = await provider.complete(
         LlmProviderRequest(

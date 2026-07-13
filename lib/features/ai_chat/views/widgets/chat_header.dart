@@ -2,11 +2,15 @@ part of '../llm_chat_screen.dart';
 
 class _ChatHeader extends StatelessWidget {
   final VoidCallback onShowHistory;
+  final VoidCallback onNewChat;
+  final bool newChatInFlight;
   final VoidCallback onShowSettings;
   final bool settingsOpening;
 
   const _ChatHeader({
     required this.onShowHistory,
+    required this.onNewChat,
+    required this.newChatInFlight,
     required this.onShowSettings,
     required this.settingsOpening,
   });
@@ -124,14 +128,15 @@ class _ChatHeader extends StatelessWidget {
                   ),
                   IconButton(
                     tooltip: strings.newChat,
-                    icon: const Icon(Icons.add_comment_outlined),
-                    onPressed: snapshot.sending
+                    icon: newChatInFlight
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.add_comment_outlined),
+                    onPressed: snapshot.sending || newChatInFlight
                         ? null
-                        : () {
-                            context
-                                .read<AiChatViewModel>()
-                                .createChatFromSettings();
-                          },
+                        : onNewChat,
                   ),
                   SizedBox.square(
                     key: const ValueKey('chat-open-llm-settings'),

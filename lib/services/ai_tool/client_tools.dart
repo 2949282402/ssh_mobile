@@ -21,7 +21,9 @@ class ClientToolsProvider implements AiToolProvider {
 
   @override
   Future<List<AiTool>> getTools(AiToolService service) async {
-    final searchSettings = await storageService.loadAiConnectionSettings();
+    final searchSettings =
+        service._runtimeConnectionSnapshot?.settings ??
+        await storageService.loadAiConnectionSettings();
     return _getClientTools(this, service, searchSettings);
   }
 

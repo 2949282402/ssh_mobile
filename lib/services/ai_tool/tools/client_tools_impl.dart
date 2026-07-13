@@ -5,7 +5,10 @@ Future<String> _webSearch(
   AiToolService service,
   Map<String, dynamic> arguments,
 ) async {
-  final settings = await provider.storageService.loadAiConnectionSettings();
+  final runtimeSnapshot =
+      service._runtimeConnectionSnapshot ??
+      await provider.storageService.loadAiRuntimeConnectionSnapshot();
+  final settings = runtimeSnapshot.settings;
   if (!settings.webSearchEnabled) {
     return jsonEncode({
       'execution': 'client',
@@ -25,6 +28,7 @@ Future<String> _webSearch(
       query,
       limit: limit,
       settings: settings,
+      apiKey: runtimeSnapshot.quarkApiKey,
     );
     return jsonEncode(result.toJson());
   }
@@ -48,9 +52,9 @@ Future<ClientWebViewSearchResult> _executeQuarkCloudSearch(
   String query, {
   required int limit,
   required AiConnectionSettings settings,
+  required String apiKey,
 }) async {
-  final apiKey = await provider.storageService.getQuarkApiKey();
-  if (apiKey == null || apiKey.trim().isEmpty) {
+  if (apiKey.trim().isEmpty) {
     return ClientWebViewSearchResult(
       chatId: provider.clientWebViewSessionId ?? 'cloud',
       supported: true,
@@ -325,6 +329,32 @@ Future<String> _clientUpdateSkill(
     return jsonEncode({
       'error':
           'Updating a local skill requires user approval before execution.',
+    });
+  }
+  final approvedSnapshot =
+      service.activeApprovalExecutionBinding?.resourceSnapshot;
+  if (approvedSnapshot is _ApprovedSkillUpdate) {
+    final saved = await provider.storageService.saveAiSkillIfUnchanged(
+      approvedSnapshot.expected,
+      approvedSnapshot.updated,
+    );
+    if (!saved) {
+      return jsonEncode({
+        'error':
+            'The skill changed while approval was open. Review the latest skill and approve the update again.',
+        'code': 'approval_target_changed',
+        'skillId': approvedSnapshot.expected.id,
+      });
+    }
+    final updated = approvedSnapshot.updated;
+    return jsonEncode({
+      'execution': 'client',
+      'target': 'local_skill',
+      'updated': true,
+      'skillId': updated.id,
+      'name': updated.name,
+      'description': updated.description,
+      'enabled': updated.enabled,
     });
   }
   final skillId = service._arg(arguments, 'skillId');

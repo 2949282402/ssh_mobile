@@ -1,4 +1,5 @@
 import 'performance_monitor_service.dart';
+import 'connection_target_binding.dart';
 
 abstract interface class PerformanceMonitorToolAdapter {
   Map<String, dynamic> getState();
@@ -32,7 +33,16 @@ abstract interface class PerformanceMonitorToolAdapter {
   Future<Map<String, dynamic>> getApplications(String connectionId);
 }
 
-class PerformanceMonitorToolService implements PerformanceMonitorToolAdapter {
+abstract interface class BoundPerformanceMonitorToolAdapter {
+  Future<Map<String, dynamic>> startWithTargets(
+    Map<String, ConnectionTargetBinding> targets,
+  );
+}
+
+class PerformanceMonitorToolService
+    implements
+        PerformanceMonitorToolAdapter,
+        BoundPerformanceMonitorToolAdapter {
   final PerformanceMonitorService service;
 
   const PerformanceMonitorToolService(this.service);
@@ -87,6 +97,14 @@ class PerformanceMonitorToolService implements PerformanceMonitorToolAdapter {
   @override
   Future<Map<String, dynamic>> start() async {
     await service.startMonitoring();
+    return getState();
+  }
+
+  @override
+  Future<Map<String, dynamic>> startWithTargets(
+    Map<String, ConnectionTargetBinding> targets,
+  ) async {
+    await service.startMonitoring(targetBindings: targets);
     return getState();
   }
 

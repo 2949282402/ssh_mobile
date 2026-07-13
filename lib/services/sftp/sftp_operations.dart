@@ -5,10 +5,14 @@ extension SftpServiceOperations on SftpService {
     String connectionId,
     String path,
   ) async {
-    return _withDetachedSftp(connectionId, (sftp, config) async {
+    return _withDetachedSftp(connectionId, (sftp, config, targetBinding) async {
       final absolutePath = await sftp.absolute(path);
 
-      final cached = _directoryCache.get(connectionId, absolutePath);
+      final cached = _directoryCache.get(
+        connectionId,
+        targetBinding.fingerprint,
+        absolutePath,
+      );
       if (cached != null) {
         return cached;
       }
@@ -20,7 +24,12 @@ extension SftpServiceOperations on SftpService {
         names: names,
       );
       final unmodifiableEntries = List<SftpEntry>.unmodifiable(entries);
-      _directoryCache.set(connectionId, absolutePath, unmodifiableEntries);
+      _directoryCache.set(
+        connectionId,
+        targetBinding.fingerprint,
+        absolutePath,
+        unmodifiableEntries,
+      );
       AppLogService.instance.info(
         'SFTP directory listed for tool',
         details: 'connection=${config.name} path=$absolutePath',
@@ -34,7 +43,7 @@ extension SftpServiceOperations on SftpService {
     required String path,
     int maxBytes = SftpService.maxTextPreviewBytes,
   }) async {
-    return _withDetachedSftp(connectionId, (sftp, config) async {
+    return _withDetachedSftp(connectionId, (sftp, config, targetBinding) async {
       final absolutePath = await sftp.absolute(path);
       final attrs = await sftp.stat(absolutePath);
       final modifiedAt = attrs.modifyTime == null
@@ -43,6 +52,7 @@ extension SftpServiceOperations on SftpService {
 
       final cachedBytes = await SftpFileCache.get(
         connectionId,
+        targetBinding.fingerprint,
         absolutePath,
         attrs.size,
         modifiedAt,
@@ -64,6 +74,7 @@ extension SftpServiceOperations on SftpService {
 
         await SftpFileCache.put(
           connectionId,
+          targetBinding.fingerprint,
           absolutePath,
           attrs.size,
           modifiedAt,
@@ -82,7 +93,7 @@ extension SftpServiceOperations on SftpService {
     required String path,
     int maxBytes = SftpService.maxDownloadBytes,
   }) async {
-    return _withDetachedSftp(connectionId, (sftp, config) async {
+    return _withDetachedSftp(connectionId, (sftp, config, targetBinding) async {
       final absolutePath = await sftp.absolute(path);
       final attrs = await sftp.stat(absolutePath);
       if (attrs.isDirectory) {
@@ -96,6 +107,7 @@ extension SftpServiceOperations on SftpService {
 
       final cachedBytes = await SftpFileCache.get(
         connectionId,
+        targetBinding.fingerprint,
         absolutePath,
         attrs.size,
         modifiedAt,
@@ -117,6 +129,7 @@ extension SftpServiceOperations on SftpService {
 
         await SftpFileCache.put(
           connectionId,
+          targetBinding.fingerprint,
           absolutePath,
           attrs.size,
           modifiedAt,
@@ -138,7 +151,7 @@ extension SftpServiceOperations on SftpService {
   }) async {
     final bytes = Uint8List.fromList(utf8.encode(text));
     _assertWithinMemoryLimit(bytes.length, 'edit', maxBytes: maxBytes);
-    await _withDetachedSftp(connectionId, (sftp, config) async {
+    await _withDetachedSftp(connectionId, (sftp, config, targetBinding) async {
       final absolutePath = await sftp.absolute(path);
       SftpFile? file;
       try {
@@ -150,8 +163,12 @@ extension SftpServiceOperations on SftpService {
               SftpFileOpenMode.write,
         );
         await file.writeBytes(bytes);
-        _directoryCache.invalidate(connectionId);
-        await SftpFileCache.invalidate(connectionId, absolutePath);
+        _directoryCache.invalidate(connectionId, targetBinding.fingerprint);
+        await SftpFileCache.invalidate(
+          connectionId,
+          targetBinding.fingerprint,
+          absolutePath,
+        );
         AppLogService.instance.info(
           'SFTP text file saved for tool',
           details:
@@ -167,7 +184,7 @@ extension SftpServiceOperations on SftpService {
     required String connectionId,
     required String path,
   }) async {
-    return _withDetachedSftp(connectionId, (sftp, _) async {
+    return _withDetachedSftp(connectionId, (sftp, _, _) async {
       final absolutePath = await sftp.absolute(path);
       final attrs = await sftp.stat(absolutePath);
       final modifiedAt = attrs.modifyTime == null
@@ -191,7 +208,7 @@ extension SftpServiceOperations on SftpService {
     int maxBytes = SftpService.maxUploadBytes,
   }) async {
     _assertWithinMemoryLimit(bytes.length, 'upload', maxBytes: maxBytes);
-    await _withDetachedSftp(connectionId, (sftp, config) async {
+    await _withDetachedSftp(connectionId, (sftp, config, targetBinding) async {
       final absolutePath = await sftp.absolute(path);
       SftpFile? file;
       try {
@@ -203,8 +220,12 @@ extension SftpServiceOperations on SftpService {
               SftpFileOpenMode.write,
         );
         await file.writeBytes(bytes);
-        _directoryCache.invalidate(connectionId);
-        await SftpFileCache.invalidate(connectionId, absolutePath);
+        _directoryCache.invalidate(connectionId, targetBinding.fingerprint);
+        await SftpFileCache.invalidate(
+          connectionId,
+          targetBinding.fingerprint,
+          absolutePath,
+        );
         AppLogService.instance.info(
           'SFTP file uploaded for tool',
           details:
@@ -220,10 +241,10 @@ extension SftpServiceOperations on SftpService {
     required String connectionId,
     required String path,
   }) async {
-    await _withDetachedSftp(connectionId, (sftp, config) async {
+    await _withDetachedSftp(connectionId, (sftp, config, targetBinding) async {
       final absolutePath = await sftp.absolute(path);
       await sftp.mkdir(absolutePath);
-      _directoryCache.invalidate(connectionId);
+      _directoryCache.invalidate(connectionId, targetBinding.fingerprint);
       AppLogService.instance.info(
         'SFTP directory created for tool',
         details: 'connection=${config.name} path=$absolutePath',
@@ -236,13 +257,21 @@ extension SftpServiceOperations on SftpService {
     required String path,
     required String newPath,
   }) async {
-    await _withDetachedSftp(connectionId, (sftp, config) async {
+    await _withDetachedSftp(connectionId, (sftp, config, targetBinding) async {
       final absolutePath = await sftp.absolute(path);
       final absoluteNewPath = await sftp.absolute(newPath);
       await sftp.rename(absolutePath, absoluteNewPath);
-      _directoryCache.invalidate(connectionId);
-      await SftpFileCache.invalidate(connectionId, absolutePath);
-      await SftpFileCache.invalidate(connectionId, absoluteNewPath);
+      _directoryCache.invalidate(connectionId, targetBinding.fingerprint);
+      await SftpFileCache.invalidate(
+        connectionId,
+        targetBinding.fingerprint,
+        absolutePath,
+      );
+      await SftpFileCache.invalidate(
+        connectionId,
+        targetBinding.fingerprint,
+        absoluteNewPath,
+      );
       AppLogService.instance.info(
         'SFTP path renamed for tool',
         details:
@@ -255,7 +284,7 @@ extension SftpServiceOperations on SftpService {
     required String connectionId,
     required String path,
   }) async {
-    await _withDetachedSftp(connectionId, (sftp, config) async {
+    await _withDetachedSftp(connectionId, (sftp, config, targetBinding) async {
       final absolutePath = await sftp.absolute(path);
       final attrs = await sftp.stat(absolutePath);
       if (attrs.isDirectory) {
@@ -263,8 +292,12 @@ extension SftpServiceOperations on SftpService {
       } else {
         await sftp.remove(absolutePath);
       }
-      _directoryCache.invalidate(connectionId);
-      await SftpFileCache.invalidate(connectionId, absolutePath);
+      _directoryCache.invalidate(connectionId, targetBinding.fingerprint);
+      await SftpFileCache.invalidate(
+        connectionId,
+        targetBinding.fingerprint,
+        absolutePath,
+      );
       AppLogService.instance.info(
         'SFTP path deleted for tool',
         details:

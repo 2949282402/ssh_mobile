@@ -17,6 +17,7 @@ import '../utils/skill_frontmatter.dart';
 import 'agent_model_profile.dart';
 import 'app_log_service.dart';
 import '../core/services/data_protection_service.dart';
+import 'connection_target_binding.dart';
 import 'multi_agent_coordinator.dart';
 import 'llm_provider/llm_api_format.dart';
 
@@ -71,6 +72,7 @@ abstract interface class ConnectionRepository {
 
 abstract interface class AiSettingsRepository {
   Future<AiConnectionSettings> loadAiConnectionSettings();
+  Future<AiRuntimeConnectionSnapshot> loadAiRuntimeConnectionSnapshot();
 
   Future<void> saveAiConnectionSettings({
     required String baseUrl,
@@ -217,40 +219,263 @@ class StorageService extends ChangeNotifier
         SftpPathHistoryRepository,
         AppBackupRepository {
   final db.AppDatabase? _providedDatabase;
+  Completer<void>? _aiSettingsOperation;
+  Completer<void>? _aiSkillOperation;
+  Completer<void>? _connectionOperation;
+  Completer<void>? _playbookOperation;
+  final Object _aiSkillOperationOwner = Object();
+  final Object _playbookOperationOwner = Object();
+  static final Object _aiSkillOperationZoneKey = Object();
+  static final Object _playbookOperationZoneKey = Object();
 
   StorageService({db.AppDatabase? database}) : _providedDatabase = database;
 
+  Future<T> _runExclusiveAiSettingsOperation<T>(
+    Future<T> Function() operation,
+  ) async {
+    while (true) {
+      final active = _aiSettingsOperation;
+      if (active != null) {
+        await active.future;
+        continue;
+      }
+      final ticket = Completer<void>();
+      _aiSettingsOperation = ticket;
+      try {
+        return await operation();
+      } finally {
+        if (identical(_aiSettingsOperation, ticket)) {
+          _aiSettingsOperation = null;
+        }
+        ticket.complete();
+      }
+    }
+  }
+
+  Future<T> _runExclusiveConnectionOperation<T>(
+    Future<T> Function() operation,
+  ) async {
+    while (true) {
+      final active = _connectionOperation;
+      if (active != null) {
+        await active.future;
+        continue;
+      }
+      final ticket = Completer<void>();
+      _connectionOperation = ticket;
+      try {
+        return await operation();
+      } finally {
+        if (identical(_connectionOperation, ticket)) {
+          _connectionOperation = null;
+        }
+        ticket.complete();
+      }
+    }
+  }
+
+  Future<T> _runExclusiveAiSkillOperation<T>(
+    Future<T> Function() operation,
+  ) async {
+    if (identical(
+      Zone.current[_aiSkillOperationZoneKey],
+      _aiSkillOperationOwner,
+    )) {
+      return operation();
+    }
+    while (true) {
+      final active = _aiSkillOperation;
+      if (active != null) {
+        await active.future;
+        continue;
+      }
+      final ticket = Completer<void>();
+      _aiSkillOperation = ticket;
+      try {
+        return await runZoned(
+          operation,
+          zoneValues: {_aiSkillOperationZoneKey: _aiSkillOperationOwner},
+        );
+      } finally {
+        if (identical(_aiSkillOperation, ticket)) {
+          _aiSkillOperation = null;
+        }
+        ticket.complete();
+      }
+    }
+  }
+
+  Future<T> _runExclusivePlaybookOperation<T>(
+    Future<T> Function() operation,
+  ) async {
+    if (identical(
+      Zone.current[_playbookOperationZoneKey],
+      _playbookOperationOwner,
+    )) {
+      return operation();
+    }
+    while (true) {
+      final active = _playbookOperation;
+      if (active != null) {
+        await active.future;
+        continue;
+      }
+      final ticket = Completer<void>();
+      _playbookOperation = ticket;
+      try {
+        return await runZoned(
+          operation,
+          zoneValues: {_playbookOperationZoneKey: _playbookOperationOwner},
+        );
+      } finally {
+        if (identical(_playbookOperation, ticket)) {
+          _playbookOperation = null;
+        }
+        ticket.complete();
+      }
+    }
+  }
+
   @override
   Future<void> addConnection(ConnectionConfig config) =>
-      ConnectionOps(this).addConnection(config);
+      _runExclusiveConnectionOperation(
+        () => ConnectionOps(this).addConnection(config),
+      );
 
   @override
   Future<void> updateConnection(ConnectionConfig config) =>
-      ConnectionOps(this).updateConnection(config);
+      _runExclusiveConnectionOperation(
+        () => ConnectionOps(this).updateConnection(config),
+      );
 
   Future<void> trustHostKey(
     String connectionId, {
     required String? algorithm,
     required String? fingerprint,
     required DateTime? trustedAt,
-  }) => ConnectionOps(this).trustHostKey(
-    connectionId,
-    algorithm: algorithm,
-    fingerprint: fingerprint,
-    trustedAt: trustedAt,
+  }) => _runExclusiveConnectionOperation(
+    () => ConnectionOps(this).trustHostKey(
+      connectionId,
+      algorithm: algorithm,
+      fingerprint: fingerprint,
+      trustedAt: trustedAt,
+    ),
   );
 
   @override
-  Future<void> deleteConnection(String id) =>
-      ConnectionOps(this).deleteConnection(id);
+  Future<void> deleteConnection(String id) => _runExclusiveConnectionOperation(
+    () => ConnectionOps(this).deleteConnection(id),
+  );
 
   @override
   Future<void> deleteConnections(List<String> ids) =>
-      ConnectionOps(this).deleteConnections(ids);
+      _runExclusiveConnectionOperation(
+        () => ConnectionOps(this).deleteConnections(List<String>.of(ids)),
+      );
 
   @override
   Future<void> reorderConnections(int oldIndex, int newIndex) =>
-      ConnectionOps(this).reorderConnections(oldIndex, newIndex);
+      _runExclusiveConnectionOperation(
+        () => ConnectionOps(this).reorderConnections(oldIndex, newIndex),
+      );
+
+  /// Captures immutable, non-secret connection targets without an async gap.
+  Map<String, ConnectionTargetBinding> captureConnectionTargetBindings(
+    Iterable<String> connectionIds,
+  ) {
+    final bindings = <String, ConnectionTargetBinding>{};
+    for (final id in connectionIds.toSet()) {
+      final config = ConnectionOps(this).getConnection(id);
+      if (config != null) {
+        bindings[id] = ConnectionTargetBinding.fromConfig(config);
+      }
+    }
+    return Map<String, ConnectionTargetBinding>.unmodifiable(bindings);
+  }
+
+  /// Atomically validates a target binding and pairs it with its credentials.
+  ///
+  /// The returned target is short-lived and must never be persisted or logged.
+  Future<ConnectionRuntimeTarget?> resolveConnectionTarget(
+    ConnectionTargetBinding binding,
+  ) {
+    return _runExclusiveConnectionOperation(() async {
+      _ensureInitialized();
+      final current = ConnectionOps(this).getConnection(binding.id);
+      if (!binding.matches(current)) return null;
+
+      final configSnapshot = ConnectionConfig.fromJson(
+        Map<String, dynamic>.from(current!.toJson()),
+      );
+      final password = await ConnectionOps(this).getPassword(binding.id);
+      final privateKey = await ConnectionOps(this).getPrivateKey(binding.id);
+      return ConnectionRuntimeTarget(
+        binding,
+        configSnapshot,
+        password,
+        privateKey,
+      );
+    });
+  }
+
+  /// Updates a saved connection only while its approved target still matches.
+  Future<bool> updateConnectionIfMatches(
+    ConnectionTargetBinding binding,
+    ConnectionConfig next,
+  ) {
+    if (next.id != binding.id) {
+      throw ArgumentError.value(
+        next.id,
+        'next',
+        'Connection id must match the target binding.',
+      );
+    }
+    return _runExclusiveConnectionOperation(() async {
+      final current = ConnectionOps(this).getConnection(binding.id);
+      if (!binding.matches(current)) return false;
+      await ConnectionOps(this).updateConnection(next);
+      return true;
+    });
+  }
+
+  /// Atomically replaces a connection only if every persisted non-secret
+  /// field still matches the snapshot shown for approval.
+  Future<bool> updateConnectionFromSnapshotIfUnchanged({
+    required ConnectionConfig expected,
+    required ConnectionConfig next,
+  }) {
+    if (next.id != expected.id) {
+      throw ArgumentError.value(
+        next.id,
+        'next',
+        'Connection id must match the expected snapshot.',
+      );
+    }
+    return _runExclusiveConnectionOperation(() async {
+      final current = ConnectionOps(this).getConnection(expected.id);
+      if (current == null ||
+          jsonEncode(current.toJson()) != jsonEncode(expected.toJson())) {
+        return false;
+      }
+      final password = await ConnectionOps(this).getPassword(expected.id);
+      final privateKey = await ConnectionOps(this).getPrivateKey(expected.id);
+      final persisted = ConnectionConfig.fromJson(next.toJson())
+        ..password = password
+        ..privateKey = privateKey;
+      await ConnectionOps(this).updateConnection(persisted);
+      return true;
+    });
+  }
+
+  /// Deletes a saved connection only while its approved target still matches.
+  Future<bool> deleteConnectionIfMatches(ConnectionTargetBinding binding) {
+    return _runExclusiveConnectionOperation(() async {
+      final current = ConnectionOps(this).getConnection(binding.id);
+      if (!binding.matches(current)) return false;
+      await ConnectionOps(this).deleteConnection(binding.id);
+      return true;
+    });
+  }
 
   @override
   ConnectionConfig? getConnection(String id) =>
@@ -265,7 +490,26 @@ class StorageService extends ChangeNotifier
 
   @override
   Future<AiConnectionSettings> loadAiConnectionSettings() =>
-      SettingsOps(this).loadAiConnectionSettings();
+      _runExclusiveAiSettingsOperation(
+        () => SettingsOps(this).loadAiConnectionSettings(),
+      );
+
+  @override
+  Future<AiRuntimeConnectionSnapshot> loadAiRuntimeConnectionSnapshot() =>
+      _runExclusiveAiSettingsOperation(() async {
+        final settings = await SettingsOps(this).loadAiConnectionSettings();
+        final apiKey = (await SettingsOps(this).getAiApiKey())?.trim() ?? '';
+        final quarkApiKey =
+            (await SettingsOps(this).getQuarkApiKey())?.trim() ?? '';
+        final aliyunApiKey =
+            (await SettingsOps(this).getAliyunApiKey())?.trim() ?? '';
+        return AiRuntimeConnectionSnapshot(
+          settings: settings,
+          apiKey: apiKey,
+          quarkApiKey: quarkApiKey,
+          aliyunApiKey: aliyunApiKey,
+        );
+      });
 
   @override
   Future<void> saveAiConnectionSettings({
@@ -304,42 +548,44 @@ class StorageService extends ChangeNotifier
     String? customSummarizerPrompt,
     String? customCoordinatorPrompt,
     LlmApiFormat? apiFormat,
-  }) => SettingsOps(this).saveAiConnectionSettings(
-    baseUrl: baseUrl,
-    model: model,
-    helperModel: helperModel,
-    auditModel: auditModel,
-    modelFallbackPolicy: modelFallbackPolicy,
-    contextWindowTokens: contextWindowTokens,
-    timeoutSeconds: timeoutSeconds,
-    deepSeekThinkingEnabled: deepSeekThinkingEnabled,
-    deepSeekReasoningEffort: deepSeekReasoningEffort,
-    openAiReasoningEffort: openAiReasoningEffort,
-    webSearchEnabled: webSearchEnabled,
-    webSearchMaxResults: webSearchMaxResults,
-    webSearchEngine: webSearchEngine,
-    multiAgentEnabled: multiAgentEnabled,
-    multiAgentMaxAgents: multiAgentMaxAgents,
-    postToolReviewEnabled: postToolReviewEnabled,
-    toolCallBudget: toolCallBudget,
-    agentLoopMode: agentLoopMode,
-    maxImageSizeBytes: maxImageSizeBytes,
-    maxFileSizeBytes: maxFileSizeBytes,
-    apiKey: apiKey,
-    selectedApiKeyId: selectedApiKeyId,
-    clearApiKey: clearApiKey,
-    quarkSearchEndpoint: quarkSearchEndpoint,
-    quarkApiKey: quarkApiKey,
-    clearQuarkApiKey: clearQuarkApiKey,
-    useCustomPrompts: useCustomPrompts,
-    customSystemPrompt: customSystemPrompt,
-    customPlannerPrompt: customPlannerPrompt,
-    customOperatorPrompt: customOperatorPrompt,
-    customExplorePrompt: customExplorePrompt,
-    customReviewerPrompt: customReviewerPrompt,
-    customSummarizerPrompt: customSummarizerPrompt,
-    customCoordinatorPrompt: customCoordinatorPrompt,
-    apiFormat: apiFormat,
+  }) => _runExclusiveAiSettingsOperation(
+    () => SettingsOps(this).saveAiConnectionSettings(
+      baseUrl: baseUrl,
+      model: model,
+      helperModel: helperModel,
+      auditModel: auditModel,
+      modelFallbackPolicy: modelFallbackPolicy,
+      contextWindowTokens: contextWindowTokens,
+      timeoutSeconds: timeoutSeconds,
+      deepSeekThinkingEnabled: deepSeekThinkingEnabled,
+      deepSeekReasoningEffort: deepSeekReasoningEffort,
+      openAiReasoningEffort: openAiReasoningEffort,
+      webSearchEnabled: webSearchEnabled,
+      webSearchMaxResults: webSearchMaxResults,
+      webSearchEngine: webSearchEngine,
+      multiAgentEnabled: multiAgentEnabled,
+      multiAgentMaxAgents: multiAgentMaxAgents,
+      postToolReviewEnabled: postToolReviewEnabled,
+      toolCallBudget: toolCallBudget,
+      agentLoopMode: agentLoopMode,
+      maxImageSizeBytes: maxImageSizeBytes,
+      maxFileSizeBytes: maxFileSizeBytes,
+      apiKey: apiKey,
+      selectedApiKeyId: selectedApiKeyId,
+      clearApiKey: clearApiKey,
+      quarkSearchEndpoint: quarkSearchEndpoint,
+      quarkApiKey: quarkApiKey,
+      clearQuarkApiKey: clearQuarkApiKey,
+      useCustomPrompts: useCustomPrompts,
+      customSystemPrompt: customSystemPrompt,
+      customPlannerPrompt: customPlannerPrompt,
+      customOperatorPrompt: customOperatorPrompt,
+      customExplorePrompt: customExplorePrompt,
+      customReviewerPrompt: customReviewerPrompt,
+      customSummarizerPrompt: customSummarizerPrompt,
+      customCoordinatorPrompt: customCoordinatorPrompt,
+      apiFormat: apiFormat,
+    ),
   );
 
   @override
@@ -352,15 +598,21 @@ class StorageService extends ChangeNotifier
 
   @override
   Future<void> removeAiApiKeyHistoryEntry(String id) =>
-      SettingsOps(this).removeAiApiKeyHistoryEntry(id);
+      _runExclusiveAiSettingsOperation(
+        () => SettingsOps(this).removeAiApiKeyHistoryEntry(id),
+      );
 
   @override
   Future<List<AiApiKeyHistoryEntry>> loadAiApiKeyHistory() =>
-      SettingsOps(this).loadAiApiKeyHistory();
+      _runExclusiveAiSettingsOperation(
+        () => SettingsOps(this).loadAiApiKeyHistory(),
+      );
 
   @override
   Future<String?> getAiApiKeyById(String id) =>
-      SettingsOps(this).getAiApiKeyById(id);
+      _runExclusiveAiSettingsOperation(
+        () => SettingsOps(this).getAiApiKeyById(id),
+      );
 
   @override
   Future<void> saveCachedAiModels({
@@ -377,34 +629,43 @@ class StorageService extends ChangeNotifier
       SettingsOps(this).getAiRequestTimeoutSeconds();
 
   @override
-  Future<void> selectAiApiKey(String id) =>
-      SettingsOps(this).selectAiApiKey(id);
+  Future<void> selectAiApiKey(String id) => _runExclusiveAiSettingsOperation(
+    () => SettingsOps(this).selectAiApiKey(id),
+  );
 
   @override
-  Future<void> deleteAiApiKey(String id) =>
-      SettingsOps(this).deleteAiApiKey(id);
+  Future<void> deleteAiApiKey(String id) => _runExclusiveAiSettingsOperation(
+    () => SettingsOps(this).deleteAiApiKey(id),
+  );
 
   @override
-  @override
-  Future<String?> getAiApiKey() => SettingsOps(this).getAiApiKey();
+  Future<String?> getAiApiKey() =>
+      _runExclusiveAiSettingsOperation(() => SettingsOps(this).getAiApiKey());
 
   @override
-  Future<String?> getQuarkApiKey() => SettingsOps(this).getQuarkApiKey();
+  Future<String?> getQuarkApiKey() => _runExclusiveAiSettingsOperation(
+    () => SettingsOps(this).getQuarkApiKey(),
+  );
 
   @override
-  Future<void> saveQuarkApiKey(String key) =>
-      SettingsOps(this).saveQuarkApiKey(key);
+  Future<void> saveQuarkApiKey(String key) => _runExclusiveAiSettingsOperation(
+    () => SettingsOps(this).saveQuarkApiKey(key),
+  );
 
   @override
-  Future<String?> getAliyunApiKey() => SettingsOps(this).getAliyunApiKey();
+  Future<String?> getAliyunApiKey() => _runExclusiveAiSettingsOperation(
+    () => SettingsOps(this).getAliyunApiKey(),
+  );
 
   @override
-  Future<void> saveAliyunApiKey(String key) =>
-      SettingsOps(this).saveAliyunApiKey(key);
+  Future<void> saveAliyunApiKey(String key) => _runExclusiveAiSettingsOperation(
+    () => SettingsOps(this).saveAliyunApiKey(key),
+  );
 
   @override
-  Future<String?> getSelectedAiApiKeyId() =>
-      SettingsOps(this).getSelectedAiApiKeyId();
+  Future<String?> getSelectedAiApiKeyId() => _runExclusiveAiSettingsOperation(
+    () => SettingsOps(this).getSelectedAiApiKeyId(),
+  );
 
   @override
   Future<List<String>> loadAiBaseUrlHistory() =>
@@ -652,13 +913,46 @@ class StorageService extends ChangeNotifier
       _executeDrift(() => _deleteAiChat(id));
 
   @override
-  Future<List<AiSkillRecord>> loadAiSkills() => _loadAiSkills();
+  Future<List<AiSkillRecord>> loadAiSkills() =>
+      _runExclusiveAiSkillOperation(_loadAiSkills);
 
   @override
-  Future<void> saveAiSkill(AiSkillRecord skill) => _saveAiSkill(skill);
+  Future<void> saveAiSkill(AiSkillRecord skill) =>
+      _runExclusiveAiSkillOperation(() => _saveAiSkill(skill));
 
   @override
-  Future<void> deleteAiSkill(String id) => _deleteAiSkill(id);
+  Future<void> deleteAiSkill(String id) =>
+      _runExclusiveAiSkillOperation(() => _deleteAiSkill(id));
+
+  /// Compare-and-swap update used when a caller approved a specific skill.
+  Future<bool> saveAiSkillIfUnchanged(
+    AiSkillRecord expected,
+    AiSkillRecord next,
+  ) {
+    if (next.id != expected.id) {
+      throw ArgumentError.value(
+        next.id,
+        'next',
+        'AI skill id must match the expected record.',
+      );
+    }
+    return _runExclusiveAiSkillOperation(() async {
+      final skills = await _loadAiSkills();
+      AiSkillRecord? current;
+      for (final skill in skills) {
+        if (skill.id == expected.id) {
+          current = skill;
+          break;
+        }
+      }
+      if (current == null ||
+          jsonEncode(current.toJson()) != jsonEncode(expected.toJson())) {
+        return false;
+      }
+      await _saveAiSkill(next);
+      return true;
+    });
+  }
 
   @override
   Future<List<AgentRunMetrics>> loadAgentRunMetrics() =>
@@ -693,16 +987,54 @@ class StorageService extends ChangeNotifier
       _executeDrift(() => _deleteAgentTraceEvents(runId));
 
   @override
-  Future<List<Playbook>> loadPlaybooks() =>
-      _executeDrift(() => _loadPlaybooks());
+  Future<List<Playbook>> loadPlaybooks() => _runExclusivePlaybookOperation(
+    () => _executeDrift(() => _loadPlaybooks()),
+  );
 
   @override
   Future<void> savePlaybook(Playbook playbook) =>
-      _executeDrift(() => _savePlaybook(playbook));
+      _runExclusivePlaybookOperation(
+        () => _executeDrift(() => _savePlaybook(playbook)),
+      );
 
   @override
-  Future<void> deletePlaybook(String id) =>
-      _executeDrift(() => _deletePlaybook(id));
+  Future<void> deletePlaybook(String id) => _runExclusivePlaybookOperation(
+    () => _executeDrift(() => _deletePlaybook(id)),
+  );
+
+  /// Persists execution state only while the approved commands are unchanged.
+  Future<bool> savePlaybookIfActionUnchanged({
+    required String playbookId,
+    required String expectedActionFingerprint,
+    required Playbook playbook,
+  }) {
+    if (playbook.id != playbookId) {
+      throw ArgumentError.value(
+        playbook.id,
+        'playbook',
+        'Playbook id must match playbookId.',
+      );
+    }
+    return _runExclusivePlaybookOperation(
+      () => _executeDrift(() async {
+        final playbooks = await _loadPlaybooks();
+        Playbook? current;
+        for (final candidate in playbooks) {
+          if (candidate.id == playbookId) {
+            current = candidate;
+            break;
+          }
+        }
+        if (current == null ||
+            _playbookActionFingerprintForStorage(current) !=
+                expectedActionFingerprint) {
+          return false;
+        }
+        await _savePlaybook(playbook);
+        return true;
+      }),
+    );
+  }
 
   @override
   Future<void> recordVisitedPath(String connectionId, String path) =>
@@ -773,6 +1105,25 @@ class StorageService extends ChangeNotifier
     if (!_initialized) {
       throw StateError('Storage service is not initialized yet.');
     }
+  }
+
+  String _playbookActionFingerprintForStorage(Playbook playbook) {
+    return jsonEncode({
+      'id': playbook.id,
+      'name': playbook.name,
+      'description': playbook.description,
+      'steps': playbook.steps
+          .map(
+            (step) => {
+              'id': step.id,
+              'name': step.name,
+              'command': step.command,
+              'description': step.description,
+              'expectedOutcomeRegex': step.expectedOutcomeRegex,
+            },
+          )
+          .toList(growable: false),
+    });
   }
 
   bool _disposed = false;

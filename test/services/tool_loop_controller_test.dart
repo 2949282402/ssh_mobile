@@ -467,6 +467,91 @@ void main() {
       );
     });
 
+    test('changed remote target invalidates approval before execution', () async {
+      var executed = false;
+      final guardedTools = MockToolService(
+        onExecute: (name, arguments) async {
+          executed = true;
+          return '{}';
+        },
+        mockApprovalRequest: const AiToolApprovalRequest(
+          toolName: 'sftp_write_text',
+          approvalType: 'remote_write',
+          connectionId: 'server-a',
+          connectionName: 'Server A',
+          command: 'SFTP WRITE /tmp/test.txt',
+          reason: 'Remote file write requires user approval.',
+        ),
+      );
+      final guardedLlm = LlmChatService(
+        storageService: storage,
+        toolService: guardedTools,
+      );
+      final ledger = <LlmToolLedgerEntry>[];
+      final controller = ToolLoopController(
+        chatService: guardedLlm,
+        toolBudget: LlmToolBudgetController(baseBudget: 10),
+        readOnlyToolCache: <String, CachedToolResult>{},
+        toolLedger: ledger,
+      );
+      final workingMessages = <Map<String, dynamic>>[];
+      final traces = <LlmTraceEvent>[];
+
+      final loopResult = await controller.handleToolCalls(
+        toolCalls: [
+          StreamingToolCall(
+            id: 'call_target_changed',
+            name: 'sftp_write_text',
+            arguments:
+                '{"connectionId":"server-a","path":"/tmp/test.txt","content":"hello"}',
+          ),
+        ],
+        visibleToolsByName: {
+          'sftp_write_text': AiTool(
+            name: 'sftp_write_text',
+            description: 'Write text file',
+            properties: const {},
+            executionMode: AiToolExecutionMode.stateChanging,
+            handler: (_) async => '{}',
+          ),
+        },
+        planMode: false,
+        language: AppLanguage.en,
+        apiKey: 'key',
+        auditModel: 'audit-model',
+        originalUserGoal: 'Write the file',
+        workingMessages: workingMessages,
+        requestToolApproval: (request) async {
+          guardedTools.approvalTargetCurrent = false;
+          return const AiToolApprovalDecision.approved();
+        },
+        onTrace: traces.add,
+        cancellationToken: null,
+        settings: await storage.loadAiConnectionSettings(),
+        complete: (role, messages, {required thinkingSettings}) async =>
+            'advice',
+        classify: (messages) async => '{}',
+      );
+
+      expect(executed, isFalse);
+      expect(loopResult.shouldStop, isTrue);
+      expect(loopResult.finalOutcome, AgentFinalOutcome.approvalRejected);
+      expect(loopResult.stopMessage, contains('No action was executed'));
+      expect(ledger.single.outcome, 'approval_target_changed');
+      expect(
+        workingMessages.singleWhere(
+          (message) => message['role'] == 'tool',
+        )['content'],
+        contains('approval_target_changed'),
+      );
+      expect(
+        traces.where((event) => event.kind == 'approval').map((event) {
+          return jsonDecode(event.content)['status'];
+        }),
+        containsAll(['requested', 'target_changed']),
+      );
+    });
+
     test('budget safety audit rejection triggers postBudgetAudit review', () async {
       // Set budget count so that audit is triggered next call
       final budget = LlmToolBudgetController(baseBudget: 10); // 10 base budget
@@ -1680,12 +1765,17 @@ class MockMultiAgentCoordinator implements MultiAgentCoordinatorAdapter {
   }
 }
 
-class MockToolService implements AiToolExecutor {
+class MockToolService implements AiToolExecutor, AiToolApprovalTargetGuard {
   final Future<String> Function(String name, Map<String, dynamic> arguments)
   onExecute;
   final AiToolApprovalRequest? mockApprovalRequest;
+  bool approvalTargetCurrent;
 
-  MockToolService({required this.onExecute, this.mockApprovalRequest});
+  MockToolService({
+    required this.onExecute,
+    this.mockApprovalRequest,
+    this.approvalTargetCurrent = true,
+  });
 
   @override
   Future<List<AiTool>> tools() async => [];
@@ -1699,6 +1789,19 @@ class MockToolService implements AiToolExecutor {
     Map<String, dynamic> arguments,
   ) async {
     return mockApprovalRequest;
+  }
+
+  @override
+  Future<bool> isApprovalTargetCurrent(AiToolApprovalRequest request) async {
+    return approvalTargetCurrent;
+  }
+
+  @override
+  Future<String> executeApproved(
+    AiToolApprovalRequest request,
+    Map<String, dynamic> arguments,
+  ) async {
+    return onExecute(request.toolName, arguments);
   }
 
   @override

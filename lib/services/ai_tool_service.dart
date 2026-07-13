@@ -9,6 +9,7 @@ import 'app_settings.dart';
 import 'client_system_tool_service.dart';
 import 'client_health_advisor.dart';
 import 'client_webview_service.dart';
+import 'connection_target_binding.dart';
 import 'multi_agent_coordinator.dart';
 import 'performance_monitor_tool_service.dart';
 import 'playbook_service.dart';
@@ -17,6 +18,7 @@ import 'server_diagnostics_service.dart';
 import 'sftp_service.dart';
 import 'ssh_service.dart';
 import 'storage_service.dart';
+import 'remote_target_scope.dart';
 import 'tool_exposure_router.dart';
 import 'tool_secret_policy.dart';
 import 'skill/skill_domain_service.dart';
@@ -34,7 +36,7 @@ part 'ai_tool/monitor_tools.dart';
 part 'ai_tool/playbook_tools.dart';
 part 'ai_tool/security_policy.dart';
 
-class AiToolService implements AiToolExecutor {
+class AiToolService implements AiToolExecutor, AiToolApprovalTargetGuard {
   static const String _clientScopeId = 'client';
   static const String _clientScopeName = 'SSH Mobile client';
   static const int _maxToolTextChars = 12000;
@@ -55,6 +57,9 @@ class AiToolService implements AiToolExecutor {
   final SkillDomainService skillDomainService;
 
   final List<AiToolProvider> providers;
+  AiRuntimeConnectionSnapshot? _runtimeConnectionSnapshot;
+  Map<String, ConnectionTargetBinding>? _connectionTargets;
+  static final Object _approvalBindingZoneKey = Object();
 
   AiToolService({
     List<AiToolProvider>? providers,
@@ -142,6 +147,21 @@ class AiToolService implements AiToolExecutor {
              playbookService: playbookService,
              clientWebViewSessionId: clientWebViewSessionId,
            );
+
+  void bindRuntimeConnectionSnapshot(AiRuntimeConnectionSnapshot snapshot) {
+    _runtimeConnectionSnapshot = snapshot;
+  }
+
+  void bindConnectionTargets(
+    Map<String, ConnectionTargetBinding> connectionTargets,
+  ) {
+    _connectionTargets = Map<String, ConnectionTargetBinding>.unmodifiable(
+      connectionTargets,
+    );
+  }
+
+  AiToolApprovalExecutionBinding? get activeApprovalExecutionBinding =>
+      Zone.current[_approvalBindingZoneKey] as AiToolApprovalExecutionBinding?;
 
   static List<AiToolProvider> _buildDefaultProviders({
     required StorageService storageService,
@@ -254,6 +274,15 @@ class AiToolService implements AiToolExecutor {
     String name,
     Map<String, dynamic> arguments,
   ) async {
+    final request = await _buildApprovalRequest(name, arguments);
+    if (request == null) return null;
+    return _bindApprovalRequest(request, arguments);
+  }
+
+  Future<AiToolApprovalRequest?> _buildApprovalRequest(
+    String name,
+    Map<String, dynamic> arguments,
+  ) async {
     switch (name) {
       case 'run_command':
         final connectionId = _arg(arguments, 'connectionId');
@@ -280,6 +309,25 @@ class AiToolService implements AiToolExecutor {
           command: 'OPEN SSH SESSION',
           reason: 'Opening a saved SSH session requires user approval.',
           contentPreview: _optionalString(arguments, 'displayName'),
+        );
+      case 'ssh_ensure_session_connected':
+        final sessionId = _arg(arguments, 'sessionId');
+        final connectionId = _arg(arguments, 'connectionId');
+        final session = sshService.getSession(sessionId);
+        final config = storageService.getConnection(connectionId);
+        return AiToolApprovalRequest(
+          toolName: name,
+          approvalType: 'ssh_session_change',
+          connectionId: connectionId,
+          connectionName: config?.name ?? connectionId,
+          command: 'CONNECT SSH SESSION $sessionId',
+          reason: 'Connecting an SSH session requires user approval.',
+          contentPreview: session?.displayName,
+          executionBinding: AiToolApprovalExecutionBinding(
+            resourceKind: 'ssh_session',
+            resourceId: sessionId,
+            resourceFingerprint: session?.connectionId,
+          ),
         );
       case 'ssh_close_session':
         final sessionId = _arg(arguments, 'sessionId');
@@ -408,14 +456,40 @@ class AiToolService implements AiToolExecutor {
               entry.key: entry.value,
         };
         final keys = changes.keys.toList(growable: false);
+        final current = config == null
+            ? null
+            : ConnectionConfig.fromJson(config.toJson());
+        final candidate = current == null
+            ? null
+            : ServerCatalogService.buildUpdateCandidate(current, changes);
+        final target = current == null
+            ? null
+            : ConnectionTargetBinding.fromConfig(current);
         return AiToolApprovalRequest(
           toolName: name,
           approvalType: 'server_metadata_change',
           connectionId: connectionId,
           connectionName: config?.name ?? connectionId,
-          command: 'UPDATE SERVER METADATA (${keys.join(', ')})',
+          command: candidate == null
+              ? 'UPDATE SERVER METADATA (${keys.join(', ')})'
+              : 'UPDATE SERVER TARGET ${candidate.username}@${candidate.host}:${candidate.port}',
           reason: 'Server metadata changes require user approval.',
-          contentPreview: keys.isEmpty ? null : keys.join(', '),
+          contentPreview: current == null || candidate == null
+              ? (keys.isEmpty ? null : keys.join(', '))
+              : _serverMetadataApprovalPreview(current, candidate, keys),
+          executionBinding:
+              target == null || current == null || candidate == null
+              ? null
+              : AiToolApprovalExecutionBinding(
+                  connectionTargets: {connectionId: target},
+                  resourceKind: 'server_metadata_update',
+                  resourceId: connectionId,
+                  resourceFingerprint: jsonEncode(current.toJson()),
+                  resourceSnapshot: _ApprovedServerMetadataUpdate(
+                    expected: current,
+                    candidate: candidate,
+                  ),
+                ),
         );
       case 'delete_server':
         final connectionId = _arg(arguments, 'connectionId');
@@ -535,6 +609,7 @@ class AiToolService implements AiToolExecutor {
           content: buildResult.content,
           enabled: enabledArg ?? current.enabled,
           references: buildResult.references,
+          updatedAt: DateTime.now(),
         );
 
         final preview = skillDomainService.generatePreview(current, updated);
@@ -583,6 +658,15 @@ class AiToolService implements AiToolExecutor {
           reason:
               'Updating a saved AI experience skill/note requires user approval.',
           contentPreview: buffer.toString(),
+          executionBinding: AiToolApprovalExecutionBinding(
+            resourceKind: 'ai_skill',
+            resourceId: skillId,
+            resourceFingerprint: _aiSkillFingerprint(current),
+            resourceSnapshot: _ApprovedSkillUpdate(
+              expected: current,
+              updated: updated,
+            ),
+          ),
         );
       case 'client_clear_logs':
         return AiToolApprovalRequest(
@@ -712,14 +796,35 @@ class AiToolService implements AiToolExecutor {
         final playbookId = _arg(arguments, 'playbookId');
         final connectionId = _arg(arguments, 'connectionId');
         final config = storageService.getConnection(connectionId);
+        final playbooks = await storageService.loadPlaybooks();
+        final playbookIndex = playbooks.indexWhere(
+          (playbook) => playbook.id == playbookId,
+        );
+        if (playbookIndex == -1) return null;
+        final playbook = Playbook.fromJson(playbooks[playbookIndex].toJson());
+        final commandPreview = playbook.steps
+            .take(3)
+            .map((step) => secretPolicy.previewText(step.command, maxChars: 80))
+            .join('\n');
         return AiToolApprovalRequest(
           toolName: name,
           approvalType: 'playbook_run',
           connectionId: connectionId,
           connectionName: config?.name ?? connectionId,
-          command: 'RUN PLAYBOOK ID: $playbookId',
+          command:
+              'RUN PLAYBOOK: ${playbook.name} (${playbook.steps.length} steps)',
           reason:
               'Executing sequential commands on a server requires user approval.',
+          contentPreview: commandPreview,
+          executionBinding: AiToolApprovalExecutionBinding(
+            resourceKind: 'playbook',
+            resourceId: playbookId,
+            resourceFingerprint: _playbookActionFingerprint(playbook),
+            resourceSnapshot: _ApprovedPlaybookRun(
+              playbook: playbook,
+              actionFingerprint: _playbookActionFingerprint(playbook),
+            ),
+          ),
         );
       case 'client_task_skip':
         final taskId = _arg(arguments, 'taskId');
@@ -735,6 +840,163 @@ class AiToolService implements AiToolExecutor {
         );
       default:
         return null;
+    }
+  }
+
+  Future<AiToolApprovalRequest> _bindApprovalRequest(
+    AiToolApprovalRequest request,
+    Map<String, dynamic> arguments,
+  ) async {
+    final existing = request.executionBinding;
+    final targets = <String, ConnectionTargetBinding>{
+      ...?existing?.connectionTargets,
+    };
+    var resourceKind = existing?.resourceKind;
+    var resourceId = existing?.resourceId;
+    var resourceFingerprint = existing?.resourceFingerprint;
+    final resourceSnapshot = existing?.resourceSnapshot;
+
+    void addTarget(String rawId, {bool allowOutsideTurn = false}) {
+      final id = rawId.trim();
+      if (id.isEmpty || id == _clientScopeId || targets.containsKey(id)) {
+        return;
+      }
+      ConnectionTargetBinding? target;
+      final turnTargets = _connectionTargets;
+      if (turnTargets == null || allowOutsideTurn) {
+        final config = storageService.getConnection(id);
+        if (config != null) {
+          target = ConnectionTargetBinding.fromConfig(config);
+        }
+      } else {
+        target = turnTargets[id];
+      }
+      if (target != null) targets[id] = target;
+    }
+
+    addTarget(request.connectionId);
+    switch (request.toolName) {
+      case 'monitor_set_selected_servers':
+        for (final id in _stringList(arguments['connectionIds'])) {
+          addTarget(id, allowOutsideTurn: true);
+        }
+        break;
+      case 'monitor_start':
+        final state = performanceMonitorToolService.getState();
+        final rawSelectedIds = state['selectedConnectionIds'];
+        final selectedIds = rawSelectedIds is List
+            ? rawSelectedIds
+                  .map((item) => item?.toString().trim() ?? '')
+                  .where((item) => item.isNotEmpty)
+                  .toList(growable: false)
+            : <String>[];
+        selectedIds.sort();
+        for (final id in selectedIds) {
+          addTarget(id, allowOutsideTurn: true);
+        }
+        resourceKind = 'monitor_selection';
+        resourceId = 'selected_connections';
+        resourceFingerprint = jsonEncode(selectedIds);
+        break;
+      case 'ssh_restore_tmux_sessions':
+        final sessions = await storageService.loadRestorableTmuxSessions();
+        for (final session in sessions) {
+          addTarget(session.connectionId, allowOutsideTurn: true);
+        }
+        break;
+    }
+
+    final binding = AiToolApprovalExecutionBinding(
+      connectionTargets: Map<String, ConnectionTargetBinding>.unmodifiable(
+        targets,
+      ),
+      resourceKind: resourceKind,
+      resourceId: resourceId,
+      resourceFingerprint: resourceFingerprint,
+      resourceSnapshot: resourceSnapshot,
+    );
+    final singleTarget = targets[request.connectionId];
+    final targetSummary = targets.values
+        .map(
+          (target) =>
+              '${target.config.name} (${target.config.username}@${target.config.host}:${target.config.port})',
+        )
+        .join('\n');
+    final preview =
+        request.connectionId == _clientScopeId && targetSummary.isNotEmpty
+        ? [
+            if (request.contentPreview?.trim().isNotEmpty == true)
+              request.contentPreview!.trim(),
+            'Targets:\n$targetSummary',
+          ].join('\n')
+        : request.contentPreview;
+    return request.copyWith(
+      connectionName: singleTarget?.config.name,
+      contentPreview: preview,
+      executionBinding: binding,
+    );
+  }
+
+  @override
+  Future<bool> isApprovalTargetCurrent(AiToolApprovalRequest request) async {
+    final binding = request.executionBinding;
+    if (binding == null) {
+      return request.connectionId.trim().isEmpty ||
+          request.connectionId == _clientScopeId;
+    }
+    if (request.connectionId != _clientScopeId &&
+        !binding.connectionTargets.containsKey(request.connectionId)) {
+      return false;
+    }
+    for (final target in binding.connectionTargets.values) {
+      if (!target.matches(storageService.getConnection(target.id))) {
+        return false;
+      }
+    }
+    switch (binding.resourceKind) {
+      case 'ai_skill':
+        final skills = await storageService.loadAiSkills();
+        final index = skills.indexWhere(
+          (skill) => skill.id == binding.resourceId,
+        );
+        return index >= 0 &&
+            _aiSkillFingerprint(skills[index]) == binding.resourceFingerprint;
+      case 'playbook':
+        final playbooks = await storageService.loadPlaybooks();
+        final index = playbooks.indexWhere(
+          (playbook) => playbook.id == binding.resourceId,
+        );
+        return index >= 0 &&
+            _playbookActionFingerprint(playbooks[index]) ==
+                binding.resourceFingerprint;
+      case 'monitor_selection':
+        final rawSelectedIds = performanceMonitorToolService
+            .getState()['selectedConnectionIds'];
+        if (rawSelectedIds is! List) return false;
+        final selectedIds =
+            rawSelectedIds
+                .map((item) => item?.toString().trim() ?? '')
+                .where((item) => item.isNotEmpty)
+                .toList(growable: false)
+              ..sort();
+        final boundIds = binding.connectionTargets.keys.toList()..sort();
+        return selectedIds.isNotEmpty &&
+            jsonEncode(selectedIds) == binding.resourceFingerprint &&
+            _listEquals(selectedIds, boundIds);
+      case 'server_metadata_update':
+        final current = storageService.getConnection(
+          binding.resourceId ?? request.connectionId,
+        );
+        return current != null &&
+            jsonEncode(current.toJson()) == binding.resourceFingerprint;
+      case 'ssh_session':
+        final sessionId = binding.resourceId;
+        if (sessionId == null || sessionId.isEmpty) return false;
+        final session = sshService.getSession(sessionId);
+        return session != null &&
+            session.connectionId == binding.resourceFingerprint;
+      default:
+        return true;
     }
   }
 
@@ -766,6 +1028,119 @@ class AiToolService implements AiToolExecutor {
     String name,
     Map<String, dynamic> arguments, {
     bool approvedWrite = false,
+  }) {
+    return _executeBound(name, arguments, approvedWrite: approvedWrite);
+  }
+
+  @override
+  Future<String> executeApproved(
+    AiToolApprovalRequest request,
+    Map<String, dynamic> arguments,
+  ) async {
+    if (!await isApprovalTargetCurrent(request)) {
+      return jsonEncode({
+        'error':
+            'The approved target or resource changed before execution. Review it and approve again.',
+        'code': 'approval_target_changed',
+        'command': request.command,
+      });
+    }
+    return _executeBound(
+      request.toolName,
+      arguments,
+      approvedWrite: true,
+      approvalBinding: request.executionBinding,
+    );
+  }
+
+  String _serverMetadataApprovalPreview(
+    ConnectionConfig current,
+    ConnectionConfig candidate,
+    List<String> keys,
+  ) {
+    final lines = <String>[
+      'Target: ${current.username}@${current.host}:${current.port} -> '
+          '${candidate.username}@${candidate.host}:${candidate.port}',
+      for (final key in keys)
+        '$key: ${_serverMetadataValue(current, key)} -> '
+            '${_serverMetadataValue(candidate, key)}',
+    ];
+    return lines.join('\n');
+  }
+
+  Object? _serverMetadataValue(ConnectionConfig config, String key) {
+    return switch (key) {
+      'name' => config.name,
+      'host' => config.host,
+      'port' => config.port,
+      'username' => config.username,
+      'group' => config.group,
+      'serverPlatform' => config.serverPlatform.name,
+      'launchMode' => config.launchMode.name,
+      'tmuxAutoDeleteSeconds' => config.tmuxAutoDeleteSeconds,
+      'keepAlive' => config.keepAlive,
+      'keepAliveInterval' => config.keepAliveInterval,
+      'terminalWidth' => config.terminalWidth,
+      'terminalHeight' => config.terminalHeight,
+      'jumpHost' => config.jumpHost,
+      'jumpPort' => config.jumpPort,
+      'jumpUsername' => config.jumpUsername,
+      _ => null,
+    };
+  }
+
+  static bool _listEquals(List<String> left, List<String> right) {
+    if (left.length != right.length) return false;
+    for (var index = 0; index < left.length; index += 1) {
+      if (left[index] != right[index]) return false;
+    }
+    return true;
+  }
+
+  Future<String> _executeBound(
+    String name,
+    Map<String, dynamic> arguments, {
+    required bool approvedWrite,
+    AiToolApprovalExecutionBinding? approvalBinding,
+  }) async {
+    final turnTargets = _connectionTargets;
+    final executionTargets = turnTargets == null && approvalBinding == null
+        ? null
+        : <String, ConnectionTargetBinding>{
+            ...?turnTargets,
+            ...?approvalBinding?.connectionTargets,
+          };
+
+    Future<String> action() {
+      return runZoned(
+        () => _executeInternal(
+          name,
+          arguments,
+          approvedWrite: approvedWrite,
+          executionTargets: executionTargets,
+        ),
+        zoneValues: {_approvalBindingZoneKey: approvalBinding},
+      );
+    }
+
+    try {
+      if (executionTargets == null) return await action();
+      return await RemoteTargetScope.run(executionTargets, action);
+    } on RemoteTargetScopeException catch (error) {
+      return jsonEncode({
+        'error':
+            'The selected server changed before the remote operation began. Review the current target and try again.',
+        'code': 'approval_target_changed',
+        'details': error.toString(),
+      });
+    }
+  }
+
+  Future<String> _executeInternal(
+    String name,
+    Map<String, dynamic> arguments, {
+    required bool approvedWrite,
+    required Map<String, ConnectionTargetBinding>? executionTargets,
   }) async {
     final availableTools = await tools();
     final hasTool = availableTools.any((t) => t.name == name);
@@ -778,6 +1153,46 @@ class AiToolService implements AiToolExecutor {
     }
 
     final tool = availableTools.firstWhere((t) => t.name == name);
+    final explicitConnectionId = arguments['connectionId'];
+    if (executionTargets != null &&
+        explicitConnectionId is String &&
+        explicitConnectionId.trim().isNotEmpty &&
+        explicitConnectionId.trim() != 'local' &&
+        (!executionTargets.containsKey(explicitConnectionId.trim()) ||
+            !executionTargets[explicitConnectionId.trim()]!.matches(
+              storageService.getConnection(explicitConnectionId.trim()),
+            ))) {
+      return jsonEncode({
+        'error':
+            'This server was not part of the turn or approval target snapshot.',
+        'code': 'approval_target_changed',
+        'tool': name,
+      });
+    }
+    final explicitConnectionIds = arguments['connectionIds'];
+    if (executionTargets != null && explicitConnectionIds is List) {
+      final missing = explicitConnectionIds
+          .whereType<String>()
+          .map((id) => id.trim())
+          .where(
+            (id) =>
+                id.isNotEmpty &&
+                id != 'local' &&
+                (!executionTargets.containsKey(id) ||
+                    !executionTargets[id]!.matches(
+                      storageService.getConnection(id),
+                    )),
+          )
+          .toList(growable: false);
+      if (missing.isNotEmpty) {
+        return jsonEncode({
+          'error':
+              'One or more servers were not part of the turn or approval target snapshot.',
+          'code': 'approval_target_changed',
+          'tool': name,
+        });
+      }
+    }
     if (tool.needsServerSelection) {
       final connId = arguments['connectionId'];
       if (connId == null ||
@@ -897,4 +1312,53 @@ class AiToolService implements AiToolExecutor {
       'minItems': ?minimumItems,
     };
   }
+}
+
+String _aiSkillFingerprint(AiSkillRecord skill) => jsonEncode(skill.toJson());
+
+String _playbookActionFingerprint(Playbook playbook) {
+  return jsonEncode({
+    'id': playbook.id,
+    'name': playbook.name,
+    'description': playbook.description,
+    'steps': playbook.steps
+        .map(
+          (step) => {
+            'id': step.id,
+            'name': step.name,
+            'command': step.command,
+            'description': step.description,
+            'expectedOutcomeRegex': step.expectedOutcomeRegex,
+          },
+        )
+        .toList(growable: false),
+  });
+}
+
+class _ApprovedSkillUpdate {
+  final AiSkillRecord expected;
+  final AiSkillRecord updated;
+
+  const _ApprovedSkillUpdate({required this.expected, required this.updated});
+}
+
+class _ApprovedPlaybookRun {
+  final Playbook playbook;
+  final String actionFingerprint;
+
+  const _ApprovedPlaybookRun({
+    required this.playbook,
+    required this.actionFingerprint,
+  });
+}
+
+class _ApprovedServerMetadataUpdate {
+  final ConnectionConfig expected;
+  final ConnectionConfig candidate;
+
+  _ApprovedServerMetadataUpdate({
+    required ConnectionConfig expected,
+    required ConnectionConfig candidate,
+  }) : expected = ConnectionConfig.fromJson(expected.toJson()),
+       candidate = ConnectionConfig.fromJson(candidate.toJson());
 }

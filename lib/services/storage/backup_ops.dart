@@ -139,25 +139,28 @@ extension BackupOps on StorageService {
     }
     final decoded = _decodeAndValidateBackupJson(jsonText);
 
-    final importedConnections = <ConnectionConfig>[];
-    for (final item in (decoded['connections'] as List<dynamic>? ?? const [])) {
-      if (item is! Map<String, dynamic>) continue;
-      final config = ConnectionConfig.fromJson(item);
-      importedConnections.add(config);
-      _clearSecretCacheForConnection(config.id);
-      await _deleteSecure('pwd_${config.id}');
-      await _deleteSecure('key_${config.id}');
-    }
+    await _runExclusiveConnectionOperation(() async {
+      final importedConnections = <ConnectionConfig>[];
+      for (final item
+          in (decoded['connections'] as List<dynamic>? ?? const [])) {
+        if (item is! Map<String, dynamic>) continue;
+        final config = ConnectionConfig.fromJson(item);
+        importedConnections.add(config);
+        _clearSecretCacheForConnection(config.id);
+        await _deleteSecure('pwd_${config.id}');
+        await _deleteSecure('key_${config.id}');
+      }
 
-    for (final old in _connections) {
-      if (importedConnections.any((item) => item.id == old.id)) continue;
-      _clearSecretCacheForConnection(old.id);
-      await _deleteSecure('pwd_${old.id}');
-      await _deleteSecure('key_${old.id}');
-    }
-    _connections = importedConnections;
-    _refreshConnectionsView();
-    await _saveConnections();
+      for (final old in _connections) {
+        if (importedConnections.any((item) => item.id == old.id)) continue;
+        _clearSecretCacheForConnection(old.id);
+        await _deleteSecure('pwd_${old.id}');
+        await _deleteSecure('key_${old.id}');
+      }
+      _connections = importedConnections;
+      _refreshConnectionsView();
+      await _saveConnections();
+    });
     await clearCachedAiModels();
     await _writeStringListPref(StorageService._aiBaseUrlHistoryKey, const []);
 
@@ -326,12 +329,13 @@ extension BackupOps on StorageService {
           .toList(),
       immediate: true,
     );
-    await _saveAiSkills(
-      ((decoded['aiSkills'] as List<dynamic>?) ?? const [])
-          .whereType<Map<String, dynamic>>()
-          .map(AiSkillRecord.fromJson)
-          .toList(),
-      immediate: true,
+    final importedAiSkills =
+        ((decoded['aiSkills'] as List<dynamic>?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(AiSkillRecord.fromJson)
+            .toList();
+    await _runExclusiveAiSkillOperation(
+      () => _saveAiSkills(importedAiSkills, immediate: true),
     );
     final importedMetrics =
         ((decoded['agentRunMetrics'] as List<dynamic>?) ?? const [])
@@ -348,12 +352,13 @@ extension BackupOps on StorageService {
         immediate: true,
       );
     }
-    await _savePlaybooks(
-      ((decoded['playbooks'] as List<dynamic>?) ?? const [])
-          .whereType<Map<String, dynamic>>()
-          .map(Playbook.fromJson)
-          .toList(),
-      immediate: true,
+    final importedPlaybooks =
+        ((decoded['playbooks'] as List<dynamic>?) ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(Playbook.fromJson)
+            .toList();
+    await _runExclusivePlaybookOperation(
+      () => _savePlaybooks(importedPlaybooks, immediate: true),
     );
     await _replaceDriftSftpPathHistory(
       recentPaths: ((decoded['sftpRecentPaths'] as List<dynamic>?) ?? const [])

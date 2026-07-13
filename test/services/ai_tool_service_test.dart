@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -11,7 +12,9 @@ import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/client_system_tool_service.dart';
 import 'package:ssh_mobile/services/client_webview_service.dart';
+import 'package:ssh_mobile/services/connection_target_binding.dart';
 import 'package:ssh_mobile/services/performance_monitor_tool_service.dart';
+import 'package:ssh_mobile/services/remote_target_scope.dart';
 import 'package:ssh_mobile/services/server_catalog_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/server_diagnostics_service.dart';
@@ -111,6 +114,136 @@ void main() {
     expect(review.blocked, isFalse);
     expect(review.requiresApproval, isTrue);
   });
+
+  test('remote approval binding changes with connection target', () async {
+    final request = await tools.approvalRequestFor('sftp_write_text', {
+      'connectionId': 'server-1',
+      'path': '/tmp/example.txt',
+      'content': 'hello',
+    });
+    expect(request, isNotNull);
+
+    expect(request!.executionBinding?.connectionTargets, contains('server-1'));
+    expect(await tools.isApprovalTargetCurrent(request), isTrue);
+
+    final current = storage.getConnection('server-1')!;
+    await storage.updateConnection(
+      current.copyWith(host: 'replacement.example.com', port: 2222),
+    );
+
+    expect(await tools.isApprovalTargetCurrent(request), isFalse);
+  });
+
+  test('read-only remote tool cannot drift outside the turn target', () async {
+    final original = storage.getConnection('server-1')!;
+    tools.bindConnectionTargets({
+      original.id: ConnectionTargetBinding.fromConfig(original),
+    });
+    await storage.updateConnection(
+      original.copyWith(host: 'replacement.example.com', port: 2222),
+    );
+
+    final result =
+        jsonDecode(
+              await tools.execute('get_server_details', {
+                'connectionId': original.id,
+              }),
+            )
+            as Map<String, dynamic>;
+
+    expect(result['code'], 'approval_target_changed');
+    expect(serverCatalog.lastDetailsConnectionId, isNull);
+  });
+
+  test(
+    'approved execution revalidates at the remote side-effect edge',
+    () async {
+      final provider = _GatedRemoteProvider();
+      final guardedTools = AiToolService(
+        providers: [provider],
+        storageService: storage,
+        sshService: ssh,
+        sftpService: sftp,
+      );
+      final original = storage.getConnection('server-1')!;
+      final binding = ConnectionTargetBinding.fromConfig(original);
+      guardedTools.bindConnectionTargets({original.id: binding});
+      final request = AiToolApprovalRequest(
+        toolName: _GatedRemoteProvider.toolName,
+        approvalType: 'remote_write',
+        connectionId: original.id,
+        connectionName: original.name,
+        command: 'GATED WRITE',
+        reason: 'test',
+        executionBinding: AiToolApprovalExecutionBinding(
+          connectionTargets: {original.id: binding},
+        ),
+      );
+
+      final execution = guardedTools.executeApproved(request, {
+        'connectionId': original.id,
+      });
+      await provider.started.future;
+      await storage.updateConnection(
+        original.copyWith(host: 'replacement.example.com', port: 2222),
+      );
+      provider.release.complete();
+
+      final result = jsonDecode(await execution) as Map<String, dynamic>;
+      expect(result['code'], 'approval_target_changed');
+      expect(provider.sideEffectCount, 0);
+    },
+  );
+
+  test('monitor start approval binds the exact selected target set', () async {
+    performanceMonitor.selectedConnectionIds = ['server-1'];
+    final request = await tools.approvalRequestFor('monitor_start', {});
+
+    expect(request, isNotNull);
+    expect(
+      request!.executionBinding?.connectionTargets.keys,
+      contains('server-1'),
+    );
+    expect(request.contentPreview, contains('Demo Server'));
+    expect(await tools.isApprovalTargetCurrent(request), isTrue);
+
+    performanceMonitor.selectedConnectionIds = [];
+    expect(await tools.isApprovalTargetCurrent(request), isFalse);
+  });
+
+  test('monitor start with no selected target fails closed', () async {
+    performanceMonitor.selectedConnectionIds = [];
+
+    final request = await tools.approvalRequestFor('monitor_start', {});
+
+    expect(request, isNotNull);
+    expect(request!.executionBinding?.connectionTargets, isEmpty);
+    expect(await tools.isApprovalTargetCurrent(request), isFalse);
+    final result =
+        jsonDecode(await tools.executeApproved(request, {}))
+            as Map<String, dynamic>;
+    expect(result['code'], 'approval_target_changed');
+    expect(performanceMonitor.startCalls, 0);
+  });
+
+  test(
+    'monitor start fails closed when a selected target is missing',
+    () async {
+      performanceMonitor.selectedConnectionIds = ['server-1'];
+      await storage.deleteConnection('server-1');
+
+      final request = await tools.approvalRequestFor('monitor_start', {});
+
+      expect(request, isNotNull);
+      expect(request!.executionBinding?.connectionTargets, isEmpty);
+      expect(await tools.isApprovalTargetCurrent(request), isFalse);
+      final result =
+          jsonDecode(await tools.executeApproved(request, {}))
+              as Map<String, dynamic>;
+      expect(result['code'], 'approval_target_changed');
+      expect(performanceMonitor.startCalls, 0);
+    },
+  );
 
   test('blocks delete-style commands on all platforms', () {
     final linux = tools.reviewCommand(
@@ -438,12 +571,71 @@ void main() {
       final decoded = jsonDecode(result) as Map<String, dynamic>;
       final changes = serverCatalog.lastMetadataChanges!;
 
-      expect(approval?.command, 'UPDATE SERVER METADATA (name)');
-      expect(approval?.contentPreview, 'name');
+      expect(approval?.command, 'UPDATE SERVER TARGET root@example.com:22');
+      expect(
+        approval?.contentPreview,
+        contains('name: Demo Server -> Renamed Server'),
+      );
       expect(decoded['updated'], isTrue);
       expect(changes, {'name': 'Renamed Server'});
       expect(changes.containsKey('serverPlatform'), isFalse);
       expect(changes.containsKey('launchMode'), isFalse);
+    },
+  );
+
+  test('server metadata approval freezes the exact proposed target', () async {
+    final arguments = <String, dynamic>{
+      'connectionId': 'server-1',
+      'host': 'approved.example.com',
+      'port': 2222,
+      'username': 'deploy',
+    };
+    final approval = await tools.approvalRequestFor(
+      'update_server_metadata',
+      arguments,
+    );
+    expect(approval, isNotNull);
+    expect(
+      approval!.contentPreview,
+      contains('root@example.com:22 -> deploy@approved.example.com:2222'),
+    );
+
+    arguments['host'] = 'unreviewed.example.com';
+    final decoded =
+        jsonDecode(await tools.executeApproved(approval, arguments))
+            as Map<String, dynamic>;
+
+    expect(decoded['updated'], isTrue);
+    expect(serverCatalog.lastMetadataChanges, isEmpty);
+    expect(serverCatalog.lastApprovedCandidate?.host, 'approved.example.com');
+    expect(serverCatalog.lastApprovedCandidate?.port, 2222);
+    expect(serverCatalog.lastApprovedCandidate?.username, 'deploy');
+  });
+
+  test(
+    'server metadata approval preserves concurrent non-target edits',
+    () async {
+      final approval = await tools.approvalRequestFor(
+        'update_server_metadata',
+        {'connectionId': 'server-1', 'host': 'approved.example.com'},
+      );
+      expect(approval, isNotNull);
+      final current = storage.getConnection('server-1')!;
+      await storage.updateConnection(current.copyWith(group: 'User edit'));
+
+      expect(await tools.isApprovalTargetCurrent(approval!), isFalse);
+      final decoded =
+          jsonDecode(
+                await tools.executeApproved(approval, {
+                  'connectionId': 'server-1',
+                  'host': 'approved.example.com',
+                }),
+              )
+              as Map<String, dynamic>;
+
+      expect(decoded['code'], 'approval_target_changed');
+      expect(serverCatalog.lastApprovedCandidate, isNull);
+      expect(storage.getConnection('server-1')!.group, 'User edit');
     },
   );
 
@@ -686,6 +878,82 @@ void main() {
     final decoded = jsonDecode(raw) as Map<String, dynamic>;
 
     expect(decoded['error'], contains('requires user approval'));
+  });
+
+  test('SSH reconnect validates approval and session ownership', () async {
+    final session = SshSession(
+      id: 'session-1',
+      connectionId: 'server-1',
+      connectionName: 'Demo Server',
+      displayName: 'Ops Shell',
+      outputController: StreamController<String>.broadcast(),
+      state: SshConnectionState.disconnected,
+    );
+    addTearDown(session.close);
+    final fakeSsh = _FakeSshClient(session);
+    final guardedTools = _buildTools(
+      storage: storage,
+      ssh: fakeSsh,
+      sftp: sftp,
+      clientSystem: clientSystem,
+      clientWebView: clientWebView,
+      serverCatalog: serverCatalog,
+      performanceMonitor: performanceMonitor,
+      diagnostics: diagnostics,
+      appSettings: appSettings,
+      chatId: 'chat-1',
+    );
+    final arguments = {
+      'sessionId': session.id,
+      'connectionId': session.connectionId,
+    };
+
+    final request = await guardedTools.approvalRequestFor(
+      'ssh_ensure_session_connected',
+      arguments,
+    );
+    expect(request, isNotNull);
+    expect(request!.approvalType, 'ssh_session_change');
+    expect(request.executionBinding?.connectionTargets, contains('server-1'));
+
+    final unapproved =
+        jsonDecode(
+              await guardedTools.execute(
+                'ssh_ensure_session_connected',
+                arguments,
+              ),
+            )
+            as Map<String, dynamic>;
+    expect(unapproved['error'], contains('requires user approval'));
+    expect(fakeSsh.ensureCalls, 0);
+
+    final approved =
+        jsonDecode(await guardedTools.executeApproved(request, arguments))
+            as Map<String, dynamic>;
+    expect(approved['connected'], isTrue);
+    expect(fakeSsh.ensureCalls, 1);
+
+    final changedSession =
+        jsonDecode(
+              await guardedTools.executeApproved(request, {
+                'sessionId': 'session-2',
+                'connectionId': session.connectionId,
+              }),
+            )
+            as Map<String, dynamic>;
+    expect(changedSession['code'], 'approval_target_changed');
+    expect(fakeSsh.ensureCalls, 1);
+
+    final mismatch =
+        jsonDecode(
+              await guardedTools.execute('ssh_ensure_session_connected', {
+                'sessionId': session.id,
+                'connectionId': 'different-server',
+              }, approvedWrite: true),
+            )
+            as Map<String, dynamic>;
+    expect(mismatch['code'], 'session_connection_mismatch');
+    expect(fakeSsh.ensureCalls, 1);
   });
 
   test('blocks secret-bearing SFTP paths before read', () async {
@@ -1480,6 +1748,47 @@ void main() {
         expect(request.contentPreview, contains('password=[REDACTED]'));
       },
     );
+
+    test(
+      'approved skill update does not overwrite a concurrent edit',
+      () async {
+        final now = DateTime.now();
+        final original = AiSkillRecord(
+          id: 'skill-cas',
+          name: 'Original',
+          description: 'Original description',
+          content: 'Original content',
+          createdAt: now,
+          updatedAt: now,
+        );
+        await storage.saveAiSkill(original);
+        final arguments = <String, dynamic>{
+          'skillId': original.id,
+          'name': 'AI approved name',
+        };
+        final request = await tools.approvalRequestFor(
+          'client_update_skill',
+          arguments,
+        );
+        expect(request, isNotNull);
+
+        await storage.saveAiSkill(
+          original.copyWith(
+            name: 'User edit',
+            updatedAt: now.add(const Duration(seconds: 1)),
+          ),
+        );
+        final result =
+            jsonDecode(await tools.executeApproved(request!, arguments))
+                as Map<String, dynamic>;
+
+        expect(result['code'], 'approval_target_changed');
+        final persisted = (await storage.loadAiSkills()).singleWhere(
+          (skill) => skill.id == original.id,
+        );
+        expect(persisted.name, 'User edit');
+      },
+    );
   });
 
   group('needsServerSelection tools connectionId boundary check tests', () {
@@ -1589,7 +1898,7 @@ void main() {
 
 AiToolService _buildTools({
   required StorageService storage,
-  required SshService ssh,
+  required SshClientAdapter ssh,
   required SftpClientAdapter sftp,
   required ClientSystemToolAdapter clientSystem,
   required ClientWebViewAdapter clientWebView,
@@ -1611,6 +1920,33 @@ AiToolService _buildTools({
     appSettings: appSettings,
     clientWebViewSessionId: chatId,
   );
+}
+
+class _FakeSshClient implements SshClientAdapter {
+  final SshSession session;
+  int ensureCalls = 0;
+
+  _FakeSshClient(this.session);
+
+  @override
+  List<SshSession> get sessions => [session];
+
+  @override
+  SshSession? getSession(String sessionId) {
+    return session.id == sessionId ? session : null;
+  }
+
+  @override
+  Future<bool> ensureSessionConnected(
+    String sessionId,
+    String connectionId,
+  ) async {
+    ensureCalls += 1;
+    return session.id == sessionId && session.connectionId == connectionId;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class _FakeClientSystemToolService implements ClientSystemToolAdapter {
@@ -2133,9 +2469,51 @@ class _FakeServerDiagnosticsService implements ServerDiagnosticsAdapter {
   }
 }
 
+class _GatedRemoteProvider implements AiToolProvider {
+  static const toolName = 'gated_remote_write';
+
+  final Completer<void> started = Completer<void>();
+  final Completer<void> release = Completer<void>();
+  int sideEffectCount = 0;
+
+  @override
+  Future<List<AiTool>> getTools(AiToolService service) async => [
+    AiTool(
+      name: toolName,
+      description: 'Test a bound remote write.',
+      properties: const {
+        'connectionId': {'type': 'string'},
+      },
+      required: const ['connectionId'],
+      requiresServerSelection: true,
+      executionMode: AiToolExecutionMode.stateChanging,
+      handler: (_) async => '{}',
+    ),
+  ];
+
+  @override
+  Future<String?> execute(
+    AiToolService service,
+    String name,
+    Map<String, dynamic> arguments, {
+    bool approvedWrite = false,
+  }) async {
+    if (name != toolName) return null;
+    if (!started.isCompleted) started.complete();
+    await release.future;
+    await RemoteTargetScope.resolveIfBound(
+      service.storageService,
+      arguments['connectionId'] as String,
+    );
+    sideEffectCount += 1;
+    return jsonEncode({'ok': true});
+  }
+}
+
 class _FakeServerCatalogService implements ServerCatalogAdapter {
   String? lastDetailsConnectionId;
   Map<String, dynamic>? lastMetadataChanges;
+  ConnectionConfig? lastApprovedCandidate;
 
   @override
   Future<Map<String, dynamic>> deleteServer(String connectionId) async => {
@@ -2168,11 +2546,17 @@ class _FakeServerCatalogService implements ServerCatalogAdapter {
   Future<Map<String, dynamic>> updateServerMetadata({
     required String connectionId,
     required Map<String, dynamic> changes,
+    ConnectionTargetBinding? approvedTarget,
+    ConnectionConfig? approvedCurrent,
+    ConnectionConfig? approvedCandidate,
   }) async {
     lastMetadataChanges = Map<String, dynamic>.from(changes);
+    lastApprovedCandidate = approvedCandidate == null
+        ? null
+        : ConnectionConfig.fromJson(approvedCandidate.toJson());
     return {
       'updated': true,
-      'server': {'id': connectionId, ...changes},
+      'server': approvedCandidate?.toJson() ?? {'id': connectionId, ...changes},
     };
   }
 }
@@ -2180,9 +2564,14 @@ class _FakeServerCatalogService implements ServerCatalogAdapter {
 class _FakePerformanceMonitorToolService
     implements PerformanceMonitorToolAdapter {
   bool getStateCalled = false;
+  int startCalls = 0;
+  List<String> selectedConnectionIds = [];
 
   @override
-  Map<String, dynamic> clearSelection() => getState();
+  Map<String, dynamic> clearSelection() {
+    selectedConnectionIds = [];
+    return getState();
+  }
 
   @override
   Future<Map<String, dynamic>> getApplications(String connectionId) async => {
@@ -2225,7 +2614,7 @@ class _FakePerformanceMonitorToolService
     return {
       'isRunning': false,
       'isSampling': false,
-      'selectedConnectionIds': const <String>[],
+      'selectedConnectionIds': List<String>.of(selectedConnectionIds),
       'monitoringConnectionIds': const <String>[],
     };
   }
@@ -2237,11 +2626,16 @@ class _FakePerformanceMonitorToolService
   Map<String, dynamic> setInterval(Duration interval) => getState();
 
   @override
-  Map<String, dynamic> setSelectedServers(List<String> connectionIds) =>
-      getState();
+  Map<String, dynamic> setSelectedServers(List<String> connectionIds) {
+    selectedConnectionIds = List<String>.of(connectionIds);
+    return getState();
+  }
 
   @override
-  Future<Map<String, dynamic>> start() async => getState();
+  Future<Map<String, dynamic>> start() async {
+    startCalls += 1;
+    return getState();
+  }
 
   @override
   Map<String, dynamic> stop() => getState();

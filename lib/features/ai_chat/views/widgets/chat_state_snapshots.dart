@@ -91,6 +91,7 @@ class _ComposerSnapshot {
   final String chatId;
   final bool planMode;
   final bool sending;
+  final bool planApprovalInFlight;
   final bool hasPendingAttachments;
   final int pendingAttachmentsCount;
   final Set<String> selectedConnectionIds;
@@ -100,6 +101,7 @@ class _ComposerSnapshot {
     required this.chatId,
     required this.planMode,
     required this.sending,
+    required this.planApprovalInFlight,
     required this.hasPendingAttachments,
     required this.pendingAttachmentsCount,
     required this.selectedConnectionIds,
@@ -114,6 +116,7 @@ class _ComposerSnapshot {
           chatId == other.chatId &&
           planMode == other.planMode &&
           sending == other.sending &&
+          planApprovalInFlight == other.planApprovalInFlight &&
           hasPendingAttachments == other.hasPendingAttachments &&
           pendingAttachmentsCount == other.pendingAttachmentsCount &&
           setEquals(selectedConnectionIds, other.selectedConnectionIds) &&
@@ -124,6 +127,7 @@ class _ComposerSnapshot {
     chatId,
     planMode,
     sending,
+    planApprovalInFlight,
     hasPendingAttachments,
     pendingAttachmentsCount,
     Object.hashAll(selectedConnectionIds),
@@ -155,12 +159,12 @@ class _ToolApprovalSnapshot {
 
 @immutable
 class _HistoryPanelSnapshot {
-  final List<AiChatRecord> savedHistoryChats;
+  final List<AiChatRecord> chats;
   final String? activeChatId;
   final bool historyLoading;
 
   const _HistoryPanelSnapshot({
-    required this.savedHistoryChats,
+    required this.chats,
     required this.activeChatId,
     required this.historyLoading,
   });
@@ -172,12 +176,9 @@ class _HistoryPanelSnapshot {
           runtimeType == other.runtimeType &&
           activeChatId == other.activeChatId &&
           historyLoading == other.historyLoading &&
-          listEquals(savedHistoryChats, other.savedHistoryChats);
+          listEquals(chats, other.chats);
 
   @override
-  int get hashCode => Object.hash(
-    activeChatId,
-    historyLoading,
-    Object.hashAll(savedHistoryChats),
-  );
+  int get hashCode =>
+      Object.hash(activeChatId, historyLoading, Object.hashAll(chats));
 }
