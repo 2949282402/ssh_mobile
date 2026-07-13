@@ -91,6 +91,7 @@ class AiChatGenerationRunner {
     final answer = StringBuffer();
 
     try {
+      cancellationToken.throwIfCancelled();
       LlmRunStats? runStats;
 
       await for (final chunk in service.stream(

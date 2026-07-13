@@ -405,6 +405,55 @@ void main() {
       );
     });
 
+    test('run respects a cancellation requested before streaming', () async {
+      var streamStarted = false;
+      final fakeService = FakeLlmChatService(
+        onStream: (_) {
+          streamStarted = true;
+          return const Stream<String>.empty();
+        },
+      );
+      final factory = FakeAiChatRuntimeFactory(
+        serviceBuilder: () => fakeService,
+        storageService: storageService,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitorService,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+      );
+      final cancellationToken = LlmCancellationToken()..cancel();
+
+      final result = await AiChatGenerationRunner(runtimeFactory: factory).run(
+        chatId: 'test_chat',
+        initialChat: AiChatRecord(
+          id: 'test_chat',
+          title: 'Title',
+          messages: const [],
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+          model: 'gpt-4o',
+        ),
+        model: 'gpt-4o',
+        userRequest: 'hello',
+        memorySources: const [],
+        allowedTools: null,
+        forceContextCompression: false,
+        cancellationToken: cancellationToken,
+        selectedConnectionIds: const {},
+        requestMessagesJson: const [],
+        onTextChunk: (_) {},
+        onTrace: (_) {},
+        requestToolApproval: (_) async =>
+            const AiToolApprovalDecision.approved(),
+      );
+
+      expect(result, isA<AiChatRunCancelled>());
+      expect((result as AiChatRunCancelled).partialAnswer, isEmpty);
+      expect(streamStarted, isFalse);
+    });
+
     test('run handles errors', () async {
       final fakeService = FakeLlmChatService(
         onStream: (token) => Stream.error(Exception('network error')),

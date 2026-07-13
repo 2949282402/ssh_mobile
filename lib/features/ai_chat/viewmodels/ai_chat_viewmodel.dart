@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../services/ai_chat_status_translator.dart';
 import '../services/ai_chat_run_metrics_recorder.dart';
 import '../services/ai_chat_generation_runner.dart';
+import '../services/ai_chat_run_state_reconciler.dart';
 
 export '../services/ai_chat_status_translator.dart' show AgentStatusString;
 import '../../../services/ai_tool_service.dart';
@@ -73,6 +74,14 @@ class SendTextNoActiveChat extends SendTextResult {
   const SendTextNoActiveChat();
 }
 
+class SendTextTargetChanged extends SendTextResult {
+  const SendTextTargetChanged();
+}
+
+class SendTextStartCancelled extends SendTextResult {
+  const SendTextStartCancelled();
+}
+
 class SendTextPlanHasNoSteps extends SendTextResult {
   const SendTextPlanHasNoSteps();
 }
@@ -120,6 +129,22 @@ class ApprovePlanExecutionNoPlan extends ApprovePlanExecutionResult {
 
 class ApprovePlanExecutionAlreadySending extends ApprovePlanExecutionResult {
   const ApprovePlanExecutionAlreadySending();
+}
+
+class ApprovePlanExecutionApiKeyMissing extends ApprovePlanExecutionResult {
+  const ApprovePlanExecutionApiKeyMissing({super.healthReport});
+}
+
+class ApprovePlanExecutionPlanChanged extends ApprovePlanExecutionResult {
+  const ApprovePlanExecutionPlanChanged({super.healthReport});
+}
+
+class ApprovePlanExecutionFailed extends ApprovePlanExecutionResult {
+  const ApprovePlanExecutionFailed({super.healthReport});
+}
+
+class ApprovePlanExecutionCancelled extends ApprovePlanExecutionResult {
+  const ApprovePlanExecutionCancelled({super.healthReport});
 }
 
 class _StreamingAssistantTarget {
@@ -190,6 +215,12 @@ class AiChatViewModel extends ChangeNotifier {
   bool _historyLoadStarted = false;
   bool _historyLoading = false;
   bool _sending = false;
+  bool _sendPreparationInFlight = false;
+  bool _sendPreparationCancelled = false;
+  bool _sendCommitInProgress = false;
+  bool _cancelGenerationOnStart = false;
+  bool _planApprovalInFlight = false;
+  int _chatStateWritesInFlight = 0;
   bool _toolsExpanded = false;
 
   // 选中的连接和工具权限
@@ -201,6 +232,8 @@ class AiChatViewModel extends ChangeNotifier {
   // 工具审批
   PendingToolApproval? _pendingApproval;
   LlmCancellationToken? _activeCancellationToken;
+  String? _activeGenerationChatId;
+  final Set<String> _deletedGenerationChatIds = {};
   ClientRuntimeHealthReport? _lastRuntimeHealthReport;
 
   // 上下文限制
@@ -272,6 +305,9 @@ class AiChatViewModel extends ChangeNotifier {
   bool get initialDraftFailed => _initialDraftFailed;
   bool get historyLoading => _historyLoading;
   bool get sending => _sending;
+  bool get planApprovalInFlight => _planApprovalInFlight;
+  bool get _chatMutationLocked =>
+      _sendPreparationInFlight || _chatStateWritesInFlight > 0;
   bool get toolsExpanded => _toolsExpanded;
   Set<String> get selectedConnectionIds =>
       Set.unmodifiable(_selectedConnectionIds);
@@ -371,6 +407,7 @@ class AiChatViewModel extends ChangeNotifier {
   }
 
   void createChat(String model) {
+    if (_chatMutationLocked) return;
     final chat = _newChatRecord(model);
     _chats = [chat, ..._chats.where((item) => item.messages.isNotEmpty)];
     _activeChatId = chat.id;
@@ -379,6 +416,7 @@ class AiChatViewModel extends ChangeNotifier {
   }
 
   void selectChat(String id) {
+    if (_chatMutationLocked) return;
     if (_activeChatId == id) return;
     _activeChatId = id;
     notifyListeners();
@@ -386,34 +424,57 @@ class AiChatViewModel extends ChangeNotifier {
   }
 
   Future<void> deleteChat(String id) async {
-    if (_chats.isEmpty && _savedHistoryChats.isEmpty) return;
-    final deleted = _chatById(id);
-    _chatAllowedTools.remove(id);
-    _pendingForceCompressionChats.remove(id);
-    final nextChats = _chats.where((chat) => chat.id != id).toList();
-    if (nextChats.isEmpty) {
-      final settings = await _storageService.loadAiConnectionSettings();
-      nextChats.add(_newChatRecord(settings.model));
+    if (_chatMutationLocked) return;
+    _chatStateWritesInFlight += 1;
+    try {
+      if (_chats.isEmpty && _savedHistoryChats.isEmpty) return;
+      if (_activeGenerationChatId == id) {
+        _deletedGenerationChatIds.add(id);
+        _activeCancellationToken?.cancel();
+        final pending = _pendingApproval;
+        if (pending?.chatId == id && !pending!.completer.isCompleted) {
+          pending.completer.complete(
+            const AiToolApprovalDecision.rejected(abort: true),
+          );
+          _pendingApproval = null;
+        }
+      }
+      final deleted = _chatById(id);
+      _chatAllowedTools.remove(id);
+      _pendingForceCompressionChats.remove(id);
+      final nextChats = _chats.where((chat) => chat.id != id).toList();
+      if (nextChats.isEmpty) {
+        final settings = await _storageService.loadAiConnectionSettings();
+        nextChats.add(_newChatRecord(settings.model));
+      }
+      _chats = nextChats;
+      _savedHistoryChats = _savedHistoryChats
+          .where((chat) => chat.id != id)
+          .toList();
+      if (_activeChatId == id || _activeChatId == null) {
+        _activeChatId = nextChats.first.id;
+      }
+      notifyListeners();
+      if (deleted?.messages.isNotEmpty == true) {
+        await _storageService.deleteAiChat(id);
+      }
+      ClientWebViewService.instance.clearSession(id);
+      _triggerScroll();
+    } finally {
+      _chatStateWritesInFlight -= 1;
     }
-    _chats = nextChats;
-    _savedHistoryChats = _savedHistoryChats
-        .where((chat) => chat.id != id)
-        .toList();
-    if (_activeChatId == id || _activeChatId == null) {
-      _activeChatId = nextChats.first.id;
-    }
-    notifyListeners();
-    if (deleted?.messages.isNotEmpty == true) {
-      await _storageService.deleteAiChat(id);
-    }
-    ClientWebViewService.instance.clearSession(id);
-    _triggerScroll();
   }
 
   Future<void> updateActiveChat(AiChatRecord chat) async {
-    await _storageService.saveAiChat(chat);
-    _replaceChat(chat);
-    notifyListeners();
+    if (_chatMutationLocked) return;
+    _chatStateWritesInFlight += 1;
+    try {
+      await _storageService.saveAiChat(chat);
+      _replaceChat(chat);
+      notifyListeners();
+    } finally {
+      _chatStateWritesInFlight -= 1;
+    }
   }
 
   // 附件操作
@@ -642,6 +703,42 @@ class AiChatViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _reserveSendPreparation() {
+    _sendPreparationCancelled = false;
+    _sendCommitInProgress = false;
+    _cancelGenerationOnStart = false;
+    _sendPreparationInFlight = true;
+    _sending = true;
+    notifyListeners();
+  }
+
+  void _releaseSendPreparation() {
+    final changed = _sendPreparationInFlight || _sending;
+    _sendPreparationInFlight = false;
+    _sendCommitInProgress = false;
+    _cancelGenerationOnStart = false;
+    _sending = false;
+    if (changed) notifyListeners();
+  }
+
+  Future<AiChatRecord?> _enablePlanModeForChat(AiChatRecord chat) async {
+    if (_chatMutationLocked) return null;
+    _chatStateWritesInFlight += 1;
+    try {
+      final updated = chat.copyWith(
+        planMode: true,
+        updatedAt: DateTime.now(),
+        clearApprovedPlan: true,
+      );
+      await _storageService.saveAiChat(updated);
+      _replaceChat(updated, activate: _activeChatId == chat.id);
+      notifyListeners();
+      return updated;
+    } finally {
+      _chatStateWritesInFlight -= 1;
+    }
+  }
+
   // 发送逻辑
   Future<SendTextResult> sendText({
     required String text,
@@ -649,7 +746,12 @@ class AiChatViewModel extends ChangeNotifier {
   }) async {
     var activeChat = this.activeChat;
     if (text.isEmpty) return const SendTextEmptyText();
-    if (_sending) return const SendTextAlreadySending();
+    if (_sending ||
+        _sendPreparationInFlight ||
+        _planApprovalInFlight ||
+        _chatStateWritesInFlight > 0) {
+      return const SendTextAlreadySending();
+    }
     if (activeChat == null) return const SendTextNoActiveChat();
 
     var targetText = text.trim();
@@ -658,13 +760,8 @@ class AiChatViewModel extends ChangeNotifier {
       final cmd = parts[0].toLowerCase();
       final args = parts.sublist(1).join(' ').trim();
       if (cmd == '/plan' && args.isNotEmpty) {
-        final updated = activeChat.copyWith(
-          planMode: true,
-          updatedAt: DateTime.now(),
-        );
-        _replaceChat(updated);
-        notifyListeners();
-        await _storageService.saveAiChat(updated);
+        final updated = await _enablePlanModeForChat(activeChat);
+        if (updated == null) return const SendTextAlreadySending();
 
         activeChat = updated;
         targetText = args;
@@ -679,156 +776,164 @@ class AiChatViewModel extends ChangeNotifier {
       }
     }
 
-    final settings = await _storageService.loadAiConnectionSettings();
-    final currentModel = settings.model.trim();
-    if (!settings.hasApiKey) {
-      AppLogService.instance.warning(
-        'LLM chat blocked: API key missing or invalid',
-        details: 'model=$currentModel',
-      );
-      return const SendTextApiKeyMissing();
-    }
-
-    _sending = true;
-    final chatId = activeChat.id;
-    final now = DateTime.now();
-
-    // RAG 检索
-    final attachments = List<AiChatAttachment>.from(_pendingAttachments);
-    final orchestrator = _runtimeFactory.createOrchestrator();
-
-    final preparedTurn = await orchestrator.prepareTurn(
-      chat: activeChat,
-      text: targetText,
-      createdAt: now,
-      language: _appSettings.language,
-      attachments: attachments,
-      selectedConnectionIds: _selectedConnectionIds,
-      approvedPlanRef: approvedPlanRef,
-      ragEnabled: _appSettings.ragEnabled,
-    );
-    final userMessage = preparedTurn.userMessage;
-    final ragChunks = const <RagChunk>[];
-
-    // RAG Traces
-    final assistantTraces = List<AiMessageTrace>.from(
-      preparedTurn.assistantMessage.traces,
-    );
-    if (ragChunks.isNotEmpty) {
-      final traceContent = StringBuffer();
-      final isEn = _appSettings.isEnglish;
-      for (final chunk in ragChunks) {
-        traceContent.writeln(
-          isEn
-              ? 'Source: [${chunk.documentName}] (Chunk #${chunk.metadata['chunkIndex'] ?? 0})'
-              : '来源: [${chunk.documentName}] (分块 #${chunk.metadata['chunkIndex'] ?? 0})',
-        );
-        traceContent.writeln('---');
-        traceContent.writeln(chunk.text);
-        traceContent.writeln('========================================\n');
+    _reserveSendPreparation();
+    try {
+      final settings = await _storageService.loadAiConnectionSettings();
+      if (_sendPreparationCancelled || !_sendPreparationInFlight) {
+        _releaseSendPreparation();
+        return const SendTextStartCancelled();
       }
-      assistantTraces.add(
-        AiMessageTrace(
-          id: 'rag-${now.microsecondsSinceEpoch}',
-          kind: 'rag_context',
-          title: isEn ? 'Knowledge Base Retrieval (RAG)' : '知识库检索 (RAG)',
-          content: traceContent.toString(),
-          createdAt: now,
-        ),
+      final currentModel = settings.model.trim();
+      if (!settings.hasApiKey) {
+        AppLogService.instance.warning(
+          'LLM chat blocked: API key missing or invalid',
+          details: 'model=$currentModel',
+        );
+        _releaseSendPreparation();
+        return const SendTextApiKeyMissing();
+      }
+
+      return await _startTextGeneration(
+        chat: activeChat,
+        targetText: targetText,
+        settings: settings,
+        approvedPlanRef: approvedPlanRef,
+        preparationReserved: true,
       );
+    } catch (_) {
+      _releaseSendPreparation();
+      rethrow;
     }
-
-    final assistantMessage = AiChatMessageRecord(
-      role: 'assistant',
-      text: '',
-      traces: assistantTraces,
-      createdAt: now,
-    );
-    final nextMessages = [
-      ...activeChat.messages,
-      userMessage,
-      assistantMessage,
-    ];
-    final nextChat = activeChat.copyWith(
-      title: activeChat.messages.isEmpty ? _titleFrom(targetText) : null,
-      model: currentModel.isNotEmpty ? currentModel : activeChat.model,
-      messages: nextMessages,
-      updatedAt: now,
-      approvedPlan: approvedPlanRef,
-    );
-
-    _replaceChat(nextChat);
-    _pendingAttachments.clear();
-    _toolsExpanded = false;
-    notifyListeners();
-    _triggerScroll();
-
-    await _storageService.saveAiChat(nextChat);
-
-    unawaited(
-      _generateAssistantResponse(
-        chatId: chatId,
-        initialChat: nextChat,
-        assistantMessage: assistantMessage,
-        model: currentModel.isNotEmpty ? currentModel : nextChat.model,
-        requestMessages: nextMessages,
-        userRequest: targetText,
-        memorySources: preparedTurn.memorySources,
-        ragHits: preparedTurn.ragHits,
-      ),
-    );
-
-    return const SendTextSuccess();
   }
 
-  Future<ApprovePlanExecutionResult> approvePlanAndExecute(
-    DateTime assistantCreatedAt, {
-    bool forceAfterWarning = false,
+  Future<SendTextResult> _startTextGeneration({
+    required AiChatRecord chat,
+    required String targetText,
+    required AiConnectionSettings settings,
+    AiApprovedPlanRef? approvedPlanRef,
+    bool Function()? canCommit,
+    bool preparationReserved = false,
   }) async {
-    if (_sending) return const ApprovePlanExecutionAlreadySending();
-    final activeChat = this.activeChat;
-    if (activeChat == null) return const ApprovePlanExecutionNoPlan();
-    final planMessage = chatAssistantMessageByCreatedAt(
-      activeChat,
-      assistantCreatedAt,
-    );
-    if (planMessage == null || planMessage.todoSteps.isEmpty) {
-      return const ApprovePlanExecutionNoPlan();
+    if (preparationReserved) {
+      if (_sendPreparationCancelled) {
+        return const SendTextStartCancelled();
+      }
+      if (!_sendPreparationInFlight || !_sending) {
+        return const SendTextAlreadySending();
+      }
+    } else if (_sending || _sendPreparationInFlight) {
+      return const SendTextAlreadySending();
+    }
+    if (canCommit != null && !canCommit()) {
+      return const SendTextTargetChanged();
     }
 
-    final healthReport = await _clientHealthAdvisor.check(
-      profile: ClientHealthCheckProfile.agentExecution,
-    );
-    _lastRuntimeHealthReport = healthReport;
-    notifyListeners();
-    if (healthReport.status == ClientRuntimeHealthStatus.blocking) {
-      return ApprovePlanExecutionBlocked(healthReport);
-    }
-    if (healthReport.status == ClientRuntimeHealthStatus.warning &&
-        !forceAfterWarning) {
-      return ApprovePlanExecutionWarning(healthReport);
+    if (!preparationReserved) {
+      _reserveSendPreparation();
     }
 
-    final approvedAt = DateTime.now();
-    final approvedPlan = AiApprovedPlanRef(
-      assistantCreatedAt: assistantCreatedAt,
-      approvedAt: approvedAt,
-    );
-    final updatedChat = activeChat.copyWith(
-      planMode: false,
-      approvedPlan: approvedPlan,
-      updatedAt: approvedAt,
-    );
-    _replaceChat(updatedChat);
-    notifyListeners();
-    await _storageService.saveAiChat(updatedChat);
+    try {
+      final currentModel = settings.model.trim();
+      final chatId = chat.id;
+      final now = DateTime.now();
 
-    final isEn = _appSettings.language == AppLanguage.en;
-    await sendText(
-      text: isEn ? 'Execute the approved plan.' : '执行已批准的计划。',
-      approvedPlanRef: approvedPlan,
-    );
-    return ApprovePlanExecutionStarted(healthReport: healthReport);
+      // RAG 检索
+      final attachments = List<AiChatAttachment>.from(_pendingAttachments);
+      final orchestrator = _runtimeFactory.createOrchestrator();
+
+      final preparedTurn = await orchestrator.prepareTurn(
+        chat: chat,
+        text: targetText,
+        createdAt: now,
+        language: _appSettings.language,
+        attachments: attachments,
+        selectedConnectionIds: _selectedConnectionIds,
+        approvedPlanRef: approvedPlanRef,
+        ragEnabled: _appSettings.ragEnabled,
+      );
+      if (_sendPreparationCancelled || !_sendPreparationInFlight) {
+        _releaseSendPreparation();
+        return const SendTextStartCancelled();
+      }
+      if (canCommit != null && !canCommit()) {
+        _releaseSendPreparation();
+        return const SendTextTargetChanged();
+      }
+      final userMessage = preparedTurn.userMessage;
+      final ragChunks = const <RagChunk>[];
+
+      // RAG Traces
+      final assistantTraces = List<AiMessageTrace>.from(
+        preparedTurn.assistantMessage.traces,
+      );
+      if (ragChunks.isNotEmpty) {
+        final traceContent = StringBuffer();
+        final isEn = _appSettings.isEnglish;
+        for (final chunk in ragChunks) {
+          traceContent.writeln(
+            isEn
+                ? 'Source: [${chunk.documentName}] (Chunk #${chunk.metadata['chunkIndex'] ?? 0})'
+                : '来源: [${chunk.documentName}] (分块 #${chunk.metadata['chunkIndex'] ?? 0})',
+          );
+          traceContent.writeln('---');
+          traceContent.writeln(chunk.text);
+          traceContent.writeln('========================================\n');
+        }
+        assistantTraces.add(
+          AiMessageTrace(
+            id: 'rag-${now.microsecondsSinceEpoch}',
+            kind: 'rag_context',
+            title: isEn ? 'Knowledge Base Retrieval (RAG)' : '知识库检索 (RAG)',
+            content: traceContent.toString(),
+            createdAt: now,
+          ),
+        );
+      }
+
+      final assistantMessage = AiChatMessageRecord(
+        role: 'assistant',
+        text: '',
+        traces: assistantTraces,
+        createdAt: now,
+      );
+      final nextMessages = [...chat.messages, userMessage, assistantMessage];
+      final nextChat = chat.copyWith(
+        title: chat.messages.isEmpty ? _titleFrom(targetText) : null,
+        model: currentModel.isNotEmpty ? currentModel : chat.model,
+        messages: nextMessages,
+        updatedAt: now,
+        approvedPlan: approvedPlanRef,
+      );
+
+      _sendCommitInProgress = true;
+      await _storageService.saveAiChat(nextChat);
+
+      _replaceChat(nextChat, activate: _activeChatId == chatId);
+      _pendingAttachments.clear();
+      _toolsExpanded = false;
+      notifyListeners();
+      _triggerScroll();
+
+      unawaited(
+        _generateAssistantResponse(
+          chatId: chatId,
+          initialChat: nextChat,
+          assistantMessage: assistantMessage,
+          model: currentModel.isNotEmpty ? currentModel : nextChat.model,
+          requestMessages: nextMessages,
+          userRequest: targetText,
+          memorySources: preparedTurn.memorySources,
+          ragHits: preparedTurn.ragHits,
+        ),
+      );
+      _sendCommitInProgress = false;
+      _sendPreparationInFlight = false;
+
+      return const SendTextSuccess();
+    } catch (_) {
+      _releaseSendPreparation();
+      rethrow;
+    }
   }
 
   Future<void> retryTodoStep(String taskId) async {
@@ -906,6 +1011,17 @@ class AiChatViewModel extends ChangeNotifier {
 
   void stopGeneration() {
     if (!_sending) return;
+    if (_sendPreparationInFlight) {
+      if (_sendCommitInProgress) {
+        _cancelGenerationOnStart = true;
+      } else {
+        _sendPreparationCancelled = true;
+        _sendPreparationInFlight = false;
+        _sending = false;
+      }
+      notifyListeners();
+      return;
+    }
     _activeCancellationToken?.cancel();
     final pending = _pendingApproval;
     if (pending != null && !pending.completer.isCompleted) {
@@ -1149,7 +1265,11 @@ class AiChatViewModel extends ChangeNotifier {
     return null;
   }
 
-  void _replaceChat(AiChatRecord chat, {bool sort = true}) {
+  void _replaceChat(
+    AiChatRecord chat, {
+    bool sort = true,
+    bool activate = true,
+  }) {
     _chats = sort
         ? upsertAiChatRecordsByUpdatedAt(_chats, chat)
         : _replaceChatWithoutReordering(_chats, chat);
@@ -1162,7 +1282,9 @@ class AiChatViewModel extends ChangeNotifier {
               insertIfMissing: false,
             );
     }
-    _activeChatId = chat.id;
+    if (activate) {
+      _activeChatId = chat.id;
+    }
   }
 
   List<AiChatRecord> _replaceChatWithoutReordering(
@@ -1215,6 +1337,30 @@ class AiChatViewModel extends ChangeNotifier {
     return AiChatMessageMapper.buildMultipartContent(textContent, attachments);
   }
 
+  Future<AiChatRecord> _reconciledChatForRun({
+    required String chatId,
+    required AiChatRecord fallback,
+  }) async {
+    final memoryChat = _chatById(chatId) ?? fallback;
+    try {
+      final persistedChats = await _storageService.loadAiChats();
+      final persistedIndex = persistedChats.indexWhere(
+        (chat) => chat.id == chatId,
+      );
+      if (persistedIndex < 0) return memoryChat;
+      return const AiChatRunStateReconciler().reconcile(
+        memoryChat: memoryChat,
+        persistedChat: persistedChats[persistedIndex],
+      );
+    } catch (_) {
+      AppLogService.instance.warning(
+        'Failed to reconcile persisted AI chat run state',
+        details: 'chatId=$chatId',
+      );
+      return memoryChat;
+    }
+  }
+
   // LLM流输出核心实现
   Future<void> _generateAssistantResponse({
     required String chatId,
@@ -1226,31 +1372,37 @@ class AiChatViewModel extends ChangeNotifier {
     required List<String> memorySources,
     required int ragHits,
   }) async {
-    final settings = await _storageService.loadAiConnectionSettings();
-    final modelProfile = AgentModelProfile(
-      mainModel: model,
-      helperModel: settings.helperModel,
-      auditModel: settings.auditModel,
-      fallbackPolicy: settings.modelFallbackPolicy,
-    );
-
-    final translator = AiChatStatusTranslator(_appSettings.language);
-    final metricsRecorder = AiChatRunMetricsRecorder(_storageService);
-    final runner = AiChatGenerationRunner(runtimeFactory: _runtimeFactory);
-
     final cancellationToken = LlmCancellationToken();
     _activeCancellationToken = cancellationToken;
-    final answer = StringBuffer();
-    final forceContextCompression = _consumeContextCompression(chatId);
-    final allowedTools = _chatAllowedTools[chatId];
-
-    _beginStreamingAssistant(
-      chatId: chatId,
-      assistantCreatedAt: assistantMessage.createdAt,
-      status: translator.translateStatus(AgentStatusString.preparing),
-    );
+    _activeGenerationChatId = chatId;
+    if (_cancelGenerationOnStart) {
+      _cancelGenerationOnStart = false;
+      cancellationToken.cancel();
+    }
 
     try {
+      final settings = await _storageService.loadAiConnectionSettings();
+      if (_deletedGenerationChatIds.contains(chatId)) return;
+      final modelProfile = AgentModelProfile(
+        mainModel: model,
+        helperModel: settings.helperModel,
+        auditModel: settings.auditModel,
+        fallbackPolicy: settings.modelFallbackPolicy,
+      );
+
+      final translator = AiChatStatusTranslator(_appSettings.language);
+      final metricsRecorder = AiChatRunMetricsRecorder(_storageService);
+      final runner = AiChatGenerationRunner(runtimeFactory: _runtimeFactory);
+      final answer = StringBuffer();
+      final forceContextCompression = _consumeContextCompression(chatId);
+      final allowedTools = _chatAllowedTools[chatId];
+
+      _beginStreamingAssistant(
+        chatId: chatId,
+        assistantCreatedAt: assistantMessage.createdAt,
+        status: translator.translateStatus(AgentStatusString.preparing),
+      );
+
       var lastStreamUiUpdate = DateTime.fromMillisecondsSinceEpoch(0);
 
       final runResult = await runner.run(
@@ -1297,9 +1449,14 @@ class AiChatViewModel extends ChangeNotifier {
           );
         },
       );
+      if (_deletedGenerationChatIds.contains(chatId)) return;
 
       if (runResult is AiChatRunSuccess) {
-        final currentChat = _chatById(chatId) ?? initialChat;
+        final currentChat = await _reconciledChatForRun(
+          chatId: chatId,
+          fallback: initialChat,
+        );
+        if (_deletedGenerationChatIds.contains(chatId)) return;
         final completedMessages = [...currentChat.messages];
         final assistantIndex = completedMessages.indexWhere(
           (message) =>
@@ -1354,10 +1511,14 @@ class AiChatViewModel extends ChangeNotifier {
           chatId: chatId,
           assistantCreatedAt: assistantMessage.createdAt,
         );
-        _replaceChat(answeredChat);
+        _replaceChat(answeredChat, activate: false);
         _sending = false;
         notifyListeners();
         await _storageService.saveAiChat(answeredChat);
+        if (_deletedGenerationChatIds.contains(chatId)) {
+          await _storageService.deleteAiChat(chatId);
+          return;
+        }
 
         await metricsRecorder.record(
           modelProfile: modelProfile,
@@ -1374,7 +1535,11 @@ class AiChatViewModel extends ChangeNotifier {
           'LLM chat UI request cancelled',
           details: 'chatId=$chatId model=$model',
         );
-        final currentChat = _chatById(chatId) ?? initialChat;
+        final currentChat = await _reconciledChatForRun(
+          chatId: chatId,
+          fallback: initialChat,
+        );
+        if (_deletedGenerationChatIds.contains(chatId)) return;
         final cancelledMessages = [...currentChat.messages];
         final assistantIndex = cancelledMessages.indexWhere(
           (message) =>
@@ -1414,10 +1579,14 @@ class AiChatViewModel extends ChangeNotifier {
           chatId: chatId,
           assistantCreatedAt: assistantMessage.createdAt,
         );
-        _replaceChat(cancelledChat);
+        _replaceChat(cancelledChat, activate: false);
         _sending = false;
         notifyListeners();
         await _storageService.saveAiChat(cancelledChat);
+        if (_deletedGenerationChatIds.contains(chatId)) {
+          await _storageService.deleteAiChat(chatId);
+          return;
+        }
 
         await metricsRecorder.record(
           modelProfile: modelProfile,
@@ -1429,7 +1598,11 @@ class AiChatViewModel extends ChangeNotifier {
           runId: runResult.runId,
         );
       } else if (runResult is AiChatRunFailed) {
-        final currentChat = _chatById(chatId) ?? initialChat;
+        final currentChat = await _reconciledChatForRun(
+          chatId: chatId,
+          fallback: initialChat,
+        );
+        if (_deletedGenerationChatIds.contains(chatId)) return;
         final errorMessages = [...currentChat.messages];
         final assistantIndex = errorMessages.indexWhere(
           (message) =>
@@ -1447,7 +1620,8 @@ class AiChatViewModel extends ChangeNotifier {
           );
           final partialText = runResult.partialAnswer;
           if (partialText.trim().isEmpty &&
-              errorMessages[assistantIndex].text.isEmpty) {
+              errorMessages[assistantIndex].text.isEmpty &&
+              errorMessages[assistantIndex].todoSteps.isEmpty) {
             errorMessages.removeAt(assistantIndex);
           } else if (partialText.isNotEmpty) {
             errorMessages[assistantIndex] = errorMessages[assistantIndex]
@@ -1488,10 +1662,14 @@ class AiChatViewModel extends ChangeNotifier {
           chatId: chatId,
           assistantCreatedAt: assistantMessage.createdAt,
         );
-        _replaceChat(errorChat);
+        _replaceChat(errorChat, activate: false);
         _sending = false;
         notifyListeners();
         await _storageService.saveAiChat(errorChat);
+        if (_deletedGenerationChatIds.contains(chatId)) {
+          await _storageService.deleteAiChat(chatId);
+          return;
+        }
 
         await metricsRecorder.record(
           modelProfile: modelProfile,
@@ -1504,12 +1682,14 @@ class AiChatViewModel extends ChangeNotifier {
         );
       }
     } catch (e, stackTrace) {
-      AppLogService.instance.error(
-        'LLM chat UI request failed unexpectedly',
-        error: e,
-        stackTrace: stackTrace,
-        details: 'chatId=$chatId model=$model',
-      );
+      if (!_deletedGenerationChatIds.contains(chatId)) {
+        AppLogService.instance.error(
+          'LLM chat UI request failed unexpectedly',
+          error: e,
+          stackTrace: stackTrace,
+          details: 'chatId=$chatId model=$model',
+        );
+      }
     } finally {
       _clearStreamingAssistant(
         chatId: chatId,
@@ -1522,6 +1702,10 @@ class AiChatViewModel extends ChangeNotifier {
       if (identical(_activeCancellationToken, cancellationToken)) {
         _activeCancellationToken = null;
       }
+      if (_activeGenerationChatId == chatId) {
+        _activeGenerationChatId = null;
+      }
+      _deletedGenerationChatIds.remove(chatId);
       notifyListeners();
       _triggerScroll();
     }
@@ -1597,6 +1781,7 @@ class AiChatViewModel extends ChangeNotifier {
     _replaceChat(
       currentChat.copyWith(messages: messages, updatedAt: DateTime.now()),
       sort: false,
+      activate: false,
     );
     notifyListeners();
     _triggerScroll();

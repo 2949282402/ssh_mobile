@@ -489,7 +489,7 @@ void main() {
         final assistantCreatedAt = DateTime.now();
         await viewModel.updateActiveChat(
           viewModel.activeChat!.copyWith(
-            planMode: true,
+            planMode: false,
             messages: [
               AiChatMessageRecord(
                 role: 'assistant',
@@ -513,7 +513,7 @@ void main() {
         );
 
         expect(result, isA<ApprovePlanExecutionBlocked>());
-        expect(viewModel.activeChat!.planMode, isTrue);
+        expect(viewModel.activeChat!.planMode, isFalse);
         expect(viewModel.activeChat!.approvedPlan, isNull);
         expect(viewModel.sending, isFalse);
       },
@@ -554,7 +554,7 @@ void main() {
         final assistantCreatedAt = DateTime.now();
         await viewModel.updateActiveChat(
           viewModel.activeChat!.copyWith(
-            planMode: true,
+            planMode: false,
             messages: [
               AiChatMessageRecord(
                 role: 'assistant',

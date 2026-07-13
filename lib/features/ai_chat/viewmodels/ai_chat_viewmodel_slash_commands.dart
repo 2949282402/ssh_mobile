@@ -23,13 +23,8 @@ extension AiChatViewModelSlashCommands on AiChatViewModel {
     }
 
     if (cmd == '/plan') {
-      final updated = activeChat.copyWith(
-        planMode: true,
-        updatedAt: DateTime.now(),
-      );
-      _replaceChat(updated);
-      notify();
-      await _storageService.saveAiChat(updated);
+      final updated = await _enablePlanModeForChat(activeChat);
+      if (updated == null) return const SendTextAlreadySending();
       return SendTextSlashCommandHandled(
         isEn
             ? 'Plan Mode Enabled. Helper agents will analyze read-only details and prepare a structured execution plan.'
