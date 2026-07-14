@@ -448,7 +448,7 @@ class _FilePane extends StatelessWidget {
   }
 
   Future<void> _editFile(BuildContext context, SftpEntry entry) async {
-    final saved = await Navigator.push<bool>(
+    await Navigator.push<bool>(
       context,
       PageRouteBuilder<bool>(
         transitionDuration: const Duration(milliseconds: 300),
@@ -462,9 +462,6 @@ class _FilePane extends StatelessWidget {
             ),
       ),
     );
-    if (saved == true && context.mounted) {
-      await context.read<SftpViewModel>().refresh();
-    }
   }
 
   String _entryMeta(AppStrings strings, SftpEntry entry) {

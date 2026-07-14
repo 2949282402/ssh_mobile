@@ -59,6 +59,26 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
 
   SftpService(this._storageService);
 
+  @visibleForTesting
+  SftpService.forTesting(
+    this._storageService, {
+    required ConnectionConfig connection,
+    required SftpClient sftpClient,
+    String currentPath = '.',
+  }) {
+    final session =
+        _SftpSession(
+            connectionId: connection.id,
+            connectionName: connection.name,
+            currentPath: currentPath,
+            targetBinding: ConnectionTargetBinding.fromConfig(connection),
+          )
+          ..sftp = sftpClient
+          ..state = SftpConnectionState.connected;
+    _sessions[connection.id] = session;
+    _activeConnectionId = connection.id;
+  }
+
   static String _decodeUtf8(Uint8List bytes) {
     return utf8.decode(bytes, allowMalformed: true);
   }
@@ -254,7 +274,11 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   }
 
   @override
-  Future<void> refresh() => openPath(currentPath);
+  Future<void> refresh() async {
+    final session = _activeSession;
+    if (session == null) return;
+    await _openPath(session, session.currentPath, bypassCache: true);
+  }
 
   @override
   void cancelActiveTransfer() {
@@ -706,11 +730,19 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
             SftpFileOpenMode.write,
       );
       await file.writeBytes(bytes);
+      await _closeFileQuietly(file);
+      file = null;
+      _directoryCache.invalidate(entry.connectionId, session.targetFingerprint);
+      await SftpFileCache.invalidate(
+        entry.connectionId,
+        session.targetFingerprint,
+        entry.path,
+      );
       AppLogService.instance.info(
         'SFTP text file saved',
         details: 'path=${entry.path} bytes=${bytes.length}',
       );
-      await _openPath(session, session.currentPath);
+      await _openPath(session, session.currentPath, bypassCache: true);
     } catch (e, stackTrace) {
       AppLogService.instance.error(
         'SFTP save failed',
@@ -820,7 +852,11 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     required String path,
   }) => _deletePathForConnectionImpl(connectionId: connectionId, path: path);
 
-  Future<void> _openPath(_SftpSession session, String path) async {
+  Future<void> _openPath(
+    _SftpSession session,
+    String path, {
+    bool bypassCache = false,
+  }) async {
     final sftp = session.sftp;
     if (sftp == null) return;
 
@@ -832,11 +868,13 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       final absolutePath = await sftp.absolute(path);
 
       // Check directory cache
-      final cached = _directoryCache.get(
-        session.connectionId,
-        session.targetFingerprint,
-        absolutePath,
-      );
+      final cached = bypassCache
+          ? null
+          : _directoryCache.get(
+              session.connectionId,
+              session.targetFingerprint,
+              absolutePath,
+            );
       if (cached != null) {
         session.currentPath = absolutePath;
         _lastPaths[session.connectionId] = absolutePath;

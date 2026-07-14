@@ -184,6 +184,9 @@ its `views/` parts.
   cloud credential folders, `/etc/shadow`, `/etc/sudoers`, and
   `/proc/*/environ` must not be cached.
 - Delete SFTP cache when a saved connection is removed or explicitly forgotten.
+- Manual directory refresh must bypass the short-lived directory cache. After
+  a successful remote mutation, invalidate the target directory cache and each
+  affected encrypted file cache entry before reloading remote metadata.
 - Keep upload, download, preview, edit, and delete behavior aligned across
   mobile, Windows, and macOS.
 
