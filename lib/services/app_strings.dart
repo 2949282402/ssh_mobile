@@ -414,9 +414,39 @@ class AppStrings {
   String get deleteComplete => _en ? 'Deleted' : '已删除';
   String editRemoteFile(String name) => _en ? 'Edit "$name"' : '编辑 "$name"';
   String get remoteFileContent => _en ? 'Remote file content' : '远程文件内容';
+  String get loadingRemoteFile => _en ? 'Loading remote file…' : '正在加载远程文件…';
+  String get remoteFileOpenFailed =>
+      _en ? 'Could not open this file' : '无法打开此文件';
+  String get remoteFileOpenFailedHint => _en
+      ? 'Check the SFTP connection and file permissions, then try again.'
+      : '请检查 SFTP 连接和文件权限，然后重试。';
   String openEditorFailed(Object error) =>
       _en ? 'Unable to open editor: $error' : '无法打开编辑器：$error';
   String get saveComplete => _en ? 'Saved' : '已保存';
+  String get saveRemoteFile => _en ? 'Save remote file' : '保存远程文件';
+  String get savingRemoteFile => _en ? 'Saving remote file…' : '正在保存远程文件…';
+  String get remoteFileSaveFailed => _en
+      ? 'Could not save this file. Check the connection and try again.'
+      : '无法保存此文件，请检查连接后重试。';
+  String remoteFileTooLarge(int maxBytes) {
+    const bytesPerMegabyte = 1024 * 1024;
+    final limit = maxBytes >= bytesPerMegabyte
+        ? '${(maxBytes / bytesPerMegabyte).toStringAsFixed(maxBytes % bytesPerMegabyte == 0 ? 0 : 1)} MB'
+        : '${(maxBytes / 1024).ceil()} KB';
+    return _en
+        ? 'This file is larger than the $limit edit limit. Reduce its content before saving.'
+        : '文件内容超过 $limit 的编辑上限，请缩减内容后再保存。';
+  }
+
+  String get remoteFileNewChangesRemain => _en
+      ? 'Earlier changes were saved. New edits are still unsaved.'
+      : '先前修改已保存，新的编辑仍未保存。';
+  String get remoteFilePath => _en ? 'Remote path' : '远程路径';
+  String get remoteFileSaved => _en ? 'All changes saved' : '所有修改均已保存';
+  String get remoteFileUnsaved => _en ? 'Unsaved changes' : '有未保存的修改';
+  String get editorControls => _en ? 'Editor controls' : '编辑器控制';
+  String get editorFontSize => _en ? 'Font size' : '字号';
+  String fontSizeValue(int value) => _en ? 'Font size $value' : '字号 $value';
   String get smallerFont => _en ? 'Smaller font' : '缩小字号';
   String get largerFont => _en ? 'Larger font' : '放大字号';
   String get enableLineWrap => _en ? 'Enable line wrap' : '开启自动换行';

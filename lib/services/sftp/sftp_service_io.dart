@@ -675,10 +675,22 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     }
   }
 
-  Future<void> saveTextFile(SftpEntry entry, String text) async {
+  Future<void> saveTextFile(
+    SftpEntry entry,
+    String text, {
+    int maxBytes = maxTextEditBytes,
+  }) async {
+    final bytes = Uint8List.fromList(utf8.encode(text));
+    if (bytes.length > maxBytes) {
+      throw SftpTextSizeLimitException(
+        actualBytes: bytes.length,
+        maxBytes: maxBytes,
+      );
+    }
+
     final session = _sessionForEntry(entry);
     final sftp = session.sftp;
-    if (sftp == null) return;
+    if (sftp == null) throw StateError('SFTP is not connected');
 
     session.state = SftpConnectionState.loading;
     session.errorMessage = null;
@@ -693,7 +705,6 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
             SftpFileOpenMode.truncate |
             SftpFileOpenMode.write,
       );
-      final bytes = Uint8List.fromList(utf8.encode(text));
       await file.writeBytes(bytes);
       AppLogService.instance.info(
         'SFTP text file saved',

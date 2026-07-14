@@ -75,6 +75,21 @@ class SftpTransferCancelledException implements Exception {
   String toString() => 'SftpTransferCancelledException: $message';
 }
 
+class SftpTextSizeLimitException implements Exception {
+  const SftpTextSizeLimitException({
+    required this.actualBytes,
+    required this.maxBytes,
+  });
+
+  final int actualBytes;
+  final int maxBytes;
+
+  @override
+  String toString() =>
+      'SftpTextSizeLimitException: text is $actualBytes bytes, '
+      'limit is $maxBytes bytes';
+}
+
 class SftpTransferState {
   final String id;
   final String name;

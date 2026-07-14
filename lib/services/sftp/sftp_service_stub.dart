@@ -249,7 +249,11 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     throw UnsupportedError('SFTP is not supported on Web');
   }
 
-  Future<void> saveTextFile(SftpEntry entry, String text) async {
+  Future<void> saveTextFile(
+    SftpEntry entry,
+    String text, {
+    int maxBytes = 512 * 1024,
+  }) async {
     throw UnsupportedError('SFTP is not supported on Web');
   }
 }

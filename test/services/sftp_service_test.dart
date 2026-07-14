@@ -45,6 +45,32 @@ void main() {
     expect(sftp.errorMessage, 'Connection config not found');
   });
 
+  test('saving text without an active connection fails explicitly', () async {
+    await sftp.connect(_textEntry.connectionId);
+
+    await expectLater(
+      sftp.saveTextFile(_textEntry, 'updated'),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('SFTP is not connected'),
+        ),
+      ),
+    );
+  });
+
+  test('text save checks UTF-8 byte size before opening remote file', () async {
+    await expectLater(
+      sftp.saveTextFile(_textEntry, '你好', maxBytes: 5),
+      throwsA(
+        isA<SftpTextSizeLimitException>()
+            .having((error) => error.actualBytes, 'actualBytes', 6)
+            .having((error) => error.maxBytes, 'maxBytes', 5),
+      ),
+    );
+  });
+
   test('SftpTransferState models progress and copyWith and equality', () {
     const state = SftpTransferState(
       id: 'tx_123',
@@ -73,3 +99,13 @@ void main() {
     expect(state.hashCode, identicalState.hashCode);
   });
 }
+
+const _textEntry = SftpEntry(
+  connectionId: 'missing-connection',
+  name: 'config.txt',
+  path: '/etc/config.txt',
+  lowerName: 'config.txt',
+  isDirectory: false,
+  isLink: false,
+  sizeLabel: '6 B',
+);

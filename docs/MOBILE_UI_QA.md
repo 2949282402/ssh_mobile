@@ -267,6 +267,18 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   semantic tree. Widget regressions additionally cover 320 dp at 200% text,
   asymmetric short-landscape safe areas, load/retry states, serialized deletes,
   operation failure feedback, and completion after the route is disposed.
+- The SFTP remote-text editor now uses the shared page surface, a focused
+  Back/title/Save app bar, adaptive file metadata, a 48 dp font/wrap toolbar,
+  and a bounded editor surface. Settled 1.5K Chinese captures cover pristine,
+  discard-confirmation, and saving states; 2K English portrait and compact
+  landscape captures retain the full remote path, save status, and editor
+  controls without overflow. Save and wrap semantics expose real accessibility
+  actions, including in the compact-height metadata row. Widget regressions
+  cover 320 dp at 200% text, asymmetric safe areas, load/retry and safe error
+  states, discard protection, UTF-8 edit limits, post-save IME races, late
+  disposal, and dynamically expanding ASCII/CJK no-wrap lines. Saving disables
+  edits and route dismissal, disconnected writes fail explicitly, and queued
+  text after a saved snapshot remains in the editor for a follow-up save.
 - Less common routes still need a consistency pass against the shared page
   surface and section components.
 - Cold startup remained on the native black launch surface for a noticeable
