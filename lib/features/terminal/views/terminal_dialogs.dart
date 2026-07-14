@@ -315,11 +315,11 @@ extension _TerminalDialogs on _TerminalScreenState {
         builder: (_) => TerminalCopyScreen(
           title: _serverName ?? strings.defaultTerminal,
           text: text,
-          copyAllTooltip: strings.copyAll,
         ),
       ),
     );
 
+    if (!mounted) return;
     _requestWindowsAwareTerminalFocus(viewModel);
   }
 

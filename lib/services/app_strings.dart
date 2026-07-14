@@ -612,6 +612,23 @@ class TerminalStrings {
       ? '"$name" is already disconnected. Close this window?'
       : '"$name" 已经断开。关闭这个窗口吗？';
   String get copyAll => _en ? 'Copy all' : '复制全部';
+  String get terminalOutput => _en ? 'Terminal output' : '终端输出';
+  String get terminalOutputSnapshot =>
+      _en ? 'Terminal output snapshot' : '终端输出快照';
+  String get terminalOutputSelectionHint =>
+      _en ? 'Select any text to copy part of the output.' : '选择任意文本可复制部分输出。';
+  String get readOnly => _en ? 'Read-only' : '只读';
+  String get copyingTerminalOutput =>
+      _en ? 'Copying terminal output…' : '正在复制终端输出…';
+  String get copyTerminalOutputFailed =>
+      _en ? 'Could not copy the terminal output. Try again.' : '无法复制终端输出，请重试。';
+  String terminalOutputSummary(int lineCount, int characterCount) {
+    if (!_en) return '$lineCount 行 · $characterCount 个字符';
+    final lines = lineCount == 1 ? 'line' : 'lines';
+    final characters = characterCount == 1 ? 'character' : 'characters';
+    return '$lineCount $lines · $characterCount $characters';
+  }
+
   String get moreActions => _en ? 'More actions' : '更多操作';
   String get navigationShell => _en ? 'Navigation & Shell' : '导航与 Shell';
   String get editControl => _en ? 'Edit & Control' : '编辑与控制';
