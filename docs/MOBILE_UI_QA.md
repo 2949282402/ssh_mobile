@@ -258,6 +258,15 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
   1.5K landscape safe areas. The relaxed state promotes Continue to the primary
   action; Continue for now skips only the current launch, matching the reminder
   copy without permanently suppressing an unresolved warning.
+- Connection history now uses the shared page surface, a real route app bar,
+  an 820 dp content ceiling, an explanatory overview, and status-led record
+  cards. Settled 1.5K Chinese populated/empty captures and a 2K English capture
+  keep Back, Refresh, Delete, and command-copy targets at least 48 dp without
+  clipped titles, host names, timestamps, or error text. Persisted connection
+  errors are redacted and length-bounded before entering the visible or
+  semantic tree. Widget regressions additionally cover 320 dp at 200% text,
+  asymmetric short-landscape safe areas, load/retry states, serialized deletes,
+  operation failure feedback, and completion after the route is disposed.
 - Less common routes still need a consistency pass against the shared page
   surface and section components.
 - Cold startup remained on the native black launch surface for a noticeable

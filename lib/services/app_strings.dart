@@ -318,8 +318,31 @@ class AppStrings {
     }
   }
 
-  String get noConnectionHistory => _en ? 'No connection history' : '暂无连接历史';
+  String get connectionHistoryHint => _en
+      ? 'Review recent terminal sessions, connection results, and tmux cleanup commands.'
+      : '查看最近的终端会话、连接结果和 tmux 清理命令。';
+  String connectionHistoryCount(int count) => _en
+      ? '$count recent ${count == 1 ? "session" : "sessions"}'
+      : '最近 $count 条会话记录';
+  String get loadingConnectionHistory =>
+      _en ? 'Loading connection history…' : '正在加载连接历史…';
+  String get connectionHistoryLoadFailed =>
+      _en ? 'Could not load connection history' : '无法加载连接历史';
+  String get connectionHistoryLoadFailedHint => _en
+      ? 'The saved session records are temporarily unavailable. Try again.'
+      : '暂时无法读取已保存的会话记录，请重试。';
+  String get noConnectionHistory =>
+      _en ? 'No connection history yet' : '暂无连接历史';
+  String get noConnectionHistoryHint => _en
+      ? 'Recently opened terminal sessions will appear here with their connection status.'
+      : '最近打开的终端会话及其连接状态会显示在这里。';
+  String historyUpdatedAt(String time) => _en ? 'Updated $time' : '更新于 $time';
   String get deleteHistoryRecord => _en ? 'Delete history record' : '删除历史记录';
+  String get deleteHistoryRecordFailed => _en
+      ? 'Could not delete this history record. Try again.'
+      : '无法删除这条历史记录，请重试。';
+  String get copyCleanupCommandFailed =>
+      _en ? 'Could not copy the cleanup command. Try again.' : '无法复制清理命令，请重试。';
 
   String get backgroundConnectionSettings => _en ? 'Background access' : '后台运行';
   String get enableBackgroundPermission =>
