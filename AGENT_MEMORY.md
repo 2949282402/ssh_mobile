@@ -19,6 +19,11 @@ across sessions.
 
 ## Notes
 
+- 2026-07-15: Developer Log uses the shared page surface and switches its
+  header actions below the title on narrow or high-text layouts; keep all
+  selection/copy/delete behavior in `DeveloperLogViewModel`. The AI chat shell
+  also sits on `AppPageSurface`, while streaming, history, tool approval, and
+  composer ownership remain unchanged.
 - 2026-07-15: Ports, Applications, and Services share `_ServerSnapshotTab`.
   Keep its snapshot-only fetching and selected-server cache behavior intact;
   its shared presentation now owns the server context card, 48 dp refresh

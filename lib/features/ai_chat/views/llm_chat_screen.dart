@@ -567,79 +567,88 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
           }
 
           return Scaffold(
-            body: LayoutBuilder(
-              builder: (context, bodyConstraints) {
-                final compactBodyLayout =
-                    compactKeyboardLayout || bodyConstraints.maxHeight < 360;
-                return Stack(
-                  children: [
-                    Column(
-                      children: [
-                        if (!compactBodyLayout)
-                          _ChatHeader(
-                            onShowHistory: () => _showHistory(context, strings),
-                            onNewChat: () => unawaited(_createNewChat()),
-                            newChatInFlight: _newChatInFlight,
-                            onShowSettings: () => _showSettings(strings),
-                            settingsOpening: _settingsOpening,
+            body: AppPageSurface(
+              child: LayoutBuilder(
+                builder: (context, bodyConstraints) {
+                  final compactBodyLayout =
+                      compactKeyboardLayout || bodyConstraints.maxHeight < 360;
+                  return Stack(
+                    children: [
+                      Column(
+                        children: [
+                          if (!compactBodyLayout)
+                            _ChatHeader(
+                              onShowHistory: () =>
+                                  _showHistory(context, strings),
+                              onNewChat: () => unawaited(_createNewChat()),
+                              newChatInFlight: _newChatInFlight,
+                              onShowSettings: () => _showSettings(strings),
+                              settingsOpening: _settingsOpening,
+                            ),
+                          Expanded(
+                            child: Stack(
+                              children: [
+                                _ChatMessageList(
+                                  scrollController: _scrollController,
+                                  onUserScroll: _updateUserScrollPosition,
+                                  onSuggestionSelected: _selectSuggestedPrompt,
+                                  onEditUser: (index) =>
+                                      _editUserMessage(index, strings),
+                                  onRegenerate: (index) =>
+                                      _confirmRegenerateAssistant(
+                                        index,
+                                        strings,
+                                      ),
+                                  onBranch: (index) =>
+                                      _confirmBranchFromAssistant(
+                                        index,
+                                        strings,
+                                      ),
+                                  onContinueTimeout: () =>
+                                      _continueAfterTimeout(strings),
+                                  onRevisePlan: (chat) =>
+                                      _revisePlan(chat, strings),
+                                ),
+                                ChatJumpToBottomButton(
+                                  scrollController: _scrollController,
+                                  isUserAtBottom: _isUserAtBottom,
+                                  onPressed: () => _scrollToBottom(jump: true),
+                                  strings: strings,
+                                ),
+                              ],
+                            ),
                           ),
-                        Expanded(
-                          child: Stack(
-                            children: [
-                              _ChatMessageList(
-                                scrollController: _scrollController,
-                                onUserScroll: _updateUserScrollPosition,
-                                onSuggestionSelected: _selectSuggestedPrompt,
-                                onEditUser: (index) =>
-                                    _editUserMessage(index, strings),
-                                onRegenerate: (index) =>
-                                    _confirmRegenerateAssistant(index, strings),
-                                onBranch: (index) =>
-                                    _confirmBranchFromAssistant(index, strings),
-                                onContinueTimeout: () =>
-                                    _continueAfterTimeout(strings),
-                                onRevisePlan: (chat) =>
-                                    _revisePlan(chat, strings),
-                              ),
-                              ChatJumpToBottomButton(
-                                scrollController: _scrollController,
-                                isUserAtBottom: _isUserAtBottom,
-                                onPressed: () => _scrollToBottom(jump: true),
-                                strings: strings,
-                              ),
-                            ],
-                          ),
-                        ),
-                        _ChatPlanApprovalArea(
-                          availableHeight: bodyConstraints.maxHeight,
-                          availableWidth: bodyConstraints.maxWidth,
-                          inputController: _inputController,
-                          toolsExpanded: _toolsExpanded,
-                          uiBusy: _planApprovalUiInFlight,
-                          onApprove: approvePlanAndExecute,
-                          onRevise: (chat) => _revisePlan(chat, strings),
-                        ),
-                        const _ChatToolApprovalArea(),
-                        SafeArea(
-                          top: false,
-                          child: _ChatComposer(
+                          _ChatPlanApprovalArea(
                             availableHeight: bodyConstraints.maxHeight,
+                            availableWidth: bodyConstraints.maxWidth,
                             inputController: _inputController,
-                            inputFocusNode: _inputFocusNode,
                             toolsExpanded: _toolsExpanded,
-                            onToolsExpandedChanged: (expanded) {
-                              setState(() => _toolsExpanded = expanded);
-                            },
-                            onSubmit: () => _send(context, strings),
-                            onStop: _stopGeneration,
+                            uiBusy: _planApprovalUiInFlight,
+                            onApprove: approvePlanAndExecute,
+                            onRevise: (chat) => _revisePlan(chat, strings),
                           ),
-                        ),
-                      ],
-                    ),
-                    _ChatHistoryOverlay(strings: strings),
-                  ],
-                );
-              },
+                          const _ChatToolApprovalArea(),
+                          SafeArea(
+                            top: false,
+                            child: _ChatComposer(
+                              availableHeight: bodyConstraints.maxHeight,
+                              inputController: _inputController,
+                              inputFocusNode: _inputFocusNode,
+                              toolsExpanded: _toolsExpanded,
+                              onToolsExpandedChanged: (expanded) {
+                                setState(() => _toolsExpanded = expanded);
+                              },
+                              onSubmit: () => _send(context, strings),
+                              onStop: _stopGeneration,
+                            ),
+                          ),
+                        ],
+                      ),
+                      _ChatHistoryOverlay(strings: strings),
+                    ],
+                  );
+                },
+              ),
             ),
           );
         },

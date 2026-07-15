@@ -33,39 +33,41 @@ class _DeveloperLogPageState extends State<DeveloperLogPage> {
     final viewModel = context.watch<DeveloperLogViewModel>();
     final strings = AppStrings(viewModel.language);
 
-    return Column(
-      children: [
-        _DeveloperLogToolbar(
-          strings: strings,
-          viewModel: viewModel,
-          onCopySuccess: () {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text(strings.copiedFilteredLogs)));
-          },
-          onDeleteSuccess: (count) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(strings.selectedLogsDeleted(count))),
-            );
-          },
-          onClearSuccess: () {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text(strings.logsCleared)));
-          },
-        ),
-        Expanded(
-          child: _DeveloperLogList(
+    return AppPageSurface(
+      child: Column(
+        children: [
+          _DeveloperLogToolbar(
             strings: strings,
             viewModel: viewModel,
-            onCopySingleSuccess: () {
+            onCopySuccess: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(strings.copiedFilteredLogs)),
+              );
+            },
+            onDeleteSuccess: (count) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(strings.selectedLogsDeleted(count))),
+              );
+            },
+            onClearSuccess: () {
               ScaffoldMessenger.of(
                 context,
-              ).showSnackBar(SnackBar(content: Text(strings.copiedSingleLog)));
+              ).showSnackBar(SnackBar(content: Text(strings.logsCleared)));
             },
           ),
-        ),
-      ],
+          Expanded(
+            child: _DeveloperLogList(
+              strings: strings,
+              viewModel: viewModel,
+              onCopySingleSuccess: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(strings.copiedSingleLog)),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -88,96 +90,134 @@ class _DeveloperLogToolbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 14, 12, 12),
-      decoration: BoxDecoration(
-        color: colorScheme.surface.withValues(alpha: 0.88),
-        border: Border(
-          bottom: BorderSide(
-            color: colorScheme.outline.withValues(alpha: 0.72),
+    final actionRow = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (viewModel.selectionMode)
+          SizedBox.square(
+            dimension: 48,
+            child: IconButton(
+              key: const ValueKey('developer-log-clear-selection'),
+              icon: const Icon(Icons.close_rounded),
+              tooltip: strings.cancel,
+              onPressed: viewModel.clearSelection,
+            ),
+          ),
+        SizedBox.square(
+          dimension: 48,
+          child: IconButton(
+            icon: Icon(
+              viewModel.selectionMode
+                  ? Icons.copy_rounded
+                  : Icons.copy_all_rounded,
+            ),
+            tooltip: viewModel.selectionMode
+                ? strings.copySelectedLogs
+                : strings.copyFilteredLogs,
+            onPressed: () async {
+              final success = await viewModel.copySelectedOrFilteredLogs();
+              if (success) onCopySuccess();
+            },
           ),
         ),
-      ),
-      child: Column(
-        children: [
-          Row(
+        SizedBox.square(
+          dimension: 48,
+          child: IconButton(
+            icon: const Icon(Icons.delete_outline_rounded),
+            tooltip: viewModel.selectionMode
+                ? strings.deleteSelectedLogs
+                : strings.clearLogs,
+            onPressed: () {
+              if (viewModel.selectionMode) {
+                final count = viewModel.deleteSelectedLogs();
+                onDeleteSuccess(count);
+              } else {
+                viewModel.clearLogs();
+                onClearSuccess();
+              }
+            },
+          ),
+        ),
+      ],
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact =
+            constraints.maxWidth < 520 ||
+            MediaQuery.textScalerOf(context).scale(1) > 1.3;
+        return Container(
+          padding: EdgeInsets.fromLTRB(
+            compact ? 14 : 20,
+            compact ? 12 : 14,
+            compact ? 14 : 12,
+            12,
+          ),
+          decoration: BoxDecoration(
+            color: colorScheme.surface.withValues(alpha: 0.88),
+            border: Border(
+              bottom: BorderSide(
+                color: colorScheme.outline.withValues(alpha: 0.72),
+              ),
+            ),
+          ),
+          child: Column(
             children: [
-              Expanded(
-                child: Text(
-                  viewModel.selectionMode
+              if (compact) ...[
+                AppPageHeader(
+                  title: viewModel.selectionMode
                       ? strings.selectedLogs(viewModel.selectedIds.length)
                       : strings.developerLogs,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.3,
-                  ),
+                  subtitle: strings.logs,
+                  icon: Icons.article_outlined,
                 ),
-              ),
-              if (viewModel.selectionMode)
-                IconButton(
-                  icon: const Icon(Icons.close_rounded),
-                  tooltip: strings.cancel,
-                  onPressed: viewModel.clearSelection,
+                const SizedBox(height: 8),
+                Align(alignment: Alignment.centerRight, child: actionRow),
+              ] else
+                Row(
+                  children: [
+                    Expanded(
+                      child: AppPageHeader(
+                        title: viewModel.selectionMode
+                            ? strings.selectedLogs(viewModel.selectedIds.length)
+                            : strings.developerLogs,
+                        subtitle: strings.logs,
+                        icon: Icons.article_outlined,
+                      ),
+                    ),
+                    actionRow,
+                  ],
                 ),
-              IconButton(
-                icon: Icon(
-                  viewModel.selectionMode
-                      ? Icons.copy_rounded
-                      : Icons.copy_all_rounded,
-                ),
-                tooltip: viewModel.selectionMode
-                    ? strings.copySelectedLogs
-                    : strings.copyFilteredLogs,
-                onPressed: () async {
-                  final success = await viewModel.copySelectedOrFilteredLogs();
-                  if (success) onCopySuccess();
-                },
-              ),
-              IconButton(
-                icon: const Icon(Icons.delete_outline_rounded),
-                tooltip: viewModel.selectionMode
-                    ? strings.deleteSelectedLogs
-                    : strings.clearLogs,
-                onPressed: () {
-                  if (viewModel.selectionMode) {
-                    final count = viewModel.deleteSelectedLogs();
-                    onDeleteSuccess(count);
-                  } else {
-                    viewModel.clearLogs();
-                    onClearSuccess();
-                  }
+              const SizedBox(height: 8),
+              Builder(
+                builder: (context) {
+                  final textScale = MediaQuery.textScalerOf(
+                    context,
+                  ).scale(1).clamp(1.0, 2.0).toDouble();
+                  return SizedBox(
+                    height: 36 + (textScale - 1.0) * 24,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: AppLogLevel.values.length,
+                      separatorBuilder: (_, _) => const SizedBox(width: 8),
+                      itemBuilder: (context, index) {
+                        final level = AppLogLevel.values[index];
+                        final count = viewModel.levelCounts[level] ?? 0;
+                        return FilterChip(
+                          label: Text(
+                            '${level.labelFor(strings.language)} $count',
+                          ),
+                          selected: viewModel.selectedLevel == level,
+                          onSelected: (_) => viewModel.setSelectedLevel(level),
+                        );
+                      },
+                    ),
+                  );
                 },
               ),
             ],
           ),
-          const SizedBox(height: 6),
-          Builder(
-            builder: (context) {
-              final textScale = MediaQuery.textScalerOf(
-                context,
-              ).scale(1).clamp(1.0, 1.6).toDouble();
-              return SizedBox(
-                height: 36 + (textScale - 1.0) * 18,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: AppLogLevel.values.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 8),
-                  itemBuilder: (context, index) {
-                    final level = AppLogLevel.values[index];
-                    final count = viewModel.levelCounts[level] ?? 0;
-                    return FilterChip(
-                      label: Text('${level.labelFor(strings.language)} $count'),
-                      selected: viewModel.selectedLevel == level,
-                      onSelected: (_) => viewModel.setSelectedLevel(level),
-                    );
-                  },
-                ),
-              );
-            },
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
