@@ -178,11 +178,10 @@ class _HealthBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = _healthColor(context, health.level);
+    final status = _healthLabel(strings, health.level);
     final detail =
         alert?.message ??
-        (health.details.isEmpty
-            ? _healthLabel(strings, health.level)
-            : health.details.join(' / '));
+        (health.details.isEmpty ? null : health.details.join(' / '));
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 260),
       child: Container(
@@ -216,7 +215,7 @@ class _HealthBadge extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           OverflowScrollText(
-                            '${connection.name} · ${health.score}',
+                            '${connection.name} · ${health.score} · $status',
                             selectable: false,
                             maxLines: 1,
                             style: TextStyle(
@@ -225,12 +224,13 @@ class _HealthBadge extends StatelessWidget {
                               fontSize: 12,
                             ),
                           ),
-                          OverflowScrollText(
-                            detail,
-                            selectable: false,
-                            maxLines: 1,
-                            style: TextStyle(color: color, fontSize: 11),
-                          ),
+                          if (detail != null)
+                            OverflowScrollText(
+                              detail,
+                              selectable: false,
+                              maxLines: 1,
+                              style: TextStyle(color: color, fontSize: 11),
+                            ),
                         ],
                       ),
                     ),
