@@ -238,37 +238,41 @@ class _PortsTabState extends State<_PortsTab>
     return Column(
       children: [
         if (_isLinux) ...[
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8.0),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: SegmentedButton<bool>(
-                segments: [
-                  ButtonSegment(
-                    value: true,
-                    icon: const Icon(Icons.admin_panel_settings_rounded),
-                    label: Text(
-                      _monitorText(widget.strings, 'Manage Mode', '管理模式'),
-                    ),
+          _AdminModeToolbar(
+            strings: widget.strings,
+            refreshKey: const ValueKey('ports-tab-refresh'),
+            onRefresh: () {
+              if (_isManageMode) {
+                unawaited(widget.viewModel.fetchPorts(id, force: true));
+              } else {
+                setState(() => _refreshPortsFuture(force: true));
+              }
+            },
+            modeSelector: SegmentedButton<bool>(
+              segments: [
+                ButtonSegment(
+                  value: true,
+                  icon: const Icon(Icons.admin_panel_settings_rounded),
+                  label: Text(
+                    _monitorText(widget.strings, 'Manage Mode', '管理模式'),
                   ),
-                  ButtonSegment(
-                    value: false,
-                    icon: const Icon(Icons.analytics_rounded),
-                    label: Text(
-                      _monitorText(widget.strings, 'Snapshot Mode', '快照模式'),
-                    ),
+                ),
+                ButtonSegment(
+                  value: false,
+                  icon: const Icon(Icons.analytics_rounded),
+                  label: Text(
+                    _monitorText(widget.strings, 'Snapshot Mode', '快照模式'),
                   ),
-                ],
-                selected: {_isManageMode},
-                onSelectionChanged: (values) {
-                  setState(() {
-                    _isManageMode = values.first;
-                    _lastActivatedModeKey = null;
-                  });
-                  _scheduleModeActivation();
-                },
-              ),
+                ),
+              ],
+              selected: {_isManageMode},
+              onSelectionChanged: (values) {
+                setState(() {
+                  _isManageMode = values.first;
+                  _lastActivatedModeKey = null;
+                });
+                _scheduleModeActivation();
+              },
             ),
           ),
         ],
@@ -406,6 +410,7 @@ class _PortsTabState extends State<_PortsTab>
         '未发现监听端口',
       ),
       future: _portsFuture,
+      showRefresh: !_isLinux,
       onRefresh: () => setState(() => _refreshPortsFuture(force: true)),
       itemBuilder: (context, port) {
         return _PortProcessTile(strings: widget.strings, port: port);

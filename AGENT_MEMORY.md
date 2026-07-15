@@ -291,3 +291,7 @@ across sessions.
   server selector chrome through `lib/widgets/server_selector.dart`. Keep
   feature-specific bindings responsible for SFTP single-select and Monitor
   multi-select behavior instead of duplicating selector layout.
+- 2026-07-15: Ports, Applications, and Services snapshot lists omit redundant
+  single-server summary headers. Ports/Services use a centered mode selector
+  with a right-aligned refresh action; Applications uses the compact
+  right-aligned snapshot refresh row.

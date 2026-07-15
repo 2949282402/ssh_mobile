@@ -220,6 +220,9 @@ its child widgets.
   Administration tab shares `SystemAdminViewModel.selectedConnectionId`.
 - Ports, Applications, and Services each operate on one selected server and
   fetch on open or manual refresh.
+- Single-server snapshot lists do not repeat the selected-server summary.
+  Keep Ports/Services mode selectors centered with a symmetric spacer and the
+  refresh action on the right; Applications uses the same compact refresh row.
 - Snapshot modes do not require root, enabling non-root Linux and Windows
   monitoring, while management tabs (Users, Sessions, Power) and management
   modes require root Linux connections.

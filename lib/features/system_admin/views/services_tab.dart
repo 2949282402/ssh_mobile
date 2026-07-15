@@ -324,37 +324,41 @@ class _ServicesTabState extends State<_ServicesTab>
     return Column(
       children: [
         if (_isLinux) ...[
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8.0),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: SegmentedButton<bool>(
-                segments: [
-                  ButtonSegment(
-                    value: true,
-                    icon: const Icon(Icons.admin_panel_settings_rounded),
-                    label: Text(
-                      _monitorText(widget.strings, 'Manage Mode', '管理模式'),
-                    ),
+          _AdminModeToolbar(
+            strings: widget.strings,
+            refreshKey: const ValueKey('services-tab-refresh'),
+            onRefresh: () {
+              if (_isManageMode) {
+                unawaited(widget.viewModel.fetchServices(id, force: true));
+              } else {
+                setState(() => _refreshServicesFuture(force: true));
+              }
+            },
+            modeSelector: SegmentedButton<bool>(
+              segments: [
+                ButtonSegment(
+                  value: true,
+                  icon: const Icon(Icons.admin_panel_settings_rounded),
+                  label: Text(
+                    _monitorText(widget.strings, 'Manage Mode', '管理模式'),
                   ),
-                  ButtonSegment(
-                    value: false,
-                    icon: const Icon(Icons.analytics_rounded),
-                    label: Text(
-                      _monitorText(widget.strings, 'Snapshot Mode', '快照模式'),
-                    ),
+                ),
+                ButtonSegment(
+                  value: false,
+                  icon: const Icon(Icons.analytics_rounded),
+                  label: Text(
+                    _monitorText(widget.strings, 'Snapshot Mode', '快照模式'),
                   ),
-                ],
-                selected: {_isManageMode},
-                onSelectionChanged: (values) {
-                  setState(() {
-                    _isManageMode = values.first;
-                    _lastActivatedModeKey = null;
-                  });
-                  _scheduleModeActivation();
-                },
-              ),
+                ),
+              ],
+              selected: {_isManageMode},
+              onSelectionChanged: (values) {
+                setState(() {
+                  _isManageMode = values.first;
+                  _lastActivatedModeKey = null;
+                });
+                _scheduleModeActivation();
+              },
             ),
           ),
         ],
@@ -529,6 +533,7 @@ class _ServicesTabState extends State<_ServicesTab>
                     '未发现运行中的服务',
                   ),
                   future: _servicesFuture,
+                  showRefresh: !_isLinux,
                   dataOverride: _rawSnapshotData.isEmpty ? null : snapshotData,
                   onRefresh: () =>
                       setState(() => _refreshServicesFuture(force: true)),

@@ -630,6 +630,14 @@ void main() {
       // Snapshot mode is the default and does not root-connect automatically.
       expect(find.text('快照模式'), findsOneWidget);
       expect(find.text('nginx'), findsWidgets);
+      expect(find.byKey(const ValueKey('header-conn_123')), findsNothing);
+      final portsModeCenter = tester.getCenter(
+        find.byType(SegmentedButton<bool>),
+      );
+      final portsRefreshCenter = tester.getCenter(
+        find.byKey(const ValueKey('ports-tab-refresh')),
+      );
+      expect(portsRefreshCenter.dx, greaterThan(portsModeCenter.dx));
       expect(find.text('连接 Root'), findsNothing);
       expect(adminVm.connectIfNeededCalls, 0);
       expect(monitorVm.fetchPortsCalls, ['conn_123']);
@@ -669,6 +677,11 @@ void main() {
       // Verify snapshot shows process 'nginx' and 'PID 101'
       expect(find.text('nginx'), findsWidgets);
       expect(find.textContaining('PID 101'), findsOneWidget);
+      expect(find.byKey(const ValueKey('header-conn_123')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('snapshot-tab-refresh')),
+        findsOneWidget,
+      );
       // Applications does not display a manage mode or Connect Root warning
       expect(find.textContaining('管理模式'), findsNothing);
       expect(find.text('连接 Root'), findsNothing);
@@ -702,6 +715,14 @@ void main() {
       // Verify service card nginx.service exists
       expect(find.text('快照模式'), findsOneWidget);
       expect(find.text('nginx.service'), findsWidgets);
+      expect(find.byKey(const ValueKey('header-conn_123')), findsNothing);
+      final servicesModeCenter = tester.getCenter(
+        find.byType(SegmentedButton<bool>),
+      );
+      final servicesRefreshCenter = tester.getCenter(
+        find.byKey(const ValueKey('services-tab-refresh')),
+      );
+      expect(servicesRefreshCenter.dx, greaterThan(servicesModeCenter.dx));
       expect(find.text('连接 Root'), findsNothing);
       expect(adminVm.connectIfNeededCalls, 0);
       expect(monitorVm.fetchServicesCalls, ['conn_123']);

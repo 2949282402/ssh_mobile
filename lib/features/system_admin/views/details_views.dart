@@ -25,6 +25,7 @@ class _ServerSnapshotTab<T> extends StatefulWidget {
   final Future<Map<String, List<T>>>? future;
   final Map<String, List<T>>? dataOverride;
   final VoidCallback onRefresh;
+  final bool showRefresh;
   final Widget Function(BuildContext context, T item) itemBuilder;
 
   const _ServerSnapshotTab({
@@ -35,6 +36,7 @@ class _ServerSnapshotTab<T> extends StatefulWidget {
     required this.future,
     this.dataOverride,
     required this.onRefresh,
+    this.showRefresh = true,
     required this.itemBuilder,
   });
 
@@ -61,42 +63,47 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
     _lastData = Map.from(data);
 
     final flatItems = <_FlatSnapshotItem<T>>[];
+    final showConnectionHeaders = connections.length > 1;
     for (final connection in connections) {
       final items = data[connection.id] ?? const [];
       if (items.isEmpty) {
-        flatItems.add(
-          _FlatSnapshotItem<T>(
-            connection: connection,
-            isHeader: true,
-            isFirst: true,
-            isLast: false,
-          ),
-        );
+        if (showConnectionHeaders) {
+          flatItems.add(
+            _FlatSnapshotItem<T>(
+              connection: connection,
+              isHeader: true,
+              isFirst: true,
+              isLast: false,
+            ),
+          );
+        }
         flatItems.add(
           _FlatSnapshotItem<T>(
             connection: connection,
             emptyText: widget.emptyText,
             isHeader: false,
-            isFirst: false,
+            isFirst: !showConnectionHeaders,
             isLast: true,
           ),
         );
       } else {
-        flatItems.add(
-          _FlatSnapshotItem<T>(
-            connection: connection,
-            isHeader: true,
-            isFirst: true,
-            isLast: false,
-          ),
-        );
+        if (showConnectionHeaders) {
+          flatItems.add(
+            _FlatSnapshotItem<T>(
+              connection: connection,
+              isHeader: true,
+              isFirst: true,
+              isLast: false,
+            ),
+          );
+        }
         for (int i = 0; i < items.length; i++) {
           flatItems.add(
             _FlatSnapshotItem<T>(
               connection: connection,
               item: items[i],
               isHeader: false,
-              isFirst: false,
+              isFirst: !showConnectionHeaders && i == 0,
               isLast: i == items.length - 1,
             ),
           );
@@ -119,68 +126,15 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
   }
 
   Widget _buildHeader(BuildContext context, {required bool isRefreshing}) {
-    final connections = widget.connections;
     final strings = widget.strings;
     final onRefresh = widget.onRefresh;
-    final compact = MediaQuery.textScalerOf(context).scale(1) > 1.3;
-    if (compact) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 48),
-          padding: const EdgeInsets.only(left: 10),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface,
-            borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-            border: Border.all(
-              color: Theme.of(context).colorScheme.outlineVariant,
-            ),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                Icons.insights_outlined,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  _serverSummary(strings, connections),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
-              ),
-              SizedBox.square(
-                dimension: 48,
-                child: IconButton(
-                  key: const ValueKey('snapshot-tab-refresh'),
-                  onPressed: isRefreshing ? null : onRefresh,
-                  icon: isRefreshing
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.refresh_rounded),
-                  tooltip: strings.refresh,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 2),
-      child: AppSectionCard(
-        title: _serverSummary(strings, connections),
-        subtitle: strings.adminSnapshotAccess,
-        icon: Icons.insights_outlined,
-        padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
-        trailing: SizedBox.square(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: SizedBox.square(
           dimension: 48,
-          child: IconButton.outlined(
+          child: IconButton(
             key: const ValueKey('snapshot-tab-refresh'),
             onPressed: isRefreshing ? null : onRefresh,
             icon: isRefreshing
@@ -353,7 +307,7 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
     if (widget.dataOverride != null) {
       return Column(
         children: [
-          _buildHeader(context, isRefreshing: false),
+          if (widget.showRefresh) _buildHeader(context, isRefreshing: false),
           Expanded(child: _buildFlatList(context, widget.dataOverride!)),
         ],
       );
@@ -368,7 +322,7 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
           final compact = MediaQuery.textScalerOf(context).scale(1) > 1.3;
           return Column(
             children: [
-              _buildHeader(context, isRefreshing: true),
+              if (widget.showRefresh) _buildHeader(context, isRefreshing: true),
               Expanded(
                 child: compact
                     ? Center(
@@ -400,7 +354,8 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
           final compact = MediaQuery.textScalerOf(context).scale(1) > 1.3;
           return Column(
             children: [
-              _buildHeader(context, isRefreshing: false),
+              if (widget.showRefresh)
+                _buildHeader(context, isRefreshing: false),
               Expanded(
                 child: compact
                     ? Center(
@@ -441,11 +396,55 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
         final data = snapshot.data ?? const {};
         return Column(
           children: [
-            _buildHeader(context, isRefreshing: isRefreshing),
+            if (widget.showRefresh)
+              _buildHeader(context, isRefreshing: isRefreshing),
             Expanded(child: _buildFlatList(context, data)),
           ],
         );
       },
+    );
+  }
+}
+
+class _AdminModeToolbar extends StatelessWidget {
+  const _AdminModeToolbar({
+    required this.strings,
+    required this.modeSelector,
+    required this.onRefresh,
+    required this.refreshKey,
+  });
+
+  final AppStrings strings;
+  final Widget modeSelector;
+  final VoidCallback onRefresh;
+  final Key refreshKey;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
+      child: Row(
+        children: [
+          const SizedBox(width: 48),
+          Expanded(
+            child: Center(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: modeSelector,
+              ),
+            ),
+          ),
+          SizedBox.square(
+            dimension: 48,
+            child: IconButton(
+              key: refreshKey,
+              tooltip: strings.refresh,
+              onPressed: onRefresh,
+              icon: const Icon(Icons.refresh_rounded),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
