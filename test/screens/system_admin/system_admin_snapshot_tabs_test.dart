@@ -815,6 +815,11 @@ void main() {
       // Verify segmented button for Manage/Snapshot exists
       expect(find.text('管理模式'), findsOneWidget);
       expect(find.text('快照模式'), findsOneWidget);
+      expect(find.byTooltip('刷新全部'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('services-tab-refresh')),
+        findsOneWidget,
+      );
 
       await tester.tap(find.text('管理模式'));
       await tester.pumpAndSettle();

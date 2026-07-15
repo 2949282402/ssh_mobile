@@ -347,7 +347,6 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
     // TabController organizes all Admin tabs
     return Column(
       children: [
-        _AdminWorkspaceHeader(strings: strings, activeTabIndex: activeTabIndex),
         Container(
           decoration: BoxDecoration(
             color: Theme.of(
@@ -359,72 +358,38 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
               ),
             ),
           ),
-          child: Row(
-            children: [
-              Expanded(
-                child: NotificationListener<ScrollNotification>(
-                  onNotification: (notification) => true,
-                  child: TabBar(
-                    controller: _tabController,
-                    isScrollable: true,
-                    tabAlignment: TabAlignment.start,
-                    labelPadding: const EdgeInsets.symmetric(horizontal: 14),
-                    tabs: [
-                      Tab(
-                        text: strings.monitor,
-                        icon: const Icon(Icons.monitor_heart_outlined),
-                      ),
-                      Tab(
-                        text: strings.listeningPorts,
-                        icon: const Icon(Icons.lan),
-                      ),
-                      Tab(
-                        text: strings.applications,
-                        icon: const Icon(Icons.apps_rounded),
-                      ),
-                      Tab(
-                        text: strings.systemServices,
-                        icon: const Icon(Icons.settings_suggest),
-                      ),
-                      Tab(
-                        text: strings.userAccounts,
-                        icon: const Icon(Icons.people),
-                      ),
-                      Tab(
-                        text: strings.activeSessions,
-                        icon: const Icon(Icons.co_present),
-                      ),
-                      Tab(
-                        text: strings.systemPower,
-                        icon: const Icon(Icons.power_settings_new),
-                      ),
-                    ],
-                  ),
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (notification) => true,
+            child: TabBar(
+              controller: _tabController,
+              isScrollable: true,
+              tabAlignment: TabAlignment.start,
+              labelPadding: const EdgeInsets.symmetric(horizontal: 14),
+              tabs: [
+                Tab(
+                  text: strings.monitor,
+                  icon: const Icon(Icons.monitor_heart_outlined),
                 ),
-              ),
-              ValueListenableBuilder<int>(
-                valueListenable: activeTabIndex,
-                builder: (context, activeIndex, _) {
-                  final isMonitorTab = activeIndex == 0;
-                  final canManage = context.select<SystemAdminViewModel, bool>(
-                    (vm) => vm.canManageSelectedConnection,
-                  );
-                  if (!isMonitorTab && canManage) {
-                    return Padding(
-                      padding: const EdgeInsets.only(right: 8.0),
-                      child: IconButton(
-                        icon: const Icon(Icons.refresh),
-                        onPressed: () => context
-                            .read<SystemAdminViewModel>()
-                            .refreshAllData(),
-                        tooltip: strings.refreshAll,
-                      ),
-                    );
-                  }
-                  return const SizedBox.shrink();
-                },
-              ),
-            ],
+                Tab(text: strings.listeningPorts, icon: const Icon(Icons.lan)),
+                Tab(
+                  text: strings.applications,
+                  icon: const Icon(Icons.apps_rounded),
+                ),
+                Tab(
+                  text: strings.systemServices,
+                  icon: const Icon(Icons.settings_suggest),
+                ),
+                Tab(text: strings.userAccounts, icon: const Icon(Icons.people)),
+                Tab(
+                  text: strings.activeSessions,
+                  icon: const Icon(Icons.co_present),
+                ),
+                Tab(
+                  text: strings.systemPower,
+                  icon: const Icon(Icons.power_settings_new),
+                ),
+              ],
+            ),
           ),
         ),
         Expanded(
@@ -505,227 +470,6 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
           ),
         ),
       ],
-    );
-  }
-}
-
-class _AdminWorkspaceHeader extends StatelessWidget {
-  final AppStrings strings;
-  final ValueListenable<int> activeTabIndex;
-
-  const _AdminWorkspaceHeader({
-    required this.strings,
-    required this.activeTabIndex,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final selectedConnection = context
-        .select<SystemAdminViewModel, ConnectionConfig?>(
-          (vm) => vm.selectedConnection,
-        );
-    final isConnecting = context.select<SystemAdminViewModel, bool>(
-      (vm) => vm.isConnectingSelectedConnection,
-    );
-    final isConnected = context.select<SystemAdminViewModel, bool>(
-      (vm) => vm.isConnectedSelectedConnection,
-    );
-    final isRoot = context.select<SystemAdminViewModel, bool>(
-      (vm) => vm.isRoot,
-    );
-    final hasError = context.select<SystemAdminViewModel, bool>(
-      (vm) => vm.hasManagementErrorForSelectedConnection,
-    );
-    final textScale = MediaQuery.textScalerOf(context).scale(1);
-
-    return ValueListenableBuilder<int>(
-      valueListenable: activeTabIndex,
-      builder: (context, tabIndex, _) {
-        // Every administration tab already exposes its identity and actions in
-        // the tab strip and its own content. Avoid repeating the generic
-        // workspace title across all seven valid tab indexes.
-        if (tabIndex >= 0) {
-          return const SizedBox.shrink();
-        }
-        final status = _AdminWorkspaceStatus.from(
-          strings: strings,
-          selectedConnection: selectedConnection,
-          isConnecting: isConnecting,
-          isConnected: isConnected,
-          isRoot: isRoot,
-          hasError: hasError,
-          requiresRoot: tabIndex >= 4,
-        );
-
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            final compact = constraints.maxWidth < 560 || textScale > 1.3;
-            final header = AppPageHeader(
-              title: strings.systemOmAdmin,
-              subtitle: selectedConnection == null
-                  ? strings.adminSelectServer
-                  : '${selectedConnection.name} · ${selectedConnection.username}@${selectedConnection.host}',
-              icon: Icons.admin_panel_settings_outlined,
-              trailing: compact
-                  ? null
-                  : _AdminWorkspaceStatusPill(status: status),
-            );
-
-            return Container(
-              key: const ValueKey('system-admin-workspace-header'),
-              width: double.infinity,
-              padding: EdgeInsets.fromLTRB(
-                compact ? 16 : 22,
-                compact ? 14 : 18,
-                compact ? 16 : 22,
-                compact ? 12 : 16,
-              ),
-              decoration: BoxDecoration(
-                border: Border(
-                  bottom: BorderSide(
-                    color: Theme.of(context).colorScheme.outlineVariant,
-                  ),
-                ),
-              ),
-              child: compact
-                  ? Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        header,
-                        const SizedBox(height: 10),
-                        _AdminWorkspaceStatusPill(status: status),
-                      ],
-                    )
-                  : header,
-            );
-          },
-        );
-      },
-    );
-  }
-}
-
-class _AdminWorkspaceStatus {
-  final String label;
-  final IconData icon;
-  final _AdminWorkspaceStatusTone tone;
-  final bool busy;
-
-  const _AdminWorkspaceStatus({
-    required this.label,
-    required this.icon,
-    required this.tone,
-    this.busy = false,
-  });
-
-  factory _AdminWorkspaceStatus.from({
-    required AppStrings strings,
-    required ConnectionConfig? selectedConnection,
-    required bool isConnecting,
-    required bool isConnected,
-    required bool isRoot,
-    required bool hasError,
-    required bool requiresRoot,
-  }) {
-    if (selectedConnection == null) {
-      return _AdminWorkspaceStatus(
-        label: strings.adminSelectServer,
-        icon: Icons.dns_outlined,
-        tone: _AdminWorkspaceStatusTone.neutral,
-      );
-    }
-    if (hasError) {
-      return _AdminWorkspaceStatus(
-        label: strings.adminConnectionFailed,
-        icon: Icons.error_outline_rounded,
-        tone: _AdminWorkspaceStatusTone.error,
-      );
-    }
-    if (isConnecting) {
-      return _AdminWorkspaceStatus(
-        label: strings.connectingEllipsis,
-        icon: Icons.sync_rounded,
-        tone: _AdminWorkspaceStatusTone.primary,
-        busy: true,
-      );
-    }
-    if (isConnected && isRoot) {
-      return _AdminWorkspaceStatus(
-        label: strings.adminRootAccess,
-        icon: Icons.verified_user_outlined,
-        tone: _AdminWorkspaceStatusTone.success,
-      );
-    }
-    if (!requiresRoot) {
-      return _AdminWorkspaceStatus(
-        label: strings.adminSnapshotAccess,
-        icon: Icons.insights_outlined,
-        tone: _AdminWorkspaceStatusTone.primary,
-      );
-    }
-    return _AdminWorkspaceStatus(
-      label: strings.notConnected,
-      icon: Icons.lock_outline_rounded,
-      tone: _AdminWorkspaceStatusTone.warning,
-    );
-  }
-}
-
-enum _AdminWorkspaceStatusTone { neutral, primary, success, warning, error }
-
-class _AdminWorkspaceStatusPill extends StatelessWidget {
-  final _AdminWorkspaceStatus status;
-
-  const _AdminWorkspaceStatusPill({required this.status});
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final color = switch (status.tone) {
-      _AdminWorkspaceStatusTone.neutral => colorScheme.onSurfaceVariant,
-      _AdminWorkspaceStatusTone.primary => colorScheme.primary,
-      _AdminWorkspaceStatusTone.success => colorScheme.secondary,
-      _AdminWorkspaceStatusTone.warning => colorScheme.tertiary,
-      _AdminWorkspaceStatusTone.error => colorScheme.error,
-    };
-    return Semantics(
-      key: const ValueKey('system-admin-workspace-status'),
-      liveRegion: true,
-      label: status.label,
-      child: Container(
-        constraints: const BoxConstraints(minHeight: 32),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(AppTheme.radiusPill),
-          border: Border.all(color: color.withValues(alpha: 0.32)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (status.busy)
-              SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2, color: color),
-              )
-            else
-              Icon(status.icon, size: 16, color: color),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                status.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: colorScheme.onSurface,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

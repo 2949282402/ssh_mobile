@@ -234,6 +234,9 @@ its child widgets.
   Management fetch debouncing must remain awaitable; forced `refreshAllData`
   calls must complete Accounts, Sessions, Services, and Ports without a shared
   timer canceling earlier work.
+- Do not add a global Refresh All action to the System Administration tab bar;
+  each active tab owns its refresh affordance and remote command scope. Avoid
+  restoring the obsolete generic workspace header/status layer.
 - Collect data with read-only one-shot SSH exec commands. Do not attach to tmux
   or interactive terminal sessions.
 - Linux probes use `/proc` and `df -P`; Windows probes use the PowerShell JSON

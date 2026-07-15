@@ -300,3 +300,6 @@ across sessions.
   SystemAdmin fetch debounce is awaited and epoch-cancelable; forced
   `refreshAllData()` must run all four management fetches instead of sharing a
   timer that drops Accounts, Sessions, or Services.
+- 2026-07-15: System Administration has no global tab-bar Refresh All or hidden
+  generic workspace header/status layer. Each tab owns its refresh action and
+  remote command scope, avoiding duplicate controls and unrelated SSH work.
