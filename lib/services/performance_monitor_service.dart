@@ -450,7 +450,9 @@ class PerformanceMonitorService extends ChangeNotifier {
               : result.stderr.trim(),
         );
       }
-      final raw = ServerStatusProbe.parsePerformanceOutput(result.stdout);
+      final raw = await ServerStatusProbe.parsePerformanceOutputAsync(
+        result.stdout,
+      );
       final sample = _sampleFromCounters(
         connectionId,
         raw.counters,
@@ -567,7 +569,7 @@ class PerformanceMonitorService extends ChangeNotifier {
     if (result.exitCode != 0 && result.stdout.trim().isEmpty) {
       throw StateError(result.stderr.trim());
     }
-    return ServerStatusProbe.parsePorts(result.stdout);
+    return ServerStatusProbe.parsePortsAsync(result.stdout);
   }
 
   Future<List<ApplicationMemorySnapshot>> fetchApplications(
@@ -590,7 +592,7 @@ class PerformanceMonitorService extends ChangeNotifier {
     if (result.exitCode != 0 && result.stdout.trim().isEmpty) {
       throw StateError(result.stderr.trim());
     }
-    return ServerStatusProbe.parseApplications(result.stdout);
+    return ServerStatusProbe.parseApplicationsAsync(result.stdout);
   }
 
   Future<List<ServiceStatusSnapshot>> fetchServices(
@@ -613,7 +615,7 @@ class PerformanceMonitorService extends ChangeNotifier {
     if (result.exitCode != 0 && result.stdout.trim().isEmpty) {
       throw StateError(result.stderr.trim());
     }
-    return ServerStatusProbe.parseServices(result.stdout);
+    return ServerStatusProbe.parseServicesAsync(result.stdout);
   }
 
   Future<WindowsStatusSnapshot> _fetchWindowsStatus(
@@ -634,7 +636,7 @@ class PerformanceMonitorService extends ChangeNotifier {
             : result.stderr.trim(),
       );
     }
-    return ServerStatusProbe.parseWindowsStatus(result.stdout);
+    return ServerStatusProbe.parseWindowsStatusAsync(result.stdout);
   }
 
   ServerPlatform _platformFor(String connectionId) {

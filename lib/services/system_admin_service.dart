@@ -9,6 +9,7 @@ import '../core/services/ssh_client_factory.dart';
 import '../core/services/ssh_host_key_policy.dart';
 import 'storage_service.dart';
 import 'app_log_service.dart';
+import 'remote_command_decoder.dart';
 
 class SystemAdminService extends ChangeNotifier {
   final StorageService _storageService;
@@ -175,11 +176,15 @@ class SystemAdminService extends ChangeNotifier {
 
       await Future.wait([stdoutFuture, stderrFuture]).timeout(timeout);
       final exitCode = session.exitCode;
+      final decoded = await decodeRemoteCommandBytes(
+        stdout: stdoutBytes,
+        stderr: stderrBytes,
+      );
 
       return RemoteCommandResult(
         exitCode: exitCode ?? 0,
-        stdout: utf8.decode(stdoutBytes, allowMalformed: true),
-        stderr: utf8.decode(stderrBytes, allowMalformed: true),
+        stdout: decoded.stdout,
+        stderr: decoded.stderr,
       );
     } finally {
       _activeSessionsList.remove(session);
@@ -202,45 +207,7 @@ class SystemAdminService extends ChangeNotifier {
         );
       }
 
-      final sessions = <ActiveSession>[];
-      final lines = const LineSplitter().convert(result.stdout);
-      for (final line in lines) {
-        final trimmed = line.trim();
-        if (trimmed.isEmpty) continue;
-
-        // Split by multiple spaces
-        final parts = trimmed.split(RegExp(r'\s+'));
-        if (parts.length < 2) continue;
-
-        final username = parts[0];
-        final tty = parts[1];
-
-        // loginTime is usually date + time
-        String loginTime = '';
-        String ipAddress = '';
-        if (parts.length >= 4) {
-          loginTime = '${parts[2]} ${parts[3]}';
-          if (parts.length >= 5) {
-            ipAddress = parts
-                .sublist(4)
-                .join(' ')
-                .replaceAll('(', '')
-                .replaceAll(')', '');
-          }
-        } else {
-          loginTime = parts.sublist(2).join(' ');
-        }
-
-        sessions.add(
-          ActiveSession(
-            username: username,
-            tty: tty,
-            loginTime: loginTime,
-            ipAddress: ipAddress,
-          ),
-        );
-      }
-      return sessions;
+      return compute(_parseActiveSessions, result.stdout);
     } catch (e, stack) {
       AppLogService.instance.error(
         'Failed to get active sessions',
@@ -286,69 +253,7 @@ class SystemAdminService extends ChangeNotifier {
         throw Exception('Failed to query passwd: ${result.stderr}');
       }
 
-      final parts = result.stdout.split('===STATUS===');
-      final passwdText = parts[0];
-      final statusText = parts.length > 1 ? parts[1] : '';
-
-      // Parse status mapping (username -> statusChar)
-      final statusMap = <String, String>{};
-      final statusLines = const LineSplitter().convert(statusText);
-      for (final line in statusLines) {
-        final trimmed = line.trim();
-        if (trimmed.isEmpty) continue;
-        final fields = trimmed.split(RegExp(r'\s+'));
-        if (fields.length >= 2) {
-          final username = fields[0];
-          final statusVal = fields[1]; // L, P, NP, etc.
-          statusMap[username] = statusVal;
-        }
-      }
-
-      final accounts = <LinuxUserAccount>[];
-      final passwdLines = const LineSplitter().convert(passwdText);
-      for (final line in passwdLines) {
-        final trimmed = line.trim();
-        if (trimmed.isEmpty) continue;
-
-        final fields = trimmed.split(':');
-        if (fields.length < 7) continue;
-
-        final username = fields[0];
-        final uid = int.tryParse(fields[2]) ?? -1;
-        final gid = int.tryParse(fields[3]) ?? -1;
-        final homeDir = fields[5];
-        final shell = fields[6];
-
-        // Filter: We include root (uid 0) and normal users (typically uid >= 1000)
-        // Also skip system users that have nologin shells or false shells unless uid >= 1000
-        final isInteractiveShell =
-            shell.isNotEmpty &&
-            !shell.contains('nologin') &&
-            !shell.contains('false') &&
-            (shell.endsWith('sh') || shell.contains('sh'));
-        if (uid == 0 || (uid >= 1000 && uid < 65534) || isInteractiveShell) {
-          final status = statusMap[username] ?? 'Unknown';
-          accounts.add(
-            LinuxUserAccount(
-              username: username,
-              uid: uid,
-              gid: gid,
-              homeDir: homeDir,
-              shell: shell,
-              status: status,
-            ),
-          );
-        }
-      }
-
-      // Sort: Root first, then alphabetical by username
-      accounts.sort((a, b) {
-        if (a.uid == 0) return -1;
-        if (b.uid == 0) return 1;
-        return a.username.compareTo(b.username);
-      });
-
-      return accounts;
+      return compute(_parseLinuxUserAccounts, result.stdout);
     } catch (e, stack) {
       AppLogService.instance.error(
         'Failed to get user accounts',
@@ -542,35 +447,7 @@ class SystemAdminService extends ChangeNotifier {
         return [];
       }
 
-      final processes = <LinuxUserProcess>[];
-      final lines = const LineSplitter().convert(result.stdout);
-      for (final line in lines) {
-        final trimmed = line.trim();
-        if (trimmed.isEmpty) continue;
-
-        final parts = trimmed.split(RegExp(r'\s+'));
-        if (parts.length < 5) continue;
-
-        final pid = int.tryParse(parts[0]) ?? -1;
-        final rssKb = int.tryParse(parts[1]) ?? 0;
-        final cpu = double.tryParse(parts[2]) ?? 0.0;
-        final mem = double.tryParse(parts[3]) ?? 0.0;
-        final command = parts.sublist(4).join(' ');
-
-        processes.add(
-          LinuxUserProcess(
-            pid: pid,
-            rssBytes: rssKb * 1024,
-            cpuPercent: cpu,
-            memPercent: mem,
-            command: command,
-          ),
-        );
-      }
-
-      // Sort: RSS descending
-      processes.sort((a, b) => b.rssBytes.compareTo(a.rssBytes));
-      return processes;
+      return compute(_parseLinuxUserProcesses, result.stdout);
     } catch (e, stack) {
       AppLogService.instance.error(
         'Failed to get processes for user $username',
@@ -591,33 +468,7 @@ class SystemAdminService extends ChangeNotifier {
         throw Exception('systemctl command failed: ${result.stderr}');
       }
 
-      final services = <SystemdService>[];
-      final lines = const LineSplitter().convert(result.stdout);
-      for (final line in lines) {
-        final trimmed = line.trim();
-        if (trimmed.isEmpty) continue;
-
-        // Lines look like: ssh.service loaded active running OpenBSD Secure Shell server
-        final parts = trimmed.split(RegExp(r'\s+'));
-        if (parts.length < 4) continue;
-
-        final name = parts[0];
-        final loadState = parts[1];
-        final activeState = parts[2];
-        final subState = parts[3];
-        final description = parts.sublist(4).join(' ');
-
-        services.add(
-          SystemdService(
-            name: name,
-            loadState: loadState,
-            activeState: activeState,
-            subState: subState,
-            description: description,
-          ),
-        );
-      }
-      return services;
+      return compute(_parseSystemdServices, result.stdout);
     } catch (e, stack) {
       AppLogService.instance.error(
         'Failed to get systemd services',
@@ -669,71 +520,7 @@ class SystemAdminService extends ChangeNotifier {
         result = await _runCommand('netstat -tulpn 2>/dev/null');
       }
 
-      final ports = <ListeningPort>[];
-      final lines = const LineSplitter().convert(result.stdout);
-      for (final line in lines) {
-        final trimmed = line.trim();
-        if (trimmed.isEmpty ||
-            trimmed.startsWith('Netid') ||
-            trimmed.startsWith('Active')) {
-          continue;
-        }
-
-        // Split line fields
-        final fields = trimmed.split(RegExp(r'\s+'));
-        if (fields.length < 5) continue;
-
-        final protocol = fields[0];
-
-        // Extract local address and port dynamically based on command output format (ss vs netstat)
-        // ss has state at index 1 ("LISTEN" / "UNCONN"), while netstat has numeric Queue size.
-        final isNetstat = fields.length > 2 && int.tryParse(fields[1]) != null;
-        final localAddrIndex = isNetstat ? 3 : 4;
-
-        if (fields.length <= localAddrIndex) continue;
-        final localAddressFull =
-            fields[localAddrIndex]; // e.g. 0.0.0.0:22 or [::]:22 or *:22
-        final lastColon = localAddressFull.lastIndexOf(':');
-        if (lastColon == -1) continue;
-
-        final localAddress = localAddressFull.substring(0, lastColon);
-        final localPortStr = localAddressFull.substring(lastColon + 1);
-        final localPort = int.tryParse(localPortStr) ?? 0;
-
-        // Extract process details if present
-        String processName = '-';
-        int? pid;
-
-        // In ss -tulpn, process info is in the last field: users:(("sshd",pid=1024,fd=3))
-        // In netstat -tulpn, it's: 1024/sshd
-        final lastField = fields.last;
-        if (lastField.contains('users:')) {
-          final pidRegex = RegExp(r'"([^"]+)",pid=(\d+)');
-          final match = pidRegex.firstMatch(lastField);
-          if (match != null) {
-            processName = match.group(1) ?? '-';
-            pid = int.tryParse(match.group(2) ?? '');
-          }
-        } else if (RegExp(r'^\d+/').hasMatch(lastField)) {
-          final parts = lastField.split('/');
-          pid = int.tryParse(parts[0]);
-          processName = parts.sublist(1).join('/');
-        }
-
-        ports.add(
-          ListeningPort(
-            protocol: protocol,
-            localAddress: localAddress,
-            localPort: localPort,
-            processName: processName,
-            pid: pid,
-          ),
-        );
-      }
-
-      // Sort: localPort ascending
-      ports.sort((a, b) => a.localPort.compareTo(b.localPort));
-      return ports;
+      return compute(_parseListeningPorts, result.stdout);
     } catch (e, stack) {
       AppLogService.instance.error(
         'Failed to query listening ports',
@@ -803,4 +590,159 @@ class SystemAdminService extends ChangeNotifier {
     _disconnectActive();
     super.dispose();
   }
+}
+
+List<ActiveSession> _parseActiveSessions(String text) {
+  final sessions = <ActiveSession>[];
+  for (final line in const LineSplitter().convert(text)) {
+    final parts = line.trim().split(RegExp(r'\s+'));
+    if (parts.length < 2 || parts.first.isEmpty) continue;
+    var loginTime = '';
+    var ipAddress = '';
+    if (parts.length >= 4) {
+      loginTime = '${parts[2]} ${parts[3]}';
+      if (parts.length >= 5) {
+        ipAddress = parts.sublist(4).join(' ').replaceAll(RegExp(r'[()]'), '');
+      }
+    } else if (parts.length > 2) {
+      loginTime = parts.sublist(2).join(' ');
+    }
+    sessions.add(
+      ActiveSession(
+        username: parts[0],
+        tty: parts[1],
+        loginTime: loginTime,
+        ipAddress: ipAddress,
+      ),
+    );
+  }
+  return sessions;
+}
+
+List<LinuxUserAccount> _parseLinuxUserAccounts(String text) {
+  final sections = text.split('===STATUS===');
+  final statusMap = <String, String>{};
+  if (sections.length > 1) {
+    for (final line in const LineSplitter().convert(sections[1])) {
+      final fields = line.trim().split(RegExp(r'\s+'));
+      if (fields.length >= 2 && fields.first.isNotEmpty) {
+        statusMap[fields[0]] = fields[1];
+      }
+    }
+  }
+
+  final accounts = <LinuxUserAccount>[];
+  for (final line in const LineSplitter().convert(sections.first)) {
+    final fields = line.trim().split(':');
+    if (fields.length < 7 || fields.first.isEmpty) continue;
+    final uid = int.tryParse(fields[2]) ?? -1;
+    final gid = int.tryParse(fields[3]) ?? -1;
+    final shell = fields[6];
+    final isInteractiveShell =
+        shell.isNotEmpty &&
+        !shell.contains('nologin') &&
+        !shell.contains('false') &&
+        (shell.endsWith('sh') || shell.contains('sh'));
+    if (uid == 0 || (uid >= 1000 && uid < 65534) || isInteractiveShell) {
+      accounts.add(
+        LinuxUserAccount(
+          username: fields[0],
+          uid: uid,
+          gid: gid,
+          homeDir: fields[5],
+          shell: shell,
+          status: statusMap[fields[0]] ?? 'Unknown',
+        ),
+      );
+    }
+  }
+  accounts.sort((a, b) {
+    if (a.uid == 0) return -1;
+    if (b.uid == 0) return 1;
+    return a.username.compareTo(b.username);
+  });
+  return accounts;
+}
+
+List<LinuxUserProcess> _parseLinuxUserProcesses(String text) {
+  final processes = <LinuxUserProcess>[];
+  for (final line in const LineSplitter().convert(text)) {
+    final parts = line.trim().split(RegExp(r'\s+'));
+    if (parts.length < 5 || parts.first.isEmpty) continue;
+    processes.add(
+      LinuxUserProcess(
+        pid: int.tryParse(parts[0]) ?? -1,
+        rssBytes: (int.tryParse(parts[1]) ?? 0) * 1024,
+        cpuPercent: double.tryParse(parts[2]) ?? 0,
+        memPercent: double.tryParse(parts[3]) ?? 0,
+        command: parts.sublist(4).join(' '),
+      ),
+    );
+  }
+  processes.sort((a, b) => b.rssBytes.compareTo(a.rssBytes));
+  return processes;
+}
+
+List<SystemdService> _parseSystemdServices(String text) {
+  final services = <SystemdService>[];
+  for (final line in const LineSplitter().convert(text)) {
+    final parts = line.trim().split(RegExp(r'\s+'));
+    if (parts.length < 4 || parts.first.isEmpty) continue;
+    services.add(
+      SystemdService(
+        name: parts[0],
+        loadState: parts[1],
+        activeState: parts[2],
+        subState: parts[3],
+        description: parts.length > 4 ? parts.sublist(4).join(' ') : '',
+      ),
+    );
+  }
+  return services;
+}
+
+List<ListeningPort> _parseListeningPorts(String text) {
+  final ports = <ListeningPort>[];
+  for (final line in const LineSplitter().convert(text)) {
+    final trimmed = line.trim();
+    if (trimmed.isEmpty ||
+        trimmed.startsWith('Netid') ||
+        trimmed.startsWith('Active')) {
+      continue;
+    }
+    final fields = trimmed.split(RegExp(r'\s+'));
+    if (fields.length < 5) continue;
+    final isNetstat = int.tryParse(fields[1]) != null;
+    final localAddressIndex = isNetstat ? 3 : 4;
+    if (fields.length <= localAddressIndex) continue;
+    final address = fields[localAddressIndex];
+    final lastColon = address.lastIndexOf(':');
+    if (lastColon < 0) continue;
+
+    var processName = '-';
+    int? pid;
+    final processField = fields.last;
+    if (processField.contains('users:')) {
+      final match = RegExp(r'"([^"]+)",pid=(\d+)').firstMatch(processField);
+      if (match != null) {
+        processName = match.group(1) ?? '-';
+        pid = int.tryParse(match.group(2) ?? '');
+      }
+    } else if (RegExp(r'^\d+/').hasMatch(processField)) {
+      final processParts = processField.split('/');
+      pid = int.tryParse(processParts[0]);
+      processName = processParts.sublist(1).join('/');
+    }
+    ports.add(
+      ListeningPort(
+        protocol: fields[0],
+        localAddress: address.substring(0, lastColon),
+        localPort: int.tryParse(address.substring(lastColon + 1)) ?? 0,
+        processName: processName,
+        pid: pid,
+      ),
+    );
+  }
+  ports.sort((a, b) => a.localPort.compareTo(b.localPort));
+  return ports;
 }

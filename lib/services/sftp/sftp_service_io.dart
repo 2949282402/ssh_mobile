@@ -19,6 +19,7 @@ import '../remote_target_scope.dart';
 import '../storage_service.dart';
 import '../tool_secret_policy.dart';
 import '../sftp_service.dart';
+import 'sftp_entry_parser.dart';
 
 part 'sftp_cache.dart';
 part 'sftp_operations.dart';
@@ -892,7 +893,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
       }
 
       final names = await sftp.listdir(absolutePath);
-      final entries = _buildEntries(
+      final entries = await _buildEntries(
         connectionId: session.connectionId,
         absolutePath: absolutePath,
         names: names,
@@ -1064,40 +1065,15 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     }
   }
 
-  List<SftpEntry> _buildEntries({
+  Future<List<SftpEntry>> _buildEntries({
     required String connectionId,
     required String absolutePath,
-    required Iterable<dynamic> names,
-  }) {
-    final entries = <SftpEntry>[];
-    for (final name in names) {
-      if (name.filename == '.' || name.filename == '..') continue;
-      final modifiedAt = name.attr.modifyTime == null
-          ? null
-          : DateTime.fromMillisecondsSinceEpoch(name.attr.modifyTime! * 1000);
-      entries.add(
-        SftpEntry(
-          connectionId: connectionId,
-          name: name.filename,
-          path: _joinRemotePath(absolutePath, name.filename),
-          lowerName: name.filename.toLowerCase(),
-          isDirectory: name.attr.isDirectory,
-          isLink: name.attr.isSymbolicLink,
-          size: name.attr.size,
-          sizeLabel: _formatBytes(name.attr.size),
-          modifiedAt: modifiedAt,
-          modifiedLabel: modifiedAt == null
-              ? null
-              : _formatTimestamp(modifiedAt),
-        ),
-      );
-    }
-    entries.sort((a, b) {
-      if (a.isDirectory != b.isDirectory) return a.isDirectory ? -1 : 1;
-      return a.lowerName.compareTo(b.lowerName);
-    });
-    return entries;
-  }
+    required Iterable<SftpName> names,
+  }) => SftpEntryParser.parse(
+    connectionId: connectionId,
+    absolutePath: absolutePath,
+    names: names,
+  );
 
   String _joinRemotePath(String base, String name) {
     if (base == '/' || base.isEmpty) return '/$name';
@@ -1172,15 +1148,6 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     if (mb < 1024) return '${mb.toStringAsFixed(mb < 10 ? 1 : 0)} MB';
     final gb = mb / 1024;
     return '${gb.toStringAsFixed(gb < 10 ? 1 : 0)} GB';
-  }
-
-  String _formatTimestamp(DateTime time) {
-    String two(int value) => value.toString().padLeft(2, '0');
-    return '${time.year.toString().padLeft(4, '0')}-'
-        '${two(time.month)}-'
-        '${two(time.day)} '
-        '${two(time.hour)}:'
-        '${two(time.minute)}';
   }
 
   Future<void> _closeFileQuietly(SftpFile? file) async {

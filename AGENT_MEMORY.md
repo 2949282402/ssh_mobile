@@ -19,6 +19,11 @@ across sessions.
 
 ## Notes
 
+- 2026-07-15: Loading flows keep network I/O asynchronous and move potentially
+  large remote-output decoding, SFTP directory construction/sorting, monitor
+  parsing, and system-admin parsing to background isolates. UI-isolate work is
+  limited to applying results and notifying widgets; cache directory scans use
+  asynchronous filesystem iteration.
 - 2026-07-15: Home settings groups use `AppSectionCard` through
   `_SettingsSection`; retain settings rows and their existing state/storage
   callbacks, and use the shared card instead of reintroducing local Material

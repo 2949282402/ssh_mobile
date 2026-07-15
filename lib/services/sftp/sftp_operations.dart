@@ -18,7 +18,7 @@ extension SftpServiceOperations on SftpService {
       }
 
       final names = await sftp.listdir(absolutePath);
-      final entries = _buildEntries(
+      final entries = await _buildEntries(
         connectionId: config.id,
         absolutePath: absolutePath,
         names: names,

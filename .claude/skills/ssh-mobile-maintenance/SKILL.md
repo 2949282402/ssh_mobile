@@ -171,6 +171,8 @@ Primary entry points are `lib/features/sftp/viewmodels/sftp_viewmodel.dart`,
 its `views/` parts.
 
 - Keep multi-server switching warm when practical.
+- Keep large directory entry construction and sorting off the UI isolate, and
+  use asynchronous directory iteration for cache discovery and cleanup.
 - Restore the last remote path after reconnect.
 - Recent and favorite SFTP paths are per server and Drift-backed. Keep them out
   of the SFTP protocol layer; record successful directory opens through the
@@ -229,6 +231,9 @@ its child widgets.
 - Linux probes use `/proc` and `df -P`; Windows probes use the PowerShell JSON
   path in `ServerStatusProbe`.
 - Sampling failures should back off cleanly and always clear in-progress flags.
+- Decode large one-shot command output and parse monitor/system-admin result
+  sets on background isolates; only final state assignment and notifications
+  belong on the UI isolate.
 - Keep the foreground/background service path active while monitoring is
   running.
 - Health scores and alerts are in-memory only; the Servers page may show a

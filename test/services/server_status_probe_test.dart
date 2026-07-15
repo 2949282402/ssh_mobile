@@ -2,6 +2,18 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/services/server_status_probe.dart';
 
 void main() {
+  test('async probe parsers preserve results off the UI isolate', () async {
+    const portsText =
+        'tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=1,fd=3))';
+
+    final sync = ServerStatusProbe.parsePorts(portsText);
+    final background = await ServerStatusProbe.parsePortsAsync(portsText);
+
+    expect(background.length, sync.length);
+    expect(background.single.port, sync.single.port);
+    expect(background.single.process, sync.single.process);
+  });
+
   test('parseDiskUsage filters virtual filesystems and sorts by usage', () {
     final disks = ServerStatusProbe.parseDiskUsage('''
 Filesystem 1B-blocks Used Available Use% Mounted on

@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
+
 /// 服务器状态探测工具类（纯静态方法）。
 ///
 /// 双平台数据采集：
@@ -10,6 +12,22 @@ import 'dart:math';
 /// 解析层统一输出 RawServerCounters / PortProcessSnapshot /
 /// ApplicationMemorySnapshot 等不可变结构，上层不关心平台差异。
 class ServerStatusProbe {
+  static Future<RawServerCounters> parsePerformanceOutputAsync(String text) =>
+      compute(parsePerformanceOutput, text);
+
+  static Future<List<PortProcessSnapshot>> parsePortsAsync(String text) =>
+      compute(parsePorts, text);
+
+  static Future<List<ApplicationMemorySnapshot>> parseApplicationsAsync(
+    String text,
+  ) => compute(parseApplications, text);
+
+  static Future<List<ServiceStatusSnapshot>> parseServicesAsync(String text) =>
+      compute(parseServices, text);
+
+  static Future<WindowsStatusSnapshot> parseWindowsStatusAsync(String text) =>
+      compute(parseWindowsStatus, text);
+
   static const performanceCommand = r'''
 printf '__PROC__\n'
 cat /proc/stat /proc/meminfo /proc/diskstats /proc/net/dev

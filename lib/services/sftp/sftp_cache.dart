@@ -112,8 +112,7 @@ class SftpFileCache {
       final previousPrefix = 'sftp_cache_${connectionHash}_${legacyPathHash}_';
       final legacyPrefix = 'sftp_cache_${legacyPathHash}_';
       File? legacyFile;
-      final list = tempDir.listSync();
-      for (final entity in list) {
+      await for (final entity in tempDir.list()) {
         if (entity is! File) continue;
         final name = p.basename(entity.path);
         if (name.startsWith(prefix)) {
@@ -314,7 +313,7 @@ class SftpFileCache {
       final tempDir = await getTemporaryDirectory();
       final connectionPrefix =
           'sftp_cache_${_getConnectionHash(connectionId)}_';
-      for (final entity in tempDir.listSync()) {
+      await for (final entity in tempDir.list()) {
         if (entity is! File) continue;
         final name = p.basename(entity.path);
         if (name.startsWith(connectionPrefix) ||
@@ -334,7 +333,7 @@ class SftpFileCache {
   static Future<void> clearAll() async {
     try {
       final tempDir = await getTemporaryDirectory();
-      for (final entity in tempDir.listSync()) {
+      await for (final entity in tempDir.list()) {
         if (entity is File &&
             p.basename(entity.path).startsWith('sftp_cache_')) {
           await entity.delete();

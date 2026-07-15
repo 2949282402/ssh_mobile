@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+
 import 'server_status_probe.dart';
 import 'ssh_service.dart';
 import 'storage_service.dart';
@@ -65,7 +67,9 @@ class ServerDiagnosticsService implements ServerDiagnosticsAdapter {
         command: ServerStatusProbe.performanceCommand,
         timeout: const Duration(seconds: 12),
       );
-      final raw = ServerStatusProbe.parsePerformanceOutput(result.stdout);
+      final raw = await ServerStatusProbe.parsePerformanceOutputAsync(
+        result.stdout,
+      );
       payload['performance'] = {
         'memoryPercent': raw.counters.memoryPercent,
         'diskUsage': raw.diskUsage.map((item) => item.toJson()).toList(),
@@ -85,9 +89,9 @@ class ServerDiagnosticsService implements ServerDiagnosticsAdapter {
         command: ServerStatusProbe.portsCommand,
         timeout: const Duration(seconds: 12),
       );
-      payload['ports'] = ServerStatusProbe.parsePorts(
+      payload['ports'] = (await ServerStatusProbe.parsePortsAsync(
         result.stdout,
-      ).take(200).map((item) => item.toJson()).toList();
+      )).take(200).map((item) => item.toJson()).toList();
       if (result.stderr.trim().isNotEmpty) {
         payload['portsStderr'] = _truncate(result.stderr);
       }
@@ -99,9 +103,9 @@ class ServerDiagnosticsService implements ServerDiagnosticsAdapter {
         command: ServerStatusProbe.applicationsCommand,
         timeout: const Duration(seconds: 12),
       );
-      payload['applications'] = ServerStatusProbe.parseApplications(
+      payload['applications'] = (await ServerStatusProbe.parseApplicationsAsync(
         result.stdout,
-      ).map((item) => item.toJson()).toList();
+      )).map((item) => item.toJson()).toList();
       if (result.stderr.trim().isNotEmpty) {
         payload['applicationsStderr'] = _truncate(result.stderr);
       }
@@ -155,11 +159,13 @@ class ServerDiagnosticsService implements ServerDiagnosticsAdapter {
       timeout: const Duration(seconds: 12),
     );
 
-    final performance = ServerStatusProbe.parsePerformanceOutput(
+    final performance = await ServerStatusProbe.parsePerformanceOutputAsync(
       performanceResult.stdout,
     );
-    final ports = ServerStatusProbe.parsePorts(portsResult.stdout);
-    final applications = ServerStatusProbe.parseApplications(appsResult.stdout);
+    final ports = await ServerStatusProbe.parsePortsAsync(portsResult.stdout);
+    final applications = await ServerStatusProbe.parseApplicationsAsync(
+      appsResult.stdout,
+    );
     final diskMax = performance.diskUsage.isEmpty
         ? 0.0
         : performance.diskUsage
@@ -326,7 +332,7 @@ class ServerDiagnosticsService implements ServerDiagnosticsAdapter {
 
     Object? parsed;
     try {
-      parsed = jsonDecode(result.stdout);
+      parsed = await compute(_decodeDiagnosticsJson, result.stdout);
     } catch (_) {
       parsed = {'raw': _truncate(result.stdout)};
     }
@@ -381,5 +387,7 @@ class ServerDiagnosticsService implements ServerDiagnosticsAdapter {
     return '${value.substring(0, _maxToolTextChars)}\n...[truncated]';
   }
 }
+
+Object? _decodeDiagnosticsJson(String text) => jsonDecode(text);
 
 const int _maxToolTextChars = 12000;

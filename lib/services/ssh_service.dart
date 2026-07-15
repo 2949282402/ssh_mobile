@@ -15,6 +15,7 @@ import '../core/services/ssh_client_factory.dart';
 import '../core/services/ssh_host_key_policy.dart';
 import 'connection_target_binding.dart';
 import 'remote_target_scope.dart';
+import 'remote_command_decoder.dart';
 import 'storage_service.dart';
 import 'terminal_history_service.dart';
 
@@ -650,10 +651,14 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     );
     try {
       final result = await client.runWithResult(command).timeout(timeout);
+      final decoded = await decodeRemoteCommandBytes(
+        stdout: result.stdout,
+        stderr: result.stderr,
+      );
       return RemoteCommandResult(
         exitCode: result.exitCode,
-        stdout: utf8.decode(result.stdout, allowMalformed: true),
-        stderr: utf8.decode(result.stderr, allowMalformed: true),
+        stdout: decoded.stdout,
+        stderr: decoded.stderr,
       );
     } finally {
       client.close();
