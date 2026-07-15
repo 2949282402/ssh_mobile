@@ -967,4 +967,37 @@ void main() {
     );
     expect(find.textContaining('Host key verification failed'), findsOneWidget);
   });
+
+  testWidgets('Snapshot mode controls remain scrollable with 200% text', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final adminVm = StubSystemAdminViewModel();
+    final monitorVm = StubPerformanceMonitorViewModel();
+    adminVm.connections = fakeConnections;
+    adminVm.selectConnection('conn_123');
+
+    await tester.pumpWidget(
+      buildTestableWidget(adminVm: adminVm, monitorVm: monitorVm, textScale: 2),
+    );
+    await tester.pumpAndSettle();
+
+    final portsTab = find.text('监听端口');
+    await tester.ensureVisible(portsTab);
+    await tester.tap(portsTab);
+    await tester.pumpAndSettle();
+    expect(find.text('快照模式'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    final servicesTab = find.text('系统服务');
+    await tester.ensureVisible(servicesTab);
+    await tester.tap(servicesTab);
+    await tester.pumpAndSettle();
+    expect(find.text('快照模式'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }

@@ -122,6 +122,55 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
     final connections = widget.connections;
     final strings = widget.strings;
     final onRefresh = widget.onRefresh;
+    final compact = MediaQuery.textScalerOf(context).scale(1) > 1.3;
+    if (compact) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 48),
+          padding: const EdgeInsets.only(left: 10),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.outlineVariant,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.insights_outlined,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _serverSummary(strings, connections),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+              SizedBox.square(
+                dimension: 48,
+                child: IconButton(
+                  key: const ValueKey('snapshot-tab-refresh'),
+                  onPressed: isRefreshing ? null : onRefresh,
+                  icon: isRefreshing
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh_rounded),
+                  tooltip: strings.refresh,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 2),
       child: AppSectionCard(
@@ -316,40 +365,75 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
         final isRefreshing =
             snapshot.connectionState == ConnectionState.waiting;
         if (snapshot.connectionState == ConnectionState.waiting) {
+          final compact = MediaQuery.textScalerOf(context).scale(1) > 1.3;
           return Column(
             children: [
               _buildHeader(context, isRefreshing: true),
               Expanded(
-                child: AppEmptyState(
-                  icon: Icons.sync_rounded,
-                  title: _monitorText(strings, 'Loading snapshot', '正在加载快照'),
-                  message: _monitorText(
-                    strings,
-                    'Reading the latest server state.',
-                    '正在读取服务器最新状态。',
-                  ),
-                  compact: true,
-                ),
+                child: compact
+                    ? Center(
+                        child: SizedBox(
+                          width: 32,
+                          height: 32,
+                          child: CircularProgressIndicator(strokeWidth: 3),
+                        ),
+                      )
+                    : AppEmptyState(
+                        icon: Icons.sync_rounded,
+                        title: _monitorText(
+                          strings,
+                          'Loading snapshot',
+                          '正在加载快照',
+                        ),
+                        message: _monitorText(
+                          strings,
+                          'Reading the latest server state.',
+                          '正在读取服务器最新状态。',
+                        ),
+                        compact: true,
+                      ),
               ),
             ],
           );
         }
         if (snapshot.hasError) {
+          final compact = MediaQuery.textScalerOf(context).scale(1) > 1.3;
           return Column(
             children: [
               _buildHeader(context, isRefreshing: false),
               Expanded(
-                child: AppEmptyState(
-                  icon: Icons.error_outline_rounded,
-                  title: _monitorText(strings, 'Load failed', '加载失败'),
-                  message: '${snapshot.error}',
-                  compact: true,
-                  action: FilledButton.icon(
-                    onPressed: widget.onRefresh,
-                    icon: const Icon(Icons.refresh_rounded),
-                    label: Text(strings.refresh),
-                  ),
-                ),
+                child: compact
+                    ? Center(
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.error_outline_rounded),
+                              Text(
+                                _monitorText(strings, 'Load failed', '加载失败'),
+                                textAlign: TextAlign.center,
+                              ),
+                              TextButton.icon(
+                                onPressed: widget.onRefresh,
+                                icon: const Icon(Icons.refresh_rounded),
+                                label: Text(strings.refresh),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    : AppEmptyState(
+                        icon: Icons.error_outline_rounded,
+                        title: _monitorText(strings, 'Load failed', '加载失败'),
+                        message: '${snapshot.error}',
+                        compact: true,
+                        action: FilledButton.icon(
+                          onPressed: widget.onRefresh,
+                          icon: const Icon(Icons.refresh_rounded),
+                          label: Text(strings.refresh),
+                        ),
+                      ),
               ),
             ],
           );

@@ -240,31 +240,35 @@ class _PortsTabState extends State<_PortsTab>
         if (_isLinux) ...[
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8.0),
-            child: SegmentedButton<bool>(
-              segments: [
-                ButtonSegment(
-                  value: true,
-                  icon: const Icon(Icons.admin_panel_settings_rounded),
-                  label: Text(
-                    _monitorText(widget.strings, 'Manage Mode', '管理模式'),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: SegmentedButton<bool>(
+                segments: [
+                  ButtonSegment(
+                    value: true,
+                    icon: const Icon(Icons.admin_panel_settings_rounded),
+                    label: Text(
+                      _monitorText(widget.strings, 'Manage Mode', '管理模式'),
+                    ),
                   ),
-                ),
-                ButtonSegment(
-                  value: false,
-                  icon: const Icon(Icons.analytics_rounded),
-                  label: Text(
-                    _monitorText(widget.strings, 'Snapshot Mode', '快照模式'),
+                  ButtonSegment(
+                    value: false,
+                    icon: const Icon(Icons.analytics_rounded),
+                    label: Text(
+                      _monitorText(widget.strings, 'Snapshot Mode', '快照模式'),
+                    ),
                   ),
-                ),
-              ],
-              selected: {_isManageMode},
-              onSelectionChanged: (values) {
-                setState(() {
-                  _isManageMode = values.first;
-                  _lastActivatedModeKey = null;
-                });
-                _scheduleModeActivation();
-              },
+                ],
+                selected: {_isManageMode},
+                onSelectionChanged: (values) {
+                  setState(() {
+                    _isManageMode = values.first;
+                    _lastActivatedModeKey = null;
+                  });
+                  _scheduleModeActivation();
+                },
+              ),
             ),
           ),
         ],
