@@ -391,6 +391,22 @@ class AppStrings {
   String get retry => _en ? 'Retry' : '重试';
   String get disconnect => _en ? 'Disconnect' : '断开连接';
   String get emptyDirectory => _en ? 'This directory is empty' : '当前目录为空';
+  String get emptyDirectoryHint =>
+      _en ? 'Upload a file or open another remote path.' : '可以上传文件，或打开其他远程路径。';
+  String get loadingDirectory =>
+      _en ? 'Loading remote directory…' : '正在加载远程目录…';
+  String get directoryLoadFailed =>
+      _en ? 'Could not load this directory' : '无法加载此目录';
+  String get directoryLoadFailedHint => _en
+      ? 'Check the SFTP connection and permissions, then try again.'
+      : '请检查 SFTP 连接和目录权限，然后重试。';
+  String get openPath => _en ? 'Open path' : '打开路径';
+  String entryActions(String name) => _en ? 'Actions for $name' : '$name 的操作';
+  String get pathHistoryLoadFailed =>
+      _en ? 'Could not load path history' : '无法加载路径记录';
+  String get pathHistoryLoadFailedHint => _en
+      ? 'Recent and favorite paths could not be read. Try again.'
+      : '无法读取最近路径和收藏路径，请重试。';
   String get directory => _en ? 'Directory' : '文件夹';
   String get uploadFile => _en ? 'Upload file' : '上传文件';
   String get uploadComplete => _en ? 'Upload complete' : '上传完成';

@@ -25,6 +25,13 @@ across sessions.
   `AnimatedSize` around fixed-width children so the full pane is never laid
   out at an intermediate narrow width; compact cards stack status details at
   150% text or above and reserve extra strip height for the 200% text target.
+- 2026-07-15: The SFTP file toolbar adapts from its actual pane width rather
+  than target platform, keeps all primary actions at least 48 dp, and stacks
+  at 150% text. Directory empty states are vertically scrollable because the
+  server strip and toolbar can leave a short content viewport at 200% text;
+  the path-history sheet subtracts keyboard and safe-area insets before
+  choosing its height. File rows retain the revision snapshot and per-row
+  `RepaintBoundary` performance boundary.
 - 2026-07-11: Settings drawers use `settingsDrawerWidthFor` and cannot exceed
   the viewport. Their scroll padding includes the system bottom inset; language
   rows expose the localized label plus current value, and the Servers
