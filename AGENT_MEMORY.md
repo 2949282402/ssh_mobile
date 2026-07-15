@@ -19,6 +19,10 @@ across sessions.
 
 ## Notes
 
+- 2026-07-15: Home settings groups use `AppSectionCard` through
+  `_SettingsSection`; retain settings rows and their existing state/storage
+  callbacks, and use the shared card instead of reintroducing local Material
+  card styling.
 - 2026-07-15: Developer Log uses the shared page surface and switches its
   header actions below the title on narrow or high-text layouts; keep all
   selection/copy/delete behavior in `DeveloperLogViewModel`. The AI chat shell

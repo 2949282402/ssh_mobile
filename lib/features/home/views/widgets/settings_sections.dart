@@ -45,34 +45,13 @@ class _SettingsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Material(
-      color: colorScheme.surface.withValues(alpha: 0.88),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-        side: BorderSide(color: colorScheme.outline.withValues(alpha: 0.72)),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
-              child: Text(
-                title,
-                style: TextStyle(
-                  color: colorScheme.primary,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.2,
-                ),
-              ),
-            ),
-            ...children,
-          ],
-        ),
+    return AppSectionCard(
+      title: title,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      contentGap: 8,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: children,
       ),
     );
   }
