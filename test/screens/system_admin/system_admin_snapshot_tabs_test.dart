@@ -73,6 +73,7 @@ class StubSystemAdminViewModel extends ChangeNotifier
   final List<String> fetchServicesCalls = [];
   final List<String> fetchPortsCalls = [];
   bool populateServicesOnFetch = false;
+  bool connectOnDemand = true;
 
   @override
   String? get connectionId => selectedConnectionId;
@@ -162,6 +163,7 @@ class StubSystemAdminViewModel extends ChangeNotifier
     if (selectedConnectionId != id) return;
     if (canManageSelectedConnection) return;
     connectIfNeededCalls++;
+    if (!connectOnDemand) return;
     await connect(id, onUnknownHostKey: onUnknownHostKey);
   }
 
@@ -497,6 +499,7 @@ void main() {
   Widget buildTestableWidget({
     required SystemAdminViewModel adminVm,
     required PerformanceMonitorViewModel monitorVm,
+    double textScale = 1,
   }) {
     return MultiProvider(
       providers: [
@@ -509,6 +512,13 @@ void main() {
           useMaterial3: true,
           splashFactory: InkRipple.splashFactory,
         ),
+        builder: (context, child) {
+          final mediaQuery = MediaQuery.of(context);
+          return MediaQuery(
+            data: mediaQuery.copyWith(textScaler: TextScaler.linear(textScale)),
+            child: child!,
+          );
+        },
         home: const SystemAdminScreen(),
       ),
     );
@@ -877,4 +887,84 @@ void main() {
       expect(find.textContaining('above'), findsOneWidget);
     },
   );
+
+  testWidgets('System admin workspace stays usable at 320dp with 200% text', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final adminVm = StubSystemAdminViewModel();
+    final monitorVm = StubPerformanceMonitorViewModel();
+    adminVm.connections = fakeConnections;
+    adminVm.selectConnection('conn_123');
+
+    await tester.pumpWidget(
+      buildTestableWidget(adminVm: adminVm, monitorVm: monitorVm, textScale: 2),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('system-admin-workspace-header')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('system-admin-workspace-status')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('admin-server-collapse-mobile')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('admin-server-tile-conn_123')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(
+      find.byKey(const ValueKey('admin-server-collapse-mobile')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('admin-server-expand-mobile')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Root connection failures use the localized recovery state', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final adminVm = StubSystemAdminViewModel();
+    final monitorVm = StubPerformanceMonitorViewModel();
+    adminVm.connections = fakeConnections;
+    adminVm.selectConnection('conn_123');
+    adminVm.managementConnectionId = 'conn_123';
+    adminVm.errorMessage = 'Host key verification failed';
+    adminVm.connectOnDemand = false;
+
+    await tester.pumpWidget(
+      buildTestableWidget(adminVm: adminVm, monitorVm: monitorVm),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('用户账号'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('连接失败'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('system-admin-connect-root')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Host key verification failed'), findsOneWidget);
+  });
 }

@@ -607,6 +607,14 @@ class AppStrings {
       ? 'Please reconnect as "root" user or with administrative authorization.'
       : '请以 root 账户重新连接，或确保连接的账户拥有完整的管理员权限。';
   String get systemOmAdmin => _en ? 'System O&M Administration' : '系统运维管理';
+  String get adminRootAccess => _en ? 'Root access' : 'Root 权限';
+  String get adminSnapshotAccess => _en ? 'Snapshot access' : '快照访问';
+  String get adminConnectionFailed => _en ? 'Connection failed' : '连接失败';
+  String get adminSelectServer => _en ? 'Select a server' : '选择服务器';
+  String get adminLinuxManagementHint => _en
+      ? 'Account, session, and power controls require a Linux server with root access.'
+      : '账户、会话和电源操作需要已取得 Root 权限的 Linux 服务器。';
+  String get adminConnectAsRoot => _en ? 'Connect as Root' : '以 Root 连接';
   String get selectServerToManage => _en
       ? 'Select a server from the list to connect and manage local accounts, services, ports, and power status.'
       : '请从列表中选择服务器进行连接，以管理本地账户、系统服务、监听端口和电源状态。';
