@@ -1,46 +1,97 @@
 part of 'system_admin_screen.dart';
 
-class _DiskUsagePanel extends StatelessWidget {
+/// A compact, data-first overview for the monitor's initial viewport. Keeping
+/// health and storage in one panel avoids two large cards before the charts.
+class _MonitorOverviewPanel extends StatelessWidget {
   final AppStrings strings;
   final List<ConnectionConfig> connections;
   final PerformanceMonitorViewModel monitor;
-  final bool expanded;
-  final VoidCallback onToggle;
+  final bool diskExpanded;
+  final VoidCallback onDiskToggle;
 
-  const _DiskUsagePanel({
+  const _MonitorOverviewPanel({
     required this.strings,
     required this.connections,
     required this.monitor,
-    required this.expanded,
-    required this.onToggle,
+    required this.diskExpanded,
+    required this.onDiskToggle,
   });
 
   @override
   Widget build(BuildContext context) {
-    return AppSectionCard(
-      title: _monitorText(strings, 'Disk usage', '硬盘使用情况'),
-      subtitle: _monitorText(
-        strings,
-        '${connections.length} monitored servers',
-        '共监控 ${connections.length} 台服务器',
+    final colors = Theme.of(context).colorScheme;
+    final alertsById = {
+      for (final alert in monitor.alerts.take(20)) alert.connectionId: alert,
+    };
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colors.surface.withValues(alpha: 0.74),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+        border: Border.all(color: colors.outlineVariant.withValues(alpha: 0.8)),
       ),
-      icon: Icons.storage_rounded,
-      onHeaderTap: onToggle,
-      expanded: expanded,
-      padding: const EdgeInsets.all(14),
-      child: !expanded
-          ? null
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                AppIconBadge(
+                  icon: Icons.health_and_safety_outlined,
+                  size: 32,
+                  iconSize: 17,
+                  color: colors.primary,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    _monitorText(strings, 'Live overview', '运行概览'),
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: onDiskToggle,
+                  icon: Icon(
+                    diskExpanded
+                        ? Icons.keyboard_arrow_up_rounded
+                        : Icons.keyboard_arrow_down_rounded,
+                  ),
+                  label: Text(_monitorText(strings, 'Storage', '存储')),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
               children: [
                 for (var i = 0; i < connections.length; i++)
-                  _DiskUsageServerBlock(
+                  _HealthBadge(
+                    strings: strings,
                     connection: connections[i],
-                    color: _monitorSeriesColor(i),
-                    disks: monitor.diskUsageFor(connections[i].id),
+                    seriesColor: _monitorSeriesColor(i),
+                    health: monitor.healthFor(connections[i].id),
+                    alert: alertsById[connections[i].id],
                   ),
               ],
             ),
+            if (diskExpanded) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Divider(height: 1, color: colors.outlineVariant),
+              ),
+              for (var i = 0; i < connections.length; i++)
+                _DiskUsageServerBlock(
+                  connection: connections[i],
+                  color: _monitorSeriesColor(i),
+                  disks: monitor.diskUsageFor(connections[i].id),
+                ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }
@@ -103,49 +154,6 @@ class _DiskUsageServerBlock extends StatelessWidget {
                   ],
                 ),
               ),
-        ],
-      ),
-    );
-  }
-}
-
-class _HealthAlertPanel extends StatelessWidget {
-  final AppStrings strings;
-  final List<ConnectionConfig> connections;
-  final PerformanceMonitorViewModel monitor;
-
-  const _HealthAlertPanel({
-    required this.strings,
-    required this.connections,
-    required this.monitor,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final alertsById = {
-      for (final alert in monitor.alerts.take(20)) alert.connectionId: alert,
-    };
-    return AppSectionCard(
-      title: _monitorText(strings, 'Health and alerts', '健康与告警'),
-      subtitle: _monitorText(
-        strings,
-        'Live health score and active warnings',
-        '实时健康评分与活跃告警',
-      ),
-      icon: Icons.health_and_safety_outlined,
-      padding: const EdgeInsets.all(14),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          for (var i = 0; i < connections.length; i++)
-            _HealthBadge(
-              strings: strings,
-              connection: connections[i],
-              seriesColor: _monitorSeriesColor(i),
-              health: monitor.healthFor(connections[i].id),
-              alert: alertsById[connections[i].id],
-            ),
         ],
       ),
     );

@@ -305,7 +305,6 @@ void main() {
 
       for (final key in [
         'sftp-parent-directory',
-        'sftp-path-history',
         'sftp-refresh-directory',
         'sftp-disconnect',
         'sftp-cancel-transfer',

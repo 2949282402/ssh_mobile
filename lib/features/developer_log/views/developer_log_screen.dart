@@ -5,7 +5,6 @@ import 'package:provider/provider.dart';
 import 'package:ssh_mobile/features/developer_log/viewmodels/developer_log_viewmodel.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
-import 'package:ssh_mobile/theme/app_theme.dart';
 import 'package:ssh_mobile/widgets/app_surface.dart';
 import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
 
@@ -142,14 +141,14 @@ class _DeveloperLogToolbar extends StatelessWidget {
     );
     return LayoutBuilder(
       builder: (context, constraints) {
-        final compact =
-            constraints.maxWidth < 520 ||
+        final stackedHeader =
+            constraints.maxWidth < 360 ||
             MediaQuery.textScalerOf(context).scale(1) > 1.3;
         return Container(
           padding: EdgeInsets.fromLTRB(
-            compact ? 14 : 20,
-            compact ? 12 : 14,
-            compact ? 14 : 12,
+            stackedHeader ? 14 : 16,
+            stackedHeader ? 12 : 10,
+            stackedHeader ? 14 : 12,
             12,
           ),
           decoration: BoxDecoration(
@@ -162,7 +161,7 @@ class _DeveloperLogToolbar extends StatelessWidget {
           ),
           child: Column(
             children: [
-              if (compact) ...[
+              if (stackedHeader) ...[
                 AppPageHeader(
                   title: viewModel.selectionMode
                       ? strings.selectedLogs(viewModel.selectedIds.length)
@@ -252,9 +251,9 @@ class _DeveloperLogList extends StatelessWidget {
     }
     return ListView.separated(
       scrollCacheExtent: const ScrollCacheExtent.pixels(900.0),
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 24),
       itemCount: entries.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 8),
+      separatorBuilder: (_, _) => const SizedBox(height: 2),
       itemBuilder: (context, index) {
         final entry = entries[index];
         return RepaintBoundary(
@@ -314,7 +313,6 @@ class _LogEntryTileState extends State<_LogEntryTile> {
     final isLong = _isLong(entry.text);
 
     return InkWell(
-      borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
       onTap: widget.selectionMode
           ? widget.onTap
           : isLong
@@ -322,22 +320,20 @@ class _LogEntryTileState extends State<_LogEntryTile> {
           : null,
       onLongPress: widget.onLongPress,
       child: Container(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.fromLTRB(10, 9, 8, 9),
         decoration: BoxDecoration(
-          color: colorScheme.surface.withValues(alpha: 0.92),
-          borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-          border: Border.all(
-            color: widget.selected
-                ? colorScheme.primary
-                : colorScheme.outline.withValues(alpha: 0.76),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.025),
-              blurRadius: 10,
-              offset: const Offset(0, 3),
+          color: widget.selected
+              ? colorScheme.primary.withValues(alpha: 0.08)
+              : colorScheme.surface.withValues(alpha: 0.72),
+          border: Border(
+            left: BorderSide(
+              color: widget.selected ? colorScheme.primary : levelColor,
+              width: widget.selected ? 3 : 2,
             ),
-          ],
+            bottom: BorderSide(
+              color: colorScheme.outlineVariant.withValues(alpha: 0.7),
+            ),
+          ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -399,7 +395,7 @@ class _LogEntryTileState extends State<_LogEntryTile> {
                   ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 5),
             OverflowScrollText(
               entry.text,
               maxLines: _expanded ? null : _collapsedLines,
@@ -417,7 +413,7 @@ class _LogEntryTileState extends State<_LogEntryTile> {
               ),
             ),
             if (isLong && !_expanded) ...[
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               Text(
                 strings.expandFullLog,
                 style: TextStyle(

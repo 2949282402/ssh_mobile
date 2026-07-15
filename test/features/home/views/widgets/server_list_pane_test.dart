@@ -157,7 +157,10 @@ void main() {
 
         expect(find.byType(ReorderableListView), findsOneWidget);
         expect(find.byType(GridView), findsNothing);
-        expect(find.text('No monitoring data'), findsOneWidget);
+        // Mobile list cards keep connection identity and actions visible while
+        // omitting the low-value empty health row.
+        expect(find.text('No monitoring data'), findsNothing);
+        expect(find.textContaining('deployment-user@'), findsOneWidget);
         expect(find.textContaining('Health 0'), findsNothing);
 
         final dragHandle = find.byKey(

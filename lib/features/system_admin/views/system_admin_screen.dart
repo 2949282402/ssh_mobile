@@ -534,6 +534,13 @@ class _AdminWorkspaceHeader extends StatelessWidget {
     return ValueListenableBuilder<int>(
       valueListenable: activeTabIndex,
       builder: (context, tabIndex, _) {
+        // The monitor has its own compact live-control strip immediately below
+        // the tabs. Repeating the workspace title and selected-server state
+        // here costs a large portion of a phone viewport without adding useful
+        // context, especially while a sample is running.
+        if (tabIndex == 0) {
+          return const SizedBox.shrink();
+        }
         final status = _AdminWorkspaceStatus.from(
           strings: strings,
           selectedConnection: selectedConnection,

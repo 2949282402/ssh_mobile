@@ -906,13 +906,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // The monitor tab begins directly with its live controls, avoiding a
+    // duplicate workspace header on compact screens.
     expect(
       find.byKey(const ValueKey('system-admin-workspace-header')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('system-admin-workspace-status')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(
       find.byKey(const ValueKey('admin-server-collapse-mobile')),

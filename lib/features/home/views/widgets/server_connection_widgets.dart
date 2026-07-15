@@ -290,6 +290,7 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
     final actualWindowsExpanded = widget.windowsExpanded && !widget.isGrid;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final extColors = Theme.of(context).extension<ExtendedColors>();
+    final compactMobileCard = !widget.isGrid && !isDesktopLayout(context);
 
     final boxBorderColor = _isHovered
         ? (extColors?.cardHoverBorder ??
@@ -312,8 +313,12 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 150),
               curve: Curves.easeOutCubic,
-              margin: EdgeInsets.only(bottom: widget.isGrid ? 0 : (10 * scale)),
-              padding: EdgeInsets.all(widget.isGrid ? 10 * scale : 14 * scale),
+              margin: EdgeInsets.only(bottom: widget.isGrid ? 0 : (6 * scale)),
+              padding: EdgeInsets.all(
+                widget.isGrid
+                    ? 10 * scale
+                    : (compactMobileCard ? 8 : 14) * scale,
+              ),
               decoration: BoxDecoration(
                 color: boxBgColor,
                 borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
@@ -380,16 +385,43 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                       ),
                       SizedBox(width: 12 * scale),
                       Expanded(
-                        child: OverflowScrollText(
-                          widget.conn.name,
-                          selectable: false,
-                          maxLines: 1,
-                          style: TextStyle(
-                            color: textColor,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
+                        child: compactMobileCard
+                            ? Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  OverflowScrollText(
+                                    widget.conn.name,
+                                    selectable: false,
+                                    maxLines: 1,
+                                    style: TextStyle(
+                                      color: textColor,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  SizedBox(height: 2 * scale),
+                                  Text(
+                                    '${widget.conn.username}@${widget.conn.host}:${widget.conn.port}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: mutedTextColor,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            : OverflowScrollText(
+                                widget.conn.name,
+                                selectable: false,
+                                maxLines: 1,
+                                style: TextStyle(
+                                  color: textColor,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                       ),
                       if (latestState != null &&
                           latestState != SshConnectionState.disconnected) ...[
@@ -403,71 +435,79 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                       ],
                     ],
                   ),
-                  SizedBox(height: 8 * scale),
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.dns_outlined,
-                        size: 13 * scale,
-                        color: mutedTextColor.withValues(alpha: 0.72),
-                      ),
-                      SizedBox(width: 5 * scale),
-                      Flexible(
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Text(
-                            '${widget.conn.username}@${widget.conn.host}:${widget.conn.port}',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: mutedTextColor,
+                  if (!compactMobileCard) ...[
+                    SizedBox(height: 8 * scale),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.dns_outlined,
+                          size: 13 * scale,
+                          color: mutedTextColor.withValues(alpha: 0.72),
+                        ),
+                        SizedBox(width: 5 * scale),
+                        Flexible(
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Text(
+                              '${widget.conn.username}@${widget.conn.host}:${widget.conn.port}',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: mutedTextColor,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                      if (sessionCount > 0) ...[
-                        SizedBox(width: 8 * scale),
-                        Container(
-                          padding: EdgeInsets.symmetric(
-                            horizontal: 6 * scale,
-                            vertical: 2 * scale,
-                          ),
-                          decoration: BoxDecoration(
-                            color: success.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(
-                              AppTheme.radiusPill,
+                        if (sessionCount > 0) ...[
+                          SizedBox(width: 8 * scale),
+                          Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 6 * scale,
+                              vertical: 2 * scale,
+                            ),
+                            decoration: BoxDecoration(
+                              color: success.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(
+                                AppTheme.radiusPill,
+                              ),
+                            ),
+                            child: Text(
+                              widget.strings.language == AppLanguage.en
+                                  ? '$sessionCount window${sessionCount == 1 ? "" : "s"}'
+                                  : '$sessionCount 个窗口',
+                              style: TextStyle(
+                                color: success,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
-                          child: Text(
-                            widget.strings.language == AppLanguage.en
-                                ? '$sessionCount window${sessionCount == 1 ? "" : "s"}'
-                                : '$sessionCount 个窗口',
-                            style: TextStyle(
-                              color: success,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
+                        ],
                       ],
-                    ],
-                  ),
-                  SizedBox(height: 6 * scale),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child:
-                        Selector<
-                          PerformanceMonitorService,
-                          ServerHealthSnapshot
-                        >(
-                          selector: (_, monitor) =>
-                              monitor.healthFor(widget.conn.id),
-                          builder: (context, health, _) =>
-                              _buildHealthChip(context, health, widget.strings),
-                        ),
-                  ),
-                  SizedBox(height: 12 * scale),
-                  Divider(height: 1, color: colorScheme.outlineVariant),
-                  SizedBox(height: 8 * scale),
+                    ),
+                  ],
+                  if (!compactMobileCard) ...[
+                    SizedBox(height: 6 * scale),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child:
+                          Selector<
+                            PerformanceMonitorService,
+                            ServerHealthSnapshot
+                          >(
+                            selector: (_, monitor) =>
+                                monitor.healthFor(widget.conn.id),
+                            builder: (context, health, _) => _buildHealthChip(
+                              context,
+                              health,
+                              widget.strings,
+                            ),
+                          ),
+                    ),
+                    SizedBox(height: 12 * scale),
+                    Divider(height: 1, color: colorScheme.outlineVariant),
+                    SizedBox(height: 8 * scale),
+                  ] else
+                    SizedBox(height: 2 * scale),
                   Row(
                     children: [
                       if (widget.isGrid) ...[

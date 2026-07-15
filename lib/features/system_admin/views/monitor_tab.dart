@@ -164,47 +164,35 @@ class _MonitorTabState extends State<_MonitorTab>
         final twoColumns = constraints.maxWidth >= 860;
         final chartItems = _metricChartItems(chartConnections);
         return ListView.builder(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-          itemCount: chartItems.length + 2,
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 20),
+          itemCount: chartItems.length + 1,
           itemBuilder: (context, index) {
             if (index == 0) {
               return RepaintBoundary(
                 child: Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: _HealthAlertPanel(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: _MonitorOverviewPanel(
                     strings: strings,
                     connections: chartConnections,
                     monitor: monitor,
-                  ),
-                ),
-              );
-            }
-            if (index == 1) {
-              return RepaintBoundary(
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: _DiskUsagePanel(
-                    strings: strings,
-                    connections: chartConnections,
-                    monitor: monitor,
-                    expanded: _diskExpanded,
-                    onToggle: () =>
+                    diskExpanded: _diskExpanded,
+                    onDiskToggle: () =>
                         setState(() => _diskExpanded = !_diskExpanded),
                   ),
                 ),
               );
             }
-            final item = chartItems[index - 2];
+            final item = chartItems[index - 1];
             return RepaintBoundary(
               child: Padding(
-                padding: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.only(bottom: 8),
                 child: _MetricChart(
                   metricKey: item.spec.key,
                   title: item.title,
                   unit: item.spec.unit,
                   connections: item.connections,
                   samplesByConnection: samplesByConnection,
-                  chartHeight: twoColumns ? 178 : 218,
+                  chartHeight: twoColumns ? 178 : 168,
                   maxY: item.spec.maxY,
                   valueFor: item.spec.valueFor,
                   latestTextFor: item.spec.latestTextFor,

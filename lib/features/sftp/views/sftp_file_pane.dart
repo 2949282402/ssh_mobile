@@ -139,9 +139,23 @@ class _SftpFileToolbar extends StatelessWidget {
               ),
             ),
           );
+          final compactUpload = SizedBox.square(
+            dimension: 48,
+            child: IconButton.filled(
+              key: const ValueKey('sftp-upload-file'),
+              tooltip: strings.uploadFile,
+              onPressed: disabled ? null : onUpload,
+              icon: const Icon(Icons.upload_file_rounded),
+            ),
+          );
 
           return Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+            padding: EdgeInsets.fromLTRB(
+              12,
+              expanded ? 12 : 8,
+              12,
+              expanded ? 12 : 8,
+            ),
             child: expanded
                 ? Row(
                     children: [
@@ -164,19 +178,13 @@ class _SftpFileToolbar extends StatelessWidget {
                       Row(
                         children: [
                           parent,
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 6),
                           Expanded(child: path),
-                          const SizedBox(width: 8),
-                          history,
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(child: upload),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 4),
                           refresh,
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 4),
+                          compactUpload,
+                          const SizedBox(width: 4),
                           disconnect,
                         ],
                       ),
@@ -278,7 +286,7 @@ class _SftpToolbarIconButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox.square(
       dimension: 48,
-      child: IconButton.filledTonal(
+      child: IconButton(
         tooltip: tooltip,
         onPressed: onPressed,
         icon: Icon(icon, color: color),
@@ -1395,34 +1403,33 @@ class _SftpEntryTile extends StatelessWidget {
                   constraints.maxWidth < 480 ||
                   MediaQuery.textScalerOf(context).scale(1) >= 1.5;
               return Container(
-                margin: EdgeInsets.only(bottom: 9 * scale),
                 padding: EdgeInsets.symmetric(
-                  horizontal: 12 * scale,
-                  vertical: 10 * scale,
+                  horizontal: 8 * scale,
+                  vertical: 6 * scale,
                 ),
                 decoration: BoxDecoration(
-                  color: colors.surfaceContainerLow.withValues(alpha: 0.76),
-                  borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
-                  border: Border.all(
-                    color: colors.outline.withValues(alpha: 0.58),
+                  border: Border(
+                    bottom: BorderSide(
+                      color: colors.outlineVariant.withValues(alpha: 0.62),
+                    ),
                   ),
                 ),
                 child: Row(
                   children: [
                     AppIconBadge(
                       icon: icon,
-                      size: 38 * scale,
-                      iconSize: 20 * scale,
+                      size: 34 * scale,
+                      iconSize: 18 * scale,
                       color: iconColor,
                     ),
-                    SizedBox(width: 12 * scale),
+                    SizedBox(width: 10 * scale),
                     Expanded(
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           titleWidget,
-                          SizedBox(height: 4 * scale),
+                          SizedBox(height: 2 * scale),
                           OverflowScrollText(
                             meta,
                             selectable: false,
