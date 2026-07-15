@@ -205,6 +205,58 @@ class SshMobileApp extends StatefulWidget {
 
 class _SshMobileAppState extends State<SshMobileApp>
     with WidgetsBindingObserver {
+  static final ThemeData _lightTheme = AppTheme.lightThemeFor();
+  static final ThemeData _darkTheme = AppTheme.darkThemeFor();
+  static final ThemeData _oledDarkTheme = AppTheme.darkThemeFor(oledDark: true);
+  static final ShadThemeData _shadLightTheme = ShadThemeData(
+    brightness: Brightness.light,
+    radius: const BorderRadius.all(Radius.circular(AppTheme.radiusSmall)),
+    colorScheme: const ShadVioletColorScheme.light().copyWith(
+      background: const Color(0xFFF6F7FB),
+      foreground: const Color(0xFF171923),
+      card: const Color(0xFFFEFEFF),
+      cardForeground: const Color(0xFF171923),
+      popover: const Color(0xFFFEFEFF),
+      popoverForeground: const Color(0xFF171923),
+      primary: const Color(0xFF4F46E5),
+      primaryForeground: Colors.white,
+      secondary: const Color(0xFFF0F2F8),
+      secondaryForeground: const Color(0xFF444A59),
+      muted: const Color(0xFFF0F2F8),
+      mutedForeground: const Color(0xFF656B7A),
+      accent: const Color(0xFFE6E4FF),
+      accentForeground: const Color(0xFF312E81),
+      border: const Color(0xFFDDE1EB),
+      input: const Color(0xFFDDE1EB),
+      ring: const Color(0xFF4F46E5),
+      selection: const Color(0x334F46E5),
+    ),
+  );
+  static final ShadThemeData _shadDarkTheme = ShadThemeData(
+    brightness: Brightness.dark,
+    radius: const BorderRadius.all(Radius.circular(AppTheme.radiusSmall)),
+    colorScheme: const ShadVioletColorScheme.dark().copyWith(
+      background: const Color(0xFF090B11),
+      foreground: const Color(0xFFF4F5F8),
+      card: const Color(0xFF11141C),
+      cardForeground: const Color(0xFFF4F5F8),
+      popover: const Color(0xFF11141C),
+      popoverForeground: const Color(0xFFF4F5F8),
+      primary: const Color(0xFF8B87FF),
+      primaryForeground: const Color(0xFF11102E),
+      secondary: const Color(0xFF171B25),
+      secondaryForeground: const Color(0xFFF4F5F8),
+      muted: const Color(0xFF171B25),
+      mutedForeground: const Color(0xFFA7ADBA),
+      accent: const Color(0xFF252B38),
+      accentForeground: const Color(0xFFF4F5F8),
+      border: const Color(0xFF282E3A),
+      input: const Color(0xFF282E3A),
+      ring: const Color(0xFF8B87FF),
+      selection: const Color(0x338B87FF),
+    ),
+  );
+
   @override
   void initState() {
     super.initState();
@@ -237,185 +289,163 @@ class _SshMobileAppState extends State<SshMobileApp>
 
   @override
   Widget build(BuildContext context) {
-    final settings = context.watch<AppSettings>();
-
-    return ShadApp.custom(
-      themeMode: settings.themeMode,
-      theme: ShadThemeData(
-        brightness: Brightness.light,
-        radius: const BorderRadius.all(Radius.circular(AppTheme.radiusSmall)),
-        colorScheme: const ShadVioletColorScheme.light().copyWith(
-          background: const Color(0xFFF6F7FB),
-          foreground: const Color(0xFF171923),
-          card: const Color(0xFFFEFEFF),
-          cardForeground: const Color(0xFF171923),
-          popover: const Color(0xFFFEFEFF),
-          popoverForeground: const Color(0xFF171923),
-          primary: const Color(0xFF4F46E5),
-          primaryForeground: Colors.white,
-          secondary: const Color(0xFFF0F2F8),
-          secondaryForeground: const Color(0xFF444A59),
-          muted: const Color(0xFFF0F2F8),
-          mutedForeground: const Color(0xFF656B7A),
-          accent: const Color(0xFFE6E4FF),
-          accentForeground: const Color(0xFF312E81),
-          border: const Color(0xFFDDE1EB),
-          input: const Color(0xFFDDE1EB),
-          ring: const Color(0xFF4F46E5),
-          selection: const Color(0x334F46E5),
-        ),
-      ),
-      darkTheme: ShadThemeData(
-        brightness: Brightness.dark,
-        radius: const BorderRadius.all(Radius.circular(AppTheme.radiusSmall)),
-        colorScheme: const ShadVioletColorScheme.dark().copyWith(
-          background: const Color(0xFF090B11),
-          foreground: const Color(0xFFF4F5F8),
-          card: const Color(0xFF11141C),
-          cardForeground: const Color(0xFFF4F5F8),
-          popover: const Color(0xFF11141C),
-          popoverForeground: const Color(0xFFF4F5F8),
-          primary: const Color(0xFF8B87FF),
-          primaryForeground: const Color(0xFF11102E),
-          secondary: const Color(0xFF171B25),
-          secondaryForeground: const Color(0xFFF4F5F8),
-          muted: const Color(0xFF171B25),
-          mutedForeground: const Color(0xFFA7ADBA),
-          accent: const Color(0xFF252B38),
-          accentForeground: const Color(0xFFF4F5F8),
-          border: const Color(0xFF282E3A),
-          input: const Color(0xFF282E3A),
-          ring: const Color(0xFF8B87FF),
-          selection: const Color(0x338B87FF),
-        ),
-      ),
-      appBuilder: (context) {
-        return MaterialApp(
-          title: 'SSH Mobile',
-          debugShowCheckedModeBanner: false,
-          theme: AppTheme.lightThemeFor(),
-          darkTheme: AppTheme.darkThemeFor(oledDark: settings.oledDark),
-          themeMode: settings.themeMode,
-          builder: (context, child) {
-            final mediaQuery = MediaQuery.of(context);
-            final adaptedMediaQuery = adaptMobileMediaQuery(mediaQuery);
-            final visualDensity = mobileVisualDensityFor(mediaQuery);
-            final effectiveChild = child ?? const SizedBox.shrink();
-            final shadChild = ShadAppBuilder(child: effectiveChild);
-
-            if (identical(adaptedMediaQuery, mediaQuery) &&
-                visualDensity == VisualDensity.standard) {
-              return shadChild;
-            }
-
-            return MediaQuery(
-              data: adaptedMediaQuery,
-              child: Theme(
-                data: Theme.of(context).copyWith(visualDensity: visualDensity),
-                child: shadChild,
-              ),
-            );
-          },
-          initialRoute: '/',
-          onGenerateRoute: (settings) {
-            switch (settings.name) {
-              case '/':
-                return MaterialPageRoute(
-                  builder: (_) => ChangeNotifierProvider(
-                    create: (context) => StartupViewModel(
-                      storageService: context.read<StorageService>(),
-                      appSettings: context.read<AppSettings>(),
-                    ),
-                    child: const StartupScreen(),
-                  ),
-                );
-              case '/terminal':
-                final config = settings.arguments as Map<String, dynamic>;
-                return MaterialPageRoute(
-                  builder: (_) => TerminalScreen(
-                    connectionId: config['id'] as String,
-                    sessionId: config['sessionId'] as String,
-                  ),
-                );
-              case '/history':
-                return MaterialPageRoute(
-                  builder: (_) => const TerminalHistoryScreen(),
-                );
-              case '/terminal-windows':
-                final args = settings.arguments;
-                String? connectionId;
-
-                if (args is String) {
-                  connectionId = args;
-                } else if (args is Map<String, dynamic>) {
-                  final value = args['connectionId'];
-                  if (value is String) {
-                    connectionId = value;
-                  }
-                }
-
-                return MaterialPageRoute(
-                  builder: (_) =>
-                      TerminalWindowsScreen(connectionId: connectionId),
-                );
-              case '/sftp':
-                return MaterialPageRoute(builder: (_) => const SftpScreen());
-              case '/performance':
-                return MaterialPageRoute(
-                  builder: (_) => const HomeScreen(initialIndex: 3),
-                );
-              case '/ai-skills':
-                return MaterialPageRoute(
-                  builder: (_) => ChangeNotifierProvider(
-                    create: (context) => AiSkillsViewModel(
-                      storageService: context.read<StorageService>(),
-                      appSettings: context.read<AppSettings>(),
-                    ),
-                    child: const AiSkillsScreen(),
-                  ),
-                );
-              case '/ai-skills/edit':
-                final args = settings.arguments as Map<String, dynamic>;
-                final viewModel = args['viewModel'] as AiSkillsViewModel;
-                return MaterialPageRoute(
-                  builder: (_) => ChangeNotifierProvider.value(
-                    value: viewModel,
-                    child: const AiSkillEditScreen(),
-                  ),
-                );
-              case '/playbooks':
-                return MaterialPageRoute(
-                  builder: (_) => ChangeNotifierProvider(
-                    create: (context) => PlaybookViewModel(
-                      playbookService: context.read<PlaybookService>(),
-                      storageService: context.read<StorageService>(),
-                    ),
-                    child: const PlaybookScreen(),
-                  ),
-                );
-              case '/add':
-                return MaterialPageRoute(builder: (_) => const AddEditScreen());
-              case '/edit':
-                final id = settings.arguments as String;
-                return MaterialPageRoute(
-                  builder: (_) => AddEditScreen(editId: id),
-                );
-              case '/rag-knowledge':
-                return MaterialPageRoute(
-                  builder: (_) => ChangeNotifierProvider(
-                    create: (context) => RagKnowledgeViewModel(
-                      ragService: context.read<RagService>(),
-                      storageService: context.read<StorageService>(),
-                    ),
-                    child: const RagKnowledgeScreen(),
-                  ),
-                );
-              default:
-                return MaterialPageRoute(builder: (_) => const HomeScreen());
-            }
-          },
+    final visualSettings = context
+        .select<AppSettings, AppVisualSettingsSnapshot>(
+          (settings) => settings.visualSettings,
         );
-      },
+    final darkMode = visualSettings.themeMode == ThemeMode.dark;
+
+    return ScrollConfiguration(
+      behavior: const ShadScrollBehavior(),
+      child: ShadTheme(
+        data: darkMode ? _shadDarkTheme : _shadLightTheme,
+        child: ShadMouseAreaSurface(
+          child: ShadMouseCursorProvider(
+            child: Builder(
+              builder: (context) {
+                return MaterialApp(
+                  title: 'SSH Mobile',
+                  debugShowCheckedModeBanner: false,
+                  theme: _lightTheme,
+                  darkTheme: visualSettings.oledDark
+                      ? _oledDarkTheme
+                      : _darkTheme,
+                  themeMode: visualSettings.themeMode,
+                  themeAnimationDuration: Duration.zero,
+                  builder: (context, child) {
+                    final mediaQuery = MediaQuery.of(context);
+                    final adaptedMediaQuery = adaptMobileMediaQuery(mediaQuery);
+                    final visualDensity = mobileVisualDensityFor(mediaQuery);
+                    final effectiveChild = child ?? const SizedBox.shrink();
+                    final shadChild = ShadAppBuilder(child: effectiveChild);
+
+                    if (identical(adaptedMediaQuery, mediaQuery) &&
+                        visualDensity == VisualDensity.standard) {
+                      return shadChild;
+                    }
+
+                    return MediaQuery(
+                      data: adaptedMediaQuery,
+                      child: Theme(
+                        data: Theme.of(
+                          context,
+                        ).copyWith(visualDensity: visualDensity),
+                        child: shadChild,
+                      ),
+                    );
+                  },
+                  initialRoute: '/',
+                  onGenerateRoute: (settings) {
+                    switch (settings.name) {
+                      case '/':
+                        return MaterialPageRoute(
+                          builder: (_) => ChangeNotifierProvider(
+                            create: (context) => StartupViewModel(
+                              storageService: context.read<StorageService>(),
+                              appSettings: context.read<AppSettings>(),
+                            ),
+                            child: const StartupScreen(),
+                          ),
+                        );
+                      case '/terminal':
+                        final config =
+                            settings.arguments as Map<String, dynamic>;
+                        return MaterialPageRoute(
+                          builder: (_) => TerminalScreen(
+                            connectionId: config['id'] as String,
+                            sessionId: config['sessionId'] as String,
+                          ),
+                        );
+                      case '/history':
+                        return MaterialPageRoute(
+                          builder: (_) => const TerminalHistoryScreen(),
+                        );
+                      case '/terminal-windows':
+                        final args = settings.arguments;
+                        String? connectionId;
+
+                        if (args is String) {
+                          connectionId = args;
+                        } else if (args is Map<String, dynamic>) {
+                          final value = args['connectionId'];
+                          if (value is String) {
+                            connectionId = value;
+                          }
+                        }
+
+                        return MaterialPageRoute(
+                          builder: (_) =>
+                              TerminalWindowsScreen(connectionId: connectionId),
+                        );
+                      case '/sftp':
+                        return MaterialPageRoute(
+                          builder: (_) => const SftpScreen(),
+                        );
+                      case '/performance':
+                        return MaterialPageRoute(
+                          builder: (_) => const HomeScreen(initialIndex: 3),
+                        );
+                      case '/ai-skills':
+                        return MaterialPageRoute(
+                          builder: (_) => ChangeNotifierProvider(
+                            create: (context) => AiSkillsViewModel(
+                              storageService: context.read<StorageService>(),
+                              appSettings: context.read<AppSettings>(),
+                            ),
+                            child: const AiSkillsScreen(),
+                          ),
+                        );
+                      case '/ai-skills/edit':
+                        final args = settings.arguments as Map<String, dynamic>;
+                        final viewModel =
+                            args['viewModel'] as AiSkillsViewModel;
+                        return MaterialPageRoute(
+                          builder: (_) => ChangeNotifierProvider.value(
+                            value: viewModel,
+                            child: const AiSkillEditScreen(),
+                          ),
+                        );
+                      case '/playbooks':
+                        return MaterialPageRoute(
+                          builder: (_) => ChangeNotifierProvider(
+                            create: (context) => PlaybookViewModel(
+                              playbookService: context.read<PlaybookService>(),
+                              storageService: context.read<StorageService>(),
+                            ),
+                            child: const PlaybookScreen(),
+                          ),
+                        );
+                      case '/add':
+                        return MaterialPageRoute(
+                          builder: (_) => const AddEditScreen(),
+                        );
+                      case '/edit':
+                        final id = settings.arguments as String;
+                        return MaterialPageRoute(
+                          builder: (_) => AddEditScreen(editId: id),
+                        );
+                      case '/rag-knowledge':
+                        return MaterialPageRoute(
+                          builder: (_) => ChangeNotifierProvider(
+                            create: (context) => RagKnowledgeViewModel(
+                              ragService: context.read<RagService>(),
+                              storageService: context.read<StorageService>(),
+                            ),
+                            child: const RagKnowledgeScreen(),
+                          ),
+                        );
+                      default:
+                        return MaterialPageRoute(
+                          builder: (_) => const HomeScreen(),
+                        );
+                    }
+                  },
+                );
+              },
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

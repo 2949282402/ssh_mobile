@@ -283,3 +283,7 @@ across sessions.
   decoding has dimension/frame/total-pixel budgets. Remote PDFs are identified
   without reading or native parsing and direct users to a trusted external
   reader until page limits can be enforced before renderer allocation.
+- 2026-07-15: The app root subscribes only to `AppVisualSettingsSnapshot` and
+  reuses cached Material/Shad theme objects. Terminal font and other
+  feature-scoped settings must not rebuild the whole navigation shell; theme
+  changes must avoid stacked interpolation animations.

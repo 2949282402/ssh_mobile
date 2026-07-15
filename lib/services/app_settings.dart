@@ -11,6 +11,26 @@ part 'app_strings.dart';
 
 enum AppLanguage { zh, en }
 
+@immutable
+class AppVisualSettingsSnapshot {
+  const AppVisualSettingsSnapshot({
+    required this.themeMode,
+    required this.oledDark,
+  });
+
+  final ThemeMode themeMode;
+  final bool oledDark;
+
+  @override
+  bool operator ==(Object other) =>
+      other is AppVisualSettingsSnapshot &&
+      other.themeMode == themeMode &&
+      other.oledDark == oledDark;
+
+  @override
+  int get hashCode => Object.hash(themeMode, oledDark);
+}
+
 /// 应用设置 + 国际化字符串服务。
 ///
 /// 职责：
@@ -81,6 +101,8 @@ class AppSettings extends ChangeNotifier {
 
   AppLanguage get language => _language;
   ThemeMode get themeMode => _themeMode;
+  AppVisualSettingsSnapshot get visualSettings =>
+      AppVisualSettingsSnapshot(themeMode: _themeMode, oledDark: _oledDark);
   bool get initialized => _initialized;
   Future<void> get initFuture => _initCompleter.future;
   bool get isEnglish => _language == AppLanguage.en;

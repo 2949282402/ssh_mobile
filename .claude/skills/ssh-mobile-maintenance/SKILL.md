@@ -286,6 +286,9 @@ its child widgets.
   surface.
 - Fresh installs and missing preference fallbacks default to Chinese and light
   theme.
+- Keep the app root subscribed only to the immutable visual-theme snapshot.
+  Cache Material and Shad theme objects, avoid nested theme interpolation, and
+  keep terminal font or other feature settings from rebuilding the app shell.
 - On macOS, keep `flutter_secure_storage` configured to avoid Keychain
   entitlement error `-34018`.
 - Background notifications hide server names by default. Only show them when
