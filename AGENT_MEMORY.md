@@ -19,6 +19,12 @@ across sessions.
 
 ## Notes
 
+- 2026-07-15: The SFTP server selector keeps per-server `Selector` snapshots,
+  exposes visible and semantic connected/connecting/disconnected states, and
+  preserves 48 dp reorder/collapse actions. Desktop collapse uses
+  `AnimatedSize` around fixed-width children so the full pane is never laid
+  out at an intermediate narrow width; compact cards stack status details at
+  150% text or above and reserve extra strip height for the 200% text target.
 - 2026-07-11: Settings drawers use `settingsDrawerWidthFor` and cannot exceed
   the viewport. Their scroll padding includes the system bottom inset; language
   rows expose the localized label plus current value, and the Servers

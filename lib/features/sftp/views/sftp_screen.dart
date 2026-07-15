@@ -74,107 +74,120 @@ class _SftpScreenState extends State<SftpScreen> {
     final serversCollapsed = _serversCollapsed && connections.isNotEmpty;
 
     if (!storageReady) {
-      return const Center(
-        child: SizedBox(
-          width: 28,
-          height: 28,
-          child: CircularProgressIndicator(strokeWidth: 2),
+      return const AppPageSurface(
+        child: Center(
+          child: SizedBox(
+            width: 28,
+            height: 28,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
         ),
       );
     }
 
     if (connections.isEmpty) {
-      return AppEmptyState(
-        icon: Icons.folder_open_rounded,
-        title: strings.sftpEmptyTitle,
-        message: strings.sftpEmptyHint,
-        action: FilledButton.icon(
-          onPressed: () => Navigator.pushNamed(context, '/add'),
-          icon: const Icon(Icons.add_rounded),
-          label: Text(strings.addConnection),
+      return AppPageSurface(
+        child: AppEmptyState(
+          icon: Icons.folder_open_rounded,
+          title: strings.sftpEmptyTitle,
+          message: strings.sftpEmptyHint,
+          action: FilledButton.icon(
+            onPressed: () => Navigator.pushNamed(context, '/add'),
+            icon: const Icon(Icons.add_rounded),
+            label: Text(strings.addConnection),
+          ),
         ),
       );
     }
 
-    return desktop
-        ? Row(
-            children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOutCubic,
-                width: serversCollapsed ? 64 : 320,
-                child: serversCollapsed
-                    ? Selector<SftpViewModel, _SftpConnectionStatusSnapshot>(
-                        selector: (_, service) =>
-                            _SftpConnectionStatusSnapshot.from(
-                              service,
-                              selectedConnection?.id,
-                            ),
-                        builder: (context, status, _) =>
-                            _CollapsedDesktopServerRail(
-                              selectedConnection: selectedConnection,
-                              busy: status.busy,
-                              connected: status.connected,
-                              strings: strings,
-                              onExpand: _expandServers,
-                            ),
-                      )
-                    : _ServerPane(
-                        connections: connections,
-                        strings: strings,
-                        onCollapse: _collapseServers,
-                      ),
-              ),
-              VerticalDivider(
-                width: 1,
-                thickness: 1,
-                color: Theme.of(context).colorScheme.outlineVariant,
-              ),
-              Expanded(
-                child: _FilePane(strings: strings, sftp: sftp),
-              ),
-            ],
-          )
-        : Column(
-            children: [
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 180),
-                switchInCurve: Curves.easeOutCubic,
-                switchOutCurve: Curves.easeInCubic,
-                child: serversCollapsed
-                    ? Selector<SftpViewModel, _SftpConnectionStatusSnapshot>(
-                        key: const ValueKey('sftp-server-collapsed'),
-                        selector: (_, service) =>
-                            _SftpConnectionStatusSnapshot.from(
-                              service,
-                              selectedConnection?.id,
-                            ),
-                        builder: (context, status, _) =>
-                            _CollapsedMobileServerBar(
-                              selectedConnection: selectedConnection,
-                              busy: status.busy,
-                              connected: status.connected,
-                              strings: strings,
-                              onExpand: _expandServers,
-                            ),
-                      )
-                    : _MobileServerStrip(
-                        key: const ValueKey('sftp-server-expanded'),
-                        connections: connections,
-                        strings: strings,
-                        onCollapse: _collapseServers,
-                      ),
-              ),
-              Divider(
-                height: 1,
-                thickness: 1,
-                color: Theme.of(context).colorScheme.outlineVariant,
-              ),
-              Expanded(
-                child: _FilePane(strings: strings, sftp: sftp),
-              ),
-            ],
-          );
+    return AppPageSurface(
+      child: desktop
+          ? Row(
+              children: [
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeOutCubic,
+                  alignment: Alignment.centerLeft,
+                  clipBehavior: Clip.hardEdge,
+                  child: SizedBox(
+                    width: serversCollapsed ? 64 : 320,
+                    child: serversCollapsed
+                        ? Selector<
+                            SftpViewModel,
+                            _SftpConnectionStatusSnapshot
+                          >(
+                            selector: (_, service) =>
+                                _SftpConnectionStatusSnapshot.from(
+                                  service,
+                                  selectedConnection?.id,
+                                ),
+                            builder: (context, status, _) =>
+                                _CollapsedDesktopServerRail(
+                                  selectedConnection: selectedConnection,
+                                  busy: status.busy,
+                                  connected: status.connected,
+                                  strings: strings,
+                                  onExpand: _expandServers,
+                                ),
+                          )
+                        : _ServerPane(
+                            connections: connections,
+                            strings: strings,
+                            onCollapse: _collapseServers,
+                          ),
+                  ),
+                ),
+                VerticalDivider(
+                  width: 1,
+                  thickness: 1,
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                ),
+                Expanded(
+                  child: _FilePane(strings: strings, sftp: sftp),
+                ),
+              ],
+            )
+          : Column(
+              children: [
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 180),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  child: serversCollapsed
+                      ? Selector<SftpViewModel, _SftpConnectionStatusSnapshot>(
+                          key: const ValueKey('sftp-server-collapsed'),
+                          selector: (_, service) =>
+                              _SftpConnectionStatusSnapshot.from(
+                                service,
+                                selectedConnection?.id,
+                              ),
+                          builder: (context, status, _) =>
+                              _CollapsedMobileServerBar(
+                                selectedConnection: selectedConnection,
+                                busy: status.busy,
+                                connected: status.connected,
+                                strings: strings,
+                                onExpand: _expandServers,
+                              ),
+                        )
+                      : _MobileServerStrip(
+                          key: const ValueKey('sftp-server-expanded'),
+                          connections: connections,
+                          strings: strings,
+                          onCollapse: _collapseServers,
+                        ),
+                ),
+                Divider(
+                  height: 1,
+                  thickness: 1,
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                ),
+                Expanded(
+                  child: _FilePane(strings: strings, sftp: sftp),
+                ),
+              ],
+            ),
+    );
   }
 
   void _collapseServers() {
