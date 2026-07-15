@@ -86,6 +86,9 @@ class _SftpFileToolbar extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final textScale = MediaQuery.textScalerOf(context).scale(1);
+    const uploadColor = Color(0xFF4338CA);
+    final uploadDisabledBackground = colors.onSurface.withValues(alpha: 0.12);
+    final uploadDisabledForeground = colors.onSurface.withValues(alpha: 0.38);
     return DecoratedBox(
       key: const ValueKey('sftp-file-toolbar'),
       decoration: BoxDecoration(
@@ -131,6 +134,12 @@ class _SftpFileToolbar extends StatelessWidget {
             child: FilledButton.icon(
               key: const ValueKey('sftp-upload-file'),
               onPressed: disabled ? null : onUpload,
+              style: FilledButton.styleFrom(
+                backgroundColor: uploadColor,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: uploadDisabledBackground,
+                disabledForegroundColor: uploadDisabledForeground,
+              ),
               icon: const Icon(Icons.upload_file_rounded),
               label: Text(
                 strings.uploadFile,
@@ -145,6 +154,12 @@ class _SftpFileToolbar extends StatelessWidget {
               key: const ValueKey('sftp-upload-file'),
               tooltip: strings.uploadFile,
               onPressed: disabled ? null : onUpload,
+              style: IconButton.styleFrom(
+                backgroundColor: uploadColor,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: uploadDisabledBackground,
+                disabledForegroundColor: uploadDisabledForeground,
+              ),
               icon: const Icon(Icons.upload_file_rounded),
             ),
           );

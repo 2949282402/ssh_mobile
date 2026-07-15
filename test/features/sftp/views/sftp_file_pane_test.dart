@@ -158,6 +158,14 @@ void main() {
         tester.getSize(find.byKey(const ValueKey('sftp-parent-directory'))),
         const Size(48, 48),
       );
+      final uploadButton = tester.widget<FilledButton>(
+        find.byKey(const ValueKey('sftp-upload-file')),
+      );
+      expect(
+        uploadButton.style?.backgroundColor?.resolve({}),
+        const Color(0xFF4338CA),
+      );
+      expect(uploadButton.style?.foregroundColor?.resolve({}), Colors.white);
       expect(
         tester.getSize(
           find.byKey(
