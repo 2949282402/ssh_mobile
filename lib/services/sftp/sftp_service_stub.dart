@@ -238,6 +238,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     SftpEntry entry, {
     int maxBytes = maxDownloadBytes,
     bool updateState = false,
+    bool bypassCache = false,
   }) async {
     throw UnsupportedError('SFTP is not supported on Web');
   }

@@ -179,6 +179,9 @@ its `views/` parts.
 - Use dedicated editor/viewer pages for larger previews and text edits.
 - Read download, preview, and edit size limits from `AppSettings` instead of
   hardcoding screen-local constants.
+- Bound every in-memory SFTP read while streaming, before full allocation. Read
+  at most the caller limit plus one sentinel byte, invalidate over-budget cache
+  entries before a bounded remote fallback, and bypass cache on explicit retry.
 - Encrypt SFTP preview/download cache files with `DataProtectionService`.
   Secret-bearing paths such as `.ssh`, `.env`, private keys, token files,
   cloud credential folders, `/etc/shadow`, `/etc/sudoers`, and
@@ -187,6 +190,14 @@ its `views/` parts.
 - Manual directory refresh must bypass the short-lived directory cache. After
   a successful remote mutation, invalidate the target directory cache and each
   affected encrypted file cache entry before reloading remote metadata.
+- Treat preview files as untrusted. Keep Markdown links inert without changing
+  code spans/blocks, block external Markdown images, and render HTML only with
+  JavaScript disabled, a deny-by-default CSP, denied permissions/navigation,
+  and stale-load isolation. Enforce image byte, dimension, frame-count, and
+  total animation-pixel budgets.
+- Do not read or parse remote PDFs inline unless a future renderer can enforce
+  page-count and geometry limits before native allocation. The current viewer
+  identifies PDFs and directs the user to download and open them externally.
 - Keep upload, download, preview, edit, and delete behavior aligned across
   mobile, Windows, and macOS.
 

@@ -399,11 +399,63 @@ class AppStrings {
   String get viewFile => _en ? 'View file' : '查看文件';
   String get preview => _en ? 'Preview' : '预览';
   String get source => _en ? 'Source' : '源码';
-  String previewFailed(Object error) =>
-      _en ? 'Preview failed: $error' : '预览失败：$error';
+  String get previewMode => _en ? 'Preview mode' : '预览模式';
+  String get loadingFilePreview => _en ? 'Loading file preview…' : '正在加载文件预览…';
+  String get filePreviewLoadFailed =>
+      _en ? 'Could not load this preview' : '无法加载此文件预览';
+  String get filePreviewLoadFailedHint => _en
+      ? 'Check the SFTP connection and file permissions, then try again.'
+      : '请检查 SFTP 连接和文件权限，然后重试。';
+  String get filePreviewTooLarge =>
+      _en ? 'This file is too large to preview' : '文件过大，无法预览';
+  String filePreviewTooLargeHint(int maxBytes) {
+    final limit = _fileSizeLimitLabel(maxBytes);
+    return _en
+        ? 'The safe preview limit is $limit. Return to the file list to download the file instead.'
+        : '安全预览上限为 $limit。请返回文件列表，下载后再查看。';
+  }
+
+  String get filePreviewResourceLimit =>
+      _en ? 'This file is too complex to preview safely' : '文件复杂度过高，无法安全预览';
+  String get filePreviewResourceLimitHint => _en
+      ? 'Its image dimensions or animation complexity exceed the in-app rendering budget. Download it to inspect with another app.'
+      : '图片尺寸或动画复杂度超出应用内渲染预算。请下载后使用其他应用查看。';
+  String get closePreview => _en ? 'Back to files' : '返回文件列表';
+  String get filePreviewRenderFailed =>
+      _en ? 'Could not display this preview' : '无法显示此文件预览';
+  String get filePreviewRenderFailedHint => _en
+      ? 'The file may be damaged or use an unsupported format. Try loading it again.'
+      : '文件可能已损坏或使用了不支持的格式，请重新加载。';
+  String get unsupportedPreviewTitle => _en ? 'No preview available' : '暂不支持预览';
   String get unsupportedPreview => _en
       ? 'Preview is not supported for this file type. Download it to open with another app.'
       : '暂不支持预览这种文件类型。可以下载后用其他应用打开。';
+  String get htmlPreviewUnavailable =>
+      _en ? 'HTML preview is unavailable here' : '当前平台无法渲染 HTML';
+  String get htmlPreviewUnavailableHint => _en
+      ? 'Rendered HTML preview is available on Android, iOS, and macOS. You can still inspect the source safely.'
+      : 'HTML 渲染预览支持 Android、iOS 和 macOS；你仍可安全查看源码。';
+  String get pdfPreviewUnavailable =>
+      _en ? 'Remote PDF preview is disabled' : '已禁用远程 PDF 预览';
+  String get pdfPreviewUnavailableHint => _en
+      ? 'To avoid parsing an untrusted document inside the app, download it and open it with a trusted PDF reader.'
+      : '为避免在应用内解析不受信任的文档，请下载后使用可信的 PDF 阅读器打开。';
+  String get viewSource => _en ? 'View source' : '查看源码';
+  String get externalPreviewContentBlocked =>
+      _en ? 'External preview content is blocked' : '已阻止预览中的外部内容';
+  String get previewKindImage => _en ? 'Image' : '图片';
+  String get previewKindPdf => _en ? 'PDF document' : 'PDF 文档';
+  String get previewKindMarkdown => _en ? 'Markdown' : 'Markdown';
+  String get previewKindHtml => _en ? 'HTML document' : 'HTML 文档';
+  String get previewKindText => _en ? 'Text file' : '文本文件';
+  String get previewKindUnsupported => _en ? 'File' : '文件';
+  String previewFileDetails(String kind, String size) => '$kind · $size';
+  String get imagePreviewLabel => _en ? 'Image preview' : '图片预览';
+  String get htmlPreviewLabel => _en ? 'HTML preview' : 'HTML 预览';
+  String get zoomOut => _en ? 'Zoom out' : '缩小';
+  String get zoomIn => _en ? 'Zoom in' : '放大';
+  String get resetZoom => _en ? 'Reset zoom' : '重置缩放';
+  String imageZoomLevel(int percent) => _en ? 'Zoom $percent%' : '缩放 $percent%';
   String get downloadFile => _en ? 'Download file' : '下载文件';
   String get downloadComplete => _en ? 'Download complete' : '下载完成';
   String downloadFailed(Object error) =>
@@ -429,13 +481,17 @@ class AppStrings {
       ? 'Could not save this file. Check the connection and try again.'
       : '无法保存此文件，请检查连接后重试。';
   String remoteFileTooLarge(int maxBytes) {
-    const bytesPerMegabyte = 1024 * 1024;
-    final limit = maxBytes >= bytesPerMegabyte
-        ? '${(maxBytes / bytesPerMegabyte).toStringAsFixed(maxBytes % bytesPerMegabyte == 0 ? 0 : 1)} MB'
-        : '${(maxBytes / 1024).ceil()} KB';
+    final limit = _fileSizeLimitLabel(maxBytes);
     return _en
         ? 'This file is larger than the $limit edit limit. Reduce its content before saving.'
         : '文件内容超过 $limit 的编辑上限，请缩减内容后再保存。';
+  }
+
+  String _fileSizeLimitLabel(int maxBytes) {
+    const bytesPerMegabyte = 1024 * 1024;
+    return maxBytes >= bytesPerMegabyte
+        ? '${(maxBytes / bytesPerMegabyte).toStringAsFixed(maxBytes % bytesPerMegabyte == 0 ? 0 : 1)} MB'
+        : '${(maxBytes / 1024).ceil()} KB';
   }
 
   String get remoteFileNewChangesRemain => _en

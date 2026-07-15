@@ -29,7 +29,6 @@ dependencies:
   file_picker: ^12.0.0-beta.7
   gpt_markdown: ^1.1.7
   webview_flutter: ^4.14.0
-  printing: ^5.14.3
   fl_chart: ^1.2.0
   animations: ^2.2.0
   drift: ^2.34.0

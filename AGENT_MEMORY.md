@@ -231,3 +231,10 @@ across sessions.
 - 2026-06-22: Widget testing pages like LlmChatScreen with locally-scoped providers and target platform overrides must manage debug variable changes inside the testWidgets body using a try-finally block, as the binding's invariant tester runs before the global tearDown hook. Subtree provider instances can be retrieved via context lookups on public descendant widgets (e.g. Scaffold).
 - 2026-06-23: App typography is now configured to completely rely on the native system fonts on all supported platforms (Android, Windows, iOS, macOS), and the custom app-level font selection feature has been completely removed to simplify settings and ensure standard system font behavior.
 - 2026-07-01: Approved AI plan execution now performs a client runtime health preflight through `ClientHealthAdvisor` / `client_check_runtime_health`. Blocking client-side issues stop execution; warning issues require explicit confirmation. Tool loop plan gating refreshes the in-memory `PlanExecutionSnapshot` from successful `client_task_update/retry/skip` calls instead of reloading chats before every tool call.
+- 2026-07-14: SFTP viewer inputs are untrusted and must stay bounded before
+  allocation. Text/Markdown/image/HTML reads use caller limits plus a one-byte
+  sentinel, over-budget cache entries are invalidated before bounded fallback,
+  retries bypass cache, Markdown/HTML external content stays inert, and image
+  decoding has dimension/frame/total-pixel budgets. Remote PDFs are identified
+  without reading or native parsing and direct users to a trusted external
+  reader until page limits can be enforced before renderer allocation.

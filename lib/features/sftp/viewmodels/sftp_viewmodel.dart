@@ -137,11 +137,13 @@ class SftpViewModel extends ChangeNotifier {
     SftpEntry entry, {
     int maxBytes = SftpService.maxDownloadBytes,
     bool updateState = false,
+    bool bypassCache = false,
   }) async {
     return await _sftpService.downloadBytes(
       entry,
       maxBytes: maxBytes,
       updateState: updateState,
+      bypassCache: bypassCache,
     );
   }
 

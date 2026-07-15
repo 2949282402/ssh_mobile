@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 // ignore: depend_on_referenced_packages
 import 'package:crypto/crypto.dart';
@@ -614,6 +615,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     SftpEntry entry, {
     int maxBytes = maxDownloadBytes,
     bool updateState = false,
+    bool bypassCache = false,
   }) async {
     final session = _sessionForEntry(entry);
     final sftp = session.sftp;
@@ -621,15 +623,18 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     if (entry.isDirectory) throw StateError('Directories cannot be downloaded');
     _assertWithinMemoryLimit(entry.size, 'download', maxBytes: maxBytes);
 
-    final cachedBytes = await SftpFileCache.get(
-      entry.connectionId,
-      session.targetFingerprint,
-      entry.path,
-      entry.size,
-      entry.modifiedAt,
-    );
-    if (cachedBytes != null) {
-      return cachedBytes;
+    if (!bypassCache) {
+      final cachedBytes = await SftpFileCache.get(
+        entry.connectionId,
+        session.targetFingerprint,
+        entry.path,
+        entry.size,
+        entry.modifiedAt,
+        maxBytes: maxBytes,
+      );
+      if (cachedBytes != null) {
+        return cachedBytes;
+      }
     }
 
     if (updateState) {
@@ -641,8 +646,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     SftpFile? file;
     try {
       file = await sftp.open(entry.path, mode: SftpFileOpenMode.read);
-      final bytes = await file.readBytes();
-      _assertWithinMemoryLimit(bytes.length, 'download', maxBytes: maxBytes);
+      final bytes = await _readFileBytesWithinLimit(file, maxBytes: maxBytes);
       AppLogService.instance.info(
         'SFTP file downloaded',
         details: 'path=${entry.path} bytes=${bytes.length}',
@@ -691,8 +695,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     SftpFile? file;
     try {
       file = await sftp.open(entry.path, mode: SftpFileOpenMode.read);
-      final bytes = await file.readBytes();
-      _assertWithinMemoryLimit(bytes.length, 'edit', maxBytes: maxBytes);
+      final bytes = await _readFileBytesWithinLimit(file, maxBytes: maxBytes);
       return utf8.decode(bytes, allowMalformed: true);
     } finally {
       await _closeFileQuietly(file);
@@ -1114,11 +1117,50 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
     String action, {
     int maxBytes = maxInMemoryTransferBytes,
   }) {
+    if (maxBytes < 0) {
+      throw ArgumentError.value(maxBytes, 'maxBytes', 'must not be negative');
+    }
     if (bytes == null || bytes <= maxBytes) return;
-    throw StateError(
-      'File is too large to $action in app memory '
-      '(${_formatBytes(bytes)} > ${_formatBytes(maxBytes)}).',
-    );
+    throw SftpFileSizeLimitException(observedBytes: bytes, maxBytes: maxBytes);
+  }
+
+  Future<Uint8List> _readFileBytesWithinLimit(
+    SftpFile file, {
+    required int maxBytes,
+  }) async {
+    if (maxBytes < 0) {
+      throw ArgumentError.value(maxBytes, 'maxBytes', 'must not be negative');
+    }
+
+    const chunkSize = 64 * 1024;
+    final buffer = BytesBuilder(copy: false);
+    var offset = 0;
+
+    while (offset <= maxBytes) {
+      final remainingWithSentinel = maxBytes - offset + 1;
+      final requestedBytes = remainingWithSentinel < chunkSize
+          ? remainingWithSentinel
+          : chunkSize;
+      final chunk = await file.readBytes(
+        length: requestedBytes,
+        offset: offset,
+      );
+      if (chunk.isEmpty) break;
+
+      buffer.add(chunk);
+      offset += chunk.length;
+      if (offset > maxBytes) {
+        throw SftpFileSizeLimitException(
+          observedBytes: offset,
+          maxBytes: maxBytes,
+        );
+      }
+
+      // dartssh2's readBytes(length:) reads until the requested length or EOF.
+      if (chunk.length < requestedBytes) break;
+    }
+
+    return buffer.takeBytes();
   }
 
   String _formatBytes(int? bytes) {

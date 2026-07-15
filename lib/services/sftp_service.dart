@@ -90,6 +90,24 @@ class SftpTextSizeLimitException implements Exception {
       'limit is $maxBytes bytes';
 }
 
+/// Thrown when an in-memory SFTP read exceeds its caller-provided byte limit.
+///
+/// [observedBytes] is the exact remote/cache size when it is known from
+/// metadata. For a bounded remote read it can be the first observed byte count
+/// above [maxBytes], which intentionally avoids reading the rest of the file.
+class SftpFileSizeLimitException extends StateError {
+  SftpFileSizeLimitException({
+    required this.observedBytes,
+    required this.maxBytes,
+  }) : super(
+         'SFTP file exceeds the in-memory read limit '
+         '($observedBytes bytes > $maxBytes bytes).',
+       );
+
+  final int observedBytes;
+  final int maxBytes;
+}
+
 class SftpTransferState {
   final String id;
   final String name;

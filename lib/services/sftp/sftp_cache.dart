@@ -137,8 +137,12 @@ class SftpFileCache {
     String targetFingerprint,
     String path,
     int? size,
-    DateTime? modifiedAt,
-  ) async {
+    DateTime? modifiedAt, {
+    int? maxBytes,
+  }) async {
+    if (maxBytes != null && maxBytes < 0) {
+      throw ArgumentError.value(maxBytes, 'maxBytes', 'must not be negative');
+    }
     if (!isCacheablePath(path)) {
       await invalidate(connectionId, targetFingerprint, path);
       return null;
@@ -157,6 +161,18 @@ class SftpFileCache {
           final cachedTime = int.tryParse(parts[6]);
           if (cachedSize == size &&
               cachedTime == (modifiedAt?.millisecondsSinceEpoch ?? 0)) {
+            if (maxBytes != null) {
+              final encryptedFileBytes = await cachedFile.length();
+              final conservativeEnvelopeLimit = (maxBytes * 2) + 512;
+              if (encryptedFileBytes > conservativeEnvelopeLimit) {
+                await cachedFile.delete();
+                AppLogService.instance.warning(
+                  'SFTP cache entry exceeded the bounded read envelope',
+                  details: 'path=$path maxBytes=$maxBytes',
+                );
+                return null;
+              }
+            }
             final encryptedBytes = await cachedFile.readAsBytes();
             if (!DataProtectionService.instance.isEncryptedBytes(
               encryptedBytes,
@@ -165,6 +181,16 @@ class SftpFileCache {
               return null;
             }
             try {
+              final plaintextLength = _encryptedPlaintextLength(encryptedBytes);
+              if (maxBytes != null && plaintextLength > maxBytes) {
+                await cachedFile.delete();
+                AppLogService.instance.warning(
+                  'SFTP cache entry exceeded the bounded plaintext limit',
+                  details:
+                      'path=$path bytes=$plaintextLength maxBytes=$maxBytes',
+                );
+                return null;
+              }
               final bytes = await DataProtectionService.instance.decryptBytes(
                 encryptedBytes,
               );
@@ -185,6 +211,27 @@ class SftpFileCache {
       AppLogService.instance.warning('SFTP Cache read failed: $e');
     }
     return null;
+  }
+
+  static int _encryptedPlaintextLength(Uint8List encryptedBytes) {
+    final text = utf8.decode(encryptedBytes);
+    final body = text.substring(
+      DataProtectionService.encryptedBytesPrefix.length,
+    );
+    if (body == '.') return 0;
+
+    final decoded = utf8.decode(base64Decode(body));
+    final payload = jsonDecode(decoded) as Map<String, dynamic>;
+    final encodedCiphertext = base64.normalize(payload['c'] as String);
+    if (encodedCiphertext.isEmpty) return 0;
+
+    var padding = 0;
+    if (encodedCiphertext.endsWith('==')) {
+      padding = 2;
+    } else if (encodedCiphertext.endsWith('=')) {
+      padding = 1;
+    }
+    return ((encodedCiphertext.length * 3) ~/ 4) - padding;
   }
 
   static Future<void> put(

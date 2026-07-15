@@ -923,7 +923,7 @@ class _SftpEntryList extends StatelessWidget {
                           maxLines: 1,
                         )
                       : Hero(
-                          tag: 'sftp_file_${entry.path}',
+                          tag: 'sftp_file_${entry.connectionId}_${entry.path}',
                           child: Material(
                             type: MaterialType.transparency,
                             child: OverflowScrollText(

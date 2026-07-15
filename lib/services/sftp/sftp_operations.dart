@@ -46,6 +46,7 @@ extension SftpServiceOperations on SftpService {
     return _withDetachedSftp(connectionId, (sftp, config, targetBinding) async {
       final absolutePath = await sftp.absolute(path);
       final attrs = await sftp.stat(absolutePath);
+      _assertWithinMemoryLimit(attrs.size, 'read', maxBytes: maxBytes);
       final modifiedAt = attrs.modifyTime == null
           ? null
           : DateTime.fromMillisecondsSinceEpoch(attrs.modifyTime! * 1000);
@@ -56,6 +57,7 @@ extension SftpServiceOperations on SftpService {
         absolutePath,
         attrs.size,
         modifiedAt,
+        maxBytes: maxBytes,
       );
       if (cachedBytes != null) {
         return compute(SftpService._decodeUtf8, cachedBytes);
@@ -64,8 +66,7 @@ extension SftpServiceOperations on SftpService {
       SftpFile? file;
       try {
         file = await sftp.open(absolutePath, mode: SftpFileOpenMode.read);
-        final bytes = await file.readBytes();
-        _assertWithinMemoryLimit(bytes.length, 'read', maxBytes: maxBytes);
+        final bytes = await _readFileBytesWithinLimit(file, maxBytes: maxBytes);
         AppLogService.instance.info(
           'SFTP file read for tool',
           details:
@@ -111,6 +112,7 @@ extension SftpServiceOperations on SftpService {
         absolutePath,
         attrs.size,
         modifiedAt,
+        maxBytes: maxBytes,
       );
       if (cachedBytes != null) {
         return cachedBytes;
@@ -119,8 +121,7 @@ extension SftpServiceOperations on SftpService {
       SftpFile? file;
       try {
         file = await sftp.open(absolutePath, mode: SftpFileOpenMode.read);
-        final bytes = await file.readBytes();
-        _assertWithinMemoryLimit(bytes.length, 'download', maxBytes: maxBytes);
+        final bytes = await _readFileBytesWithinLimit(file, maxBytes: maxBytes);
         AppLogService.instance.info(
           'SFTP file downloaded for tool',
           details:
