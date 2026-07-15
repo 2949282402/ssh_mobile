@@ -26,6 +26,10 @@ across sessions.
   divergent raw placeholders. At 200% text it switches to a compact header and
   inline loading/error treatment; the Ports and Services mode switch remains
   horizontally scrollable rather than constraining labels.
+- 2026-07-15: Monitor health and disk panels use `AppSectionCard`; the disk
+  header is an accessible 48 dp expand/collapse action. Keep monitor data
+  sourcing and in-memory health/alert behavior unchanged when altering their
+  presentation.
 - 2026-07-15: The System Administration workspace now uses the shared page
   surface/header and shows a localized connection, snapshot, Root, loading, or
   failure state without changing selection or SSH connection semantics. The

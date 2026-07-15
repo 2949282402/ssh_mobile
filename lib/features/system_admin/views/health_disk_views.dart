@@ -17,46 +17,30 @@ class _DiskUsagePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: colorScheme.outlineVariant),
+    return AppSectionCard(
+      title: _monitorText(strings, 'Disk usage', '硬盘使用情况'),
+      subtitle: _monitorText(
+        strings,
+        '${connections.length} monitored servers',
+        '共监控 ${connections.length} 台服务器',
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          InkWell(
-            onTap: onToggle,
-            child: Row(
+      icon: Icons.storage_rounded,
+      onHeaderTap: onToggle,
+      expanded: expanded,
+      padding: const EdgeInsets.all(14),
+      child: !expanded
+          ? null
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Text(
-                    _monitorText(strings, 'Disk usage', '硬盘使用情况'),
-                    style: const TextStyle(fontWeight: FontWeight.w800),
+                for (var i = 0; i < connections.length; i++)
+                  _DiskUsageServerBlock(
+                    connection: connections[i],
+                    color: _monitorSeriesColor(i),
+                    disks: monitor.diskUsageFor(connections[i].id),
                   ),
-                ),
-                Icon(
-                  expanded
-                      ? Icons.expand_less_rounded
-                      : Icons.expand_more_rounded,
-                ),
               ],
             ),
-          ),
-          if (expanded) ...[
-            const SizedBox(height: 10),
-            for (var i = 0; i < connections.length; i++)
-              _DiskUsageServerBlock(
-                connection: connections[i],
-                color: _monitorSeriesColor(i),
-                disks: monitor.diskUsageFor(connections[i].id),
-              ),
-          ],
-        ],
-      ),
     );
   }
 }
@@ -138,51 +122,30 @@ class _HealthAlertPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     final alertsById = {
       for (final alert in monitor.alerts.take(20)) alert.connectionId: alert,
     };
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: colorScheme.outlineVariant),
+    return AppSectionCard(
+      title: _monitorText(strings, 'Health and alerts', '健康与告警'),
+      subtitle: _monitorText(
+        strings,
+        'Live health score and active warnings',
+        '实时健康评分与活跃告警',
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      icon: Icons.health_and_safety_outlined,
+      padding: const EdgeInsets.all(14),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
         children: [
-          Row(
-            children: [
-              Icon(
-                Icons.health_and_safety_outlined,
-                size: 18,
-                color: colorScheme.primary,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  _monitorText(strings, 'Health and alerts', '健康与告警'),
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (var i = 0; i < connections.length; i++)
-                _HealthBadge(
-                  strings: strings,
-                  connection: connections[i],
-                  seriesColor: _monitorSeriesColor(i),
-                  health: monitor.healthFor(connections[i].id),
-                  alert: alertsById[connections[i].id],
-                ),
-            ],
-          ),
+          for (var i = 0; i < connections.length; i++)
+            _HealthBadge(
+              strings: strings,
+              connection: connections[i],
+              seriesColor: _monitorSeriesColor(i),
+              health: monitor.healthFor(connections[i].id),
+              alert: alertsById[connections[i].id],
+            ),
         ],
       ),
     );
