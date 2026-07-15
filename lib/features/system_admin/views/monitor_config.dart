@@ -314,50 +314,56 @@ class _MonitorConfigPanelV2 extends StatelessWidget {
                 ),
               ),
             ),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                _DurationMenu(
-                  icon: Icons.timer_outlined,
-                  label: _monitorText(strings, 'Interval', '刷新间隔'),
-                  value: monitor.interval,
-                  values: PerformanceMonitorViewModel.intervalOptions,
-                  onChanged: monitor.setInterval,
-                  onCustom: onCustomInterval,
-                  strings: strings,
-                ),
-                _DurationMenu(
-                  icon: Icons.history_rounded,
-                  label: _monitorText(strings, 'Range', '时间范围'),
-                  value: monitor.historyWindow,
-                  values: PerformanceMonitorViewModel.historyWindowOptions,
-                  onChanged: monitor.setHistoryWindow,
-                  onCustom: onCustomWindow,
-                  strings: strings,
-                ),
-                _ServersPerChartMenu(
-                  strings: strings,
-                  value: serversPerChart,
-                  onChanged: onServersPerChartChanged,
-                ),
-                if (isRunning)
-                  IconButton.outlined(
-                    tooltip: strings.refresh,
-                    icon: isSampling
-                        ? SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: colorScheme.primary,
-                            ),
-                          )
-                        : const Icon(Icons.refresh_rounded),
-                    onPressed: isSampling ? null : monitor.sampleNow,
+            child: SingleChildScrollView(
+              key: const ValueKey('monitor-config-horizontal-scroll'),
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _DurationMenu(
+                    icon: Icons.timer_outlined,
+                    label: _monitorText(strings, 'Interval', '刷新间隔'),
+                    value: monitor.interval,
+                    values: PerformanceMonitorViewModel.intervalOptions,
+                    onChanged: monitor.setInterval,
+                    onCustom: onCustomInterval,
+                    strings: strings,
                   ),
-              ],
+                  const SizedBox(width: 8),
+                  _DurationMenu(
+                    icon: Icons.history_rounded,
+                    label: _monitorText(strings, 'Range', '时间范围'),
+                    value: monitor.historyWindow,
+                    values: PerformanceMonitorViewModel.historyWindowOptions,
+                    onChanged: monitor.setHistoryWindow,
+                    onCustom: onCustomWindow,
+                    strings: strings,
+                  ),
+                  const SizedBox(width: 8),
+                  _ServersPerChartMenu(
+                    strings: strings,
+                    value: serversPerChart,
+                    onChanged: onServersPerChartChanged,
+                  ),
+                  if (isRunning) ...[
+                    const SizedBox(width: 8),
+                    IconButton.outlined(
+                      tooltip: strings.refresh,
+                      icon: isSampling
+                          ? SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: colorScheme.primary,
+                              ),
+                            )
+                          : const Icon(Icons.refresh_rounded),
+                      onPressed: isSampling ? null : monitor.sampleNow,
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
         ),

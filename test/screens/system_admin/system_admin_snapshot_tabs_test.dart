@@ -920,6 +920,16 @@ void main() {
       find.byKey(const ValueKey('admin-server-tile-conn_123')),
       findsOneWidget,
     );
+    final configScroller = find.byKey(
+      const ValueKey('monitor-config-horizontal-scroll'),
+    );
+    expect(configScroller, findsOneWidget);
+    expect(
+      tester.widget<SingleChildScrollView>(configScroller).scrollDirection,
+      Axis.horizontal,
+    );
+    await tester.drag(configScroller, const Offset(-240, 0));
+    await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
 
     await tester.tap(
