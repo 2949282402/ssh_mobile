@@ -144,7 +144,7 @@ class _MobileServerStrip extends StatelessWidget {
     final textScale = MediaQuery.textScalerOf(
       context,
     ).scale(1).clamp(1.0, 2.0).toDouble();
-    final stripHeight = 96.0 + (textScale - 1.0) * 58.0;
+    final stripHeight = 72.0 + (textScale - 1.0) * 38.0;
     if (connections.isEmpty) {
       return SizedBox(
         height: stripHeight,
@@ -152,25 +152,20 @@ class _MobileServerStrip extends StatelessWidget {
       );
     }
 
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: colorScheme.surface.withValues(alpha: 0.84),
-      ),
+    return Material(
+      color: colorScheme.surface,
       child: SizedBox(
         key: const ValueKey('sftp-mobile-server-strip'),
         height: stripHeight,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final cardWidth = (constraints.maxWidth - 82)
-                .clamp(196.0, 280.0)
-                .toDouble();
             return Semantics(
               container: true,
               label: strings.sftpServers,
               child: ListView.separated(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 10,
-                  vertical: 10,
+                  vertical: 8,
                 ),
                 scrollDirection: Axis.horizontal,
                 itemCount: connections.length + 1,
@@ -184,7 +179,7 @@ class _MobileServerStrip extends StatelessWidget {
                   }
                   final connection = connections[index - 1];
                   return SizedBox(
-                    width: cardWidth,
+                    width: 210,
                     child: _SftpServerTileBinding(
                       connection: connection,
                       strings: strings,
@@ -209,17 +204,26 @@ class _MobileCollapseButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return SizedBox(
       width: 48,
       child: Align(
         alignment: Alignment.topCenter,
         child: SizedBox.square(
           dimension: 48,
-          child: IconButton.filledTonal(
-            key: const ValueKey('sftp-server-collapse-mobile'),
-            tooltip: strings.collapseServerList,
-            icon: const Icon(Icons.keyboard_double_arrow_up_rounded),
-            onPressed: onPressed,
+          child: Material(
+            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.42),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+              side: BorderSide(color: colorScheme.outlineVariant),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: IconButton(
+              key: const ValueKey('sftp-server-collapse-mobile'),
+              tooltip: strings.collapseServerList,
+              icon: const Icon(Icons.keyboard_double_arrow_up_rounded),
+              onPressed: onPressed,
+            ),
           ),
         ),
       ),
@@ -255,22 +259,21 @@ class _CollapsedMobileServerBar extends StatelessWidget {
       busy: busy,
       connected: connected,
     );
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: colorScheme.surface.withValues(alpha: 0.9),
-      ),
+    final barHeight = 48.0 + (textScale - 1.0) * 22.0;
+    return Material(
+      color: colorScheme.surface,
       child: SafeArea(
         top: false,
         bottom: false,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(minHeight: 56 + (textScale - 1) * 28),
+        child: SizedBox(
+          height: barHeight,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Row(
               children: [
                 SizedBox.square(
                   dimension: 48,
-                  child: IconButton.filledTonal(
+                  child: IconButton(
                     key: const ValueKey('sftp-server-expand-mobile'),
                     tooltip: strings.expandServerList,
                     icon: const Icon(Icons.keyboard_double_arrow_down_rounded),
@@ -286,39 +289,23 @@ class _CollapsedMobileServerBar extends StatelessWidget {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Semantics(
+                    key: const ValueKey('sftp-collapsed-server-summary'),
                     container: true,
                     label: connection == null
                         ? strings.sftpServers
                         : '${connection.name}, ${status.label}, '
                               '${connection.username}@${connection.host}:${connection.port}',
                     child: ExcludeSemantics(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          OverflowScrollText(
-                            connection?.name ?? strings.sftpServers,
-                            selectable: false,
-                            maxLines: 1,
-                            style: TextStyle(
-                              color: colorScheme.onSurface,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          if (connection != null) ...[
-                            const SizedBox(height: 2),
-                            Text(
-                              status.label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(
-                                    color: status.color,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                            ),
-                          ],
-                        ],
+                      child: OverflowScrollText(
+                        connection == null
+                            ? strings.sftpServers
+                            : '${connection.name}  ${connection.username}@${connection.host}',
+                        selectable: false,
+                        maxLines: 1,
+                        style: TextStyle(
+                          color: colorScheme.onSurface,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   ),
@@ -472,7 +459,7 @@ class _ServerTile extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final scale = mobileUiScaleOf(context);
     final textScale = MediaQuery.textScalerOf(context).scale(1);
-    final stackStatus = compact && textScale >= 1.5;
+    final stackStatus = !compact && textScale >= 1.5;
     final isDark = theme.brightness == Brightness.dark;
     final status = _SftpServerStatus.of(
       context,
@@ -482,8 +469,14 @@ class _ServerTile extends StatelessWidget {
     );
     final borderColor = selected
         ? colorScheme.primary.withValues(alpha: 0.58)
+        : compact
+        ? colorScheme.outlineVariant
         : colorScheme.outline.withValues(alpha: 0.62);
-    final background = selected
+    final background = compact
+        ? (selected
+              ? colorScheme.primary.withValues(alpha: 0.08)
+              : colorScheme.surface)
+        : selected
         ? Color.alphaBlend(
             colorScheme.primary.withValues(alpha: isDark ? 0.12 : 0.075),
             colorScheme.surfaceContainerLow,
@@ -534,31 +527,35 @@ class _ServerTile extends StatelessWidget {
             duration: const Duration(milliseconds: 160),
             curve: Curves.easeOutCubic,
             constraints: BoxConstraints(
-              minHeight: stackStatus
+              minHeight: compact
+                  ? 56
+                  : stackStatus
                   ? 112
-                  : compact
-                  ? 76
                   : 72,
             ),
             padding: EdgeInsets.symmetric(
-              horizontal: (compact ? 12 : 14) * scale,
-              vertical: (compact ? 9 : 11) * scale,
+              horizontal: (compact ? 10 : 14) * scale,
+              vertical: (compact ? 3 : 11) * scale,
             ),
             decoration: BoxDecoration(
               color: background,
-              borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+              borderRadius: BorderRadius.circular(
+                compact ? AppTheme.radiusSmall : AppTheme.radiusMedium,
+              ),
               border: Border.all(color: borderColor, width: selected ? 1.2 : 1),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(
-                    alpha: selected
-                        ? (isDark ? 0.20 : 0.055)
-                        : (isDark ? 0.12 : 0.025),
-                  ),
-                  blurRadius: selected ? 16 : 10,
-                  offset: Offset(0, selected ? 6 : 3),
-                ),
-              ],
+              boxShadow: compact
+                  ? const []
+                  : [
+                      BoxShadow(
+                        color: Colors.black.withValues(
+                          alpha: selected
+                              ? (isDark ? 0.20 : 0.055)
+                              : (isDark ? 0.12 : 0.025),
+                        ),
+                        blurRadius: selected ? 16 : 10,
+                        offset: Offset(0, selected ? 6 : 3),
+                      ),
+                    ],
             ),
             child: Row(
               children: [
@@ -573,7 +570,11 @@ class _ServerTile extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (stackStatus) ...[
+                      if (compact) ...[
+                        title,
+                        SizedBox(height: 3 * scale),
+                        endpoint,
+                      ] else if (stackStatus) ...[
                         title,
                         SizedBox(height: 2 * scale),
                         Text(

@@ -240,6 +240,12 @@ void main() {
           findsOneWidget,
         );
         expect(
+          tester
+              .getSize(find.byKey(const ValueKey('sftp-mobile-server-strip')))
+              .height,
+          110,
+        );
+        expect(
           tester.getSize(
             find.byKey(const ValueKey('sftp-server-collapse-mobile')),
           ),
@@ -248,7 +254,7 @@ void main() {
         final cardSize = tester.getSize(
           find.byKey(const ValueKey('sftp-server-tile-server-1')),
         );
-        expect(cardSize.width, inInclusiveRange(196, 280));
+        expect(cardSize.width, 210);
         expect(tester.takeException(), isNull);
 
         await tester.tap(find.byTooltip('Collapse server list'));
@@ -260,11 +266,14 @@ void main() {
           ),
           const Size(48, 48),
         );
-        expect(
-          find.text('Production gateway with a very long server name'),
-          findsOneWidget,
+        final collapsedSummary = tester.getSemantics(
+          find.byKey(const ValueKey('sftp-collapsed-server-summary')),
         );
-        expect(find.text('Connected'), findsOneWidget);
+        expect(
+          collapsedSummary.label,
+          contains('Production gateway with a very long server name'),
+        );
+        expect(collapsedSummary.label, contains('Connected'));
         expect(tester.takeException(), isNull);
       } finally {
         debugDefaultTargetPlatformOverride = null;
