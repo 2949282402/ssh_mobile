@@ -15,115 +15,38 @@ class _ServerPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    if (connections.isEmpty) {
-      return DecoratedBox(
-        key: const ValueKey('sftp-server-pane'),
-        decoration: BoxDecoration(
-          color: colorScheme.surface.withValues(alpha: 0.84),
-        ),
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-          children: [
-            _header(context),
-            const SizedBox(height: 16),
-            AppEmptyState(
-              icon: Icons.dns_outlined,
-              title: strings.noConnections,
-              message: strings.sftpEmptyHint,
-              compact: true,
-              contained: false,
-            ),
-          ],
-        ),
-      );
-    }
-    return DecoratedBox(
+    return ServerSelectorPane(
       key: const ValueKey('sftp-server-pane'),
-      decoration: BoxDecoration(
-        color: colorScheme.surface.withValues(alpha: 0.84),
+      connections: connections,
+      title: strings.sftpServers,
+      subtitle: strings.language == AppLanguage.en
+          ? '${connections.length} available'
+          : '共 ${connections.length} 台可用',
+      headerIcon: Icons.folder_shared_rounded,
+      collapseTooltip: strings.collapseServerList,
+      reorderTooltip: strings.reorderServer,
+      collapseButtonKey: const ValueKey('sftp-server-collapse-desktop'),
+      dragHandleKeyBuilder: (connection) =>
+          ValueKey('sftp-server-drag-${connection.id}'),
+      onCollapse: onCollapse,
+      onReorder: (oldIndex, newIndex) {
+        context.read<ConnectionViewModel>().reorderConnections(
+          oldIndex,
+          newIndex,
+        );
+      },
+      tileBuilder: (context, connection, compact) => _SftpServerTileBinding(
+        connection: connection,
+        strings: strings,
+        compact: compact,
+        onTap: () => onSelect(connection.id),
       ),
-      child: Column(
-        children: [
-          _header(context),
-          Expanded(
-            child: Scrollbar(
-              child: ReorderableListView.builder(
-                buildDefaultDragHandles: false,
-                padding: const EdgeInsets.fromLTRB(8, 0, 12, 24),
-                itemCount: connections.length,
-                itemBuilder: (context, index) {
-                  final connection = connections[index];
-                  return Padding(
-                    key: ValueKey(connection.id),
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: Row(
-                      children: [
-                        Tooltip(
-                          message: strings.reorderServer,
-                          child: Semantics(
-                            label: strings.reorderServer,
-                            button: true,
-                            child: ExcludeSemantics(
-                              child: ReorderableDragStartListener(
-                                index: index,
-                                child: SizedBox.square(
-                                  key: ValueKey(
-                                    'sftp-server-drag-${connection.id}',
-                                  ),
-                                  dimension: 48,
-                                  child: Icon(
-                                    Icons.drag_handle_rounded,
-                                    size: 20,
-                                    color: colorScheme.onSurfaceVariant
-                                        .withValues(alpha: 0.58),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: _SftpServerTileBinding(
-                            connection: connection,
-                            strings: strings,
-                            onTap: () => onSelect(connection.id),
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                },
-                onReorderItem: (oldIndex, newIndex) {
-                  context.read<ConnectionViewModel>().reorderConnections(
-                    oldIndex,
-                    newIndex,
-                  );
-                },
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _header(BuildContext context) {
-    return Padding(
-      key: const ValueKey('sftp-server-header'),
-      padding: const EdgeInsets.fromLTRB(16, 16, 12, 14),
-      child: AppPageHeader(
-        title: strings.sftpServers,
-        icon: Icons.folder_shared_rounded,
-        trailing: SizedBox.square(
-          dimension: 48,
-          child: IconButton(
-            key: const ValueKey('sftp-server-collapse-desktop'),
-            tooltip: strings.collapseServerList,
-            icon: const Icon(Icons.keyboard_double_arrow_left_rounded),
-            onPressed: connections.isEmpty ? null : onCollapse,
-          ),
-        ),
+      emptyState: AppEmptyState(
+        icon: Icons.dns_outlined,
+        title: strings.noConnections,
+        message: strings.sftpEmptyHint,
+        compact: true,
+        contained: false,
       ),
     );
   }
@@ -145,93 +68,19 @@ class _MobileServerStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textScale = MediaQuery.textScalerOf(
-      context,
-    ).scale(1).clamp(1.0, 2.0).toDouble();
-    final stripHeight = 72.0 + (textScale - 1.0) * 38.0;
-    if (connections.isEmpty) {
-      return SizedBox(
-        height: stripHeight,
-        child: Center(child: Text(strings.noConnections)),
-      );
-    }
-
-    return Material(
-      color: colorScheme.surface,
-      child: SizedBox(
-        key: const ValueKey('sftp-mobile-server-strip'),
-        height: stripHeight,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            return Semantics(
-              container: true,
-              label: strings.sftpServers,
-              child: ListView.separated(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 8,
-                ),
-                scrollDirection: Axis.horizontal,
-                itemCount: connections.length + 1,
-                separatorBuilder: (_, _) => const SizedBox(width: 10),
-                itemBuilder: (context, index) {
-                  if (index == 0) {
-                    return _MobileCollapseButton(
-                      strings: strings,
-                      onPressed: onCollapse,
-                    );
-                  }
-                  final connection = connections[index - 1];
-                  return SizedBox(
-                    width: 210,
-                    child: _SftpServerTileBinding(
-                      connection: connection,
-                      strings: strings,
-                      compact: true,
-                      onTap: () => onSelect(connection.id),
-                    ),
-                  );
-                },
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-}
-
-class _MobileCollapseButton extends StatelessWidget {
-  final AppStrings strings;
-  final VoidCallback onPressed;
-
-  const _MobileCollapseButton({required this.strings, required this.onPressed});
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return SizedBox(
-      width: 48,
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: SizedBox.square(
-          dimension: 48,
-          child: Material(
-            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.42),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-              side: BorderSide(color: colorScheme.outlineVariant),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: IconButton(
-              key: const ValueKey('sftp-server-collapse-mobile'),
-              tooltip: strings.collapseServerList,
-              icon: const Icon(Icons.keyboard_double_arrow_up_rounded),
-              onPressed: onPressed,
-            ),
-          ),
-        ),
+    return ServerSelectorStrip(
+      key: const ValueKey('sftp-mobile-server-strip'),
+      connections: connections,
+      semanticsLabel: strings.sftpServers,
+      noConnectionsLabel: strings.noConnections,
+      collapseTooltip: strings.collapseServerList,
+      collapseButtonKey: const ValueKey('sftp-server-collapse-mobile'),
+      onCollapse: onCollapse,
+      tileBuilder: (context, connection, compact) => _SftpServerTileBinding(
+        connection: connection,
+        strings: strings,
+        compact: compact,
+        onTap: () => onSelect(connection.id),
       ),
     );
   }

@@ -98,141 +98,36 @@ class _AdminServerPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     final connections = context
         .select<SystemAdminViewModel, List<ConnectionConfig>>(
           (vm) => vm.connections,
         );
-
-    if (connections.isEmpty) {
-      return Material(
-        color: colorScheme.surface,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-          children: [
-            _header(context, colorScheme, isMonitorTab),
-            _AdminEmptyState(strings: strings),
-          ],
-        ),
-      );
-    }
-    return Material(
-      color: colorScheme.surface,
-      child: Column(
-        children: [
-          _header(context, colorScheme, isMonitorTab),
-          Expanded(
-            child: ReorderableListView.builder(
-              buildDefaultDragHandles: false,
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
-              itemCount: connections.length,
-              itemBuilder: (context, index) {
-                final connection = connections[index];
-                return Container(
-                  key: ValueKey(connection.id),
-                  margin: const EdgeInsets.only(bottom: 8),
-                  child: Row(
-                    children: [
-                      ReorderableDragStartListener(
-                        index: index,
-                        child: SizedBox.square(
-                          dimension: 48,
-                          child: Center(
-                            child: Icon(
-                              Icons.drag_handle_rounded,
-                              size: 22,
-                              color: colorScheme.onSurfaceVariant.withValues(
-                                alpha: 0.58,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      Expanded(
-                        child: _AdminServerTileBinding(
-                          connection: connection,
-                          isMonitorTab: isMonitorTab,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-              onReorderItem: (oldIndex, newIndex) {
-                context.read<StorageService>().reorderConnections(
-                  oldIndex,
-                  newIndex,
-                );
-              },
-            ),
-          ),
-        ],
+    return ServerSelectorPane(
+      connections: connections,
+      title: isMonitorTab
+          ? _monitorText(strings, 'Monitor servers', '监控服务器')
+          : strings.omServers,
+      subtitle: _monitorText(
+        strings,
+        '${connections.length} available',
+        '共 ${connections.length} 台可用',
       ),
-    );
-  }
-
-  Widget _header(
-    BuildContext context,
-    ColorScheme colorScheme,
-    bool isMonitorTab,
-  ) {
-    final connections = context.select<SystemAdminViewModel, int>(
-      (vm) => vm.connections.length,
-    );
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
-      child: Row(
-        children: [
-          AppIconBadge(
-            icon: isMonitorTab
-                ? Icons.monitor_heart_outlined
-                : Icons.dns_outlined,
-            size: 36,
-            iconSize: 18,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  isMonitorTab
-                      ? _monitorText(strings, 'Monitor servers', '监控服务器')
-                      : strings.omServers,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: colorScheme.onSurface,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                Text(
-                  _monitorText(
-                    strings,
-                    '$connections available',
-                    '共 $connections 台可用',
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: colorScheme.onSurfaceVariant,
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          SizedBox.square(
-            dimension: 48,
-            child: IconButton(
-              key: const ValueKey('admin-server-collapse-desktop'),
-              tooltip: strings.collapseServerList,
-              icon: const Icon(Icons.keyboard_double_arrow_left_rounded),
-              onPressed: onCollapse,
-            ),
-          ),
-        ],
+      headerIcon: isMonitorTab
+          ? Icons.monitor_heart_outlined
+          : Icons.dns_outlined,
+      collapseTooltip: strings.collapseServerList,
+      reorderTooltip: strings.reorderServer,
+      collapseButtonKey: const ValueKey('admin-server-collapse-desktop'),
+      onCollapse: onCollapse,
+      onReorder: (oldIndex, newIndex) {
+        context.read<StorageService>().reorderConnections(oldIndex, newIndex);
+      },
+      tileBuilder: (context, connection, compact) => _AdminServerTileBinding(
+        connection: connection,
+        compact: compact,
+        isMonitorTab: isMonitorTab,
       ),
+      emptyState: _AdminEmptyState(strings: strings),
     );
   }
 }
@@ -251,83 +146,23 @@ class _AdminMobileServerStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textScale = MediaQuery.textScalerOf(
-      context,
-    ).scale(1).clamp(1.0, 2.0).toDouble();
-    final stripHeight = 72.0 + (textScale - 1.0) * 38.0;
-
     final connections = context
         .select<SystemAdminViewModel, List<ConnectionConfig>>(
           (vm) => vm.connections,
         );
-
-    if (connections.isEmpty) {
-      return SizedBox(
-        height: stripHeight,
-        child: Center(child: Text(strings.noConnections)),
-      );
-    }
-
-    return SizedBox(
-      height: stripHeight,
-      child: NotificationListener<ScrollNotification>(
-        onNotification: (notification) => true,
-        child: ListView.separated(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          scrollDirection: Axis.horizontal,
-          itemCount: connections.length + 1,
-          separatorBuilder: (_, _) => const SizedBox(width: 10),
-          itemBuilder: (context, index) {
-            if (index == 0) {
-              return _AdminMobileCollapseButton(
-                strings: strings,
-                onPressed: onCollapse,
-              );
-            }
-            final connection = connections[index - 1];
-            return SizedBox(
-              width: 210,
-              child: _AdminServerTileBinding(
-                connection: connection,
-                compact: true,
-                isMonitorTab: isMonitorTab,
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-}
-
-class _AdminMobileCollapseButton extends StatelessWidget {
-  final AppStrings strings;
-  final VoidCallback onPressed;
-
-  const _AdminMobileCollapseButton({
-    required this.strings,
-    required this.onPressed,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return SizedBox(
-      width: 48,
-      height: 48,
-      child: Material(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.42),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-          side: BorderSide(color: colorScheme.outlineVariant),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: IconButton(
-          key: const ValueKey('admin-server-collapse-mobile'),
-          tooltip: strings.collapseServerList,
-          icon: const Icon(Icons.keyboard_double_arrow_up_rounded),
-          onPressed: onPressed,
-        ),
+    return ServerSelectorStrip(
+      connections: connections,
+      semanticsLabel: isMonitorTab
+          ? _monitorText(strings, 'Monitor servers', '监控服务器')
+          : strings.omServers,
+      noConnectionsLabel: strings.noConnections,
+      collapseTooltip: strings.collapseServerList,
+      collapseButtonKey: const ValueKey('admin-server-collapse-mobile'),
+      onCollapse: onCollapse,
+      tileBuilder: (context, connection, compact) => _AdminServerTileBinding(
+        connection: connection,
+        compact: compact,
+        isMonitorTab: isMonitorTab,
       ),
     );
   }

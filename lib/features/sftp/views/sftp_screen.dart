@@ -18,6 +18,7 @@ import 'package:ssh_mobile/widgets/tactile_feedback.dart';
 import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
 import 'package:ssh_mobile/widgets/app_surface.dart';
 import 'package:ssh_mobile/widgets/ssh_host_key_trust_dialog.dart';
+import 'package:ssh_mobile/widgets/server_selector.dart';
 import 'package:ssh_mobile/features/sftp/views/sftp_editor_screen.dart';
 import 'package:ssh_mobile/features/sftp/views/sftp_file_viewer_screen.dart';
 

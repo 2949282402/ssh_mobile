@@ -87,7 +87,7 @@ flowchart LR
 - `lib/main.dart`: 应用启动和 `MultiProvider` 装配入口，注册基础 service 与 feature ViewModel。
 - `lib/features/`: feature 自有目录。当前重点包括 `connection/models|viewmodels|views`、`ai_chat/viewmodels|services`、`settings/viewmodels`、`performance/viewmodels`、`sftp/viewmodels`、`terminal/viewmodels`。
 - `lib/features/*/views/`: 页面、导航壳、基于 Dart `part` 的复合 UI 和 feature 子组件，主要负责布局、路由和少量瞬时 UI 状态。
-- `lib/theme/app_theme.dart` 与 `lib/widgets/app_surface.dart`: 全局颜色、排版、圆角、控件主题，以及主页面背景、页头、图标徽标、分组卡片和空状态组件。新增界面应优先复用这些设计基础，避免页面级颜色和阴影分叉。
+- `lib/theme/app_theme.dart`、`lib/widgets/app_surface.dart` 与 `lib/widgets/server_selector.dart`: 全局颜色、排版、圆角、控件主题，主页面背景、页头、图标徽标、分组卡片、空状态，以及 SFTP / 系统管理共用的桌面和移动服务器选择栏。新增界面应优先复用这些设计基础，避免页面级颜色和阴影分叉。
 - `lib/services/`: SSH、SFTP、LLM、AI tools、监控、存储、MCP 等基础设施与 repository-style service，子目录包括 `ai_tool/`、`client_webview/`、`mcp/`、`ssh/`、`sftp/`、`storage/`。
 - `lib/data/`: Drift 数据库、DAO 和 Drift-backed repository 实现。`StorageService` 仍作为兼容 facade 暴露现有接口。
 - `lib/core/services/`: 更底层的跨 feature 服务与工厂，例如 `ssh_client_factory.dart`、`data_protection_service.dart`。

@@ -287,3 +287,7 @@ across sessions.
   reuses cached Material/Shad theme objects. Terminal font and other
   feature-scoped settings must not rebuild the whole navigation shell; theme
   changes must avoid stacked interpolation animations.
+- 2026-07-15: SFTP and System Administration share expanded desktop/mobile
+  server selector chrome through `lib/widgets/server_selector.dart`. Keep
+  feature-specific bindings responsible for SFTP single-select and Monitor
+  multi-select behavior instead of duplicating selector layout.

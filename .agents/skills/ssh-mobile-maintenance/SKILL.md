@@ -255,6 +255,9 @@ its child widgets.
   settings remain reachable from the Servers page. The AI header's settings
   button opens LLM settings and stays separate from app settings.
 - Keep deferred page activation so heavy pages mount only when selected.
+- Keep SFTP and System Administration server selector chrome shared through
+  `lib/widgets/server_selector.dart`; feature bindings own single/multi-select
+  state, connection actions, and status semantics.
 - Keep the AI chat page alive across page switches.
 - Keep custom mobile navigation items exposed as a single semantic button with
   a localized label and selected state; exclude duplicate icon/text semantics.
