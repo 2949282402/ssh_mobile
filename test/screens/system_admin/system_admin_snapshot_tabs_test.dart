@@ -571,6 +571,10 @@ void main() {
       await tester.tap(find.text('监听端口'));
       await tester.pumpAndSettle();
 
+      expect(
+        find.byKey(const ValueKey('system-admin-workspace-header')),
+        findsNothing,
+      );
       // Snapshot mode is the default and does not root-connect automatically.
       expect(find.text('快照模式'), findsOneWidget);
       expect(find.text('nginx'), findsWidgets);
