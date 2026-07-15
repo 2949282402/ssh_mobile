@@ -19,6 +19,13 @@ across sessions.
 
 ## Notes
 
+- 2026-07-15: The System Administration workspace now uses the shared page
+  surface/header and shows a localized connection, snapshot, Root, loading, or
+  failure state without changing selection or SSH connection semantics. The
+  mobile server strip reserves height through 200% text; its collapse switch
+  only lays out the current child so an outgoing expanded strip cannot overflow
+  during the height animation. Keep its 48 dp collapse/expand and reorder
+  controls, visible desktop status chips, and per-server semantic state.
 - 2026-07-15: The SFTP server selector keeps per-server `Selector` snapshots,
   exposes visible and semantic connected/connecting/disconnected states, and
   preserves 48 dp reorder/collapse actions. Desktop collapse uses
