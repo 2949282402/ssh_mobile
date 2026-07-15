@@ -123,20 +123,16 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
     final strings = widget.strings;
     final onRefresh = widget.onRefresh;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
-      child: Row(
-        children: [
-          Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Text(
-                _serverSummary(strings, connections),
-                maxLines: 1,
-                style: const TextStyle(fontWeight: FontWeight.w800),
-              ),
-            ),
-          ),
-          IconButton.outlined(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 2),
+      child: AppSectionCard(
+        title: _serverSummary(strings, connections),
+        subtitle: strings.adminSnapshotAccess,
+        icon: Icons.insights_outlined,
+        padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
+        trailing: SizedBox.square(
+          dimension: 48,
+          child: IconButton.outlined(
+            key: const ValueKey('snapshot-tab-refresh'),
             onPressed: isRefreshing ? null : onRefresh,
             icon: isRefreshing
                 ? const SizedBox(
@@ -147,7 +143,7 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
                 : const Icon(Icons.refresh_rounded),
             tooltip: strings.refresh,
           ),
-        ],
+        ),
       ),
     );
   }
@@ -203,10 +199,38 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
             key: ValueKey('header-${flatItem.connection.id}'),
             margin: margin,
             decoration: decoration,
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
-            child: Text(
-              flatItem.connection.name,
-              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+            child: Row(
+              children: [
+                AppIconBadge(icon: Icons.dns_outlined, size: 32, iconSize: 16),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        flatItem.connection.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 14,
+                        ),
+                      ),
+                      Text(
+                        '${flatItem.connection.username}@${flatItem.connection.host}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: colorScheme.onSurfaceVariant,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           );
         }
@@ -216,13 +240,25 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
             key: ValueKey('empty-${flatItem.connection.id}'),
             margin: margin,
             decoration: decoration,
-            padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-            child: Text(
-              flatItem.emptyText!,
-              style: TextStyle(
-                color: colorScheme.onSurfaceVariant,
-                fontSize: 12,
-              ),
+            padding: const EdgeInsets.fromLTRB(54, 4, 12, 14),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.inbox_outlined,
+                  size: 18,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    flatItem.emptyText!,
+                    style: TextStyle(
+                      color: colorScheme.onSurfaceVariant,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
             ),
           );
         }
@@ -246,24 +282,22 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
     final future = widget.future;
 
     if (connections.isEmpty) {
-      return Center(
-        child: Builder(
-          builder: (context) {
-            final desktop = isDesktopLayout(context);
-            final emptyServerText = desktop
-                ? _monitorText(
-                    strings,
-                    'Select a server from the left.',
-                    '请从左侧选择一台服务器。',
-                  )
-                : _monitorText(
-                    strings,
-                    'Select a server from above.',
-                    '请从上方选择一台服务器。',
-                  );
-            return Text(emptyServerText);
-          },
-        ),
+      final desktop = isDesktopLayout(context);
+      return AppEmptyState(
+        icon: Icons.dns_outlined,
+        title: strings.adminSelectServer,
+        message: desktop
+            ? _monitorText(
+                strings,
+                'Select a server from the left.',
+                '请从左侧选择一台服务器。',
+              )
+            : _monitorText(
+                strings,
+                'Select a server from above.',
+                '请从上方选择一台服务器。',
+              ),
+        compact: true,
       );
     }
 
@@ -285,13 +319,16 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
           return Column(
             children: [
               _buildHeader(context, isRefreshing: true),
-              const Expanded(
-                child: Center(
-                  child: SizedBox(
-                    width: 28,
-                    height: 28,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+              Expanded(
+                child: AppEmptyState(
+                  icon: Icons.sync_rounded,
+                  title: _monitorText(strings, 'Loading snapshot', '正在加载快照'),
+                  message: _monitorText(
+                    strings,
+                    'Reading the latest server state.',
+                    '正在读取服务器最新状态。',
                   ),
+                  compact: true,
                 ),
               ),
             ],
@@ -302,10 +339,15 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
             children: [
               _buildHeader(context, isRefreshing: false),
               Expanded(
-                child: Center(
-                  child: Text(
-                    '${_monitorText(strings, 'Load failed', '加载失败')}: ${snapshot.error}',
-                    textAlign: TextAlign.center,
+                child: AppEmptyState(
+                  icon: Icons.error_outline_rounded,
+                  title: _monitorText(strings, 'Load failed', '加载失败'),
+                  message: '${snapshot.error}',
+                  compact: true,
+                  action: FilledButton.icon(
+                    onPressed: widget.onRefresh,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: Text(strings.refresh),
                   ),
                 ),
               ),

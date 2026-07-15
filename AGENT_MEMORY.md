@@ -19,6 +19,11 @@ across sessions.
 
 ## Notes
 
+- 2026-07-15: Ports, Applications, and Services share `_ServerSnapshotTab`.
+  Keep its snapshot-only fetching and selected-server cache behavior intact;
+  its shared presentation now owns the server context card, 48 dp refresh
+  action, and loading/error/empty recovery states so feature tabs do not add
+  divergent raw placeholders.
 - 2026-07-15: The System Administration workspace now uses the shared page
   surface/header and shows a localized connection, snapshot, Root, loading, or
   failure state without changing selection or SSH connection semantics. The
