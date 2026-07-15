@@ -162,8 +162,17 @@ class AppStrings {
       _en ? 'Window name already exists' : '窗口名称已存在';
 
   String get terminalWindows => _en ? 'Terminal windows' : '终端窗口';
+  String terminalWindowsOverview(int total, int connected, int attention) => _en
+      ? '$total ${total == 1 ? "window" : "windows"} · $connected connected${attention > 0 ? " · $attention ${attention == 1 ? "needs" : "need"} attention" : ""}'
+      : '$total 个窗口 · $connected 个已连接${attention > 0 ? " · $attention 个需处理" : ""}';
+  String terminalWindowsForServer(int total, int connected) => _en
+      ? '$total ${total == 1 ? "window" : "windows"} · $connected connected'
+      : '$total 个窗口 · $connected 个已连接';
   String selectedWindows(int count) =>
       _en ? '$count selected' : '已选择 $count 个窗口';
+  String selectedWindowsHint(int total) => _en
+      ? 'Choose actions for the selected windows · $total total'
+      : '对选中的窗口执行操作 · 共 $total 个';
   String selectedServers(int count) =>
       _en ? '$count selected' : '已选择 $count 台服务器';
   String viewAllTerminalWindows(int totalCount) => _en
@@ -178,7 +187,12 @@ class AppStrings {
       ? 'Opened terminals will appear here after connecting to a server.'
       : '连接服务器后，打开的终端会显示在这里。';
   String get enterWindow => _en ? 'Enter window' : '进入窗口';
+  String get renameTerminalWindow => _en ? 'Rename window' : '重命名窗口';
+  String get windowActions => _en ? 'Window actions' : '窗口操作';
   String get closeWindow => _en ? 'Close window' : '关闭窗口';
+  String get sessionMode => _en ? 'Mode' : '模式';
+  String get tmuxSession => _en ? 'tmux' : 'tmux';
+  String get plainSshSession => _en ? 'SSH' : 'SSH';
   String get createdAt => _en ? 'Created' : '创建';
   String get autoDestroy => _en ? 'Auto delete' : '销毁';
   String get memoryUsage => _en ? 'Memory' : '内存';

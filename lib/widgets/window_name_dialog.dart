@@ -7,11 +7,15 @@ import '../services/app_settings.dart';
 class WindowNameDialog extends StatefulWidget {
   final String initialName;
   final bool Function(String name) isNameAvailable;
+  final String? title;
+  final String? confirmLabel;
 
   const WindowNameDialog({
     super.key,
     required this.initialName,
     required this.isNameAvailable,
+    this.title,
+    this.confirmLabel,
   });
 
   @override
@@ -48,7 +52,7 @@ class _WindowNameDialogState extends State<WindowNameDialog> {
         : strings.duplicateWindowName;
 
     return ShadDialog(
-      title: Text(strings.newTerminalWindow),
+      title: Text(widget.title ?? strings.newTerminalWindow),
       actions: [
         ShadButton.outline(
           onPressed: () => Navigator.pop(context),
@@ -56,7 +60,7 @@ class _WindowNameDialogState extends State<WindowNameDialog> {
         ),
         ShadButton(
           onPressed: valid ? () => Navigator.pop(context, name) : null,
-          child: Text(strings.create),
+          child: Text(widget.confirmLabel ?? strings.create),
         ),
       ],
       child: Column(

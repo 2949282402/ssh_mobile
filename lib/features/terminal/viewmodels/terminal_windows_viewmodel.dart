@@ -25,6 +25,9 @@ class TerminalWindowsViewModel extends ChangeNotifier {
   }
 
   void _onServiceChanged() {
+    final availableIds = sessions.map((session) => session.id).toSet();
+    _selectedSessionIds.retainAll(availableIds);
+    _selectionMode = _selectedSessionIds.isNotEmpty;
     notifyListeners();
   }
 
@@ -81,6 +84,20 @@ class TerminalWindowsViewModel extends ChangeNotifier {
     for (final id in ids) {
       await _sshService.disconnectSession(id);
     }
+  }
+
+  bool isSessionNameAvailable(String sessionId, String name) {
+    final normalized = name.trim().toLowerCase();
+    if (normalized.isEmpty) return false;
+    return sessions.every(
+      (session) =>
+          session.id == sessionId ||
+          session.displayName.trim().toLowerCase() != normalized,
+    );
+  }
+
+  bool renameSession(String sessionId, String name) {
+    return _sshService.renameSession(sessionId, name);
   }
 
   Future<void> copyCleanupCommand(String command) async {

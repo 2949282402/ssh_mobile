@@ -6,7 +6,11 @@ import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/theme/app_theme.dart';
 import 'package:ssh_mobile/utils/responsive.dart';
+import 'package:ssh_mobile/widgets/app_surface.dart';
+import 'package:ssh_mobile/widgets/connection_progress_dialog.dart';
 import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
+import 'package:ssh_mobile/widgets/ssh_host_key_trust_dialog.dart';
+import 'package:ssh_mobile/widgets/window_name_dialog.dart';
 
 class TerminalWindowsScreen extends StatelessWidget {
   final String? connectionId;
@@ -16,7 +20,9 @@ class TerminalWindowsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: SafeArea(child: TerminalWindowsPage(connectionId: connectionId)),
+      body: AppPageSurface(
+        child: SafeArea(child: TerminalWindowsPage(connectionId: connectionId)),
+      ),
     );
   }
 }
@@ -118,63 +124,144 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final desktop = constraints.maxWidth >= AppBreakpoints.desktop;
-        final columns = constraints.maxWidth >= AppBreakpoints.wideDesktop
+        final accessibleText = MediaQuery.textScalerOf(context).scale(1) > 1.25;
+        final columns = accessibleText
+            ? 1
+            : constraints.maxWidth >= AppBreakpoints.wideDesktop
             ? 3
             : desktop
             ? 2
             : 1;
         final horizontalPadding = desktop ? 24.0 : 12.0;
+        final groups = _groupSessions(sessions);
 
         return Center(
           child: ConstrainedBox(
             constraints: BoxConstraints(
               maxWidth: desktop ? 1480 : double.infinity,
             ),
-            child: columns == 1
-                ? ListView.separated(
+            child: CustomScrollView(
+              slivers: [
+                const SliverToBoxAdapter(child: SizedBox(height: 6)),
+                for (final group in groups) ...[
+                  SliverPadding(
                     padding: EdgeInsets.fromLTRB(
                       horizontalPadding,
-                      8,
+                      12,
                       horizontalPadding,
-                      24,
+                      10,
                     ),
-                    itemCount: sessions.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 10),
-                    itemBuilder: (context, index) {
-                      return _buildWindowItem(
-                        context,
-                        viewModel,
-                        sessions[index],
-                        strings,
-                      );
-                    },
-                  )
-                : GridView.builder(
-                    padding: EdgeInsets.fromLTRB(
-                      horizontalPadding,
-                      18,
-                      horizontalPadding,
-                      24,
+                    sliver: SliverToBoxAdapter(
+                      child: _buildServerGroupHeader(context, group, strings),
                     ),
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: columns,
-                      crossAxisSpacing: 14,
-                      mainAxisSpacing: 14,
-                      mainAxisExtent: 210,
-                    ),
-                    itemCount: sessions.length,
-                    itemBuilder: (context, index) {
-                      return _buildWindowItem(
-                        context,
-                        viewModel,
-                        sessions[index],
-                        strings,
-                      );
-                    },
                   ),
+                  if (columns == 1)
+                    SliverPadding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: horizontalPadding,
+                      ),
+                      sliver: SliverList.separated(
+                        itemCount: group.sessions.length,
+                        separatorBuilder: (_, _) => const SizedBox(height: 10),
+                        itemBuilder: (context, index) => _buildWindowItem(
+                          context,
+                          viewModel,
+                          group.sessions[index],
+                          strings,
+                        ),
+                      ),
+                    )
+                  else
+                    SliverPadding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: horizontalPadding,
+                      ),
+                      sliver: SliverGrid.builder(
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columns,
+                          crossAxisSpacing: 14,
+                          mainAxisSpacing: 14,
+                          mainAxisExtent: 320,
+                        ),
+                        itemCount: group.sessions.length,
+                        itemBuilder: (context, index) => _buildWindowItem(
+                          context,
+                          viewModel,
+                          group.sessions[index],
+                          strings,
+                        ),
+                      ),
+                    ),
+                  const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                ],
+                const SliverToBoxAdapter(child: SizedBox(height: 18)),
+              ],
+            ),
           ),
         );
       },
+    );
+  }
+
+  List<_TerminalServerGroup> _groupSessions(List<SshSession> sessions) {
+    final groups = <String, _TerminalServerGroup>{};
+    for (final session in sessions) {
+      groups.putIfAbsent(
+        session.connectionId,
+        () => _TerminalServerGroup(
+          connectionName: session.connectionName,
+          sessions: [],
+        ),
+      );
+      groups[session.connectionId]!.sessions.add(session);
+    }
+    return groups.values.toList(growable: false);
+  }
+
+  Widget _buildServerGroupHeader(
+    BuildContext context,
+    _TerminalServerGroup group,
+    AppStrings strings,
+  ) {
+    final colors = Theme.of(context).colorScheme;
+    final connected = group.sessions
+        .where((session) => session.isConnected)
+        .length;
+    return Semantics(
+      container: true,
+      header: true,
+      label: group.connectionName,
+      child: Row(
+        children: [
+          const AppIconBadge(icon: Icons.dns_outlined, size: 36, iconSize: 18),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  group.connectionName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  strings.terminalWindowsForServer(
+                    group.sessions.length,
+                    connected,
+                  ),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -185,59 +272,163 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
     AppStrings strings,
   ) {
     final colorScheme = Theme.of(context).colorScheme;
+    final connected = sessions.where((session) => session.isConnected).length;
+    final attention = sessions.length - connected;
+    final canPop = !widget.embedded && Navigator.canPop(context);
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+      key: const ValueKey('terminal-windows-header'),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       decoration: BoxDecoration(
-        color: Theme.of(context).scaffoldBackgroundColor,
+        color: colorScheme.surface.withValues(alpha: 0.84),
         border: Border(bottom: BorderSide(color: colorScheme.outlineVariant)),
       ),
-      child: Row(
-        children: [
-          if (viewModel.selectionMode)
-            IconButton(
-              icon: const Icon(Icons.close),
-              tooltip: strings.exitSelection,
-              onPressed: viewModel.clearSelection,
-            )
-          else if (!widget.embedded && Navigator.canPop(context))
-            IconButton(
-              icon: const Icon(Icons.arrow_back_rounded),
-              tooltip: MaterialLocalizations.of(context).backButtonTooltip,
-              onPressed: () => Navigator.pop(context),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact =
+              constraints.maxWidth < 560 ||
+              MediaQuery.textScalerOf(context).scale(1) > 1.3;
+          final title = viewModel.selectionMode
+              ? strings.selectedWindows(viewModel.selectedSessionIds.length)
+              : strings.terminalWindows;
+          final subtitle = viewModel.selectionMode
+              ? strings.selectedWindowsHint(sessions.length)
+              : strings.terminalWindowsOverview(
+                  sessions.length,
+                  connected,
+                  attention,
+                );
+          final heading = Semantics(
+            header: true,
+            liveRegion: viewModel.selectionMode,
+            child: Row(
+              children: [
+                if (viewModel.selectionMode)
+                  _headerIconButton(
+                    key: const ValueKey('terminal-windows-exit-selection'),
+                    icon: Icons.close_rounded,
+                    tooltip: strings.exitSelection,
+                    onPressed: viewModel.clearSelection,
+                  )
+                else if (canPop)
+                  _headerIconButton(
+                    key: const ValueKey('terminal-windows-back'),
+                    icon: Icons.arrow_back_rounded,
+                    tooltip: MaterialLocalizations.of(
+                      context,
+                    ).backButtonTooltip,
+                    onPressed: () => Navigator.pop(context),
+                  )
+                else
+                  const AppIconBadge(
+                    icon: Icons.terminal_rounded,
+                    size: 44,
+                    iconSize: 22,
+                  ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        subtitle,
+                        maxLines: compact ? 2 : 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-          Expanded(
-            child: Text(
-              viewModel.selectionMode
-                  ? strings.selectedWindows(viewModel.selectedSessionIds.length)
-                  : strings.terminalWindows,
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w800,
-                color: colorScheme.onSurface,
-              ),
-            ),
-          ),
-          if (viewModel.selectionMode) ...[
-            IconButton(
-              icon: const Icon(Icons.select_all),
-              tooltip: strings.selectAll,
-              onPressed: viewModel.selectAll,
-            ),
-            IconButton(
-              icon: const Icon(Icons.delete_outline),
-              tooltip: strings.closeSelectedWindows,
-              color: colorScheme.error,
-              onPressed: viewModel.selectedSessionIds.isEmpty
-                  ? null
-                  : () => _closeSelectedWindows(context, viewModel),
-            ),
-          ] else
-            IconButton(
-              icon: const Icon(Icons.history_rounded),
-              tooltip: strings.connectionHistory,
-              onPressed: () => Navigator.pushNamed(context, '/history'),
-            ),
-        ],
+          );
+          final actions = Row(
+            mainAxisSize: MainAxisSize.min,
+            children: viewModel.selectionMode
+                ? [
+                    _headerIconButton(
+                      key: const ValueKey('terminal-windows-select-all'),
+                      icon: Icons.select_all_rounded,
+                      tooltip: strings.selectAll,
+                      onPressed: viewModel.selectAll,
+                    ),
+                    const SizedBox(width: 6),
+                    _headerIconButton(
+                      key: const ValueKey('terminal-windows-close-selected'),
+                      icon: Icons.delete_outline_rounded,
+                      tooltip: strings.closeSelectedWindows,
+                      color: colorScheme.error,
+                      onPressed: viewModel.selectedSessionIds.isEmpty
+                          ? null
+                          : () => _closeSelectedWindows(context, viewModel),
+                    ),
+                  ]
+                : [
+                    if (widget.connectionId != null) ...[
+                      _headerIconButton(
+                        key: const ValueKey('terminal-windows-new'),
+                        icon: Icons.add_rounded,
+                        tooltip: strings.newTerminalWindow,
+                        onPressed: () => _openNewWindow(context, strings),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                    _headerIconButton(
+                      key: const ValueKey('terminal-windows-history'),
+                      icon: Icons.history_rounded,
+                      tooltip: strings.connectionHistory,
+                      onPressed: () => Navigator.pushNamed(context, '/history'),
+                    ),
+                  ],
+          );
+
+          if (compact) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                heading,
+                const SizedBox(height: 8),
+                Align(alignment: Alignment.centerRight, child: actions),
+              ],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: heading),
+              const SizedBox(width: 14),
+              actions,
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _headerIconButton({
+    required Key key,
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback? onPressed,
+    Color? color,
+  }) {
+    return SizedBox.square(
+      key: key,
+      dimension: 48,
+      child: IconButton(
+        icon: Icon(icon),
+        tooltip: tooltip,
+        color: color,
+        onPressed: onPressed,
       ),
     );
   }
@@ -248,55 +439,43 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
       return Container(
         width: double.infinity,
         margin: const EdgeInsets.only(top: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.34),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
           border: Border.all(color: colorScheme.outlineVariant),
         ),
-        child: Text(
-          strings.noOpenWindows,
-          style: TextStyle(
-            color: colorScheme.onSurfaceVariant,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      );
-    }
-
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+        child: Row(
           children: [
-            Icon(
-              Icons.tab_unselected_rounded,
-              size: 56,
-              color: colorScheme.onSurface.withValues(alpha: 0.38),
-            ),
-            const SizedBox(height: 14),
-            Text(
-              strings.noOpenWindows,
-              style: TextStyle(
-                color: colorScheme.onSurface,
-                fontSize: 17,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              strings.openWindowsHint,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: colorScheme.onSurface.withValues(alpha: 0.62),
-                fontSize: 14,
+            Icon(Icons.terminal_rounded, size: 20, color: colorScheme.primary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                strings.noOpenWindows,
+                style: TextStyle(
+                  color: colorScheme.onSurfaceVariant,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
           ],
         ),
-      ),
+      );
+    }
+
+    return AppEmptyState(
+      icon: Icons.terminal_rounded,
+      title: strings.noOpenWindows,
+      message: strings.openWindowsHint,
+      action: widget.connectionId == null
+          ? null
+          : FilledButton.icon(
+              key: const ValueKey('terminal-windows-empty-new'),
+              onPressed: () => _openNewWindow(context, strings),
+              icon: const Icon(Icons.add_rounded),
+              label: Text(strings.newTerminalWindow),
+            ),
     );
   }
 
@@ -310,125 +489,202 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
     final selected = viewModel.selectedSessionIds.contains(session.id);
     final statusColor = _statusColor(context, session);
     final cleanupCommand = session.tmuxKillCommand;
+    final statusLabel = _statusLabel(session, strings);
+    final statusDetail = _statusDetail(session);
 
     return RepaintBoundary(
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(8),
-          onTap: () {
-            if (viewModel.selectionMode) {
-              viewModel.toggleSelection(session.id);
-            } else {
-              _openWindow(context, session);
-            }
-          },
-          onLongPress: () {
-            viewModel.toggleSelection(session.id);
-          },
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
+      child: Semantics(
+        key: ValueKey('terminal-window-card-${session.id}'),
+        container: true,
+        button: true,
+        selected: selected,
+        label: '${session.displayName}, $statusLabel',
+        child: Card(
+          elevation: 0,
+          color: selected
+              ? colorScheme.primary.withValues(alpha: 0.12)
+              : colorScheme.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+            side: BorderSide(
               color: selected
-                  ? colorScheme.primary.withValues(alpha: 0.12)
-                  : colorScheme.surface,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: selected
-                    ? colorScheme.primary.withValues(alpha: 0.55)
-                    : colorScheme.outlineVariant,
-              ),
+                  ? colorScheme.primary.withValues(alpha: 0.55)
+                  : colorScheme.outline,
             ),
-            child: Row(
-              children: [
-                _buildLeadingIcon(
-                  context,
-                  viewModel,
-                  session,
-                  selected,
-                  statusColor,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      OverflowScrollText(
-                        session.displayName,
-                        selectable: false,
-                        maxLines: 1,
-                        style: TextStyle(
-                          color: colorScheme.onSurface,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () {
+              if (viewModel.selectionMode) {
+                viewModel.toggleSelection(session.id);
+              } else {
+                _openWindow(context, session);
+              }
+            },
+            onLongPress: () => viewModel.toggleSelection(session.id),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildLeadingIcon(
+                    context,
+                    viewModel,
+                    session,
+                    selected,
+                    statusColor,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        OverflowScrollText(
+                          session.displayName,
+                          selectable: false,
+                          maxLines: 1,
+                          style: TextStyle(
+                            color: colorScheme.onSurface,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      OverflowScrollText(
-                        session.connectionName,
-                        selectable: false,
-                        maxLines: 1,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: colorScheme.onSurface.withValues(alpha: 0.58),
-                        ),
-                      ),
-                      const SizedBox(height: 7),
-                      Row(
-                        children: [
-                          Container(
-                            width: 7,
-                            height: 7,
-                            decoration: BoxDecoration(
-                              color: statusColor,
-                              shape: BoxShape.circle,
+                        const SizedBox(height: 4),
+                        OverflowScrollText(
+                          session.connectionName,
+                          selectable: false,
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colorScheme.onSurface.withValues(
+                              alpha: 0.58,
                             ),
                           ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: OverflowScrollText(
-                              _statusLabel(session, strings),
-                              selectable: false,
-                              maxLines: 1,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: colorScheme.onSurface.withValues(
-                                  alpha: 0.68,
-                                ),
+                        ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 9,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: statusColor.withValues(alpha: 0.11),
+                              borderRadius: BorderRadius.circular(
+                                AppTheme.radiusPill,
+                              ),
+                              border: Border.all(
+                                color: statusColor.withValues(alpha: 0.28),
                               ),
                             ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _statusIcon(session.state),
+                                  size: 13,
+                                  color: statusColor,
+                                ),
+                                const SizedBox(width: 5),
+                                Flexible(
+                                  child: Text(
+                                    statusLabel,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: statusColor,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        if (statusDetail != null) ...[
+                          const SizedBox(height: 7),
+                          Text(
+                            statusDetail,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: colorScheme.error,
+                                  height: 1.35,
+                                ),
                           ),
                         ],
-                      ),
-                      const SizedBox(height: 8),
-                      _buildSessionMeta(context, session, strings),
-                      if (cleanupCommand != null) ...[
                         const SizedBox(height: 8),
-                        _buildCleanupCommand(
-                          context,
-                          viewModel,
-                          cleanupCommand,
-                          strings,
+                        _buildSessionMeta(context, session, strings),
+                        if (cleanupCommand != null) ...[
+                          const SizedBox(height: 8),
+                          _buildCleanupCommand(
+                            context,
+                            viewModel,
+                            session.id,
+                            cleanupCommand,
+                            strings,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  if (!viewModel.selectionMode) ...[
+                    _windowActionButton(
+                      key: ValueKey('terminal-window-open-${session.id}'),
+                      icon: Icons.open_in_new_rounded,
+                      tooltip: strings.enterWindow,
+                      onPressed: () => _openWindow(context, session),
+                    ),
+                    PopupMenuButton<String>(
+                      key: ValueKey('terminal-window-menu-${session.id}'),
+                      tooltip: strings.windowActions,
+                      onSelected: (value) {
+                        switch (value) {
+                          case 'rename':
+                            _renameWindow(context, viewModel, session, strings);
+                            break;
+                          case 'close':
+                            _closeWindow(context, viewModel, session, strings);
+                            break;
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        PopupMenuItem(
+                          value: 'rename',
+                          child: ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.edit_outlined, size: 20),
+                            title: Text(strings.renameTerminalWindow),
+                          ),
+                        ),
+                        PopupMenuItem(
+                          value: 'close',
+                          child: ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: Icon(
+                              Icons.close_rounded,
+                              size: 20,
+                              color: colorScheme.error,
+                            ),
+                            title: Text(
+                              strings.closeWindow,
+                              style: TextStyle(color: colorScheme.error),
+                            ),
+                          ),
                         ),
                       ],
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                if (!viewModel.selectionMode)
-                  _windowActionButton(
-                    icon: const Icon(Icons.open_in_new_rounded),
-                    tooltip: strings.enterWindow,
-                    onPressed: () => _openWindow(context, session),
-                  ),
-                _windowActionButton(
-                  icon: const Icon(Icons.close_rounded),
-                  tooltip: strings.closeWindow,
-                  color: session.isConnected ? null : colorScheme.error,
-                  onPressed: () =>
-                      _closeWindow(context, viewModel, session, strings),
-                ),
-              ],
+                      child: const SizedBox.square(
+                        dimension: 48,
+                        child: Icon(Icons.more_vert_rounded),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
         ),
@@ -437,20 +693,19 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
   }
 
   Widget _windowActionButton({
-    required Widget icon,
+    required Key key,
+    required IconData icon,
     required String tooltip,
     required VoidCallback onPressed,
     Color? color,
   }) {
-    return SizedBox(
-      width: 36,
-      height: 36,
+    return SizedBox.square(
+      key: key,
+      dimension: 48,
       child: IconButton(
-        icon: icon,
+        icon: Icon(icon),
         tooltip: tooltip,
         color: color,
-        padding: EdgeInsets.zero,
-        visualDensity: VisualDensity.compact,
         onPressed: onPressed,
       ),
     );
@@ -459,47 +714,54 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
   Widget _buildCleanupCommand(
     BuildContext context,
     TerminalWindowsViewModel viewModel,
+    String sessionId,
     String command,
     AppStrings strings,
   ) {
     final colorScheme = Theme.of(context).colorScheme;
-    return InkWell(
-      borderRadius: BorderRadius.circular(6),
-      onTap: () => _copyCleanupCommand(context, viewModel, command, strings),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.72),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: colorScheme.outlineVariant),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              Icons.content_copy_rounded,
-              size: 14,
-              color: colorScheme.onSurface.withValues(alpha: 0.62),
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: OverflowScrollText(
-                command,
-                selectable: false,
-                maxLines: 1,
-                style: TextStyle(
-                  fontFamily: 'monospace',
-                  fontFamilyFallback: [
-                    'Consolas',
-                    'Microsoft YaHei',
-                    'PingFang SC',
-                    'sans-serif',
-                  ],
-                  fontSize: 11,
-                  color: colorScheme.onSurface.withValues(alpha: 0.78),
+    return Semantics(
+      key: ValueKey('terminal-window-cleanup-$sessionId'),
+      button: true,
+      label: strings.copyCommand,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+        onTap: () => _copyCleanupCommand(context, viewModel, command, strings),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 48),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.72),
+            borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+            border: Border.all(color: colorScheme.outlineVariant),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.content_copy_rounded,
+                size: 14,
+                color: colorScheme.onSurface.withValues(alpha: 0.62),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: OverflowScrollText(
+                  command,
+                  selectable: false,
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontFamilyFallback: [
+                      'Consolas',
+                      'Microsoft YaHei',
+                      'PingFang SC',
+                      'sans-serif',
+                    ],
+                    fontSize: 11,
+                    color: colorScheme.onSurface.withValues(alpha: 0.78),
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -522,6 +784,17 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
           spacing: 8,
           runSpacing: 6,
           children: [
+            _MetaChip(
+              width: chipWidth,
+              icon: session.tmuxSessionName == null
+                  ? Icons.terminal_rounded
+                  : Icons.layers_outlined,
+              label: strings.sessionMode,
+              value: session.tmuxSessionName == null
+                  ? strings.plainSshSession
+                  : strings.tmuxSession,
+              color: metaColor,
+            ),
             _MetaChip(
               width: chipWidth,
               icon: Icons.schedule_rounded,
@@ -601,14 +874,13 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
       );
     }
 
-    return Container(
-      width: 40,
-      height: 40,
-      decoration: BoxDecoration(
-        color: statusColor.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Icon(Icons.terminal_rounded, color: statusColor, size: 22),
+    return AppIconBadge(
+      icon: session.tmuxSessionName == null
+          ? Icons.terminal_rounded
+          : Icons.layers_outlined,
+      size: 44,
+      iconSize: 22,
+      color: statusColor,
     );
   }
 
@@ -632,10 +904,28 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
       case SshConnectionState.connecting:
         return strings.connecting;
       case SshConnectionState.error:
-        return session.errorMessage ?? strings.connectionError;
+        return strings.connectionError;
       case SshConnectionState.disconnected:
-        return session.errorMessage ?? strings.disconnected;
+        return strings.disconnected;
     }
+  }
+
+  String? _statusDetail(SshSession session) {
+    if (session.state != SshConnectionState.error &&
+        session.state != SshConnectionState.disconnected) {
+      return null;
+    }
+    final message = session.errorMessage?.trim();
+    return message == null || message.isEmpty ? null : message;
+  }
+
+  IconData _statusIcon(SshConnectionState state) {
+    return switch (state) {
+      SshConnectionState.connected => Icons.check_circle_rounded,
+      SshConnectionState.connecting => Icons.sync_rounded,
+      SshConnectionState.error => Icons.error_rounded,
+      SshConnectionState.disconnected => Icons.link_off_rounded,
+    };
   }
 
   void _openWindow(BuildContext context, SshSession session) {
@@ -645,6 +935,88 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
       (route) => route.isFirst,
       arguments: {'id': session.connectionId, 'sessionId': session.id},
     );
+  }
+
+  Future<void> _openNewWindow(BuildContext context, AppStrings strings) async {
+    final connectionId = widget.connectionId;
+    if (connectionId == null) return;
+    final ssh = context.read<SshService>();
+    final windowName = await showDialog<String>(
+      context: context,
+      builder: (_) => WindowNameDialog(
+        initialName: ssh.defaultDisplayNameForConnection(connectionId),
+        isNameAvailable: ssh.isSessionNameAvailable,
+      ),
+    );
+    if (!context.mounted || windowName == null) return;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      useSafeArea: false,
+      builder: (_) => ConnectionProgressDialog(
+        title: strings.connectingTo(windowName),
+        message: strings.establishingConnection,
+      ),
+    );
+    await waitForConnectionProgressFrame();
+    if (!context.mounted) return;
+
+    final sessionId = await ssh.openSession(
+      connectionId,
+      displayName: windowName,
+      onUnknownHostKey: (request) =>
+          showSshHostKeyTrustDialog(context, request),
+    );
+    if (!context.mounted) return;
+    Navigator.of(context).pop();
+
+    if (sessionId == null) {
+      final message = ssh.errorMessage ?? strings.unknown;
+      final lower = message.toLowerCase();
+      final displayMessage =
+          lower.contains('tmux is not installed') ||
+              lower.contains('unable to check tmux')
+          ? strings.tmuxMissingHint(message)
+          : strings.connectionFailed(message);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(displayMessage),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+      return;
+    }
+
+    final session = ssh.getSession(sessionId);
+    if (session != null && context.mounted) {
+      _openWindow(context, session);
+    }
+  }
+
+  Future<void> _renameWindow(
+    BuildContext context,
+    TerminalWindowsViewModel viewModel,
+    SshSession session,
+    AppStrings strings,
+  ) async {
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => WindowNameDialog(
+        initialName: session.displayName,
+        isNameAvailable: (name) =>
+            viewModel.isSessionNameAvailable(session.id, name),
+        title: strings.renameTerminalWindow,
+        confirmLabel: strings.save,
+      ),
+    );
+    if (!context.mounted || name == null) return;
+    final renamed = viewModel.renameSession(session.id, name);
+    if (!renamed && context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(strings.duplicateWindowName)));
+    }
   }
 
   Future<void> _closeWindow(
@@ -704,7 +1076,9 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
             child: Text(strings.close),
           ),
         ],
@@ -747,7 +1121,9 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
             child: Text(strings.close),
           ),
         ],
@@ -758,6 +1134,16 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
       await viewModel.closeSelectedSessions();
     }
   }
+}
+
+class _TerminalServerGroup {
+  const _TerminalServerGroup({
+    required this.connectionName,
+    required this.sessions,
+  });
+
+  final String connectionName;
+  final List<SshSession> sessions;
 }
 
 class _MetaChip extends StatelessWidget {
