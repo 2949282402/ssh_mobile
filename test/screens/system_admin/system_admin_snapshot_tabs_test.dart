@@ -990,6 +990,10 @@ void main() {
       tester.widget<SingleChildScrollView>(configScroller).scrollDirection,
       Axis.horizontal,
     );
+    final controlsRow = tester.widget<Row>(
+      find.byKey(const ValueKey('monitor-config-controls-row')),
+    );
+    expect(controlsRow.mainAxisAlignment, MainAxisAlignment.center);
     await tester.drag(configScroller, const Offset(-240, 0));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
