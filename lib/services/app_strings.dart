@@ -623,6 +623,7 @@ class TerminalStrings {
   bool get _en => language == AppLanguage.en;
 
   String get connected => _en ? 'Connected' : '已连接';
+  String get connecting => _en ? 'Connecting' : '连接中';
   String get disconnected => _en ? 'Disconnected' : '已断开';
   String get fontSize => _en ? 'Font' : '字号';
   String get defaultTerminal => _en ? 'SSH Terminal' : 'SSH 终端';
@@ -638,6 +639,25 @@ class TerminalStrings {
   String get disconnect => _en ? 'Disconnect' : '断开连接';
   String get reconnect => _en ? 'Reconnect' : '重连';
   String get reconnecting => _en ? 'Reconnecting...' : '正在重连...';
+  String get connectingSession => _en ? 'Connecting to the terminal' : '正在连接终端';
+  String get connectingSessionHint => _en
+      ? 'Secure session negotiation is in progress. This usually takes only a moment.'
+      : '正在协商安全会话，通常只需片刻。';
+  String get connectionInterrupted =>
+      _en ? 'Terminal connection interrupted' : '终端连接已中断';
+  String get connectionInterruptedHint => _en
+      ? 'Your terminal output is preserved. Reconnect to continue this session.'
+      : '终端输出已保留，可重新连接后继续当前会话。';
+  String get terminalConnectionError =>
+      _en ? 'Could not connect to the terminal' : '无法连接终端';
+  String get terminalConnectionErrorStatus => _en ? 'Error' : '错误';
+  String get terminalConnectionErrorHint => _en
+      ? 'Check the server and network, then try connecting again.'
+      : '请检查服务器和网络状态，然后重试连接。';
+  String get manageWindows => _en ? 'Manage windows' : '管理窗口';
+  String get closeWindow => _en ? 'Close window' : '关闭窗口';
+  String get restoringTerminalOutput =>
+      _en ? 'Restoring terminal output…' : '正在恢复终端输出…';
   String get closeDisconnected =>
       _en ? 'Close disconnected window' : '关闭已断开的窗口';
   String get openNewWindow => _en ? 'Open new window' : '打开新窗口';
@@ -663,6 +683,13 @@ class TerminalStrings {
       _en ? 'Window name already exists' : '窗口名称已存在';
   String get addShortcut => _en ? 'Add shortcut command' : '添加快捷命令';
   String get complexKeyboard => _en ? 'Advanced keyboard' : '复杂键盘';
+  String get advancedKeyboardHint => _en
+      ? 'Navigation, control, function keys, and multiline input.'
+      : '集中使用导航键、控制键、功能键和多行输入。';
+  String get moreKeys => _en ? 'More shortcut keys' : '更多快捷键';
+  String get moreKeysHint => _en
+      ? 'Frequently used shell navigation and control keys.'
+      : '常用的 Shell 导航键与控制键。';
   String get multilineHint =>
       _en ? 'Paste or type multiline input' : '粘贴或输入多行文本';
   String get send => _en ? 'Send' : '发送';

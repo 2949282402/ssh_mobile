@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
 
 import 'package:ssh_mobile/services/app_settings.dart';
+import 'package:ssh_mobile/services/ssh_service.dart';
+import 'package:ssh_mobile/theme/app_theme.dart';
+import 'package:ssh_mobile/widgets/app_surface.dart';
 
 class TerminalScreenAppBar extends StatelessWidget
     implements PreferredSizeWidget {
   final TerminalStrings strings;
   final String? displayName;
   final String? serverName;
-  final bool isConnected;
+  final String? serverEndpoint;
+  final SshConnectionState connectionState;
   final bool isDarkMode;
   final bool reconnectInProgress;
   final VoidCallback onReconnect;
@@ -23,7 +27,8 @@ class TerminalScreenAppBar extends StatelessWidget
     required this.strings,
     required this.displayName,
     required this.serverName,
-    required this.isConnected,
+    required this.serverEndpoint,
+    required this.connectionState,
     required this.isDarkMode,
     required this.reconnectInProgress,
     required this.onReconnect,
@@ -35,56 +40,37 @@ class TerminalScreenAppBar extends StatelessWidget
     required this.onLargerFont,
   });
 
+  bool get _isConnected => connectionState == SshConnectionState.connected;
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final connectedColor = colorScheme.secondary;
-    final disconnectedColor = colorScheme.error;
-    final closeColor = isConnected ? colorScheme.error : disconnectedColor;
-    final statusColor = isConnected ? connectedColor : disconnectedColor;
+    final extendedColors = Theme.of(context).extension<ExtendedColors>();
+    final status = _statusPresentation(colorScheme, extendedColors);
+    final closeColor = colorScheme.error;
 
     return AppBar(
+      key: const ValueKey('terminal-app-bar'),
+      toolbarHeight: preferredSize.height,
       surfaceTintColor: Colors.transparent,
       titleSpacing: 4,
-      title: Row(
-        children: [
-          Flexible(
-            child: Text(
-              displayName ?? serverName ?? strings.defaultTerminal,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-            decoration: BoxDecoration(
-              color: statusColor.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: statusColor.withValues(alpha: 0.32)),
-            ),
-            child: Text(
-              isConnected ? strings.connected : strings.disconnected,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w800,
-                color: statusColor,
-              ),
-            ),
-          ),
-        ],
+      title: _TerminalAppBarTitle(
+        title: displayName ?? serverName ?? strings.defaultTerminal,
+        endpoint: serverEndpoint ?? serverName,
+        status: status,
       ),
       actions: [
-        IconButton(
-          icon: const Icon(Icons.view_list),
-          tooltip: strings.switchWindow,
-          onPressed: onSwitchWindow,
+        SizedBox.square(
+          dimension: 48,
+          child: IconButton(
+            key: const ValueKey('terminal-switch-window'),
+            icon: const Icon(Icons.space_dashboard_outlined),
+            tooltip: strings.switchWindow,
+            onPressed: onSwitchWindow,
+          ),
         ),
         PopupMenuButton<String>(
-          icon: const Icon(Icons.more_vert),
+          key: const ValueKey('terminal-more-actions'),
           tooltip: strings.moreActions,
           onSelected: (value) {
             switch (value) {
@@ -114,97 +100,256 @@ class TerminalScreenAppBar extends StatelessWidget
               fontSize: 15,
             );
             return [
-              PopupMenuItem(
+              _menuItem(
                 value: 'new_window',
-                child: Row(
-                  children: [
-                    const Icon(Icons.add_to_photos_outlined, size: 20),
-                    const SizedBox(width: 12),
-                    Text(strings.newWindow, style: fontStyle),
-                  ],
-                ),
+                icon: Icons.add_to_photos_outlined,
+                label: strings.newWindow,
+                style: fontStyle,
               ),
-              PopupMenuItem(
+              _menuItem(
                 value: 'toggle_theme',
-                child: Row(
-                  children: [
-                    Icon(
-                      isDarkMode
-                          ? Icons.light_mode_rounded
-                          : Icons.dark_mode_rounded,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      isDarkMode
-                          ? strings.switchToLightMode
-                          : strings.switchToDarkMode,
-                      style: fontStyle,
-                    ),
-                  ],
-                ),
+                icon: isDarkMode
+                    ? Icons.light_mode_rounded
+                    : Icons.dark_mode_rounded,
+                label: isDarkMode
+                    ? strings.switchToLightMode
+                    : strings.switchToDarkMode,
+                style: fontStyle,
               ),
-              PopupMenuItem(
+              _menuItem(
                 value: 'smaller_font',
-                child: Row(
-                  children: [
-                    const Icon(Icons.zoom_out, size: 20),
-                    const SizedBox(width: 12),
-                    Text(strings.smallerFont, style: fontStyle),
-                  ],
-                ),
+                icon: Icons.text_decrease_rounded,
+                label: strings.smallerFont,
+                style: fontStyle,
               ),
-              PopupMenuItem(
+              _menuItem(
                 value: 'larger_font',
-                child: Row(
-                  children: [
-                    const Icon(Icons.zoom_in, size: 20),
-                    const SizedBox(width: 12),
-                    Text(strings.largerFont, style: fontStyle),
-                  ],
-                ),
+                icon: Icons.text_increase_rounded,
+                label: strings.largerFont,
+                style: fontStyle,
               ),
-              if (!isConnected)
-                PopupMenuItem(
+              if (!_isConnected)
+                _menuItem(
                   value: 'reconnect',
+                  icon: Icons.refresh_rounded,
+                  label: reconnectInProgress
+                      ? strings.reconnecting
+                      : strings.reconnect,
+                  style: fontStyle,
                   enabled: !reconnectInProgress,
-                  child: Row(
-                    children: [
-                      const Icon(Icons.refresh, size: 20),
-                      const SizedBox(width: 12),
-                      Text(strings.reconnect, style: fontStyle),
-                    ],
-                  ),
                 ),
               const PopupMenuDivider(),
-              PopupMenuItem(
+              _menuItem(
                 value: 'close_window',
-                child: Row(
-                  children: [
-                    Icon(
-                      isConnected
-                          ? Icons.power_settings_new
-                          : Icons.warning_amber,
-                      color: closeColor,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      isConnected
-                          ? strings.disconnect
-                          : strings.closeDisconnected,
-                      style: fontStyle.copyWith(color: closeColor),
-                    ),
-                  ],
-                ),
+                icon: _isConnected
+                    ? Icons.power_settings_new_rounded
+                    : Icons.close_rounded,
+                label: _isConnected
+                    ? strings.disconnect
+                    : strings.closeDisconnected,
+                style: fontStyle.copyWith(color: closeColor),
+                iconColor: closeColor,
               ),
             ];
           },
+          child: const SizedBox.square(
+            dimension: 48,
+            child: Icon(Icons.more_vert_rounded),
+          ),
         ),
+        const SizedBox(width: 4),
       ],
     );
   }
 
+  PopupMenuItem<String> _menuItem({
+    required String value,
+    required IconData icon,
+    required String label,
+    required TextStyle style,
+    bool enabled = true,
+    Color? iconColor,
+  }) {
+    return PopupMenuItem<String>(
+      value: value,
+      enabled: enabled,
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: iconColor),
+          const SizedBox(width: 12),
+          Flexible(child: Text(label, style: style)),
+        ],
+      ),
+    );
+  }
+
+  _TerminalStatusPresentation _statusPresentation(
+    ColorScheme colors,
+    ExtendedColors? extendedColors,
+  ) {
+    if (reconnectInProgress) {
+      return _TerminalStatusPresentation(
+        label: strings.reconnecting,
+        icon: Icons.sync_rounded,
+        color: extendedColors?.warning ?? AppTheme.terminalAmber,
+      );
+    }
+    return switch (connectionState) {
+      SshConnectionState.connected => _TerminalStatusPresentation(
+        label: strings.connected,
+        icon: Icons.check_circle_rounded,
+        color: extendedColors?.success ?? colors.secondary,
+      ),
+      SshConnectionState.connecting => _TerminalStatusPresentation(
+        label: strings.connecting,
+        icon: Icons.sync_rounded,
+        color: extendedColors?.warning ?? AppTheme.terminalAmber,
+      ),
+      SshConnectionState.error => _TerminalStatusPresentation(
+        label: strings.terminalConnectionErrorStatus,
+        icon: Icons.error_rounded,
+        color: colors.error,
+      ),
+      SshConnectionState.disconnected => _TerminalStatusPresentation(
+        label: strings.disconnected,
+        icon: Icons.link_off_rounded,
+        color: colors.error,
+      ),
+    };
+  }
+
   @override
-  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
+  Size get preferredSize => const Size.fromHeight(76);
+}
+
+class _TerminalAppBarTitle extends StatelessWidget {
+  const _TerminalAppBarTitle({
+    required this.title,
+    required this.endpoint,
+    required this.status,
+  });
+
+  final String title;
+  final String? endpoint;
+  final _TerminalStatusPresentation status;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final showBadge = constraints.maxWidth >= 190;
+        return Row(
+          children: [
+            if (showBadge) ...[
+              const AppIconBadge(
+                icon: Icons.terminal_rounded,
+                size: 40,
+                iconSize: 21,
+              ),
+              const SizedBox(width: 11),
+            ],
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.15,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Semantics(
+                          key: const ValueKey('terminal-connection-status'),
+                          label: status.label,
+                          liveRegion: true,
+                          child: ExcludeSemantics(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: status.color.withValues(alpha: 0.11),
+                                borderRadius: BorderRadius.circular(
+                                  AppTheme.radiusPill,
+                                ),
+                                border: Border.all(
+                                  color: status.color.withValues(alpha: 0.28),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    status.icon,
+                                    size: 11,
+                                    color: status.color,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Flexible(
+                                    child: Text(
+                                      status.label,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: theme.textTheme.labelSmall
+                                          ?.copyWith(
+                                            color: status.color,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (endpoint != null && endpoint!.isNotEmpty) ...[
+                        const SizedBox(width: 7),
+                        Expanded(
+                          child: Text(
+                            endpoint!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: colors.onSurfaceVariant,
+                              fontFamily: 'monospace',
+                              fontFamilyFallback: AppTheme.monospaceFallback,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _TerminalStatusPresentation {
+  const _TerminalStatusPresentation({
+    required this.label,
+    required this.icon,
+    required this.color,
+  });
+
+  final String label;
+  final IconData icon;
+  final Color color;
 }

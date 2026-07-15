@@ -6,6 +6,7 @@ import 'package:ssh_mobile/services/shortcut_command_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/theme/app_theme.dart';
 import 'package:ssh_mobile/utils/responsive.dart';
+import 'package:ssh_mobile/widgets/app_surface.dart';
 
 class TerminalShortcutPanel extends StatelessWidget {
   final String sessionId;
@@ -41,45 +42,66 @@ class TerminalShortcutPanel extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final borderColor = colorScheme.outlineVariant;
     final scale = mobileUiScaleOf(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final panelColor = Color.alphaBlend(
+      colorScheme.surface.withValues(alpha: isDark ? 0.72 : 0.82),
+      toolbarColor,
+    );
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: toolbarColor,
+        color: panelColor,
         border: Border(top: BorderSide(color: borderColor)),
       ),
       child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          8 * scale,
-          5 * scale,
-          8 * scale,
-          7 * scale,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
+        padding: const EdgeInsets.fromLTRB(8, 7, 8, 8),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final accessibleCompactLayout =
+                constraints.maxWidth < 400 &&
+                MediaQuery.textScalerOf(context).scale(1) > 1.3;
+            final actions = Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Expanded(child: _buildShortcutBar(context, scale)),
-                SizedBox(width: 4 * scale),
                 _toolbarIconButton(
                   context,
-                  scale: scale,
-                  icon: Icons.add_circle_outline,
+                  key: const ValueKey('terminal-add-shortcut'),
+                  icon: Icons.add_rounded,
                   tooltip: strings.addShortcut,
                   onPressed: () => _showAddShortcutDialog(context),
                 ),
-                SizedBox(width: 4 * scale),
+                const SizedBox(width: 6),
                 _toolbarIconButton(
                   context,
-                  scale: scale,
-                  icon: Icons.keyboard_command_key,
+                  key: const ValueKey('terminal-advanced-keyboard'),
+                  icon: Icons.keyboard_command_key_rounded,
                   tooltip: strings.complexKeyboard,
                   onPressed: () =>
                       _showAdvancedKeyboardBottomSheet(context, scale),
                 ),
               ],
-            ),
-          ],
+            );
+
+            if (accessibleCompactLayout) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildShortcutBar(context, scale, scrollAll: true),
+                  const SizedBox(height: 6),
+                  Align(alignment: Alignment.centerRight, child: actions),
+                ],
+              );
+            }
+
+            return Row(
+              children: [
+                Expanded(child: _buildShortcutBar(context, scale)),
+                const SizedBox(width: 6),
+                actions,
+              ],
+            );
+          },
         ),
       ),
     );
@@ -87,31 +109,39 @@ class TerminalShortcutPanel extends StatelessWidget {
 
   Widget _toolbarIconButton(
     BuildContext context, {
-    required double scale,
+    required Key key,
     required IconData icon,
     required String tooltip,
     required VoidCallback onPressed,
   }) {
     return SizedBox(
-      width: 34 * scale,
-      height: 34 * scale,
+      key: key,
+      width: 48,
+      height: 48,
       child: IconButton(
-        icon: Icon(icon, size: 20 * scale),
+        icon: Icon(icon, size: 21),
         tooltip: tooltip,
-        padding: EdgeInsets.zero,
         style: IconButton.styleFrom(
           backgroundColor: Theme.of(
             context,
-          ).colorScheme.primary.withValues(alpha: 0.1),
+          ).colorScheme.primary.withValues(alpha: 0.11),
           foregroundColor: Theme.of(context).colorScheme.primary,
+          side: BorderSide(
+            color: Theme.of(
+              context,
+            ).colorScheme.primary.withValues(alpha: 0.18),
+          ),
         ),
         onPressed: onPressed,
       ),
     );
   }
 
-  Widget _buildShortcutBar(BuildContext context, double scale) {
-    final colorScheme = Theme.of(context).colorScheme;
+  Widget _buildShortcutBar(
+    BuildContext context,
+    double scale, {
+    bool scrollAll = false,
+  }) {
     final shortcuts = context.read<ShortcutCommandService>();
     context.select<ShortcutCommandService, int>(
       (service) => service.orderVersion,
@@ -159,6 +189,27 @@ class TerminalShortcutPanel extends StatelessWidget {
         .where((c) => !primaryIds.contains(c.id) && !c.custom)
         .toList();
 
+    if (scrollAll) {
+      return SizedBox(
+        height: 48,
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          children: [
+            _buildCtrlKey(context, scale),
+            SizedBox(width: 2 * scale),
+            _buildAltKey(context, scale),
+            SizedBox(width: 4 * scale),
+            for (final command in primaryCommands)
+              _quickKey(context, command, scale),
+            if (secondaryCommands.isNotEmpty) ...[
+              SizedBox(width: 4 * scale),
+              _moreKeysButton(context, secondaryCommands, scale),
+            ],
+          ],
+        ),
+      );
+    }
+
     return Row(
       children: [
         _buildCtrlKey(context, scale),
@@ -167,7 +218,7 @@ class TerminalShortcutPanel extends StatelessWidget {
         SizedBox(width: 4 * scale),
         Expanded(
           child: SizedBox(
-            height: 36 * scale,
+            height: 48,
             child: ReorderableListView.builder(
               scrollDirection: Axis.horizontal,
               buildDefaultDragHandles: false,
@@ -196,29 +247,39 @@ class TerminalShortcutPanel extends StatelessWidget {
         ),
         if (secondaryCommands.isNotEmpty) ...[
           SizedBox(width: 4 * scale),
-          InputChip(
-            label: Text(
-              strings.language == AppLanguage.en ? 'MORE' : '更多键',
-              style: TextStyle(
-                fontSize: (11 * scale).clamp(9.5, 12.0),
-                fontWeight: FontWeight.w700,
-                color: colorScheme.primary,
-              ),
-            ),
-            backgroundColor: colorScheme.primary.withValues(alpha: 0.08),
-            side: BorderSide(
-              color: colorScheme.primary.withValues(alpha: 0.35),
-            ),
-            padding: EdgeInsets.symmetric(
-              horizontal: (7 * scale).clamp(4.0, 8.0),
-              vertical: (3 * scale).clamp(1.5, 4.0),
-            ),
-            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            onPressed: () =>
-                _showMoreKeysBottomSheet(context, secondaryCommands, scale),
-          ),
+          _moreKeysButton(context, secondaryCommands, scale),
         ],
       ],
+    );
+  }
+
+  Widget _moreKeysButton(
+    BuildContext context,
+    List<ShortcutCommand> secondaryCommands,
+    double scale,
+  ) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 48),
+      child: InputChip(
+        label: Text(
+          strings.language == AppLanguage.en ? 'MORE' : '更多键',
+          style: TextStyle(
+            fontSize: (11 * scale).clamp(9.5, 12.0),
+            fontWeight: FontWeight.w700,
+            color: colorScheme.primary,
+          ),
+        ),
+        backgroundColor: colorScheme.primary.withValues(alpha: 0.08),
+        side: BorderSide(color: colorScheme.primary.withValues(alpha: 0.35)),
+        padding: EdgeInsets.symmetric(
+          horizontal: (7 * scale).clamp(4.0, 8.0),
+          vertical: (3 * scale).clamp(1.5, 4.0),
+        ),
+        materialTapTargetSize: MaterialTapTargetSize.padded,
+        onPressed: () =>
+            _showMoreKeysBottomSheet(context, secondaryCommands, scale),
+      ),
     );
   }
 
@@ -229,38 +290,43 @@ class TerminalShortcutPanel extends StatelessWidget {
     final activeBorder = colorScheme.primary;
     final activeForeground = colorScheme.onPrimary;
 
-    final normalBackground = Colors.transparent;
+    final normalBackground = colorScheme.surfaceContainer.withValues(
+      alpha: 0.72,
+    );
     final normalBorder = colorScheme.primary.withValues(alpha: 0.48);
     final normalForeground = colorScheme.primary;
 
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 2 * scale),
-      child: InputChip(
-        label: Text(
-          'CTRL',
-          style: TextStyle(
-            fontSize: (11 * scale).clamp(9.5, 12.0),
-            fontFamily: 'monospace',
-            fontFamilyFallback: const [
-              'Consolas',
-              'Microsoft YaHei',
-              'PingFang SC',
-              'sans-serif',
-            ],
-            fontWeight: FontWeight.w700,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 48),
+        child: InputChip(
+          label: Text(
+            'CTRL',
+            style: TextStyle(
+              fontSize: (11 * scale).clamp(9.5, 12.0),
+              fontFamily: 'monospace',
+              fontFamilyFallback: const [
+                'Consolas',
+                'Microsoft YaHei',
+                'PingFang SC',
+                'sans-serif',
+              ],
+              fontWeight: FontWeight.w700,
+            ),
           ),
+          labelStyle: TextStyle(
+            color: ctrlActive ? activeForeground : normalForeground,
+          ),
+          backgroundColor: ctrlActive ? activeBackground : normalBackground,
+          side: BorderSide(color: ctrlActive ? activeBorder : normalBorder),
+          padding: EdgeInsets.symmetric(
+            horizontal: (7 * scale).clamp(4.0, 8.0),
+            vertical: (3 * scale).clamp(1.5, 4.0),
+          ),
+          materialTapTargetSize: MaterialTapTargetSize.padded,
+          onPressed: onToggleCtrl,
         ),
-        labelStyle: TextStyle(
-          color: ctrlActive ? activeForeground : normalForeground,
-        ),
-        backgroundColor: ctrlActive ? activeBackground : normalBackground,
-        side: BorderSide(color: ctrlActive ? activeBorder : normalBorder),
-        padding: EdgeInsets.symmetric(
-          horizontal: (7 * scale).clamp(4.0, 8.0),
-          vertical: (3 * scale).clamp(1.5, 4.0),
-        ),
-        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        onPressed: onToggleCtrl,
       ),
     );
   }
@@ -272,38 +338,43 @@ class TerminalShortcutPanel extends StatelessWidget {
     final activeBorder = colorScheme.primary;
     final activeForeground = colorScheme.onPrimary;
 
-    final normalBackground = Colors.transparent;
+    final normalBackground = colorScheme.surfaceContainer.withValues(
+      alpha: 0.72,
+    );
     final normalBorder = colorScheme.primary.withValues(alpha: 0.48);
     final normalForeground = colorScheme.primary;
 
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 2 * scale),
-      child: InputChip(
-        label: Text(
-          'ALT',
-          style: TextStyle(
-            fontSize: (11 * scale).clamp(9.5, 12.0),
-            fontFamily: 'monospace',
-            fontFamilyFallback: const [
-              'Consolas',
-              'Microsoft YaHei',
-              'PingFang SC',
-              'sans-serif',
-            ],
-            fontWeight: FontWeight.w700,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 48),
+        child: InputChip(
+          label: Text(
+            'ALT',
+            style: TextStyle(
+              fontSize: (11 * scale).clamp(9.5, 12.0),
+              fontFamily: 'monospace',
+              fontFamilyFallback: const [
+                'Consolas',
+                'Microsoft YaHei',
+                'PingFang SC',
+                'sans-serif',
+              ],
+              fontWeight: FontWeight.w700,
+            ),
           ),
+          labelStyle: TextStyle(
+            color: altActive ? activeForeground : normalForeground,
+          ),
+          backgroundColor: altActive ? activeBackground : normalBackground,
+          side: BorderSide(color: altActive ? activeBorder : normalBorder),
+          padding: EdgeInsets.symmetric(
+            horizontal: (7 * scale).clamp(4.0, 8.0),
+            vertical: (3 * scale).clamp(1.5, 4.0),
+          ),
+          materialTapTargetSize: MaterialTapTargetSize.padded,
+          onPressed: onToggleAlt,
         ),
-        labelStyle: TextStyle(
-          color: altActive ? activeForeground : normalForeground,
-        ),
-        backgroundColor: altActive ? activeBackground : normalBackground,
-        side: BorderSide(color: altActive ? activeBorder : normalBorder),
-        padding: EdgeInsets.symmetric(
-          horizontal: (7 * scale).clamp(4.0, 8.0),
-          vertical: (3 * scale).clamp(1.5, 4.0),
-        ),
-        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        onPressed: onToggleAlt,
       ),
     );
   }
@@ -317,7 +388,7 @@ class TerminalShortcutPanel extends StatelessWidget {
         .toList();
 
     return SizedBox(
-      height: 34 * scale,
+      height: 48,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: commands.length,
@@ -347,45 +418,48 @@ class TerminalShortcutPanel extends StatelessWidget {
 
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 2 * scale),
-      child: InputChip(
-        label: Container(
-          constraints: BoxConstraints(maxWidth: 80 * scale),
-          child: Text(
-            command.label,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: (11 * scale).clamp(9.5, 12.0),
-              fontFamily: 'monospace',
-              fontFamilyFallback: const [
-                'Consolas',
-                'Microsoft YaHei',
-                'PingFang SC',
-                'sans-serif',
-              ],
-              fontWeight: FontWeight.w700,
-              color: command.custom ? customBorder : foreground,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 48),
+        child: InputChip(
+          label: Container(
+            constraints: BoxConstraints(maxWidth: 80 * scale),
+            child: Text(
+              command.label,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: (11 * scale).clamp(9.5, 12.0),
+                fontFamily: 'monospace',
+                fontFamilyFallback: const [
+                  'Consolas',
+                  'Microsoft YaHei',
+                  'PingFang SC',
+                  'sans-serif',
+                ],
+                fontWeight: FontWeight.w700,
+                color: command.custom ? customBorder : foreground,
+              ),
             ),
           ),
+          backgroundColor: command.custom ? customBackground : normalBackground,
+          side: BorderSide(color: command.custom ? customBorder : normalBorder),
+          padding: EdgeInsets.symmetric(
+            horizontal: (7 * scale).clamp(4.0, 8.0),
+            vertical: (3 * scale).clamp(1.5, 4.0),
+          ),
+          materialTapTargetSize: MaterialTapTargetSize.padded,
+          avatar: command.custom
+              ? Icon(Icons.bolt, size: 14 * scale, color: customBorder)
+              : null,
+          deleteIcon: Icon(Icons.close_rounded, size: 14 * scale),
+          onDeleted: command.custom
+              ? () => _confirmRemoveShortcut(context, command)
+              : null,
+          onPressed: () {
+            context.read<ShortcutCommandService>().recordUse(command.id);
+            context.read<SshService>().sendData(sessionId, command.code);
+            terminalFocusNode.requestFocus();
+          },
         ),
-        backgroundColor: command.custom ? customBackground : normalBackground,
-        side: BorderSide(color: command.custom ? customBorder : normalBorder),
-        padding: EdgeInsets.symmetric(
-          horizontal: (7 * scale).clamp(4.0, 8.0),
-          vertical: (3 * scale).clamp(1.5, 4.0),
-        ),
-        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        avatar: command.custom
-            ? Icon(Icons.bolt, size: 14 * scale, color: customBorder)
-            : null,
-        deleteIcon: Icon(Icons.close_rounded, size: 14 * scale),
-        onDeleted: command.custom
-            ? () => _confirmRemoveShortcut(context, command)
-            : null,
-        onPressed: () {
-          context.read<ShortcutCommandService>().recordUse(command.id);
-          context.read<SshService>().sendData(sessionId, command.code);
-          terminalFocusNode.requestFocus();
-        },
       ),
     );
   }
@@ -398,6 +472,8 @@ class TerminalShortcutPanel extends StatelessWidget {
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
+      useSafeArea: true,
+      constraints: const BoxConstraints(maxWidth: 720),
       builder: (ctx) {
         return SafeArea(
           child: Padding(
@@ -406,37 +482,39 @@ class TerminalShortcutPanel extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  strings.language == AppLanguage.en ? 'More Keys' : '更多快捷键',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                  ),
+                AppPageHeader(
+                  title: strings.moreKeys,
+                  subtitle: strings.moreKeysHint,
+                  icon: Icons.keyboard_alt_outlined,
                 ),
                 const SizedBox(height: 16),
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
                   children: secondaryCommands.map((cmd) {
-                    return InputChip(
-                      label: Text(
-                        cmd.label,
-                        style: TextStyle(
-                          fontSize: (11 * scale).clamp(9.5, 12.0),
-                          fontFamily: 'monospace',
-                          fontWeight: FontWeight.w700,
+                    return ConstrainedBox(
+                      constraints: const BoxConstraints(minHeight: 48),
+                      child: InputChip(
+                        label: Text(
+                          cmd.label,
+                          style: TextStyle(
+                            fontSize: (11 * scale).clamp(9.5, 12.0),
+                            fontFamily: 'monospace',
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
+                        materialTapTargetSize: MaterialTapTargetSize.padded,
+                        onPressed: () {
+                          context.read<ShortcutCommandService>().recordUse(
+                            cmd.id,
+                          );
+                          context.read<SshService>().sendData(
+                            sessionId,
+                            cmd.code,
+                          );
+                          terminalFocusNode.requestFocus();
+                        },
                       ),
-                      onPressed: () {
-                        context.read<ShortcutCommandService>().recordUse(
-                          cmd.id,
-                        );
-                        context.read<SshService>().sendData(
-                          sessionId,
-                          cmd.code,
-                        );
-                        terminalFocusNode.requestFocus();
-                      },
                     );
                   }).toList(),
                 ),
@@ -453,6 +531,8 @@ class TerminalShortcutPanel extends StatelessWidget {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
+      useSafeArea: true,
+      constraints: const BoxConstraints(maxWidth: 760),
       builder: (ctx) {
         return Padding(
           padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
@@ -464,12 +544,10 @@ class TerminalShortcutPanel extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      strings.complexKeyboard,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                      ),
+                    AppPageHeader(
+                      title: strings.complexKeyboard,
+                      subtitle: strings.advancedKeyboardHint,
+                      icon: Icons.keyboard_command_key_rounded,
                     ),
                     const SizedBox(height: 16),
                     Text(
@@ -544,7 +622,7 @@ class TerminalShortcutPanel extends StatelessWidget {
                       children: [
                         Expanded(
                           child: SizedBox(
-                            height: 48 * scale,
+                            height: 88,
                             child: TextField(
                               controller: complexInputController,
                               decoration: InputDecoration(
@@ -565,8 +643,8 @@ class TerminalShortcutPanel extends StatelessWidget {
                         ),
                         const SizedBox(width: 8),
                         SizedBox(
-                          width: 48 * scale,
-                          height: 48 * scale,
+                          width: 48,
+                          height: 48,
                           child: IconButton(
                             icon: Icon(Icons.send, size: 20 * scale),
                             tooltip: strings.send,
@@ -639,7 +717,7 @@ class TerminalShortcutPanel extends StatelessWidget {
             onPressed: () => Navigator.pop(ctx),
             child: Text(strings.cancel),
           ),
-          TextButton(
+          FilledButton(
             onPressed: () => Navigator.pop(ctx, (label, command)),
             child: Text(strings.add),
           ),
@@ -671,7 +749,9 @@ class TerminalShortcutPanel extends StatelessWidget {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
             child: Text(strings.remove),
           ),
         ],

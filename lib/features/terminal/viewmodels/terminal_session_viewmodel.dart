@@ -106,6 +106,10 @@ class TerminalSessionViewModel extends ChangeNotifier {
 
   SshSession? get session => _sshService.getSession(sessionId);
   bool get isConnected => session?.isConnected ?? false;
+  SshConnectionState get connectionState =>
+      session?.state ?? SshConnectionState.disconnected;
+  String? get connectionError =>
+      session?.errorMessage ?? _sshService.errorMessage;
   String? get displayName => session?.displayName;
 
   bool get isWindowsTarget =>

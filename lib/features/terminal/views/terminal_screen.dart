@@ -18,6 +18,7 @@ import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
 import 'package:ssh_mobile/widgets/ssh_host_key_trust_dialog.dart';
 import 'package:ssh_mobile/widgets/window_name_dialog.dart';
 import 'terminal_app_bar.dart';
+import 'terminal_connection_overlay.dart';
 import 'terminal_copy_screen.dart';
 import 'terminal_shortcut_panel.dart';
 import 'terminal_view_area.dart';
@@ -58,6 +59,7 @@ class _TerminalScreenState extends State<TerminalScreen>
   String? _cachedTerminalThemeId;
 
   String? _serverName;
+  String? _serverEndpoint;
 
   bool get _isWindowsTerminalTarget {
     return !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
@@ -82,7 +84,8 @@ class _TerminalScreenState extends State<TerminalScreen>
     final storage = context.read<StorageService>();
     final config = storage.getConnection(widget.connectionId);
     if (config != null) {
-      setState(() => _serverName = config.name);
+      _serverName = config.name;
+      _serverEndpoint = '${config.username}@${config.host}:${config.port}';
     }
   }
 
@@ -350,6 +353,7 @@ class _TerminalScreenState extends State<TerminalScreen>
               );
           final strings = TerminalStrings(appSettings.language);
           final isConnected = viewModel.isConnected;
+          final connectionState = viewModel.connectionState;
           final isDark = Theme.of(context).brightness == Brightness.dark;
           final terminalBackground = _getThemeBackground(
             appSettings.terminalThemeId,
@@ -419,7 +423,8 @@ class _TerminalScreenState extends State<TerminalScreen>
               strings: strings,
               displayName: viewModel.displayName,
               serverName: _serverName,
-              isConnected: isConnected,
+              serverEndpoint: _serverEndpoint,
+              connectionState: connectionState,
               isDarkMode: appSettings.isDarkMode,
               reconnectInProgress: viewModel.reconnectInProgress,
               onReconnect: viewModel.reconnect,
@@ -467,16 +472,19 @@ class _TerminalScreenState extends State<TerminalScreen>
                           ],
                         ),
                 ),
-                if (viewModel.loadingBufferedOutput)
-                  ColoredBox(
-                    color: terminalBackground.withValues(alpha: 0.72),
-                    child: const Center(
-                      child: SizedBox(
-                        width: 28,
-                        height: 28,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    ),
+                if (viewModel.loadingBufferedOutput && isConnected)
+                  TerminalBufferedOutputIndicator(strings: strings),
+                if (!isConnected || viewModel.reconnectInProgress)
+                  TerminalConnectionOverlay(
+                    strings: strings,
+                    connectionState: connectionState,
+                    reconnectInProgress: viewModel.reconnectInProgress,
+                    terminalBackground: terminalBackground,
+                    endpoint: _serverEndpoint ?? _serverName,
+                    errorMessage: viewModel.connectionError,
+                    onReconnect: viewModel.reconnect,
+                    onSwitchWindow: () => _showSessionSwitcher(context),
+                    onCloseWindow: () => _confirmDisconnect(context),
                   ),
               ],
             ),
