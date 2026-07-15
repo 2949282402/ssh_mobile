@@ -4,11 +4,13 @@ class _ServerPane extends StatelessWidget {
   final List<ConnectionConfig> connections;
   final AppStrings strings;
   final VoidCallback onCollapse;
+  final Future<void> Function(String connectionId) onSelect;
 
   const _ServerPane({
     required this.connections,
     required this.strings,
     required this.onCollapse,
+    required this.onSelect,
   });
 
   @override
@@ -85,6 +87,7 @@ class _ServerPane extends StatelessWidget {
                           child: _SftpServerTileBinding(
                             connection: connection,
                             strings: strings,
+                            onTap: () => onSelect(connection.id),
                           ),
                         ),
                       ],
@@ -130,12 +133,14 @@ class _MobileServerStrip extends StatelessWidget {
   final List<ConnectionConfig> connections;
   final AppStrings strings;
   final VoidCallback onCollapse;
+  final Future<void> Function(String connectionId) onSelect;
 
   const _MobileServerStrip({
     super.key,
     required this.connections,
     required this.strings,
     required this.onCollapse,
+    required this.onSelect,
   });
 
   @override
@@ -184,6 +189,7 @@ class _MobileServerStrip extends StatelessWidget {
                       connection: connection,
                       strings: strings,
                       compact: true,
+                      onTap: () => onSelect(connection.id),
                     ),
                   );
                 },
@@ -679,10 +685,12 @@ class _SftpServerTileBinding extends StatelessWidget {
   final ConnectionConfig connection;
   final AppStrings strings;
   final bool compact;
+  final VoidCallback onTap;
 
   const _SftpServerTileBinding({
     required this.connection,
     required this.strings,
+    required this.onTap,
     this.compact = false,
   });
 
@@ -698,11 +706,7 @@ class _SftpServerTileBinding extends StatelessWidget {
         busy: status.busy,
         connected: status.connected,
         compact: compact,
-        onTap: () => context.read<SftpViewModel>().connect(
-          connection.id,
-          onUnknownHostKey: (request) =>
-              showSshHostKeyTrustDialog(context, request),
-        ),
+        onTap: onTap,
       ),
     );
   }

@@ -374,6 +374,7 @@ class StubPerformanceMonitorViewModel extends ChangeNotifier
     SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
     isRunning = true;
+    monitoringConnectionIds = Set<String>.of(selectedConnectionIds);
     notifyListeners();
   }
 
@@ -544,6 +545,57 @@ void main() {
     },
   );
 
+  testWidgets('Monitor supports multi-select and collapses only after start', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final adminVm = StubSystemAdminViewModel();
+    final monitorVm = StubPerformanceMonitorViewModel();
+    adminVm.connections = [
+      ...fakeConnections,
+      ConnectionConfig(
+        id: 'conn_456',
+        name: 'Second Server',
+        host: '127.0.0.2',
+        username: 'operator',
+        serverPlatform: ServerPlatform.linux,
+      ),
+    ];
+
+    await tester.pumpWidget(
+      buildTestableWidget(adminVm: adminVm, monitorVm: monitorVm),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('admin-server-tile-conn_123')));
+    await tester.drag(
+      find.byKey(const ValueKey('admin-server-tile-conn_123')),
+      const Offset(-220, 0),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('admin-server-tile-conn_456')));
+    await tester.pumpAndSettle();
+
+    expect(monitorVm.selectedConnectionIds, {'conn_123', 'conn_456'});
+    expect(adminVm.serversCollapsed, isFalse);
+
+    await tester.tap(find.byKey(const ValueKey('monitor-start')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(monitorVm.monitoringConnectionIds, {'conn_123', 'conn_456'});
+    expect(adminVm.serversCollapsed, isTrue);
+    expect(
+      find.byKey(const ValueKey('admin-server-collapsed')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'SystemAdminScreen displays Ports snapshot when server is selected',
     (WidgetTester tester) async {
@@ -581,6 +633,12 @@ void main() {
       expect(find.text('连接 Root'), findsNothing);
       expect(adminVm.connectIfNeededCalls, 0);
       expect(monitorVm.fetchPortsCalls, ['conn_123']);
+
+      await tester.tap(
+        find.byKey(const ValueKey('admin-server-tile-conn_123')),
+      );
+      await tester.pumpAndSettle();
+      expect(adminVm.serversCollapsed, isTrue);
     },
   );
 

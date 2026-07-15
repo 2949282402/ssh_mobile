@@ -838,9 +838,9 @@ class _AdminServerTileBinding extends StatelessWidget {
           compact: compact,
           isMonitorTab: false,
           onTap: () {
-            context.read<SystemAdminViewModel>().selectConnection(
-              connection.id,
-            );
+            final viewModel = context.read<SystemAdminViewModel>();
+            viewModel.selectConnection(connection.id);
+            viewModel.setServersCollapsed(context, true);
           },
         ),
       );

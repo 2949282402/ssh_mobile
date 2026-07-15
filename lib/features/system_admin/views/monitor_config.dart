@@ -158,6 +158,7 @@ class _MonitorConfigPanelV2 extends StatelessWidget {
           const SizedBox(width: 8),
           if (!isRunning)
             FilledButton.icon(
+              key: const ValueKey('monitor-start'),
               style: FilledButton.styleFrom(
                 backgroundColor: Colors.green.shade600,
                 foregroundColor: Colors.white,
@@ -276,6 +277,7 @@ class _MonitorConfigPanelV2 extends StatelessWidget {
               ),
               if (!isRunning)
                 IconButton.filled(
+                  key: const ValueKey('monitor-start'),
                   style: IconButton.styleFrom(
                     backgroundColor: Colors.green.shade600,
                     foregroundColor: Colors.white,

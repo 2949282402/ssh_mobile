@@ -134,6 +134,7 @@ class _SftpScreenState extends State<SftpScreen> {
                             connections: connections,
                             strings: strings,
                             onCollapse: _collapseServers,
+                            onSelect: _connectServer,
                           ),
                   ),
                 ),
@@ -175,6 +176,7 @@ class _SftpScreenState extends State<SftpScreen> {
                           connections: connections,
                           strings: strings,
                           onCollapse: _collapseServers,
+                          onSelect: _connectServer,
                         ),
                 ),
                 Divider(
@@ -196,6 +198,19 @@ class _SftpScreenState extends State<SftpScreen> {
 
   void _expandServers() {
     _setServersCollapsed(false);
+  }
+
+  Future<void> _connectServer(String connectionId) async {
+    final sftp = context.read<SftpViewModel>();
+    await sftp.connect(
+      connectionId,
+      onUnknownHostKey: (request) =>
+          showSshHostKeyTrustDialog(context, request),
+    );
+    if (!mounted) return;
+    if (sftp.connectionId == connectionId && sftp.isConnected) {
+      _collapseServers();
+    }
   }
 
   void _setServersCollapsed(bool collapsed) {

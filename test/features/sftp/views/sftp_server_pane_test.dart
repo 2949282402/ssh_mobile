@@ -194,6 +194,7 @@ void main() {
         devicePixelRatio: 1,
       );
       await addServers();
+      sftpService.setStatus('server-1', connected: true);
 
       await tester.pumpWidget(host());
       await tester.pumpAndSettle();
@@ -204,15 +205,30 @@ void main() {
       expect(sftpService.connectCalls, ['server-2']);
       expect(sftpService.connectionId, 'server-2');
       expect(sftpService.isConnectionOpen('server-2'), isTrue);
-
-      await tester.tap(find.byTooltip('Collapse server list'));
-      await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('sftp-server-pane')), findsNothing);
       expect(find.byTooltip('Expand server list'), findsOneWidget);
 
       await tester.tap(find.byTooltip('Expand server list'));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('sftp-server-pane')), findsOneWidget);
+      expect(
+        tester
+            .getSemantics(
+              find.byKey(const ValueKey('sftp-server-tile-server-1')),
+            )
+            .flagsCollection
+            .isSelected,
+        Tristate.isFalse,
+      );
+      expect(
+        tester
+            .getSemantics(
+              find.byKey(const ValueKey('sftp-server-tile-server-2')),
+            )
+            .flagsCollection
+            .isSelected,
+        Tristate.isTrue,
+      );
       expect(tester.takeException(), isNull);
     } finally {
       debugDefaultTargetPlatformOverride = null;

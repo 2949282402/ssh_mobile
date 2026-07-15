@@ -440,7 +440,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                     onUnknownHostKey: (request) =>
                         showSshHostKeyTrustDialog(context, request),
                   );
-                  if (mounted) {
+                  if (mounted && monitorVm.isRunning) {
                     context.read<SystemAdminViewModel>().setServersCollapsed(
                       context,
                       true,
