@@ -183,6 +183,42 @@ void main() {
     },
   );
 
+  testWidgets('busy server status replaces the default icon', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+      useViewport(
+        tester,
+        physicalSize: const Size(1200, 800),
+        devicePixelRatio: 1,
+      );
+      await addServers();
+      sftpService.setStatus('server-1', busy: true);
+
+      await tester.pumpWidget(host());
+      await tester.pump(const Duration(milliseconds: 100));
+
+      final serverTile = find.byKey(
+        const ValueKey('sftp-server-tile-server-1'),
+      );
+      expect(
+        find.descendant(
+          of: serverTile,
+          matching: find.byKey(const ValueKey('sftp-server-status-loading')),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: serverTile,
+          matching: find.byKey(const ValueKey('sftp-server-status-icon')),
+        ),
+        findsNothing,
+      );
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
   testWidgets('server cards connect and desktop rail collapses and expands', (
     tester,
   ) async {

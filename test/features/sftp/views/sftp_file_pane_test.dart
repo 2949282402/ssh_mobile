@@ -15,6 +15,7 @@ import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 import 'package:ssh_mobile/theme/app_theme.dart';
+import 'package:ssh_mobile/widgets/app_surface.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -223,6 +224,17 @@ void main() {
       expect(
         find.byKey(const ValueKey('sftp-directory-loading')),
         findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('sftp-directory-loading-spinner')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('sftp-directory-loading')),
+          matching: find.byType(AppIconBadge),
+        ),
+        findsNothing,
       );
 
       sftpService.show(state: SftpConnectionState.connected);

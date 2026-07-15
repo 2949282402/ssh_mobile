@@ -413,29 +413,24 @@ class _ServerStatusIcon extends StatelessWidget {
 
     return SizedBox.square(
       dimension: size,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          AppIconBadge(
-            icon: busy
-                ? Icons.sync_rounded
-                : connected
-                ? Icons.folder_shared_rounded
-                : Icons.folder_open_rounded,
-            size: size,
-            iconSize: iconSize,
-            color: color,
-          ),
-          if (busy)
-            SizedBox.square(
-              dimension: size,
+      child: busy
+          ? Padding(
+              padding: EdgeInsets.all(4 * scale),
               child: CircularProgressIndicator(
+                key: const ValueKey('sftp-server-status-loading'),
                 color: color,
                 strokeWidth: 1.8 * scale,
               ),
+            )
+          : AppIconBadge(
+              key: const ValueKey('sftp-server-status-icon'),
+              icon: connected
+                  ? Icons.folder_shared_rounded
+                  : Icons.folder_open_rounded,
+              size: size,
+              iconSize: iconSize,
+              color: color,
             ),
-        ],
-      ),
     );
   }
 }
