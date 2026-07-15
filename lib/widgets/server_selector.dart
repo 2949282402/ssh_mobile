@@ -27,6 +27,7 @@ class ServerSelectorPane extends StatelessWidget {
     required this.emptyState,
     required this.collapseButtonKey,
     this.dragHandleKeyBuilder,
+    this.collapseIcon = Icons.keyboard_double_arrow_left_rounded,
   });
 
   final List<ConnectionConfig> connections;
@@ -41,6 +42,7 @@ class ServerSelectorPane extends StatelessWidget {
   final Widget emptyState;
   final Key collapseButtonKey;
   final Key Function(ConnectionConfig connection)? dragHandleKeyBuilder;
+  final IconData collapseIcon;
 
   @override
   Widget build(BuildContext context) {
@@ -55,6 +57,7 @@ class ServerSelectorPane extends StatelessWidget {
             icon: headerIcon,
             collapseTooltip: collapseTooltip,
             collapseButtonKey: collapseButtonKey,
+            collapseIcon: collapseIcon,
             onCollapse: connections.isEmpty ? null : onCollapse,
           ),
           if (connections.isEmpty)
@@ -128,6 +131,7 @@ class ServerSelectorStrip extends StatelessWidget {
     required this.onCollapse,
     required this.tileBuilder,
     required this.collapseButtonKey,
+    this.collapseIcon = Icons.keyboard_double_arrow_up_rounded,
   });
 
   final List<ConnectionConfig> connections;
@@ -137,6 +141,7 @@ class ServerSelectorStrip extends StatelessWidget {
   final VoidCallback onCollapse;
   final ServerSelectorTileBuilder tileBuilder;
   final Key collapseButtonKey;
+  final IconData collapseIcon;
 
   @override
   Widget build(BuildContext context) {
@@ -169,6 +174,7 @@ class ServerSelectorStrip extends StatelessWidget {
                 return _ServerSelectorCollapseButton(
                   buttonKey: collapseButtonKey,
                   tooltip: collapseTooltip,
+                  icon: collapseIcon,
                   onPressed: onCollapse,
                 );
               }
@@ -192,6 +198,7 @@ class _ServerSelectorHeader extends StatelessWidget {
     required this.icon,
     required this.collapseTooltip,
     required this.collapseButtonKey,
+    required this.collapseIcon,
     required this.onCollapse,
   });
 
@@ -200,6 +207,7 @@ class _ServerSelectorHeader extends StatelessWidget {
   final IconData icon;
   final String collapseTooltip;
   final Key collapseButtonKey;
+  final IconData collapseIcon;
   final VoidCallback? onCollapse;
 
   @override
@@ -241,7 +249,7 @@ class _ServerSelectorHeader extends StatelessWidget {
             child: IconButton(
               key: collapseButtonKey,
               tooltip: collapseTooltip,
-              icon: const Icon(Icons.keyboard_double_arrow_left_rounded),
+              icon: Icon(collapseIcon),
               onPressed: onCollapse,
             ),
           ),
@@ -255,11 +263,13 @@ class _ServerSelectorCollapseButton extends StatelessWidget {
   const _ServerSelectorCollapseButton({
     required this.buttonKey,
     required this.tooltip,
+    required this.icon,
     required this.onPressed,
   });
 
   final Key buttonKey;
   final String tooltip;
+  final IconData icon;
   final VoidCallback onPressed;
 
   @override
@@ -281,7 +291,7 @@ class _ServerSelectorCollapseButton extends StatelessWidget {
             child: IconButton(
               key: buttonKey,
               tooltip: tooltip,
-              icon: const Icon(Icons.keyboard_double_arrow_up_rounded),
+              icon: Icon(icon),
               onPressed: onPressed,
             ),
           ),

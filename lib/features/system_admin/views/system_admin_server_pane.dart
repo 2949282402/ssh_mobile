@@ -118,6 +118,9 @@ class _AdminServerPane extends StatelessWidget {
       collapseTooltip: strings.collapseServerList,
       reorderTooltip: strings.reorderServer,
       collapseButtonKey: const ValueKey('admin-server-collapse-desktop'),
+      collapseIcon: isMonitorTab
+          ? Icons.unfold_less_rounded
+          : Icons.keyboard_double_arrow_left_rounded,
       onCollapse: onCollapse,
       onReorder: (oldIndex, newIndex) {
         context.read<StorageService>().reorderConnections(oldIndex, newIndex);
@@ -158,6 +161,9 @@ class _AdminMobileServerStrip extends StatelessWidget {
       noConnectionsLabel: strings.noConnections,
       collapseTooltip: strings.collapseServerList,
       collapseButtonKey: const ValueKey('admin-server-collapse-mobile'),
+      collapseIcon: isMonitorTab
+          ? Icons.unfold_less_rounded
+          : Icons.keyboard_double_arrow_up_rounded,
       onCollapse: onCollapse,
       tileBuilder: (context, connection, compact) => _AdminServerTileBinding(
         connection: connection,
@@ -255,7 +261,11 @@ class _AdminCollapsedMobileServerBar extends StatelessWidget {
                   child: IconButton(
                     key: const ValueKey('admin-server-expand-mobile'),
                     tooltip: strings.expandServerList,
-                    icon: const Icon(Icons.keyboard_double_arrow_down_rounded),
+                    icon: Icon(
+                      isMonitorTab
+                          ? Icons.unfold_more_rounded
+                          : Icons.keyboard_double_arrow_down_rounded,
+                    ),
                     onPressed: onExpand,
                   ),
                 ),
@@ -367,7 +377,11 @@ class _AdminCollapsedDesktopServerRail extends StatelessWidget {
             child: IconButton(
               key: const ValueKey('admin-server-expand-desktop'),
               tooltip: strings.expandServerList,
-              icon: const Icon(Icons.keyboard_double_arrow_right_rounded),
+              icon: Icon(
+                isMonitorTab
+                    ? Icons.unfold_more_rounded
+                    : Icons.keyboard_double_arrow_right_rounded,
+              ),
               onPressed: onExpand,
             ),
           ),

@@ -571,6 +571,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('admin-server-collapse-mobile')),
+        matching: find.byIcon(Icons.unfold_less_rounded),
+      ),
+      findsOneWidget,
+    );
+
     await tester.tap(find.byKey(const ValueKey('admin-server-tile-conn_123')));
     await tester.drag(
       find.byKey(const ValueKey('admin-server-tile-conn_123')),
@@ -591,6 +599,13 @@ void main() {
     expect(adminVm.serversCollapsed, isTrue);
     expect(
       find.byKey(const ValueKey('admin-server-collapsed')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('admin-server-expand-mobile')),
+        matching: find.byIcon(Icons.unfold_more_rounded),
+      ),
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);
