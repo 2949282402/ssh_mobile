@@ -229,6 +229,11 @@ its child widgets.
 - Root management connections must follow the selected connection. Do not let
   connect or async tab activation rewrite `selectedConnectionId`, and do not
   auto-run `refreshAllData()` after connect.
+- Users and Sessions tabs must select their list/loading state from
+  `SystemAdminViewModel`, and manual root retries must load the active tab.
+  Management fetch debouncing must remain awaitable; forced `refreshAllData`
+  calls must complete Accounts, Sessions, Services, and Ports without a shared
+  timer canceling earlier work.
 - Collect data with read-only one-shot SSH exec commands. Do not attach to tmux
   or interactive terminal sessions.
 - Linux probes use `/proc` and `df -P`; Windows probes use the PowerShell JSON

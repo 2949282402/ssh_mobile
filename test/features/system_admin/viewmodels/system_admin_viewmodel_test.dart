@@ -245,6 +245,38 @@ tcp   LISTEN  0       128               0.0.0.0:22            0.0.0.0:*      use
       expect(viewModel.ports[0].pid, equals(1024));
     });
 
+    test('refreshAllData awaits every forced management fetch', () async {
+      final viewModel = await rootConnectedViewModel();
+      viewModel.debounceDuration = const Duration(milliseconds: 300);
+      final commands = <String>[];
+      adminService.runCommandOverride = (command) async {
+        commands.add(command);
+        final stdout = switch (command) {
+          final value when value.contains('cat /etc/passwd') =>
+            '''
+root:x:0:0:root:/root:/bin/bash
+===STATUS===
+root P
+''',
+          'who' => 'root pts/0 2026-07-15 10:30 (192.168.1.10)',
+          final value when value.contains('systemctl list-units') =>
+            'ssh.service loaded active running OpenSSH server',
+          final value when value.contains('ss -tulpn') =>
+            'tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=1024,fd=3))',
+          _ => '',
+        };
+        return RemoteCommandResult(exitCode: 0, stdout: stdout, stderr: '');
+      };
+
+      await viewModel.refreshAllData();
+
+      expect(commands, hasLength(4));
+      expect(viewModel.accounts, hasLength(1));
+      expect(viewModel.sessions, hasLength(1));
+      expect(viewModel.services, hasLength(1));
+      expect(viewModel.ports, hasLength(1));
+    });
+
     test('fetch caches empty results by connection id', () async {
       final viewModel = await rootConnectedViewModel();
 

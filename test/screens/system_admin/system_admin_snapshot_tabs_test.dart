@@ -73,6 +73,8 @@ class StubSystemAdminViewModel extends ChangeNotifier
   final List<String> fetchServicesCalls = [];
   final List<String> fetchPortsCalls = [];
   bool populateServicesOnFetch = false;
+  bool populateAccountsOnFetch = false;
+  bool populateSessionsOnFetch = false;
   bool connectOnDemand = true;
 
   @override
@@ -214,11 +216,35 @@ class StubSystemAdminViewModel extends ChangeNotifier
   @override
   Future<void> fetchAccounts(String connId, {bool force = false}) async {
     fetchAccountsCalls.add(connId);
+    if (populateAccountsOnFetch) {
+      accounts = const [
+        LinuxUserAccount(
+          username: 'root',
+          uid: 0,
+          gid: 0,
+          homeDir: '/root',
+          shell: '/bin/bash',
+          status: 'P',
+        ),
+      ];
+      notifyListeners();
+    }
   }
 
   @override
   Future<void> fetchSessions(String connId, {bool force = false}) async {
     fetchSessionsCalls.add(connId);
+    if (populateSessionsOnFetch) {
+      sessions = const [
+        ActiveSession(
+          username: 'root',
+          tty: 'pts/0',
+          loginTime: '2026-07-15 10:30',
+          ipAddress: '192.168.1.10',
+        ),
+      ];
+      notifyListeners();
+    }
   }
 
   @override
@@ -884,6 +910,7 @@ void main() {
     final adminVm = StubSystemAdminViewModel();
     final monitorVm = StubPerformanceMonitorViewModel();
     adminVm.connections = fakeConnections;
+    adminVm.populateAccountsOnFetch = true;
     adminVm.selectConnection('conn_123');
 
     await tester.pumpWidget(
@@ -900,6 +927,67 @@ void main() {
     expect(adminVm.fetchSessionsCalls, isEmpty);
     expect(adminVm.fetchServicesCalls, isEmpty);
     expect(adminVm.fetchPortsCalls, isEmpty);
+    expect(find.text('root'), findsWidgets);
+  });
+
+  testWidgets('Sessions tab rebuilds when session data arrives', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final adminVm = StubSystemAdminViewModel()
+      ..connections = fakeConnections
+      ..populateSessionsOnFetch = true;
+    final monitorVm = StubPerformanceMonitorViewModel();
+    adminVm.selectConnection('conn_123');
+
+    await tester.pumpWidget(
+      buildTestableWidget(adminVm: adminVm, monitorVm: monitorVm),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('活动会话'));
+    await tester.tap(find.text('活动会话'));
+    await tester.pumpAndSettle();
+
+    expect(adminVm.fetchSessionsCalls, ['conn_123']);
+    expect(find.text('pts/0'), findsOneWidget);
+    expect(find.textContaining('192.168.1.10'), findsOneWidget);
+  });
+
+  testWidgets('manual root retry loads the active Users tab', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final adminVm = StubSystemAdminViewModel()
+      ..connections = fakeConnections
+      ..connectOnDemand = false
+      ..populateAccountsOnFetch = true;
+    final monitorVm = StubPerformanceMonitorViewModel();
+    adminVm.selectConnection('conn_123');
+
+    await tester.pumpWidget(
+      buildTestableWidget(adminVm: adminVm, monitorVm: monitorVm),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('用户账号'));
+    await tester.tap(find.text('用户账号'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('以 Root 连接'), findsOneWidget);
+    adminVm.connectOnDemand = true;
+    await tester.tap(find.text('以 Root 连接'));
+    await tester.pumpAndSettle();
+
+    expect(adminVm.fetchAccountsCalls, ['conn_123']);
+    expect(find.text('root'), findsWidgets);
   });
 
   testWidgets('Power tab connects without preloading management lists', (

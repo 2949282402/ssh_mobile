@@ -295,3 +295,8 @@ across sessions.
   single-server summary headers. Ports/Services use a centered mode selector
   with a right-aligned refresh action; Applications uses the compact
   right-aligned snapshot refresh row.
+- 2026-07-15: Users and Sessions tabs subscribe directly to their ViewModel
+  list/loading state, and manual root retry continues loading the active tab.
+  SystemAdmin fetch debounce is awaited and epoch-cancelable; forced
+  `refreshAllData()` must run all four management fetches instead of sharing a
+  timer that drops Accounts, Sessions, or Services.

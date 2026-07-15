@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../core/services/ssh_host_key_policy.dart';
 import '../../../services/system_admin_service.dart';
@@ -272,12 +271,11 @@ class SystemAdminViewModel extends ChangeNotifier {
   }
 
   Duration debounceDuration = const Duration(milliseconds: 300);
-  Timer? _debounceTimer;
+  int _commandEpoch = 0;
 
   /// Cancel all active management commands and reset loading states
   void cancelActiveCommands() {
-    _debounceTimer?.cancel();
-    _debounceTimer = null;
+    _commandEpoch++;
 
     _adminService.cancelActiveCommands();
     bool stateChanged = false;
@@ -307,6 +305,7 @@ class SystemAdminViewModel extends ChangeNotifier {
     if (activeManagementConnectionId != connId) return;
 
     cancelActiveCommands();
+    final commandEpoch = _commandEpoch;
     _loadingAccounts = true;
     notifyListeners();
 
@@ -327,10 +326,12 @@ class SystemAdminViewModel extends ChangeNotifier {
       }
     }
 
-    if (debounceDuration == Duration.zero) {
+    if (force || debounceDuration == Duration.zero) {
       await performFetch();
     } else {
-      _debounceTimer = Timer(debounceDuration, performFetch);
+      await Future<void>.delayed(debounceDuration);
+      if (commandEpoch != _commandEpoch) return;
+      await performFetch();
     }
   }
 
@@ -339,6 +340,7 @@ class SystemAdminViewModel extends ChangeNotifier {
     if (activeManagementConnectionId != connId) return;
 
     cancelActiveCommands();
+    final commandEpoch = _commandEpoch;
     _loadingSessions = true;
     notifyListeners();
 
@@ -359,10 +361,12 @@ class SystemAdminViewModel extends ChangeNotifier {
       }
     }
 
-    if (debounceDuration == Duration.zero) {
+    if (force || debounceDuration == Duration.zero) {
       await performFetch();
     } else {
-      _debounceTimer = Timer(debounceDuration, performFetch);
+      await Future<void>.delayed(debounceDuration);
+      if (commandEpoch != _commandEpoch) return;
+      await performFetch();
     }
   }
 
@@ -371,6 +375,7 @@ class SystemAdminViewModel extends ChangeNotifier {
     if (activeManagementConnectionId != connId) return;
 
     cancelActiveCommands();
+    final commandEpoch = _commandEpoch;
     _loadingServices = true;
     notifyListeners();
 
@@ -391,10 +396,12 @@ class SystemAdminViewModel extends ChangeNotifier {
       }
     }
 
-    if (debounceDuration == Duration.zero) {
+    if (force || debounceDuration == Duration.zero) {
       await performFetch();
     } else {
-      _debounceTimer = Timer(debounceDuration, performFetch);
+      await Future<void>.delayed(debounceDuration);
+      if (commandEpoch != _commandEpoch) return;
+      await performFetch();
     }
   }
 
@@ -403,6 +410,7 @@ class SystemAdminViewModel extends ChangeNotifier {
     if (activeManagementConnectionId != connId) return;
 
     cancelActiveCommands();
+    final commandEpoch = _commandEpoch;
     _loadingPorts = true;
     notifyListeners();
 
@@ -423,10 +431,12 @@ class SystemAdminViewModel extends ChangeNotifier {
       }
     }
 
-    if (debounceDuration == Duration.zero) {
+    if (force || debounceDuration == Duration.zero) {
       await performFetch();
     } else {
-      _debounceTimer = Timer(debounceDuration, performFetch);
+      await Future<void>.delayed(debounceDuration);
+      if (commandEpoch != _commandEpoch) return;
+      await performFetch();
     }
   }
 

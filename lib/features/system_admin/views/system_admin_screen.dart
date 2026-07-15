@@ -473,6 +473,9 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
               ),
               // Tab 4: Users (Requires root connection)
               _RootRequiredTabWrapper(
+                onConnected: (connectionId) => context
+                    .read<SystemAdminViewModel>()
+                    .fetchAccounts(connectionId, force: true),
                 child: _UsersTab(
                   strings: strings,
                   colorScheme: colorScheme,
@@ -481,6 +484,9 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
               ),
               // Tab 5: Sessions (Requires root connection)
               _RootRequiredTabWrapper(
+                onConnected: (connectionId) => context
+                    .read<SystemAdminViewModel>()
+                    .fetchSessions(connectionId, force: true),
                 child: _SessionsTab(
                   strings: strings,
                   colorScheme: colorScheme,
@@ -726,8 +732,9 @@ class _AdminWorkspaceStatusPill extends StatelessWidget {
 
 class _RootRequiredTabWrapper extends StatelessWidget {
   final Widget child;
+  final Future<void> Function(String connectionId)? onConnected;
 
-  const _RootRequiredTabWrapper({required this.child});
+  const _RootRequiredTabWrapper({required this.child, this.onConnected});
 
   @override
   Widget build(BuildContext context) {
@@ -800,17 +807,26 @@ class _RootRequiredTabWrapper extends StatelessWidget {
       return _RootRequiredView(
         strings: strings,
         errorMessage: errorMessage,
-        onConnect: () => unawaited(
-          context.read<SystemAdminViewModel>().connectIfNeeded(
-            selectedConnectionId,
-            onUnknownHostKey: (request) =>
-                showSshHostKeyTrustDialog(context, request),
-          ),
-        ),
+        onConnect: () =>
+            unawaited(_connectAndLoad(context, selectedConnectionId)),
       );
     }
 
     return child;
+  }
+
+  Future<void> _connectAndLoad(
+    BuildContext context,
+    String connectionId,
+  ) async {
+    final viewModel = context.read<SystemAdminViewModel>();
+    await viewModel.connectIfNeeded(
+      connectionId,
+      onUnknownHostKey: (request) =>
+          showSshHostKeyTrustDialog(context, request),
+    );
+    if (!context.mounted || !viewModel.canManageSelectedConnection) return;
+    await onConnected?.call(connectionId);
   }
 }
 

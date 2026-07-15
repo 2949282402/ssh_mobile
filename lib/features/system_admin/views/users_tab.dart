@@ -24,11 +24,20 @@ class _UsersTabState extends State<_UsersTab>
   Widget build(BuildContext context) {
     super.build(context);
     final viewModel = widget.viewModel;
-    if (viewModel.loadingAccounts) {
+    final loadingAccounts = context.select<SystemAdminViewModel, bool>(
+      (vm) => vm.loadingAccounts,
+    );
+    final accounts = context
+        .select<SystemAdminViewModel, List<LinuxUserAccount>>(
+          (vm) => vm.accounts,
+        );
+    if (loadingAccounts) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    final id = viewModel.selectedConnectionId;
+    final id = context.select<SystemAdminViewModel, String?>(
+      (vm) => vm.selectedConnectionId,
+    );
     if (id == null) return const SizedBox.shrink();
 
     return Column(
@@ -57,13 +66,27 @@ class _UsersTabState extends State<_UsersTab>
         Expanded(
           child: RefreshIndicator(
             onRefresh: () => viewModel.fetchAccounts(id, force: true),
-            child: viewModel.accounts.isEmpty
-                ? const Center(child: Text('No accounts found.'))
+            child: accounts.isEmpty
+                ? ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: [
+                      const SizedBox(height: 100),
+                      Center(
+                        child: Text(
+                          _monitorText(
+                            widget.strings,
+                            'No accounts found.',
+                            '未发现用户账户。',
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
                 : ListView.builder(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
-                    itemCount: viewModel.accounts.length,
+                    itemCount: accounts.length,
                     itemBuilder: (context, index) {
-                      final account = viewModel.accounts[index];
+                      final account = accounts[index];
                       return Card(
                         child: ExpansionTile(
                           leading: CircleAvatar(

@@ -24,14 +24,22 @@ class _SessionsTabState extends State<_SessionsTab>
   Widget build(BuildContext context) {
     super.build(context);
     final viewModel = widget.viewModel;
-    if (viewModel.loadingSessions) {
+    final loadingSessions = context.select<SystemAdminViewModel, bool>(
+      (vm) => vm.loadingSessions,
+    );
+    final sessions = context.select<SystemAdminViewModel, List<ActiveSession>>(
+      (vm) => vm.sessions,
+    );
+    if (loadingSessions) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    final id = viewModel.selectedConnectionId;
+    final id = context.select<SystemAdminViewModel, String?>(
+      (vm) => vm.selectedConnectionId,
+    );
     if (id == null) return const SizedBox.shrink();
 
-    if (viewModel.sessions.isEmpty) {
+    if (sessions.isEmpty) {
       return RefreshIndicator(
         onRefresh: () => viewModel.fetchSessions(id, force: true),
         child: ListView(
@@ -48,9 +56,9 @@ class _SessionsTabState extends State<_SessionsTab>
       onRefresh: () => viewModel.fetchSessions(id, force: true),
       child: ListView.builder(
         padding: const EdgeInsets.all(12),
-        itemCount: viewModel.sessions.length,
+        itemCount: sessions.length,
         itemBuilder: (context, index) {
-          final s = viewModel.sessions[index];
+          final s = sessions[index];
           return Card(
             child: ListTile(
               leading: const CircleAvatar(child: Icon(Icons.computer)),
