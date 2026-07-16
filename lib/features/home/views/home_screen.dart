@@ -134,71 +134,21 @@ class _HomeScreenState extends State<HomeScreen> {
           _switchPage(_aiPage);
           return true;
         },
-        child: NotificationListener<ScrollNotification>(
-          onNotification: (notification) {
-            if (desktop || notification.metrics.axis != Axis.horizontal) {
-              return false;
+        child: PageView.builder(
+          controller: _pageController,
+          itemCount: _lastPage + 1,
+          physics: const NeverScrollableScrollPhysics(),
+          allowImplicitScrolling: false,
+          onPageChanged: (index) {
+            if (_selectedIndex != index) {
+              setState(() {
+                _selectedIndex = index;
+                _settledIndex = index;
+              });
+              _onPageActive(index);
             }
-
-            // Check for horizontal overscroll (left-to-right at start, or right-to-left at end)
-            final double overscrollAmount;
-            if (notification is OverscrollNotification) {
-              overscrollAmount = notification.overscroll;
-            } else {
-              final metrics = notification.metrics;
-              if (metrics.pixels < 0.0) {
-                overscrollAmount = metrics.pixels;
-              } else if (metrics.pixels > metrics.maxScrollExtent) {
-                overscrollAmount = metrics.pixels - metrics.maxScrollExtent;
-              } else {
-                overscrollAmount = 0.0;
-              }
-            }
-
-            if (overscrollAmount < -20.0) {
-              if (_selectedIndex == _serverPage && notification.depth == 0) {
-                Future.microtask(() {
-                  if (context.mounted) _openSettings(context);
-                });
-                return true;
-              } else if (_selectedIndex == _adminPage &&
-                  notification.depth > 0) {
-                // Swipe left-to-right on first tab (Monitor) -> switch to AI Chat
-                Future.microtask(() {
-                  if (context.mounted) _switchPage(_aiPage);
-                });
-                return true;
-              }
-            } else if (overscrollAmount > 20.0) {
-              if (_selectedIndex == _adminPage && notification.depth > 0) {
-                // Swipe right-to-left on last tab (System Power) -> switch to Logs
-                Future.microtask(() {
-                  if (context.mounted) _switchPage(_logPage);
-                });
-                return true;
-              }
-            }
-            return false;
           },
-          child: PageView.builder(
-            controller: _pageController,
-            itemCount: _lastPage + 1,
-            physics: _selectedIndex == _adminPage
-                ? const NeverScrollableScrollPhysics()
-                : const BouncingScrollPhysics(),
-            allowImplicitScrolling: false,
-            onPageChanged: (index) {
-              if (_selectedIndex != index) {
-                setState(() {
-                  _selectedIndex = index;
-                  _settledIndex = index;
-                });
-                _onPageActive(index);
-              }
-            },
-            itemBuilder: (context, index) =>
-                _buildPage(context, index, strings),
-          ),
+          itemBuilder: (context, index) => _buildPage(context, index, strings),
         ),
       ),
     );
