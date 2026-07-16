@@ -63,6 +63,9 @@ class _OverflowScrollTextState extends State<OverflowScrollText> {
         child: SingleChildScrollView(
           controller: _scrollController,
           scrollDirection: Axis.horizontal,
+          physics: const BouncingScrollPhysics(
+            parent: AlwaysScrollableScrollPhysics(),
+          ),
           child: child,
         ),
       ),

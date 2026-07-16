@@ -321,7 +321,8 @@ class AiTool {
   }
 
   bool _supportsOpenAiStrict(AiConnectionSettings settings) {
-    if (settings.apiFormat != LlmApiFormat.openAiChatCompletions) {
+    if (settings.apiFormat != LlmApiFormat.openAiChatCompletions &&
+        settings.apiFormat != LlmApiFormat.openAiResponses) {
       return false;
     }
     final host =

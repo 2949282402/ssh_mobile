@@ -154,6 +154,7 @@ class _LlmApiConfigSection extends StatelessWidget {
               items:
                   const [
                     LlmApiFormat.openAiChatCompletions,
+                    LlmApiFormat.openAiResponses,
                     LlmApiFormat.geminiOpenAiCompatible,
                     LlmApiFormat.anthropicMessages,
                   ].map((format) {

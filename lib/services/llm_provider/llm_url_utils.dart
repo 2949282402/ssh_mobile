@@ -15,16 +15,23 @@ class LlmUrlUtils {
     if (basePath.endsWith(normalizedPath)) return trimmedBase;
     const chatPath = '/chat/completions';
     const modelsPath = '/models';
-    if (normalizedPath == modelsPath && basePath.endsWith(chatPath)) {
-      final nextPath =
-          '${basePath.substring(0, basePath.length - chatPath.length)}$modelsPath';
-      return uri
-          .replace(path: nextPath, query: null, fragment: null)
-          .toString();
+    const responsesPath = '/responses';
+
+    String? currentEnding;
+    if (basePath.endsWith(chatPath)) {
+      currentEnding = chatPath;
+    } else if (basePath.endsWith(modelsPath)) {
+      currentEnding = modelsPath;
+    } else if (basePath.endsWith(responsesPath)) {
+      currentEnding = responsesPath;
     }
-    if (normalizedPath == chatPath && basePath.endsWith(modelsPath)) {
+
+    if (currentEnding != null &&
+        (normalizedPath == chatPath ||
+            normalizedPath == modelsPath ||
+            normalizedPath == responsesPath)) {
       final nextPath =
-          '${basePath.substring(0, basePath.length - modelsPath.length)}$chatPath';
+          '${basePath.substring(0, basePath.length - currentEnding.length)}$normalizedPath';
       return uri
           .replace(path: nextPath, query: null, fragment: null)
           .toString();

@@ -4,6 +4,7 @@ import 'package:ssh_mobile/services/llm_provider/llm_provider_factory.dart';
 import 'package:ssh_mobile/services/llm_provider/openai_chat_provider.dart';
 import 'package:ssh_mobile/services/llm_provider/gemini_openai_compatible_provider.dart';
 import 'package:ssh_mobile/services/llm_provider/anthropic_messages_provider.dart';
+import 'package:ssh_mobile/services/llm_provider/openai_responses_provider.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 
 AiConnectionSettings buildSettings(LlmApiFormat format) {
@@ -64,14 +65,11 @@ void main() {
       expect(provider, isA<AnthropicMessagesProvider>());
     });
 
-    test(
-      'falls back to OpenAiChatProvider for unimplemented openAiResponses',
-      () {
-        final settings = buildSettings(LlmApiFormat.openAiResponses);
-        final provider = LlmProviderFactory.fromSettings(settings);
-        expect(provider, isA<OpenAiChatProvider>());
-      },
-    );
+    test('returns OpenAiResponsesProvider for openAiResponses', () {
+      final settings = buildSettings(LlmApiFormat.openAiResponses);
+      final provider = LlmProviderFactory.fromSettings(settings);
+      expect(provider, isA<OpenAiResponsesProvider>());
+    });
 
     test('falls back to OpenAiChatProvider for unimplemented geminiNative', () {
       final settings = buildSettings(LlmApiFormat.geminiNative);

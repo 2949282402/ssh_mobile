@@ -197,7 +197,7 @@ class TerminalScreenAppBar extends StatelessWidget
     return switch (connectionState) {
       SshConnectionState.connected => _TerminalStatusPresentation(
         label: strings.connected,
-        icon: Icons.check_circle_rounded,
+        icon: Icons.check_rounded,
         color: extendedColors?.success ?? colors.secondary,
       ),
       SshConnectionState.connecting => _TerminalStatusPresentation(
@@ -207,12 +207,12 @@ class TerminalScreenAppBar extends StatelessWidget
       ),
       SshConnectionState.error => _TerminalStatusPresentation(
         label: strings.terminalConnectionErrorStatus,
-        icon: Icons.error_rounded,
+        icon: Icons.close_rounded,
         color: colors.error,
       ),
       SshConnectionState.disconnected => _TerminalStatusPresentation(
         label: strings.disconnected,
-        icon: Icons.link_off_rounded,
+        icon: Icons.close_rounded,
         color: colors.error,
       ),
     };
@@ -268,48 +268,23 @@ class _TerminalAppBarTitle extends StatelessWidget {
                   const SizedBox(height: 3),
                   Row(
                     children: [
-                      Flexible(
-                        child: Semantics(
-                          key: const ValueKey('terminal-connection-status'),
-                          label: status.label,
-                          liveRegion: true,
-                          child: ExcludeSemantics(
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 7,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: status.color.withValues(alpha: 0.11),
-                                borderRadius: BorderRadius.circular(
-                                  AppTheme.radiusPill,
-                                ),
-                                border: Border.all(
-                                  color: status.color.withValues(alpha: 0.28),
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    status.icon,
-                                    size: 11,
-                                    color: status.color,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Flexible(
-                                    child: Text(
-                                      status.label,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: theme.textTheme.labelSmall
-                                          ?.copyWith(
-                                            color: status.color,
-                                            fontWeight: FontWeight.w800,
-                                          ),
-                                    ),
-                                  ),
-                                ],
+                      Semantics(
+                        key: const ValueKey('terminal-connection-status'),
+                        label: status.label,
+                        liveRegion: true,
+                        child: ExcludeSemantics(
+                          child: Container(
+                            width: 18,
+                            height: 18,
+                            decoration: BoxDecoration(
+                              color: status.color,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Center(
+                              child: Icon(
+                                status.icon,
+                                size: 12,
+                                color: Colors.white,
                               ),
                             ),
                           ),
@@ -318,14 +293,16 @@ class _TerminalAppBarTitle extends StatelessWidget {
                       if (endpoint != null && endpoint!.isNotEmpty) ...[
                         const SizedBox(width: 7),
                         Expanded(
-                          child: Text(
-                            endpoint!,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: colors.onSurfaceVariant,
-                              fontFamily: 'monospace',
-                              fontFamilyFallback: AppTheme.monospaceFallback,
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Text(
+                              endpoint!,
+                              maxLines: 1,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: colors.onSurfaceVariant,
+                                fontFamily: 'monospace',
+                                fontFamilyFallback: AppTheme.monospaceFallback,
+                              ),
                             ),
                           ),
                         ),

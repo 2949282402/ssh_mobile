@@ -109,6 +109,7 @@ class _LlmSettingsScreenState extends State<LlmSettingsScreen> {
     _selectedApiKeyId = widget.initialSettings.activeApiKeyId;
     const supportedApiFormats = [
       LlmApiFormat.openAiChatCompletions,
+      LlmApiFormat.openAiResponses,
       LlmApiFormat.geminiOpenAiCompatible,
       LlmApiFormat.anthropicMessages,
     ];
@@ -781,6 +782,8 @@ class _LlmSettingsScreenState extends State<LlmSettingsScreen> {
     switch (format) {
       case LlmApiFormat.openAiChatCompletions:
         return 'https://api.deepseek.com';
+      case LlmApiFormat.openAiResponses:
+        return 'https://api.openai.com/v1';
       case LlmApiFormat.geminiOpenAiCompatible:
         return 'https://generativelanguage.googleapis.com/v1beta/openai';
       case LlmApiFormat.anthropicMessages:

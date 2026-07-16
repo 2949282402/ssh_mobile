@@ -573,8 +573,7 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                                 SizedBox(width: 8 * scale),
                                 Flexible(
                                   child: TextButton.icon(
-                                    onPressed:
-                                        widget.onToggleConnectionWindows,
+                                    onPressed: widget.onToggleConnectionWindows,
                                     icon: Icon(
                                       widget.windowsExpanded
                                           ? Icons.expand_less_rounded

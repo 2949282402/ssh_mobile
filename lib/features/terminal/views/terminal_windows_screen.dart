@@ -775,50 +775,53 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
     final colorScheme = Theme.of(context).colorScheme;
     final metaColor = colorScheme.onSurface.withValues(alpha: 0.62);
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final chipWidth = constraints.maxWidth < 260
-            ? constraints.maxWidth
-            : (constraints.maxWidth - 8) / 2;
-        return Wrap(
-          spacing: 8,
-          runSpacing: 6,
-          children: [
-            _MetaChip(
-              width: chipWidth,
-              icon: session.tmuxSessionName == null
-                  ? Icons.terminal_rounded
-                  : Icons.layers_outlined,
-              label: strings.sessionMode,
-              value: session.tmuxSessionName == null
-                  ? strings.plainSshSession
-                  : strings.tmuxSession,
-              color: metaColor,
-            ),
-            _MetaChip(
-              width: chipWidth,
-              icon: Icons.schedule_rounded,
-              label: strings.createdAt,
-              value: _formatTime(session.createdAt),
-              color: metaColor,
-            ),
-            _MetaChip(
-              width: chipWidth,
-              icon: Icons.timer_outlined,
-              label: strings.autoDestroy,
-              value: _formatAutoDestroy(session, strings),
-              color: metaColor,
-            ),
-            _MetaChip(
-              width: chipWidth,
-              icon: Icons.memory_rounded,
-              label: strings.memoryUsage,
-              value: _formatBytes(session.estimatedMemoryBytes),
-              color: metaColor,
-            ),
-          ],
-        );
-      },
+    return GestureDetector(
+      onTap: () {}, // Prevent taps from propagating to the parent InkWell
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final chipWidth = constraints.maxWidth < 260
+              ? constraints.maxWidth
+              : (constraints.maxWidth - 8) / 2;
+          return Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              _MetaChip(
+                width: chipWidth,
+                icon: session.tmuxSessionName == null
+                    ? Icons.terminal_rounded
+                    : Icons.layers_outlined,
+                label: strings.sessionMode,
+                value: session.tmuxSessionName == null
+                    ? strings.plainSshSession
+                    : strings.tmuxSession,
+                color: metaColor,
+              ),
+              _MetaChip(
+                width: chipWidth,
+                icon: Icons.schedule_rounded,
+                label: strings.createdAt,
+                value: _formatTime(session.createdAt),
+                color: metaColor,
+              ),
+              _MetaChip(
+                width: chipWidth,
+                icon: Icons.timer_outlined,
+                label: strings.autoDestroy,
+                value: _formatAutoDestroy(session, strings),
+                color: metaColor,
+              ),
+              _MetaChip(
+                width: chipWidth,
+                icon: Icons.memory_rounded,
+                label: strings.memoryUsage,
+                value: _formatBytes(session.estimatedMemoryBytes),
+                color: metaColor,
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 
@@ -1178,11 +1181,11 @@ class _MetaChip extends StatelessWidget {
           children: [
             Icon(icon, size: 12, color: color),
             const SizedBox(width: 4),
-            Flexible(
-              child: Text(
+            Expanded(
+              child: OverflowScrollText(
                 '$label $value',
+                selectable: false,
                 maxLines: 1,
-                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: color,
                   fontSize: 11,
