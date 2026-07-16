@@ -21,7 +21,7 @@ void main() {
 
   late AppSettings appSettings;
   late StorageService storageService;
-  late SshService sshService;
+  late _TestSshService sshService;
   late SftpService sftpService;
   late PerformanceMonitorService performanceService;
   late ConnectionViewModel connectionViewModel;
@@ -37,7 +37,7 @@ void main() {
 
     storageService = StorageService();
     await storageService.init();
-    sshService = SshService(storageService);
+    sshService = _TestSshService(storageService);
     sftpService = SftpService(storageService);
     performanceService = PerformanceMonitorService(sshService, storageService);
     connectionViewModel = ConnectionViewModel(
@@ -64,7 +64,7 @@ void main() {
       providers: [
         ChangeNotifierProvider.value(value: appSettings),
         ChangeNotifierProvider.value(value: connectionViewModel),
-        ChangeNotifierProvider.value(value: sshService),
+        ChangeNotifierProvider<SshService>.value(value: sshService),
         ChangeNotifierProvider.value(value: performanceService),
       ],
       child: MaterialApp(
@@ -151,6 +151,18 @@ void main() {
           ),
         );
         await connectionViewModel.fetchConnections();
+        sshService.setServerOverview(
+          const SshServerOverviewSnapshot(
+            byConnection: {
+              'server-1': SshConnectionOverview(
+                count: 2,
+                latestState: SshConnectionState.connected,
+                hasConnected: true,
+              ),
+            },
+            windowCount: 2,
+          ),
+        );
 
         await tester.pumpWidget(host(onSettings: (_) {}));
         await tester.pumpAndSettle();
@@ -162,6 +174,7 @@ void main() {
         expect(find.text('No monitoring data'), findsNothing);
         expect(find.textContaining('deployment-user@'), findsOneWidget);
         expect(find.textContaining('Health 0'), findsNothing);
+        expect(find.text('Window List · 2'), findsOneWidget);
 
         final dragHandle = find.byKey(
           const ValueKey<String>('server-drag-handle-server-1'),
@@ -176,5 +189,20 @@ void main() {
         expect(tester.takeException(), isNull);
       },
     );
+  }
+}
+
+class _TestSshService extends SshService {
+  _TestSshService(super.storageService);
+
+  SshServerOverviewSnapshot _overview =
+      const SshServerOverviewSnapshot.empty();
+
+  @override
+  SshServerOverviewSnapshot get serverOverviewSnapshot => _overview;
+
+  void setServerOverview(SshServerOverviewSnapshot value) {
+    _overview = value;
+    notifyListeners();
   }
 }
