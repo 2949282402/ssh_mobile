@@ -1,3 +1,4 @@
+// ignore_for_file: prefer_initializing_formals
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 
@@ -22,11 +23,35 @@ class ConnectionViewModel extends ChangeNotifier {
   String? _errorMessage;
 
   ConnectionViewModel({
-    required this._connectionRepository,
-    required this._sshService,
-    required this._sftpService,
-    required this._performanceService,
-  });
+    required ConnectionRepository connectionRepository,
+    required SshService sshService,
+    required SftpService sftpService,
+    required PerformanceMonitorService performanceService,
+  }) : _connectionRepository = connectionRepository,
+       _sshService = sshService,
+       _sftpService = sftpService,
+       _performanceService = performanceService {
+    if (_connectionRepository is ChangeNotifier) {
+      (_connectionRepository as ChangeNotifier).addListener(
+        _onRepositoryChanged,
+      );
+    }
+  }
+
+  void _onRepositoryChanged() {
+    _connections = _connectionRepository.connections;
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    if (_connectionRepository is ChangeNotifier) {
+      (_connectionRepository as ChangeNotifier).removeListener(
+        _onRepositoryChanged,
+      );
+    }
+    super.dispose();
+  }
 
   List<ConnectionConfig> get connections => _connections;
   bool get isLoading => _isLoading;
@@ -75,10 +100,18 @@ class ConnectionViewModel extends ChangeNotifier {
   }
 
   Future<void> reorderConnections(int oldIndex, int newIndex) async {
+    if (oldIndex >= 0 &&
+        oldIndex < _connections.length &&
+        newIndex >= 0 &&
+        newIndex <= _connections.length) {
+      final mutable = List<ConnectionConfig>.from(_connections);
+      final item = mutable.removeAt(oldIndex);
+      mutable.insert(newIndex, item);
+      _connections = List.unmodifiable(mutable);
+      notifyListeners();
+    }
     try {
       await _connectionRepository.reorderConnections(oldIndex, newIndex);
-      _connections = _connectionRepository.connections;
-      notifyListeners();
     } catch (e) {
       _errorMessage = e.toString();
       notifyListeners();

@@ -561,48 +561,7 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
                             ),
                           ),
                         ),
-                        const SizedBox(height: 8),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 9,
-                              vertical: 5,
-                            ),
-                            decoration: BoxDecoration(
-                              color: statusColor.withValues(alpha: 0.11),
-                              borderRadius: BorderRadius.circular(
-                                AppTheme.radiusPill,
-                              ),
-                              border: Border.all(
-                                color: statusColor.withValues(alpha: 0.28),
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  _statusIcon(session.state),
-                                  size: 13,
-                                  color: statusColor,
-                                ),
-                                const SizedBox(width: 5),
-                                Flexible(
-                                  child: Text(
-                                    statusLabel,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: statusColor,
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
+
                         if (statusDetail != null) ...[
                           const SizedBox(height: 7),
                           Text(
@@ -633,11 +592,28 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
                   ),
                   const SizedBox(width: 8),
                   if (!viewModel.selectionMode) ...[
-                    _windowActionButton(
-                      key: ValueKey('terminal-window-open-${session.id}'),
-                      icon: Icons.open_in_new_rounded,
-                      tooltip: strings.enterWindow,
-                      onPressed: () => _openWindow(context, session),
+                    Container(
+                      key: ValueKey('terminal-window-status-${session.id}'),
+                      width: 48,
+                      height: 48,
+                      alignment: Alignment.center,
+                      child: Container(
+                        width: 20,
+                        height: 20,
+                        decoration: BoxDecoration(
+                          color: session.isConnected
+                              ? Colors.green.shade600
+                              : colorScheme.error,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          session.isConnected
+                              ? Icons.check_rounded
+                              : Icons.close_rounded,
+                          color: Colors.white,
+                          size: 13,
+                        ),
+                      ),
                     ),
                     PopupMenuButton<String>(
                       key: ValueKey('terminal-window-menu-${session.id}'),
@@ -688,25 +664,6 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _windowActionButton({
-    required Key key,
-    required IconData icon,
-    required String tooltip,
-    required VoidCallback onPressed,
-    Color? color,
-  }) {
-    return SizedBox.square(
-      key: key,
-      dimension: 48,
-      child: IconButton(
-        icon: Icon(icon),
-        tooltip: tooltip,
-        color: color,
-        onPressed: onPressed,
       ),
     );
   }
@@ -777,50 +734,57 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
 
     return GestureDetector(
       onTap: () {}, // Prevent taps from propagating to the parent InkWell
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final chipWidth = constraints.maxWidth < 260
-              ? constraints.maxWidth
-              : (constraints.maxWidth - 8) / 2;
-          return Wrap(
-            spacing: 8,
-            runSpacing: 6,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
             children: [
-              _MetaChip(
-                width: chipWidth,
-                icon: session.tmuxSessionName == null
-                    ? Icons.terminal_rounded
-                    : Icons.layers_outlined,
-                label: strings.sessionMode,
-                value: session.tmuxSessionName == null
-                    ? strings.plainSshSession
-                    : strings.tmuxSession,
-                color: metaColor,
+              Expanded(
+                child: _MetaChip(
+                  icon: session.tmuxSessionName == null
+                      ? Icons.terminal_rounded
+                      : Icons.layers_outlined,
+                  label: strings.sessionMode,
+                  value: session.tmuxSessionName == null
+                      ? strings.plainSshSession
+                      : strings.tmuxSession,
+                  color: metaColor,
+                ),
               ),
-              _MetaChip(
-                width: chipWidth,
-                icon: Icons.schedule_rounded,
-                label: strings.createdAt,
-                value: _formatTime(session.createdAt),
-                color: metaColor,
-              ),
-              _MetaChip(
-                width: chipWidth,
-                icon: Icons.timer_outlined,
-                label: strings.autoDestroy,
-                value: _formatAutoDestroy(session, strings),
-                color: metaColor,
-              ),
-              _MetaChip(
-                width: chipWidth,
-                icon: Icons.memory_rounded,
-                label: strings.memoryUsage,
-                value: _formatBytes(session.estimatedMemoryBytes),
-                color: metaColor,
+              const SizedBox(width: 8),
+              Expanded(
+                child: _MetaChip(
+                  icon: Icons.schedule_rounded,
+                  label: strings.createdAt,
+                  value: _formatTime(session.createdAt),
+                  color: metaColor,
+                ),
               ),
             ],
-          );
-        },
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: _MetaChip(
+                  icon: Icons.timer_outlined,
+                  label: strings.autoDestroy,
+                  value: _formatAutoDestroy(session, strings),
+                  color: metaColor,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _MetaChip(
+                  icon: Icons.memory_rounded,
+                  label: strings.memoryUsage,
+                  value: _formatBytes(session.estimatedMemoryBytes),
+                  color: metaColor,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -920,15 +884,6 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
     }
     final message = session.errorMessage?.trim();
     return message == null || message.isEmpty ? null : message;
-  }
-
-  IconData _statusIcon(SshConnectionState state) {
-    return switch (state) {
-      SshConnectionState.connected => Icons.check_circle_rounded,
-      SshConnectionState.connecting => Icons.sync_rounded,
-      SshConnectionState.error => Icons.error_rounded,
-      SshConnectionState.disconnected => Icons.link_off_rounded,
-    };
   }
 
   void _openWindow(BuildContext context, SshSession session) {
@@ -1150,14 +1105,12 @@ class _TerminalServerGroup {
 }
 
 class _MetaChip extends StatelessWidget {
-  final double width;
   final IconData icon;
   final String label;
   final String value;
   final Color color;
 
   const _MetaChip({
-    required this.width,
     required this.icon,
     required this.label,
     required this.value,
@@ -1167,34 +1120,31 @@ class _MetaChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return SizedBox(
-      width: width,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-        decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.48),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: colorScheme.outlineVariant),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 12, color: color),
-            const SizedBox(width: 4),
-            Expanded(
-              child: OverflowScrollText(
-                '$label $value',
-                selectable: false,
-                maxLines: 1,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                ),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.48),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: colorScheme.outlineVariant),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Expanded(
+            child: OverflowScrollText(
+              '$label $value',
+              selectable: false,
+              maxLines: 1,
+              style: TextStyle(
+                color: color,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

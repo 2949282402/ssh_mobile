@@ -423,16 +423,6 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                                 ),
                               ),
                       ),
-                      if (latestState != null &&
-                          latestState != SshConnectionState.disconnected) ...[
-                        SizedBox(width: 8 * scale),
-                        _buildConnectionStatusChip(
-                          context,
-                          latestState,
-                          widget.strings,
-                          scale,
-                        ),
-                      ],
                     ],
                   ),
                   if (!compactMobileCard) ...[
@@ -661,52 +651,6 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
           duration: 250.ms,
           curve: Curves.easeOutQuart,
         );
-  }
-
-  Widget _buildConnectionStatusChip(
-    BuildContext context,
-    SshConnectionState state,
-    AppStrings strings,
-    double scale,
-  ) {
-    final colorScheme = Theme.of(context).colorScheme;
-    Color color;
-    String label;
-    switch (state) {
-      case SshConnectionState.connected:
-        color = colorScheme.secondary;
-        label = strings.connected;
-        break;
-      case SshConnectionState.connecting:
-        color = colorScheme.primary;
-        label = strings.connecting;
-        break;
-      case SshConnectionState.error:
-        color = colorScheme.error;
-        label = strings.connectionError;
-        break;
-      case SshConnectionState.disconnected:
-        color = colorScheme.onSurfaceVariant;
-        label = strings.disconnected;
-        break;
-    }
-
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: 8 * scale, vertical: 3 * scale),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(AppTheme.radiusPill),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: color,
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
   }
 
   Widget _buildHealthChip(

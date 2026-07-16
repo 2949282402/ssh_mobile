@@ -141,7 +141,6 @@ void main() {
     expect(find.text('Staging'), findsWidgets);
     expect(find.textContaining('tmux'), findsWidgets);
     expect(find.textContaining('SSH'), findsWidgets);
-    expect(find.text('Connection error'), findsOneWidget);
     expect(
       find.text('Connection timed out while negotiating the SSH transport.'),
       findsOneWidget,
@@ -150,7 +149,7 @@ void main() {
 
     expect(
       tester.getSize(
-        find.byKey(const ValueKey('terminal-window-open-api-shell')),
+        find.byKey(const ValueKey('terminal-window-status-api-shell')),
       ),
       const Size(48, 48),
     );
@@ -208,7 +207,7 @@ void main() {
       const Size(48, 48),
     );
     expect(
-      find.byKey(const ValueKey('terminal-window-open-api-shell')),
+      find.byKey(const ValueKey('terminal-window-status-api-shell')),
       findsNothing,
     );
     expect(tester.takeException(), isNull);
