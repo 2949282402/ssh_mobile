@@ -174,6 +174,9 @@ its `views/` parts.
 - Keep large directory entry construction and sorting off the UI isolate, and
   use asynchronous directory iteration for cache discovery and cleanup.
 - Restore the last remote path after reconnect.
+- SFTP error retry must distinguish a live session directory failure from a
+  closed-session connection failure: refresh the current path when the client
+  is open, otherwise reconnect the selected server with host-key confirmation.
 - Recent and favorite SFTP paths are per server and Drift-backed. Keep them out
   of the SFTP protocol layer; record successful directory opens through the
   service/facade path.

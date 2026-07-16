@@ -308,3 +308,7 @@ across sessions.
   remote command scope, avoiding duplicate controls and unrelated SSH work.
 - 2026-07-16: The SFTP upload action follows `ColorScheme.secondary` in both
   desktop and compact toolbars; do not restore a fixed deep-purple button.
+- 2026-07-16: The SFTP directory error retry reconnects the active server when
+  its SFTP client is closed, but refreshes the current path when the session is
+  still open. Keep UI retries on this state-aware path so connection failures
+  do not silently call the no-op directory refresh path.

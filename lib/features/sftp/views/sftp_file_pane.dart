@@ -45,7 +45,10 @@ class _FilePane extends StatelessWidget {
           _SftpDirectoryErrorCard(
             strings: strings,
             message: snapshot.errorMessage!,
-            onRetry: sftp.refresh,
+            onRetry: () => sftp.retry(
+              onUnknownHostKey: (request) =>
+                  showSshHostKeyTrustDialog(context, request),
+            ),
           ),
         Expanded(
           child: _SftpEntryList(

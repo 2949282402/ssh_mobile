@@ -258,6 +258,7 @@ void main() {
       sftpService.show(
         state: SftpConnectionState.error,
         errorMessage: 'Permission denied',
+        connectionOpen: true,
       );
       await tester.pumpAndSettle();
       expect(
@@ -268,6 +269,16 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('sftp-directory-retry')));
       await tester.pump();
       expect(sftpService.refreshCalls, 1);
+
+      sftpService.show(
+        state: SftpConnectionState.error,
+        errorMessage: 'Connection failed',
+        connectionOpen: false,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('sftp-directory-retry')));
+      await tester.pump();
+      expect(sftpService.connectCalls, 1);
 
       sftpService.show(
         state: SftpConnectionState.connected,
@@ -398,9 +409,11 @@ class _FilePaneFakeSftpService extends SftpService {
   List<SftpEntry> _entries = const [];
   int _entriesRevision = 0;
   SftpTransferState? _activeTransfer;
+  bool _connectionOpen = true;
 
   int openParentCalls = 0;
   int refreshCalls = 0;
+  int connectCalls = 0;
   int disconnectCalls = 0;
   int cancelTransferCalls = 0;
   final List<String> openedPaths = [];
@@ -411,12 +424,14 @@ class _FilePaneFakeSftpService extends SftpService {
     String? errorMessage,
     String? currentPath,
     SftpTransferState? activeTransfer,
+    bool? connectionOpen,
   }) {
     _state = state;
     _entries = List.unmodifiable(entries);
     _errorMessage = errorMessage;
     _currentPath = currentPath ?? _currentPath;
     _activeTransfer = activeTransfer;
+    _connectionOpen = connectionOpen ?? _connectionOpen;
     _entriesRevision++;
     notifyListeners();
   }
@@ -443,7 +458,7 @@ class _FilePaneFakeSftpService extends SftpService {
   List<SftpEntry> get entries => _entries;
 
   @override
-  bool get isConnected => _state != SftpConnectionState.disconnected;
+  bool get isConnected => _connectionOpen;
 
   @override
   bool get isBusy =>
@@ -461,6 +476,15 @@ class _FilePaneFakeSftpService extends SftpService {
 
   @override
   bool isConnectionOpen(String connectionId) => isConnected;
+
+  @override
+  Future<void> connect(String connectionId, {dynamic onUnknownHostKey}) async {
+    connectCalls++;
+    _connectionOpen = true;
+    _state = SftpConnectionState.connected;
+    _errorMessage = null;
+    notifyListeners();
+  }
 
   @override
   Future<void> openPath(String path) async {
@@ -482,6 +506,7 @@ class _FilePaneFakeSftpService extends SftpService {
   @override
   Future<void> disconnect({bool notify = true}) async {
     disconnectCalls++;
+    _connectionOpen = false;
     _state = SftpConnectionState.disconnected;
     if (notify) notifyListeners();
   }

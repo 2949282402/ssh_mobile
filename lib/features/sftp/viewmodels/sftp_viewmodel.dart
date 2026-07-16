@@ -92,6 +92,15 @@ class SftpViewModel extends ChangeNotifier {
     await _sftpService.refresh();
   }
 
+  Future<void> retry({SshHostKeyConfirmation? onUnknownHostKey}) async {
+    final activeConnectionId = connectionId;
+    if (activeConnectionId != null && !isConnected) {
+      await connect(activeConnectionId, onUnknownHostKey: onUnknownHostKey);
+      return;
+    }
+    await refresh();
+  }
+
   Future<void> uploadLocalFile({
     required String localPath,
     required String filename,
