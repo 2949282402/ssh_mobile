@@ -27,7 +27,11 @@ SSH Mobile 是一个基于 Flutter 的跨平台 SSH / SFTP 客户端，覆盖 An
 Codex 和 GPT-5.6 被用于本项目的 AI 辅助开发流程，但最终代码、架构和安全决策均由开发者审查、测试并确认。
 
 - **Codex**：用于仓库级代码分析、功能实现、重构、缺陷定位、测试生成、代码审查，以及文档和维护脚本同步。
-- **GPT-5.6**：用于架构推理、Agent loop 与工具调用安全设计、复杂回归分析、测试策略制定和技术方案权衡。
+- **GPT-5.6**：主要用于完成以下工作：
+  - **1.5K 与 2K 手机屏幕适配**：引入基于设备物理短边的统一 `MobileUiMetrics` 策略。对于物理短边约 1280–1440 px 的 1.5K 屏幕，适度收紧控件和导航密度；对于 2K 屏幕，保持标准界面比例，同时不缩放系统文字。还调整了响应式断点，并优化 Servers、SFTP、Logs、Settings 和 System Administration 等主要页面的紧凑布局。
+  - **UI 与组件重构**：压缩服务器卡片、SFTP 工具栏与文件列表、日志条目和监控控件；抽取 SFTP 与 System Administration 共用的服务器选择组件；并协助完成启动页、终端、性能监控和系统管理页面的 feature-first MVVM 重构。
+  - **项目启动与运行时性能优化**：缓存 Material 与 Shad 主题对象，使应用根节点仅订阅不可变的视觉设置快照，避免终端字体等功能级设置触发整个应用外壳重建；保留页面和 Tab 的延迟加载；使用 `Selector` 缩小组件刷新范围；缓存图表采样点与列表计算结果；并把远程输出解码、SFTP 条目构建与排序、监控和系统管理数据解析迁移到后台 isolate。
+  - 代表性提交：[`33d5f63`](https://github.com/hejulian2004/ssh_mobile/commit/33d5f63e77381fe1c94b6feaf9967abb5926b4fb)、[`97b52b5`](https://github.com/hejulian2004/ssh_mobile/commit/97b52b59ac31ce44e732a672ae61d65109304ad5)、[`1e587bf`](https://github.com/hejulian2004/ssh_mobile/commit/1e587bf3d521fd9007cd2636d86ad69cc26b2320)、[`833256a`](https://github.com/hejulian2004/ssh_mobile/commit/833256ab73134d474daea8aa9790678976f9c70b)、[`3d2ceda`](https://github.com/hejulian2004/ssh_mobile/commit/3d2ceda56aba01be8f4452c492913b9f9fa11079) 和 [`9ffd48e`](https://github.com/hejulian2004/ssh_mobile/commit/9ffd48e2bc26fd3a3c6fc2cb83973076a7e01902)。
 - **Gemini**：用于部分实现方案与文档内容的交叉验证。
 - 所有 AI 生成或修改的代码都需要通过格式化、静态分析、自动化测试、覆盖率检查和人工审查后才能保留。
 
