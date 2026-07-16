@@ -8,6 +8,7 @@ class _ApplicationsTab extends StatefulWidget {
   final ValueNotifier<int> activeTabIndex;
 
   const _ApplicationsTab({
+    super.key,
     required this.strings,
     required this.colorScheme,
     required this.viewModel,
@@ -30,6 +31,11 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
   bool _appsLoadScheduled = false;
 
   bool get _isActive => widget.activeTabIndex.value == 2;
+
+  void refresh() {
+    if (widget.viewModel.selectedConnectionId == null) return;
+    setState(() => _refreshApplicationsFuture(force: true));
+  }
 
   void _refreshApplicationsFuture({bool force = false}) {
     final connectionId = widget.viewModel.selectedConnectionId;
@@ -168,6 +174,7 @@ class _ApplicationsTabState extends State<_ApplicationsTab>
         '未发现应用数据',
       ),
       future: _appsFuture,
+      showRefresh: false,
       onRefresh: () => setState(() => _refreshApplicationsFuture(force: true)),
       itemBuilder: _buildApplicationItem,
     );

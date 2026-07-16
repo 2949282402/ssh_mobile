@@ -675,12 +675,17 @@ void main() {
         find.byType(SegmentedButton<bool>),
       );
       final portsRefreshCenter = tester.getCenter(
-        find.byKey(const ValueKey('ports-tab-refresh')),
+        find.byKey(const ValueKey('system-admin-tab-refresh')),
       );
       expect(portsRefreshCenter.dx, greaterThan(portsModeCenter.dx));
+      expect(portsRefreshCenter.dy, lessThan(portsModeCenter.dy));
       expect(find.text('连接 Root'), findsNothing);
       expect(adminVm.connectIfNeededCalls, 0);
       expect(monitorVm.fetchPortsCalls, ['conn_123']);
+
+      await tester.tap(find.byKey(const ValueKey('system-admin-tab-refresh')));
+      await tester.pumpAndSettle();
+      expect(monitorVm.fetchPortsCalls, ['conn_123', 'conn_123']);
 
       await tester.tap(
         find.byKey(const ValueKey('admin-server-tile-conn_123')),
@@ -719,7 +724,7 @@ void main() {
       expect(find.textContaining('PID 101'), findsOneWidget);
       expect(find.byKey(const ValueKey('header-conn_123')), findsNothing);
       expect(
-        find.byKey(const ValueKey('snapshot-tab-refresh')),
+        find.byKey(const ValueKey('system-admin-tab-refresh')),
         findsOneWidget,
       );
       // Applications does not display a manage mode or Connect Root warning
@@ -760,9 +765,10 @@ void main() {
         find.byType(SegmentedButton<bool>),
       );
       final servicesRefreshCenter = tester.getCenter(
-        find.byKey(const ValueKey('services-tab-refresh')),
+        find.byKey(const ValueKey('system-admin-tab-refresh')),
       );
       expect(servicesRefreshCenter.dx, greaterThan(servicesModeCenter.dx));
+      expect(servicesRefreshCenter.dy, lessThan(servicesModeCenter.dy));
       expect(find.text('连接 Root'), findsNothing);
       expect(adminVm.connectIfNeededCalls, 0);
       expect(monitorVm.fetchServicesCalls, ['conn_123']);
@@ -816,7 +822,7 @@ void main() {
       expect(find.text('快照模式'), findsOneWidget);
       expect(find.byTooltip('刷新全部'), findsNothing);
       expect(
-        find.byKey(const ValueKey('services-tab-refresh')),
+        find.byKey(const ValueKey('system-admin-tab-refresh')),
         findsOneWidget,
       );
 
@@ -1193,6 +1199,24 @@ void main() {
     await tester.tap(portsTab);
     await tester.pumpAndSettle();
     expect(find.text('快照模式'), findsOneWidget);
+    final mobileSelector = find.byKey(const ValueKey('admin-server-expanded'));
+    final refreshButton = find.byKey(
+      const ValueKey('system-admin-tab-refresh'),
+    );
+    expect(refreshButton, findsOneWidget);
+    expect(
+      tester.getCenter(refreshButton).dx,
+      greaterThan(tester.getTopRight(mobileSelector).dx),
+    );
+    final selectorList = find.descendant(
+      of: mobileSelector,
+      matching: find.byType(ListView),
+    );
+    expect(selectorList, findsOneWidget);
+    expect(
+      tester.widget<ListView>(selectorList).scrollDirection,
+      Axis.horizontal,
+    );
     expect(tester.takeException(), isNull);
 
     final servicesTab = find.text('系统服务');

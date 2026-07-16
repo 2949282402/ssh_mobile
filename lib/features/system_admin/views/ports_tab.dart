@@ -54,6 +54,7 @@ class _PortsTab extends StatefulWidget {
   final ValueNotifier<int> activeTabIndex;
 
   const _PortsTab({
+    super.key,
     required this.strings,
     required this.colorScheme,
     required this.viewModel,
@@ -77,6 +78,16 @@ class _PortsTabState extends State<_PortsTab>
   bool _modeActivationScheduled = false;
 
   bool get _isActive => widget.activeTabIndex.value == 1;
+
+  void refresh() {
+    final id = widget.viewModel.selectedConnectionId;
+    if (id == null) return;
+    if (_isManageMode && _isLinux) {
+      unawaited(widget.viewModel.fetchPorts(id, force: true));
+    } else {
+      setState(() => _refreshPortsFuture(force: true));
+    }
+  }
 
   bool get _isLinux {
     final connectionId = widget.viewModel.selectedConnectionId;
@@ -239,15 +250,6 @@ class _PortsTabState extends State<_PortsTab>
       children: [
         if (_isLinux) ...[
           _AdminModeToolbar(
-            strings: widget.strings,
-            refreshKey: const ValueKey('ports-tab-refresh'),
-            onRefresh: () {
-              if (_isManageMode) {
-                unawaited(widget.viewModel.fetchPorts(id, force: true));
-              } else {
-                setState(() => _refreshPortsFuture(force: true));
-              }
-            },
             modeSelector: SegmentedButton<bool>(
               segments: [
                 ButtonSegment(
@@ -410,7 +412,7 @@ class _PortsTabState extends State<_PortsTab>
         '未发现监听端口',
       ),
       future: _portsFuture,
-      showRefresh: !_isLinux,
+      showRefresh: false,
       onRefresh: () => setState(() => _refreshPortsFuture(force: true)),
       itemBuilder: (context, port) {
         return _PortProcessTile(strings: widget.strings, port: port);

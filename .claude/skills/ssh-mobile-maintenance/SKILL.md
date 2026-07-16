@@ -226,8 +226,8 @@ its child widgets.
 - Ports, Applications, and Services each operate on one selected server and
   fetch on open or manual refresh.
 - Single-server snapshot lists do not repeat the selected-server summary.
-  Keep Ports/Services mode selectors centered with a symmetric spacer and the
-  refresh action on the right; Applications uses the same compact refresh row.
+  Keep Ports/Services mode selectors centered without embedding another
+  trailing action in their content toolbar.
 - Snapshot modes do not require root, enabling non-root Linux and Windows
   monitoring, while management tabs (Users, Sessions, Power) and management
   modes require root Linux connections.
@@ -240,8 +240,10 @@ its child widgets.
   calls must complete Accounts, Sessions, Services, and Ports without a shared
   timer canceling earlier work.
 - Do not add a global Refresh All action to the System Administration tab bar;
-  each active tab owns its refresh affordance and remote command scope. Avoid
-  restoring the obsolete generic workspace header/status layer.
+  the fixed top-right refresh affordance sits beside (not inside) the scrollable
+  server selector and dispatches only to the active Ports, Applications,
+  Services, Users, or Sessions tab. Monitor and Power do not show that action.
+  Avoid restoring the obsolete generic workspace header/status layer.
 - Collect data with read-only one-shot SSH exec commands. Do not attach to tmux
   or interactive terminal sessions.
 - Linux probes use `/proc` and `df -P`; Windows probes use the PowerShell JSON

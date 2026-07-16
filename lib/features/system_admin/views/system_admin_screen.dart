@@ -50,6 +50,11 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final ValueNotifier<int> _activeTabIndex = ValueNotifier<int>(0);
+  final GlobalKey<_PortsTabState> _portsTabKey = GlobalKey<_PortsTabState>();
+  final GlobalKey<_ApplicationsTabState> _applicationsTabKey =
+      GlobalKey<_ApplicationsTabState>();
+  final GlobalKey<_ServicesTabState> _servicesTabKey =
+      GlobalKey<_ServicesTabState>();
   int? _lastActivatedTabIndex;
   String? _lastActivatedConnectionId;
   String? _lastObservedSelectedConnectionId;
@@ -131,6 +136,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
           strings,
           colorScheme,
           _activeTabIndex,
+          reserveTopRightRefreshSpace: desktop,
         );
 
         return Scaffold(
@@ -178,7 +184,22 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                             thickness: 1,
                             color: Theme.of(context).colorScheme.outlineVariant,
                           ),
-                          Expanded(child: bodyContent),
+                          Expanded(
+                            child: ValueListenableBuilder<int>(
+                              valueListenable: _activeTabIndex,
+                              builder: (context, activeIndex, _) => Stack(
+                                children: [
+                                  Positioned.fill(child: bodyContent),
+                                  if (_tabSupportsRefresh(activeIndex))
+                                    Positioned(
+                                      top: 4,
+                                      right: 4,
+                                      child: _buildTabRefreshButton(strings),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
                         ],
                       )
                     : Column(
@@ -189,33 +210,56 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
                             height: snapshot.serversCollapsed
                                 ? collapsedMobileServerHeight
                                 : expandedMobileServerHeight,
-                            child: AnimatedSwitcher(
-                              duration: const Duration(milliseconds: 180),
-                              switchInCurve: Curves.easeOutCubic,
-                              switchOutCurve: Curves.easeInCubic,
-                              layoutBuilder: (currentChild, _) =>
-                                  currentChild ?? const SizedBox.shrink(),
-                              child: snapshot.serversCollapsed
-                                  ? _AdminCollapsedMobileServerBar(
-                                      key: const ValueKey(
-                                        'admin-server-collapsed',
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: AnimatedSwitcher(
+                                    duration: const Duration(milliseconds: 180),
+                                    switchInCurve: Curves.easeOutCubic,
+                                    switchOutCurve: Curves.easeInCubic,
+                                    layoutBuilder: (currentChild, _) =>
+                                        currentChild ?? const SizedBox.shrink(),
+                                    child: snapshot.serversCollapsed
+                                        ? _AdminCollapsedMobileServerBar(
+                                            key: const ValueKey(
+                                              'admin-server-collapsed',
+                                            ),
+                                            strings: strings,
+                                            isMonitorTab: isMonitorTab,
+                                            onExpand: () => context
+                                                .read<SystemAdminViewModel>()
+                                                .setServersCollapsed(
+                                                  context,
+                                                  false,
+                                                ),
+                                          )
+                                        : _AdminMobileServerStrip(
+                                            key: const ValueKey(
+                                              'admin-server-expanded',
+                                            ),
+                                            strings: strings,
+                                            isMonitorTab: isMonitorTab,
+                                            onCollapse: () => context
+                                                .read<SystemAdminViewModel>()
+                                                .setServersCollapsed(
+                                                  context,
+                                                  true,
+                                                ),
+                                          ),
+                                  ),
+                                ),
+                                if (_tabSupportsRefresh(activeIndex))
+                                  Material(
+                                    color: colorScheme.surface,
+                                    child: SizedBox(
+                                      width: 56,
+                                      height: double.infinity,
+                                      child: Center(
+                                        child: _buildTabRefreshButton(strings),
                                       ),
-                                      strings: strings,
-                                      isMonitorTab: isMonitorTab,
-                                      onExpand: () => context
-                                          .read<SystemAdminViewModel>()
-                                          .setServersCollapsed(context, false),
-                                    )
-                                  : _AdminMobileServerStrip(
-                                      key: const ValueKey(
-                                        'admin-server-expanded',
-                                      ),
-                                      strings: strings,
-                                      isMonitorTab: isMonitorTab,
-                                      onCollapse: () => context
-                                          .read<SystemAdminViewModel>()
-                                          .setServersCollapsed(context, true),
                                     ),
+                                  ),
+                              ],
                             ),
                           ),
                           Divider(
@@ -342,8 +386,9 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
   Widget _buildMainContent(
     AppStrings strings,
     ColorScheme colorScheme,
-    ValueNotifier<int> activeTabIndex,
-  ) {
+    ValueNotifier<int> activeTabIndex, {
+    required bool reserveTopRightRefreshSpace,
+  }) {
     // TabController organizes all Admin tabs
     return Column(
       children: [
@@ -358,37 +403,55 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
               ),
             ),
           ),
-          child: NotificationListener<ScrollNotification>(
-            onNotification: (notification) => true,
-            child: TabBar(
-              controller: _tabController,
-              isScrollable: true,
-              tabAlignment: TabAlignment.start,
-              labelPadding: const EdgeInsets.symmetric(horizontal: 14),
-              tabs: [
-                Tab(
-                  text: strings.monitor,
-                  icon: const Icon(Icons.monitor_heart_outlined),
+          child: ValueListenableBuilder<int>(
+            valueListenable: activeTabIndex,
+            builder: (context, activeIndex, _) => Padding(
+              padding: EdgeInsets.only(
+                right:
+                    reserveTopRightRefreshSpace &&
+                        _tabSupportsRefresh(activeIndex)
+                    ? 56
+                    : 0,
+              ),
+              child: NotificationListener<ScrollNotification>(
+                onNotification: (notification) => true,
+                child: TabBar(
+                  controller: _tabController,
+                  isScrollable: true,
+                  tabAlignment: TabAlignment.start,
+                  labelPadding: const EdgeInsets.symmetric(horizontal: 14),
+                  tabs: [
+                    Tab(
+                      text: strings.monitor,
+                      icon: const Icon(Icons.monitor_heart_outlined),
+                    ),
+                    Tab(
+                      text: strings.listeningPorts,
+                      icon: const Icon(Icons.lan),
+                    ),
+                    Tab(
+                      text: strings.applications,
+                      icon: const Icon(Icons.apps_rounded),
+                    ),
+                    Tab(
+                      text: strings.systemServices,
+                      icon: const Icon(Icons.settings_suggest),
+                    ),
+                    Tab(
+                      text: strings.userAccounts,
+                      icon: const Icon(Icons.people),
+                    ),
+                    Tab(
+                      text: strings.activeSessions,
+                      icon: const Icon(Icons.co_present),
+                    ),
+                    Tab(
+                      text: strings.systemPower,
+                      icon: const Icon(Icons.power_settings_new),
+                    ),
+                  ],
                 ),
-                Tab(text: strings.listeningPorts, icon: const Icon(Icons.lan)),
-                Tab(
-                  text: strings.applications,
-                  icon: const Icon(Icons.apps_rounded),
-                ),
-                Tab(
-                  text: strings.systemServices,
-                  icon: const Icon(Icons.settings_suggest),
-                ),
-                Tab(text: strings.userAccounts, icon: const Icon(Icons.people)),
-                Tab(
-                  text: strings.activeSessions,
-                  icon: const Icon(Icons.co_present),
-                ),
-                Tab(
-                  text: strings.systemPower,
-                  icon: const Icon(Icons.power_settings_new),
-                ),
-              ],
+              ),
             ),
           ),
         ),
@@ -416,6 +479,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
               ),
               // Tab 1: Ports (Manage/Snapshot)
               _PortsTab(
+                key: _portsTabKey,
                 strings: strings,
                 colorScheme: colorScheme,
                 viewModel: context.read<SystemAdminViewModel>(),
@@ -423,6 +487,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
               ),
               // Tab 2: Applications (Snapshot only)
               _ApplicationsTab(
+                key: _applicationsTabKey,
                 strings: strings,
                 colorScheme: colorScheme,
                 viewModel: context.read<SystemAdminViewModel>(),
@@ -431,6 +496,7 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
               ),
               // Tab 3: Services (Manage/Snapshot)
               _ServicesTab(
+                key: _servicesTabKey,
                 strings: strings,
                 colorScheme: colorScheme,
                 viewModel: context.read<SystemAdminViewModel>(),
@@ -471,6 +537,36 @@ class _SystemAdminScreenState extends State<SystemAdminScreen>
         ),
       ],
     );
+  }
+
+  bool _tabSupportsRefresh(int index) => index >= 1 && index <= 5;
+
+  Widget _buildTabRefreshButton(AppStrings strings) {
+    return IconButton(
+      key: const ValueKey('system-admin-tab-refresh'),
+      tooltip: strings.refresh,
+      onPressed: _refreshActiveTab,
+      icon: const Icon(Icons.refresh_rounded),
+    );
+  }
+
+  void _refreshActiveTab() {
+    final viewModel = context.read<SystemAdminViewModel>();
+    final connectionId = viewModel.selectedConnectionId;
+    if (connectionId == null) return;
+
+    switch (_activeTabIndex.value) {
+      case 1:
+        _portsTabKey.currentState?.refresh();
+      case 2:
+        _applicationsTabKey.currentState?.refresh();
+      case 3:
+        _servicesTabKey.currentState?.refresh();
+      case 4:
+        unawaited(viewModel.fetchAccounts(connectionId, force: true));
+      case 5:
+        unawaited(viewModel.fetchSessions(connectionId, force: true));
+    }
   }
 }
 

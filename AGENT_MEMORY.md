@@ -295,17 +295,19 @@ across sessions.
   feature-specific bindings responsible for SFTP single-select and Monitor
   multi-select behavior instead of duplicating selector layout.
 - 2026-07-15: Ports, Applications, and Services snapshot lists omit redundant
-  single-server summary headers. Ports/Services use a centered mode selector
-  with a right-aligned refresh action; Applications uses the compact
-  right-aligned snapshot refresh row.
+  single-server summary headers. Ports/Services keep their mode selector
+  centered without a duplicate content-toolbar refresh action.
 - 2026-07-15: Users and Sessions tabs subscribe directly to their ViewModel
   list/loading state, and manual root retry continues loading the active tab.
   SystemAdmin fetch debounce is awaited and epoch-cancelable; forced
   `refreshAllData()` must run all four management fetches instead of sharing a
   timer that drops Accounts, Sessions, or Services.
 - 2026-07-15: System Administration has no global tab-bar Refresh All or hidden
-  generic workspace header/status layer. Each tab owns its refresh action and
-  remote command scope, avoiding duplicate controls and unrelated SSH work.
+  generic workspace header/status layer. Its refresh action stays fixed at the
+  top right beside the independently scrollable server selector and dispatches
+  only to the active Ports, Applications, Services, Users, or Sessions tab;
+  Monitor and Power do not expose it. This avoids duplicate controls and
+  unrelated SSH work.
 - 2026-07-16: The SFTP upload action follows `ColorScheme.secondary` in both
   desktop and compact toolbars; do not restore a fixed deep-purple button.
 - 2026-07-16: The SFTP directory error retry reconnects the active server when

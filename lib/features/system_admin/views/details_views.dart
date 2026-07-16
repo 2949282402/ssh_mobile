@@ -407,43 +407,19 @@ class _ServerSnapshotTabState<T> extends State<_ServerSnapshotTab<T>> {
 }
 
 class _AdminModeToolbar extends StatelessWidget {
-  const _AdminModeToolbar({
-    required this.strings,
-    required this.modeSelector,
-    required this.onRefresh,
-    required this.refreshKey,
-  });
+  const _AdminModeToolbar({required this.modeSelector});
 
-  final AppStrings strings;
   final Widget modeSelector;
-  final VoidCallback onRefresh;
-  final Key refreshKey;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
-      child: Row(
-        children: [
-          const SizedBox(width: 48),
-          Expanded(
-            child: Center(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: modeSelector,
-              ),
-            ),
-          ),
-          SizedBox.square(
-            dimension: 48,
-            child: IconButton(
-              key: refreshKey,
-              tooltip: strings.refresh,
-              onPressed: onRefresh,
-              icon: const Icon(Icons.refresh_rounded),
-            ),
-          ),
-        ],
+      child: Center(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: modeSelector,
+        ),
       ),
     );
   }

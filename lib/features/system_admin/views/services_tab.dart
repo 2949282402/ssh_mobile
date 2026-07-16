@@ -54,6 +54,7 @@ class _ServicesTab extends StatefulWidget {
   final ValueNotifier<int> activeTabIndex;
 
   const _ServicesTab({
+    super.key,
     required this.strings,
     required this.colorScheme,
     required this.viewModel,
@@ -84,6 +85,16 @@ class _ServicesTabState extends State<_ServicesTab>
   String? _lastManageFilterKey;
 
   bool get _isActive => widget.activeTabIndex.value == 3;
+
+  void refresh() {
+    final id = widget.viewModel.selectedConnectionId;
+    if (id == null) return;
+    if (_isManageMode && _isLinux) {
+      unawaited(widget.viewModel.fetchServices(id, force: true));
+    } else {
+      setState(() => _refreshServicesFuture(force: true));
+    }
+  }
 
   @override
   bool get wantKeepAlive => true;
@@ -325,15 +336,6 @@ class _ServicesTabState extends State<_ServicesTab>
       children: [
         if (_isLinux) ...[
           _AdminModeToolbar(
-            strings: widget.strings,
-            refreshKey: const ValueKey('services-tab-refresh'),
-            onRefresh: () {
-              if (_isManageMode) {
-                unawaited(widget.viewModel.fetchServices(id, force: true));
-              } else {
-                setState(() => _refreshServicesFuture(force: true));
-              }
-            },
             modeSelector: SegmentedButton<bool>(
               segments: [
                 ButtonSegment(
@@ -533,7 +535,7 @@ class _ServicesTabState extends State<_ServicesTab>
                     '未发现运行中的服务',
                   ),
                   future: _servicesFuture,
-                  showRefresh: !_isLinux,
+                  showRefresh: false,
                   dataOverride: _rawSnapshotData.isEmpty ? null : snapshotData,
                   onRefresh: () =>
                       setState(() => _refreshServicesFuture(force: true)),
