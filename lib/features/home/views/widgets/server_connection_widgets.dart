@@ -544,46 +544,62 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                             ),
                           ),
                         ],
-                      ] else ...[
-                        TextButton.icon(
-                          onPressed: widget.onOpenNewTerminal,
-                          icon: Icon(
-                            Icons.add_to_photos_outlined,
-                            size: 16 * scale,
-                          ),
-                          label: Text(widget.strings.newWindow),
-                          style: TextButton.styleFrom(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 8 * scale,
-                              vertical: 4 * scale,
-                            ),
+                        const Spacer(),
+                      ] else
+                        Expanded(
+                          child: Row(
+                            children: [
+                              Flexible(
+                                child: TextButton.icon(
+                                  onPressed: widget.onOpenNewTerminal,
+                                  icon: Icon(
+                                    Icons.add_to_photos_outlined,
+                                    size: 16 * scale,
+                                  ),
+                                  label: Text(
+                                    widget.strings.newWindow,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  style: TextButton.styleFrom(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 8 * scale,
+                                      vertical: 4 * scale,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              if (sessionCount > 0) ...[
+                                SizedBox(width: 8 * scale),
+                                Flexible(
+                                  child: TextButton.icon(
+                                    onPressed:
+                                        widget.onToggleConnectionWindows,
+                                    icon: Icon(
+                                      widget.windowsExpanded
+                                          ? Icons.expand_less_rounded
+                                          : Icons.expand_more_rounded,
+                                      size: 16 * scale,
+                                    ),
+                                    label: Text(
+                                      widget.strings.language == AppLanguage.en
+                                          ? 'Window List · $sessionCount'
+                                          : '窗口列表 · $sessionCount',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    style: TextButton.styleFrom(
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal: 8 * scale,
+                                        vertical: 4 * scale,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                         ),
-                        if (sessionCount > 0) ...[
-                          SizedBox(width: 8 * scale),
-                          TextButton.icon(
-                            onPressed: widget.onToggleConnectionWindows,
-                            icon: Icon(
-                              widget.windowsExpanded
-                                  ? Icons.expand_less_rounded
-                                  : Icons.expand_more_rounded,
-                              size: 16 * scale,
-                            ),
-                            label: Text(
-                              widget.strings.language == AppLanguage.en
-                                  ? 'Window List · $sessionCount'
-                                  : '窗口列表 · $sessionCount',
-                            ),
-                            style: TextButton.styleFrom(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 8 * scale,
-                                vertical: 4 * scale,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                      const Spacer(),
                       if (!widget.serverSelectionMode)
                         PopupMenuButton<String>(
                           icon: Icon(
