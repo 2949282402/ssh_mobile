@@ -163,9 +163,12 @@ void main() {
       );
       expect(
         uploadButton.style?.backgroundColor?.resolve({}),
-        const Color(0xFF4338CA),
+        AppTheme.lightThemeFor().colorScheme.secondary,
       );
-      expect(uploadButton.style?.foregroundColor?.resolve({}), Colors.white);
+      expect(
+        uploadButton.style?.foregroundColor?.resolve({}),
+        AppTheme.lightThemeFor().colorScheme.onSecondary,
+      );
       expect(
         tester.getSize(
           find.byKey(

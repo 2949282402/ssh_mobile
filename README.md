@@ -26,7 +26,7 @@ The project began with a two-core server that had only 1 GB of memory. Running a
 
 - **SSH connection management** with passwords, private keys, encrypted private keys, jump hosts, server platform selection, and SSH host-key trust-on-first-use verification.
 - **Multi-window terminals** that allow several fixed-name sessions per server and stable tmux session binding.
-- **SFTP file management** with browsing, recent and favorite paths, uploads, downloads, editing, previews, and explicit deletion confirmation.
+- **SFTP file management** with browsing, recent and favorite paths, uploads, downloads, editing, previews, and explicit deletion confirmation. The upload action follows the active theme's secondary color instead of a fixed deep purple.
 - **Server monitoring** for performance, ports, applications, services, users, and active sessions.
 - **AI chat and agent execution** with streaming output, Plan Mode, approval-controlled tools, persistent history, message branching, context compression, RAG, skills, and execution traces.
 - **Local MCP server** support on desktop platforms, including generated configuration for Codex, Claude Code, and Gemini CLI.

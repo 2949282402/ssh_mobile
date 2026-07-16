@@ -202,6 +202,8 @@ its `views/` parts.
   identifies PDFs and directs the user to download and open them externally.
 - Keep upload, download, preview, edit, and delete behavior aligned across
   mobile, Windows, and macOS.
+- Keep the SFTP upload action on the active theme's secondary color; do not
+  hardcode the former deep-purple action color.
 
 ### Performance Monitor & System Administration
 

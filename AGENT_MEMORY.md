@@ -303,3 +303,5 @@ across sessions.
 - 2026-07-15: System Administration has no global tab-bar Refresh All or hidden
   generic workspace header/status layer. Each tab owns its refresh action and
   remote command scope, avoiding duplicate controls and unrelated SSH work.
+- 2026-07-16: The SFTP upload action follows `ColorScheme.secondary` in both
+  desktop and compact toolbars; do not restore a fixed deep-purple button.
