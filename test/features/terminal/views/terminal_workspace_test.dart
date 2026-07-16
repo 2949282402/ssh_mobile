@@ -267,7 +267,7 @@ void main() {
           find.byKey(const ValueKey('terminal-advanced-keyboard')),
         );
         await tester.pumpAndSettle();
-        expect(find.text('Advanced keyboard'), findsOneWidget);
+        expect(find.text('Advanced Keyboard'), findsOneWidget);
         expect(find.text('Function Keys'), findsOneWidget);
         expect(tester.takeException(), isNull);
       },

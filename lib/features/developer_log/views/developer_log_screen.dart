@@ -10,13 +10,13 @@ import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
 
 extension _DeveloperLogStrings on AppStrings {
   String get copySelectedLogs =>
-      language == AppLanguage.en ? 'Copy selected logs' : '复制选中日志';
+      language == AppLanguage.en ? 'Copy Selected' : '复制选中日志';
   String get deleteSelectedLogs =>
-      language == AppLanguage.en ? 'Delete selected logs' : '删除选中日志';
+      language == AppLanguage.en ? 'Delete Selected' : '删除选中日志';
   String selectedLogs(int count) =>
-      language == AppLanguage.en ? '$count logs selected' : '已选择 $count 条日志';
+      language == AppLanguage.en ? '$count selected' : '已选择 $count 条日志';
   String selectedLogsDeleted(int count) =>
-      language == AppLanguage.en ? '$count logs deleted' : '已删除 $count 条日志';
+      language == AppLanguage.en ? '$count deleted' : '已删除 $count 条日志';
 }
 
 class DeveloperLogPage extends StatefulWidget {

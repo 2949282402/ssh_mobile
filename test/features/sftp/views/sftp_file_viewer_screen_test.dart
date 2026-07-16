@@ -671,7 +671,7 @@ final sample = '[fenced](https://code.example/fenced)';
       findsOneWidget,
     );
     expect(find.text('Remote PDF preview is disabled'), findsOneWidget);
-    expect(find.textContaining('untrusted document'), findsOneWidget);
+    expect(find.textContaining('trusted reader'), findsOneWidget);
     expect(find.byKey(const ValueKey('sftp-viewer-retry')), findsNothing);
     expect(
       tester.getSize(find.byKey(const ValueKey('sftp-viewer-close'))).height,

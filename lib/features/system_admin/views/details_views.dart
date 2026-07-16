@@ -565,7 +565,7 @@ class _PortDetailLine extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 64,
+            width: 84,
             child: Text(
               label,
               maxLines: 1,

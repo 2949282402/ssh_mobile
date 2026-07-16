@@ -266,11 +266,9 @@ class _LlmChatScreenBody extends StatefulWidget {
 
 extension AiMessageActionStrings on AiStrings {
   String get saveAndSend =>
-      language == AppLanguage.en ? 'Save and send' : '保存并发送';
-  String get editMessage =>
-      language == AppLanguage.en ? 'Edit message' : '编辑消息';
-  String get messageContent =>
-      language == AppLanguage.en ? 'Message content' : '消息内容';
+      language == AppLanguage.en ? 'Save & Send' : '保存并发送';
+  String get editMessage => language == AppLanguage.en ? 'Edit' : '编辑消息';
+  String get messageContent => language == AppLanguage.en ? 'Content' : '消息内容';
   String get branchSuffix => language == AppLanguage.en ? 'Branch' : '分支';
 }
 
@@ -291,47 +289,44 @@ extension AiToolbarActionStrings on AiStrings {
   String get serverTarget => language == AppLanguage.en ? 'Server' : '服务器';
   String get templates => language == AppLanguage.en ? 'Templates' : '模板';
   String get noDefaultServer =>
-      language == AppLanguage.en ? 'No default server' : '不指定默认服务器';
+      language == AppLanguage.en ? 'No default' : '不指定默认服务器';
   String get quickSkill =>
       language == AppLanguage.en ? 'Use Skill' : '临时 Skill';
   String get quickSkillActive =>
-      language == AppLanguage.en ? 'Skill active' : 'Skill 已启用';
+      language == AppLanguage.en ? 'Skill Active' : 'Skill 已启用';
   String get noQuickSkill =>
-      language == AppLanguage.en ? 'No temporary skill' : '不启用临时 Skill';
+      language == AppLanguage.en ? 'None' : '不启用临时 Skill';
   String get noSkills =>
-      language == AppLanguage.en ? 'No custom skills yet' : '还没有自定义 Skills';
+      language == AppLanguage.en ? 'No custom skills' : '还没有自定义 Skills';
 }
 
 extension AiRunStatusStrings on AiStrings {
   String get assistantPreparing =>
-      language == AppLanguage.en ? 'Preparing response...' : '模型正在准备回答...';
+      language == AppLanguage.en ? 'Preparing...' : '模型正在准备回答...';
   String get assistantThinking =>
       language == AppLanguage.en ? 'Thinking...' : '模型正在思考...';
   String get assistantResponding =>
-      language == AppLanguage.en ? 'Generating answer...' : '正在输出回答...';
+      language == AppLanguage.en ? 'Responding...' : '正在输出回答...';
   String get assistantProcessingToolResult =>
-      language == AppLanguage.en ? 'Processing tool result...' : '正在处理工具结果...';
-  String get assistantProcessingApproval => language == AppLanguage.en
-      ? 'Processing approval decision...'
-      : '正在处理审批结果...';
-  String get assistantCollaborating => language == AppLanguage.en
-      ? 'Coordinating helper agents...'
-      : '正在协调多 Agent 协作...';
+      language == AppLanguage.en ? 'Processing result...' : '正在处理工具结果...';
+  String get assistantProcessingApproval =>
+      language == AppLanguage.en ? 'Processing approval...' : '正在处理审批结果...';
+  String get assistantCollaborating =>
+      language == AppLanguage.en ? 'Collaborating...' : '正在协调多 Agent 协作...';
 
   String get assistantToolBudgetExtended => language == AppLanguage.en
-      ? 'Tool budget extended. Please review tool use...'
+      ? 'Budget extended.'
       : '工具预算已扩展，请留意工具调用是否合理...';
-  String get assistantToolBudgetAudit => language == AppLanguage.en
-      ? 'Auditing tool usage before continuing...'
-      : '继续前正在审计工具调用...';
+  String get assistantToolBudgetAudit =>
+      language == AppLanguage.en ? 'Auditing tool...' : '继续前正在审计工具调用...';
   String get assistantToolBudgetStopped => language == AppLanguage.en
-      ? 'Tool usage stopped after safety audit...'
+      ? 'Tool blocked by audit.'
       : '安全审计后已停止继续调用工具...';
 
   String assistantRunningTool(String toolName) {
     final name = toolName.trim();
     if (language == AppLanguage.en) {
-      return name.isEmpty ? 'Running tool...' : 'Running tool: $name';
+      return name.isEmpty ? 'Running tool...' : 'Running $name...';
     }
     return name.isEmpty ? '正在调用工具...' : '正在调用工具：$name';
   }
@@ -341,7 +336,7 @@ extension AiRunStatusStrings on AiStrings {
     if (language == AppLanguage.en) {
       return name.isEmpty
           ? 'Waiting for tool approval...'
-          : 'Waiting for tool approval on $name...';
+          : 'Awaiting approval ($name)...';
     }
     return name.isEmpty ? '等待确认工具操作...' : '等待确认 $name 上的工具操作...';
   }

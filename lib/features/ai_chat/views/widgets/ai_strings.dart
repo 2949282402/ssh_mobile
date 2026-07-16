@@ -16,7 +16,7 @@ class AiStrings {
   String get knowledgeBaseSettings => _en ? 'Knowledge base' : '知识库';
   String get uploadLimits => _en ? 'Upload limits' : '上传限制';
   String get apiFormatUnsupported => _en
-      ? 'The selected API format is currently unsupported. Switched back to OpenAI Chat Completions.'
+      ? 'API format unsupported. Switched to OpenAI.'
       : '所选 API 格式暂不支持，已切换回 OpenAI Chat Completions。';
   String get recommendedBaseUrl => _en ? 'Recommended' : '推荐值';
   String get useRecommendedBaseUrl => _en ? 'Use Recommended' : '使用推荐值';
@@ -37,29 +37,25 @@ class AiStrings {
 
   String get title => _en ? 'LLM Assistant' : '大模型助手';
   String get welcome => _en
-      ? 'Ask me about your servers, logs, status, or a remote file.'
+      ? 'Ask me about servers, logs, or remote files.'
       : '可以问我服务器状态、日志、远程文件等。';
   String get welcomeTitle => _en ? 'What can I help with?' : '今天想处理什么？';
   String get chatBootstrapFailedTitle =>
       _en ? 'Unable to open AI chat' : '无法打开 AI 对话';
-  String get chatBootstrapFailedMessage => _en
-      ? 'Chat settings could not be loaded. Check local storage and try again.'
-      : '无法读取对话设置，请检查本地存储后重试。';
+  String get chatBootstrapFailedMessage =>
+      _en ? 'Failed to load chat settings. Try again.' : '无法读取对话设置，请检查本地存储后重试。';
   String get retry => _en ? 'Retry' : '重试';
   String get checkServersSuggestion => _en ? 'Check server health' : '检查服务器状态';
-  String get checkServersPrompt => _en
-      ? 'Check my servers and highlight anything that needs attention.'
-      : '检查我的服务器，并指出需要关注的问题。';
+  String get checkServersPrompt =>
+      _en ? 'Check servers and highlight issues.' : '检查我的服务器，并指出需要关注的问题。';
   String get reviewLogsSuggestion => _en ? 'Review recent logs' : '查看近期日志';
-  String get reviewLogsPrompt => _en
-      ? 'Review the recent logs and summarize important errors or warnings.'
-      : '查看近期日志，并总结重要的错误或警告。';
+  String get reviewLogsPrompt =>
+      _en ? 'Review recent logs and summarize errors.' : '查看近期日志，并总结重要的错误或警告。';
   String get remoteFileSuggestion => _en ? 'Work with a remote file' : '处理远程文件';
-  String get remoteFilePrompt => _en
-      ? 'Help me inspect or update a file on a remote server.'
-      : '帮我检查或更新远程服务器上的文件。';
+  String get remoteFilePrompt =>
+      _en ? 'Help me view or edit a remote file.' : '帮我检查或更新远程服务器上的文件。';
   String get composerHint =>
-      _en ? 'Describe a task or type / for commands' : '描述任务，或输入 / 查看命令';
+      _en ? 'Ask a question, or type / for commands' : '描述任务，或输入 / 查看命令';
   String get history => _en ? 'Chat history' : '聊天历史';
   String get newChat => _en ? 'New chat' : '新聊天';
   String get delete => _en ? 'Delete' : '删除';
@@ -70,12 +66,12 @@ class AiStrings {
   String get regenerateReplyTitle =>
       _en ? 'Regenerate this reply?' : '确认重新生成这条回复吗？';
   String get regenerateReplyMessage => _en
-      ? 'This removes this reply and all messages after it, then regenerates from this point.'
+      ? 'This deletes this reply and subsequent messages, then regenerates.'
       : '这会删除当前回复及其后的所有消息，并从该位置重新生成。';
   String get regenerateReplyAction => _en ? 'Regenerate' : '重新生成';
   String get createBranchTitle => _en ? 'Create a chat branch?' : '确认创建聊天分支吗？';
   String get createBranchMessage => _en
-      ? 'This creates a new chat from this message so you can continue independently.'
+      ? 'Creates a new chat branch from this message.'
       : '这会从当前消息创建新对话，之后可独立继续。';
   String get createBranchAction => _en ? 'Create branch' : '创建分支';
   String get deleteBaseUrlHistoryTitle =>
@@ -124,11 +120,11 @@ class AiStrings {
   String get model => _en ? 'Model' : '模型';
   String get helperModel => _en ? 'Helper model (optional)' : '辅助模型（可选）';
   String get helperModelHint => _en
-      ? 'Used for helper agents and fast classification. Leave blank to reuse the main model.'
+      ? 'Used for helper agents. Leave blank to reuse main model.'
       : '用于 helper agent 和快速分类。留空时回退到主模型。';
   String get auditModel => _en ? 'Audit model (optional)' : '审计模型（可选）';
   String get auditModelHint => _en
-      ? 'Used for tool-budget audits and safety checks. Leave blank to reuse the main model.'
+      ? 'Used for tool-safety audits. Leave blank to reuse main model.'
       : '用于工具预算审计和安全检查。留空时回退到主模型。';
   String get modelFallbackPolicy => _en ? 'Secondary model policy' : '副模型策略';
   String modelFallbackPolicyLabel(String value) {
@@ -145,18 +141,18 @@ class AiStrings {
   String get requestTimeout => _en ? 'Request timeout' : '请求超时';
   String get deepSeekThinking => _en ? 'DeepSeek thinking' : 'DeepSeek 思考模式';
   String get deepSeekThinkingHint => _en
-      ? 'Only sent to DeepSeek API hosts. Disable it for faster simple replies.'
+      ? 'Applies to DeepSeek API. Disable for faster simple replies.'
       : '仅在 DeepSeek API 地址下发送。关闭后简单回复会更快。';
   String get deepSeekReasoningEffort =>
       _en ? 'DeepSeek reasoning effort' : 'DeepSeek 思考强度';
   String get webSearch => _en ? 'Local web search' : '本地网络搜索';
   String get webSearchHint => _en
-      ? 'Expose a web_search tool that uses the current chat WebView on this device. No search API key is required.'
+      ? 'Enables web search using local WebView. No API key needed.'
       : '通过当前聊天绑定的本机 WebView 给模型提供 web_search 工具，不需要搜索 API Key。';
   String get ragTitle => _en ? 'RAG Ops Knowledge Base' : 'RAG 运维知识库';
   String get ragSettings => _en ? 'Knowledge retrieval' : '知识检索';
   String get ragHint => _en
-      ? 'Locally retrieve relevant context from uploaded operational manuals based on your query.'
+      ? 'Retrieve offline context from manuals based on query.'
       : '根据问题自动在本地检索运维手册与文档，并作为参考上下文喂给 AI 助手。';
   String get ragManage => _en ? 'Manage Knowledge Base' : '管理运维知识库';
   String get ragSearchMode => _en ? 'Retrieval Mode' : '检索模式';
@@ -205,13 +201,13 @@ class AiStrings {
 
   String get multiAgent => _en ? 'Multi-agent collaboration' : '多 Agent 协作';
   String get multiAgentHint => _en
-      ? 'Automatically ask helper agents to plan, suggest safe operations, and review complex tasks before the main answer.'
+      ? 'Ask helper agents to plan and review complex tasks.'
       : '复杂任务前自动让辅助 Agent 规划、建议安全操作并检查风险。';
   String get multiAgentMaxAgents =>
       _en ? 'Maximum helper agents' : '最大辅助 Agent 数';
   String get toolCallBudget => _en ? 'Tool call budget' : '工具调用预算';
   String get toolCallBudgetHint => _en
-      ? 'Per request, the first budget hit auto-extends by half. Later extensions require an internal safety audit.'
+      ? 'Limits tool calls per request. First limit hit auto-extends.'
       : '按单次请求计数，首次达到预算会自动增加一半；后续每次扩容都需要内部安全审计。';
   String get budgetAuditTitle =>
       _en ? 'Confirm continued tool use' : '确认连续调用工具授权';
@@ -346,7 +342,7 @@ class AiStrings {
   String get planRevisionPrompt => _en ? 'Revise this plan: ' : '请按以下意见调整计划：';
   String get todoTitle => _en ? 'Operation Tasks (TODO)' : '规划的运维任务清单 (TODO)';
   String get todoFailureGuidance => _en
-      ? 'Review the logs, retry after fixing the cause, skip only when it is safe, or return to Plan Mode to revise the remaining steps.'
+      ? 'Fix cause and retry, skip if safe, or return to Plan Mode.'
       : '请先查看日志并修复原因后重试；仅在确认安全时跳过，也可以返回规划模式调整后续步骤。';
   String get todoRetryStep => _en ? 'Retry step' : '重试此步骤';
   String get todoSkipStep => _en ? 'Skip step' : '跳过此步骤';
@@ -381,10 +377,10 @@ class AiStrings {
   String get runtimeBlockedTitle =>
       _en ? 'Runtime check blocked execution' : '运行环境检查阻止执行';
   String get runtimeWarningsMessage => _en
-      ? 'The plan can run, but client conditions may interrupt long agent work.'
+      ? 'Plan can run, but environment limits may interrupt long runs.'
       : '计划可以继续执行，但客户端环境可能影响长时间 Agent 任务。';
   String get runtimeBlockedMessage => _en
-      ? 'Fix the following client-side issues before running this plan.'
+      ? 'Resolve these client issues to execute plan.'
       : '请先处理以下客户端问题，再执行此计划。';
   String get runtimeBlockingLabel => _en ? 'Blocking' : '阻断';
   String get runtimeWarningLabel => _en ? 'Warning' : '警告';

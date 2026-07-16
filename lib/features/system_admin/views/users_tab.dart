@@ -130,7 +130,7 @@ class _UsersTabState extends State<_UsersTab>
                                     borderRadius: BorderRadius.circular(4),
                                   ),
                                   child: Text(
-                                    widget.strings.lockUser,
+                                    widget.strings.statusLocked,
                                     style: TextStyle(
                                       color: widget.colorScheme.error,
                                       fontSize: 10,
@@ -272,14 +272,15 @@ class _UserDetailActionsState extends State<_UserDetailActions> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          Wrap(
+            spacing: 16,
+            runSpacing: 8,
             children: [
               Text(
                 '${widget.strings.storageUsed}: ',
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               Text(_storageUsed),
-              const SizedBox(width: 24),
               Text(
                 '${widget.strings.sudoStatus}: ',
                 style: const TextStyle(fontWeight: FontWeight.bold),
@@ -836,9 +837,9 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
           children: [
             TextField(
               controller: _usernameController,
-              decoration: const InputDecoration(
-                labelText: 'Username',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: widget.strings.username,
+                border: const OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 12),

@@ -60,9 +60,7 @@ void main() {
 
       expect(find.text('Unable to open AI chat'), findsOneWidget);
       expect(
-        find.text(
-          'Chat settings could not be loaded. Check local storage and try again.',
-        ),
+        find.text('Failed to load chat settings. Try again.'),
         findsOneWidget,
       );
       expect(find.textContaining(r'C:\private\settings.db'), findsNothing);

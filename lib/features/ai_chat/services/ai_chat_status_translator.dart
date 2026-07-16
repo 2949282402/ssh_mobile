@@ -21,19 +21,19 @@ class AiChatStatusTranslator {
   String translateStatus(AgentStatusString status) {
     switch (status) {
       case AgentStatusString.preparing:
-        return isEn ? 'Preparing response...' : '模型正在准备回答...';
+        return isEn ? 'Preparing...' : '模型正在准备回答...';
       case AgentStatusString.thinking:
         return isEn ? 'Thinking...' : '模型正在思考...';
       case AgentStatusString.responding:
-        return isEn ? 'Generating answer...' : '正在输出回答...';
+        return isEn ? 'Responding...' : '正在输出回答...';
       case AgentStatusString.processingToolResult:
-        return isEn ? 'Processing tool result...' : '正在处理工具结果...';
+        return isEn ? 'Processing result...' : '正在处理工具结果...';
       case AgentStatusString.processingApproval:
-        return isEn ? 'Processing approval decision...' : '正在处理审批结果...';
+        return isEn ? 'Processing approval...' : '正在处理审批结果...';
       case AgentStatusString.collaborating:
-        return isEn ? 'Coordinating helper agents...' : '正在协调多 Agent 协作...';
+        return isEn ? 'Collaborating...' : '正在协调多 Agent 协作...';
       case AgentStatusString.stopped:
-        return isEn ? 'Generation stopped.' : '输出已停止。';
+        return isEn ? 'Stopped.' : '输出已停止。';
     }
   }
 
@@ -52,18 +52,12 @@ class AiChatStatusTranslator {
       case 'budget':
         final lowerTitle = event.title.toLowerCase();
         if (lowerTitle.contains('running')) {
-          return isEn
-              ? 'Auditing tool usage before continuing...'
-              : '继续前正在审计工具调用...';
+          return isEn ? 'Auditing tool...' : '继续前正在审计工具调用...';
         }
         if (lowerTitle.contains('rejected')) {
-          return isEn
-              ? 'Tool usage stopped after safety audit...'
-              : '安全审计后已停止继续调用工具...';
+          return isEn ? 'Tool blocked by audit.' : '安全审计后已停止继续调用工具...';
         }
-        return isEn
-            ? 'Tool budget extended. Please review tool use...'
-            : '工具预算已扩展，请留意工具调用是否合理...';
+        return isEn ? 'Budget extended.' : '工具预算已扩展，请留意工具调用是否合理...';
       default:
         return translateStatus(AgentStatusString.preparing);
     }
@@ -78,7 +72,7 @@ class AiChatStatusTranslator {
   String translateRunningTool(String toolName) {
     final name = toolName.trim();
     if (isEn) {
-      return name.isEmpty ? 'Running tool...' : 'Running tool: $name';
+      return name.isEmpty ? 'Running tool...' : 'Running $name...';
     }
     return name.isEmpty ? '正在调用工具...' : '正在调用工具：$name';
   }
@@ -88,7 +82,7 @@ class AiChatStatusTranslator {
     if (isEn) {
       return name.isEmpty
           ? 'Waiting for tool approval...'
-          : 'Waiting for tool approval on $name...';
+          : 'Awaiting approval ($name)...';
     }
     return name.isEmpty ? '等待确认工具操作...' : '等待确认 $name 上的工具操作...';
   }

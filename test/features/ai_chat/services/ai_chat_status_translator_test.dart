@@ -126,7 +126,7 @@ void main() {
     test('translateStatus translates correctly', () {
       expect(
         translator.translateStatus(AgentStatusString.preparing),
-        'Preparing response...',
+        'Preparing...',
       );
       expect(
         translator.translateStatus(AgentStatusString.thinking),
@@ -134,24 +134,21 @@ void main() {
       );
       expect(
         translator.translateStatus(AgentStatusString.responding),
-        'Generating answer...',
+        'Responding...',
       );
       expect(
         translator.translateStatus(AgentStatusString.processingToolResult),
-        'Processing tool result...',
+        'Processing result...',
       );
       expect(
         translator.translateStatus(AgentStatusString.processingApproval),
-        'Processing approval decision...',
+        'Processing approval...',
       );
       expect(
         translator.translateStatus(AgentStatusString.collaborating),
-        'Coordinating helper agents...',
+        'Collaborating...',
       );
-      expect(
-        translator.translateStatus(AgentStatusString.stopped),
-        'Generation stopped.',
-      );
+      expect(translator.translateStatus(AgentStatusString.stopped), 'Stopped.');
     });
 
     test('translateTrace translates budget correctly', () {
@@ -163,7 +160,7 @@ void main() {
             content: '',
           ),
         ),
-        'Auditing tool usage before continuing...',
+        'Auditing tool...',
       );
       expect(
         translator.translateTrace(
@@ -173,13 +170,13 @@ void main() {
             content: '',
           ),
         ),
-        'Tool usage stopped after safety audit...',
+        'Tool blocked by audit.',
       );
       expect(
         translator.translateTrace(
           LlmTraceEvent(kind: 'budget', title: 'Extended info', content: ''),
         ),
-        'Tool budget extended. Please review tool use...',
+        'Budget extended.',
       );
     });
   });

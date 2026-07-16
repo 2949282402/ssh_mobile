@@ -116,7 +116,7 @@ void main() {
     expect(
       tester.getSemantics(copyAction),
       matchesSemantics(
-        label: 'Copying terminal output…',
+        label: 'Copying output...',
         isButton: true,
         hasEnabledState: true,
         isEnabled: false,
@@ -172,10 +172,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(attempts, 1);
-    expect(
-      find.text('Could not copy the terminal output. Try again.'),
-      findsOneWidget,
-    );
+    expect(find.text('Failed to copy output. Retry.'), findsOneWidget);
     expect(find.textContaining('copy-secret'), findsNothing);
     expect(
       find.byKey(const ValueKey('terminal-copy-output-surface')),
@@ -196,10 +193,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(attempts, 2);
     expect(find.text('copy-result:true'), findsOneWidget);
-    expect(
-      find.text('Could not copy the terminal output. Try again.'),
-      findsNothing,
-    );
+    expect(find.text('Failed to copy output. Retry.'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

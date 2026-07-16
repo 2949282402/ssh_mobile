@@ -256,15 +256,15 @@ class _TracePanelStrings {
       case 'budget':
         final lowerTitle = trace.title.toLowerCase();
         if (lowerTitle.contains('running')) {
-          return _en ? 'Tool budget safety review' : '工具预算安全审计';
+          return _en ? 'Budget Safety Audit' : '工具预算安全审计';
         }
         if (lowerTitle.contains('approved')) {
-          return _en ? 'Tool budget approved' : '工具预算审计通过';
+          return _en ? 'Budget Approved' : '工具预算审计通过';
         }
         if (lowerTitle.contains('rejected')) {
-          return _en ? 'Tool budget stopped' : '工具预算已停止';
+          return _en ? 'Budget Stopped' : '工具预算已停止';
         }
-        return _en ? 'Tool budget notice' : '工具预算提醒';
+        return _en ? 'Budget Notice' : '工具预算提醒';
       default:
         return trace.title;
     }

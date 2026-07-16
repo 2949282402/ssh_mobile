@@ -35,9 +35,7 @@ void main() {
 
     expect(find.text('Create a chat branch?'), findsOneWidget);
     expect(
-      find.text(
-        'This creates a new chat from this message so you can continue independently.',
-      ),
+      find.text('Creates a new chat branch from this message.'),
       findsOneWidget,
     );
     final cancel = find.byKey(const ValueKey('chat-action-cancel'));

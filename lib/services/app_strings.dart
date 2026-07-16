@@ -119,12 +119,12 @@ class AppStrings {
       : '私钥认证需要输入私钥内容';
   String get jumpHost => _en ? 'Jump host address' : '跳板机地址';
   String get jumpHostHint =>
-      _en ? 'Optional, leave empty for direct connection' : '可选，留空则直连';
+      _en ? 'Optional (leave empty for direct)' : '可选，留空则直连';
   String get jumpPort => _en ? 'Jump host port' : '跳板机端口';
   String get jumpUsername => _en ? 'Jump host username' : '跳板机用户名';
   String get optional => _en ? 'Optional' : '可选';
   String get tmuxModeDescription => _en
-      ? 'Connect over SSH and automatically enter the tmux session for this window.'
+      ? 'Auto-connect to tmux session matching the window name.'
       : '连接 SSH 后自动进入与当前窗口同名的 tmux 会话。';
   String get sshModeDescription =>
       _en ? 'Open a normal interactive SSH shell.' : '打开普通交互式 SSH shell。';
@@ -147,18 +147,18 @@ class AppStrings {
   String get paste => _en ? 'Paste' : '粘贴';
   String get serverSystem => _en ? 'Server system' : '服务器系统';
   String get windowsTmuxUnavailable => _en
-      ? 'Windows OpenSSH uses a normal interactive shell. tmux is only available if you connect to Linux/WSL and tmux is installed.'
+      ? 'tmux requires a Linux/WSL connection with tmux installed.'
       : 'Windows OpenSSH 使用普通交互式 shell。tmux 只适用于 Linux/WSL 且服务器已安装 tmux 的场景。';
   String get windowsMonitoringDescription => _en
-      ? 'Windows monitoring uses PowerShell diagnostics; terminal mode stays plain SSH.'
+      ? 'PowerShell diagnostics monitor. Terminal uses plain SSH.'
       : 'Windows 监控会使用 PowerShell 诊断命令；终端模式固定为普通 SSH。';
   String get linuxMonitoringDescription => _en
-      ? 'Default. Supports normal SSH and SSH + tmux when tmux is installed on the server.'
+      ? 'Default. Supports plain SSH and SSH + tmux.'
       : '默认选项。服务器安装 tmux 时支持普通 SSH 和 SSH + tmux。';
   String get saveWillCloseWindowsTitle =>
       _en ? 'Related windows will be closed' : '保存后将关闭相关窗口';
   String saveWillCloseWindowsContent(int count) => _en
-      ? 'This config has $count related terminal ${count == 1 ? "window" : "windows"}. After saving, these old windows will close automatically to avoid sending input to an old SSH or tmux session.'
+      ? 'Saving closes $count active terminal ${count == 1 ? "window" : "windows"} to apply the connection changes.'
       : '当前配置有关联的 $count 个终端窗口。保存修改后，这些旧窗口会自动关闭，避免继续向旧 SSH 或旧 tmux 会话发送输入。';
   String get saveAndDisconnect => _en ? 'Save and disconnect' : '保存并断开';
 
@@ -340,7 +340,7 @@ class AppStrings {
   }
 
   String get connectionHistoryHint => _en
-      ? 'Review recent terminal sessions, connection results, and tmux cleanup commands.'
+      ? 'History of terminal sessions and tmux cleanups.'
       : '查看最近的终端会话、连接结果和 tmux 清理命令。';
   String connectionHistoryCount(int count) => _en
       ? '$count recent ${count == 1 ? "session" : "sessions"}'
@@ -349,13 +349,12 @@ class AppStrings {
       _en ? 'Loading connection history…' : '正在加载连接历史…';
   String get connectionHistoryLoadFailed =>
       _en ? 'Could not load connection history' : '无法加载连接历史';
-  String get connectionHistoryLoadFailedHint => _en
-      ? 'The saved session records are temporarily unavailable. Try again.'
-      : '暂时无法读取已保存的会话记录，请重试。';
+  String get connectionHistoryLoadFailedHint =>
+      _en ? 'Unable to read session history. Retry.' : '暂时无法读取已保存的会话记录，请重试。';
   String get noConnectionHistory =>
       _en ? 'No connection history yet' : '暂无连接历史';
   String get noConnectionHistoryHint => _en
-      ? 'Recently opened terminal sessions will appear here with their connection status.'
+      ? 'Recent terminal sessions will appear here.'
       : '最近打开的终端会话及其连接状态会显示在这里。';
   String historyUpdatedAt(String time) => _en ? 'Updated $time' : '更新于 $time';
   String get deleteHistoryRecord => _en ? 'Delete history record' : '删除历史记录';
@@ -369,7 +368,7 @@ class AppStrings {
   String get enableBackgroundPermission =>
       _en ? 'Keep SSH connected in the background' : '让 SSH 在后台保持连接';
   String get backgroundPermissionGuide => _en
-      ? 'Android may pause background networking to save power. Review these settings so SSH sessions and transfers are less likely to disconnect.'
+      ? 'Android battery optimization may drop connections. Configure background access to keep SSH alive.'
       : 'Android 可能会为了省电暂停后台网络。请检查以下设置，减少 SSH 会话和文件传输意外断开的情况。';
   String get backgroundChecklistTitle => _en ? 'Recommended settings' : '建议设置';
   String get allowBackgroundActivity =>
@@ -381,7 +380,7 @@ class AppStrings {
   String get openAppSettings => _en ? 'Open app settings' : '打开应用设置';
   String get settings => _en ? 'Settings' : '设置';
   String get backgroundGuideNote => _en
-      ? 'Setting names vary by device. You can continue for now; if restrictions remain, this guide will remind you again next launch.'
+      ? 'Settings vary by device. Unresolved battery limits will prompt on next launch.'
       : '不同设备的设置名称可能不同。你可以暂时继续；如果限制仍然存在，下次启动时会再次提醒。';
   String get enterApp => _en ? 'Continue for now' : '暂时继续';
   String get continueToApp => _en ? 'Continue to app' : '进入应用';
@@ -397,7 +396,7 @@ class AppStrings {
   String get sftpEmptyTitle =>
       _en ? 'Select a server for SFTP' : '选择服务器使用 SFTP';
   String get sftpEmptyHint => _en
-      ? 'Browse remote files with the same saved SSH connections on desktop and mobile.'
+      ? 'Browse remote files using saved SSH connections.'
       : '桌面端和移动端使用同一套 SSH 连接来浏览远程文件。';
   String get parentDirectory => _en ? 'Parent directory' : '上级目录';
   String get pathHistory => _en ? 'Path history' : '路径记录';
@@ -413,7 +412,7 @@ class AppStrings {
   String get disconnect => _en ? 'Disconnect' : '断开连接';
   String get emptyDirectory => _en ? 'This directory is empty' : '当前目录为空';
   String get emptyDirectoryHint =>
-      _en ? 'Upload a file or open another remote path.' : '可以上传文件，或打开其他远程路径。';
+      _en ? 'Upload files or navigate to another path.' : '可以上传文件，或打开其他远程路径。';
   String get loadingDirectory =>
       _en ? 'Loading remote directory…' : '正在加载远程目录…';
   String get directoryLoadFailed =>
@@ -448,14 +447,14 @@ class AppStrings {
   String filePreviewTooLargeHint(int maxBytes) {
     final limit = _fileSizeLimitLabel(maxBytes);
     return _en
-        ? 'The safe preview limit is $limit. Return to the file list to download the file instead.'
+        ? 'File exceeds $limit preview limit. Return and download file.'
         : '安全预览上限为 $limit。请返回文件列表，下载后再查看。';
   }
 
   String get filePreviewResourceLimit =>
       _en ? 'This file is too complex to preview safely' : '文件复杂度过高，无法安全预览';
   String get filePreviewResourceLimitHint => _en
-      ? 'Its image dimensions or animation complexity exceed the in-app rendering budget. Download it to inspect with another app.'
+      ? 'Complexity exceeds in-app rendering budget. Download to view.'
       : '图片尺寸或动画复杂度超出应用内渲染预算。请下载后使用其他应用查看。';
   String get closePreview => _en ? 'Back to files' : '返回文件列表';
   String get filePreviewRenderFailed =>
@@ -465,7 +464,7 @@ class AppStrings {
       : '文件可能已损坏或使用了不支持的格式，请重新加载。';
   String get unsupportedPreviewTitle => _en ? 'No preview available' : '暂不支持预览';
   String get unsupportedPreview => _en
-      ? 'Preview is not supported for this file type. Download it to open with another app.'
+      ? 'Unsupported preview file type. Download to open.'
       : '暂不支持预览这种文件类型。可以下载后用其他应用打开。';
   String get htmlPreviewUnavailable =>
       _en ? 'HTML preview is unavailable here' : '当前平台无法渲染 HTML';
@@ -475,7 +474,7 @@ class AppStrings {
   String get pdfPreviewUnavailable =>
       _en ? 'Remote PDF preview is disabled' : '已禁用远程 PDF 预览';
   String get pdfPreviewUnavailableHint => _en
-      ? 'To avoid parsing an untrusted document inside the app, download it and open it with a trusted PDF reader.'
+      ? 'Download PDF to open in a trusted reader.'
       : '为避免在应用内解析不受信任的文档，请下载后使用可信的 PDF 阅读器打开。';
   String get viewSource => _en ? 'View source' : '查看源码';
   String get externalPreviewContentBlocked =>
@@ -545,9 +544,8 @@ class AppStrings {
   String get enableLineWrap => _en ? 'Enable line wrap' : '开启自动换行';
   String get disableLineWrap => _en ? 'Disable line wrap' : '关闭自动换行';
   String get discardChangesTitle => _en ? 'Discard changes?' : '放弃修改？';
-  String get discardChangesContent => _en
-      ? 'This file has unsaved changes. Leave without saving?'
-      : '当前文件有未保存的修改，确定不保存并离开吗？';
+  String get discardChangesContent =>
+      _en ? 'File has unsaved changes. Exit anyway?' : '当前文件有未保存的修改，确定不保存并离开吗？';
   String get discard => _en ? 'Discard' : '放弃';
 
   String connectionFailed(String message) =>
@@ -575,6 +573,7 @@ class AppStrings {
   String get systemPower => _en ? 'Power' : '系统电源';
   String get lockUser => _en ? 'Lock User' : '禁用账号';
   String get unlockUser => _en ? 'Unlock User' : '启用账号';
+  String get statusLocked => _en ? 'Locked' : '已禁用';
   String get changePassword => _en ? 'Change Password' : '修改密码';
   String get viewHomeDir => _en ? 'Home Directory' : '主目录文件';
   String get usageStats => _en ? 'Resource Usage' : '资源占用';
@@ -658,40 +657,38 @@ class TerminalStrings {
   String get defaultTerminal => _en ? 'SSH Terminal' : 'SSH 终端';
   String get currentServer => _en ? 'current server' : '当前服务器';
   String get unknown => _en ? 'unknown' : '未知错误';
-  String get smallerFont => _en ? 'Smaller font' : '缩小字号';
-  String get largerFont => _en ? 'Larger font' : '放大字号';
-  String get switchToLightMode => _en ? 'Switch to light mode' : '切换到浅色主题';
-  String get switchToDarkMode => _en ? 'Switch to dark mode' : '切换到深色主题';
-  String get newWindow => _en ? 'New terminal window' : '新建终端窗口';
-  String get renameWindow => _en ? 'Rename window' : '重命名窗口';
-  String get switchWindow => _en ? 'Switch terminal window' : '切换终端窗口';
+  String get smallerFont => _en ? 'Smaller Font' : '缩小字号';
+  String get largerFont => _en ? 'Larger Font' : '放大字号';
+  String get switchToLightMode => _en ? 'Light Mode' : '切换到浅色主题';
+  String get switchToDarkMode => _en ? 'Dark Mode' : '切换到深色主题';
+  String get newWindow => _en ? 'New Window' : '新建终端窗口';
+  String get renameWindow => _en ? 'Rename Window' : '重命名窗口';
+  String get switchWindow => _en ? 'Switch Window' : '切换终端窗口';
   String get disconnect => _en ? 'Disconnect' : '断开连接';
   String get reconnect => _en ? 'Reconnect' : '重连';
   String get reconnecting => _en ? 'Reconnecting...' : '正在重连...';
   String get connectingSession => _en ? 'Connecting to the terminal' : '正在连接终端';
-  String get connectingSessionHint => _en
-      ? 'Secure session negotiation is in progress. This usually takes only a moment.'
-      : '正在协商安全会话，通常只需片刻。';
+  String get connectingSessionHint =>
+      _en ? 'Negotiating secure session. Please wait.' : '正在协商安全会话，通常只需片刻。';
   String get connectionInterrupted =>
       _en ? 'Terminal connection interrupted' : '终端连接已中断';
   String get connectionInterruptedHint => _en
-      ? 'Your terminal output is preserved. Reconnect to continue this session.'
+      ? 'Terminal output preserved. Reconnect to resume.'
       : '终端输出已保留，可重新连接后继续当前会话。';
   String get terminalConnectionError =>
       _en ? 'Could not connect to the terminal' : '无法连接终端';
   String get terminalConnectionErrorStatus => _en ? 'Error' : '错误';
   String get terminalConnectionErrorHint => _en
-      ? 'Check the server and network, then try connecting again.'
+      ? 'Check server and network status, then retry.'
       : '请检查服务器和网络状态，然后重试连接。';
-  String get manageWindows => _en ? 'Manage windows' : '管理窗口';
+  String get manageWindows => _en ? 'Manage Windows' : '管理窗口';
   String get closeWindow => _en ? 'Close window' : '关闭窗口';
   String get restoringTerminalOutput =>
       _en ? 'Restoring terminal output…' : '正在恢复终端输出…';
-  String get closeDisconnected =>
-      _en ? 'Close disconnected window' : '关闭已断开的窗口';
-  String get openNewWindow => _en ? 'Open new window' : '打开新窗口';
+  String get closeDisconnected => _en ? 'Close Disconnected' : '关闭已断开的窗口';
+  String get openNewWindow => _en ? 'Open New Window' : '打开新窗口';
   String createFrom(String name) =>
-      _en ? 'Create a new SSH window from "$name"?' : '使用 "$name" 创建新的 SSH 窗口？';
+      _en ? 'Create new window from "$name"?' : '使用 "$name" 创建新的 SSH 窗口？';
   String get cancel => _en ? 'Cancel' : '取消';
   String get editServer => _en ? 'Edit server' : '编辑服务器';
   String get addServer => _en ? 'Add server' : '新增服务器';
@@ -699,7 +696,7 @@ class TerminalStrings {
   String connectingTo(String name) =>
       _en ? 'Connecting to $name' : '正在连接 $name';
   String get openingNewWindow =>
-      _en ? 'Opening a new SSH window...' : '正在打开新的 SSH 窗口...';
+      _en ? 'Opening new window...' : '正在打开新的 SSH 窗口...';
   String connectionFailed(String message) =>
       _en ? 'Connection failed: $message' : '连接失败：$message';
   String tmuxMissingHint(String text) => _en
@@ -710,26 +707,25 @@ class TerminalStrings {
   String get windowName => _en ? 'Window name' : '窗口名称';
   String get duplicateWindowName =>
       _en ? 'Window name already exists' : '窗口名称已存在';
-  String get addShortcut => _en ? 'Add shortcut command' : '添加快捷命令';
-  String get complexKeyboard => _en ? 'Advanced keyboard' : '复杂键盘';
+  String get addShortcut => _en ? 'Add Command' : '添加快捷命令';
+  String get complexKeyboard => _en ? 'Advanced Keyboard' : '复杂键盘';
   String get advancedKeyboardHint => _en
-      ? 'Navigation, control, function keys, and multiline input.'
+      ? 'Navigation, controls, function keys, and multiline.'
       : '集中使用导航键、控制键、功能键和多行输入。';
-  String get moreKeys => _en ? 'More shortcut keys' : '更多快捷键';
-  String get moreKeysHint => _en
-      ? 'Frequently used shell navigation and control keys.'
-      : '常用的 Shell 导航键与控制键。';
+  String get moreKeys => _en ? 'More Shortcuts' : '更多快捷键';
+  String get moreKeysHint =>
+      _en ? 'Shell navigation and control keys.' : '常用的 Shell 导航键与控制键。';
   String get multilineHint =>
       _en ? 'Paste or type multiline input' : '粘贴或输入多行文本';
   String get send => _en ? 'Send' : '发送';
   String get label => _en ? 'Label' : '标签';
   String get command => _en ? 'Command' : '命令';
   String get add => _en ? 'Add' : '添加';
-  String get removeShortcut => _en ? 'Remove shortcut' : '删除快捷命令';
+  String get removeShortcut => _en ? 'Remove Shortcut' : '删除快捷命令';
   String removeShortcutContent(String label) =>
       _en ? 'Remove "$label"?' : '删除 "$label"？';
   String get remove => _en ? 'Remove' : '删除';
-  String get selectCopy => _en ? 'Select copy' : '选择复制';
+  String get selectCopy => _en ? 'Select Copy' : '选择复制';
   String get copy => _en ? 'Copy' : '复制';
   String get paste => _en ? 'Paste' : '粘贴';
   String get closeDisconnectedTitle =>
@@ -741,15 +737,13 @@ class TerminalStrings {
       : '"$name" 已经断开。关闭这个窗口吗？';
   String get copyAll => _en ? 'Copy all' : '复制全部';
   String get terminalOutput => _en ? 'Terminal output' : '终端输出';
-  String get terminalOutputSnapshot =>
-      _en ? 'Terminal output snapshot' : '终端输出快照';
+  String get terminalOutputSnapshot => _en ? 'Output Snapshot' : '终端输出快照';
   String get terminalOutputSelectionHint =>
-      _en ? 'Select any text to copy part of the output.' : '选择任意文本可复制部分输出。';
+      _en ? 'Select text to copy output.' : '选择任意文本可复制部分输出。';
   String get readOnly => _en ? 'Read-only' : '只读';
-  String get copyingTerminalOutput =>
-      _en ? 'Copying terminal output…' : '正在复制终端输出…';
+  String get copyingTerminalOutput => _en ? 'Copying output...' : '正在复制终端输出…';
   String get copyTerminalOutputFailed =>
-      _en ? 'Could not copy the terminal output. Try again.' : '无法复制终端输出，请重试。';
+      _en ? 'Failed to copy output. Retry.' : '无法复制终端输出，请重试。';
   String terminalOutputSummary(int lineCount, int characterCount) {
     if (!_en) return '$lineCount 行 · $characterCount 个字符';
     final lines = lineCount == 1 ? 'line' : 'lines';
@@ -757,8 +751,8 @@ class TerminalStrings {
     return '$lineCount $lines · $characterCount $characters';
   }
 
-  String get moreActions => _en ? 'More actions' : '更多操作';
-  String get navigationShell => _en ? 'Navigation & Shell' : '导航与 Shell';
-  String get editControl => _en ? 'Edit & Control' : '编辑与控制';
+  String get moreActions => _en ? 'More Actions' : '更多操作';
+  String get navigationShell => _en ? 'Navigation' : '导航与 Shell';
+  String get editControl => _en ? 'Edit/Control' : '编辑与控制';
   String get functionKeys => _en ? 'Function Keys' : '功能键';
 }
