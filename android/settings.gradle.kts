@@ -9,10 +9,18 @@ pluginManagement {
 
     includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
 
+    val useAliyunMaven =
+        providers.gradleProperty("useAliyunMaven").orNull?.equals("true", ignoreCase = true) == true ||
+            System.getenv("USE_ALIYUN_MAVEN")?.equals("true", ignoreCase = true) == true
+
     repositories {
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/central") }
-        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+        // Keep third-party mirrors out of CI unless explicitly requested.
+        if (useAliyunMaven) {
+            maven { url = uri("https://maven.aliyun.com/repository/google") }
+            maven { url = uri("https://maven.aliyun.com/repository/central") }
+            maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+        }
+
         google()
         mavenCentral()
         gradlePluginPortal()
