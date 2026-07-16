@@ -193,7 +193,7 @@ void main() {
 }
 
 class _TestSshService extends SshService {
-  _TestSshService(super.storageService);
+  _TestSshService(StorageService storageService) : super(storageService);
 
   SshServerOverviewSnapshot _overview =
       const SshServerOverviewSnapshot.empty();
