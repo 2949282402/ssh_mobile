@@ -292,9 +292,9 @@ Codex accelerated the project by:
 
 ### GPT-5.6 implementation period: July 10 onward
 
-The reviewed period starts with [`3ac2b73`](https://github.com/hejulian2004/ssh_mobile/commit/3ac2b7314930c6340200af1ab581e6d919d9ad5a) on July 10, 2026. Current `main` is 80 commits ahead of that baseline, so the period contains **81 commits including the baseline commit**. According to the project development record, all commits in this period were implemented through GPT-5.6-assisted sessions under maintainer direction and review.
+The fixed review range starts with [`3ac2b73`](https://github.com/hejulian2004/ssh_mobile/commit/3ac2b7314930c6340200af1ab581e6d919d9ad5a) on July 10, 2026 and ends with [`aecbf92`](https://github.com/hejulian2004/ssh_mobile/commit/aecbf924eda2e1d28c2f86e07dfbf7b4518b1742) on July 16, 2026. It contains **81 commits including both endpoints**. According to the project development record, every commit in this fixed implementation range was produced through GPT-5.6-assisted sessions under maintainer direction and review.
 
-Full comparison: [`3ac2b73...main`](https://github.com/hejulian2004/ssh_mobile/compare/3ac2b7314930c6340200af1ab581e6d919d9ad5a...main)
+Full comparison: [`3ac2b73...aecbf92`](https://github.com/hejulian2004/ssh_mobile/compare/3ac2b7314930c6340200af1ab581e6d919d9ad5a...aecbf924eda2e1d28c2f86e07dfbf7b4518b1742)
 
 | Workstream | Summary of the GPT-5.6-assisted changes | Representative commits |
 | --- | --- | --- |
