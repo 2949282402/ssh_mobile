@@ -205,6 +205,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
                 width: double.infinity,
                 height: 48,
                 child: FilledButton.icon(
+                  key: const ValueKey('connection-save-button'),
                   onPressed: isSaving || _isLoadingSecrets ? null : _save,
                   icon: isSaving
                       ? const SizedBox(
@@ -231,9 +232,14 @@ class _AddEditScreenState extends State<AddEditScreen> {
       appBar: AppBar(
         title: Text(isEditing ? strings.editConnection : strings.addConnection),
       ),
-      bottomNavigationBar: MediaQuery.viewInsetsOf(context).bottom > 0
-          ? null
-          : stickyActionBar,
+      bottomNavigationBar: AnimatedPadding(
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOutCubic,
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: stickyActionBar,
+      ),
       body: AppPageSurface(
         child: _isLoadingSecrets
             ? const Center(
