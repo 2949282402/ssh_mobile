@@ -606,9 +606,8 @@ void main() {
     );
 
     await tester.tap(find.byKey(const ValueKey('admin-server-tile-conn_123')));
-    await tester.drag(
-      find.byKey(const ValueKey('admin-server-tile-conn_123')),
-      const Offset(-220, 0),
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('admin-server-tile-conn_456')),
     );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('admin-server-tile-conn_456')));
