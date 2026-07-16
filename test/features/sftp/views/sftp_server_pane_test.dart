@@ -271,6 +271,36 @@ void main() {
     }
   });
 
+  testWidgets('mobile selector collapses as soon as a server is selected', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    try {
+      useViewport(
+        tester,
+        physicalSize: const Size(390, 844),
+        devicePixelRatio: 1,
+      );
+      await addServers();
+      sftpService.connectSucceeds = false;
+
+      await tester.pumpWidget(host());
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('sftp-server-tile-server-1')));
+      await tester.pumpAndSettle();
+
+      expect(sftpService.connectCalls, ['server-1']);
+      expect(find.byKey(const ValueKey('sftp-server-expanded')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('sftp-server-collapsed')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
   testWidgets(
     '320dp mobile layout supports 200 percent text and collapse state',
     (tester) async {
@@ -341,6 +371,7 @@ class _FakeSftpService extends SftpService {
   final Set<String> _busyConnections = {};
   final Set<String> _openConnections = {};
   String? _selectedConnectionId;
+  bool connectSucceeds = true;
 
   void setStatus(
     String connectionId, {
@@ -401,7 +432,7 @@ class _FakeSftpService extends SftpService {
     notifyListeners();
     await Future<void>.delayed(Duration.zero);
     _busyConnections.remove(connectionId);
-    _openConnections.add(connectionId);
+    if (connectSucceeds) _openConnections.add(connectionId);
     notifyListeners();
   }
 }

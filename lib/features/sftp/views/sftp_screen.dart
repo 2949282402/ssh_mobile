@@ -203,15 +203,12 @@ class _SftpScreenState extends State<SftpScreen> {
 
   Future<void> _connectServer(String connectionId) async {
     final sftp = context.read<SftpViewModel>();
+    _collapseServers();
     await sftp.connect(
       connectionId,
       onUnknownHostKey: (request) =>
           showSshHostKeyTrustDialog(context, request),
     );
-    if (!mounted) return;
-    if (sftp.connectionId == connectionId && sftp.isConnected) {
-      _collapseServers();
-    }
   }
 
   void _setServersCollapsed(bool collapsed) {
