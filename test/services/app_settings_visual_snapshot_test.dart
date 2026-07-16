@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ssh_mobile/services/app_settings.dart';
+import 'package:ssh_mobile/theme/app_theme.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -30,6 +31,13 @@ void main() {
     settings.setThemeMode(ThemeMode.dark);
     await tester.pump();
     expect(builds, 2);
+
+    await settings.setColorPalette(AppColorPalette.emerald);
+    await tester.pump();
+    expect(builds, 3);
+
+    final preferences = await SharedPreferences.getInstance();
+    expect(preferences.getString('color_palette'), 'emerald');
 
     await tester.pump(const Duration(milliseconds: 200));
   });

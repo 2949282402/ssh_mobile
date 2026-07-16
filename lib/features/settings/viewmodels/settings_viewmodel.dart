@@ -8,6 +8,7 @@ import '../../../services/mcp/mcp_config_templates.dart';
 import '../../../services/mcp/mcp_port_probe.dart';
 import '../../../services/mcp/mcp_server_controller.dart';
 import '../../../services/storage_service.dart';
+import '../../../theme/app_theme.dart';
 
 class SettingsViewModel extends ChangeNotifier {
   final AppSettings _appSettings;
@@ -86,12 +87,17 @@ class SettingsViewModel extends ChangeNotifier {
   }
 
   bool get oledDark => _appSettings.oledDark;
+  AppColorPalette get colorPalette => _appSettings.colorPalette;
   String get terminalThemeId => _appSettings.terminalThemeId;
   String get terminalFontFamily => _appSettings.terminalFontFamily;
   String get serverListLayoutMode => _appSettings.serverListLayoutMode;
 
   Future<void> setOledDark(bool value) async {
     await _appSettings.setOledDark(value);
+  }
+
+  Future<void> setColorPalette(AppColorPalette palette) async {
+    await _appSettings.setColorPalette(palette);
   }
 
   Future<void> setTerminalThemeId(String id) async {

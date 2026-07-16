@@ -84,6 +84,15 @@ class _AppearanceSettingsSection extends StatelessWidget {
       );
     }
 
+    String paletteLabel(AppColorPalette palette) => switch (palette) {
+      AppColorPalette.monochrome => strings.paletteMonochrome,
+      AppColorPalette.indigo => strings.paletteIndigo,
+      AppColorPalette.ocean => strings.paletteOcean,
+      AppColorPalette.emerald => strings.paletteEmerald,
+      AppColorPalette.rose => strings.paletteRose,
+      AppColorPalette.amber => strings.paletteAmber,
+    };
+
     return _SettingsSection(
       title: strings.appearance,
       children: [
@@ -134,6 +143,45 @@ class _AppearanceSettingsSection extends StatelessWidget {
           value: appSnapshot.isDarkMode,
           onChanged: (_) => settings.changeThemeMode(
             settings.isDarkMode ? ThemeMode.light : ThemeMode.dark,
+          ),
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.color_lens_outlined, size: 20),
+          title: Text(
+            strings.colorPalette,
+            style: const TextStyle(fontSize: 13),
+          ),
+        ),
+        SingleChildScrollView(
+          key: const ValueKey('app-color-palette-selector'),
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (final palette in AppColorPalette.values) ...[
+                ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 48),
+                  child: ChoiceChip(
+                    key: ValueKey('app-color-palette-${palette.name}'),
+                    selected: appSnapshot.colorPalette == palette,
+                    avatar: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: AppTheme.paletteColors(
+                          palette,
+                          Theme.of(context).brightness,
+                        ).primary,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const SizedBox.square(dimension: 16),
+                    ),
+                    label: Text(paletteLabel(palette)),
+                    onSelected: (_) => settings.setColorPalette(palette),
+                  ),
+                ),
+                if (palette != AppColorPalette.values.last)
+                  const SizedBox(width: 8),
+              ],
+            ],
           ),
         ),
         if (appSnapshot.isDarkMode)

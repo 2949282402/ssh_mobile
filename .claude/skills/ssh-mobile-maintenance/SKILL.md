@@ -300,8 +300,10 @@ its child widgets.
   before replacing local state, and high-risk content such as playbooks,
   custom prompts, shortcuts, and AI skills must remain user-approved import
   surface.
-- Fresh installs and missing preference fallbacks default to Chinese and light
-  theme.
+- Fresh installs and missing preference fallbacks default to Chinese, light
+  theme, and the Monochrome palette. Keep Monochrome, Indigo, Ocean, Emerald,
+  Rose, and Amber palettes synchronized across Material and Shad themes and
+  included in settings backup/import.
 - Keep the app root subscribed only to the immutable visual-theme snapshot.
   Cache Material and Shad theme objects, avoid nested theme interpolation, and
   keep terminal font or other feature settings from rebuilding the app shell.

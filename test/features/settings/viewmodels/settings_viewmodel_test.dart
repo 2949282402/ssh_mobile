@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/features/settings/viewmodels/settings_viewmodel.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
+import 'package:ssh_mobile/theme/app_theme.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -39,6 +40,7 @@ void main() {
 
       expect(viewModel.language, equals(AppLanguage.zh));
       expect(viewModel.themeMode, equals(ThemeMode.light));
+      expect(viewModel.colorPalette, AppColorPalette.monochrome);
       expect(viewModel.isImporting, isFalse);
       expect(viewModel.isExporting, isFalse);
       expect(viewModel.lastOperationMessage, isNull);
@@ -63,6 +65,19 @@ void main() {
 
       viewModel.changeThemeMode(ThemeMode.dark);
       expect(viewModel.themeMode, equals(ThemeMode.dark));
+    });
+
+    test('setColorPalette updates and persists AppSettings', () async {
+      final viewModel = SettingsViewModel(
+        appSettings: appSettings,
+        storageService: storageService,
+      );
+
+      await viewModel.setColorPalette(AppColorPalette.rose);
+
+      expect(viewModel.colorPalette, AppColorPalette.rose);
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('color_palette'), 'rose');
     });
 
     test('configureSecretCache and clearSecretCache works', () async {

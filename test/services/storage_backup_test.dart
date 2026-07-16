@@ -645,6 +645,7 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('app_language', 'en');
       await prefs.setString('theme_mode', 'dark');
+      await prefs.setString('color_palette', 'ocean');
       await prefs.setBool('dark_mode', true);
       await prefs.setString('font_family', 'Roboto');
       await prefs.setInt('sftp_download_limit_bytes', 1024 * 1024);
@@ -679,6 +680,7 @@ void main() {
       final appSettings = decoded['appSettings'] as Map<String, dynamic>;
       expect(appSettings['language'], 'en');
       expect(appSettings['themeMode'], 'dark');
+      expect(appSettings['colorPalette'], 'ocean');
       expect(appSettings['darkMode'], isTrue);
       expect(appSettings['fontFamily'], 'Roboto');
       expect(appSettings['sftpDownloadLimitBytes'], 1024 * 1024);
@@ -721,6 +723,7 @@ void main() {
       final newPrefs = await SharedPreferences.getInstance();
       expect(newPrefs.getString('app_language'), 'en');
       expect(newPrefs.getString('theme_mode'), 'dark');
+      expect(newPrefs.getString('color_palette'), 'ocean');
       expect(newPrefs.getBool('dark_mode'), isTrue);
       expect(newPrefs.getString('font_family'), 'Roboto');
       expect(newPrefs.getInt('sftp_download_limit_bytes'), 1024 * 1024);

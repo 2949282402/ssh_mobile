@@ -90,6 +90,7 @@ extension BackupOps on StorageService {
       'appSettings': {
         'language': _prefs!.getString('app_language'),
         'themeMode': _prefs!.getString('theme_mode'),
+        'colorPalette': _prefs!.getString('color_palette'),
         'darkMode': _prefs!.getBool('dark_mode'),
         'fontFamily': _prefs!.getString('font_family'),
         'sftpDownloadLimitBytes': _prefs!.getInt('sftp_download_limit_bytes'),
@@ -213,6 +214,12 @@ extension BackupOps on StorageService {
         await _prefs!.setString(
           'theme_mode',
           appSettings['themeMode'] as String,
+        );
+      }
+      if (appSettings['colorPalette'] != null) {
+        await _prefs!.setString(
+          'color_palette',
+          appSettings['colorPalette'] as String,
         );
       }
       if (appSettings['darkMode'] != null) {
@@ -465,6 +472,7 @@ void _validateBackupSchema(Map<String, dynamic> decoded) {
   if (appSettings is Map<String, dynamic>) {
     _optionalStringLimit(appSettings, 'language', _maxShortFieldChars);
     _optionalStringLimit(appSettings, 'themeMode', _maxShortFieldChars);
+    _optionalStringLimit(appSettings, 'colorPalette', _maxShortFieldChars);
     _optionalStringLimit(appSettings, 'fontFamily', _maxShortFieldChars);
     _optionalBool(appSettings, 'darkMode');
     _optionalBool(appSettings, 'showServerNamesInNotifications');

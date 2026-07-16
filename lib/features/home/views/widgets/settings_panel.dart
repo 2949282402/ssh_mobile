@@ -352,6 +352,7 @@ class _SettingsAppSnapshot {
   final int sftpRichPreviewLimitBytes;
   final int sftpTextEditLimitBytes;
   final bool oledDark;
+  final AppColorPalette colorPalette;
   final String terminalThemeId;
   final String terminalFontFamily;
   final String serverListLayoutMode;
@@ -365,6 +366,7 @@ class _SettingsAppSnapshot {
     required this.sftpRichPreviewLimitBytes,
     required this.sftpTextEditLimitBytes,
     required this.oledDark,
+    required this.colorPalette,
     required this.terminalThemeId,
     required this.terminalFontFamily,
     required this.serverListLayoutMode,
@@ -380,6 +382,7 @@ class _SettingsAppSnapshot {
       sftpRichPreviewLimitBytes: settings.sftpRichPreviewLimitBytes,
       sftpTextEditLimitBytes: settings.sftpTextEditLimitBytes,
       oledDark: settings.oledDark,
+      colorPalette: settings.colorPalette,
       terminalThemeId: settings.terminalThemeId,
       terminalFontFamily: settings.terminalFontFamily,
       serverListLayoutMode: settings.serverListLayoutMode,
@@ -397,6 +400,7 @@ class _SettingsAppSnapshot {
         other.sftpRichPreviewLimitBytes == sftpRichPreviewLimitBytes &&
         other.sftpTextEditLimitBytes == sftpTextEditLimitBytes &&
         other.oledDark == oledDark &&
+        other.colorPalette == colorPalette &&
         other.terminalThemeId == terminalThemeId &&
         other.terminalFontFamily == terminalFontFamily &&
         other.serverListLayoutMode == serverListLayoutMode;
@@ -412,6 +416,7 @@ class _SettingsAppSnapshot {
     sftpRichPreviewLimitBytes,
     sftpTextEditLimitBytes,
     oledDark,
+    colorPalette,
     terminalThemeId,
     terminalFontFamily,
     serverListLayoutMode,

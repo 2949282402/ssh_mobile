@@ -3,6 +3,23 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:animations/animations.dart';
 
+enum AppColorPalette { monochrome, indigo, ocean, emerald, rose, amber }
+
+@immutable
+class AppColorPaletteColors {
+  const AppColorPaletteColors({
+    required this.primary,
+    required this.secondary,
+    required this.tertiary,
+    required this.onPrimary,
+  });
+
+  final Color primary;
+  final Color secondary;
+  final Color tertiary;
+  final Color onPrimary;
+}
+
 class ExtendedColors extends ThemeExtension<ExtendedColors> {
   final Color terminalBg;
   final Color terminalGreen;
@@ -101,9 +118,151 @@ class AppTheme {
     'monospace',
   ];
 
-  static ThemeData lightThemeFor() => _applyFont(lightTheme);
-  static ThemeData darkThemeFor({bool oledDark = false}) =>
-      _applyFont(buildDarkTheme(oledDark: oledDark));
+  static ThemeData lightThemeFor({
+    AppColorPalette palette = AppColorPalette.monochrome,
+  }) => _applyFont(_applyColorPalette(lightTheme, palette));
+  static ThemeData darkThemeFor({
+    bool oledDark = false,
+    AppColorPalette palette = AppColorPalette.monochrome,
+  }) => _applyFont(
+    _applyColorPalette(buildDarkTheme(oledDark: oledDark), palette),
+  );
+
+  static AppColorPaletteColors paletteColors(
+    AppColorPalette palette,
+    Brightness brightness,
+  ) {
+    final dark = brightness == Brightness.dark;
+    return switch (palette) {
+      AppColorPalette.monochrome => AppColorPaletteColors(
+        primary: dark ? const Color(0xFFE8EAED) : const Color(0xFF202124),
+        secondary: dark ? const Color(0xFFBDC1C6) : const Color(0xFF5F6368),
+        tertiary: dark ? const Color(0xFF9AA0A6) : const Color(0xFF3C4043),
+        onPrimary: dark ? const Color(0xFF202124) : Colors.white,
+      ),
+      AppColorPalette.indigo => AppColorPaletteColors(
+        primary: dark ? const Color(0xFF8B87FF) : const Color(0xFF4F46E5),
+        secondary: dark ? const Color(0xFF48CFB5) : const Color(0xFF0F9F87),
+        tertiary: dark ? const Color(0xFFC4B5FD) : const Color(0xFF7C3AED),
+        onPrimary: dark ? const Color(0xFF11102E) : Colors.white,
+      ),
+      AppColorPalette.ocean => AppColorPaletteColors(
+        primary: dark ? const Color(0xFF38BDF8) : const Color(0xFF0369A1),
+        secondary: dark ? const Color(0xFF22D3EE) : const Color(0xFF0891B2),
+        tertiary: dark ? const Color(0xFF60A5FA) : const Color(0xFF2563EB),
+        onPrimary: dark ? const Color(0xFF082F49) : Colors.white,
+      ),
+      AppColorPalette.emerald => AppColorPaletteColors(
+        primary: dark ? const Color(0xFF34D399) : const Color(0xFF047857),
+        secondary: dark ? const Color(0xFF2DD4BF) : const Color(0xFF0F766E),
+        tertiary: dark ? const Color(0xFFA3E635) : const Color(0xFF65A30D),
+        onPrimary: dark ? const Color(0xFF052E24) : Colors.white,
+      ),
+      AppColorPalette.rose => AppColorPaletteColors(
+        primary: dark ? const Color(0xFFFB7185) : const Color(0xFFBE123C),
+        secondary: dark ? const Color(0xFFE879F9) : const Color(0xFFC026D3),
+        tertiary: dark ? const Color(0xFFC4B5FD) : const Color(0xFF7C3AED),
+        onPrimary: dark ? const Color(0xFF4C0519) : Colors.white,
+      ),
+      AppColorPalette.amber => AppColorPaletteColors(
+        primary: dark ? const Color(0xFFFBBF24) : const Color(0xFFB45309),
+        secondary: dark ? const Color(0xFFFACC15) : const Color(0xFFCA8A04),
+        tertiary: dark ? const Color(0xFFFB923C) : const Color(0xFFEA580C),
+        onPrimary: dark ? const Color(0xFF3A2500) : Colors.white,
+      ),
+    };
+  }
+
+  static ThemeData _applyColorPalette(
+    ThemeData theme,
+    AppColorPalette palette,
+  ) {
+    final colors = paletteColors(palette, theme.brightness);
+    final surface = theme.colorScheme.surface;
+    Color container(Color color) => Color.alphaBlend(
+      color.withValues(
+        alpha: theme.brightness == Brightness.dark ? 0.24 : 0.12,
+      ),
+      surface,
+    );
+    Color foreground(Color color) =>
+        ThemeData.estimateBrightnessForColor(color) == Brightness.dark
+        ? Colors.white
+        : const Color(0xFF202124);
+    final scheme = theme.colorScheme.copyWith(
+      primary: colors.primary,
+      onPrimary: colors.onPrimary,
+      primaryContainer: container(colors.primary),
+      onPrimaryContainer: foreground(container(colors.primary)),
+      secondary: colors.secondary,
+      onSecondary: foreground(colors.secondary),
+      secondaryContainer: container(colors.secondary),
+      onSecondaryContainer: foreground(container(colors.secondary)),
+      tertiary: colors.tertiary,
+      onTertiary: foreground(colors.tertiary),
+      tertiaryContainer: container(colors.tertiary),
+      onTertiaryContainer: foreground(container(colors.tertiary)),
+      inversePrimary: colors.primary,
+      surfaceTint: colors.primary,
+    );
+    final extended = theme.extension<ExtendedColors>();
+    return theme.copyWith(
+      colorScheme: scheme,
+      extensions: [
+        if (extended != null)
+          extended.copyWith(
+            success: colors.secondary,
+            cardHoverBorder: colors.primary.withValues(alpha: 0.4),
+          ),
+      ],
+      navigationBarTheme: _navigationBarTheme(
+        surface: scheme.surface,
+        primary: colors.primary,
+        onSurfaceVariant: scheme.onSurfaceVariant,
+      ),
+      navigationRailTheme: _navigationRailTheme(
+        surface: scheme.surface,
+        primary: colors.primary,
+        onSurfaceVariant: scheme.onSurfaceVariant,
+      ),
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        backgroundColor: colors.primary,
+        foregroundColor: colors.onPrimary,
+        elevation: 2,
+        focusElevation: 3,
+        hoverElevation: 4,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(Radius.circular(radiusMedium)),
+        ),
+      ),
+      textButtonTheme: _textButtonTheme(colors.primary),
+      chipTheme: _chipTheme(
+        background: scheme.surfaceContainer,
+        selected: Color.alphaBlend(
+          colors.primary.withValues(alpha: 0.14),
+          scheme.surfaceContainer,
+        ),
+        outline: scheme.outline,
+        label: scheme.onSurface,
+      ),
+      inputDecorationTheme: _inputDecorationTheme(
+        fill: scheme.surface,
+        outline: scheme.outline,
+        focused: colors.primary,
+        label: scheme.onSurfaceVariant,
+      ),
+      segmentedButtonTheme: _segmentedButtonTheme(
+        primary: colors.primary,
+        outline: scheme.outline,
+        surface: scheme.surface,
+        foreground: scheme.onSurface,
+      ),
+      progressIndicatorTheme: _progressIndicatorTheme(
+        primary: colors.primary,
+        track: scheme.outline,
+      ),
+    );
+  }
 
   static ThemeData _applyFont(ThemeData theme) {
     return theme.copyWith(

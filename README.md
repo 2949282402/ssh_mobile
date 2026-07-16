@@ -109,7 +109,7 @@ Important defaults:
 | Setting | Default | Notes |
 | --- | --- | --- |
 | Language | Chinese | Chinese and English are supported. |
-| Theme | Light | Dark and OLED dark themes are available. |
+| Theme | Light with Monochrome palette | Dark and OLED dark themes are available. Monochrome, Indigo, Ocean, Emerald, Rose, and Amber palettes persist across launches and backups. |
 | Server list | List | Grid is enabled only when the viewport is wide enough. |
 | Notification privacy | Hide server names | Prevents server names from appearing in background notifications by default. |
 | RAG | Disabled | Search mode defaults to BM25 with top-N set to 3. |

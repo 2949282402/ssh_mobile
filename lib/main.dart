@@ -205,57 +205,67 @@ class SshMobileApp extends StatefulWidget {
 
 class _SshMobileAppState extends State<SshMobileApp>
     with WidgetsBindingObserver {
-  static final ThemeData _lightTheme = AppTheme.lightThemeFor();
-  static final ThemeData _darkTheme = AppTheme.darkThemeFor();
-  static final ThemeData _oledDarkTheme = AppTheme.darkThemeFor(oledDark: true);
-  static final ShadThemeData _shadLightTheme = ShadThemeData(
-    brightness: Brightness.light,
-    radius: const BorderRadius.all(Radius.circular(AppTheme.radiusSmall)),
-    colorScheme: const ShadVioletColorScheme.light().copyWith(
-      background: const Color(0xFFF6F7FB),
-      foreground: const Color(0xFF171923),
-      card: const Color(0xFFFEFEFF),
-      cardForeground: const Color(0xFF171923),
-      popover: const Color(0xFFFEFEFF),
-      popoverForeground: const Color(0xFF171923),
-      primary: const Color(0xFF4F46E5),
-      primaryForeground: Colors.white,
-      secondary: const Color(0xFFF0F2F8),
-      secondaryForeground: const Color(0xFF444A59),
-      muted: const Color(0xFFF0F2F8),
-      mutedForeground: const Color(0xFF656B7A),
-      accent: const Color(0xFFE6E4FF),
-      accentForeground: const Color(0xFF312E81),
-      border: const Color(0xFFDDE1EB),
-      input: const Color(0xFFDDE1EB),
-      ring: const Color(0xFF4F46E5),
-      selection: const Color(0x334F46E5),
-    ),
-  );
-  static final ShadThemeData _shadDarkTheme = ShadThemeData(
-    brightness: Brightness.dark,
-    radius: const BorderRadius.all(Radius.circular(AppTheme.radiusSmall)),
-    colorScheme: const ShadVioletColorScheme.dark().copyWith(
-      background: const Color(0xFF090B11),
-      foreground: const Color(0xFFF4F5F8),
-      card: const Color(0xFF11141C),
-      cardForeground: const Color(0xFFF4F5F8),
-      popover: const Color(0xFF11141C),
-      popoverForeground: const Color(0xFFF4F5F8),
-      primary: const Color(0xFF8B87FF),
-      primaryForeground: const Color(0xFF11102E),
-      secondary: const Color(0xFF171B25),
-      secondaryForeground: const Color(0xFFF4F5F8),
-      muted: const Color(0xFF171B25),
-      mutedForeground: const Color(0xFFA7ADBA),
-      accent: const Color(0xFF252B38),
-      accentForeground: const Color(0xFFF4F5F8),
-      border: const Color(0xFF282E3A),
-      input: const Color(0xFF282E3A),
-      ring: const Color(0xFF8B87FF),
-      selection: const Color(0x338B87FF),
-    ),
-  );
+  static final Map<AppColorPalette, ThemeData> _lightThemes = {
+    for (final palette in AppColorPalette.values)
+      palette: AppTheme.lightThemeFor(palette: palette),
+  };
+  static final Map<AppColorPalette, ThemeData> _darkThemes = {
+    for (final palette in AppColorPalette.values)
+      palette: AppTheme.darkThemeFor(palette: palette),
+  };
+  static final Map<AppColorPalette, ThemeData> _oledDarkThemes = {
+    for (final palette in AppColorPalette.values)
+      palette: AppTheme.darkThemeFor(oledDark: true, palette: palette),
+  };
+  static final Map<AppColorPalette, ShadThemeData> _shadLightThemes = {
+    for (final palette in AppColorPalette.values)
+      palette: _buildShadTheme(palette, Brightness.light),
+  };
+  static final Map<AppColorPalette, ShadThemeData> _shadDarkThemes = {
+    for (final palette in AppColorPalette.values)
+      palette: _buildShadTheme(palette, Brightness.dark),
+  };
+
+  static ShadThemeData _buildShadTheme(
+    AppColorPalette palette,
+    Brightness brightness,
+  ) {
+    final dark = brightness == Brightness.dark;
+    final materialTheme = dark
+        ? AppTheme.darkThemeFor(palette: palette)
+        : AppTheme.lightThemeFor(palette: palette);
+    final colors = materialTheme.colorScheme;
+    final base = dark
+        ? const ShadVioletColorScheme.dark()
+        : const ShadVioletColorScheme.light();
+    return ShadThemeData(
+      brightness: brightness,
+      radius: const BorderRadius.all(Radius.circular(AppTheme.radiusSmall)),
+      colorScheme: base.copyWith(
+        background: materialTheme.scaffoldBackgroundColor,
+        foreground: colors.onSurface,
+        card: colors.surface,
+        cardForeground: colors.onSurface,
+        popover: colors.surface,
+        popoverForeground: colors.onSurface,
+        primary: colors.primary,
+        primaryForeground: colors.onPrimary,
+        secondary: colors.surfaceContainer,
+        secondaryForeground: colors.onSurface,
+        muted: colors.surfaceContainer,
+        mutedForeground: colors.onSurfaceVariant,
+        accent: Color.alphaBlend(
+          colors.primary.withValues(alpha: 0.14),
+          colors.surfaceContainer,
+        ),
+        accentForeground: colors.onSurface,
+        border: colors.outline,
+        input: colors.outline,
+        ring: colors.primary,
+        selection: colors.primary.withValues(alpha: 0.2),
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -294,11 +304,12 @@ class _SshMobileAppState extends State<SshMobileApp>
           (settings) => settings.visualSettings,
         );
     final darkMode = visualSettings.themeMode == ThemeMode.dark;
+    final palette = visualSettings.colorPalette;
 
     return ScrollConfiguration(
       behavior: const ShadScrollBehavior(),
       child: ShadTheme(
-        data: darkMode ? _shadDarkTheme : _shadLightTheme,
+        data: darkMode ? _shadDarkThemes[palette]! : _shadLightThemes[palette]!,
         child: ShadMouseAreaSurface(
           child: ShadMouseCursorProvider(
             child: Builder(
@@ -306,10 +317,10 @@ class _SshMobileAppState extends State<SshMobileApp>
                 return MaterialApp(
                   title: 'SSH Mobile',
                   debugShowCheckedModeBanner: false,
-                  theme: _lightTheme,
+                  theme: _lightThemes[palette],
                   darkTheme: visualSettings.oledDark
-                      ? _oledDarkTheme
-                      : _darkTheme,
+                      ? _oledDarkThemes[palette]
+                      : _darkThemes[palette],
                   themeMode: visualSettings.themeMode,
                   themeAnimationDuration: Duration.zero,
                   builder: (context, child) {

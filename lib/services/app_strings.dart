@@ -16,6 +16,13 @@ class AppStrings {
   String get switchToLightMode => _en ? 'Switch to light mode' : '切换到浅色主题';
   String get switchToDarkMode => _en ? 'Switch to dark mode' : '切换到深色主题';
   String get oledDarkMode => _en ? 'OLED Black Mode' : 'OLED 纯黑模式';
+  String get colorPalette => _en ? 'App Color' : '应用配色';
+  String get paletteMonochrome => _en ? 'Monochrome' : '黑白灰';
+  String get paletteIndigo => _en ? 'Indigo' : '靛蓝';
+  String get paletteOcean => _en ? 'Ocean' : '海洋蓝';
+  String get paletteEmerald => _en ? 'Emerald' : '翡翠绿';
+  String get paletteRose => _en ? 'Rose' : '玫瑰红';
+  String get paletteAmber => _en ? 'Amber' : '琥珀橙';
   String get terminalTheme => _en ? 'Terminal Theme' : '终端配色方案';
   String get customTerminalFont => _en ? 'Custom Terminal Font' : '自定义终端字体';
   String get customTerminalFontHint => _en

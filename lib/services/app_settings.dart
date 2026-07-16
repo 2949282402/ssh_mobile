@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../theme/app_theme.dart';
 import 'app_log_service.dart';
 import 'mcp/mcp_server_settings.dart';
 
@@ -16,19 +17,22 @@ class AppVisualSettingsSnapshot {
   const AppVisualSettingsSnapshot({
     required this.themeMode,
     required this.oledDark,
+    required this.colorPalette,
   });
 
   final ThemeMode themeMode;
   final bool oledDark;
+  final AppColorPalette colorPalette;
 
   @override
   bool operator ==(Object other) =>
       other is AppVisualSettingsSnapshot &&
       other.themeMode == themeMode &&
-      other.oledDark == oledDark;
+      other.oledDark == oledDark &&
+      other.colorPalette == colorPalette;
 
   @override
-  int get hashCode => Object.hash(themeMode, oledDark);
+  int get hashCode => Object.hash(themeMode, oledDark, colorPalette);
 }
 
 /// 应用设置 + 国际化字符串服务。
@@ -61,6 +65,7 @@ class AppSettings extends ChangeNotifier {
   static const _mcpEnableSseKey = 'mcp_enable_sse';
   static const _mcpServerTokenSecureKey = 'mcp_server_token';
   static const _oledDarkKey = 'oled_dark';
+  static const _colorPaletteKey = 'color_palette';
   static const _terminalThemeIdKey = 'terminal_theme_id';
   static const _terminalFontFamilyKey = 'terminal_font_family';
   static const _serverListLayoutModeKey = 'server_list_layout_mode';
@@ -89,6 +94,7 @@ class AppSettings extends ChangeNotifier {
   bool _mcpRequireApprovalForWriteTools = true;
   bool _mcpEnableSse = false;
   bool _oledDark = false;
+  AppColorPalette _colorPalette = AppColorPalette.monochrome;
   String _terminalThemeId = 'default';
   String _terminalFontFamily = '';
   String _serverListLayoutMode = 'list';
@@ -101,8 +107,11 @@ class AppSettings extends ChangeNotifier {
 
   AppLanguage get language => _language;
   ThemeMode get themeMode => _themeMode;
-  AppVisualSettingsSnapshot get visualSettings =>
-      AppVisualSettingsSnapshot(themeMode: _themeMode, oledDark: _oledDark);
+  AppVisualSettingsSnapshot get visualSettings => AppVisualSettingsSnapshot(
+    themeMode: _themeMode,
+    oledDark: _oledDark,
+    colorPalette: _colorPalette,
+  );
   bool get initialized => _initialized;
   Future<void> get initFuture => _initCompleter.future;
   bool get isEnglish => _language == AppLanguage.en;
@@ -123,6 +132,7 @@ class AppSettings extends ChangeNotifier {
   bool get mcpRequireApprovalForWriteTools => _mcpRequireApprovalForWriteTools;
   bool get mcpEnableSse => _mcpEnableSse;
   bool get oledDark => _oledDark;
+  AppColorPalette get colorPalette => _colorPalette;
   String get terminalThemeId => _terminalThemeId;
   String get terminalFontFamily => _terminalFontFamily;
   String get serverListLayoutMode => _serverListLayoutMode;
@@ -181,6 +191,11 @@ class AppSettings extends ChangeNotifier {
       _mcpEnableSse = prefs.getBool(_mcpEnableSseKey) ?? false;
       _mcpServerToken = await _readOrCreateMcpServerToken();
       _oledDark = prefs.getBool(_oledDarkKey) ?? false;
+      final colorPaletteName = prefs.getString(_colorPaletteKey);
+      _colorPalette = AppColorPalette.values.firstWhere(
+        (palette) => palette.name == colorPaletteName,
+        orElse: () => AppColorPalette.monochrome,
+      );
       _terminalThemeId = prefs.getString(_terminalThemeIdKey) ?? 'default';
       _terminalFontFamily = prefs.getString(_terminalFontFamilyKey) ?? '';
       _serverListLayoutMode =
@@ -209,6 +224,7 @@ class AppSettings extends ChangeNotifier {
       _mcpRequireApprovalForWriteTools = true;
       _mcpEnableSse = false;
       _oledDark = false;
+      _colorPalette = AppColorPalette.monochrome;
       _terminalThemeId = 'default';
       _terminalFontFamily = '';
       _serverListLayoutMode = 'list';
@@ -414,6 +430,18 @@ class AppSettings extends ChangeNotifier {
     AppLogService.instance.info(
       'OLED Dark setting updated',
       details: 'oledDark=$value',
+    );
+  }
+
+  Future<void> setColorPalette(AppColorPalette palette) async {
+    if (_colorPalette == palette) return;
+    _colorPalette = palette;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_colorPaletteKey, palette.name);
+    AppLogService.instance.info(
+      'Color palette setting updated',
+      details: 'palette=${palette.name}',
     );
   }
 
