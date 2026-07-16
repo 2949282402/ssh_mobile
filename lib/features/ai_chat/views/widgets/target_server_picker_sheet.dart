@@ -13,6 +13,8 @@ Future<Set<String>?> showTargetServerPickerSheet({
     useSafeArea: true,
     showDragHandle: false,
     backgroundColor: Colors.transparent,
+    elevation: 0,
+    shape: const RoundedRectangleBorder(),
     builder: (sheetContext) {
       final media = MediaQuery.of(sheetContext);
       final visibleHeight = (media.size.height - media.viewInsets.bottom)
@@ -29,15 +31,11 @@ Future<Set<String>?> showTargetServerPickerSheet({
         child: Align(
           alignment: Alignment.bottomCenter,
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 640),
-            child: SizedBox(
-              width: double.infinity,
-              height: sheetHeight,
-              child: TargetServerPickerSheet(
-                connections: connections,
-                initialSelection: initialSelection,
-                strings: strings,
-              ),
+            constraints: BoxConstraints(maxWidth: 640, maxHeight: sheetHeight),
+            child: TargetServerPickerSheet(
+              connections: connections,
+              initialSelection: initialSelection,
+              strings: strings,
             ),
           ),
         ),
@@ -115,8 +113,9 @@ class _TargetServerPickerSheetState extends State<TargetServerPickerSheet> {
     return Material(
       color: colorScheme.surface,
       clipBehavior: Clip.antiAlias,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      shape: RoundedRectangleBorder(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        side: BorderSide(color: colorScheme.outline),
       ),
       child: SafeArea(
         top: false,
@@ -128,6 +127,7 @@ class _TargetServerPickerSheetState extends State<TargetServerPickerSheet> {
             compact ? 4 : 12,
           ),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
               if (!compact) ...[
                 Container(
@@ -147,7 +147,7 @@ class _TargetServerPickerSheetState extends State<TargetServerPickerSheet> {
                       header: true,
                       child: Text(
                         widget.strings.selectTargetServers,
-                        maxLines: 1,
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: compact
                             ? theme.textTheme.titleMedium
@@ -172,9 +172,10 @@ class _TargetServerPickerSheetState extends State<TargetServerPickerSheet> {
                 ],
               ),
               SizedBox(height: compact ? 2 : 6),
-              Expanded(
+              Flexible(
                 child: ListView.builder(
                   key: const ValueKey('server-selector-list'),
+                  shrinkWrap: true,
                   itemCount: widget.connections.length,
                   itemBuilder: (context, index) {
                     final connection = widget.connections[index];

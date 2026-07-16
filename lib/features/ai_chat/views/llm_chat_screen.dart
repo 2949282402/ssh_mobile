@@ -767,10 +767,14 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
   }
 
   Future<void> _showPromptCustomizer(AiStrings strings) async {
+    final viewModel = context.read<AiChatViewModel>();
     await showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => PromptCustomizerDialog(strings: strings),
+      builder: (_) => ChangeNotifierProvider<AiChatViewModel>.value(
+        value: viewModel,
+        child: PromptCustomizerDialog(strings: strings),
+      ),
     );
   }
 

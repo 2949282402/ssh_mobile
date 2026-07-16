@@ -75,6 +75,7 @@ or maintenance lesson should be shared across Codex and Claude Code sessions.
 - Keep SSH Host Key checks centralized in `SshHostKeyPolicy`. UI-initiated
   first use may prompt for TOFU confirmation, but AI tools and background SSH
   service code must never auto-trust unknown or changed host keys.
+- Optimize validation time: when running `flutter analyze` or `flutter test`, target only the modified/added files (e.g. `flutter analyze lib/widgets/app_surface.dart` or `flutter test test/widgets/app_surface_test.dart`) to save execution time, rather than running full repository checks on every minor incremental change.
 - When features, navigation, settings, tools, or platform behavior change,
   update this skill and `README.md` in the same task.
 - Keep `.agents/.../SKILL.md` and `.claude/.../SKILL.md` synchronized with

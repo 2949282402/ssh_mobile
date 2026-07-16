@@ -284,41 +284,43 @@ class AppEmptyState extends StatelessWidget {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-    final content = Padding(
-      padding: EdgeInsets.all(compact ? 22 : 30),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          AppIconBadge(
-            icon: icon,
-            size: compact ? 60 : 72,
-            iconSize: compact ? 30 : 34,
-          ),
-          SizedBox(height: compact ? 16 : 20),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: theme.textTheme.titleLarge,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            message,
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: colors.onSurfaceVariant,
-              height: 1.5,
+    final content = SingleChildScrollView(
+      child: Padding(
+        padding: EdgeInsets.all(compact ? 22 : 30),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AppIconBadge(
+              icon: icon,
+              size: compact ? 60 : 72,
+              iconSize: compact ? 30 : 34,
             ),
-          ),
-          if (action != null || secondaryAction != null) ...[
-            SizedBox(height: compact ? 18 : 22),
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 10,
-              runSpacing: 10,
-              children: [?action, ?secondaryAction],
+            SizedBox(height: compact ? 16 : 20),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.titleLarge,
             ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: colors.onSurfaceVariant,
+                height: 1.5,
+              ),
+            ),
+            if (action != null || secondaryAction != null) ...[
+              SizedBox(height: compact ? 18 : 22),
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 10,
+                runSpacing: 10,
+                children: [?action, ?secondaryAction],
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
 

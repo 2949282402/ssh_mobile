@@ -1,13 +1,17 @@
 ---
 name: git-commit
-description: Use when the user requests to commit changes, git commit, stage files, or asks "提交一下", "git 提交", "git提交一下", running pre-commit checks (formatting, analysis, testing), generating standard commit messages, and committing changes in this repository.
+description: Use when the user requests to commit changes, git commit, stage files, or asks "提交一下", "git 提交", "git提交一下", running formatting checks, generating standard commit messages, and committing changes in this repository (analysis and tests are already performed during the modification phase, so they are skipped here).
 ---
 
 # Git Commit Skill
 
-This skill guides the process of checking, formatting, validating, and committing changes to Git in this repository.
+This skill guides the process of checking, formatting, and committing changes to Git in this repository.
 
 ## Step-by-Step Commit Workflow
+
+> [!NOTE]
+> Since code modifications must already be verified via `flutter analyze` and `flutter test` during the editing phase, those validation checks are skipped during the commit phase to save time.
+
 
 ### 1. Inspect Status and Diff
 Before staging any files, check the current workspace state to understand what files are modified or untracked:
