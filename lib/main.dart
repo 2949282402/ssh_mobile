@@ -26,6 +26,7 @@ import 'package:ssh_mobile/features/terminal/views/terminal_screen.dart';
 import 'package:ssh_mobile/features/terminal/views/terminal_windows_screen.dart';
 import 'package:ssh_mobile/features/rag/views/rag_knowledge_screen.dart';
 import 'services/app_log_service.dart';
+import 'services/display_mode_service.dart';
 import 'services/background_service.dart';
 import 'services/app_settings.dart';
 import 'services/performance_monitor_service.dart';
@@ -57,6 +58,7 @@ Future<void> main() async {
       appLogService.install(); // 替换 debugPrint / FlutterError.onError 等全局钩子
       appLogService.info('Application bootstrap started');
       unawaited(SharedPreferences.getInstance());
+      unawaited(DisplayModeService.enableHighRefreshRate());
 
       // --- 服务装配与异步加载通过 MultiProvider 懒加载自动完成 ---
       runApp(
