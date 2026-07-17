@@ -633,10 +633,12 @@ class _RootRequiredTabWrapper extends StatelessWidget {
           icon: Icons.admin_panel_settings_outlined,
           padding: const EdgeInsets.all(22),
           child: const Center(
-            child: SizedBox(
-              width: 44,
-              height: 44,
-              child: CircularProgressIndicator(strokeWidth: 3),
+            child: RepaintBoundary(
+              child: SizedBox(
+                width: 44,
+                height: 44,
+                child: CircularProgressIndicator(strokeWidth: 3),
+              ),
             ),
           ),
         ),

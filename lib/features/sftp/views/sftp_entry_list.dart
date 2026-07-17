@@ -201,12 +201,14 @@ class _SftpDirectoryLoadingState extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    SizedBox.square(
-                      dimension: 48,
-                      child: CircularProgressIndicator(
-                        key: const ValueKey('sftp-directory-loading-spinner'),
-                        color: colors.primary,
-                        strokeWidth: 2.4,
+                    RepaintBoundary(
+                      child: SizedBox.square(
+                        dimension: 48,
+                        child: CircularProgressIndicator(
+                          key: const ValueKey('sftp-directory-loading-spinner'),
+                          color: colors.primary,
+                          strokeWidth: 2.4,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 16),

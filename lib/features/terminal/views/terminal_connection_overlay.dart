@@ -82,13 +82,15 @@ class TerminalConnectionOverlay extends StatelessWidget {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 if (isWaiting)
-                                  SizedBox.square(
-                                    dimension: compact ? 48 : 58,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 3,
-                                      color: presentation.color,
-                                      backgroundColor: presentation.color
-                                          .withValues(alpha: 0.14),
+                                  RepaintBoundary(
+                                    child: SizedBox.square(
+                                      dimension: compact ? 48 : 58,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 3,
+                                        color: presentation.color,
+                                        backgroundColor: presentation.color
+                                            .withValues(alpha: 0.14),
+                                      ),
                                     ),
                                   )
                                 else
@@ -310,9 +312,11 @@ class TerminalBufferedOutputIndicator extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                  const RepaintBoundary(
+                    child: SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
                   ),
                   const SizedBox(width: 10),
                   Text(
