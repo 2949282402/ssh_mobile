@@ -109,6 +109,7 @@ extension BackupOps on StorageService {
         'usage': _prefs!.getString('shortcut_command_usage'),
         'customCommands': _prefs!.getString('custom_shortcut_commands'),
         'order': _prefs!.getString('shortcut_command_order'),
+        'quickKeys': _prefs!.getString('terminal_keyboard_quick_keys'),
       },
       'secretCache': {
         'enabled': _prefs!.getBool('secret_cache_enabled'),
@@ -281,6 +282,12 @@ extension BackupOps on StorageService {
         await _prefs!.setString(
           'shortcut_command_order',
           shortcutCommands['order'] as String,
+        );
+      }
+      if (shortcutCommands['quickKeys'] != null) {
+        await _prefs!.setString(
+          'terminal_keyboard_quick_keys',
+          shortcutCommands['quickKeys'] as String,
         );
       }
     }
@@ -486,6 +493,7 @@ void _validateBackupSchema(Map<String, dynamic> decoded) {
     _optionalStringLimit(shortcuts, 'usage', _maxPromptChars);
     _optionalStringLimit(shortcuts, 'customCommands', _maxPlaybookContentChars);
     _optionalStringLimit(shortcuts, 'order', _maxPromptChars);
+    _optionalStringLimit(shortcuts, 'quickKeys', _maxPromptChars);
   }
 
   _validateOptionalList(

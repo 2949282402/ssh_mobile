@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'package:ssh_mobile/features/terminal/models/terminal_keyboard_models.dart';
+import 'package:ssh_mobile/features/terminal/views/widgets/terminal_custom_keyboard.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/shortcut_command_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
@@ -8,11 +10,31 @@ import 'package:ssh_mobile/theme/app_theme.dart';
 import 'package:ssh_mobile/utils/responsive.dart';
 import 'package:ssh_mobile/widgets/app_surface.dart';
 
+const _builtinTerminalShortcutCommands = <ShortcutCommand>[
+  ShortcutCommand(id: 'tab', label: 'TAB', code: '\t'),
+  ShortcutCommand(id: 'esc', label: 'ESC', code: '\x1b'),
+  ShortcutCommand(id: 'enter', label: 'ENTER', code: '\r'),
+  ShortcutCommand(id: 'bksp', label: 'BKSP', code: '\x7f'),
+  ShortcutCommand(id: 'up', label: '↑', code: '\x1b[A'),
+  ShortcutCommand(id: 'down', label: '↓', code: '\x1b[B'),
+  ShortcutCommand(id: 'left', label: '←', code: '\x1b[D'),
+  ShortcutCommand(id: 'right', label: '→', code: '\x1b[C'),
+  ShortcutCommand(id: 'home', label: 'HOME', code: '\x1b[H'),
+  ShortcutCommand(id: 'end', label: 'END', code: '\x1b[F'),
+  ShortcutCommand(id: 'pgup', label: 'PGUP', code: '\x1b[5~'),
+  ShortcutCommand(id: 'pgdn', label: 'PGDN', code: '\x1b[6~'),
+  ShortcutCommand(id: 'ctrl_c', label: 'CTRL+C', code: '\x03'),
+  ShortcutCommand(id: 'ctrl_d', label: 'CTRL+D', code: '\x04'),
+  ShortcutCommand(id: 'ctrl_l', label: 'CTRL+L', code: '\x0c'),
+];
+
 class TerminalShortcutPanel extends StatelessWidget {
   final String sessionId;
   final TerminalStrings strings;
   final Color toolbarColor;
   final TextEditingController complexInputController;
+  final ValueChanged<String> onSendComplexInput;
+  final ValueChanged<TerminalKeyboardStroke> onTerminalStroke;
   final FocusNode terminalFocusNode;
   final bool ctrlActive;
   final VoidCallback onToggleCtrl;
@@ -25,6 +47,8 @@ class TerminalShortcutPanel extends StatelessWidget {
     required this.strings,
     required this.toolbarColor,
     required this.complexInputController,
+    required this.onSendComplexInput,
+    required this.onTerminalStroke,
     required this.terminalFocusNode,
     required this.ctrlActive,
     required this.onToggleCtrl,
@@ -76,8 +100,7 @@ class TerminalShortcutPanel extends StatelessWidget {
                   key: const ValueKey('terminal-advanced-keyboard'),
                   icon: Icons.keyboard_rounded,
                   tooltip: strings.windowsKeyboard,
-                  onPressed: () =>
-                      _showAdvancedKeyboardBottomSheet(context, scale),
+                  onPressed: () => _showAdvancedKeyboardBottomSheet(context),
                 ),
               ],
             );
@@ -151,37 +174,12 @@ class TerminalShortcutPanel extends StatelessWidget {
           (service) => service.customCommands,
         );
 
-    final allBuiltin = [
-      const ShortcutCommand(id: 'tab', label: 'TAB', code: '\t'),
-      const ShortcutCommand(id: 'esc', label: 'ESC', code: '\x1b'),
-      const ShortcutCommand(id: 'enter', label: 'ENTER', code: '\r'),
-      const ShortcutCommand(id: 'bksp', label: 'BKSP', code: '\x7f'),
-      const ShortcutCommand(id: 'up', label: '↑', code: '\x1b[A'),
-      const ShortcutCommand(id: 'down', label: '↓', code: '\x1b[B'),
-      const ShortcutCommand(id: 'left', label: '←', code: '\x1b[D'),
-      const ShortcutCommand(id: 'right', label: '→', code: '\x1b[C'),
-      const ShortcutCommand(id: 'home', label: 'HOME', code: '\x1b[H'),
-      const ShortcutCommand(id: 'end', label: 'END', code: '\x1b[F'),
-      const ShortcutCommand(id: 'pgup', label: 'PGUP', code: '\x1b[5~'),
-      const ShortcutCommand(id: 'pgdn', label: 'PGDN', code: '\x1b[6~'),
-      const ShortcutCommand(id: 'ctrl_c', label: 'CTRL+C', code: '\x03'),
-      const ShortcutCommand(id: 'ctrl_d', label: 'CTRL+D', code: '\x04'),
-      const ShortcutCommand(id: 'ctrl_l', label: 'CTRL+L', code: '\x0c'),
-    ];
+    final sortedAll = shortcuts.sortByUsage([
+      ..._builtinTerminalShortcutCommands,
+      ...customCommands,
+    ]);
 
-    final sortedAll = shortcuts.sortByUsage([...allBuiltin, ...customCommands]);
-
-    final primaryIds = {
-      'tab',
-      'esc',
-      'enter',
-      'bksp',
-      'up',
-      'down',
-      'left',
-      'right',
-      'ctrl_c',
-    };
+    final primaryIds = shortcuts.quickCommandIds.toSet();
     final primaryCommands = sortedAll
         .where((c) => primaryIds.contains(c.id) || c.custom)
         .toList();
@@ -379,42 +377,6 @@ class TerminalShortcutPanel extends StatelessWidget {
     );
   }
 
-  Widget _keyGroup(BuildContext context, List<_KeySpec> keys, double scale) {
-    final commands = keys
-        .map(
-          (key) =>
-              ShortcutCommand(id: key.id, label: key.label, code: key.code),
-        )
-        .toList();
-
-    return SizedBox(
-      height: 48,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: commands.length,
-        separatorBuilder: (_, _) => SizedBox(width: 4 * scale),
-        itemBuilder: (context, index) {
-          return _quickKey(context, commands[index], scale);
-        },
-      ),
-    );
-  }
-
-  Widget _keyWrap(BuildContext context, List<_KeySpec> keys, double scale) {
-    final commands = keys
-        .map(
-          (key) =>
-              ShortcutCommand(id: key.id, label: key.label, code: key.code),
-        )
-        .toList();
-
-    return Wrap(
-      spacing: 4 * scale,
-      runSpacing: 4 * scale,
-      children: commands.map((cmd) => _quickKey(context, cmd, scale)).toList(),
-    );
-  }
-
   Widget _quickKey(
     BuildContext context,
     ShortcutCommand command,
@@ -541,193 +503,146 @@ class TerminalShortcutPanel extends StatelessWidget {
     );
   }
 
-  void _showAdvancedKeyboardBottomSheet(BuildContext context, double scale) {
+  void _showAdvancedKeyboardBottomSheet(BuildContext context) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
       useSafeArea: true,
-      constraints: const BoxConstraints(maxWidth: 760),
+      constraints: const BoxConstraints(maxWidth: 820),
       builder: (ctx) {
         return Padding(
           padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
           child: SafeArea(
             child: SingleChildScrollView(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    AppPageHeader(
-                      title: strings.windowsKeyboard,
-                      subtitle: strings.windowsKeyboardHint,
-                      icon: Icons.keyboard_rounded,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      strings.shellSymbols,
-                      style: TextStyle(
-                        fontSize: 12 * scale,
-                        fontWeight: FontWeight.w600,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    _keyWrap(context, const [
-                      _KeySpec('|', '|'),
-                      _KeySpec('~', '~'),
-                      _KeySpec('/', '/'),
-                      _KeySpec('\\', '\\'),
-                      _KeySpec('\$', '\$'),
-                      _KeySpec('&', '&'),
-                      _KeySpec('>', '>'),
-                      _KeySpec('<', '<'),
-                      _KeySpec(';', ';'),
-                      _KeySpec('-', '-'),
-                      _KeySpec('_', '_'),
-                      _KeySpec('`', '`'),
-                      _KeySpec("'", "'"),
-                      _KeySpec('"', '"'),
-                      _KeySpec('*', '*'),
-                      _KeySpec('#', '#'),
-                      _KeySpec('=', '='),
-                      _KeySpec('%', '%'),
-                    ], scale),
-                    const SizedBox(height: 16),
-                    Text(
-                      strings.navigationShell,
-                      style: TextStyle(
-                        fontSize: 12 * scale,
-                        fontWeight: FontWeight.w600,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    _keyWrap(context, const [
-                      _KeySpec('ESC', '\x1b'),
-                      _KeySpec('TAB', '\t'),
-                      _KeySpec('ENTER', '\r'),
-                      _KeySpec('BKSP', '\x7f'),
-                      _KeySpec('↑', '\x1b[A'),
-                      _KeySpec('↓', '\x1b[B'),
-                      _KeySpec('←', '\x1b[D'),
-                      _KeySpec('→', '\x1b[C'),
-                      _KeySpec('HOME', '\x1b[H'),
-                      _KeySpec('END', '\x1b[F'),
-                      _KeySpec('PGUP', '\x1b[5~'),
-                      _KeySpec('PGDN', '\x1b[6~'),
-                      _KeySpec('INS', '\x1b[2~'),
-                      _KeySpec('DEL', '\x1b[3~'),
-                      _KeySpec('SPACE', ' '),
-                    ], scale),
-                    const SizedBox(height: 16),
-                    Text(
-                      strings.controlShortcuts,
-                      style: TextStyle(
-                        fontSize: 12 * scale,
-                        fontWeight: FontWeight.w600,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    _keyWrap(context, const [
-                      _KeySpec('CTRL+C', '\x03'),
-                      _KeySpec('CTRL+Z', '\x1a'),
-                      _KeySpec('CTRL+L', '\x0c'),
-                      _KeySpec('CTRL+D', '\x04'),
-                      _KeySpec('CTRL+A', '\x01'),
-                      _KeySpec('CTRL+E', '\x05'),
-                      _KeySpec('CTRL+U', '\x15'),
-                      _KeySpec('CTRL+K', '\x0b'),
-                      _KeySpec('CTRL+W', '\x17'),
-                      _KeySpec('CTRL+R', '\x12'),
-                      _KeySpec('CTRL+\\', '\x1c'),
-                      _KeySpec('ALT+B', '\x1bb'),
-                      _KeySpec('ALT+F', '\x1bf'),
-                      _KeySpec('ALT+D', '\x1bd'),
-                    ], scale),
-                    const SizedBox(height: 16),
-                    Text(
-                      strings.functionKeys,
-                      style: TextStyle(
-                        fontSize: 12 * scale,
-                        fontWeight: FontWeight.w600,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    _keyGroup(context, const [
-                      _KeySpec('F1', '\x1bOP'),
-                      _KeySpec('F2', '\x1bOQ'),
-                      _KeySpec('F3', '\x1bOR'),
-                      _KeySpec('F4', '\x1bOS'),
-                      _KeySpec('F5', '\x1b[15~'),
-                      _KeySpec('F6', '\x1b[17~'),
-                      _KeySpec('F7', '\x1b[18~'),
-                      _KeySpec('F8', '\x1b[19~'),
-                      _KeySpec('F9', '\x1b[20~'),
-                      _KeySpec('F10', '\x1b[21~'),
-                      _KeySpec('F11', '\x1b[23~'),
-                      _KeySpec('F12', '\x1b[24~'),
-                    ], scale),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: SizedBox(
-                            height: 88,
-                            child: TextField(
-                              controller: complexInputController,
-                              decoration: InputDecoration(
-                                hintText: strings.multilineHint,
-                                alignLabelWithHint: true,
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 10 * scale,
-                                  vertical: 8 * scale,
-                                ),
-                              ),
-                              keyboardType: TextInputType.multiline,
-                              textInputAction: TextInputAction.newline,
-                              minLines: null,
-                              maxLines: null,
-                              expands: true,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        SizedBox(
-                          width: 48,
-                          height: 48,
-                          child: IconButton(
-                            icon: Icon(Icons.send, size: 20 * scale),
-                            tooltip: strings.send,
-                            style: IconButton.styleFrom(
-                              backgroundColor: Theme.of(
-                                context,
-                              ).colorScheme.primary.withValues(alpha: 0.1),
-                              foregroundColor: Theme.of(
-                                context,
-                              ).colorScheme.primary,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                            ),
-                            onPressed: () {
-                              _sendComplexInput(context);
-                              Navigator.pop(ctx);
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  AppPageHeader(
+                    title: strings.windowsKeyboard,
+                    subtitle: strings.windowsKeyboardHint,
+                    icon: Icons.keyboard_rounded,
+                  ),
+                  const SizedBox(height: 16),
+                  TerminalCustomKeyboard(
+                    strings: strings,
+                    controller: complexInputController,
+                    onTerminalStroke: (stroke) {
+                      onTerminalStroke(stroke);
+                      terminalFocusNode.requestFocus();
+                    },
+                    onSubmit: (text) {
+                      onSendComplexInput(text);
+                      terminalFocusNode.requestFocus();
+                    },
+                    onCustomizeQuickKeys: () {
+                      Navigator.pop(ctx);
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (context.mounted) {
+                          _showQuickKeyCustomizer(context);
+                        }
+                      });
+                    },
+                  ),
+                ],
               ),
             ),
           ),
         );
       },
+    );
+  }
+
+  Future<void> _showQuickKeyCustomizer(BuildContext context) async {
+    final service = context.read<ShortcutCommandService>();
+    var selected = service.quickCommandIds.toSet();
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      useSafeArea: true,
+      constraints: const BoxConstraints(maxWidth: 720),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) {
+          return SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  AppPageHeader(
+                    title: strings.quickKeysTitle,
+                    subtitle: strings.quickKeysHint,
+                    icon: Icons.tune_rounded,
+                  ),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _builtinTerminalShortcutCommands.map((command) {
+                      return FilterChip(
+                        key: ValueKey('terminal-quick-key-${command.id}'),
+                        label: Text(
+                          command.label,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        selected: selected.contains(command.id),
+                        onSelected: (enabled) async {
+                          if (!enabled && selected.length == 1) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(strings.quickKeysAtLeastOne),
+                              ),
+                            );
+                            return;
+                          }
+                          setModalState(() {
+                            selected = {...selected};
+                            if (enabled) {
+                              selected.add(command.id);
+                            } else {
+                              selected.remove(command.id);
+                            }
+                          });
+                          await service.setQuickCommandIds(selected);
+                        },
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton.icon(
+                        key: const ValueKey('terminal-quick-keys-reset'),
+                        onPressed: () async {
+                          await service.resetQuickCommandIds();
+                          setModalState(
+                            () => selected = service.quickCommandIds.toSet(),
+                          );
+                        },
+                        icon: const Icon(Icons.restart_alt_rounded),
+                        label: Text(strings.resetQuickKeys),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        key: const ValueKey('terminal-quick-keys-done'),
+                        onPressed: () => Navigator.pop(ctx),
+                        child: Text(strings.done),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 
@@ -817,21 +732,4 @@ class TerminalShortcutPanel extends StatelessWidget {
       command.id,
     );
   }
-
-  void _sendComplexInput(BuildContext context) {
-    final rawText = complexInputController.text;
-    if (rawText.isEmpty) return;
-
-    context.read<SshService>().sendData(sessionId, rawText);
-    complexInputController.clear();
-    terminalFocusNode.requestFocus();
-  }
-}
-
-class _KeySpec {
-  final String id;
-  final String label;
-  final String code;
-
-  const _KeySpec(this.label, this.code) : id = 'adv_$label';
 }

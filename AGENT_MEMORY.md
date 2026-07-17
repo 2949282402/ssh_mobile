@@ -19,6 +19,15 @@ across sessions.
 
 ## Notes
 
+- 2026-07-17: Windows terminal input keeps one multiline draft shared by the
+  inline command composer and advanced keyboard. Shell-symbol keys edit the
+  draft, `Enter` submits through xterm bracketed paste, `Shift+Enter` adds a
+  line, sent commands can be recalled locally, and an empty draft forwards
+  terminal control/navigation/function keys instead of swallowing them.
+- 2026-07-17: The Windows advanced keyboard is data-driven with QWERTY,
+  Shell-symbol, navigation, and F1-F12 layers plus compose/direct modes.
+  Shift/Ctrl/Alt have one-shot and locked states and route through xterm; the
+  built-in quick-bar selection persists in preferences and app backups.
 - 2026-07-17: Keep non-generated Dart source and test files below 1000 lines.
   Split by feature responsibility using library `part` files or focused
   collaborators while preserving public/interface methods on their declaring

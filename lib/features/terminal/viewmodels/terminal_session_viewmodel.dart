@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:xterm/xterm.dart';
+import 'package:ssh_mobile/features/terminal/models/terminal_keyboard_models.dart';
 import '../../../services/ssh_service.dart';
 
 class TerminalSessionViewModel extends ChangeNotifier {
@@ -15,6 +16,9 @@ class TerminalSessionViewModel extends ChangeNotifier {
   bool _ctrlActive = false;
   bool _altActive = false;
   double _fontSize = 13.0;
+  final List<String> _commandInputHistory = <String>[];
+  int? _commandInputHistoryIndex;
+  String _commandInputHistoryDraft = '';
 
   // Terminal instances
   late final Terminal terminal;
@@ -44,6 +48,7 @@ class TerminalSessionViewModel extends ChangeNotifier {
   static const int _baseTerminalFlushChars = 12000;
   static const int _highTerminalFlushChars = 40000;
   static const int _terminalScrollbackLines = 4000;
+  static const int _commandInputHistoryLimit = 100;
 
   TerminalSessionViewModel({
     required this._sshService,
@@ -113,7 +118,7 @@ class TerminalSessionViewModel extends ChangeNotifier {
   String? get displayName => session?.displayName;
 
   bool get isWindowsTarget =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
   void toggleCtrl() {
     _ctrlActive = !_ctrlActive;
@@ -151,6 +156,150 @@ class TerminalSessionViewModel extends ChangeNotifier {
 
   void sendData(String data) {
     _sshService.sendData(sessionId, data);
+  }
+
+  bool sendTerminalKeyboardStroke(TerminalKeyboardStroke stroke) {
+    if (_ctrlActive) setCtrlActive(false);
+    if (_altActive) setAltActive(false);
+
+    final key = stroke.key;
+    if (key != null) {
+      return terminal.keyInput(
+        key,
+        ctrl: stroke.ctrl,
+        alt: stroke.alt,
+        shift: stroke.shift,
+      );
+    }
+
+    final text = stroke.text;
+    if (text == null || text.isEmpty) return false;
+    var output = text;
+    if (stroke.ctrl && text.length == 1) {
+      final code = text.codeUnitAt(0);
+      if (code == 32) {
+        output = '\x00';
+      } else if (code >= 64 && code <= 95) {
+        output = String.fromCharCode(code - 64);
+      } else if (code >= 96 && code <= 127) {
+        output = String.fromCharCode(code - 96);
+      }
+    }
+    if (stroke.alt) output = '\x1b$output';
+    terminal.textInput(output);
+    return true;
+  }
+
+  bool submitCommandInput() {
+    final text = commandInputController.text;
+    if (text.isEmpty) {
+      return terminal.keyInput(TerminalKey.enter);
+    }
+
+    final submitted = submitCommandText(text);
+    if (submitted) {
+      commandInputController.clear();
+    }
+    return submitted;
+  }
+
+  bool submitCommandText(String text) {
+    if (text.isEmpty) return false;
+
+    final normalizedText = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+    terminal.paste(normalizedText);
+    terminal.keyInput(TerminalKey.enter);
+    _rememberCommandInput(normalizedText);
+    resetCommandInputHistoryNavigation();
+    return true;
+  }
+
+  void insertCommandInputText(String text) {
+    if (text.isEmpty) return;
+
+    final value = commandInputController.value;
+    final selection = value.selection.isValid
+        ? value.selection
+        : TextSelection.collapsed(offset: value.text.length);
+    final nextText = value.text.replaceRange(
+      selection.start,
+      selection.end,
+      text,
+    );
+    final nextOffset = selection.start + text.length;
+    commandInputController.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(offset: nextOffset),
+    );
+    resetCommandInputHistoryNavigation();
+  }
+
+  Future<bool> pasteClipboardIntoCommandInput() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text;
+    if (text == null || text.isEmpty) return false;
+    insertCommandInputText(text);
+    return true;
+  }
+
+  void clearCommandInput() {
+    commandInputController.clear();
+    resetCommandInputHistoryNavigation();
+  }
+
+  void resetCommandInputHistoryNavigation() {
+    _commandInputHistoryIndex = null;
+    _commandInputHistoryDraft = '';
+  }
+
+  bool showPreviousCommandInput() {
+    if (_commandInputHistory.isEmpty) return false;
+
+    final currentIndex = _commandInputHistoryIndex;
+    if (currentIndex == null) {
+      _commandInputHistoryDraft = commandInputController.text;
+      _commandInputHistoryIndex = _commandInputHistory.length - 1;
+    } else if (currentIndex > 0) {
+      _commandInputHistoryIndex = currentIndex - 1;
+    }
+    _showCommandInputHistoryValue(
+      _commandInputHistory[_commandInputHistoryIndex!],
+    );
+    return true;
+  }
+
+  bool showNextCommandInput() {
+    final currentIndex = _commandInputHistoryIndex;
+    if (currentIndex == null) return false;
+
+    if (currentIndex < _commandInputHistory.length - 1) {
+      _commandInputHistoryIndex = currentIndex + 1;
+      _showCommandInputHistoryValue(
+        _commandInputHistory[_commandInputHistoryIndex!],
+      );
+    } else {
+      _commandInputHistoryIndex = null;
+      _showCommandInputHistoryValue(_commandInputHistoryDraft);
+      _commandInputHistoryDraft = '';
+    }
+    return true;
+  }
+
+  void _rememberCommandInput(String text) {
+    if (_commandInputHistory.isNotEmpty && _commandInputHistory.last == text) {
+      return;
+    }
+    _commandInputHistory.add(text);
+    if (_commandInputHistory.length > _commandInputHistoryLimit) {
+      _commandInputHistory.removeAt(0);
+    }
+  }
+
+  void _showCommandInputHistoryValue(String text) {
+    commandInputController.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
   }
 
   void syncTerminalSize(int width, int height) {

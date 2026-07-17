@@ -110,6 +110,14 @@ their `widgets/` part files.
 - Terminal session orchestration belongs in `TerminalViewModel` and
   `SshService`; keep screen state limited to layout, route args, and short-lived
   UI affordances.
+- Windows terminal input uses one shared multiline command draft across the
+  inline composer and advanced keyboard. Preserve IME composition, local sent
+  command history, empty-draft terminal key forwarding, and xterm bracketed
+  paste submission for complex commands.
+- Keep advanced terminal keys data-driven across QWERTY, Shell-symbol,
+  navigation, and F1-F12 layers. Route Shift/Ctrl/Alt combinations through
+  xterm key input, preserve one-shot and locked modifier states, and persist
+  user-selected quick-bar keys through app backup and restore.
 - Window names stay stable because they bind tmux or plain-session restoration
   state.
 

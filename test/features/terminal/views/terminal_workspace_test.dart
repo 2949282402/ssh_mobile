@@ -221,6 +221,7 @@ void main() {
       'compact 200% layout keeps actions tappable and sheet scrollable',
       (tester) async {
         useViewport(tester, physicalSize: const Size(320, 720));
+        String? submittedCommand;
 
         await tester.pumpWidget(
           MultiProvider(
@@ -238,6 +239,8 @@ void main() {
                     strings: const TerminalStrings(AppLanguage.en),
                     toolbarColor: const Color(0xFF09090B),
                     complexInputController: inputController,
+                    onSendComplexInput: (value) => submittedCommand = value,
+                    onTerminalStroke: (_) {},
                     terminalFocusNode: focusNode,
                     ctrlActive: false,
                     onToggleCtrl: () {},
@@ -269,6 +272,34 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.text('Windows Keyboard'), findsOneWidget);
         expect(find.text('Function Keys'), findsOneWidget);
+        final symbolsLayer = find.byKey(
+          const ValueKey('terminal-keyboard-layer-symbols'),
+        );
+        await tester.ensureVisible(symbolsLayer);
+        await tester.pumpAndSettle();
+        await tester.tap(symbolsLayer);
+        await tester.pump();
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('terminal-custom-key-pipe')),
+        );
+        await tester.tap(
+          find.byKey(const ValueKey('terminal-custom-key-pipe')),
+        );
+        expect(inputController.text, '|');
+
+        await tester.enterText(
+          find.byKey(const ValueKey('terminal-custom-keyboard-input')),
+          'printf "first"\nprintf "second"',
+        );
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('terminal-custom-keyboard-send')),
+        );
+        await tester.tap(
+          find.byKey(const ValueKey('terminal-custom-keyboard-send')),
+        );
+        await tester.pumpAndSettle();
+        expect(submittedCommand, 'printf "first"\nprintf "second"');
+        expect(inputController.text, isEmpty);
         expect(tester.takeException(), isNull);
       },
     );

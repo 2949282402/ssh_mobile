@@ -716,6 +716,22 @@ class TerminalStrings {
   String get windowsKeyboardHint => _en
       ? 'Full PC layout with F1-F12, modifiers, symbols, and multiline commands.'
       : '包含 F1-F12、修饰键、Shell 特殊符号与复杂命令编辑。';
+  String get keyboardComposeMode => _en ? 'Compose' : '编辑输入';
+  String get keyboardDirectMode => _en ? 'Direct' : '直接发送';
+  String get customizeQuickKeys => _en ? 'Customize quick keys' : '自定义快捷键';
+  String get keyboardLetters => _en ? 'Letters' : '字母';
+  String get keyboardNavigation => _en ? 'Navigation' : '导航';
+  String get keyboardSpace => _en ? 'Space' : '空格';
+  String get keyboardBackspace => _en ? 'Backspace' : '退格';
+  String get keyboardEnter => _en ? 'Enter' : '回车';
+  String get quickKeysTitle => _en ? 'Customize Quick Keys' : '自定义快捷栏';
+  String get quickKeysHint => _en
+      ? 'Choose built-in keys shown beside Ctrl and Alt. Custom commands remain visible.'
+      : '选择显示在 Ctrl、Alt 旁的内置键；自定义命令始终保留。';
+  String get quickKeysAtLeastOne =>
+      _en ? 'Keep at least one built-in quick key.' : '至少保留一个内置快捷键。';
+  String get resetQuickKeys => _en ? 'Reset defaults' : '恢复默认';
+  String get done => _en ? 'Done' : '完成';
   String get shellSymbols => _en ? 'Shell Symbols' : 'Shell 符号';
   String get controlShortcuts => _en ? 'Control Keys' : '控制快捷键';
   String get moreKeys => _en ? 'More Shortcuts' : '更多快捷键';
@@ -723,6 +739,12 @@ class TerminalStrings {
       _en ? 'Shell navigation and control keys.' : '常用的 Shell 导航键与控制键。';
   String get multilineHint =>
       _en ? 'Paste or type multiline input' : '粘贴或输入多行文本';
+  String get commandComposer => _en ? 'Command composer' : '命令编辑器';
+  String get commandComposerHint => _en
+      ? 'Enter sends · Shift+Enter adds a line · Up/Down recalls sent commands'
+      : 'Enter 发送 · Shift+Enter 换行 · 上下方向键浏览已发送命令';
+  String get pasteIntoCommand => _en ? 'Paste into command' : '粘贴到命令编辑器';
+  String get clearCommand => _en ? 'Clear command' : '清空命令';
   String get send => _en ? 'Send' : '发送';
   String get label => _en ? 'Label' : '标签';
   String get command => _en ? 'Command' : '命令';

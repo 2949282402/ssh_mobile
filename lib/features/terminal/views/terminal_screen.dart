@@ -16,7 +16,6 @@ import 'package:ssh_mobile/utils/responsive.dart';
 import 'package:ssh_mobile/widgets/connection_progress_dialog.dart';
 import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
 import 'package:ssh_mobile/widgets/ssh_host_key_trust_dialog.dart';
-import 'package:ssh_mobile/widgets/window_name_dialog.dart';
 import 'terminal_app_bar.dart';
 import 'terminal_connection_overlay.dart';
 import 'terminal_copy_screen.dart';
@@ -392,11 +391,20 @@ class _TerminalScreenState extends State<TerminalScreen>
             },
           );
 
+          final complexInputController = _isWindowsTerminalTarget
+              ? viewModel.commandInputController
+              : viewModel.complexInputController;
+
           final shortcutPanel = TerminalShortcutPanel(
             sessionId: widget.sessionId,
             strings: strings,
             toolbarColor: toolbarColor,
-            complexInputController: viewModel.complexInputController,
+            complexInputController: complexInputController,
+            onSendComplexInput: (text) {
+              viewModel.submitCommandText(text);
+              _requestWindowsAwareTerminalFocus(viewModel);
+            },
+            onTerminalStroke: viewModel.sendTerminalKeyboardStroke,
             terminalFocusNode: _isWindowsTerminalTarget
                 ? viewModel.commandInputFocusNode
                 : viewModel.terminalFocusNode,

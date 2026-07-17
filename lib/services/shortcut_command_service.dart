@@ -40,17 +40,32 @@ class ShortcutCommandService extends ChangeNotifier {
   static const _usageKey = 'shortcut_command_usage';
   static const _customKey = 'custom_shortcut_commands';
   static const _orderKey = 'shortcut_command_order';
+  static const _quickKeysKey = 'terminal_keyboard_quick_keys';
+  static const defaultQuickCommandIds = <String>[
+    'tab',
+    'esc',
+    'enter',
+    'bksp',
+    'up',
+    'down',
+    'left',
+    'right',
+    'ctrl_c',
+  ];
 
   final Map<String, int> _usage = {};
   final List<String> _orderIds = [];
   final List<ShortcutCommand> _customCommands = [];
+  final List<String> _quickCommandIds = [...defaultQuickCommandIds];
   List<ShortcutCommand> _customCommandsView = const [];
+  List<String> _quickCommandIdsView = defaultQuickCommandIds;
   Timer? _usageSaveTimer;
   int _orderVersion = 0;
   bool _initialized = false;
 
   bool get initialized => _initialized;
   List<ShortcutCommand> get customCommands => _customCommandsView;
+  List<String> get quickCommandIds => _quickCommandIdsView;
   int get orderVersion => _orderVersion;
 
   Future<void> init() async {
@@ -116,6 +131,31 @@ class ShortcutCommandService extends ChangeNotifier {
           );
         }
       }
+
+      final quickKeysJson = prefs.getString(_quickKeysKey);
+      if (quickKeysJson != null && quickKeysJson.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(quickKeysJson) as List<dynamic>;
+          final seen = <String>{};
+          final ids = decoded
+              .whereType<String>()
+              .where((id) => id.isNotEmpty && id.length <= 64 && seen.add(id))
+              .take(32)
+              .toList();
+          if (ids.isNotEmpty) {
+            _quickCommandIds
+              ..clear()
+              ..addAll(ids);
+            _refreshQuickCommandIdsView();
+          }
+        } catch (e, stackTrace) {
+          AppLogService.instance.add(
+            'warning',
+            'Failed to decode terminal keyboard quick keys: $e',
+            stackTrace: stackTrace,
+          );
+        }
+      }
     } catch (e, stackTrace) {
       AppLogService.instance.error(
         'Failed to initialize ShortcutCommandService',
@@ -126,6 +166,10 @@ class ShortcutCommandService extends ChangeNotifier {
       _orderIds.clear();
       _customCommands.clear();
       _refreshCustomCommandsView();
+      _quickCommandIds
+        ..clear()
+        ..addAll(defaultQuickCommandIds);
+      _refreshQuickCommandIdsView();
     } finally {
       _initialized = true;
       notifyListeners();
@@ -165,6 +209,27 @@ class ShortcutCommandService extends ChangeNotifier {
     await _saveOrder();
   }
 
+  Future<void> setQuickCommandIds(Iterable<String> ids) async {
+    final seen = <String>{};
+    final normalized = ids
+        .where((id) => id.isNotEmpty && id.length <= 64 && seen.add(id))
+        .take(32)
+        .toList();
+    if (normalized.isEmpty || listEquals(normalized, _quickCommandIds)) return;
+
+    _quickCommandIds
+      ..clear()
+      ..addAll(normalized);
+    _refreshQuickCommandIdsView();
+    _orderVersion++;
+    notifyListeners();
+    await _saveQuickCommandIds();
+  }
+
+  Future<void> resetQuickCommandIds() {
+    return setQuickCommandIds(defaultQuickCommandIds);
+  }
+
   Future<void> addCustomCommand(String label, String code) async {
     final trimmedLabel = label.trim();
     if (trimmedLabel.isEmpty || code.isEmpty) return;
@@ -182,7 +247,7 @@ class ShortcutCommandService extends ChangeNotifier {
     notifyListeners();
     AppLogService.instance.info(
       'Custom shortcut command added',
-      details: 'label=$trimmedLabel code=$code',
+      details: 'label=$trimmedLabel codeLength=${code.length}',
     );
     await _saveOrder();
     await _saveCustomCommands();
@@ -207,6 +272,10 @@ class ShortcutCommandService extends ChangeNotifier {
 
   void _refreshCustomCommandsView() {
     _customCommandsView = List.unmodifiable(_customCommands);
+  }
+
+  void _refreshQuickCommandIdsView() {
+    _quickCommandIdsView = List.unmodifiable(_quickCommandIds);
   }
 
   void _scheduleUsageSave() {
@@ -253,6 +322,19 @@ class ShortcutCommandService extends ChangeNotifier {
     } catch (e, stackTrace) {
       AppLogService.instance.error(
         'Failed to save custom shortcut commands',
+        error: e,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  Future<void> _saveQuickCommandIds() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_quickKeysKey, jsonEncode(_quickCommandIds));
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to save terminal keyboard quick keys',
         error: e,
         stackTrace: stackTrace,
       );

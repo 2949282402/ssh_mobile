@@ -660,6 +660,7 @@ void main() {
         '[{"id":"c1","label":"Custom","code":"ls","custom":true}]',
       );
       await prefs.setString('shortcut_command_order', '["c1"]');
+      await prefs.setString('terminal_keyboard_quick_keys', '["tab","ctrl_c"]');
 
       await storage.setSecretCacheEnabled(false);
       await storage.setSecretCacheTtl(const Duration(minutes: 5));
@@ -697,6 +698,7 @@ void main() {
         '[{"id":"c1","label":"Custom","code":"ls","custom":true}]',
       );
       expect(shortcutCommands['order'], '["c1"]');
+      expect(shortcutCommands['quickKeys'], '["tab","ctrl_c"]');
 
       final secretCache = decoded['secretCache'] as Map<String, dynamic>;
       expect(secretCache['enabled'], isFalse);
@@ -738,6 +740,10 @@ void main() {
         '[{"id":"c1","label":"Custom","code":"ls","custom":true}]',
       );
       expect(newPrefs.getString('shortcut_command_order'), '["c1"]');
+      expect(
+        newPrefs.getString('terminal_keyboard_quick_keys'),
+        '["tab","ctrl_c"]',
+      );
 
       expect(newStorage.isSecretCacheEnabled, isFalse);
       expect(newStorage.secretCacheTtlMinutes, 5);
