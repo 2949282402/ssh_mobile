@@ -21,7 +21,7 @@ void main() {
             body: Align(
               alignment: Alignment.topLeft,
               child: SizedBox(
-                width: 180,
+                width: 100,
                 child: MessageActions(
                   isUser: false,
                   isError: false,
@@ -39,7 +39,7 @@ void main() {
     final buttons = find.byType(IconButton);
     expect(buttons, findsNWidgets(4));
     for (var index = 0; index < 4; index++) {
-      expect(tester.getSize(buttons.at(index)), const Size(48, 48));
+      expect(tester.getSize(buttons.at(index)), const Size(32, 32));
     }
     expect(
       tester.getTopLeft(find.byTooltip('创建分支')).dy,

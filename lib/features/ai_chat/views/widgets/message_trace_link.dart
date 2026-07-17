@@ -20,21 +20,9 @@ class _AgentTraceLink extends StatelessWidget {
     final strings = AiStrings(language);
     final String label;
     if (message.traces.isNotEmpty) {
-      final tools = message.traces
-          .where((trace) => trace.kind.contains('tool'))
-          .length;
-      final approvals = message.traces
-          .where((trace) => trace.kind.contains('approval'))
-          .length;
-      final elapsed = message.elapsedMs == null
-          ? null
-          : _formatElapsedForTraceLink(message.elapsedMs!);
       label = [
         strings.trace,
         strings.traceEvents(message.traces.length),
-        if (tools > 0) strings.traceTools(tools),
-        if (approvals > 0) strings.traceApprovals(approvals),
-        ?elapsed,
       ].join(' · ');
     } else {
       final shortRunId = runId.length > 8
@@ -89,10 +77,5 @@ class _AgentTraceLink extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  static String _formatElapsedForTraceLink(int ms) {
-    if (ms < 1000) return '${ms}ms';
-    return '${(ms / 1000).toStringAsFixed(1)}s';
   }
 }

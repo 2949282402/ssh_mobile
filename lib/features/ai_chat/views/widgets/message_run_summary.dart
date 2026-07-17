@@ -65,68 +65,75 @@ class _AgentRunInlineSummaryState extends State<AgentRunInlineSummary> {
         final statusColor = data.success
             ? (extColors?.success ?? colorScheme.primary)
             : colorScheme.error;
+        final chips = <Widget>[
+          _RunSummaryChip(
+            key: const ValueKey('run-summary-status'),
+            icon: data.success
+                ? Icons.check_circle_outline
+                : Icons.error_outline,
+            label: data.success
+                ? strings.agentRunCompleted
+                : strings.agentRunNeedsAttention,
+            color: statusColor,
+            maxWidth: double.infinity,
+          ),
+          if (data.toolCalls > 0)
+            _RunSummaryChip(
+              key: const ValueKey('run-summary-tools'),
+              icon: Icons.build_outlined,
+              label: strings.agentRunTools(data.toolCalls),
+              color: colorScheme.primary,
+              maxWidth: double.infinity,
+            ),
+          if (data.approvalCount > 0)
+            _RunSummaryChip(
+              key: const ValueKey('run-summary-approvals'),
+              icon: Icons.verified_user_outlined,
+              label: strings.agentRunApprovals(
+                data.approvedCount,
+                data.approvalCount,
+              ),
+              color: colorScheme.tertiary,
+              maxWidth: double.infinity,
+            ),
+          if (data.blockedCount > 0)
+            _RunSummaryChip(
+              key: const ValueKey('run-summary-blocked'),
+              icon: Icons.block_outlined,
+              label: strings.agentRunBlocked(data.blockedCount),
+              color: colorScheme.error,
+              maxWidth: double.infinity,
+            ),
+          if (data.elapsedMs != null)
+            _RunSummaryChip(
+              key: const ValueKey('run-summary-elapsed'),
+              icon: Icons.timer_outlined,
+              label: _formatRunElapsed(data.elapsedMs!),
+              color: colorScheme.onSurfaceVariant,
+              maxWidth: double.infinity,
+            ),
+          if (data.finalOutcome != null && !data.success)
+            _RunSummaryChip(
+              key: const ValueKey('run-summary-outcome'),
+              icon: Icons.flag_outlined,
+              label: strings.agentTraceOutcomeLabel(data.finalOutcome!),
+              color: colorScheme.onSurfaceVariant,
+              maxWidth: double.infinity,
+            ),
+        ];
+
         return Padding(
           key: ValueKey('agent-run-summary-${widget.runId}'),
           padding: const EdgeInsets.only(left: 4, bottom: 2),
-          child: LayoutBuilder(
-            builder: (context, constraints) => Wrap(
-              spacing: 6,
-              runSpacing: 4,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                _RunSummaryChip(
-                  key: const ValueKey('run-summary-status'),
-                  icon: data.success
-                      ? Icons.check_circle_outline
-                      : Icons.error_outline,
-                  label: data.success
-                      ? strings.agentRunCompleted
-                      : strings.agentRunNeedsAttention,
-                  color: statusColor,
-                  maxWidth: constraints.maxWidth,
-                ),
-                if (data.toolCalls > 0)
-                  _RunSummaryChip(
-                    key: const ValueKey('run-summary-tools'),
-                    icon: Icons.build_outlined,
-                    label: strings.agentRunTools(data.toolCalls),
-                    color: colorScheme.primary,
-                    maxWidth: constraints.maxWidth,
-                  ),
-                if (data.approvalCount > 0)
-                  _RunSummaryChip(
-                    key: const ValueKey('run-summary-approvals'),
-                    icon: Icons.verified_user_outlined,
-                    label: strings.agentRunApprovals(
-                      data.approvedCount,
-                      data.approvalCount,
-                    ),
-                    color: colorScheme.tertiary,
-                    maxWidth: constraints.maxWidth,
-                  ),
-                if (data.blockedCount > 0)
-                  _RunSummaryChip(
-                    key: const ValueKey('run-summary-blocked'),
-                    icon: Icons.block_outlined,
-                    label: strings.agentRunBlocked(data.blockedCount),
-                    color: colorScheme.error,
-                    maxWidth: constraints.maxWidth,
-                  ),
-                if (data.elapsedMs != null)
-                  _RunSummaryChip(
-                    key: const ValueKey('run-summary-elapsed'),
-                    icon: Icons.timer_outlined,
-                    label: _formatRunElapsed(data.elapsedMs!),
-                    color: colorScheme.onSurfaceVariant,
-                    maxWidth: constraints.maxWidth,
-                  ),
-                if (data.finalOutcome != null && !data.success)
-                  _RunSummaryChip(
-                    key: const ValueKey('run-summary-outcome'),
-                    icon: Icons.flag_outlined,
-                    label: strings.agentTraceOutcomeLabel(data.finalOutcome!),
-                    color: colorScheme.onSurfaceVariant,
-                    maxWidth: constraints.maxWidth,
-                  ),
+                for (var i = 0; i < chips.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 6),
+                  chips[i],
+                ],
               ],
             ),
           ),

@@ -183,14 +183,18 @@ class MessageBubble extends StatelessWidget {
                 if (!isUser && !isError && message.totalTokens != null)
                   Padding(
                     padding: const EdgeInsets.only(left: 4, bottom: 8),
-                    child: Text(
-                      _messageStats(message),
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: colorScheme.onSurfaceVariant.withValues(
-                          alpha: 0.72,
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Text(
+                        _messageStats(message),
+                        maxLines: 1,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: colorScheme.onSurfaceVariant.withValues(
+                            alpha: 0.72,
+                          ),
+                          height: 1.2,
                         ),
-                        height: 1.2,
                       ),
                     ),
                   )
@@ -226,7 +230,8 @@ class MessageBubble extends StatelessWidget {
         'in ${message.promptTokens ?? '-'} / out ${message.completionTokens ?? '-'}',
       );
     }
-    if (message.elapsedMs != null) {
+    if (message.elapsedMs != null &&
+        message.agentRunId?.trim().isNotEmpty != true) {
       parts.add('time ${_formatElapsed(message.elapsedMs!)}');
     }
     if (message.promptCacheHitTokens != null ||

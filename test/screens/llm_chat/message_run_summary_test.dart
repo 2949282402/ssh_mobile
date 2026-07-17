@@ -55,6 +55,11 @@ void main() {
     expect(find.text('1 次阻断'), findsOneWidget);
     expect(find.text('1.2s'), findsOneWidget);
     final outcome = find.byKey(const ValueKey('run-summary-outcome'));
+    await tester.drag(
+      find.byType(SingleChildScrollView).first,
+      const Offset(-600, 0),
+    );
+    await tester.pumpAndSettle();
     expect(tester.getSemantics(outcome), matchesSemantics(label: '用户拒绝审批'));
     expect(tester.takeException(), isNull);
     semantics.dispose();
@@ -159,6 +164,11 @@ void main() {
     expect(find.text('Run ended with an unknown result'), findsOneWidget);
     expect(find.textContaining(rawOutcome), findsNothing);
     final outcome = find.byKey(const ValueKey('run-summary-outcome'));
+    await tester.drag(
+      find.byType(SingleChildScrollView).first,
+      const Offset(-1500, 0),
+    );
+    await tester.pumpAndSettle();
     expect(
       tester.getSemantics(outcome),
       matchesSemantics(label: 'Run ended with an unknown result'),

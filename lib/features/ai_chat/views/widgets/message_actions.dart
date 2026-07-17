@@ -73,13 +73,14 @@ class MessageActions extends StatelessWidget {
     ];
     return LayoutBuilder(
       builder: (context, constraints) {
-        final desiredWidth = children.length * 48.0;
+        final buttonSize = 32.0;
+        final desiredWidth = children.length * buttonSize;
         final availableWidth = constraints.maxWidth.isFinite
             ? constraints.maxWidth
             : desiredWidth;
-        final maxActionsWidth = availableWidth < 48
+        final maxActionsWidth = availableWidth < buttonSize
             ? availableWidth
-            : desiredWidth.clamp(48.0, availableWidth);
+            : desiredWidth.clamp(buttonSize, availableWidth);
         return Padding(
           padding: const EdgeInsets.only(left: 2, right: 2, bottom: 4),
           child: Align(
@@ -211,12 +212,12 @@ class MessageActions extends StatelessWidget {
   }) {
     final colorScheme = Theme.of(context).colorScheme;
     return SizedBox(
-      width: 48,
-      height: 48,
+      width: 32,
+      height: 32,
       child: IconButton(
         tooltip: tooltip,
         padding: EdgeInsets.zero,
-        iconSize: 17,
+        iconSize: 15,
         color: colorScheme.onSurfaceVariant,
         icon: Icon(icon),
         onPressed: onPressed,
