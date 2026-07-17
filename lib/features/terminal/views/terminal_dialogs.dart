@@ -56,8 +56,8 @@ extension _TerminalDialogs on _TerminalScreenState {
     BuildContext context,
     String connectionId,
   ) async {
-    final windowName = await _askWindowName(context, connectionId);
-    if (!context.mounted || windowName == null) return;
+    final ssh = context.read<SshService>();
+    final windowName = ssh.defaultDisplayNameForConnection(connectionId);
     await _openSessionWindowWithOptions(context, connectionId, windowName);
   }
 
@@ -109,20 +109,6 @@ extension _TerminalDialogs on _TerminalScreenState {
     if (session == null) return;
 
     _replaceWithTerminalSession(session, animated: true);
-  }
-
-  Future<String?> _askWindowName(
-    BuildContext context,
-    String connectionId,
-  ) async {
-    final ssh = context.read<SshService>();
-    return showDialog<String>(
-      context: context,
-      builder: (_) => WindowNameDialog(
-        initialName: ssh.defaultDisplayNameForConnection(connectionId),
-        isNameAvailable: ssh.isSessionNameAvailable,
-      ),
-    );
   }
 
   String _formatConnectionFailure(TerminalStrings strings, String? message) {

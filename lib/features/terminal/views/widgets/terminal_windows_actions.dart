@@ -14,14 +14,7 @@ extension _TerminalWindowsActions on _TerminalWindowsPageState {
     final connectionId = page.connectionId;
     if (connectionId == null) return;
     final ssh = context.read<SshService>();
-    final windowName = await showDialog<String>(
-      context: context,
-      builder: (_) => WindowNameDialog(
-        initialName: ssh.defaultDisplayNameForConnection(connectionId),
-        isNameAvailable: ssh.isSessionNameAvailable,
-      ),
-    );
-    if (!context.mounted || windowName == null) return;
+    final windowName = ssh.defaultDisplayNameForConnection(connectionId);
 
     showDialog<void>(
       context: context,

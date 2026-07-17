@@ -298,6 +298,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     final id = sessionId ?? _createSessionId(connectionId);
     ConnectionRuntimeTarget runtimeTarget;
     try {
+      await Future<void>.delayed(Duration.zero);
       runtimeTarget = await RemoteTargetScope.resolveIfBound(
         _storageService,
         connectionId,

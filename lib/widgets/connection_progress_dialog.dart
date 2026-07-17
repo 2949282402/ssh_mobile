@@ -8,10 +8,9 @@ const Duration _connectionProgressAnimationDuration = Duration(
 
 Future<void> waitForConnectionProgressFrame() async {
   await WidgetsBinding.instance.endOfFrame;
-  // Let the entrance animation settle before SSH setup starts. Connection
-  // preparation can parse keys or hit secure storage and otherwise steals the
-  // spinner's first frames on the UI isolate.
+  // Let the entrance animation settle before SSH setup starts.
   await Future<void>.delayed(_connectionProgressAnimationDuration);
+  await Future<void>.delayed(const Duration(milliseconds: 16));
 }
 
 class ConnectionProgressDialog extends StatelessWidget {
@@ -55,16 +54,18 @@ class ConnectionProgressDialog extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    SizedBox(
-                      width: 42,
-                      height: 42,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 3,
-                        color:
-                            Theme.of(
-                              context,
-                            ).extension<ExtendedColors>()?.success ??
-                            AppTheme.terminalGreen,
+                    RepaintBoundary(
+                      child: SizedBox(
+                        width: 42,
+                        height: 42,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 3,
+                          color:
+                              Theme.of(
+                                context,
+                              ).extension<ExtendedColors>()?.success ??
+                              AppTheme.terminalGreen,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 18),

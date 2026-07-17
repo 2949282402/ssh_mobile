@@ -332,19 +332,22 @@ class _SshMobileAppState extends State<SshMobileApp>
                     final effectiveChild = child ?? const SizedBox.shrink();
                     final shadChild = ShadAppBuilder(child: effectiveChild);
 
+                    final currentTheme = Theme.of(context);
                     if (identical(adaptedMediaQuery, mediaQuery) &&
-                        visualDensity == VisualDensity.standard) {
+                        visualDensity == currentTheme.visualDensity) {
                       return shadChild;
                     }
 
                     return MediaQuery(
                       data: adaptedMediaQuery,
-                      child: Theme(
-                        data: Theme.of(
-                          context,
-                        ).copyWith(visualDensity: visualDensity),
-                        child: shadChild,
-                      ),
+                      child: currentTheme.visualDensity == visualDensity
+                          ? shadChild
+                          : Theme(
+                              data: currentTheme.copyWith(
+                                visualDensity: visualDensity,
+                              ),
+                              child: shadChild,
+                            ),
                     );
                   },
                   initialRoute: '/',

@@ -208,12 +208,18 @@ class _ServerSelectionBar extends StatelessWidget {
               onPressed: onCancel,
             ),
             const SizedBox(width: 8),
-            FilledButton.tonalIcon(
-              icon: const Icon(Icons.delete, size: 18),
+            FilledButton.icon(
+              icon: const Icon(Icons.delete_outline, size: 18),
               label: Text(strings.delete),
               style: FilledButton.styleFrom(
-                foregroundColor: colorScheme.error,
-                backgroundColor: colorScheme.errorContainer,
+                backgroundColor: colorScheme.error,
+                foregroundColor: colorScheme.onError,
+                disabledBackgroundColor: colorScheme.error.withValues(
+                  alpha: 0.12,
+                ),
+                disabledForegroundColor: colorScheme.error.withValues(
+                  alpha: 0.38,
+                ),
               ),
               onPressed: count > 0 ? onDelete : null,
             ),
@@ -424,6 +430,44 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                                 ),
                               ),
                       ),
+                      if (!widget.serverSelectionMode)
+                        PopupMenuButton<String>(
+                          icon: Icon(
+                            Icons.more_vert,
+                            color: mutedTextColor,
+                            size: 20 * scale,
+                          ),
+                          onSelected: widget.onAction,
+                          itemBuilder: (_) => [
+                            PopupMenuItem(
+                              value: 'edit',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.edit, size: 18 * scale),
+                                  SizedBox(width: 8 * scale),
+                                  Text(widget.strings.edit),
+                                ],
+                              ),
+                            ),
+                            PopupMenuItem(
+                              value: 'delete',
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.delete,
+                                    size: 18 * scale,
+                                    color: colorScheme.error,
+                                  ),
+                                  SizedBox(width: 8 * scale),
+                                  Text(
+                                    widget.strings.delete,
+                                    style: TextStyle(color: colorScheme.error),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
                     ],
                   ),
                   if (!compactMobileCard) ...[
@@ -589,44 +633,6 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
                               ],
                             ],
                           ),
-                        ),
-                      if (!widget.serverSelectionMode)
-                        PopupMenuButton<String>(
-                          icon: Icon(
-                            Icons.more_vert,
-                            color: mutedTextColor,
-                            size: 20 * scale,
-                          ),
-                          onSelected: widget.onAction,
-                          itemBuilder: (_) => [
-                            PopupMenuItem(
-                              value: 'edit',
-                              child: Row(
-                                children: [
-                                  Icon(Icons.edit, size: 18 * scale),
-                                  SizedBox(width: 8 * scale),
-                                  Text(widget.strings.edit),
-                                ],
-                              ),
-                            ),
-                            PopupMenuItem(
-                              value: 'delete',
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.delete,
-                                    size: 18 * scale,
-                                    color: colorScheme.error,
-                                  ),
-                                  SizedBox(width: 8 * scale),
-                                  Text(
-                                    widget.strings.delete,
-                                    style: TextStyle(color: colorScheme.error),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
                         ),
                     ],
                   ),

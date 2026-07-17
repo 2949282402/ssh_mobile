@@ -151,34 +151,34 @@ class _AddEditScreenState extends State<AddEditScreen> {
     final portAndUserRow = isDesktop
         ? Row(
             children: [
-              Expanded(flex: 2, child: _buildPortField()),
+              Expanded(flex: 2, child: _buildPortField(strings)),
               const SizedBox(width: 12),
-              Expanded(flex: 3, child: _buildUsernameField()),
+              Expanded(flex: 3, child: _buildUsernameField(strings)),
             ],
           )
         : Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _buildPortField(),
+              _buildPortField(strings),
               const SizedBox(height: 12),
-              _buildUsernameField(),
+              _buildUsernameField(strings),
             ],
           );
 
     final jumpPortAndUserRow = isDesktop
         ? Row(
             children: [
-              Expanded(flex: 2, child: _buildJumpPortField()),
+              Expanded(flex: 2, child: _buildJumpPortField(strings)),
               const SizedBox(width: 12),
-              Expanded(flex: 3, child: _buildJumpUsernameField()),
+              Expanded(flex: 3, child: _buildJumpUsernameField(strings)),
             ],
           )
         : Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _buildJumpPortField(),
+              _buildJumpPortField(strings),
               const SizedBox(height: 12),
-              _buildJumpUsernameField(),
+              _buildJumpUsernameField(strings),
             ],
           );
 
@@ -186,16 +186,26 @@ class _AddEditScreenState extends State<AddEditScreen> {
       decoration: BoxDecoration(
         color: colorScheme.surface.withValues(alpha: 0.96),
         border: Border(
-          top: BorderSide(color: colorScheme.outline.withValues(alpha: 0.72)),
+          top: BorderSide(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.72),
+          ),
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
+          ),
+        ],
       ),
       child: SafeArea(
+        top: false,
         child: Padding(
           padding: EdgeInsets.fromLTRB(
             outerPadding,
-            8 * layoutScale,
-            outerPadding,
             10 * layoutScale,
+            outerPadding,
+            12 * layoutScale,
           ),
           child: Center(
             heightFactor: 1,
@@ -206,6 +216,14 @@ class _AddEditScreenState extends State<AddEditScreen> {
                 height: 48,
                 child: FilledButton.icon(
                   key: const ValueKey('connection-save-button'),
+                  style: FilledButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(
+                        AppTheme.radiusMedium,
+                      ),
+                    ),
+                    elevation: 1,
+                  ),
                   onPressed: isSaving || _isLoadingSecrets ? null : _save,
                   icon: isSaving
                       ? const SizedBox(
@@ -216,9 +234,13 @@ class _AddEditScreenState extends State<AddEditScreen> {
                             color: Colors.white,
                           ),
                         )
-                      : const Icon(Icons.verified_outlined),
+                      : const Icon(Icons.verified_outlined, size: 20),
                   label: Text(
                     isSaving ? strings.saving : strings.verifyAndSave,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ),
@@ -228,13 +250,23 @@ class _AddEditScreenState extends State<AddEditScreen> {
       ),
     );
 
+    final jumpHostSubtitle = !_jumpHostExpanded
+        ? (_jumpHostController.text.isNotEmpty
+              ? _jumpHostController.text
+              : (strings.language == AppLanguage.en ? 'Not configured' : '未配置'))
+        : null;
+
+    final advancedOptionsSubtitle = !_advancedOptionsExpanded
+        ? (strings.language == AppLanguage.en
+              ? 'Platform, tmux, KeepAlive'
+              : '系统平台、tmux及保活设置')
+        : null;
+
     return Scaffold(
       appBar: AppBar(
         title: Text(isEditing ? strings.editConnection : strings.addConnection),
       ),
-      bottomNavigationBar: AnimatedPadding(
-        duration: const Duration(milliseconds: 160),
-        curve: Curves.easeOutCubic,
+      bottomNavigationBar: Padding(
         padding: EdgeInsets.only(
           bottom: MediaQuery.viewInsetsOf(context).bottom,
         ),
@@ -263,6 +295,26 @@ class _AddEditScreenState extends State<AddEditScreen> {
                         24 * layoutScale,
                       ),
                       children: [
+                        // 顶部 Header Banner
+                        Padding(
+                          padding: EdgeInsets.only(bottom: sectionGap + 2),
+                          child: AppPageHeader(
+                            title: isEditing
+                                ? strings.editConnection
+                                : strings.addConnection,
+                            subtitle: strings.language == AppLanguage.en
+                                ? (isEditing
+                                      ? 'Modify SSH server connection and authentication settings'
+                                      : 'Configure host address, port, auth credentials, and platform options')
+                                : (isEditing
+                                      ? '修改并保存 SSH 服务器配置与认证信息'
+                                      : '配置主机、端口、认证凭据与运行平台模式'),
+                            icon: isEditing
+                                ? Icons.edit_note_rounded
+                                : Icons.dns_rounded,
+                          ),
+                        ),
+
                         // 基础信息分组
                         Padding(
                           padding: EdgeInsets.only(bottom: sectionGap),
@@ -271,7 +323,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
                             icon: Icons.badge_outlined,
                             padding: cardPadding,
                             contentGap: 12 * layoutScale,
-                            child: _buildNameField(),
+                            child: _buildNameField(strings),
                           ),
                         ),
 
@@ -286,7 +338,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                _buildHostField(),
+                                _buildHostField(strings),
                                 const SizedBox(height: 12),
                                 portAndUserRow,
                               ],
@@ -305,16 +357,16 @@ class _AddEditScreenState extends State<AddEditScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                _buildAuthMethodSelector(),
+                                _buildAuthMethodSelector(strings, colorScheme),
                                 const SizedBox(height: 12),
                                 if (_authMethod == AuthMethod.password ||
                                     _authMethod == AuthMethod.both) ...[
-                                  _buildPasswordField(),
+                                  _buildPasswordField(strings),
                                   const SizedBox(height: 12),
                                 ],
                                 if (_authMethod == AuthMethod.privateKey ||
                                     _authMethod == AuthMethod.both) ...[
-                                  _buildPrivateKeyField(),
+                                  _buildPrivateKeyField(strings),
                                   const SizedBox(height: 12),
                                 ],
                               ],
@@ -327,6 +379,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
                           padding: EdgeInsets.only(bottom: sectionGap),
                           child: AppSectionCard(
                             title: strings.jumpHostOptional,
+                            subtitle: jumpHostSubtitle,
                             icon: Icons.hub_outlined,
                             padding: cardPadding,
                             contentGap: 12 * layoutScale,
@@ -339,7 +392,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      _buildJumpHostField(),
+                                      _buildJumpHostField(strings),
                                       const SizedBox(height: 12),
                                       jumpPortAndUserRow,
                                     ],
@@ -353,6 +406,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
                           padding: EdgeInsets.only(bottom: sectionGap),
                           child: AppSectionCard(
                             title: strings.advancedOptions,
+                            subtitle: advancedOptionsSubtitle,
                             icon: Icons.tune_rounded,
                             padding: cardPadding,
                             contentGap: 12 * layoutScale,
@@ -366,16 +420,16 @@ class _AddEditScreenState extends State<AddEditScreen> {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      _buildServerPlatformSelector(),
+                                      _buildServerPlatformSelector(strings),
                                       const SizedBox(height: 16),
-                                      _buildLaunchModeSelector(),
+                                      _buildLaunchModeSelector(strings),
                                       if (_launchMode ==
                                           TerminalLaunchMode.tmux) ...[
                                         const SizedBox(height: 12),
-                                        _buildTmuxAutoDeleteField(),
+                                        _buildTmuxAutoDeleteField(strings),
                                       ],
                                       const SizedBox(height: 12),
-                                      _buildKeepAliveSwitch(),
+                                      _buildKeepAliveSwitch(strings),
                                     ],
                                   )
                                 : null,
@@ -390,8 +444,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
     );
   }
 
-  Widget _buildNameField() {
-    final strings = _strings(context);
+  Widget _buildNameField(AppStrings strings) {
     return ShadInputFormField(
       id: 'name',
       controller: _nameController,
@@ -406,8 +459,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
     );
   }
 
-  Widget _buildHostField() {
-    final strings = _strings(context);
+  Widget _buildHostField(AppStrings strings) {
     return ShadInputFormField(
       id: 'host',
       controller: _hostController,
@@ -423,8 +475,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
     );
   }
 
-  Widget _buildPortField() {
-    final strings = _strings(context);
+  Widget _buildPortField(AppStrings strings) {
     return ShadInputFormField(
       id: 'port',
       controller: _portController,
@@ -445,8 +496,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
     );
   }
 
-  Widget _buildUsernameField() {
-    final strings = _strings(context);
+  Widget _buildUsernameField(AppStrings strings) {
     return ShadInputFormField(
       id: 'username',
       controller: _usernameController,
@@ -460,45 +510,69 @@ class _AddEditScreenState extends State<AddEditScreen> {
     );
   }
 
-  Widget _buildAuthMethodSelector() {
-    final strings = _strings(context);
+  Widget _buildAuthMethodSelector(AppStrings strings, ColorScheme colorScheme) {
+    Widget buildChip({
+      required String label,
+      required IconData icon,
+      required AuthMethod method,
+    }) {
+      final selected = _authMethod == method;
+      return FilterChip(
+        selected: selected,
+        label: Text(label),
+        avatar: Icon(
+          icon,
+          size: 16,
+          color: selected
+              ? colorScheme.onPrimaryContainer
+              : colorScheme.onSurfaceVariant,
+        ),
+        showCheckmark: false,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
+          side: BorderSide(
+            color: selected
+                ? colorScheme.primary
+                : colorScheme.outlineVariant.withValues(alpha: 0.6),
+          ),
+        ),
+        selectedColor: colorScheme.primaryContainer,
+        labelStyle: TextStyle(
+          fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+          color: selected
+              ? colorScheme.onPrimaryContainer
+              : colorScheme.onSurface,
+        ),
+        onSelected: (val) {
+          if (val) setState(() => _authMethod = method);
+        },
+      );
+    }
+
     return Wrap(
       spacing: 8,
       runSpacing: 8,
       children: [
-        ChoiceChip(
-          label: Text(strings.password),
-          avatar: const Icon(Icons.lock_outline, size: 16),
-          showCheckmark: false,
-          selected: _authMethod == AuthMethod.password,
-          onSelected: (selected) {
-            if (selected) setState(() => _authMethod = AuthMethod.password);
-          },
+        buildChip(
+          label: strings.password,
+          icon: Icons.lock_outline,
+          method: AuthMethod.password,
         ),
-        ChoiceChip(
-          label: Text(strings.privateKey),
-          avatar: const Icon(Icons.key, size: 16),
-          showCheckmark: false,
-          selected: _authMethod == AuthMethod.privateKey,
-          onSelected: (selected) {
-            if (selected) setState(() => _authMethod = AuthMethod.privateKey);
-          },
+        buildChip(
+          label: strings.privateKey,
+          icon: Icons.key_outlined,
+          method: AuthMethod.privateKey,
         ),
-        ChoiceChip(
-          label: Text(strings.privateKeyPassword),
-          avatar: const Icon(Icons.enhanced_encryption, size: 16),
-          showCheckmark: false,
-          selected: _authMethod == AuthMethod.both,
-          onSelected: (selected) {
-            if (selected) setState(() => _authMethod = AuthMethod.both);
-          },
+        buildChip(
+          label: strings.privateKeyPassword,
+          icon: Icons.enhanced_encryption_outlined,
+          method: AuthMethod.both,
         ),
       ],
     );
   }
 
-  Widget _buildPasswordField() {
-    final strings = _strings(context);
+  Widget _buildPasswordField(AppStrings strings) {
     return ShadInputFormField(
       id: 'password',
       controller: _passwordController,
@@ -528,8 +602,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
     );
   }
 
-  Widget _buildPrivateKeyField() {
-    final strings = _strings(context);
+  Widget _buildPrivateKeyField(AppStrings strings) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -580,8 +653,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
     );
   }
 
-  Widget _buildJumpHostField() {
-    final strings = _strings(context);
+  Widget _buildJumpHostField(AppStrings strings) {
     return ShadInputFormField(
       id: 'jumpHost',
       controller: _jumpHostController,
@@ -594,8 +666,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
     );
   }
 
-  Widget _buildJumpPortField() {
-    final strings = _strings(context);
+  Widget _buildJumpPortField(AppStrings strings) {
     return ShadInputFormField(
       id: 'jumpPort',
       controller: _jumpPortController,
@@ -613,8 +684,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
     );
   }
 
-  Widget _buildJumpUsernameField() {
-    final strings = _strings(context);
+  Widget _buildJumpUsernameField(AppStrings strings) {
     return ShadInputFormField(
       id: 'jumpUsername',
       controller: _jumpUsernameController,
@@ -623,8 +693,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
     );
   }
 
-  Widget _buildLaunchModeSelector() {
-    final strings = _strings(context);
+  Widget _buildLaunchModeSelector(AppStrings strings) {
     final supportsTmux = _serverPlatform == ServerPlatform.linux;
     final selectedLaunchMode = supportsTmux
         ? _launchMode
@@ -672,8 +741,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
     );
   }
 
-  Widget _buildServerPlatformSelector() {
-    final strings = _strings(context);
+  Widget _buildServerPlatformSelector(AppStrings strings) {
     final isWindows = _serverPlatform == ServerPlatform.windows;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -726,8 +794,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
     );
   }
 
-  Widget _buildTmuxAutoDeleteField() {
-    final strings = _strings(context);
+  Widget _buildTmuxAutoDeleteField(AppStrings strings) {
     return ShadInputFormField(
       id: 'tmuxAutoDelete',
       controller: _tmuxAutoDeleteController,
@@ -749,8 +816,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
     );
   }
 
-  Widget _buildKeepAliveSwitch() {
-    final strings = _strings(context);
+  Widget _buildKeepAliveSwitch(AppStrings strings) {
     return Material(
       color: Colors.transparent,
       child: SwitchListTile(
