@@ -712,6 +712,12 @@ class TerminalStrings {
   String get advancedKeyboardHint => _en
       ? 'Navigation, controls, function keys, and multiline.'
       : '集中使用导航键、控制键、功能键和多行输入。';
+  String get windowsKeyboard => _en ? 'Windows Keyboard' : 'Windows 键盘';
+  String get windowsKeyboardHint => _en
+      ? 'Full PC layout with F1-F12, modifiers, symbols, and multiline commands.'
+      : '包含 F1-F12、修饰键、Shell 特殊符号与复杂命令编辑。';
+  String get shellSymbols => _en ? 'Shell Symbols' : 'Shell 符号';
+  String get controlShortcuts => _en ? 'Control Keys' : '控制快捷键';
   String get moreKeys => _en ? 'More Shortcuts' : '更多快捷键';
   String get moreKeysHint =>
       _en ? 'Shell navigation and control keys.' : '常用的 Shell 导航键与控制键。';

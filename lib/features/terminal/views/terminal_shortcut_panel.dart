@@ -74,8 +74,8 @@ class TerminalShortcutPanel extends StatelessWidget {
                 _toolbarIconButton(
                   context,
                   key: const ValueKey('terminal-advanced-keyboard'),
-                  icon: Icons.keyboard_command_key_rounded,
-                  tooltip: strings.complexKeyboard,
+                  icon: Icons.keyboard_rounded,
+                  tooltip: strings.windowsKeyboard,
                   onPressed: () =>
                       _showAdvancedKeyboardBottomSheet(context, scale),
                 ),
@@ -400,6 +400,21 @@ class TerminalShortcutPanel extends StatelessWidget {
     );
   }
 
+  Widget _keyWrap(BuildContext context, List<_KeySpec> keys, double scale) {
+    final commands = keys
+        .map(
+          (key) =>
+              ShortcutCommand(id: key.id, label: key.label, code: key.code),
+        )
+        .toList();
+
+    return Wrap(
+      spacing: 4 * scale,
+      runSpacing: 4 * scale,
+      children: commands.map((cmd) => _quickKey(context, cmd, scale)).toList(),
+    );
+  }
+
   Widget _quickKey(
     BuildContext context,
     ShortcutCommand command,
@@ -545,10 +560,40 @@ class TerminalShortcutPanel extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     AppPageHeader(
-                      title: strings.complexKeyboard,
-                      subtitle: strings.advancedKeyboardHint,
-                      icon: Icons.keyboard_command_key_rounded,
+                      title: strings.windowsKeyboard,
+                      subtitle: strings.windowsKeyboardHint,
+                      icon: Icons.keyboard_rounded,
                     ),
+                    const SizedBox(height: 16),
+                    Text(
+                      strings.shellSymbols,
+                      style: TextStyle(
+                        fontSize: 12 * scale,
+                        fontWeight: FontWeight.w600,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _keyWrap(context, const [
+                      _KeySpec('|', '|'),
+                      _KeySpec('~', '~'),
+                      _KeySpec('/', '/'),
+                      _KeySpec('\\', '\\'),
+                      _KeySpec('\$', '\$'),
+                      _KeySpec('&', '&'),
+                      _KeySpec('>', '>'),
+                      _KeySpec('<', '<'),
+                      _KeySpec(';', ';'),
+                      _KeySpec('-', '-'),
+                      _KeySpec('_', '_'),
+                      _KeySpec('`', '`'),
+                      _KeySpec("'", "'"),
+                      _KeySpec('"', '"'),
+                      _KeySpec('*', '*'),
+                      _KeySpec('#', '#'),
+                      _KeySpec('=', '='),
+                      _KeySpec('%', '%'),
+                    ], scale),
                     const SizedBox(height: 16),
                     Text(
                       strings.navigationShell,
@@ -559,17 +604,26 @@ class TerminalShortcutPanel extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    _keyGroup(context, [
-                      const _KeySpec('HOME', '\x1b[H'),
-                      const _KeySpec('END', '\x1b[F'),
-                      const _KeySpec('PGUP', '\x1b[5~'),
-                      const _KeySpec('PGDN', '\x1b[6~'),
-                      const _KeySpec('CTRL+D', '\x04'),
-                      const _KeySpec('CTRL+L', '\x0c'),
+                    _keyWrap(context, const [
+                      _KeySpec('ESC', '\x1b'),
+                      _KeySpec('TAB', '\t'),
+                      _KeySpec('ENTER', '\r'),
+                      _KeySpec('BKSP', '\x7f'),
+                      _KeySpec('↑', '\x1b[A'),
+                      _KeySpec('↓', '\x1b[B'),
+                      _KeySpec('←', '\x1b[D'),
+                      _KeySpec('→', '\x1b[C'),
+                      _KeySpec('HOME', '\x1b[H'),
+                      _KeySpec('END', '\x1b[F'),
+                      _KeySpec('PGUP', '\x1b[5~'),
+                      _KeySpec('PGDN', '\x1b[6~'),
+                      _KeySpec('INS', '\x1b[2~'),
+                      _KeySpec('DEL', '\x1b[3~'),
+                      _KeySpec('SPACE', ' '),
                     ], scale),
                     const SizedBox(height: 16),
                     Text(
-                      strings.editControl,
+                      strings.controlShortcuts,
                       style: TextStyle(
                         fontSize: 12 * scale,
                         fontWeight: FontWeight.w600,
@@ -577,21 +631,21 @@ class TerminalShortcutPanel extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    _keyGroup(context, [
-                      const _KeySpec('INS', '\x1b[2~'),
-                      const _KeySpec('DEL', '\x1b[3~'),
-                      const _KeySpec('SPACE', ' '),
-                      const _KeySpec('CTRL+A', '\x01'),
-                      const _KeySpec('CTRL+E', '\x05'),
-                      const _KeySpec('CTRL+U', '\x15'),
-                      const _KeySpec('CTRL+K', '\x0b'),
-                      const _KeySpec('CTRL+W', '\x17'),
-                      const _KeySpec('CTRL+R', '\x12'),
-                      const _KeySpec('CTRL+Z', '\x1a'),
-                      const _KeySpec('CTRL+\\', '\x1c'),
-                      const _KeySpec('ALT+B', '\x1bb'),
-                      const _KeySpec('ALT+F', '\x1bf'),
-                      const _KeySpec('ALT+D', '\x1bd'),
+                    _keyWrap(context, const [
+                      _KeySpec('CTRL+C', '\x03'),
+                      _KeySpec('CTRL+Z', '\x1a'),
+                      _KeySpec('CTRL+L', '\x0c'),
+                      _KeySpec('CTRL+D', '\x04'),
+                      _KeySpec('CTRL+A', '\x01'),
+                      _KeySpec('CTRL+E', '\x05'),
+                      _KeySpec('CTRL+U', '\x15'),
+                      _KeySpec('CTRL+K', '\x0b'),
+                      _KeySpec('CTRL+W', '\x17'),
+                      _KeySpec('CTRL+R', '\x12'),
+                      _KeySpec('CTRL+\\', '\x1c'),
+                      _KeySpec('ALT+B', '\x1bb'),
+                      _KeySpec('ALT+F', '\x1bf'),
+                      _KeySpec('ALT+D', '\x1bd'),
                     ], scale),
                     const SizedBox(height: 16),
                     Text(
@@ -603,19 +657,19 @@ class TerminalShortcutPanel extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    _keyGroup(context, [
-                      const _KeySpec('F1', '\x1bOP'),
-                      const _KeySpec('F2', '\x1bOQ'),
-                      const _KeySpec('F3', '\x1bOR'),
-                      const _KeySpec('F4', '\x1bOS'),
-                      const _KeySpec('F5', '\x1b[15~'),
-                      const _KeySpec('F6', '\x1b[17~'),
-                      const _KeySpec('F7', '\x1b[18~'),
-                      const _KeySpec('F8', '\x1b[19~'),
-                      const _KeySpec('F9', '\x1b[20~'),
-                      const _KeySpec('F10', '\x1b[21~'),
-                      const _KeySpec('F11', '\x1b[23~'),
-                      const _KeySpec('F12', '\x1b[24~'),
+                    _keyGroup(context, const [
+                      _KeySpec('F1', '\x1bOP'),
+                      _KeySpec('F2', '\x1bOQ'),
+                      _KeySpec('F3', '\x1bOR'),
+                      _KeySpec('F4', '\x1bOS'),
+                      _KeySpec('F5', '\x1b[15~'),
+                      _KeySpec('F6', '\x1b[17~'),
+                      _KeySpec('F7', '\x1b[18~'),
+                      _KeySpec('F8', '\x1b[19~'),
+                      _KeySpec('F9', '\x1b[20~'),
+                      _KeySpec('F10', '\x1b[21~'),
+                      _KeySpec('F11', '\x1b[23~'),
+                      _KeySpec('F12', '\x1b[24~'),
                     ], scale),
                     const SizedBox(height: 16),
                     Row(
