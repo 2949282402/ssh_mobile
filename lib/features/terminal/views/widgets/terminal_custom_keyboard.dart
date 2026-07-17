@@ -49,8 +49,8 @@ class _TerminalCustomKeyboardState extends State<TerminalCustomKeyboard> {
         const SizedBox(height: 12),
         _buildLayerBar(context),
         const SizedBox(height: 8),
-        for (final row in rows) ...[
-          _buildKeyRow(context, row),
+        for (var rowIndex = 0; rowIndex < rows.length; rowIndex++) ...[
+          _buildKeyRow(context, rows[rowIndex], rowIndex),
           const SizedBox(height: 6),
         ],
         _buildModifierRow(context),
@@ -173,96 +173,201 @@ class _TerminalCustomKeyboardState extends State<TerminalCustomKeyboard> {
   }
 
   Widget _buildLayerBar(BuildContext context) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          _layerChip(
-            TerminalKeyboardLayer.letters,
-            widget.strings.keyboardLetters,
-            Icons.keyboard_rounded,
-          ),
-          _layerChip(
-            TerminalKeyboardLayer.symbols,
-            widget.strings.shellSymbols,
-            Icons.code_rounded,
-          ),
-          _layerChip(
-            TerminalKeyboardLayer.navigation,
-            widget.strings.keyboardNavigation,
-            Icons.navigation_rounded,
-          ),
-          _layerChip(
-            TerminalKeyboardLayer.function,
-            widget.strings.functionKeys,
-            Icons.functions_rounded,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _layerChip(TerminalKeyboardLayer layer, String label, IconData icon) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 6),
-      child: ChoiceChip(
-        key: ValueKey('terminal-keyboard-layer-${layer.name}'),
-        selected: _layer == layer,
-        avatar: Icon(icon, size: 17),
-        label: Text(label),
-        onSelected: (_) => setState(() => _layer = layer),
-      ),
-    );
-  }
-
-  Widget _buildKeyRow(BuildContext context, List<TerminalKeyboardKeySpec> row) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        const spacing = 5.0;
-        const minKeyWidth = 44.0;
-        final requiredWidth =
-            row.fold<double>(0, (sum, key) => sum + minKeyWidth * key.flex) +
-            spacing * (row.length - 1);
-        final fits = requiredWidth <= constraints.maxWidth;
-        final keyWidgets = <Widget>[];
-        for (var index = 0; index < row.length; index++) {
-          final key = row[index];
-          final button = _buildKey(context, key);
-          keyWidgets.add(
-            fits
-                ? Expanded(flex: (key.flex * 10).round(), child: button)
-                : SizedBox(width: minKeyWidth * key.flex, child: button),
-          );
-          if (index != row.length - 1) {
-            keyWidgets.add(const SizedBox(width: spacing));
-          }
-        }
-        final content = Row(children: keyWidgets);
-        if (fits) return content;
-        return SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: content,
+        final height = (constraints.maxWidth / 8).clamp(40.0, 48.0);
+        return Row(
+          children: [
+            _layerButton(
+              context,
+              height,
+              TerminalKeyboardLayer.letters,
+              widget.strings.keyboardLetters,
+              Icons.keyboard_rounded,
+            ),
+            const SizedBox(width: 4),
+            _layerButton(
+              context,
+              height,
+              TerminalKeyboardLayer.symbols,
+              widget.strings.shellSymbols,
+              Icons.code_rounded,
+            ),
+            const SizedBox(width: 4),
+            _layerButton(
+              context,
+              height,
+              TerminalKeyboardLayer.navigation,
+              widget.strings.keyboardNavigation,
+              Icons.navigation_rounded,
+            ),
+            const SizedBox(width: 4),
+            _layerButton(
+              context,
+              height,
+              TerminalKeyboardLayer.function,
+              widget.strings.functionKeys,
+              Icons.functions_rounded,
+            ),
+          ],
         );
       },
     );
   }
 
-  Widget _buildKey(BuildContext context, TerminalKeyboardKeySpec key) {
+  Widget _layerButton(
+    BuildContext context,
+    double height,
+    TerminalKeyboardLayer layer,
+    String label,
+    IconData icon,
+  ) {
     final colors = Theme.of(context).colorScheme;
+    final selected = _layer == layer;
+    return Expanded(
+      child: SizedBox(
+        height: height,
+        child: Semantics(
+          button: true,
+          selected: selected,
+          label: label,
+          child: Tooltip(
+            message: label,
+            child: FilledButton.tonal(
+              key: ValueKey('terminal-keyboard-layer-${layer.name}'),
+              style: FilledButton.styleFrom(
+                minimumSize: Size.zero,
+                padding: const EdgeInsets.symmetric(horizontal: 3),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                elevation: selected ? 1.2 : 0.4,
+                shadowColor: colors.shadow.withValues(alpha: 0.18),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                side: BorderSide(
+                  color: selected
+                      ? colors.primary.withValues(alpha: 0.28)
+                      : colors.outlineVariant.withValues(alpha: 0.72),
+                ),
+                backgroundColor: selected
+                    ? colors.primaryContainer
+                    : colors.surfaceContainerHigh,
+                foregroundColor: selected
+                    ? colors.onPrimaryContainer
+                    : colors.onSurfaceVariant,
+              ),
+              onPressed: () => setState(() => _layer = layer),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon, size: 16),
+                    const SizedBox(width: 3),
+                    Text(label),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildKeyRow(
+    BuildContext context,
+    List<TerminalKeyboardKeySpec> row,
+    int rowIndex,
+  ) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final spacing = (width / 100).clamp(2.0, 5.0);
+        final keyHeight = _keyHeightFor(width);
+        final (leadingUnits, trailingUnits) = _rowInsets(rowIndex);
+        final keyWidgets = <Widget>[];
+        if (leadingUnits > 0) {
+          keyWidgets.add(Spacer(flex: (leadingUnits * 20).round()));
+        }
+        for (var index = 0; index < row.length; index++) {
+          final key = row[index];
+          final button = _buildKey(context, key, keyHeight);
+          keyWidgets.add(
+            Expanded(flex: (key.flex * 20).round(), child: button),
+          );
+          if (index != row.length - 1) {
+            keyWidgets.add(SizedBox(width: spacing));
+          }
+        }
+        if (trailingUnits > 0) {
+          keyWidgets.add(Spacer(flex: (trailingUnits * 20).round()));
+        }
+        return Row(children: keyWidgets);
+      },
+    );
+  }
+
+  (double, double) _rowInsets(int rowIndex) {
+    if (_layer != TerminalKeyboardLayer.letters) return (0, 0);
+    return switch (rowIndex) {
+      0 => (0, 0),
+      1 => (0.2, 0),
+      2 => (0.55, 0.55),
+      3 => (0.85, 0),
+      _ => (0, 0),
+    };
+  }
+
+  double _keyHeightFor(double width) {
+    return (width / 10).clamp(32.0, 48.0);
+  }
+
+  ButtonStyle _keycapStyle(
+    BuildContext context, {
+    bool terminal = false,
+    bool active = false,
+    bool primary = false,
+  }) {
+    final colors = Theme.of(context).colorScheme;
+    final background = primary || active
+        ? colors.primary
+        : terminal
+        ? colors.secondaryContainer
+        : colors.surfaceContainerHigh;
+    final foreground = primary || active
+        ? colors.onPrimary
+        : terminal
+        ? colors.onSecondaryContainer
+        : colors.onSurface;
+    return FilledButton.styleFrom(
+      minimumSize: Size.zero,
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      elevation: primary || active ? 1.6 : 0.6,
+      shadowColor: colors.shadow.withValues(alpha: 0.22),
+      backgroundColor: background,
+      foregroundColor: foreground,
+      side: BorderSide(
+        color: primary || active
+            ? colors.primary.withValues(alpha: 0.72)
+            : colors.outlineVariant.withValues(alpha: 0.78),
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
+    );
+  }
+
+  Widget _buildKey(
+    BuildContext context,
+    TerminalKeyboardKeySpec key,
+    double height,
+  ) {
     final label = key.labelFor(_shiftActive);
     return SizedBox(
-      height: 48,
+      height: height,
       child: FilledButton.tonal(
         key: ValueKey('terminal-custom-key-${key.id}'),
-        style: FilledButton.styleFrom(
-          padding: const EdgeInsets.symmetric(horizontal: 5),
-          backgroundColor: key.alwaysTerminal
-              ? colors.secondaryContainer
-              : colors.surfaceContainerHighest,
-          foregroundColor: key.alwaysTerminal
-              ? colors.onSecondaryContainer
-              : colors.onSurfaceVariant,
-        ),
+        style: _keycapStyle(context, terminal: key.alwaysTerminal),
         onPressed: () => _handleKey(key),
         child: FittedBox(
           fit: BoxFit.scaleDown,
@@ -271,6 +376,7 @@ class _TerminalCustomKeyboardState extends State<TerminalCustomKeyboard> {
             style: const TextStyle(
               fontFamily: 'monospace',
               fontWeight: FontWeight.w700,
+              letterSpacing: 0.2,
             ),
           ),
         ),
@@ -279,69 +385,96 @@ class _TerminalCustomKeyboardState extends State<TerminalCustomKeyboard> {
   }
 
   Widget _buildModifierRow(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: _modifierButton(
-            'Shift',
-            _shift,
-            () => setState(() => _shift = _nextModifierState(_shift)),
-            key: const ValueKey('terminal-custom-key-shift'),
-          ),
-        ),
-        const SizedBox(width: 5),
-        Expanded(
-          child: _modifierButton(
-            'Ctrl',
-            _ctrl,
-            () => setState(() => _ctrl = _nextModifierState(_ctrl)),
-            key: const ValueKey('terminal-custom-key-ctrl'),
-          ),
-        ),
-        const SizedBox(width: 5),
-        Expanded(
-          child: _modifierButton(
-            'Alt',
-            _alt,
-            () => setState(() => _alt = _nextModifierState(_alt)),
-            key: const ValueKey('terminal-custom-key-alt'),
-          ),
-        ),
-        const SizedBox(width: 5),
-        Expanded(
-          flex: 3,
-          child: SizedBox(
-            height: 48,
-            child: FilledButton.tonal(
-              key: const ValueKey('terminal-custom-key-space'),
-              onPressed: () => _handleTextKey(' '),
-              child: Text(widget.strings.keyboardSpace),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final spacing = (constraints.maxWidth / 100).clamp(2.0, 5.0);
+        final height = _keyHeightFor(constraints.maxWidth);
+        return Row(
+          children: [
+            Expanded(
+              flex: 16,
+              child: _modifierButton(
+                'Shift',
+                _shift,
+                () => setState(() => _shift = _nextModifierState(_shift)),
+                height: height,
+                key: const ValueKey('terminal-custom-key-shift'),
+              ),
             ),
-          ),
-        ),
-        const SizedBox(width: 5),
-        SizedBox(
-          width: 52,
-          height: 48,
-          child: IconButton.filledTonal(
-            key: const ValueKey('terminal-custom-key-backspace'),
-            tooltip: widget.strings.keyboardBackspace,
-            onPressed: _handleBackspace,
-            icon: const Icon(Icons.backspace_outlined, size: 19),
-          ),
-        ),
-        const SizedBox(width: 5),
-        SizedBox(
-          width: 58,
-          height: 48,
-          child: IconButton.filled(
-            key: const ValueKey('terminal-custom-key-enter'),
-            tooltip: widget.strings.keyboardEnter,
-            onPressed: _handleEnter,
-            icon: const Icon(Icons.keyboard_return_rounded, size: 20),
-          ),
-        ),
-      ],
+            SizedBox(width: spacing),
+            Expanded(
+              flex: 12,
+              child: _modifierButton(
+                'Ctrl',
+                _ctrl,
+                () => setState(() => _ctrl = _nextModifierState(_ctrl)),
+                height: height,
+                key: const ValueKey('terminal-custom-key-ctrl'),
+              ),
+            ),
+            SizedBox(width: spacing),
+            Expanded(
+              flex: 12,
+              child: _modifierButton(
+                'Alt',
+                _alt,
+                () => setState(() => _alt = _nextModifierState(_alt)),
+                height: height,
+                key: const ValueKey('terminal-custom-key-alt'),
+              ),
+            ),
+            SizedBox(width: spacing),
+            Expanded(
+              flex: 50,
+              child: SizedBox(
+                height: height,
+                child: FilledButton.tonal(
+                  key: const ValueKey('terminal-custom-key-space'),
+                  style: _keycapStyle(context),
+                  onPressed: () => _handleTextKey(' '),
+                  child: FittedBox(child: Text(widget.strings.keyboardSpace)),
+                ),
+              ),
+            ),
+            SizedBox(width: spacing),
+            Expanded(
+              flex: 16,
+              child: SizedBox(
+                height: height,
+                child: FilledButton.tonal(
+                  key: const ValueKey('terminal-custom-key-backspace'),
+                  style: _keycapStyle(context, terminal: true),
+                  onPressed: _handleBackspace,
+                  child: Tooltip(
+                    message: widget.strings.keyboardBackspace,
+                    child: const FittedBox(
+                      child: Icon(Icons.backspace_outlined, size: 19),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            SizedBox(width: spacing),
+            Expanded(
+              flex: 18,
+              child: SizedBox(
+                height: height,
+                child: FilledButton(
+                  key: const ValueKey('terminal-custom-key-enter'),
+                  style: _keycapStyle(context, primary: true),
+                  onPressed: _handleEnter,
+                  child: Tooltip(
+                    message: widget.strings.keyboardEnter,
+                    child: const FittedBox(
+                      child: Icon(Icons.keyboard_return_rounded, size: 20),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -349,6 +482,7 @@ class _TerminalCustomKeyboardState extends State<TerminalCustomKeyboard> {
     String label,
     TerminalModifierState state,
     VoidCallback onPressed, {
+    required double height,
     required Key key,
   }) {
     final active = state != TerminalModifierState.off;
@@ -358,17 +492,10 @@ class _TerminalCustomKeyboardState extends State<TerminalCustomKeyboard> {
       TerminalModifierState.locked => ' 🔒',
     };
     return SizedBox(
-      height: 48,
+      height: height,
       child: FilledButton(
         key: key,
-        style: active
-            ? null
-            : FilledButton.styleFrom(
-                backgroundColor: Theme.of(
-                  context,
-                ).colorScheme.surfaceContainerHigh,
-                foregroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+        style: _keycapStyle(context, active: active),
         onPressed: onPressed,
         child: FittedBox(child: Text('$label$suffix')),
       ),

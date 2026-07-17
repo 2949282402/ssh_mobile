@@ -28,6 +28,10 @@ across sessions.
   Shell-symbol, navigation, and F1-F12 layers plus compose/direct modes.
   Shift/Ctrl/Alt have one-shot and locked states and route through xterm; the
   built-in quick-bar selection persists in preferences and app backups.
+- 2026-07-17: Advanced keyboard rows always scale into the available width;
+  do not restore per-row horizontal scrolling. Keep staggered QWERTY alignment,
+  physical-style modifier/space proportions, modern rounded keycap surfaces,
+  and narrow-screen overflow tests.
 - 2026-07-17: Keep non-generated Dart source and test files below 1000 lines.
   Split by feature responsibility using library `part` files or focused
   collaborators while preserving public/interface methods on their declaring

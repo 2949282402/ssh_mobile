@@ -118,6 +118,10 @@ their `widgets/` part files.
   navigation, and F1-F12 layers. Route Shift/Ctrl/Alt combinations through
   xterm key input, preserve one-shot and locked modifier states, and persist
   user-selected quick-bar keys through app backup and restore.
+- Advanced keyboard rows must fit the available width without horizontal
+  scrolling. Preserve staggered physical-QWERTY alignment, proportional
+  modifier/space keys, modern rounded keycap surface hierarchy, fitted labels,
+  and narrow-screen overflow coverage.
 - Window names stay stable because they bind tmux or plain-session restoration
   state.
 
