@@ -524,139 +524,155 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
             onLongPress: () => viewModel.toggleSelection(session.id),
             child: Padding(
               padding: const EdgeInsets.all(14),
-              child: Row(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildLeadingIcon(
-                    context,
-                    viewModel,
-                    session,
-                    selected,
-                    statusColor,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        OverflowScrollText(
-                          session.displayName,
-                          selectable: false,
-                          maxLines: 1,
-                          style: TextStyle(
-                            color: colorScheme.onSurface,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        OverflowScrollText(
-                          session.connectionName,
-                          selectable: false,
-                          maxLines: 1,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: colorScheme.onSurface.withValues(
-                              alpha: 0.58,
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildLeadingIcon(
+                        context,
+                        viewModel,
+                        session,
+                        selected,
+                        statusColor,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            OverflowScrollText(
+                              session.displayName,
+                              selectable: false,
+                              maxLines: 1,
+                              style: TextStyle(
+                                color: colorScheme.onSurface,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
-                          ),
-                        ),
-
-                        if (statusDetail != null) ...[
-                          const SizedBox(height: 7),
-                          Text(
-                            statusDetail,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: colorScheme.error,
-                                  height: 1.35,
+                            const SizedBox(height: 4),
+                            OverflowScrollText(
+                              session.connectionName,
+                              selectable: false,
+                              maxLines: 1,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colorScheme.onSurface.withValues(
+                                  alpha: 0.58,
                                 ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      if (!viewModel.selectionMode) ...[
+                        Container(
+                          key: ValueKey('terminal-window-status-${session.id}'),
+                          width: 48,
+                          height: 48,
+                          alignment: Alignment.center,
+                          child: Container(
+                            width: 20,
+                            height: 20,
+                            decoration: BoxDecoration(
+                              color: session.isConnected
+                                  ? Colors.green.shade600
+                                  : colorScheme.error,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              session.isConnected
+                                  ? Icons.check_rounded
+                                  : Icons.close_rounded,
+                              color: Colors.white,
+                              size: 13,
+                            ),
                           ),
-                        ],
-                        const SizedBox(height: 8),
-                        _buildSessionMeta(context, session, strings),
-                        if (cleanupCommand != null) ...[
-                          const SizedBox(height: 8),
-                          _buildCleanupCommand(
-                            context,
-                            viewModel,
-                            session.id,
-                            cleanupCommand,
-                            strings,
+                        ),
+                        PopupMenuButton<String>(
+                          key: ValueKey('terminal-window-menu-${session.id}'),
+                          tooltip: strings.windowActions,
+                          onSelected: (value) {
+                            switch (value) {
+                              case 'rename':
+                                _renameWindow(
+                                  context,
+                                  viewModel,
+                                  session,
+                                  strings,
+                                );
+                                break;
+                              case 'close':
+                                _closeWindow(
+                                  context,
+                                  viewModel,
+                                  session,
+                                  strings,
+                                );
+                                break;
+                            }
+                          },
+                          itemBuilder: (context) => [
+                            PopupMenuItem(
+                              value: 'rename',
+                              child: ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                leading: const Icon(
+                                  Icons.edit_outlined,
+                                  size: 20,
+                                ),
+                                title: Text(strings.renameTerminalWindow),
+                              ),
+                            ),
+                            PopupMenuItem(
+                              value: 'close',
+                              child: ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                leading: Icon(
+                                  Icons.close_rounded,
+                                  size: 20,
+                                  color: colorScheme.error,
+                                ),
+                                title: Text(
+                                  strings.closeWindow,
+                                  style: TextStyle(color: colorScheme.error),
+                                ),
+                              ),
+                            ),
+                          ],
+                          child: const SizedBox.square(
+                            dimension: 48,
+                            child: Icon(Icons.more_vert_rounded),
                           ),
-                        ],
+                        ),
                       ],
-                    ),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  if (!viewModel.selectionMode) ...[
-                    Container(
-                      key: ValueKey('terminal-window-status-${session.id}'),
-                      width: 48,
-                      height: 48,
-                      alignment: Alignment.center,
-                      child: Container(
-                        width: 20,
-                        height: 20,
-                        decoration: BoxDecoration(
-                          color: session.isConnected
-                              ? Colors.green.shade600
-                              : colorScheme.error,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          session.isConnected
-                              ? Icons.check_rounded
-                              : Icons.close_rounded,
-                          color: Colors.white,
-                          size: 13,
-                        ),
+                  if (statusDetail != null) ...[
+                    const SizedBox(height: 7),
+                    Text(
+                      statusDetail,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colorScheme.error,
+                        height: 1.35,
                       ),
                     ),
-                    PopupMenuButton<String>(
-                      key: ValueKey('terminal-window-menu-${session.id}'),
-                      tooltip: strings.windowActions,
-                      onSelected: (value) {
-                        switch (value) {
-                          case 'rename':
-                            _renameWindow(context, viewModel, session, strings);
-                            break;
-                          case 'close':
-                            _closeWindow(context, viewModel, session, strings);
-                            break;
-                        }
-                      },
-                      itemBuilder: (context) => [
-                        PopupMenuItem(
-                          value: 'rename',
-                          child: ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: const Icon(Icons.edit_outlined, size: 20),
-                            title: Text(strings.renameTerminalWindow),
-                          ),
-                        ),
-                        PopupMenuItem(
-                          value: 'close',
-                          child: ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: Icon(
-                              Icons.close_rounded,
-                              size: 20,
-                              color: colorScheme.error,
-                            ),
-                            title: Text(
-                              strings.closeWindow,
-                              style: TextStyle(color: colorScheme.error),
-                            ),
-                          ),
-                        ),
-                      ],
-                      child: const SizedBox.square(
-                        dimension: 48,
-                        child: Icon(Icons.more_vert_rounded),
-                      ),
+                  ],
+                  const SizedBox(height: 10),
+                  _buildSessionMeta(context, session, strings),
+                  if (cleanupCommand != null) ...[
+                    const SizedBox(height: 10),
+                    _buildCleanupCommand(
+                      context,
+                      viewModel,
+                      session.id,
+                      cleanupCommand,
+                      strings,
                     ),
                   ],
                 ],
