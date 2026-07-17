@@ -434,34 +434,8 @@ class _TerminalWindowsPageState extends State<TerminalWindowsPage> {
   }
 
   Widget _buildEmptyState(BuildContext context, AppStrings strings) {
-    final colorScheme = Theme.of(context).colorScheme;
     if (widget.embedded) {
-      return Container(
-        width: double.infinity,
-        margin: const EdgeInsets.only(top: 8),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.34),
-          borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
-          border: Border.all(color: colorScheme.outlineVariant),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.terminal_rounded, size: 20, color: colorScheme.primary),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                strings.noOpenWindows,
-                style: TextStyle(
-                  color: colorScheme.onSurfaceVariant,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
+      return const SizedBox.shrink();
     }
 
     return AppEmptyState(

@@ -287,7 +287,8 @@ class _ServerConnectionCardState extends State<_ServerConnectionCard> {
         ? colorScheme.primary.withValues(alpha: 0.54)
         : borderColor;
 
-    final actualWindowsExpanded = widget.windowsExpanded && !widget.isGrid;
+    final actualWindowsExpanded =
+        widget.windowsExpanded && !widget.isGrid && sessionCount > 0;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final extColors = Theme.of(context).extension<ExtendedColors>();
     final compactMobileCard = !widget.isGrid && !isDesktopLayout(context);
