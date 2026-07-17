@@ -1,18 +1,25 @@
 # Validation Report
 
-- Date: 2026-07-10
+- Latest source validation: 2026-07-17
+- Full build/coverage baseline: 2026-07-10
 - Host: Windows 10 x64
 - Flutter: 3.44.2 stable
 - Dart: 3.12.2
 
 ## Automated Results
 
+Formatting, analysis, tests, and the source-size audit were refreshed after the
+repository-wide modular refactor. Coverage and platform-build rows retain the
+most recent full release-chain evidence from 2026-07-10 and were not re-run for
+this documentation update.
+
 | Check | Result |
 | --- | --- |
-| Dart formatting | 348 files checked, 0 changes required |
+| Dart formatting | 459 files checked, 0 changes required |
 | Flutter analyzer | Passed with 0 issues |
-| Unit and widget tests | 568 passed |
-| Non-generated line coverage | 39.3% (`12690/32302`) |
+| Unit and widget tests | 829 passed |
+| Non-generated Dart file size | All below 1000 lines; generated `app_database.g.dart` excluded |
+| Non-generated line coverage | 39.3% (`12690/32302`), last verified 2026-07-10 |
 | Coverage regression floor | 35% |
 | Android debug APK | Built successfully |
 | Android release APK | Built successfully without signing credentials |
@@ -24,6 +31,17 @@
 | Web manifest JSON and Git diff checks | Passed |
 
 ## Commands
+
+Latest source validation:
+
+```powershell
+dart format --output=none --set-exit-if-changed lib test
+flutter analyze
+flutter test
+git diff --check
+```
+
+Full build and coverage baseline from 2026-07-10:
 
 ```powershell
 flutter pub get

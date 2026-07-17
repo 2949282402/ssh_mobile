@@ -1,6 +1,6 @@
 ---
 name: ssh-mobile-maintenance
-description: Use when modifying or debugging this SSH Mobile Flutter project, especially SSH/tmux sessions, SFTP file operations, AI chat, OpenAI-compatible LLM streaming, AI tool definitions, settings persistence, logs, navigation behavior, Android device launch/install failures, README updates, project documentation, shared agent memory, or the project skills used by Codex and Claude Code.
+description: Maintain and debug this SSH Mobile Flutter repository across feature-first MVVM UI, SSH/SFTP, monitoring, AI chat/tools, storage, security, platform builds, tests, documentation, and shared agent guidance. Use for project code, architecture, debugging, validation, or documentation changes.
 ---
 
 # SSH Mobile Maintenance
@@ -46,6 +46,18 @@ or maintenance lesson should be shared across Codex and Claude Code sessions.
 
 - Preserve user work in the git tree. Do not revert unrelated dirty files.
 - Keep source and docs in UTF-8 without BOM.
+- Organize new code by feature and responsibility from the start. Put new
+  functionality in a dedicated file under the owning feature's `models/`,
+  `services/`, `viewmodels/`, `views/`, or `widgets/` directory, or in the
+  matching infrastructure subdirectory. Do not keep appending unrelated
+  behavior, models, helpers, or widgets to an existing file.
+- Before extending an existing file, check whether the change introduces a new
+  responsibility or would push a non-generated Dart file toward 1000 lines.
+  Extract a cohesive module first when either is true. Never hand-edit or split
+  generated files such as `*.g.dart`; change their generator inputs instead.
+- Prefer independently importable classes and services for real decoupling.
+  Use Dart `part` files only when cohesive code genuinely needs shared
+  library-private access, and keep each part focused on one functional area.
 - Prefer existing services and interfaces over duplicating protocol logic.
 - Route SSH, SFTP, LLM, AI tool, and failure logs through `AppLogService`.
 - Keep shared UI behavior aligned with `lib/theme/app_theme.dart` and
@@ -103,10 +115,10 @@ their `widgets/` part files.
 
 ### LLM Chat and Tools
 
-Primary entry points are `lib/features/ai_chat/viewmodels/ai_chat_viewmodel.dart` (split into approvals and slash command extensions),
-`lib/features/ai_chat/services/`, `lib/services/llm_chat_service.dart`,
-`lib/services/ai_tool_service.dart` (with `client_tools.dart` split into schema and impl files), and `lib/features/ai_chat/views/llm_chat_screen.dart`
-with its `widgets/` part files.
+Primary entry points are `lib/features/ai_chat/viewmodels/ai_chat_viewmodel.dart`
+and its focused extensions, `lib/features/ai_chat/services/`,
+`lib/services/ai_tool_service.dart` and its functional modules, and
+`lib/features/ai_chat/views/llm_chat_screen.dart` with its focused widgets.
 
 - Chat uses SSE streaming and must tolerate split `tool_calls` deltas.
 - The `+` toolbar below the input row is the current entry point for server

@@ -24,6 +24,10 @@ import 'package:ssh_mobile/features/sftp/views/sftp_file_viewer_screen.dart';
 
 part 'sftp_server_pane.dart';
 part 'sftp_file_pane.dart';
+part 'sftp_file_toolbar.dart';
+part 'sftp_file_actions.dart';
+part 'sftp_path_history_sheet.dart';
+part 'sftp_entry_list.dart';
 part 'sftp_models.dart';
 
 class SftpScreen extends StatefulWidget {

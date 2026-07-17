@@ -1,6 +1,8 @@
 # Engineering Baseline ADR
 
-Date: 2026-06-16
+Status: Accepted
+
+Updated: 2026-07-17
 
 ## Decisions
 
@@ -8,11 +10,15 @@ Date: 2026-06-16
   Compose services and feature ViewModels in `lib/main.dart`, and optimize hot
   paths with `Selector`, `context.select`, and repaint boundaries instead of
   migrating frameworks.
-- Keep a feature-first MVVM layout as the directory baseline. Put long-lived
-  view state and user actions in `lib/features/<feature>/viewmodels`, put
-  feature-owned models/forms in `lib/features/<feature>/models|views`, keep
-  navigation shells and part-based page composition in `lib/screens/`, and
-  keep infrastructure in `lib/services/` plus `lib/core/services/`.
+- Keep a pure feature-first MVVM layout as the directory baseline. Put
+  feature-owned models, services, ViewModels, views, and widgets under
+  `lib/features/<feature>/<layer>/`. Keep shared UI in `lib/widgets/` and
+  `lib/theme/`, and infrastructure in `lib/services/`, `lib/core/services/`,
+  and `lib/data/`.
+- Split code by feature and responsibility before a non-generated Dart file
+  reaches 1000 lines. Prefer independently importable collaborators; use Dart
+  `part` files only for cohesive code that needs library-private access. Never
+  hand-edit or split generated files such as `*.g.dart`.
 - Keep screen classes thin. Routing, layout composition, and short-lived UI
   affordances may stay in screens; validation, async orchestration, repository
   coordination, and reusable feature state belong in ViewModels or services.
@@ -27,16 +33,18 @@ Date: 2026-06-16
 - Store secrets in secure storage only. Export/import and durable memory must
   never include passwords, private keys, API keys, bearer tokens, or host
   credentials.
+- Keep `StorageService` as the compatibility facade. Store growth-oriented
+  structured data in Drift repositories under `lib/data/`, small settings in
+  SharedPreferences, and credentials in secure storage. Sensitive AI content,
+  traces, todo steps, and Playbook content must be encrypted before SQLite
+  writes.
 - Android release builds do not allow cleartext traffic by default. Debug and
   profile builds may allow cleartext for local provider/SearXNG testing.
 
 ## Follow-Up Work
 
-- Move growth-oriented structured data, such as AI chats and terminal history
-  metadata, out of monolithic SharedPreferences JSON when practical.
-- Continue moving remaining page-owned business state into feature ViewModels
-  only when it reduces coupling; do not move stable infrastructure merely for
-  symmetry.
+- Preserve current feature and storage boundaries; do not reintroduce
+  monolithic screens, ViewModels, services, or SharedPreferences JSON stores.
 - Expand unit tests around ViewModels and protocol/storage seams before deeper
   refactors so regressions are caught without real SSH/SFTP/LLM network
   access.

@@ -38,8 +38,9 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
 
 ## Baseline observations
 
-- The shared violet palette and primary empty-state styling already render on
-  both density classes.
+- The current theme families (Monochrome, Indigo, Ocean, Emerald, Rose, and
+  Amber) and shared empty-state styling render on both density classes;
+  Monochrome remains the default.
 - The home screen's main proportions are close across 1280 px and 1440 px short
   edges, so the physical-short-edge interpolation remains the correct basis for
   the mobile correction.
@@ -57,8 +58,9 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
 - The Settings drawer stays within both portrait viewports and removes the
   duplicate in-panel page header. Language exposes one semantic button with
   its current value, the list/grid control remains on one line in Chinese and
-  English, custom-font helper text may wrap to two lines, cache timeout displays
-  its value only once, and the final import row clears the gesture inset.
+  English, cache timeout displays its value only once, and the final import row
+  clears the gesture inset. App text follows native system fonts; there is no
+  user-selectable application font setting to verify.
 - The connection form uses shared icon-led section cards on both profiles. Its
   collapsible jump-host and advanced headers expose full-width semantic button
   targets, the password visibility action is labeled, and focusing an input

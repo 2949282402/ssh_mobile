@@ -27,7 +27,9 @@ part 'llm_chat/llm_context_compressor.dart';
 part 'llm_chat/llm_chat_utils.dart';
 part 'llm_chat/llm_safety_auditor.dart';
 part 'llm_chat/llm_stream_handler.dart';
+part 'llm_chat/llm_plan_validation.dart';
 part 'llm_chat/tool_loop_controller.dart';
+part 'llm_chat/tool_loop_helpers.dart';
 part 'llm_chat/tool_result_classifier.dart';
 part 'llm_chat/plan_output_validator.dart';
 
