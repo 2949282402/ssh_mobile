@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:gal/gal.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:file_picker/file_picker.dart';
 import 'lan_share_models.dart';
 
 /// Service responsible for sandbox storage management, disk space pre-flight checks,
@@ -132,6 +133,26 @@ class LanStorageService {
     if (!await file.exists()) return false;
 
     try {
+      if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+        final outputPath = await FilePicker.platform.saveFile(
+          dialogTitle: 'Save File',
+          fileName: p.basename(localPath),
+        );
+        if (outputPath == null) return false;
+
+        var copied = false;
+        final target = File(outputPath);
+        try {
+          await file.openRead().pipe(target.openWrite());
+          copied = true;
+        } finally {
+          if (!copied && await target.exists()) {
+            await target.delete();
+          }
+        }
+        return copied;
+      }
+
       if (payloadType == LanPayloadType.image) {
         final hasAccess = await Gal.hasAccess();
         if (!hasAccess) {
@@ -149,13 +170,8 @@ class LanStorageService {
         await Gal.putVideo(localPath);
         return true;
       } else {
-        // Copy to system Downloads folder (Desktop or Mobile)
-        Directory? downloadsDir;
-        if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
-          downloadsDir = await getDownloadsDirectory();
-        } else {
-          downloadsDir = await getExternalStorageDirectory();
-        }
+        // Copy to system Downloads folder (Mobile)
+        Directory? downloadsDir = await getExternalStorageDirectory();
         downloadsDir ??= await getApplicationDocumentsDirectory();
 
         final target = await _reserveUniqueFile(
