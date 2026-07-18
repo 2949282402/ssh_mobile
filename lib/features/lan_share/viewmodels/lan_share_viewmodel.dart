@@ -525,6 +525,12 @@ class LanShareViewModel extends ChangeNotifier {
     await historyDao.deleteRecord(messageId);
   }
 
+  Future<void> forgetDevice(String deviceId) async {
+    await securityService.unpairDevice(deviceId);
+    transferService.closeConnection(deviceId);
+    if (!_disposed) notifyListeners();
+  }
+
   Future<void> clearChatHistory(String targetDeviceId) async {
     final records = await historyDao.getAllRecords();
     for (final r in records) {

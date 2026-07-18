@@ -774,13 +774,12 @@ class LanSecurityService {
               deviceId,
             );
             final client = HttpClient(context: SecurityContext())
-              ..findProxy = (_) =>
-                  'DIRECT'
-                    ..badCertificateCallback = (cert, host, port) {
-                      if (expectedFingerprint == null) return false;
-                      return _certificateFingerprintFromDer(cert.der) ==
-                          expectedFingerprint;
-                    };
+              ..findProxy = ((_) => 'DIRECT')
+              ..badCertificateCallback = (cert, host, port) {
+                if (expectedFingerprint == null) return false;
+                return _certificateFingerprintFromDer(cert.der) ==
+                    expectedFingerprint;
+              };
             final url = Uri.parse(
               'https://$ip:$port/api/lan/check_pair?deviceId=$localDeviceId',
             );

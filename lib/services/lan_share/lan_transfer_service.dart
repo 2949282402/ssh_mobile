@@ -312,6 +312,7 @@ class LanTransferService {
   }
 
   void _registerActiveWebSocket(String deviceId, WebSocket socket) {
+    socket.pingInterval = const Duration(seconds: 5);
     final previousSocket = _activeWebSockets[deviceId];
     _activeWebSockets[deviceId] = socket;
     if (previousSocket != null && !identical(previousSocket, socket)) {

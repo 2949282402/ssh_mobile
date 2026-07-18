@@ -8,6 +8,7 @@ import '../../../services/lan_share/lan_share_models.dart';
 import '../../../widgets/app_surface.dart';
 import '../viewmodels/lan_share_viewmodel.dart';
 import 'lan_preview_viewer_screen.dart';
+import 'lan_text_selection_screen.dart';
 
 class LanChatScreen extends StatefulWidget {
   final String targetDeviceId;
@@ -294,7 +295,37 @@ class _LanChatScreenState extends State<LanChatScreen> {
                           PopupMenuButton<String>(
                             icon: const Icon(Icons.more_vert_rounded),
                             onSelected: (action) async {
-                              if (action == 'clear') {
+                              if (action == 'forget') {
+                                final confirm = await showDialog<bool>(
+                                  context: context,
+                                  builder: (ctx) => AlertDialog(
+                                    title: Text(strings.lanShareForgetConfirm),
+                                    content: Text(
+                                      strings.lanShareForgetConfirmMessage,
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.pop(ctx, false),
+                                        child: Text(strings.cancel),
+                                      ),
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.pop(ctx, true),
+                                        child: Text(
+                                          strings.lanShareForgetConfirm,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (confirm == true) {
+                                  await vm.forgetDevice(widget.targetDeviceId);
+                                  if (mounted) {
+                                    _refreshPairing(vm);
+                                  }
+                                }
+                              } else if (action == 'clear') {
                                 final confirm = await showDialog<bool>(
                                   context: context,
                                   builder: (ctx) => AlertDialog(
@@ -327,6 +358,10 @@ class _LanChatScreenState extends State<LanChatScreen> {
                             },
                             itemBuilder: (context) => [
                               PopupMenuItem(
+                                value: 'forget',
+                                child: Text(strings.lanShareForgetDevice),
+                              ),
+                              PopupMenuItem(
                                 value: 'clear',
                                 child: Text(strings.lanShareClearChatHistory),
                               ),
@@ -339,18 +374,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
 
                     // Chat Messages List
                     Expanded(
-                      child: !_isPaired
-                          ? Center(
-                              child: Text(
-                                strings.lanSharePinPairing,
-                                style: TextStyle(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                            )
-                          : chatMessages.isEmpty
+                      child: chatMessages.isEmpty
                           ? Center(
                               child: Text(
                                 strings.lanShareNoDevices,
@@ -421,7 +445,47 @@ class _LanChatScreenState extends State<LanChatScreen> {
                       ),
 
                     // Bottom Input Bar
-                    if (isOnline && _isPaired)
+                    if (!_isPaired)
+                      Container(
+                        padding: const EdgeInsets.all(16.0),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).cardColor,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.05),
+                              blurRadius: 4,
+                              offset: const Offset(0, -2),
+                            ),
+                          ],
+                        ),
+                        child: SafeArea(
+                          top: false,
+                          child: SizedBox(
+                            width: double.infinity,
+                            child: isOnline
+                                ? ElevatedButton.icon(
+                                    onPressed: () async {
+                                      if (onlineDevice != null) {
+                                        await vm.requestPairing(onlineDevice);
+                                        if (mounted) {
+                                          _refreshPairing(vm);
+                                        }
+                                      }
+                                    },
+                                    icon: const Icon(Icons.lock_open_rounded),
+                                    label: Text(strings.lanShareReauthenticate),
+                                  )
+                                : ElevatedButton.icon(
+                                    onPressed: null, // Disabled when offline
+                                    icon: const Icon(Icons.cloud_off_rounded),
+                                    label: Text(
+                                      strings.lanShareOfflineReauthHint,
+                                    ),
+                                  ),
+                          ),
+                        ),
+                      )
+                    else if (isOnline)
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 8.0,
@@ -578,7 +642,7 @@ class _LanChatScreenState extends State<LanChatScreen> {
       switch (msg.payloadType) {
         case LanPayloadType.text:
         case LanPayloadType.clipboard:
-          bubbleContent = SelectableText(
+          bubbleContent = Text(
             msg.textContent ?? '',
             style: TextStyle(color: isMe ? colors.onPrimary : colors.onSurface),
           );
@@ -830,10 +894,10 @@ class _LanChatScreenState extends State<LanChatScreen> {
           children: [
             if (!msg.isRecalled &&
                 (msg.payloadType == LanPayloadType.text ||
-                    msg.payloadType == LanPayloadType.clipboard))
+                    msg.payloadType == LanPayloadType.clipboard)) ...[
               ListTile(
-                leading: const Icon(Icons.copy_rounded),
-                title: Text(strings.copy),
+                leading: const Icon(Icons.copy_all_rounded),
+                title: Text(strings.lanShareCopyAll),
                 onTap: () {
                   Navigator.pop(ctx);
                   if (msg.textContent != null) {
@@ -841,6 +905,23 @@ class _LanChatScreenState extends State<LanChatScreen> {
                   }
                 },
               ),
+              ListTile(
+                leading: const Icon(Icons.text_fields_rounded),
+                title: Text(strings.lanShareSelectToCopy),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  if (msg.textContent != null) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            LanTextSelectionScreen(text: msg.textContent!),
+                      ),
+                    );
+                  }
+                },
+              ),
+            ],
             if (!msg.isRecalled && isMe && device != null)
               ListTile(
                 leading: const Icon(Icons.undo_rounded),

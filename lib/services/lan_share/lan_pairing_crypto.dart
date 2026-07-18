@@ -5,6 +5,10 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:cryptography/cryptography.dart';
 import 'package:pointycastle/export.dart' as pc;
+import 'package:pointycastle/srp/srp6_client.dart' as pc;
+import 'package:pointycastle/srp/srp6_server.dart' as pc;
+import 'package:pointycastle/srp/srp6_standard_groups.dart' as pc;
+import 'package:pointycastle/srp/srp6_verifier_generator.dart' as pc;
 
 /// One-use SRP-6a state. It must never be reused for another offer.
 class LanPairingEphemeralKeyPair {

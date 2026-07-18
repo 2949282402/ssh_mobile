@@ -150,45 +150,47 @@ class _LanPreviewViewerScreenState extends State<LanPreviewViewerScreen> {
     final strings = AppStrings(settings.language);
 
     return Scaffold(
-      body: AppPageSurface(
-        child: Column(
-          children: [
-            AppPageHeader(
-              title: widget.message.fileName ?? strings.lanShare,
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (widget.message.localPath?.isNotEmpty == true)
-                    IconButton(
-                      icon: const Icon(Icons.download_rounded),
-                      tooltip: strings.lanShareExport,
-                      onPressed: () => _exportFile(context, strings),
-                    ),
-                  if (_canCopy)
-                    IconButton(
-                      icon: const Icon(Icons.copy_rounded),
-                      tooltip: strings.copy,
-                      onPressed: () => _copyPreview(context, strings),
-                    ),
-                  const CloseButton(),
-                ],
+      body: SafeArea(
+        child: AppPageSurface(
+          child: Column(
+            children: [
+              AppPageHeader(
+                title: widget.message.fileName ?? strings.lanShare,
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (widget.message.localPath?.isNotEmpty == true)
+                      IconButton(
+                        icon: const Icon(Icons.download_rounded),
+                        tooltip: strings.lanShareExport,
+                        onPressed: () => _exportFile(context, strings),
+                      ),
+                    if (_canCopy)
+                      IconButton(
+                        icon: const Icon(Icons.copy_rounded),
+                        tooltip: strings.copy,
+                        onPressed: () => _copyPreview(context, strings),
+                      ),
+                    const CloseButton(),
+                  ],
+                ),
               ),
-            ),
-            Expanded(
-              child: FutureBuilder<_LanPreviewPayload>(
-                future: _previewFuture,
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState != ConnectionState.done) {
-                    return _PreviewLoading(strings: strings);
-                  }
-                  if (snapshot.hasError) {
-                    return _buildError(strings, snapshot.error!);
-                  }
-                  return _buildPayload(context, strings, snapshot.data!);
-                },
+              Expanded(
+                child: FutureBuilder<_LanPreviewPayload>(
+                  future: _previewFuture,
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState != ConnectionState.done) {
+                      return _PreviewLoading(strings: strings);
+                    }
+                    if (snapshot.hasError) {
+                      return _buildError(strings, snapshot.error!);
+                    }
+                    return _buildPayload(context, strings, snapshot.data!);
+                  },
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

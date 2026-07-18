@@ -689,6 +689,8 @@ class AppStrings {
   String get lanShareOpenBrowser => _en ? 'Open Link' : '打开链接';
   String get lanShareConnectServer => _en ? 'Connect Server' : '一键连接服务器';
   String get lanShareCopyText => _en ? 'Copy Text' : '复制文本';
+  String get lanShareCopyAll => _en ? 'Copy All' : '全文复制';
+  String get lanShareSelectToCopy => _en ? 'Select to Copy' : '选择复制';
   String get lanShareSendToNearby => _en ? 'Send to nearby device' : '发送至附近设备';
   String get lanShareTransferHistory => _en ? 'Transfer History' : '传输历史';
   String get lanShareNoHistory => _en ? 'No transfer history yet' : '暂无传输历史';
@@ -706,6 +708,14 @@ class AppStrings {
       ? 'Device is offline. You can view history, but cannot send new messages.'
       : '设备处于离线状态，可查看历史记录，但无法发送新消息。';
   String get lanShareClearChatHistory => _en ? 'Clear Chat History' : '清空聊天记录';
+  String get lanShareForgetDevice => _en ? 'Forget Device' : '忘记设备';
+  String get lanShareForgetConfirm => _en ? 'Unpair Device' : '解除配对';
+  String get lanShareForgetConfirmMessage => _en
+      ? 'Unpairing prevents sending new messages until re-authenticated. History is kept.'
+      : '解除配对后将无法发消息直到重新认证。历史记录会保留。';
+  String get lanShareReauthenticate => _en ? 'Re-authenticate' : '重新发起认证';
+  String get lanShareOfflineReauthHint =>
+      _en ? 'Offline. Re-authenticate when online.' : '对方已离线，恢复在线后可重新认证。';
   String get lanShareDeleteMessage => _en ? 'Delete Message' : '删除消息';
   String get lanShareChatInputHint => _en ? 'Type a message...' : '输入消息...';
   String get lanShareMessageSummaryRecalled => _en ? '[Recalled]' : '[已撤回]';
