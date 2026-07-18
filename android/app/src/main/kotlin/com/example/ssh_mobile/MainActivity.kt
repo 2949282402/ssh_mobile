@@ -21,15 +21,18 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private val channelName = "ssh_mobile/power"
     private val systemChannelName = "ssh_mobile/client_system"
+    private val lanDiscoveryChannelName = "ssh_mobile/lan_discovery"
 
     companion object {
         private const val LOCK_TIMEOUT_MS = 60 * 60 * 1000L
         private var wakeLock: PowerManager.WakeLock? = null
         private var wifiLock: WifiManager.WifiLock? = null
+        private var multicastLock: WifiManager.MulticastLock? = null
         private var releaseLocksRunnable: Runnable? = null
     }
 
     override fun onDestroy() {
+        releaseMulticastLock()
         releaseLocks()
         super.onDestroy()
     }
@@ -56,6 +59,20 @@ class MainActivity : FlutterActivity() {
                 }
                 "openAppSettings" -> {
                     openAppSettings()
+                    result.success(true)
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, lanDiscoveryChannelName).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "acquireMulticastLock" -> {
+                    acquireMulticastLock()
+                    result.success(true)
+                }
+                "releaseMulticastLock" -> {
+                    releaseMulticastLock()
                     result.success(true)
                 }
                 else -> result.notImplemented()
@@ -131,6 +148,24 @@ class MainActivity : FlutterActivity() {
             wakeLock?.release()
         }
         wakeLock = null
+    }
+
+    private fun acquireMulticastLock() {
+        if (multicastLock?.isHeld == true) return
+        val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        multicastLock = wifiManager.createMulticastLock(
+            "ssh_mobile:LanDiscoveryMulticastLock"
+        ).apply {
+            setReferenceCounted(false)
+            acquire()
+        }
+    }
+
+    private fun releaseMulticastLock() {
+        if (multicastLock?.isHeld == true) {
+            multicastLock?.release()
+        }
+        multicastLock = null
     }
 
     private fun scheduleLockTimeout() {

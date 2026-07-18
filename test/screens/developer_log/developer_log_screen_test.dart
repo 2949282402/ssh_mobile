@@ -17,7 +17,8 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
     final appSettings = AppSettings();
-    await appSettings.init();
+    await tester.runAsync(appSettings.init);
+    addTearDown(appSettings.dispose);
     final logService = AppLogService()..clear();
     final viewModel = DeveloperLogViewModel(
       appSettings: appSettings,
@@ -44,7 +45,7 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 
     expect(find.text('开发日志'), findsWidgets);

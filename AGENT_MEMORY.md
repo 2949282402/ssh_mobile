@@ -18,6 +18,13 @@ across sessions.
   context.
 
 ## Notes
+- 2026-07-17: LAN Quick Share pairing receivers initialize outside the
+  deferred LAN page. QR scans and device-list taps emit the same short-lived
+  invitation; QR URLs carry the stable device ID and native transfer port.
+  Foreground navigation merges reciprocal invitations for the active device,
+  and the pairing screen changes role when needed so simultaneous initiators
+  cannot deadlock in pending_remote. Invitations never establish trust; PIN
+  verification does, and PIN values must not be logged.
 
 - 2026-07-17: Windows terminal input keeps one multiline draft shared by the
   inline command composer and advanced keyboard. Shell-symbol keys edit the
@@ -287,6 +294,21 @@ across sessions.
   batch retryable, and marker-gated: each batch may commit independently, but
   mark complete only after every batch succeeds. Logs may report row counts
   only; never log field values.
+- 2026-07-18: `StorageService.appDatabase` can be read by root providers before
+  asynchronous storage initialization starts. Keep database creation cached and
+  single-owner, make concurrent `init()` calls share one future, reuse the same
+  instance from Drift initialization, and await `AppLogService.setDatabase`
+  before signaling Drift readiness; otherwise Windows may reject a second open
+  of the same database or retain a closed logger database in tests.
+- 2026-07-18: LAN pairing completion is reciprocal and role-independent, so
+  either peer may enter its PIN first and reciprocal invitations must preserve
+  typed input on the active route. After pairing, require peer-specific bearer
+  authentication and certificate fingerprint pinning. Ignore remote local
+  paths, confine receives and recall deletion to the LAN sandbox, bound pending
+  state and request/preview sizes, and persist interrupted incoming uploads as
+  failed after deleting partial data. Web Share uses a short-lived capability;
+  Android discovery owns a multicast lock, Apple targets declare local-network
+  service access, and Windows firewall access remains app/local-subnet scoped.
 - 2026-06-22: Agent Trace history is now a Drift-only growth store under
   `agent_trace_events`, with `StorageService` as the facade. Trace content is
   redacted, size-capped, encrypted in `content_json`, tied to assistant

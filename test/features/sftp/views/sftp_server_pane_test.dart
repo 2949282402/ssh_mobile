@@ -54,13 +54,14 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  tearDown(() {
+  tearDown(() async {
     debugDefaultTargetPlatformOverride = null;
     sftpViewModel.dispose();
     connectionViewModel.dispose();
     performanceService.dispose();
     sftpService.dispose();
     sshService.dispose();
+    await storageService.shutdown();
     storageService.dispose();
     appSettings.dispose();
   });
@@ -150,7 +151,7 @@ void main() {
           physicalSize: const Size(1200, 800),
           devicePixelRatio: 1,
         );
-        await addServers();
+        await tester.runAsync(addServers);
         sftpService.setStatus('server-1', connected: true);
 
         await tester.pumpWidget(host());
@@ -191,7 +192,7 @@ void main() {
         physicalSize: const Size(1200, 800),
         devicePixelRatio: 1,
       );
-      await addServers();
+      await tester.runAsync(addServers);
       sftpService.setStatus('server-1', busy: true);
 
       await tester.pumpWidget(host());
@@ -229,7 +230,7 @@ void main() {
         physicalSize: const Size(1200, 800),
         devicePixelRatio: 1,
       );
-      await addServers();
+      await tester.runAsync(addServers);
       sftpService.setStatus('server-1', connected: true);
 
       await tester.pumpWidget(host());
@@ -281,7 +282,7 @@ void main() {
         physicalSize: const Size(390, 844),
         devicePixelRatio: 1,
       );
-      await addServers();
+      await tester.runAsync(addServers);
       sftpService.connectSucceeds = false;
 
       await tester.pumpWidget(host());
@@ -311,7 +312,7 @@ void main() {
           physicalSize: const Size(1280, 2856),
           devicePixelRatio: 4,
         );
-        await addServers(longLabels: true);
+        await tester.runAsync(() => addServers(longLabels: true));
         sftpService.setStatus('server-1', connected: true);
 
         await tester.pumpWidget(host(textScale: 2));

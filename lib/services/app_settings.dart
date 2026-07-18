@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 import '../theme/app_theme.dart';
+import '../utils/device_name_util.dart';
 import 'app_log_service.dart';
 import 'mcp/mcp_server_settings.dart';
 
@@ -69,6 +71,8 @@ class AppSettings extends ChangeNotifier {
   static const _terminalThemeIdKey = 'terminal_theme_id';
   static const _terminalFontFamilyKey = 'terminal_font_family';
   static const _serverListLayoutModeKey = 'server_list_layout_mode';
+  static const _lanDeviceIdKey = 'lan_device_id';
+  static const _lanDeviceAliasKey = 'lan_device_alias';
   static const int minSftpLimitBytes = 64 * 1024;
   static const int maxSftpLimitBytes = 2 * 1024 * 1024 * 1024;
   static const int defaultSftpDownloadLimitBytes = 512 * 1024 * 1024;
@@ -98,6 +102,8 @@ class AppSettings extends ChangeNotifier {
   String _terminalThemeId = 'default';
   String _terminalFontFamily = '';
   String _serverListLayoutMode = 'list';
+  String _lanDeviceId = '';
+  String _lanDeviceAlias = '';
   bool _initialized = false;
   final Completer<void> _initCompleter = Completer<void>();
   Future<void> _themeWrite = Future.value();
@@ -107,6 +113,8 @@ class AppSettings extends ChangeNotifier {
 
   AppLanguage get language => _language;
   ThemeMode get themeMode => _themeMode;
+  String get lanDeviceId => _lanDeviceId;
+  String get lanDeviceAlias => _lanDeviceAlias;
   AppVisualSettingsSnapshot get visualSettings => AppVisualSettingsSnapshot(
     themeMode: _themeMode,
     oledDark: _oledDark,
@@ -200,6 +208,37 @@ class AppSettings extends ChangeNotifier {
       _terminalFontFamily = prefs.getString(_terminalFontFamilyKey) ?? '';
       _serverListLayoutMode =
           prefs.getString(_serverListLayoutModeKey) ?? 'list';
+      // Try loading device ID from secure storage first for maximum persistence,
+      // falling back to SharedPreferences, and generating if not found anywhere.
+      String secureId = '';
+      try {
+        secureId = await _secureStorage.read(key: _lanDeviceIdKey) ?? '';
+      } catch (_) {}
+
+      final prefsId = prefs.getString(_lanDeviceIdKey) ?? '';
+
+      if (secureId.isNotEmpty) {
+        _lanDeviceId = secureId;
+        if (prefsId != secureId) {
+          await prefs.setString(_lanDeviceIdKey, secureId);
+        }
+      } else if (prefsId.isNotEmpty) {
+        _lanDeviceId = prefsId;
+        try {
+          await _secureStorage.write(key: _lanDeviceIdKey, value: prefsId);
+        } catch (_) {}
+      } else {
+        _lanDeviceId = const Uuid().v4();
+        await prefs.setString(_lanDeviceIdKey, _lanDeviceId);
+        try {
+          await _secureStorage.write(key: _lanDeviceIdKey, value: _lanDeviceId);
+        } catch (_) {}
+      }
+      _lanDeviceAlias = prefs.getString(_lanDeviceAliasKey) ?? '';
+      if (_lanDeviceAlias.isEmpty) {
+        _lanDeviceAlias = await getDeviceName();
+        await prefs.setString(_lanDeviceAliasKey, _lanDeviceAlias);
+      }
     } catch (e, stackTrace) {
       AppLogService.instance.error(
         'Failed to initialize AppSettings',
@@ -228,6 +267,8 @@ class AppSettings extends ChangeNotifier {
       _terminalThemeId = 'default';
       _terminalFontFamily = '';
       _serverListLayoutMode = 'list';
+      _lanDeviceId = '';
+      _lanDeviceAlias = await getDeviceName();
     } finally {
       _initialized = true;
       if (!_initCompleter.isCompleted) {
@@ -246,6 +287,19 @@ class AppSettings extends ChangeNotifier {
     AppLogService.instance.info(
       'Language setting updated',
       details: 'language=${_language.name}',
+    );
+  }
+
+  Future<void> setLanDeviceAlias(String alias) async {
+    if (_lanDeviceAlias == alias) return;
+    _lanDeviceAlias = alias;
+    notifyListeners();
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_lanDeviceAliasKey, alias);
+    AppLogService.instance.info(
+      'LAN device alias updated',
+      details: 'alias=$alias',
     );
   }
 

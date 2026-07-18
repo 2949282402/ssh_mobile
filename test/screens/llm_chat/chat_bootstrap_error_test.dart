@@ -29,10 +29,11 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
 
     final storage = _FailOnceInitialSettingsStorage();
-    await storage.init();
     final settings = AppSettings();
-    await settings.init();
-    await settings.toggleLanguage();
+    await tester.runAsync(() async {
+      await settings.init();
+      await settings.toggleLanguage();
+    });
     final ssh = SshService(storage);
     final sftp = SftpService(storage);
     final monitor = PerformanceMonitorService(ssh, storage);
@@ -56,7 +57,8 @@ void main() {
           child: const MaterialApp(home: LlmChatScreen()),
         ),
       );
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
 
       expect(find.text('Unable to open AI chat'), findsOneWidget);
       expect(
@@ -70,7 +72,8 @@ void main() {
       expect(storage.settingsLoadAttempts, 1);
 
       await tester.tap(retry);
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
 
       expect(find.text('Unable to open AI chat'), findsNothing);
       expect(find.text('What can I help with?'), findsOneWidget);
@@ -79,7 +82,13 @@ void main() {
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
       debugDefaultTargetPlatformOverride = originalPlatform;
+      rag.dispose();
+      playbooks.dispose();
+      monitor.dispose();
+      sftp.dispose();
+      ssh.dispose();
       settings.dispose();
+      await tester.runAsync(storage.shutdown);
       storage.dispose();
     }
   });
@@ -87,6 +96,37 @@ void main() {
 
 class _FailOnceInitialSettingsStorage extends StorageService {
   int settingsLoadAttempts = 0;
+  static const _settings = AiConnectionSettings(
+    baseUrl: 'https://api.example.com',
+    model: 'example-model',
+    contextWindowTokens: 259000,
+    timeoutSeconds: 60,
+    deepSeekThinkingEnabled: false,
+    deepSeekReasoningEffort: 'medium',
+    openAiReasoningEffort: 'medium',
+    webSearchEnabled: false,
+    webSearchMaxResults: 5,
+    webSearchEngine: 'duckduckgo',
+    quarkSearchEndpoint: '',
+    hasQuarkApiKey: false,
+    multiAgentEnabled: false,
+    multiAgentMaxAgents: 2,
+    postToolReviewEnabled: true,
+    toolCallBudget: 20,
+    maxImageSizeBytes: 5 * 1024 * 1024,
+    maxFileSizeBytes: 10 * 1024 * 1024,
+    hasApiKey: false,
+    activeApiKeyId: null,
+    activeApiKeyMasked: null,
+    useCustomPrompts: false,
+    customSystemPrompt: '',
+    customPlannerPrompt: '',
+    customOperatorPrompt: '',
+    customExplorePrompt: '',
+    customReviewerPrompt: '',
+    customSummarizerPrompt: '',
+    customCoordinatorPrompt: '',
+  );
 
   @override
   Future<AiConnectionSettings> loadAiConnectionSettings() async {
@@ -94,6 +134,9 @@ class _FailOnceInitialSettingsStorage extends StorageService {
     if (settingsLoadAttempts == 1) {
       throw StateError(r'failed to read C:\private\settings.db');
     }
-    return super.loadAiConnectionSettings();
+    return _settings;
   }
+
+  @override
+  Future<List<AiChatRecord>> loadAiChats() async => const [];
 }

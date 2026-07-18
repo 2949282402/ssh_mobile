@@ -40,6 +40,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
 
   @override
   bool get isConnected => false;
+  dynamic getSftpClientForConnection(String connectionId) => null;
 
   @override
   bool get isBusy => false;

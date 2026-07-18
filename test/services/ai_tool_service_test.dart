@@ -99,10 +99,11 @@ void main() {
     );
   });
 
-  tearDown(() {
+  tearDown(() async {
+    await storage.shutdown();
+    storage.dispose();
     AppLogService.instance.clear();
     ssh.dispose();
-    storage.dispose();
     debugDefaultTargetPlatformOverride = null;
   });
   _registerAiToolCoreTests();

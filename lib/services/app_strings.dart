@@ -6,6 +6,7 @@ class AppStrings {
   const AppStrings(this.language);
 
   bool get _en => language == AppLanguage.en;
+  bool get isEnglish => _en;
 
   String get appTitle => 'SSH Mobile';
   String get switchToChinese => '中文';
@@ -641,6 +642,88 @@ class AppStrings {
   String get omServers => _en ? 'O&M Servers' : '运维服务器';
   String get notConnected => _en ? 'Not Connected' : '未连接';
   String get connectingEllipsis => _en ? 'Connecting...' : '连接中...';
+
+  // ── LAN Share ──
+  String get lanShare => _en ? 'LAN Share' : '局域网快传';
+  String get lanShareRadarHint =>
+      _en ? 'Scanning nearby devices...' : '正在雷达扫描附近设备…';
+  String get lanShareRadarStoppedHint => _en ? 'Scanning paused' : '扫描已暂停';
+  String get lanShareNoDevices => _en ? 'No nearby devices found' : '未找到附近设备';
+  String get lanShareNoDevicesRefreshHint => _en
+      ? 'No devices found. Tap refresh icon to scan again.'
+      : '未找到附近设备，请点击右上角图标重新刷新';
+  String get lanShareWebShare => _en ? 'Web Share' : '网页快传';
+  String get lanShareWebShareHint => _en
+      ? 'Scan QR code from any browser to transfer files'
+      : '无须安装 App，任意浏览器扫码即可收发文件';
+  String get lanSharePinPairing => _en ? 'PIN Verification' : 'PIN 码安全配对';
+  String get lanSharePinPrompt => _en
+      ? 'Enter the 6-digit PIN shown on target device:'
+      : '请输入目标设备上显示的 6 位 PIN 码：';
+  String get lanSharePinMismatch => _en ? 'Incorrect PIN code' : 'PIN 码不正确';
+  String get lanSharePinLocked =>
+      _en ? 'Too many failed attempts. Try again in 30s.' : '失败次数过多，请 30 秒后再试';
+  String get lanShareTrustDevice => _en ? 'Trust this device' : '信任此设备';
+  String get lanShareTrusted => _en ? 'Trusted' : '已信任';
+  String get lanShareSendClipboard => _en ? 'Send Clipboard' : '发送剪贴板';
+  String get lanShareSendFiles => _en ? 'Send Files' : '发送文件';
+  String get lanShareSelectImage => _en ? 'Select Image' : '选择图片';
+  String get lanShareSelectVideo => _en ? 'Select Video' : '选择视频';
+  String get lanShareSelectFile => _en ? 'Select File' : '选择文件';
+  String get lanShareClipboard => _en ? 'Clipboard' : '粘贴板';
+  String get lanShareSendFolder => _en ? 'Send Folder' : '发送文件夹';
+  String get lanShareSendText => _en ? 'Send Text' : '发送文本';
+  String get lanShareSending => _en ? 'Sending...' : '正在发送…';
+  String get lanShareReceiving => _en ? 'Receiving...' : '正在接收…';
+  String get lanShareCompleted => _en ? 'Completed' : '已完成';
+  String get lanShareFailed => _en ? 'Failed' : '失败';
+  String get lanShareCancelled => _en ? 'Cancelled' : '已取消';
+  String get lanShareRecall => _en ? 'Recall' : '撤回';
+  String get lanShareRecalled => _en ? 'Recalled' : '已撤回';
+  String get lanShareRecallSuccess => _en ? 'Transfer recalled' : '消息已撤回';
+  String get lanShareSavedToGallery =>
+      _en ? 'Saved to Photo Gallery' : '已保存至系统相册';
+  String get lanShareSavedToDownloads =>
+      _en ? 'Saved to Downloads' : '已保存至下载目录';
+  String get lanShareSaveFailed => _en ? 'Failed to save file' : '保存文件失败';
+  String get lanShareOpenBrowser => _en ? 'Open Link' : '打开链接';
+  String get lanShareConnectServer => _en ? 'Connect Server' : '一键连接服务器';
+  String get lanShareCopyText => _en ? 'Copy Text' : '复制文本';
+  String get lanShareSendToNearby => _en ? 'Send to nearby device' : '发送至附近设备';
+  String get lanShareTransferHistory => _en ? 'Transfer History' : '传输历史';
+  String get lanShareNoHistory => _en ? 'No transfer history yet' : '暂无传输历史';
+  String get lanShareClearHistory => _en ? 'Clear History' : '清空历史';
+  String get lanShareFileExpired =>
+      _en ? 'Expired (Auto-deleted after 7 days)' : '已过期 (7天自动销毁)';
+  String get lanShareDragDropHint =>
+      _en ? 'Drop files or folders here to send' : '拖拽文件或文件夹到此处直接发送';
+  String get lanShareStorageFull =>
+      _en ? 'Insufficient disk space' : '磁盘剩余空间不足';
+  String get lanShareExport => _en ? 'Save to Device' : '保存到本地';
+  String get lanShareOffline => _en ? 'Offline' : '离线';
+  String get lanShareOnline => _en ? 'Online' : '在线';
+  String get lanShareDeviceOfflineHint => _en
+      ? 'Device is offline. You can view history, but cannot send new messages.'
+      : '设备处于离线状态，可查看历史记录，但无法发送新消息。';
+  String get lanShareClearChatHistory => _en ? 'Clear Chat History' : '清空聊天记录';
+  String get lanShareDeleteMessage => _en ? 'Delete Message' : '删除消息';
+  String get lanShareChatInputHint => _en ? 'Type a message...' : '输入消息...';
+  String get lanShareMessageSummaryRecalled => _en ? '[Recalled]' : '[已撤回]';
+  String get lanShareMessageSummaryImage => _en ? '[Image]' : '[图片]';
+  String get lanShareMessageSummaryVideo => _en ? '[Video]' : '[视频]';
+  String get lanShareMessageSummaryAudio => _en ? '[Audio]' : '[音频]';
+  String get lanShareMessageSummaryFile => _en ? '[File]' : '[文件]';
+  String get lanShareScanOrAdd => _en ? 'Scan/Add Device' : '扫码/手动添加';
+  String get lanShareManualConnect => _en ? 'Manual Connection' : '手动输入 IP 连接';
+  String get lanShareInputIpPort => _en
+      ? 'Enter IP:Port (e.g. 192.168.1.100:53317)'
+      : '输入 IP:端口 (例如 192.168.1.100:53317)';
+  String get lanShareConnect => _en ? 'Connect' : '连接';
+  String get lanShareScanQrCode => _en ? 'Scan QR Code' : '扫码连接';
+  String get lanShareInvalidAddress => _en ? 'Invalid IP address' : '无效的 IP 地址';
+  String get lanShareCameraPermissionDenied =>
+      _en ? 'Camera permission denied' : '无法访问相机，请授予相机权限';
+  String get lanShareDeviceList => _en ? 'Devices' : '设备列表';
 }
 
 class TerminalStrings {

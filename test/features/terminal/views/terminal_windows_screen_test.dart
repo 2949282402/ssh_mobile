@@ -94,6 +94,7 @@ void main() {
     await sshService.closeFakeSessions();
     sshService.dispose();
     appSettings.dispose();
+    await storageService.shutdown();
     storageService.dispose();
   });
 

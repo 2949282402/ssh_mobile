@@ -5,14 +5,13 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/features/connection/viewmodels/connection_viewmodel.dart';
 import 'package:ssh_mobile/features/settings/viewmodels/settings_viewmodel.dart';
 import 'package:ssh_mobile/features/system_admin/viewmodels/system_admin_viewmodel.dart';
 import 'package:ssh_mobile/features/sftp/viewmodels/sftp_viewmodel.dart';
-import 'package:ssh_mobile/features/developer_log/viewmodels/developer_log_viewmodel.dart';
-import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/utils/responsive.dart';
@@ -20,15 +19,18 @@ import 'package:ssh_mobile/widgets/connection_progress_dialog.dart';
 import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
 import 'package:ssh_mobile/widgets/ssh_host_key_trust_dialog.dart';
 import 'package:ssh_mobile/widgets/tactile_feedback.dart';
-import 'package:ssh_mobile/widgets/window_name_dialog.dart';
 import 'package:ssh_mobile/widgets/app_surface.dart';
 import 'package:ssh_mobile/theme/app_theme.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
-import 'package:ssh_mobile/features/developer_log/views/developer_log_screen.dart';
 import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
 import 'package:ssh_mobile/features/sftp/views/sftp_screen.dart';
 import 'package:ssh_mobile/features/system_admin/views/system_admin_screen.dart';
 import 'package:ssh_mobile/features/terminal/views/terminal_windows_screen.dart';
+import 'package:ssh_mobile/features/lan_share/views/lan_share_screen.dart';
+import 'package:ssh_mobile/features/lan_share/utils/lan_platform_capabilities.dart';
+import 'package:ssh_mobile/features/developer_log/views/developer_log_screen.dart';
+import 'package:ssh_mobile/features/developer_log/viewmodels/developer_log_viewmodel.dart';
+import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/mcp/mcp_port_probe.dart';
 import 'package:ssh_mobile/services/mcp/mcp_server_controller.dart';
@@ -153,44 +155,60 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
 
-    return Scaffold(
-      key: _scaffoldKey,
-      extendBody: !desktop,
-      drawer: _buildSettingsDrawer(context, strings),
-      drawerEnableOpenDragGesture: _selectedIndex == _serverPage,
-      body: SafeArea(
-        bottom: false,
-        child: Stack(
-          children: [
-            _buildAdaptiveShell(
-              context,
-              content,
-              strings,
-              desktop: desktop,
-              compactKeyboardLayout: compactKeyboardLayout,
-            ),
-            if (isBusy)
-              ColoredBox(
-                color: Theme.of(
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final overlayStyle = SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+      systemNavigationBarColor: Colors.transparent,
+      systemNavigationBarIconBrightness: isDark
+          ? Brightness.light
+          : Brightness.dark,
+    );
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: overlayStyle,
+      child: AppPageSurface(
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          key: _scaffoldKey,
+          extendBody: !desktop,
+          drawer: _buildSettingsDrawer(context, strings),
+          drawerEnableOpenDragGesture: _selectedIndex == _serverPage,
+          body: SafeArea(
+            bottom: false,
+            child: Stack(
+              children: [
+                _buildAdaptiveShell(
                   context,
-                ).colorScheme.surface.withValues(alpha: 0.72),
-                child: _buildLoadingState(),
-              ),
-          ],
+                  content,
+                  strings,
+                  desktop: desktop,
+                  compactKeyboardLayout: compactKeyboardLayout,
+                ),
+                if (isBusy)
+                  ColoredBox(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surface.withValues(alpha: 0.72),
+                    child: _buildLoadingState(),
+                  ),
+              ],
+            ),
+          ),
+          floatingActionButton:
+              _selectedIndex == _serverPage && !desktop && hasConnections
+              ? FloatingActionButton(
+                  onPressed: () => Navigator.pushNamed(context, '/add'),
+                  tooltip: strings.addConnection,
+                  child: const Icon(Icons.add),
+                )
+              : null,
+          bottomNavigationBar:
+              desktop || (_selectedIndex == _aiPage && _aiHistoryVisible)
+              ? null
+              : _buildBottomNavigation(context, strings),
         ),
       ),
-      floatingActionButton:
-          _selectedIndex == _serverPage && !desktop && hasConnections
-          ? FloatingActionButton(
-              onPressed: () => Navigator.pushNamed(context, '/add'),
-              tooltip: strings.addConnection,
-              child: const Icon(Icons.add),
-            )
-          : null,
-      bottomNavigationBar:
-          desktop || (_selectedIndex == _aiPage && _aiHistoryVisible)
-          ? null
-          : _buildBottomNavigation(context, strings),
     );
   }
 
@@ -298,9 +316,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   label: Text(strings.admin),
                 ),
                 NavigationRailDestination(
-                  icon: const Icon(Icons.article_outlined),
-                  selectedIcon: const Icon(Icons.article_rounded),
-                  label: Text(strings.logs),
+                  icon: const Icon(Icons.radar_outlined),
+                  selectedIcon: const Icon(Icons.radar_rounded),
+                  label: Text(strings.lanShare),
                 ),
               ],
             ),
@@ -430,9 +448,9 @@ class _HomeScreenState extends State<HomeScreen> {
             _buildNavItem(
               context: context,
               mobileMetrics: mobileMetrics,
-              icon: const Icon(Icons.article_outlined),
-              selectedIcon: const Icon(Icons.article_rounded),
-              label: strings.logs,
+              icon: const Icon(Icons.radar_outlined),
+              selectedIcon: const Icon(Icons.radar_rounded),
+              label: strings.lanShare,
               index: _logPage,
             ),
           ],
@@ -620,13 +638,7 @@ class _HomeScreenState extends State<HomeScreen> {
               return const SystemAdminScreen();
             case _logPage:
             default:
-              return ChangeNotifierProvider(
-                create: (context) => DeveloperLogViewModel(
-                  logService: context.read<AppLogService>(),
-                  appSettings: context.read<AppSettings>(),
-                ),
-                child: const DeveloperLogPage(),
-              );
+              return const LanShareScreen();
           }
         },
       ),

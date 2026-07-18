@@ -32,40 +32,45 @@ class _DeveloperLogPageState extends State<DeveloperLogPage> {
     final viewModel = context.watch<DeveloperLogViewModel>();
     final strings = AppStrings(viewModel.language);
 
-    return AppPageSurface(
-      child: Column(
-        children: [
-          _DeveloperLogToolbar(
-            strings: strings,
-            viewModel: viewModel,
-            onCopySuccess: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(strings.copiedFilteredLogs)),
-              );
-            },
-            onDeleteSuccess: (count) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text(strings.selectedLogsDeleted(count))),
-              );
-            },
-            onClearSuccess: () {
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(SnackBar(content: Text(strings.logsCleared)));
-            },
+    return Scaffold(
+      body: AppPageSurface(
+        child: SafeArea(
+          bottom: false,
+          child: Column(
+            children: [
+              _DeveloperLogToolbar(
+                strings: strings,
+                viewModel: viewModel,
+                onCopySuccess: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(strings.copiedFilteredLogs)),
+                  );
+                },
+                onDeleteSuccess: (count) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(strings.selectedLogsDeleted(count))),
+                  );
+                },
+                onClearSuccess: () {
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text(strings.logsCleared)));
+                },
+              ),
+              Expanded(
+                child: _DeveloperLogList(
+                  strings: strings,
+                  viewModel: viewModel,
+                  onCopySingleSuccess: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(strings.copiedSingleLog)),
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
-          Expanded(
-            child: _DeveloperLogList(
-              strings: strings,
-              viewModel: viewModel,
-              onCopySingleSuccess: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(strings.copiedSingleLog)),
-                );
-              },
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -139,6 +144,20 @@ class _DeveloperLogToolbar extends StatelessWidget {
         ),
       ],
     );
+
+    final canPop = Navigator.canPop(context);
+    final leading = canPop
+        ? Padding(
+            padding: const EdgeInsets.only(right: 8.0),
+            child: IconButton(
+              key: const ValueKey('developer-log-back'),
+              icon: const Icon(Icons.arrow_back_rounded),
+              tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+              onPressed: () => Navigator.maybePop(context),
+            ),
+          )
+        : null;
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final stackedHeader =
@@ -162,18 +181,26 @@ class _DeveloperLogToolbar extends StatelessWidget {
           child: Column(
             children: [
               if (stackedHeader) ...[
-                AppPageHeader(
-                  title: viewModel.selectionMode
-                      ? strings.selectedLogs(viewModel.selectedIds.length)
-                      : strings.developerLogs,
-                  subtitle: strings.logs,
-                  icon: Icons.article_outlined,
+                Row(
+                  children: [
+                    ?leading,
+                    Expanded(
+                      child: AppPageHeader(
+                        title: viewModel.selectionMode
+                            ? strings.selectedLogs(viewModel.selectedIds.length)
+                            : strings.developerLogs,
+                        subtitle: strings.logs,
+                        icon: Icons.article_outlined,
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 8),
                 Align(alignment: Alignment.centerRight, child: actionRow),
               ] else
                 Row(
                   children: [
+                    ?leading,
                     Expanded(
                       child: AppPageHeader(
                         title: viewModel.selectionMode
@@ -312,118 +339,135 @@ class _LogEntryTileState extends State<_LogEntryTile> {
     final levelColor = _levelColor(context, level);
     final isLong = _isLong(entry.text);
 
-    return InkWell(
-      onTap: widget.selectionMode
-          ? widget.onTap
-          : isLong
-          ? () => setState(() => _expanded = !_expanded)
-          : null,
-      onLongPress: widget.onLongPress,
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(10, 9, 8, 9),
-        decoration: BoxDecoration(
-          color: widget.selected
-              ? colorScheme.primary.withValues(alpha: 0.08)
-              : colorScheme.surface.withValues(alpha: 0.72),
-          border: Border(
-            left: BorderSide(
-              color: widget.selected ? colorScheme.primary : levelColor,
-              width: widget.selected ? 3 : 2,
-            ),
-            bottom: BorderSide(
-              color: colorScheme.outlineVariant.withValues(alpha: 0.7),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: widget.selectionMode
+            ? () {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  widget.onTap();
+                });
+              }
+            : isLong
+            ? () {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) {
+                    setState(() => _expanded = !_expanded);
+                  }
+                });
+              }
+            : null,
+        onLongPress: () {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            widget.onLongPress();
+          });
+        },
+        child: Ink(
+          padding: const EdgeInsets.fromLTRB(10, 9, 8, 9),
+          decoration: BoxDecoration(
+            color: widget.selected
+                ? colorScheme.primary.withValues(alpha: 0.08)
+                : colorScheme.surface.withValues(alpha: 0.72),
+            border: Border(
+              left: BorderSide(
+                color: widget.selected ? colorScheme.primary : levelColor,
+                width: widget.selected ? 3 : 2,
+              ),
+              bottom: BorderSide(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.7),
+              ),
             ),
           ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                if (widget.selectionMode) ...[
-                  Icon(
-                    widget.selected
-                        ? Icons.check_circle_rounded
-                        : Icons.radio_button_unchecked_rounded,
-                    color: widget.selected
-                        ? colorScheme.primary
-                        : colorScheme.onSurfaceVariant,
-                    size: 20,
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 7,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: levelColor.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(
-                      color: levelColor.withValues(alpha: 0.35),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  if (widget.selectionMode) ...[
+                    Icon(
+                      widget.selected
+                          ? Icons.check_circle_rounded
+                          : Icons.radio_button_unchecked_rounded,
+                      color: widget.selected
+                          ? colorScheme.primary
+                          : colorScheme.onSurfaceVariant,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: levelColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: levelColor.withValues(alpha: 0.35),
+                      ),
+                    ),
+                    child: Text(
+                      level.labelFor(strings.language),
+                      style: TextStyle(
+                        color: levelColor,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
-                  child: Text(
-                    level.labelFor(strings.language),
-                    style: TextStyle(
-                      color: levelColor,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
+                  const Spacer(),
+                  if (!widget.selectionMode)
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      iconSize: 18,
+                      tooltip: strings.copySingleLog,
+                      onPressed: () async {
+                        await widget.viewModel.copySingleLog(entry.text);
+                        widget.onCopySingleSuccess();
+                      },
+                      icon: const Icon(Icons.copy_rounded),
                     ),
-                  ),
-                ),
-                const Spacer(),
-                if (!widget.selectionMode)
-                  IconButton(
-                    visualDensity: VisualDensity.compact,
-                    iconSize: 18,
-                    tooltip: strings.copySingleLog,
-                    onPressed: () async {
-                      await widget.viewModel.copySingleLog(entry.text);
-                      widget.onCopySingleSuccess();
-                    },
-                    icon: const Icon(Icons.copy_rounded),
-                  ),
-                if (isLong)
-                  Icon(
-                    _expanded
-                        ? Icons.keyboard_arrow_up_rounded
-                        : Icons.keyboard_arrow_down_rounded,
-                    size: 22,
-                    color: colorScheme.onSurface.withValues(alpha: 0.58),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 5),
-            OverflowScrollText(
-              entry.text,
-              maxLines: _expanded ? null : _collapsedLines,
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontFamilyFallback: [
-                  'Consolas',
-                  'Microsoft YaHei',
-                  'PingFang SC',
-                  'sans-serif',
+                  if (isLong)
+                    Icon(
+                      _expanded
+                          ? Icons.keyboard_arrow_up_rounded
+                          : Icons.keyboard_arrow_down_rounded,
+                      size: 22,
+                      color: colorScheme.onSurface.withValues(alpha: 0.58),
+                    ),
                 ],
-                fontSize: 11,
-                height: 1.35,
-                color: colorScheme.onSurface,
               ),
-            ),
-            if (isLong && !_expanded) ...[
-              const SizedBox(height: 4),
-              Text(
-                strings.expandFullLog,
+              const SizedBox(height: 5),
+              OverflowScrollText(
+                entry.text,
+                maxLines: _expanded ? null : _collapsedLines,
                 style: TextStyle(
-                  color: colorScheme.primary,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
+                  fontFamily: 'monospace',
+                  fontFamilyFallback: [
+                    'Consolas',
+                    'Microsoft YaHei',
+                    'PingFang SC',
+                    'sans-serif',
+                  ],
+                  fontSize: 11,
+                  height: 1.35,
+                  color: colorScheme.onSurface,
                 ),
               ),
+              if (isLong && !_expanded) ...[
+                const SizedBox(height: 4),
+                Text(
+                  strings.expandFullLog,
+                  style: TextStyle(
+                    color: colorScheme.primary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );

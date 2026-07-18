@@ -7,6 +7,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
 import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
+import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/playbook_service.dart';
@@ -18,50 +19,62 @@ import 'package:ssh_mobile/services/storage_service.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  Future<_PromptHarness> createHarness() async {
-    SharedPreferences.setMockInitialValues({});
-    FlutterSecureStorage.setMockInitialValues({});
-    final storage = StorageService();
-    await storage.init();
-    final initial = await storage.loadAiConnectionSettings();
-    await storage.saveAiConnectionSettings(
-      baseUrl: initial.baseUrl,
-      model: initial.model,
-      useCustomPrompts: true,
-      customSystemPrompt: 'Initial custom prompt',
-      customPlannerPrompt: 'Initial planner prompt',
-    );
+  Future<_PromptHarness> createHarness(WidgetTester tester) async {
+    final harness = await tester.runAsync(() async {
+      SharedPreferences.setMockInitialValues({});
+      FlutterSecureStorage.setMockInitialValues({});
+      final storage = StorageService();
+      await storage.init();
+      await AppLogService.instance.detachDatabase(storage.appDatabase);
+      final initial = await storage.loadAiConnectionSettings();
+      await storage.saveAiConnectionSettings(
+        baseUrl: initial.baseUrl,
+        model: initial.model,
+        useCustomPrompts: true,
+        customSystemPrompt: 'Initial custom prompt',
+        customPlannerPrompt: 'Initial planner prompt',
+      );
 
-    final appSettings = AppSettings();
-    final originalPlatform = debugDefaultTargetPlatformOverride;
-    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-    late final SshService sshService;
-    try {
-      sshService = SshService(storage);
-    } finally {
-      debugDefaultTargetPlatformOverride = originalPlatform;
+      final appSettings = AppSettings();
+      final originalPlatform = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      late final SshService sshService;
+      try {
+        sshService = SshService(storage);
+      } finally {
+        debugDefaultTargetPlatformOverride = originalPlatform;
+      }
+      final sftpService = SftpService(storage);
+      final performanceMonitor = PerformanceMonitorService(sshService, storage);
+      final playbookService = PlaybookService(
+        storageService: storage,
+        sshService: sshService,
+      );
+      final ragService = RagService(storageService: storage);
+      final viewModel = AiChatViewModel(
+        storageService: storage,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitorService: performanceMonitor,
+        playbookService: playbookService,
+        ragService: ragService,
+        appSettings: appSettings,
+      );
+      return _PromptHarness(
+        storage: storage,
+        appSettings: appSettings,
+        viewModel: viewModel,
+        sshService: sshService,
+        sftpService: sftpService,
+        performanceMonitor: performanceMonitor,
+        playbookService: playbookService,
+        ragService: ragService,
+      );
+    });
+    if (harness == null) {
+      throw StateError('Prompt harness creation did not complete');
     }
-    final sftpService = SftpService(storage);
-    final performanceMonitor = PerformanceMonitorService(sshService, storage);
-    final playbookService = PlaybookService(
-      storageService: storage,
-      sshService: sshService,
-    );
-    final ragService = RagService(storageService: storage);
-    final viewModel = AiChatViewModel(
-      storageService: storage,
-      sshService: sshService,
-      sftpService: sftpService,
-      performanceMonitorService: performanceMonitor,
-      playbookService: playbookService,
-      ragService: ragService,
-      appSettings: appSettings,
-    );
-    return _PromptHarness(
-      storage: storage,
-      appSettings: appSettings,
-      viewModel: viewModel,
-    );
+    return harness;
   }
 
   Widget testApp(_PromptHarness harness) {
@@ -118,8 +131,10 @@ void main() {
     tester.view.devicePixelRatio = 3.5;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final harness = await createHarness();
-    addTearDown(harness.dispose);
+    final harness = await createHarness(tester);
+    addTearDown(() async {
+      await tester.runAsync(harness.dispose);
+    });
     await openPrompts(tester, harness);
 
     final editor = find.byKey(
@@ -166,7 +181,12 @@ void main() {
     await tester.tap(save);
     await tester.pumpAndSettle();
     expect(find.byType(PromptCustomizerDialog), findsNothing);
-    final stored = await harness.storage.loadAiConnectionSettings();
+    final stored = await tester.runAsync(
+      harness.storage.loadAiConnectionSettings,
+    );
+    if (stored == null) {
+      throw StateError('Prompt settings load did not complete');
+    }
     expect(stored.useCustomPrompts, isTrue);
     expect(stored.customSystemPrompt, 'Edited custom prompt');
     expect(tester.takeException(), isNull);
@@ -180,8 +200,10 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.view.resetViewInsets);
-    final harness = await createHarness();
-    addTearDown(harness.dispose);
+    final harness = await createHarness(tester);
+    addTearDown(() async {
+      await tester.runAsync(harness.dispose);
+    });
     await openPrompts(tester, harness);
 
     tester.view.viewInsets = const FakeViewPadding(bottom: 660);
@@ -211,15 +233,31 @@ class _PromptHarness {
     required this.storage,
     required this.appSettings,
     required this.viewModel,
+    required this.sshService,
+    required this.sftpService,
+    required this.performanceMonitor,
+    required this.playbookService,
+    required this.ragService,
   });
 
   final StorageService storage;
   final AppSettings appSettings;
   final AiChatViewModel viewModel;
+  final SshService sshService;
+  final SftpService sftpService;
+  final PerformanceMonitorService performanceMonitor;
+  final PlaybookService playbookService;
+  final RagService ragService;
 
-  void dispose() {
+  Future<void> dispose() async {
     viewModel.dispose();
+    ragService.dispose();
+    playbookService.dispose();
+    performanceMonitor.dispose();
+    sftpService.dispose();
+    sshService.dispose();
     appSettings.dispose();
+    await storage.shutdown();
     storage.dispose();
   }
 }

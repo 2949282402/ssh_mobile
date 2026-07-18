@@ -11,6 +11,7 @@ class _ChatHeader extends StatelessWidget {
     required this.onShowHistory,
     required this.onNewChat,
     required this.newChatInFlight,
+
     required this.onShowSettings,
     required this.settingsOpening,
   });
@@ -54,103 +55,88 @@ class _ChatHeader extends StatelessWidget {
             ? 0.0
             : snapshot.contextTokens / snapshot.contextWindowTokens;
 
-        return ClipRect(
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(14, 9, 12, 9),
-              decoration: BoxDecoration(
-                color: colorScheme.surface.withValues(alpha: 0.9),
-                border: Border(
-                  bottom: BorderSide(
-                    color: colorScheme.outline.withValues(alpha: 0.72),
+        return Container(
+          padding: const EdgeInsets.fromLTRB(14, 9, 12, 9),
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: strings.history,
+                icon: const Icon(Icons.menu_rounded),
+                style: IconButton.styleFrom(
+                  foregroundColor: colorScheme.primary,
+                  backgroundColor: colorScheme.primary.withValues(alpha: 0.1),
+                ),
+                onPressed: onShowHistory,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TweenAnimationBuilder<double>(
+                  key: ValueKey('chat-title-${snapshot.chatId}'),
+                  tween: Tween(begin: 0, end: 1),
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOutCubic,
+                  builder: (context, value, child) {
+                    return Opacity(
+                      opacity: value,
+                      child: Transform.translate(
+                        offset: Offset(12 * (1 - value), 0),
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      OverflowScrollText(
+                        snapshot.title,
+                        selectable: false,
+                        maxLines: 1,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.2,
+                        ),
+                      ),
+                      OverflowScrollText(
+                        _contextUsage(
+                          snapshot.contextTokens,
+                          snapshot.contextWindowTokens,
+                          contextPercent,
+                        ),
+                        selectable: false,
+                        maxLines: 1,
+                        style: TextStyle(
+                          color: colorScheme.onSurfaceVariant,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-              child: Row(
-                children: [
-                  IconButton(
-                    tooltip: strings.history,
-                    icon: const Icon(Icons.menu_rounded),
-                    style: IconButton.styleFrom(
-                      foregroundColor: colorScheme.primary,
-                      backgroundColor: colorScheme.primary.withValues(
-                        alpha: 0.1,
-                      ),
-                    ),
-                    onPressed: onShowHistory,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TweenAnimationBuilder<double>(
-                      key: ValueKey('chat-title-${snapshot.chatId}'),
-                      tween: Tween(begin: 0, end: 1),
-                      duration: const Duration(milliseconds: 220),
-                      curve: Curves.easeOutCubic,
-                      builder: (context, value, child) {
-                        return Opacity(
-                          opacity: value,
-                          child: Transform.translate(
-                            offset: Offset(12 * (1 - value), 0),
-                            child: child,
-                          ),
-                        );
-                      },
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          OverflowScrollText(
-                            snapshot.title,
-                            selectable: false,
-                            maxLines: 1,
-                            style: const TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: -0.2,
-                            ),
-                          ),
-                          OverflowScrollText(
-                            _contextUsage(
-                              snapshot.contextTokens,
-                              snapshot.contextWindowTokens,
-                              contextPercent,
-                            ),
-                            selectable: false,
-                            maxLines: 1,
-                            style: TextStyle(
-                              color: colorScheme.onSurfaceVariant,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: strings.newChat,
-                    icon: newChatInFlight
-                        ? const SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.add_comment_outlined),
-                    onPressed: snapshot.sending || newChatInFlight
-                        ? null
-                        : onNewChat,
-                  ),
-                  SizedBox.square(
-                    key: const ValueKey('chat-open-llm-settings'),
-                    dimension: 48,
-                    child: IconButton(
-                      key: const ValueKey('chat-open-llm-settings-button'),
-                      tooltip: strings.settings,
-                      icon: const Icon(Icons.tune_rounded),
-                      onPressed: settingsOpening ? null : onShowSettings,
-                    ),
-                  ),
-                ],
+              IconButton(
+                tooltip: strings.newChat,
+                icon: newChatInFlight
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.add_comment_outlined),
+                onPressed: snapshot.sending || newChatInFlight
+                    ? null
+                    : onNewChat,
               ),
-            ),
+              SizedBox.square(
+                key: const ValueKey('chat-open-llm-settings'),
+                dimension: 48,
+                child: IconButton(
+                  key: const ValueKey('chat-open-llm-settings-button'),
+                  tooltip: strings.settings,
+                  icon: const Icon(Icons.tune_rounded),
+                  onPressed: settingsOpening ? null : onShowSettings,
+                ),
+              ),
+            ],
           ),
         );
       },

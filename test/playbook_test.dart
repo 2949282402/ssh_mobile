@@ -246,7 +246,9 @@ void main() {
       service = PlaybookService(storageService: storage, sshService: ssh);
     });
 
-    tearDown(() {
+    tearDown(() async {
+      await storage.shutdown();
+      storage.dispose();
       debugDefaultTargetPlatformOverride = null;
     });
 

@@ -49,11 +49,12 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  tearDown(() {
+  tearDown(() async {
     connectionViewModel.dispose();
     performanceService.dispose();
     sftpService.dispose();
     sshService.dispose();
+    await storageService.shutdown();
     storageService.dispose();
     appSettings.dispose();
     debugDefaultTargetPlatformOverride = null;
@@ -139,18 +140,20 @@ void main() {
           physicalSize: profile.size,
           devicePixelRatio: profile.dpr,
         );
-        await appSettings.setServerListLayoutMode('grid');
-        await storageService.addConnection(
-          ConnectionConfig(
-            id: 'server-1',
-            name: 'Production gateway with a long server name',
-            host: '2001:db8:85a3::8a2e:370:7334',
-            port: 22,
-            username: 'deployment-user',
-            authMethod: AuthMethod.password,
-          ),
-        );
-        await connectionViewModel.fetchConnections();
+        await tester.runAsync(() async {
+          await appSettings.setServerListLayoutMode('grid');
+          await storageService.addConnection(
+            ConnectionConfig(
+              id: 'server-1',
+              name: 'Production gateway with a long server name',
+              host: '2001:db8:85a3::8a2e:370:7334',
+              port: 22,
+              username: 'deployment-user',
+              authMethod: AuthMethod.password,
+            ),
+          );
+          await connectionViewModel.fetchConnections();
+        });
         sshService.setServerOverview(
           const SshServerOverviewSnapshot(
             byConnection: {

@@ -87,12 +87,14 @@ class AppPageHeader extends StatelessWidget {
     super.key,
     required this.title,
     this.subtitle,
+    this.subtitleWidget,
     this.icon,
     this.trailing,
   });
 
   final String title;
   final String? subtitle;
+  final Widget? subtitleWidget;
   final IconData? icon;
   final Widget? trailing;
 
@@ -119,7 +121,10 @@ class AppPageHeader extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.headlineSmall,
               ),
-              if (subtitle != null && subtitle!.isNotEmpty) ...[
+              if (subtitleWidget != null) ...[
+                const SizedBox(height: 3),
+                subtitleWidget!,
+              ] else if (subtitle != null && subtitle!.isNotEmpty) ...[
                 const SizedBox(height: 3),
                 Text(
                   subtitle!,

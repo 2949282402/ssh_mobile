@@ -37,6 +37,13 @@ class SettingsViewModel extends ChangeNotifier {
   // APP设置暴露
   AppLanguage get language => _appSettings.language;
   ThemeMode get themeMode => _appSettings.themeMode;
+  String get lanDeviceId => _appSettings.lanDeviceId;
+  String get lanDeviceAlias => _appSettings.lanDeviceAlias;
+
+  Future<void> setLanDeviceAlias(String alias) async {
+    await _appSettings.setLanDeviceAlias(alias);
+  }
+
   int get sftpDownloadLimitBytes => _appSettings.sftpDownloadLimitBytes;
   int get sftpTextPreviewLimitBytes => _appSettings.sftpTextPreviewLimitBytes;
   int get sftpRichPreviewLimitBytes => _appSettings.sftpRichPreviewLimitBytes;

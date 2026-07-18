@@ -48,7 +48,9 @@ void main() {
     };
   });
 
-  tearDown(() {
+  tearDown(() async {
+    adminService.dispose();
+    await storageService.shutdown();
     storageService.dispose();
   });
 

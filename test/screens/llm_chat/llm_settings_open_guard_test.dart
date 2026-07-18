@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ssh_mobile/data/database/app_database.dart';
 import 'package:ssh_mobile/features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
 import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
@@ -40,23 +41,29 @@ void main() {
     final settings = AppSettings();
     final active = ValueNotifier<bool>(true);
     addTearDown(active.dispose);
-    final logs = AppLogService.instance;
-    logs.clear();
+    late final AppLogService logs;
+
+    late final SshService ssh;
+    late final SftpService sftp;
+    late final PerformanceMonitorService monitor;
+    late final PlaybookService playbooks;
+    late final RagService rag;
+    await tester.runAsync(() async {
+      logs = AppLogService.instance;
+      logs.clear();
+      await storage.init();
+      await logs.detachDatabase(storage.appDatabase);
+      await settings.init();
+      await settings.toggleLanguage();
+      ssh = SshService(storage);
+      sftp = SftpService(storage);
+      monitor = PerformanceMonitorService(ssh, storage);
+      playbooks = PlaybookService(storageService: storage, sshService: ssh);
+      rag = RagService(storageService: storage);
+    });
     addTearDown(logs.clear);
 
     try {
-      await storage.init();
-      await settings.init();
-      await settings.toggleLanguage();
-      final ssh = SshService(storage);
-      final sftp = SftpService(storage);
-      final monitor = PerformanceMonitorService(ssh, storage);
-      final playbooks = PlaybookService(
-        storageService: storage,
-        sshService: ssh,
-      );
-      final rag = RagService(storageService: storage);
-
       await tester.pumpWidget(
         MultiProvider(
           providers: [
@@ -291,14 +298,16 @@ void main() {
         'private-audit-model',
         'https://private-quark.example/search?token=quark-secret',
       ];
-      await storage.saveAiConnectionSettings(
-        baseUrl: sensitiveSettingsValues[0],
-        model: sensitiveSettingsValues[1],
-        helperModel: sensitiveSettingsValues[2],
-        auditModel: sensitiveSettingsValues[3],
-        quarkSearchEndpoint: sensitiveSettingsValues[4],
-        apiKey: 'valid-api-key-marker-for-log-test',
-      );
+      await tester.runAsync(() async {
+        await storage.saveAiConnectionSettings(
+          baseUrl: sensitiveSettingsValues[0],
+          model: sensitiveSettingsValues[1],
+          helperModel: sensitiveSettingsValues[2],
+          auditModel: sensitiveSettingsValues[3],
+          quarkSearchEndpoint: sensitiveSettingsValues[4],
+          apiKey: 'valid-api-key-marker-for-log-test',
+        );
+      });
       final savedSettingsLog = logs.entries.singleWhere(
         (entry) => entry.message == 'LLM settings saved',
       );
@@ -330,14 +339,16 @@ void main() {
       const rejectedBaseUrl =
           'https://private-rejected.example/v1?token=rejected-secret';
       const rejectedModel = 'private-rejected-model';
-      await expectLater(
-        storage.saveAiConnectionSettings(
-          baseUrl: rejectedBaseUrl,
-          model: rejectedModel,
-          apiKey: 'invalid-key\nsecret',
-        ),
-        throwsA(isA<FormatException>()),
-      );
+      await tester.runAsync(() async {
+        await expectLater(
+          storage.saveAiConnectionSettings(
+            baseUrl: rejectedBaseUrl,
+            model: rejectedModel,
+            apiKey: 'invalid-key\nsecret',
+          ),
+          throwsA(isA<FormatException>()),
+        );
+      });
       final rejectedSettingsLog = logs.entries.singleWhere(
         (entry) => entry.message == 'LLM settings rejected invalid API key',
       );
@@ -366,7 +377,15 @@ void main() {
       await tester.pumpAndSettle();
       await tester.pumpWidget(const SizedBox.shrink());
       debugDefaultTargetPlatformOverride = originalPlatform;
+      rag.dispose();
+      playbooks.dispose();
+      monitor.dispose();
+      sftp.dispose();
+      ssh.dispose();
       settings.dispose();
+      await tester.runAsync(() async {
+        await storage.shutdown();
+      });
       storage.dispose();
     }
   });
@@ -374,6 +393,8 @@ void main() {
 
 class _GuardedSettingsStorage extends StorageService {
   static const alternateModel = 'settings-apply-test-model';
+
+  _GuardedSettingsStorage() : super(databaseFactory: AppDatabase.forTesting);
 
   int settingsLoads = 0;
   int chatSaveAttempts = 0;

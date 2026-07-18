@@ -6606,6 +6606,1458 @@ class SftpFavoritePathsCompanion extends UpdateCompanion<SftpFavoritePath> {
   }
 }
 
+class $LanTransferRecordsTable extends LanTransferRecords
+    with TableInfo<$LanTransferRecordsTable, LanTransferRecord> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LanTransferRecordsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _senderIdMeta = const VerificationMeta(
+    'senderId',
+  );
+  @override
+  late final GeneratedColumn<String> senderId = GeneratedColumn<String>(
+    'sender_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _senderAliasMeta = const VerificationMeta(
+    'senderAlias',
+  );
+  @override
+  late final GeneratedColumn<String> senderAlias = GeneratedColumn<String>(
+    'sender_alias',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _receiverIdMeta = const VerificationMeta(
+    'receiverId',
+  );
+  @override
+  late final GeneratedColumn<String> receiverId = GeneratedColumn<String>(
+    'receiver_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _payloadTypeMeta = const VerificationMeta(
+    'payloadType',
+  );
+  @override
+  late final GeneratedColumn<String> payloadType = GeneratedColumn<String>(
+    'payload_type',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _textContentMeta = const VerificationMeta(
+    'textContent',
+  );
+  @override
+  late final GeneratedColumn<String> textContent = GeneratedColumn<String>(
+    'text_content',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _fileNameMeta = const VerificationMeta(
+    'fileName',
+  );
+  @override
+  late final GeneratedColumn<String> fileName = GeneratedColumn<String>(
+    'file_name',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _fileSizeMeta = const VerificationMeta(
+    'fileSize',
+  );
+  @override
+  late final GeneratedColumn<int> fileSize = GeneratedColumn<int>(
+    'file_size',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _localPathMeta = const VerificationMeta(
+    'localPath',
+  );
+  @override
+  late final GeneratedColumn<String> localPath = GeneratedColumn<String>(
+    'local_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _manifestJsonMeta = const VerificationMeta(
+    'manifestJson',
+  );
+  @override
+  late final GeneratedColumn<String> manifestJson = GeneratedColumn<String>(
+    'manifest_json',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _statusMeta = const VerificationMeta('status');
+  @override
+  late final GeneratedColumn<String> status = GeneratedColumn<String>(
+    'status',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _bytesTransferredMeta = const VerificationMeta(
+    'bytesTransferred',
+  );
+  @override
+  late final GeneratedColumn<int> bytesTransferred = GeneratedColumn<int>(
+    'bytes_transferred',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _isIncomingMeta = const VerificationMeta(
+    'isIncoming',
+  );
+  @override
+  late final GeneratedColumn<bool> isIncoming = GeneratedColumn<bool>(
+    'is_incoming',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_incoming" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _isRecalledMeta = const VerificationMeta(
+    'isRecalled',
+  );
+  @override
+  late final GeneratedColumn<bool> isRecalled = GeneratedColumn<bool>(
+    'is_recalled',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_recalled" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _sftpServerIdMeta = const VerificationMeta(
+    'sftpServerId',
+  );
+  @override
+  late final GeneratedColumn<String> sftpServerId = GeneratedColumn<String>(
+    'sftp_server_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _sftpRemotePathMeta = const VerificationMeta(
+    'sftpRemotePath',
+  );
+  @override
+  late final GeneratedColumn<String> sftpRemotePath = GeneratedColumn<String>(
+    'sftp_remote_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    senderId,
+    senderAlias,
+    receiverId,
+    payloadType,
+    textContent,
+    fileName,
+    fileSize,
+    localPath,
+    manifestJson,
+    status,
+    bytesTransferred,
+    createdAt,
+    isIncoming,
+    isRecalled,
+    sftpServerId,
+    sftpRemotePath,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'lan_transfer_records';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<LanTransferRecord> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('sender_id')) {
+      context.handle(
+        _senderIdMeta,
+        senderId.isAcceptableOrUnknown(data['sender_id']!, _senderIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_senderIdMeta);
+    }
+    if (data.containsKey('sender_alias')) {
+      context.handle(
+        _senderAliasMeta,
+        senderAlias.isAcceptableOrUnknown(
+          data['sender_alias']!,
+          _senderAliasMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_senderAliasMeta);
+    }
+    if (data.containsKey('receiver_id')) {
+      context.handle(
+        _receiverIdMeta,
+        receiverId.isAcceptableOrUnknown(data['receiver_id']!, _receiverIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_receiverIdMeta);
+    }
+    if (data.containsKey('payload_type')) {
+      context.handle(
+        _payloadTypeMeta,
+        payloadType.isAcceptableOrUnknown(
+          data['payload_type']!,
+          _payloadTypeMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_payloadTypeMeta);
+    }
+    if (data.containsKey('text_content')) {
+      context.handle(
+        _textContentMeta,
+        textContent.isAcceptableOrUnknown(
+          data['text_content']!,
+          _textContentMeta,
+        ),
+      );
+    }
+    if (data.containsKey('file_name')) {
+      context.handle(
+        _fileNameMeta,
+        fileName.isAcceptableOrUnknown(data['file_name']!, _fileNameMeta),
+      );
+    }
+    if (data.containsKey('file_size')) {
+      context.handle(
+        _fileSizeMeta,
+        fileSize.isAcceptableOrUnknown(data['file_size']!, _fileSizeMeta),
+      );
+    }
+    if (data.containsKey('local_path')) {
+      context.handle(
+        _localPathMeta,
+        localPath.isAcceptableOrUnknown(data['local_path']!, _localPathMeta),
+      );
+    }
+    if (data.containsKey('manifest_json')) {
+      context.handle(
+        _manifestJsonMeta,
+        manifestJson.isAcceptableOrUnknown(
+          data['manifest_json']!,
+          _manifestJsonMeta,
+        ),
+      );
+    }
+    if (data.containsKey('status')) {
+      context.handle(
+        _statusMeta,
+        status.isAcceptableOrUnknown(data['status']!, _statusMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_statusMeta);
+    }
+    if (data.containsKey('bytes_transferred')) {
+      context.handle(
+        _bytesTransferredMeta,
+        bytesTransferred.isAcceptableOrUnknown(
+          data['bytes_transferred']!,
+          _bytesTransferredMeta,
+        ),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('is_incoming')) {
+      context.handle(
+        _isIncomingMeta,
+        isIncoming.isAcceptableOrUnknown(data['is_incoming']!, _isIncomingMeta),
+      );
+    }
+    if (data.containsKey('is_recalled')) {
+      context.handle(
+        _isRecalledMeta,
+        isRecalled.isAcceptableOrUnknown(data['is_recalled']!, _isRecalledMeta),
+      );
+    }
+    if (data.containsKey('sftp_server_id')) {
+      context.handle(
+        _sftpServerIdMeta,
+        sftpServerId.isAcceptableOrUnknown(
+          data['sftp_server_id']!,
+          _sftpServerIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('sftp_remote_path')) {
+      context.handle(
+        _sftpRemotePathMeta,
+        sftpRemotePath.isAcceptableOrUnknown(
+          data['sftp_remote_path']!,
+          _sftpRemotePathMeta,
+        ),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  LanTransferRecord map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LanTransferRecord(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      senderId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}sender_id'],
+      )!,
+      senderAlias: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}sender_alias'],
+      )!,
+      receiverId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}receiver_id'],
+      )!,
+      payloadType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}payload_type'],
+      )!,
+      textContent: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}text_content'],
+      ),
+      fileName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}file_name'],
+      ),
+      fileSize: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}file_size'],
+      )!,
+      localPath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}local_path'],
+      ),
+      manifestJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}manifest_json'],
+      ),
+      status: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}status'],
+      )!,
+      bytesTransferred: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}bytes_transferred'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}created_at'],
+      )!,
+      isIncoming: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_incoming'],
+      )!,
+      isRecalled: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_recalled'],
+      )!,
+      sftpServerId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}sftp_server_id'],
+      ),
+      sftpRemotePath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}sftp_remote_path'],
+      ),
+    );
+  }
+
+  @override
+  $LanTransferRecordsTable createAlias(String alias) {
+    return $LanTransferRecordsTable(attachedDatabase, alias);
+  }
+}
+
+class LanTransferRecord extends DataClass
+    implements Insertable<LanTransferRecord> {
+  final String id;
+  final String senderId;
+  final String senderAlias;
+  final String receiverId;
+  final String payloadType;
+  final String? textContent;
+  final String? fileName;
+  final int fileSize;
+  final String? localPath;
+  final String? manifestJson;
+  final String status;
+  final int bytesTransferred;
+  final int createdAt;
+  final bool isIncoming;
+  final bool isRecalled;
+  final String? sftpServerId;
+  final String? sftpRemotePath;
+  const LanTransferRecord({
+    required this.id,
+    required this.senderId,
+    required this.senderAlias,
+    required this.receiverId,
+    required this.payloadType,
+    this.textContent,
+    this.fileName,
+    required this.fileSize,
+    this.localPath,
+    this.manifestJson,
+    required this.status,
+    required this.bytesTransferred,
+    required this.createdAt,
+    required this.isIncoming,
+    required this.isRecalled,
+    this.sftpServerId,
+    this.sftpRemotePath,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['sender_id'] = Variable<String>(senderId);
+    map['sender_alias'] = Variable<String>(senderAlias);
+    map['receiver_id'] = Variable<String>(receiverId);
+    map['payload_type'] = Variable<String>(payloadType);
+    if (!nullToAbsent || textContent != null) {
+      map['text_content'] = Variable<String>(textContent);
+    }
+    if (!nullToAbsent || fileName != null) {
+      map['file_name'] = Variable<String>(fileName);
+    }
+    map['file_size'] = Variable<int>(fileSize);
+    if (!nullToAbsent || localPath != null) {
+      map['local_path'] = Variable<String>(localPath);
+    }
+    if (!nullToAbsent || manifestJson != null) {
+      map['manifest_json'] = Variable<String>(manifestJson);
+    }
+    map['status'] = Variable<String>(status);
+    map['bytes_transferred'] = Variable<int>(bytesTransferred);
+    map['created_at'] = Variable<int>(createdAt);
+    map['is_incoming'] = Variable<bool>(isIncoming);
+    map['is_recalled'] = Variable<bool>(isRecalled);
+    if (!nullToAbsent || sftpServerId != null) {
+      map['sftp_server_id'] = Variable<String>(sftpServerId);
+    }
+    if (!nullToAbsent || sftpRemotePath != null) {
+      map['sftp_remote_path'] = Variable<String>(sftpRemotePath);
+    }
+    return map;
+  }
+
+  LanTransferRecordsCompanion toCompanion(bool nullToAbsent) {
+    return LanTransferRecordsCompanion(
+      id: Value(id),
+      senderId: Value(senderId),
+      senderAlias: Value(senderAlias),
+      receiverId: Value(receiverId),
+      payloadType: Value(payloadType),
+      textContent: textContent == null && nullToAbsent
+          ? const Value.absent()
+          : Value(textContent),
+      fileName: fileName == null && nullToAbsent
+          ? const Value.absent()
+          : Value(fileName),
+      fileSize: Value(fileSize),
+      localPath: localPath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(localPath),
+      manifestJson: manifestJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(manifestJson),
+      status: Value(status),
+      bytesTransferred: Value(bytesTransferred),
+      createdAt: Value(createdAt),
+      isIncoming: Value(isIncoming),
+      isRecalled: Value(isRecalled),
+      sftpServerId: sftpServerId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sftpServerId),
+      sftpRemotePath: sftpRemotePath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sftpRemotePath),
+    );
+  }
+
+  factory LanTransferRecord.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LanTransferRecord(
+      id: serializer.fromJson<String>(json['id']),
+      senderId: serializer.fromJson<String>(json['senderId']),
+      senderAlias: serializer.fromJson<String>(json['senderAlias']),
+      receiverId: serializer.fromJson<String>(json['receiverId']),
+      payloadType: serializer.fromJson<String>(json['payloadType']),
+      textContent: serializer.fromJson<String?>(json['textContent']),
+      fileName: serializer.fromJson<String?>(json['fileName']),
+      fileSize: serializer.fromJson<int>(json['fileSize']),
+      localPath: serializer.fromJson<String?>(json['localPath']),
+      manifestJson: serializer.fromJson<String?>(json['manifestJson']),
+      status: serializer.fromJson<String>(json['status']),
+      bytesTransferred: serializer.fromJson<int>(json['bytesTransferred']),
+      createdAt: serializer.fromJson<int>(json['createdAt']),
+      isIncoming: serializer.fromJson<bool>(json['isIncoming']),
+      isRecalled: serializer.fromJson<bool>(json['isRecalled']),
+      sftpServerId: serializer.fromJson<String?>(json['sftpServerId']),
+      sftpRemotePath: serializer.fromJson<String?>(json['sftpRemotePath']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'senderId': serializer.toJson<String>(senderId),
+      'senderAlias': serializer.toJson<String>(senderAlias),
+      'receiverId': serializer.toJson<String>(receiverId),
+      'payloadType': serializer.toJson<String>(payloadType),
+      'textContent': serializer.toJson<String?>(textContent),
+      'fileName': serializer.toJson<String?>(fileName),
+      'fileSize': serializer.toJson<int>(fileSize),
+      'localPath': serializer.toJson<String?>(localPath),
+      'manifestJson': serializer.toJson<String?>(manifestJson),
+      'status': serializer.toJson<String>(status),
+      'bytesTransferred': serializer.toJson<int>(bytesTransferred),
+      'createdAt': serializer.toJson<int>(createdAt),
+      'isIncoming': serializer.toJson<bool>(isIncoming),
+      'isRecalled': serializer.toJson<bool>(isRecalled),
+      'sftpServerId': serializer.toJson<String?>(sftpServerId),
+      'sftpRemotePath': serializer.toJson<String?>(sftpRemotePath),
+    };
+  }
+
+  LanTransferRecord copyWith({
+    String? id,
+    String? senderId,
+    String? senderAlias,
+    String? receiverId,
+    String? payloadType,
+    Value<String?> textContent = const Value.absent(),
+    Value<String?> fileName = const Value.absent(),
+    int? fileSize,
+    Value<String?> localPath = const Value.absent(),
+    Value<String?> manifestJson = const Value.absent(),
+    String? status,
+    int? bytesTransferred,
+    int? createdAt,
+    bool? isIncoming,
+    bool? isRecalled,
+    Value<String?> sftpServerId = const Value.absent(),
+    Value<String?> sftpRemotePath = const Value.absent(),
+  }) => LanTransferRecord(
+    id: id ?? this.id,
+    senderId: senderId ?? this.senderId,
+    senderAlias: senderAlias ?? this.senderAlias,
+    receiverId: receiverId ?? this.receiverId,
+    payloadType: payloadType ?? this.payloadType,
+    textContent: textContent.present ? textContent.value : this.textContent,
+    fileName: fileName.present ? fileName.value : this.fileName,
+    fileSize: fileSize ?? this.fileSize,
+    localPath: localPath.present ? localPath.value : this.localPath,
+    manifestJson: manifestJson.present ? manifestJson.value : this.manifestJson,
+    status: status ?? this.status,
+    bytesTransferred: bytesTransferred ?? this.bytesTransferred,
+    createdAt: createdAt ?? this.createdAt,
+    isIncoming: isIncoming ?? this.isIncoming,
+    isRecalled: isRecalled ?? this.isRecalled,
+    sftpServerId: sftpServerId.present ? sftpServerId.value : this.sftpServerId,
+    sftpRemotePath: sftpRemotePath.present
+        ? sftpRemotePath.value
+        : this.sftpRemotePath,
+  );
+  LanTransferRecord copyWithCompanion(LanTransferRecordsCompanion data) {
+    return LanTransferRecord(
+      id: data.id.present ? data.id.value : this.id,
+      senderId: data.senderId.present ? data.senderId.value : this.senderId,
+      senderAlias: data.senderAlias.present
+          ? data.senderAlias.value
+          : this.senderAlias,
+      receiverId: data.receiverId.present
+          ? data.receiverId.value
+          : this.receiverId,
+      payloadType: data.payloadType.present
+          ? data.payloadType.value
+          : this.payloadType,
+      textContent: data.textContent.present
+          ? data.textContent.value
+          : this.textContent,
+      fileName: data.fileName.present ? data.fileName.value : this.fileName,
+      fileSize: data.fileSize.present ? data.fileSize.value : this.fileSize,
+      localPath: data.localPath.present ? data.localPath.value : this.localPath,
+      manifestJson: data.manifestJson.present
+          ? data.manifestJson.value
+          : this.manifestJson,
+      status: data.status.present ? data.status.value : this.status,
+      bytesTransferred: data.bytesTransferred.present
+          ? data.bytesTransferred.value
+          : this.bytesTransferred,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      isIncoming: data.isIncoming.present
+          ? data.isIncoming.value
+          : this.isIncoming,
+      isRecalled: data.isRecalled.present
+          ? data.isRecalled.value
+          : this.isRecalled,
+      sftpServerId: data.sftpServerId.present
+          ? data.sftpServerId.value
+          : this.sftpServerId,
+      sftpRemotePath: data.sftpRemotePath.present
+          ? data.sftpRemotePath.value
+          : this.sftpRemotePath,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LanTransferRecord(')
+          ..write('id: $id, ')
+          ..write('senderId: $senderId, ')
+          ..write('senderAlias: $senderAlias, ')
+          ..write('receiverId: $receiverId, ')
+          ..write('payloadType: $payloadType, ')
+          ..write('textContent: $textContent, ')
+          ..write('fileName: $fileName, ')
+          ..write('fileSize: $fileSize, ')
+          ..write('localPath: $localPath, ')
+          ..write('manifestJson: $manifestJson, ')
+          ..write('status: $status, ')
+          ..write('bytesTransferred: $bytesTransferred, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('isIncoming: $isIncoming, ')
+          ..write('isRecalled: $isRecalled, ')
+          ..write('sftpServerId: $sftpServerId, ')
+          ..write('sftpRemotePath: $sftpRemotePath')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    senderId,
+    senderAlias,
+    receiverId,
+    payloadType,
+    textContent,
+    fileName,
+    fileSize,
+    localPath,
+    manifestJson,
+    status,
+    bytesTransferred,
+    createdAt,
+    isIncoming,
+    isRecalled,
+    sftpServerId,
+    sftpRemotePath,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LanTransferRecord &&
+          other.id == this.id &&
+          other.senderId == this.senderId &&
+          other.senderAlias == this.senderAlias &&
+          other.receiverId == this.receiverId &&
+          other.payloadType == this.payloadType &&
+          other.textContent == this.textContent &&
+          other.fileName == this.fileName &&
+          other.fileSize == this.fileSize &&
+          other.localPath == this.localPath &&
+          other.manifestJson == this.manifestJson &&
+          other.status == this.status &&
+          other.bytesTransferred == this.bytesTransferred &&
+          other.createdAt == this.createdAt &&
+          other.isIncoming == this.isIncoming &&
+          other.isRecalled == this.isRecalled &&
+          other.sftpServerId == this.sftpServerId &&
+          other.sftpRemotePath == this.sftpRemotePath);
+}
+
+class LanTransferRecordsCompanion extends UpdateCompanion<LanTransferRecord> {
+  final Value<String> id;
+  final Value<String> senderId;
+  final Value<String> senderAlias;
+  final Value<String> receiverId;
+  final Value<String> payloadType;
+  final Value<String?> textContent;
+  final Value<String?> fileName;
+  final Value<int> fileSize;
+  final Value<String?> localPath;
+  final Value<String?> manifestJson;
+  final Value<String> status;
+  final Value<int> bytesTransferred;
+  final Value<int> createdAt;
+  final Value<bool> isIncoming;
+  final Value<bool> isRecalled;
+  final Value<String?> sftpServerId;
+  final Value<String?> sftpRemotePath;
+  final Value<int> rowid;
+  const LanTransferRecordsCompanion({
+    this.id = const Value.absent(),
+    this.senderId = const Value.absent(),
+    this.senderAlias = const Value.absent(),
+    this.receiverId = const Value.absent(),
+    this.payloadType = const Value.absent(),
+    this.textContent = const Value.absent(),
+    this.fileName = const Value.absent(),
+    this.fileSize = const Value.absent(),
+    this.localPath = const Value.absent(),
+    this.manifestJson = const Value.absent(),
+    this.status = const Value.absent(),
+    this.bytesTransferred = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.isIncoming = const Value.absent(),
+    this.isRecalled = const Value.absent(),
+    this.sftpServerId = const Value.absent(),
+    this.sftpRemotePath = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  LanTransferRecordsCompanion.insert({
+    required String id,
+    required String senderId,
+    required String senderAlias,
+    required String receiverId,
+    required String payloadType,
+    this.textContent = const Value.absent(),
+    this.fileName = const Value.absent(),
+    this.fileSize = const Value.absent(),
+    this.localPath = const Value.absent(),
+    this.manifestJson = const Value.absent(),
+    required String status,
+    this.bytesTransferred = const Value.absent(),
+    required int createdAt,
+    this.isIncoming = const Value.absent(),
+    this.isRecalled = const Value.absent(),
+    this.sftpServerId = const Value.absent(),
+    this.sftpRemotePath = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       senderId = Value(senderId),
+       senderAlias = Value(senderAlias),
+       receiverId = Value(receiverId),
+       payloadType = Value(payloadType),
+       status = Value(status),
+       createdAt = Value(createdAt);
+  static Insertable<LanTransferRecord> custom({
+    Expression<String>? id,
+    Expression<String>? senderId,
+    Expression<String>? senderAlias,
+    Expression<String>? receiverId,
+    Expression<String>? payloadType,
+    Expression<String>? textContent,
+    Expression<String>? fileName,
+    Expression<int>? fileSize,
+    Expression<String>? localPath,
+    Expression<String>? manifestJson,
+    Expression<String>? status,
+    Expression<int>? bytesTransferred,
+    Expression<int>? createdAt,
+    Expression<bool>? isIncoming,
+    Expression<bool>? isRecalled,
+    Expression<String>? sftpServerId,
+    Expression<String>? sftpRemotePath,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (senderId != null) 'sender_id': senderId,
+      if (senderAlias != null) 'sender_alias': senderAlias,
+      if (receiverId != null) 'receiver_id': receiverId,
+      if (payloadType != null) 'payload_type': payloadType,
+      if (textContent != null) 'text_content': textContent,
+      if (fileName != null) 'file_name': fileName,
+      if (fileSize != null) 'file_size': fileSize,
+      if (localPath != null) 'local_path': localPath,
+      if (manifestJson != null) 'manifest_json': manifestJson,
+      if (status != null) 'status': status,
+      if (bytesTransferred != null) 'bytes_transferred': bytesTransferred,
+      if (createdAt != null) 'created_at': createdAt,
+      if (isIncoming != null) 'is_incoming': isIncoming,
+      if (isRecalled != null) 'is_recalled': isRecalled,
+      if (sftpServerId != null) 'sftp_server_id': sftpServerId,
+      if (sftpRemotePath != null) 'sftp_remote_path': sftpRemotePath,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  LanTransferRecordsCompanion copyWith({
+    Value<String>? id,
+    Value<String>? senderId,
+    Value<String>? senderAlias,
+    Value<String>? receiverId,
+    Value<String>? payloadType,
+    Value<String?>? textContent,
+    Value<String?>? fileName,
+    Value<int>? fileSize,
+    Value<String?>? localPath,
+    Value<String?>? manifestJson,
+    Value<String>? status,
+    Value<int>? bytesTransferred,
+    Value<int>? createdAt,
+    Value<bool>? isIncoming,
+    Value<bool>? isRecalled,
+    Value<String?>? sftpServerId,
+    Value<String?>? sftpRemotePath,
+    Value<int>? rowid,
+  }) {
+    return LanTransferRecordsCompanion(
+      id: id ?? this.id,
+      senderId: senderId ?? this.senderId,
+      senderAlias: senderAlias ?? this.senderAlias,
+      receiverId: receiverId ?? this.receiverId,
+      payloadType: payloadType ?? this.payloadType,
+      textContent: textContent ?? this.textContent,
+      fileName: fileName ?? this.fileName,
+      fileSize: fileSize ?? this.fileSize,
+      localPath: localPath ?? this.localPath,
+      manifestJson: manifestJson ?? this.manifestJson,
+      status: status ?? this.status,
+      bytesTransferred: bytesTransferred ?? this.bytesTransferred,
+      createdAt: createdAt ?? this.createdAt,
+      isIncoming: isIncoming ?? this.isIncoming,
+      isRecalled: isRecalled ?? this.isRecalled,
+      sftpServerId: sftpServerId ?? this.sftpServerId,
+      sftpRemotePath: sftpRemotePath ?? this.sftpRemotePath,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (senderId.present) {
+      map['sender_id'] = Variable<String>(senderId.value);
+    }
+    if (senderAlias.present) {
+      map['sender_alias'] = Variable<String>(senderAlias.value);
+    }
+    if (receiverId.present) {
+      map['receiver_id'] = Variable<String>(receiverId.value);
+    }
+    if (payloadType.present) {
+      map['payload_type'] = Variable<String>(payloadType.value);
+    }
+    if (textContent.present) {
+      map['text_content'] = Variable<String>(textContent.value);
+    }
+    if (fileName.present) {
+      map['file_name'] = Variable<String>(fileName.value);
+    }
+    if (fileSize.present) {
+      map['file_size'] = Variable<int>(fileSize.value);
+    }
+    if (localPath.present) {
+      map['local_path'] = Variable<String>(localPath.value);
+    }
+    if (manifestJson.present) {
+      map['manifest_json'] = Variable<String>(manifestJson.value);
+    }
+    if (status.present) {
+      map['status'] = Variable<String>(status.value);
+    }
+    if (bytesTransferred.present) {
+      map['bytes_transferred'] = Variable<int>(bytesTransferred.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(createdAt.value);
+    }
+    if (isIncoming.present) {
+      map['is_incoming'] = Variable<bool>(isIncoming.value);
+    }
+    if (isRecalled.present) {
+      map['is_recalled'] = Variable<bool>(isRecalled.value);
+    }
+    if (sftpServerId.present) {
+      map['sftp_server_id'] = Variable<String>(sftpServerId.value);
+    }
+    if (sftpRemotePath.present) {
+      map['sftp_remote_path'] = Variable<String>(sftpRemotePath.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LanTransferRecordsCompanion(')
+          ..write('id: $id, ')
+          ..write('senderId: $senderId, ')
+          ..write('senderAlias: $senderAlias, ')
+          ..write('receiverId: $receiverId, ')
+          ..write('payloadType: $payloadType, ')
+          ..write('textContent: $textContent, ')
+          ..write('fileName: $fileName, ')
+          ..write('fileSize: $fileSize, ')
+          ..write('localPath: $localPath, ')
+          ..write('manifestJson: $manifestJson, ')
+          ..write('status: $status, ')
+          ..write('bytesTransferred: $bytesTransferred, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('isIncoming: $isIncoming, ')
+          ..write('isRecalled: $isRecalled, ')
+          ..write('sftpServerId: $sftpServerId, ')
+          ..write('sftpRemotePath: $sftpRemotePath, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $AppLogRecordsTable extends AppLogRecords
+    with TableInfo<$AppLogRecordsTable, AppLogRecord> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $AppLogRecordsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'PRIMARY KEY AUTOINCREMENT',
+    ),
+  );
+  static const VerificationMeta _timeMeta = const VerificationMeta('time');
+  @override
+  late final GeneratedColumn<int> time = GeneratedColumn<int>(
+    'time',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _levelMeta = const VerificationMeta('level');
+  @override
+  late final GeneratedColumn<String> level = GeneratedColumn<String>(
+    'level',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _messageMeta = const VerificationMeta(
+    'message',
+  );
+  @override
+  late final GeneratedColumn<String> message = GeneratedColumn<String>(
+    'message',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _sourceLocationMeta = const VerificationMeta(
+    'sourceLocation',
+  );
+  @override
+  late final GeneratedColumn<String> sourceLocation = GeneratedColumn<String>(
+    'source_location',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _stackTraceMeta = const VerificationMeta(
+    'stackTrace',
+  );
+  @override
+  late final GeneratedColumn<String> stackTrace = GeneratedColumn<String>(
+    'stack_trace',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _detailsMeta = const VerificationMeta(
+    'details',
+  );
+  @override
+  late final GeneratedColumn<String> details = GeneratedColumn<String>(
+    'details',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    time,
+    level,
+    message,
+    sourceLocation,
+    stackTrace,
+    details,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'app_log_records';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<AppLogRecord> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('time')) {
+      context.handle(
+        _timeMeta,
+        time.isAcceptableOrUnknown(data['time']!, _timeMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_timeMeta);
+    }
+    if (data.containsKey('level')) {
+      context.handle(
+        _levelMeta,
+        level.isAcceptableOrUnknown(data['level']!, _levelMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_levelMeta);
+    }
+    if (data.containsKey('message')) {
+      context.handle(
+        _messageMeta,
+        message.isAcceptableOrUnknown(data['message']!, _messageMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_messageMeta);
+    }
+    if (data.containsKey('source_location')) {
+      context.handle(
+        _sourceLocationMeta,
+        sourceLocation.isAcceptableOrUnknown(
+          data['source_location']!,
+          _sourceLocationMeta,
+        ),
+      );
+    }
+    if (data.containsKey('stack_trace')) {
+      context.handle(
+        _stackTraceMeta,
+        stackTrace.isAcceptableOrUnknown(data['stack_trace']!, _stackTraceMeta),
+      );
+    }
+    if (data.containsKey('details')) {
+      context.handle(
+        _detailsMeta,
+        details.isAcceptableOrUnknown(data['details']!, _detailsMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  AppLogRecord map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return AppLogRecord(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      time: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}time'],
+      )!,
+      level: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}level'],
+      )!,
+      message: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}message'],
+      )!,
+      sourceLocation: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}source_location'],
+      ),
+      stackTrace: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}stack_trace'],
+      ),
+      details: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}details'],
+      ),
+    );
+  }
+
+  @override
+  $AppLogRecordsTable createAlias(String alias) {
+    return $AppLogRecordsTable(attachedDatabase, alias);
+  }
+}
+
+class AppLogRecord extends DataClass implements Insertable<AppLogRecord> {
+  final int id;
+  final int time;
+  final String level;
+  final String message;
+  final String? sourceLocation;
+  final String? stackTrace;
+  final String? details;
+  const AppLogRecord({
+    required this.id,
+    required this.time,
+    required this.level,
+    required this.message,
+    this.sourceLocation,
+    this.stackTrace,
+    this.details,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['time'] = Variable<int>(time);
+    map['level'] = Variable<String>(level);
+    map['message'] = Variable<String>(message);
+    if (!nullToAbsent || sourceLocation != null) {
+      map['source_location'] = Variable<String>(sourceLocation);
+    }
+    if (!nullToAbsent || stackTrace != null) {
+      map['stack_trace'] = Variable<String>(stackTrace);
+    }
+    if (!nullToAbsent || details != null) {
+      map['details'] = Variable<String>(details);
+    }
+    return map;
+  }
+
+  AppLogRecordsCompanion toCompanion(bool nullToAbsent) {
+    return AppLogRecordsCompanion(
+      id: Value(id),
+      time: Value(time),
+      level: Value(level),
+      message: Value(message),
+      sourceLocation: sourceLocation == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sourceLocation),
+      stackTrace: stackTrace == null && nullToAbsent
+          ? const Value.absent()
+          : Value(stackTrace),
+      details: details == null && nullToAbsent
+          ? const Value.absent()
+          : Value(details),
+    );
+  }
+
+  factory AppLogRecord.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return AppLogRecord(
+      id: serializer.fromJson<int>(json['id']),
+      time: serializer.fromJson<int>(json['time']),
+      level: serializer.fromJson<String>(json['level']),
+      message: serializer.fromJson<String>(json['message']),
+      sourceLocation: serializer.fromJson<String?>(json['sourceLocation']),
+      stackTrace: serializer.fromJson<String?>(json['stackTrace']),
+      details: serializer.fromJson<String?>(json['details']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'time': serializer.toJson<int>(time),
+      'level': serializer.toJson<String>(level),
+      'message': serializer.toJson<String>(message),
+      'sourceLocation': serializer.toJson<String?>(sourceLocation),
+      'stackTrace': serializer.toJson<String?>(stackTrace),
+      'details': serializer.toJson<String?>(details),
+    };
+  }
+
+  AppLogRecord copyWith({
+    int? id,
+    int? time,
+    String? level,
+    String? message,
+    Value<String?> sourceLocation = const Value.absent(),
+    Value<String?> stackTrace = const Value.absent(),
+    Value<String?> details = const Value.absent(),
+  }) => AppLogRecord(
+    id: id ?? this.id,
+    time: time ?? this.time,
+    level: level ?? this.level,
+    message: message ?? this.message,
+    sourceLocation: sourceLocation.present
+        ? sourceLocation.value
+        : this.sourceLocation,
+    stackTrace: stackTrace.present ? stackTrace.value : this.stackTrace,
+    details: details.present ? details.value : this.details,
+  );
+  AppLogRecord copyWithCompanion(AppLogRecordsCompanion data) {
+    return AppLogRecord(
+      id: data.id.present ? data.id.value : this.id,
+      time: data.time.present ? data.time.value : this.time,
+      level: data.level.present ? data.level.value : this.level,
+      message: data.message.present ? data.message.value : this.message,
+      sourceLocation: data.sourceLocation.present
+          ? data.sourceLocation.value
+          : this.sourceLocation,
+      stackTrace: data.stackTrace.present
+          ? data.stackTrace.value
+          : this.stackTrace,
+      details: data.details.present ? data.details.value : this.details,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AppLogRecord(')
+          ..write('id: $id, ')
+          ..write('time: $time, ')
+          ..write('level: $level, ')
+          ..write('message: $message, ')
+          ..write('sourceLocation: $sourceLocation, ')
+          ..write('stackTrace: $stackTrace, ')
+          ..write('details: $details')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    time,
+    level,
+    message,
+    sourceLocation,
+    stackTrace,
+    details,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is AppLogRecord &&
+          other.id == this.id &&
+          other.time == this.time &&
+          other.level == this.level &&
+          other.message == this.message &&
+          other.sourceLocation == this.sourceLocation &&
+          other.stackTrace == this.stackTrace &&
+          other.details == this.details);
+}
+
+class AppLogRecordsCompanion extends UpdateCompanion<AppLogRecord> {
+  final Value<int> id;
+  final Value<int> time;
+  final Value<String> level;
+  final Value<String> message;
+  final Value<String?> sourceLocation;
+  final Value<String?> stackTrace;
+  final Value<String?> details;
+  const AppLogRecordsCompanion({
+    this.id = const Value.absent(),
+    this.time = const Value.absent(),
+    this.level = const Value.absent(),
+    this.message = const Value.absent(),
+    this.sourceLocation = const Value.absent(),
+    this.stackTrace = const Value.absent(),
+    this.details = const Value.absent(),
+  });
+  AppLogRecordsCompanion.insert({
+    this.id = const Value.absent(),
+    required int time,
+    required String level,
+    required String message,
+    this.sourceLocation = const Value.absent(),
+    this.stackTrace = const Value.absent(),
+    this.details = const Value.absent(),
+  }) : time = Value(time),
+       level = Value(level),
+       message = Value(message);
+  static Insertable<AppLogRecord> custom({
+    Expression<int>? id,
+    Expression<int>? time,
+    Expression<String>? level,
+    Expression<String>? message,
+    Expression<String>? sourceLocation,
+    Expression<String>? stackTrace,
+    Expression<String>? details,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (time != null) 'time': time,
+      if (level != null) 'level': level,
+      if (message != null) 'message': message,
+      if (sourceLocation != null) 'source_location': sourceLocation,
+      if (stackTrace != null) 'stack_trace': stackTrace,
+      if (details != null) 'details': details,
+    });
+  }
+
+  AppLogRecordsCompanion copyWith({
+    Value<int>? id,
+    Value<int>? time,
+    Value<String>? level,
+    Value<String>? message,
+    Value<String?>? sourceLocation,
+    Value<String?>? stackTrace,
+    Value<String?>? details,
+  }) {
+    return AppLogRecordsCompanion(
+      id: id ?? this.id,
+      time: time ?? this.time,
+      level: level ?? this.level,
+      message: message ?? this.message,
+      sourceLocation: sourceLocation ?? this.sourceLocation,
+      stackTrace: stackTrace ?? this.stackTrace,
+      details: details ?? this.details,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (time.present) {
+      map['time'] = Variable<int>(time.value);
+    }
+    if (level.present) {
+      map['level'] = Variable<String>(level.value);
+    }
+    if (message.present) {
+      map['message'] = Variable<String>(message.value);
+    }
+    if (sourceLocation.present) {
+      map['source_location'] = Variable<String>(sourceLocation.value);
+    }
+    if (stackTrace.present) {
+      map['stack_trace'] = Variable<String>(stackTrace.value);
+    }
+    if (details.present) {
+      map['details'] = Variable<String>(details.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AppLogRecordsCompanion(')
+          ..write('id: $id, ')
+          ..write('time: $time, ')
+          ..write('level: $level, ')
+          ..write('message: $message, ')
+          ..write('sourceLocation: $sourceLocation, ')
+          ..write('stackTrace: $stackTrace, ')
+          ..write('details: $details')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -6628,6 +8080,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   );
   late final $SftpFavoritePathsTable sftpFavoritePaths =
       $SftpFavoritePathsTable(this);
+  late final $LanTransferRecordsTable lanTransferRecords =
+      $LanTransferRecordsTable(this);
+  late final $AppLogRecordsTable appLogRecords = $AppLogRecordsTable(this);
   late final MigrationMetaDao migrationMetaDao = MigrationMetaDao(
     this as AppDatabase,
   );
@@ -6643,6 +8098,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final SftpHistoryDao sftpHistoryDao = SftpHistoryDao(
     this as AppDatabase,
   );
+  late final LanHistoryDao lanHistoryDao = LanHistoryDao(this as AppDatabase);
+  late final AppLogDao appLogDao = AppLogDao(this as AppDatabase);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -6659,6 +8116,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     playbookRunSteps,
     sftpRecentPaths,
     sftpFavoritePaths,
+    lanTransferRecords,
+    appLogRecords,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
@@ -10653,6 +12112,703 @@ typedef $$SftpFavoritePathsTableProcessedTableManager =
       SftpFavoritePath,
       PrefetchHooks Function()
     >;
+typedef $$LanTransferRecordsTableCreateCompanionBuilder =
+    LanTransferRecordsCompanion Function({
+      required String id,
+      required String senderId,
+      required String senderAlias,
+      required String receiverId,
+      required String payloadType,
+      Value<String?> textContent,
+      Value<String?> fileName,
+      Value<int> fileSize,
+      Value<String?> localPath,
+      Value<String?> manifestJson,
+      required String status,
+      Value<int> bytesTransferred,
+      required int createdAt,
+      Value<bool> isIncoming,
+      Value<bool> isRecalled,
+      Value<String?> sftpServerId,
+      Value<String?> sftpRemotePath,
+      Value<int> rowid,
+    });
+typedef $$LanTransferRecordsTableUpdateCompanionBuilder =
+    LanTransferRecordsCompanion Function({
+      Value<String> id,
+      Value<String> senderId,
+      Value<String> senderAlias,
+      Value<String> receiverId,
+      Value<String> payloadType,
+      Value<String?> textContent,
+      Value<String?> fileName,
+      Value<int> fileSize,
+      Value<String?> localPath,
+      Value<String?> manifestJson,
+      Value<String> status,
+      Value<int> bytesTransferred,
+      Value<int> createdAt,
+      Value<bool> isIncoming,
+      Value<bool> isRecalled,
+      Value<String?> sftpServerId,
+      Value<String?> sftpRemotePath,
+      Value<int> rowid,
+    });
+
+class $$LanTransferRecordsTableFilterComposer
+    extends Composer<_$AppDatabase, $LanTransferRecordsTable> {
+  $$LanTransferRecordsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get senderId => $composableBuilder(
+    column: $table.senderId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get senderAlias => $composableBuilder(
+    column: $table.senderAlias,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get receiverId => $composableBuilder(
+    column: $table.receiverId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get payloadType => $composableBuilder(
+    column: $table.payloadType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get textContent => $composableBuilder(
+    column: $table.textContent,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get fileName => $composableBuilder(
+    column: $table.fileName,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get fileSize => $composableBuilder(
+    column: $table.fileSize,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get localPath => $composableBuilder(
+    column: $table.localPath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get manifestJson => $composableBuilder(
+    column: $table.manifestJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get bytesTransferred => $composableBuilder(
+    column: $table.bytesTransferred,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isIncoming => $composableBuilder(
+    column: $table.isIncoming,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isRecalled => $composableBuilder(
+    column: $table.isRecalled,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get sftpServerId => $composableBuilder(
+    column: $table.sftpServerId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get sftpRemotePath => $composableBuilder(
+    column: $table.sftpRemotePath,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$LanTransferRecordsTableOrderingComposer
+    extends Composer<_$AppDatabase, $LanTransferRecordsTable> {
+  $$LanTransferRecordsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get senderId => $composableBuilder(
+    column: $table.senderId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get senderAlias => $composableBuilder(
+    column: $table.senderAlias,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get receiverId => $composableBuilder(
+    column: $table.receiverId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get payloadType => $composableBuilder(
+    column: $table.payloadType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get textContent => $composableBuilder(
+    column: $table.textContent,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get fileName => $composableBuilder(
+    column: $table.fileName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get fileSize => $composableBuilder(
+    column: $table.fileSize,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get localPath => $composableBuilder(
+    column: $table.localPath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get manifestJson => $composableBuilder(
+    column: $table.manifestJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get bytesTransferred => $composableBuilder(
+    column: $table.bytesTransferred,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get isIncoming => $composableBuilder(
+    column: $table.isIncoming,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get isRecalled => $composableBuilder(
+    column: $table.isRecalled,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get sftpServerId => $composableBuilder(
+    column: $table.sftpServerId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get sftpRemotePath => $composableBuilder(
+    column: $table.sftpRemotePath,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$LanTransferRecordsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $LanTransferRecordsTable> {
+  $$LanTransferRecordsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get senderId =>
+      $composableBuilder(column: $table.senderId, builder: (column) => column);
+
+  GeneratedColumn<String> get senderAlias => $composableBuilder(
+    column: $table.senderAlias,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get receiverId => $composableBuilder(
+    column: $table.receiverId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get payloadType => $composableBuilder(
+    column: $table.payloadType,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get textContent => $composableBuilder(
+    column: $table.textContent,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get fileName =>
+      $composableBuilder(column: $table.fileName, builder: (column) => column);
+
+  GeneratedColumn<int> get fileSize =>
+      $composableBuilder(column: $table.fileSize, builder: (column) => column);
+
+  GeneratedColumn<String> get localPath =>
+      $composableBuilder(column: $table.localPath, builder: (column) => column);
+
+  GeneratedColumn<String> get manifestJson => $composableBuilder(
+    column: $table.manifestJson,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get status =>
+      $composableBuilder(column: $table.status, builder: (column) => column);
+
+  GeneratedColumn<int> get bytesTransferred => $composableBuilder(
+    column: $table.bytesTransferred,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<bool> get isIncoming => $composableBuilder(
+    column: $table.isIncoming,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get isRecalled => $composableBuilder(
+    column: $table.isRecalled,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get sftpServerId => $composableBuilder(
+    column: $table.sftpServerId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get sftpRemotePath => $composableBuilder(
+    column: $table.sftpRemotePath,
+    builder: (column) => column,
+  );
+}
+
+class $$LanTransferRecordsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $LanTransferRecordsTable,
+          LanTransferRecord,
+          $$LanTransferRecordsTableFilterComposer,
+          $$LanTransferRecordsTableOrderingComposer,
+          $$LanTransferRecordsTableAnnotationComposer,
+          $$LanTransferRecordsTableCreateCompanionBuilder,
+          $$LanTransferRecordsTableUpdateCompanionBuilder,
+          (
+            LanTransferRecord,
+            BaseReferences<
+              _$AppDatabase,
+              $LanTransferRecordsTable,
+              LanTransferRecord
+            >,
+          ),
+          LanTransferRecord,
+          PrefetchHooks Function()
+        > {
+  $$LanTransferRecordsTableTableManager(
+    _$AppDatabase db,
+    $LanTransferRecordsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LanTransferRecordsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LanTransferRecordsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LanTransferRecordsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> senderId = const Value.absent(),
+                Value<String> senderAlias = const Value.absent(),
+                Value<String> receiverId = const Value.absent(),
+                Value<String> payloadType = const Value.absent(),
+                Value<String?> textContent = const Value.absent(),
+                Value<String?> fileName = const Value.absent(),
+                Value<int> fileSize = const Value.absent(),
+                Value<String?> localPath = const Value.absent(),
+                Value<String?> manifestJson = const Value.absent(),
+                Value<String> status = const Value.absent(),
+                Value<int> bytesTransferred = const Value.absent(),
+                Value<int> createdAt = const Value.absent(),
+                Value<bool> isIncoming = const Value.absent(),
+                Value<bool> isRecalled = const Value.absent(),
+                Value<String?> sftpServerId = const Value.absent(),
+                Value<String?> sftpRemotePath = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => LanTransferRecordsCompanion(
+                id: id,
+                senderId: senderId,
+                senderAlias: senderAlias,
+                receiverId: receiverId,
+                payloadType: payloadType,
+                textContent: textContent,
+                fileName: fileName,
+                fileSize: fileSize,
+                localPath: localPath,
+                manifestJson: manifestJson,
+                status: status,
+                bytesTransferred: bytesTransferred,
+                createdAt: createdAt,
+                isIncoming: isIncoming,
+                isRecalled: isRecalled,
+                sftpServerId: sftpServerId,
+                sftpRemotePath: sftpRemotePath,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String senderId,
+                required String senderAlias,
+                required String receiverId,
+                required String payloadType,
+                Value<String?> textContent = const Value.absent(),
+                Value<String?> fileName = const Value.absent(),
+                Value<int> fileSize = const Value.absent(),
+                Value<String?> localPath = const Value.absent(),
+                Value<String?> manifestJson = const Value.absent(),
+                required String status,
+                Value<int> bytesTransferred = const Value.absent(),
+                required int createdAt,
+                Value<bool> isIncoming = const Value.absent(),
+                Value<bool> isRecalled = const Value.absent(),
+                Value<String?> sftpServerId = const Value.absent(),
+                Value<String?> sftpRemotePath = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => LanTransferRecordsCompanion.insert(
+                id: id,
+                senderId: senderId,
+                senderAlias: senderAlias,
+                receiverId: receiverId,
+                payloadType: payloadType,
+                textContent: textContent,
+                fileName: fileName,
+                fileSize: fileSize,
+                localPath: localPath,
+                manifestJson: manifestJson,
+                status: status,
+                bytesTransferred: bytesTransferred,
+                createdAt: createdAt,
+                isIncoming: isIncoming,
+                isRecalled: isRecalled,
+                sftpServerId: sftpServerId,
+                sftpRemotePath: sftpRemotePath,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$LanTransferRecordsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $LanTransferRecordsTable,
+      LanTransferRecord,
+      $$LanTransferRecordsTableFilterComposer,
+      $$LanTransferRecordsTableOrderingComposer,
+      $$LanTransferRecordsTableAnnotationComposer,
+      $$LanTransferRecordsTableCreateCompanionBuilder,
+      $$LanTransferRecordsTableUpdateCompanionBuilder,
+      (
+        LanTransferRecord,
+        BaseReferences<
+          _$AppDatabase,
+          $LanTransferRecordsTable,
+          LanTransferRecord
+        >,
+      ),
+      LanTransferRecord,
+      PrefetchHooks Function()
+    >;
+typedef $$AppLogRecordsTableCreateCompanionBuilder =
+    AppLogRecordsCompanion Function({
+      Value<int> id,
+      required int time,
+      required String level,
+      required String message,
+      Value<String?> sourceLocation,
+      Value<String?> stackTrace,
+      Value<String?> details,
+    });
+typedef $$AppLogRecordsTableUpdateCompanionBuilder =
+    AppLogRecordsCompanion Function({
+      Value<int> id,
+      Value<int> time,
+      Value<String> level,
+      Value<String> message,
+      Value<String?> sourceLocation,
+      Value<String?> stackTrace,
+      Value<String?> details,
+    });
+
+class $$AppLogRecordsTableFilterComposer
+    extends Composer<_$AppDatabase, $AppLogRecordsTable> {
+  $$AppLogRecordsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get time => $composableBuilder(
+    column: $table.time,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get level => $composableBuilder(
+    column: $table.level,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get message => $composableBuilder(
+    column: $table.message,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get sourceLocation => $composableBuilder(
+    column: $table.sourceLocation,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get stackTrace => $composableBuilder(
+    column: $table.stackTrace,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get details => $composableBuilder(
+    column: $table.details,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$AppLogRecordsTableOrderingComposer
+    extends Composer<_$AppDatabase, $AppLogRecordsTable> {
+  $$AppLogRecordsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get time => $composableBuilder(
+    column: $table.time,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get level => $composableBuilder(
+    column: $table.level,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get message => $composableBuilder(
+    column: $table.message,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get sourceLocation => $composableBuilder(
+    column: $table.sourceLocation,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get stackTrace => $composableBuilder(
+    column: $table.stackTrace,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get details => $composableBuilder(
+    column: $table.details,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$AppLogRecordsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $AppLogRecordsTable> {
+  $$AppLogRecordsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get time =>
+      $composableBuilder(column: $table.time, builder: (column) => column);
+
+  GeneratedColumn<String> get level =>
+      $composableBuilder(column: $table.level, builder: (column) => column);
+
+  GeneratedColumn<String> get message =>
+      $composableBuilder(column: $table.message, builder: (column) => column);
+
+  GeneratedColumn<String> get sourceLocation => $composableBuilder(
+    column: $table.sourceLocation,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get stackTrace => $composableBuilder(
+    column: $table.stackTrace,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get details =>
+      $composableBuilder(column: $table.details, builder: (column) => column);
+}
+
+class $$AppLogRecordsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $AppLogRecordsTable,
+          AppLogRecord,
+          $$AppLogRecordsTableFilterComposer,
+          $$AppLogRecordsTableOrderingComposer,
+          $$AppLogRecordsTableAnnotationComposer,
+          $$AppLogRecordsTableCreateCompanionBuilder,
+          $$AppLogRecordsTableUpdateCompanionBuilder,
+          (
+            AppLogRecord,
+            BaseReferences<_$AppDatabase, $AppLogRecordsTable, AppLogRecord>,
+          ),
+          AppLogRecord,
+          PrefetchHooks Function()
+        > {
+  $$AppLogRecordsTableTableManager(_$AppDatabase db, $AppLogRecordsTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$AppLogRecordsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$AppLogRecordsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$AppLogRecordsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<int> time = const Value.absent(),
+                Value<String> level = const Value.absent(),
+                Value<String> message = const Value.absent(),
+                Value<String?> sourceLocation = const Value.absent(),
+                Value<String?> stackTrace = const Value.absent(),
+                Value<String?> details = const Value.absent(),
+              }) => AppLogRecordsCompanion(
+                id: id,
+                time: time,
+                level: level,
+                message: message,
+                sourceLocation: sourceLocation,
+                stackTrace: stackTrace,
+                details: details,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required int time,
+                required String level,
+                required String message,
+                Value<String?> sourceLocation = const Value.absent(),
+                Value<String?> stackTrace = const Value.absent(),
+                Value<String?> details = const Value.absent(),
+              }) => AppLogRecordsCompanion.insert(
+                id: id,
+                time: time,
+                level: level,
+                message: message,
+                sourceLocation: sourceLocation,
+                stackTrace: stackTrace,
+                details: details,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$AppLogRecordsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $AppLogRecordsTable,
+      AppLogRecord,
+      $$AppLogRecordsTableFilterComposer,
+      $$AppLogRecordsTableOrderingComposer,
+      $$AppLogRecordsTableAnnotationComposer,
+      $$AppLogRecordsTableCreateCompanionBuilder,
+      $$AppLogRecordsTableUpdateCompanionBuilder,
+      (
+        AppLogRecord,
+        BaseReferences<_$AppDatabase, $AppLogRecordsTable, AppLogRecord>,
+      ),
+      AppLogRecord,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -10682,6 +12838,10 @@ class $AppDatabaseManager {
       $$SftpRecentPathsTableTableManager(_db, _db.sftpRecentPaths);
   $$SftpFavoritePathsTableTableManager get sftpFavoritePaths =>
       $$SftpFavoritePathsTableTableManager(_db, _db.sftpFavoritePaths);
+  $$LanTransferRecordsTableTableManager get lanTransferRecords =>
+      $$LanTransferRecordsTableTableManager(_db, _db.lanTransferRecords);
+  $$AppLogRecordsTableTableManager get appLogRecords =>
+      $$AppLogRecordsTableTableManager(_db, _db.appLogRecords);
 }
 
 mixin _$MigrationMetaDaoMixin on DatabaseAccessor<AppDatabase> {
@@ -10804,4 +12964,32 @@ class SftpHistoryDaoManager {
         _db.attachedDatabase,
         _db.sftpFavoritePaths,
       );
+}
+
+mixin _$LanHistoryDaoMixin on DatabaseAccessor<AppDatabase> {
+  $LanTransferRecordsTable get lanTransferRecords =>
+      attachedDatabase.lanTransferRecords;
+  LanHistoryDaoManager get managers => LanHistoryDaoManager(this);
+}
+
+class LanHistoryDaoManager {
+  final _$LanHistoryDaoMixin _db;
+  LanHistoryDaoManager(this._db);
+  $$LanTransferRecordsTableTableManager get lanTransferRecords =>
+      $$LanTransferRecordsTableTableManager(
+        _db.attachedDatabase,
+        _db.lanTransferRecords,
+      );
+}
+
+mixin _$AppLogDaoMixin on DatabaseAccessor<AppDatabase> {
+  $AppLogRecordsTable get appLogRecords => attachedDatabase.appLogRecords;
+  AppLogDaoManager get managers => AppLogDaoManager(this);
+}
+
+class AppLogDaoManager {
+  final _$AppLogDaoMixin _db;
+  AppLogDaoManager(this._db);
+  $$AppLogRecordsTableTableManager get appLogRecords =>
+      $$AppLogRecordsTableTableManager(_db.attachedDatabase, _db.appLogRecords);
 }

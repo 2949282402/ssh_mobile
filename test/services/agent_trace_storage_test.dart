@@ -17,9 +17,12 @@ void main() {
 
   test('saves and loads a single trace event', () async {
     final database = db.AppDatabase.forTesting();
-    addTearDown(database.close);
     final storage = StorageService(database: database);
-    addTearDown(storage.dispose);
+    addTearDown(() async {
+      await storage.shutdown();
+      storage.dispose();
+      await database.close();
+    });
     await storage.init();
 
     final event = _event(runId: 'run-1', sequence: 0, title: 'Started');
@@ -32,9 +35,12 @@ void main() {
 
   test('batch save reads by run id ordered by sequence', () async {
     final database = db.AppDatabase.forTesting();
-    addTearDown(database.close);
     final storage = StorageService(database: database);
-    addTearDown(storage.dispose);
+    addTearDown(() async {
+      await storage.shutdown();
+      storage.dispose();
+      await database.close();
+    });
     await storage.init();
 
     await storage.saveAgentTraceEvents([
@@ -49,9 +55,12 @@ void main() {
 
   test('loads recent run ids for chat by latest event time', () async {
     final database = db.AppDatabase.forTesting();
-    addTearDown(database.close);
     final storage = StorageService(database: database);
-    addTearDown(storage.dispose);
+    addTearDown(() async {
+      await storage.shutdown();
+      storage.dispose();
+      await database.close();
+    });
     await storage.init();
 
     final base = DateTime.utc(2026, 6, 22);
@@ -79,9 +88,12 @@ void main() {
 
   test('trims old runs and caps events per run', () async {
     final database = db.AppDatabase.forTesting();
-    addTearDown(database.close);
     final storage = StorageService(database: database);
-    addTearDown(storage.dispose);
+    addTearDown(() async {
+      await storage.shutdown();
+      storage.dispose();
+      await database.close();
+    });
     await storage.init();
 
     final base = DateTime.utc(2026, 6, 22);
@@ -114,9 +126,12 @@ void main() {
 
   test('cache is invalidated when retention trims stale runs', () async {
     final database = db.AppDatabase.forTesting();
-    addTearDown(database.close);
     final storage = StorageService(database: database);
-    addTearDown(storage.dispose);
+    addTearDown(() async {
+      await storage.shutdown();
+      storage.dispose();
+      await database.close();
+    });
     await storage.init();
 
     final base = DateTime.utc(2026, 6, 22);
@@ -140,9 +155,12 @@ void main() {
 
   test('batch save caps events per run instead of per batch', () async {
     final database = db.AppDatabase.forTesting();
-    addTearDown(database.close);
     final storage = StorageService(database: database);
-    addTearDown(storage.dispose);
+    addTearDown(() async {
+      await storage.shutdown();
+      storage.dispose();
+      await database.close();
+    });
     await storage.init();
 
     await storage.saveAgentTraceEvents([
@@ -160,9 +178,12 @@ void main() {
 
   test('truncates long content and empty batch save is harmless', () async {
     final database = db.AppDatabase.forTesting();
-    addTearDown(database.close);
     final storage = StorageService(database: database);
-    addTearDown(storage.dispose);
+    addTearDown(() async {
+      await storage.shutdown();
+      storage.dispose();
+      await database.close();
+    });
     await storage.init();
 
     await storage.saveAgentTraceEvents(const []);
@@ -182,9 +203,12 @@ void main() {
   test('encrypts content_json in Drift and deletes events for run', () async {
     const marker = 'TRACE_SECRET_MARKER_20260622';
     final database = db.AppDatabase.forTesting();
-    addTearDown(database.close);
     final storage = StorageService(database: database);
-    addTearDown(storage.dispose);
+    addTearDown(() async {
+      await storage.shutdown();
+      storage.dispose();
+      await database.close();
+    });
     await storage.init();
 
     await storage.saveAgentTraceEvent(

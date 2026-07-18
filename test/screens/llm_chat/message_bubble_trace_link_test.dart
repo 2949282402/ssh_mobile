@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:ssh_mobile/features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
 import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
+import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
@@ -27,23 +28,29 @@ void main() {
       FlutterSecureStorage.setMockInitialValues({});
 
       final storageService = StorageService();
-      await storageService.init();
-
       final appSettings = AppSettings();
-      await appSettings.init();
-      await appSettings.toggleLanguage();
-
-      final sshService = SshService(storageService);
-      final sftpService = SftpService(storageService);
-      final performanceMonitorService = PerformanceMonitorService(
-        sshService,
-        storageService,
-      );
-      final playbookService = PlaybookService(
-        storageService: storageService,
-        sshService: sshService,
-      );
-      final ragService = RagService(storageService: storageService);
+      late final SshService sshService;
+      late final SftpService sftpService;
+      late final PerformanceMonitorService performanceMonitorService;
+      late final PlaybookService playbookService;
+      late final RagService ragService;
+      await tester.runAsync(() async {
+        await storageService.init();
+        await AppLogService.instance.detachDatabase(storageService.appDatabase);
+        await appSettings.init();
+        await appSettings.toggleLanguage();
+        sshService = SshService(storageService);
+        sftpService = SftpService(storageService);
+        performanceMonitorService = PerformanceMonitorService(
+          sshService,
+          storageService,
+        );
+        playbookService = PlaybookService(
+          storageService: storageService,
+          sshService: sshService,
+        );
+        ragService = RagService(storageService: storageService);
+      });
 
       try {
         final testChat = AiChatRecord(
@@ -85,7 +92,9 @@ void main() {
         );
 
         // Set active chat via storage
-        await storageService.saveAiChat(testChat);
+        await tester.runAsync(() async {
+          await storageService.saveAiChat(testChat);
+        });
 
         await tester.pumpWidget(
           MultiProvider(
@@ -123,7 +132,7 @@ void main() {
         final viewModel = Provider.of<AiChatViewModel>(context, listen: false);
 
         // Load history and select the chat
-        await viewModel.loadHistoryChatsIfNeeded();
+        await tester.runAsync(viewModel.loadHistoryChatsIfNeeded);
         viewModel.selectChat(testChat.id);
 
         // Pump and settle to let the chat messages render
@@ -144,7 +153,17 @@ void main() {
             .first;
         expect(tester.getSize(traceLink).height, greaterThanOrEqualTo(48));
       } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
         debugDefaultTargetPlatformOverride = originalPlatform;
+        ragService.dispose();
+        playbookService.dispose();
+        performanceMonitorService.dispose();
+        sftpService.dispose();
+        sshService.dispose();
+        appSettings.dispose();
+        await tester.runAsync(() async {
+          await storageService.shutdown();
+        });
         storageService.dispose();
       }
     },

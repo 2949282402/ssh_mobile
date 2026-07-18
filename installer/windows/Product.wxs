@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+  xmlns:fire="http://schemas.microsoft.com/wix/FirewallExtension">
   <Product
     Id="*"
     Name="$(var.ProductName)"
@@ -45,9 +46,29 @@
       </Component>
     </DirectoryRef>
 
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="LanShareFirewallException" Guid="*">
+        <RegistryValue
+          Root="HKLM"
+          Key="Software\SSH Mobile"
+          Name="LanShareFirewallException"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+        <fire:FirewallException
+          Id="LanShareFirewallRule"
+          Name="SSH Mobile LAN Share"
+          Description="Allow SSH Mobile LAN sharing from the local subnet"
+          Program="[INSTALLFOLDER]ssh_mobile.exe"
+          Scope="localSubnet"
+          Profile="all" />
+      </Component>
+    </DirectoryRef>
+
     <Feature Id="MainFeature" Title="$(var.ProductName)" Level="1">
       <ComponentGroupRef Id="AppFiles" />
       <ComponentRef Id="ApplicationStartMenuShortcut" />
+      <ComponentRef Id="LanShareFirewallException" />
     </Feature>
   </Product>
 </Wix>

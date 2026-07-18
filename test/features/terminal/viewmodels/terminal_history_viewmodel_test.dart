@@ -25,8 +25,10 @@ void main() {
     sshService = SshService(storageService);
   });
 
-  tearDown(() {
+  tearDown(() async {
     debugDefaultTargetPlatformOverride = null;
+    sshService.dispose();
+    await storageService.shutdown();
     storageService.dispose();
   });
 

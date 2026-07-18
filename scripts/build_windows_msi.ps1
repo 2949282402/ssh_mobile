@@ -6,6 +6,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.IO.Compression
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $releaseDir = Join-Path $repoRoot "build\windows\x64\runner\Release"
@@ -55,19 +56,85 @@ function Find-ToolInDirectory($name, $directory) {
   return $null
 }
 
+function Save-RemoteFile($url, $destination) {
+  $curl = Get-Command "curl.exe" -ErrorAction SilentlyContinue
+  if ($curl) {
+    & $curl.Source --fail --location --retry 3 --retry-delay 2 --silent --show-error --output $destination $url
+    if ($LASTEXITCODE -ne 0) {
+      throw "curl.exe failed to download $url with exit code $LASTEXITCODE"
+    }
+    return
+  }
+
+  Invoke-WebRequest -Uri $url -OutFile $destination
+}
+
+function Test-WixPackage($path) {
+  if (!(Test-Path -LiteralPath $path)) {
+    return $false
+  }
+
+  $stream = $null
+  $archive = $null
+  try {
+    $stream = [IO.File]::OpenRead($path)
+    $archive = [IO.Compression.ZipArchive]::new(
+      $stream,
+      [IO.Compression.ZipArchiveMode]::Read,
+      $false
+    )
+    $entryNames = $archive.Entries | ForEach-Object { $_.Name }
+    foreach ($requiredName in @(
+        "heat.exe",
+        "candle.exe",
+        "light.exe",
+        "WixFirewallExtension.dll"
+      )) {
+      if ($entryNames -notcontains $requiredName) {
+        return $false
+      }
+    }
+    return $true
+  } catch {
+    return $false
+  } finally {
+    if ($archive) {
+      $archive.Dispose()
+    }
+    if ($stream) {
+      $stream.Dispose()
+    }
+  }
+}
+
 $heat = Find-Tool "heat.exe"
 $candle = Find-Tool "candle.exe"
 $light = Find-Tool "light.exe"
+$firewallExtension = Find-Tool "WixFirewallExtension.dll"
 
-if (!$heat -or !$candle -or !$light) {
+if (!$heat -or !$candle -or !$light -or !$firewallExtension) {
   New-Item -ItemType Directory -Force -Path $wixCacheDir | Out-Null
-  if (!(Test-Path -LiteralPath $wixPackage)) {
-    $url = "https://www.nuget.org/api/v2/package/wix/$wixVersion"
+  if (!(Test-WixPackage $wixPackage)) {
+    Remove-Item -LiteralPath $wixPackage -Force -ErrorAction SilentlyContinue
+    $downloadPath = "$wixPackage.download"
+    Remove-Item -LiteralPath $downloadPath -Force -ErrorAction SilentlyContinue
+    $url = "https://api.nuget.org/v3-flatcontainer/wix/$wixVersion/wix.$wixVersion.nupkg"
     Write-Host "WiX Toolset v3 not found locally. Downloading $url ..."
-    Invoke-WebRequest -Uri $url -OutFile $wixPackage
+    try {
+      Save-RemoteFile $url $downloadPath
+      if (!(Test-WixPackage $downloadPath)) {
+        throw "Downloaded WiX package is incomplete or does not contain the required tools."
+      }
+      Move-Item -LiteralPath $downloadPath -Destination $wixPackage -Force
+    } finally {
+      Remove-Item -LiteralPath $downloadPath -Force -ErrorAction SilentlyContinue
+    }
   }
   if (!(Test-Path -LiteralPath $wixExtractDir) -or
-      !(Find-ToolInDirectory "heat.exe" $wixExtractDir)) {
+      !(Find-ToolInDirectory "heat.exe" $wixExtractDir) -or
+      !(Find-ToolInDirectory "candle.exe" $wixExtractDir) -or
+      !(Find-ToolInDirectory "light.exe" $wixExtractDir) -or
+      !(Find-ToolInDirectory "WixFirewallExtension.dll" $wixExtractDir)) {
     Remove-Item -LiteralPath $wixExtractDir -Recurse -Force -ErrorAction SilentlyContinue
     $wixZip = Join-Path $wixCacheDir "wix.$wixVersion.zip"
     Copy-Item -LiteralPath $wixPackage -Destination $wixZip -Force
@@ -77,10 +144,11 @@ if (!$heat -or !$candle -or !$light) {
   $heat = Find-ToolInDirectory "heat.exe" $wixExtractDir
   $candle = Find-ToolInDirectory "candle.exe" $wixExtractDir
   $light = Find-ToolInDirectory "light.exe" $wixExtractDir
+  $firewallExtension = Find-ToolInDirectory "WixFirewallExtension.dll" $wixExtractDir
 }
 
-if (!$heat -or !$candle -or !$light) {
-  throw "WiX Toolset v3 tools were not found. Install WiX manually or check the downloaded package in $wixExtractDir."
+if (!$heat -or !$candle -or !$light -or !$firewallExtension) {
+  throw "WiX Toolset v3 tools and WixFirewallExtension.dll were not found. Install WiX manually or check the downloaded package in $wixExtractDir."
 }
 
 Push-Location $repoRoot
@@ -108,6 +176,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 & $candle -arch x64 `
+  -ext $firewallExtension `
   "-dSourceDir=$stageDir" `
   "-dProductName=$ProductName" `
   "-dProductVersion=$Version" `
@@ -119,6 +188,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 & $light -nologo `
+  -ext $firewallExtension `
   -out $msiPath `
   (Join-Path $objDir "Product.wixobj") `
   (Join-Path $objDir "AppFiles.wixobj")

@@ -1,87 +1,73 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ssh_mobile/data/database/app_database.dart' as db;
 import 'package:ssh_mobile/features/ai_chat/models/agent_trace_event.dart';
 import 'package:ssh_mobile/features/ai_chat/pages/agent_trace_debug_page.dart';
-import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/storage_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  setUp(() {
-    SharedPreferences.setMockInitialValues({});
-    FlutterSecureStorage.setMockInitialValues({});
-    AppLogService.instance.clear();
-  });
-
   testWidgets('shows overview, timeline, filters, and raw content', (
     tester,
   ) async {
-    final database = db.AppDatabase.forTesting();
-    addTearDown(database.close);
-    final storage = StorageService(database: database);
-    addTearDown(storage.dispose);
-    await storage.init();
-
     final now = DateTime.utc(2026, 6, 22, 10);
-    await storage.saveAgentRunMetrics(
-      AgentRunMetrics(
-        id: 'run-1',
-        startedAt: now,
-        finishedAt: now.add(const Duration(seconds: 2)),
-        model: 'main-model',
-        helperModel: 'helper-model',
-        auditModel: 'audit-model',
-        promptTokens: 10,
-        completionTokens: 5,
-        totalTokens: 15,
-        elapsedMs: 2000,
-        toolCalls: 1,
-        approvalCount: 1,
-      ),
+    final storage = _fakeStorage(
+      metrics: [
+        AgentRunMetrics(
+          id: 'run-1',
+          startedAt: now,
+          finishedAt: now.add(const Duration(seconds: 2)),
+          model: 'main-model',
+          helperModel: 'helper-model',
+          auditModel: 'audit-model',
+          promptTokens: 10,
+          completionTokens: 5,
+          totalTokens: 15,
+          elapsedMs: 2000,
+          toolCalls: 1,
+          approvalCount: 1,
+        ),
+      ],
+      events: [
+        AgentTraceEvent(
+          id: 'event-1',
+          runId: 'run-1',
+          chatId: 'chat-1',
+          createdAt: now,
+          sequence: 0,
+          kind: 'agent_run_started',
+          title: 'Agent run started',
+          content: '{"model":"main-model"}',
+        ),
+        AgentTraceEvent(
+          id: 'event-2',
+          runId: 'run-1',
+          chatId: 'chat-1',
+          createdAt: now.add(const Duration(milliseconds: 100)),
+          sequence: 1,
+          kind: 'tool_result',
+          title: 'Tool result: run_command',
+          content: '{"resultPreview":"uptime ok"}',
+          toolName: 'run_command',
+          status: 'success',
+        ),
+        AgentTraceEvent(
+          id: 'event-3',
+          runId: 'run-1',
+          chatId: 'chat-1',
+          createdAt: now.add(const Duration(milliseconds: 200)),
+          sequence: 2,
+          kind: 'agent_run_summary',
+          title: 'Agent run summary',
+          content:
+              '{"finalOutcome":"success","selectedToolSet":["run_command"],"memorySources":["rag:ops"]}',
+          status: 'completed',
+        ),
+      ],
     );
-    await storage.saveAgentTraceEvents([
-      AgentTraceEvent(
-        id: 'event-1',
-        runId: 'run-1',
-        chatId: 'chat-1',
-        createdAt: now,
-        sequence: 0,
-        kind: 'agent_run_started',
-        title: 'Agent run started',
-        content: '{"model":"main-model"}',
-      ),
-      AgentTraceEvent(
-        id: 'event-2',
-        runId: 'run-1',
-        chatId: 'chat-1',
-        createdAt: now.add(const Duration(milliseconds: 100)),
-        sequence: 1,
-        kind: 'tool_result',
-        title: 'Tool result: run_command',
-        content: '{"resultPreview":"uptime ok"}',
-        toolName: 'run_command',
-        status: 'success',
-      ),
-      AgentTraceEvent(
-        id: 'event-3',
-        runId: 'run-1',
-        chatId: 'chat-1',
-        createdAt: now.add(const Duration(milliseconds: 200)),
-        sequence: 2,
-        kind: 'agent_run_summary',
-        title: 'Agent run summary',
-        content:
-            '{"finalOutcome":"success","selectedToolSet":["run_command"],"memorySources":["rag:ops"]}',
-        status: 'completed',
-      ),
-    ]);
 
     await tester.pumpWidget(_traceTestApp(storage: storage, runId: 'run-1'));
     await tester.pumpAndSettle();
@@ -112,11 +98,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    final database = db.AppDatabase.forTesting();
-    addTearDown(database.close);
-    final storage = StorageService(database: database);
-    addTearDown(storage.dispose);
-    await storage.init();
+    final storage = _fakeStorage();
 
     final now = DateTime.utc(2026, 6, 22, 10);
     await storage.saveAgentTraceEvents([
@@ -200,11 +182,7 @@ void main() {
       () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
     );
 
-    final database = db.AppDatabase.forTesting();
-    addTearDown(database.close);
-    final storage = StorageService(database: database);
-    addTearDown(storage.dispose);
-    await storage.init();
+    final storage = _fakeStorage();
 
     final rawInput = List.generate(
       160,
@@ -281,11 +259,7 @@ void main() {
   });
 
   testWidgets('shows empty trace state', (tester) async {
-    final database = db.AppDatabase.forTesting();
-    addTearDown(database.close);
-    final storage = StorageService(database: database);
-    addTearDown(storage.dispose);
-    await storage.init();
+    final storage = _fakeStorage();
 
     await tester.pumpWidget(
       _traceTestApp(storage: storage, runId: 'missing-run'),
@@ -302,11 +276,7 @@ void main() {
   testWidgets(
     'shows metrics overview when events are empty but metrics exist',
     (tester) async {
-      final database = db.AppDatabase.forTesting();
-      addTearDown(database.close);
-      final storage = StorageService(database: database);
-      addTearDown(storage.dispose);
-      await storage.init();
+      final storage = _fakeStorage();
 
       final now = DateTime.utc(2026, 6, 22, 10);
       await storage.saveAgentRunMetrics(
@@ -344,11 +314,7 @@ void main() {
   testWidgets('updates trace chrome when the app language changes', (
     tester,
   ) async {
-    final database = db.AppDatabase.forTesting();
-    addTearDown(database.close);
-    final storage = StorageService(database: database);
-    addTearDown(storage.dispose);
-    await storage.init();
+    final storage = _fakeStorage();
 
     await storage.saveAgentTraceEvents([
       AgentTraceEvent(
@@ -409,6 +375,53 @@ void main() {
     expect(find.textContaining('agent_run_summary'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+}
+
+_FakeStorageService _fakeStorage({
+  List<AgentTraceEvent> events = const [],
+  List<AgentRunMetrics> metrics = const [],
+}) {
+  final storage = _FakeStorageService(events: events, metrics: metrics);
+  addTearDown(storage.dispose);
+  return storage;
+}
+
+class _FakeStorageService extends StorageService {
+  _FakeStorageService({
+    List<AgentTraceEvent> events = const [],
+    List<AgentRunMetrics> metrics = const [],
+  }) : _events = List<AgentTraceEvent>.of(events),
+       _metrics = List<AgentRunMetrics>.of(metrics);
+
+  final List<AgentTraceEvent> _events;
+  final List<AgentRunMetrics> _metrics;
+
+  @override
+  Future<List<AgentTraceEvent>> loadAgentTraceEvents(String runId) async {
+    return List<AgentTraceEvent>.unmodifiable(
+      _events.where((event) => event.runId == runId),
+    );
+  }
+
+  @override
+  Future<List<AgentRunMetrics>> loadAgentRunMetrics() async {
+    return List<AgentRunMetrics>.unmodifiable(_metrics);
+  }
+
+  @override
+  Future<void> saveAgentTraceEvents(List<AgentTraceEvent> events) async {
+    _events.addAll(events);
+  }
+
+  @override
+  Future<void> saveAgentRunMetrics(AgentRunMetrics metrics) async {
+    _metrics
+      ..removeWhere((item) => item.id == metrics.id)
+      ..insert(0, metrics);
+  }
+
+  @override
+  Future<void> shutdown() async {}
 }
 
 Widget _traceTestApp({

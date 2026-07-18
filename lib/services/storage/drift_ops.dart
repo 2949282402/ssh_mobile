@@ -5,11 +5,13 @@ const int _driftSensitiveReencryptBatchSize = 50;
 extension DriftOps on StorageService {
   Future<void> _initializeDriftStorage() async {
     try {
-      final database = _providedDatabase ?? db.AppDatabase();
-      _database = database;
-      _ownsDatabase = _providedDatabase == null;
+      if (_disposed) return;
+      final database = appDatabase;
       await ensureAppDatabaseOpen(database);
+      if (_disposed) return;
       _driftReady = true;
+      await AppLogService.instance.setDatabase(database);
+      if (_disposed) return;
 
       _driftAiChatsActive = await _migrateAiChatsToDrift();
       _driftAgentMetricsActive = await _migrateAgentMetricsToDrift();

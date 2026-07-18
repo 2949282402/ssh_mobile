@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
 
+import 'package:drift/drift.dart' as drift;
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../data/database/app_database.dart' as db;
 import 'app_settings.dart';
 import 'tool_secret_policy.dart';
 
@@ -13,15 +15,19 @@ import 'tool_secret_policy.dart';
 ///
 /// 功能：
 /// 1. 全局 debugPrint / FlutterError.onError / PlatformDispatcher.onError 拦截
-/// 2. 内存环形日志缓冲区（上限 1200 条）
+/// 2. 内存环形日志缓冲区（上限 1000 条）
 /// 3. 日志脱敏：自动检测并替换私钥 PEM、Bearer Token、密码字段
 /// 4. UI 通知合并：160ms 内多次 add() 合并为一次 notifyListeners()
 /// 5. 多级缓存：entries、levelCounts、entriesByLevel 惰性计算+缓存
 class AppLogService extends ChangeNotifier {
   static final AppLogService instance = AppLogService._();
   factory AppLogService() => instance;
-  static const int _maxEntries = 1200;
+  static const int _maxEntries = 1000;
   final ListQueue<AppLogEntry> _entries = ListQueue<AppLogEntry>();
+  db.AppDatabase? _database;
+  db.AppDatabase? _bindingDatabase;
+  ListQueue<_DatabaseLogMutation>? _databaseBindingMutations;
+  Future<void>? _databaseBindingFuture;
   List<AppLogEntry>? _cachedNewestFirstEntries;
   Map<AppLogLevel, int>? _cachedLevelCounts;
   Map<AppLogLevel, List<AppLogEntry>>? _cachedEntriesByLevel;
@@ -35,6 +41,11 @@ class AppLogService extends ChangeNotifier {
   final List<String> _logWriteQueue = [];
   bool _isWriting = false;
   Completer<void>? _writeCompleter;
+  Future<void> _databaseOperationTail = Future<void>.value();
+  int _activeDbWrites = 0;
+  Completer<void>? _dbWriteCompleter;
+  Object? _pendingDbWriteError;
+  StackTrace? _pendingDbWriteStackTrace;
   int logSizeLimit = 5 * 1024 * 1024;
   bool writeDiskLogsInRelease = false;
   final ToolSecretPolicy _secretPolicy = const ToolSecretPolicy();
@@ -48,9 +59,40 @@ class AppLogService extends ChangeNotifier {
     return (_writeCompleter ??= Completer<void>()).future;
   }
 
+  /// A future that completes when all pending log writes to the database are finished.
+  @visibleForTesting
+  Future<void> get pendingDbWrites {
+    if (_activeDbWrites == 0) {
+      final error = _pendingDbWriteError;
+      if (error != null) {
+        final stackTrace = _pendingDbWriteStackTrace ?? StackTrace.current;
+        _pendingDbWriteError = null;
+        _pendingDbWriteStackTrace = null;
+        return Future<void>.error(error, stackTrace);
+      }
+      return Future.value();
+    }
+    return (_dbWriteCompleter ??= Completer<void>()).future;
+  }
+
   @visibleForTesting
   void resetLogFileForTesting() {
     _logFile = null;
+  }
+
+  @visibleForTesting
+  void resetDatabaseForTesting() {
+    assert(_activeDbWrites == 0);
+    _database = null;
+    _bindingDatabase = null;
+    _databaseBindingMutations = null;
+    _databaseBindingFuture = null;
+    _databaseOperationTail = Future<void>.value();
+    _pendingDbWriteError = null;
+    _pendingDbWriteStackTrace = null;
+    if (_entries.isEmpty) {
+      _nextEntryId = 1;
+    }
   }
 
   AppLogService._();
@@ -148,6 +190,268 @@ class AppLogService extends ChangeNotifier {
     );
   }
 
+  Future<void> setDatabase(
+    db.AppDatabase database, {
+    @visibleForTesting Future<void> Function()? bindingCheckpoint,
+  }) {
+    if (identical(_database, database) && _bindingDatabase == null) {
+      return pendingDbWrites;
+    }
+
+    final activeBinding = _databaseBindingFuture;
+    if (activeBinding != null) {
+      if (identical(_bindingDatabase, database)) {
+        return activeBinding;
+      }
+      return Future<void>.error(
+        StateError('AppLogService is already binding another database'),
+      );
+    }
+
+    if (_database != null) {
+      return Future<void>.error(
+        StateError('AppLogService is already bound to another database'),
+      );
+    }
+
+    final pendingMutations = ListQueue<_DatabaseLogMutation>.from(
+      _entries.map(_AddDatabaseLogMutation.new),
+    );
+    _bindingDatabase = database;
+    _databaseBindingMutations = pendingMutations;
+
+    late final Future<void> bindingFuture;
+    bindingFuture =
+        _runDatabaseBinding(
+          database,
+          pendingMutations,
+          bindingCheckpoint: bindingCheckpoint,
+        ).whenComplete(() {
+          if (identical(_databaseBindingFuture, bindingFuture)) {
+            _databaseBindingFuture = null;
+          }
+        });
+    _databaseBindingFuture = bindingFuture;
+    return bindingFuture;
+  }
+
+  /// Stops routing new log mutations to [database] and waits for every
+  /// mutation already queued for it to finish.
+  ///
+  /// The matching database may then be closed safely. Entries that were
+  /// already persisted are removed from the in-memory startup buffer so a
+  /// later binding to the same database file does not insert them again.
+  Future<void> detachDatabase(db.AppDatabase database) async {
+    final activeBinding = _databaseBindingFuture;
+    if (activeBinding != null && identical(_bindingDatabase, database)) {
+      await activeBinding;
+    }
+
+    if (!identical(_database, database)) {
+      return;
+    }
+
+    final persistedEntries = Set<AppLogEntry>.identity()..addAll(_entries);
+
+    // Detach synchronously before yielding so logs created while the drain is
+    // in progress remain memory/disk-only and cannot extend the old DB queue.
+    _database = null;
+    await _queueDatabaseOperation(() async {}, operation: 'detach database');
+    await pendingDbWrites;
+
+    _entries.removeWhere(persistedEntries.contains);
+    _invalidateCaches();
+    _scheduleNotify();
+  }
+
+  Future<void> _runDatabaseBinding(
+    db.AppDatabase database,
+    ListQueue<_DatabaseLogMutation> pendingMutations, {
+    Future<void> Function()? bindingCheckpoint,
+  }) async {
+    try {
+      await _queueDatabaseOperation(
+        () => _completeDatabaseBinding(
+          database,
+          pendingMutations,
+          bindingCheckpoint: bindingCheckpoint,
+        ),
+        operation: 'bind database',
+      );
+    } catch (_) {
+      if (identical(_bindingDatabase, database)) {
+        _bindingDatabase = null;
+        _databaseBindingMutations = null;
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _completeDatabaseBinding(
+    db.AppDatabase database,
+    ListQueue<_DatabaseLogMutation> pendingMutations, {
+    Future<void> Function()? bindingCheckpoint,
+  }) async {
+    var records = await database.appLogDao.getAllLogs();
+    var maxId = records.isEmpty ? 0 : records.last.id;
+
+    await bindingCheckpoint?.call();
+    await database.appLogDao.pruneOldLogs();
+
+    final assignedIdsByTemporaryId = <int, List<int>>{};
+    while (true) {
+      while (pendingMutations.isNotEmpty) {
+        final mutation = pendingMutations.removeFirst();
+        switch (mutation) {
+          case _AddDatabaseLogMutation(:final entry):
+            final storedEntry = _copyEntryWithId(entry, ++maxId);
+            await database.appLogDao.insertLog(_toDatabaseRecord(storedEntry));
+            await database.appLogDao.pruneOldLogs();
+            assignedIdsByTemporaryId
+                .putIfAbsent(entry.id, () => <int>[])
+                .add(storedEntry.id);
+          case _DeleteDatabaseLogMutation(
+            :final databaseIds,
+            :final temporaryIds,
+          ):
+            final resolvedDatabaseIds = <int>{...databaseIds};
+            for (final id in temporaryIds) {
+              final assignedIds = assignedIdsByTemporaryId.remove(id);
+              if (assignedIds != null) {
+                resolvedDatabaseIds.addAll(assignedIds);
+              }
+            }
+            if (resolvedDatabaseIds.isNotEmpty) {
+              await database.appLogDao.deleteLogs(resolvedDatabaseIds);
+            }
+          case _ClearDatabaseLogMutation():
+            await database.appLogDao.clearAllLogs();
+            assignedIdsByTemporaryId.clear();
+        }
+      }
+
+      records = await database.appLogDao.getAllLogs();
+      if (pendingMutations.isNotEmpty) {
+        continue;
+      }
+
+      _entries
+        ..clear()
+        ..addAll(records.map(_fromDatabaseRecord));
+      while (_entries.length > _maxEntries) {
+        _entries.removeFirst();
+      }
+
+      _nextEntryId = records.isEmpty ? 1 : records.last.id + 1;
+      _database = database;
+      _bindingDatabase = null;
+      _databaseBindingMutations = null;
+      _invalidateCaches();
+      _scheduleNotify();
+      return;
+    }
+  }
+
+  Future<void> _writeEntryToDb(
+    db.AppDatabase database,
+    AppLogEntry entry,
+  ) async {
+    await database.appLogDao.insertLog(_toDatabaseRecord(entry));
+    await database.appLogDao.pruneOldLogs();
+  }
+
+  Future<T> _queueDatabaseOperation<T>(
+    Future<T> Function() action, {
+    required String operation,
+  }) {
+    _activeDbWrites++;
+    final result = _databaseOperationTail.then((_) => action());
+    _databaseOperationTail = result
+        .then<void>(
+          (_) {},
+          onError: (Object error, StackTrace stackTrace) {
+            _pendingDbWriteError ??= error;
+            _pendingDbWriteStackTrace ??= stackTrace;
+            _reportDatabaseFailure(operation, error, stackTrace);
+          },
+        )
+        .whenComplete(_finishDatabaseOperation);
+    return result;
+  }
+
+  void _finishDatabaseOperation() {
+    _activeDbWrites--;
+    if (_activeDbWrites != 0) {
+      return;
+    }
+
+    final completer = _dbWriteCompleter;
+    if (completer == null) {
+      return;
+    }
+    _dbWriteCompleter = null;
+
+    final error = _pendingDbWriteError;
+    if (error == null) {
+      completer.complete();
+      return;
+    }
+
+    final stackTrace = _pendingDbWriteStackTrace ?? StackTrace.current;
+    _pendingDbWriteError = null;
+    _pendingDbWriteStackTrace = null;
+    completer.completeError(error, stackTrace);
+  }
+
+  void _reportDatabaseFailure(
+    String operation,
+    Object error,
+    StackTrace stackTrace,
+  ) {
+    final safeError = _redact(error.toString());
+    final printer = _previousDebugPrint ?? debugPrint;
+    printer('App log database $operation failed: $safeError\n$stackTrace');
+  }
+
+  db.AppLogRecordsCompanion _toDatabaseRecord(AppLogEntry entry) {
+    return db.AppLogRecordsCompanion(
+      id: drift.Value(entry.id),
+      time: drift.Value(entry.time.millisecondsSinceEpoch),
+      level: drift.Value(entry.level),
+      message: drift.Value(entry.message),
+      sourceLocation: drift.Value(entry.sourceLocation),
+      stackTrace: drift.Value(entry.stackTrace),
+      details: drift.Value(entry.details),
+    );
+  }
+
+  AppLogEntry _fromDatabaseRecord(db.AppLogRecord record) {
+    return AppLogEntry(
+      id: record.id,
+      time: DateTime.fromMillisecondsSinceEpoch(
+        record.time,
+        isUtc: true,
+      ).toLocal(),
+      level: record.level,
+      message: record.message,
+      sourceLocation: record.sourceLocation,
+      stackTrace: record.stackTrace,
+      details: record.details,
+    );
+  }
+
+  AppLogEntry _copyEntryWithId(AppLogEntry entry, int id) {
+    return AppLogEntry(
+      id: id,
+      time: entry.time,
+      level: entry.level,
+      message: entry.message,
+      sourceLocation: entry.sourceLocation,
+      stackTrace: entry.stackTrace,
+      details: entry.details,
+    );
+  }
+
   void add(
     String level,
     String message, {
@@ -176,21 +480,83 @@ class AppLogService extends ChangeNotifier {
     _invalidateCaches();
     _scheduleNotify();
 
-    // Write log to disk asynchronously
+    // Write log to disk asynchronously.
     unawaited(_writeToDisk(entry.text));
+
+    // Keep entries produced while the database is being bound in the same
+    // ordered buffer as startup logs. They receive final IDs only after the
+    // database's current maximum ID is known.
+    final bindingMutations = _databaseBindingMutations;
+    if (bindingMutations != null) {
+      bindingMutations.addLast(_AddDatabaseLogMutation(entry));
+      return;
+    }
+
+    final database = _database;
+    if (database != null) {
+      unawaited(
+        _queueDatabaseOperation(
+          () => _writeEntryToDb(database, entry),
+          operation: 'write log entry',
+        ),
+      );
+    }
   }
 
   void deleteEntriesById(Set<int> ids) {
     if (ids.isEmpty) return;
+    final bindingMutations = _databaseBindingMutations;
+    final temporaryIds = bindingMutations == null
+        ? const <int>{}
+        : _entries
+              .where((entry) => ids.contains(entry.id))
+              .map((entry) => entry.id)
+              .toSet();
     _entries.removeWhere((entry) => ids.contains(entry.id));
     _invalidateCaches();
     _scheduleNotify();
+
+    if (bindingMutations != null) {
+      bindingMutations.addLast(
+        _DeleteDatabaseLogMutation(
+          databaseIds: ids.difference(temporaryIds),
+          temporaryIds: temporaryIds,
+        ),
+      );
+      return;
+    }
+
+    final database = _database;
+    if (database != null) {
+      unawaited(
+        _queueDatabaseOperation(
+          () => database.appLogDao.deleteLogs(ids),
+          operation: 'delete log entries',
+        ),
+      );
+    }
   }
 
   void clear() {
     _entries.clear();
     _invalidateCaches();
     _scheduleNotify();
+
+    final bindingMutations = _databaseBindingMutations;
+    if (bindingMutations != null) {
+      bindingMutations.addLast(const _ClearDatabaseLogMutation());
+      return;
+    }
+
+    final database = _database;
+    if (database != null) {
+      unawaited(
+        _queueDatabaseOperation(
+          database.appLogDao.clearAllLogs,
+          operation: 'clear log entries',
+        ),
+      );
+    }
   }
 
   void _invalidateCaches() {
@@ -303,6 +669,31 @@ class AppLogService extends ChangeNotifier {
     _notifyTimer?.cancel();
     super.dispose();
   }
+}
+
+sealed class _DatabaseLogMutation {
+  const _DatabaseLogMutation();
+}
+
+final class _AddDatabaseLogMutation extends _DatabaseLogMutation {
+  const _AddDatabaseLogMutation(this.entry);
+
+  final AppLogEntry entry;
+}
+
+final class _DeleteDatabaseLogMutation extends _DatabaseLogMutation {
+  _DeleteDatabaseLogMutation({
+    required Set<int> databaseIds,
+    required Set<int> temporaryIds,
+  }) : databaseIds = Set.unmodifiable(databaseIds),
+       temporaryIds = Set.unmodifiable(temporaryIds);
+
+  final Set<int> databaseIds;
+  final Set<int> temporaryIds;
+}
+
+final class _ClearDatabaseLogMutation extends _DatabaseLogMutation {
+  const _ClearDatabaseLogMutation();
 }
 
 class AppLogEntry {

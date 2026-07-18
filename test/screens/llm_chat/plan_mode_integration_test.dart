@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ssh_mobile/features/ai_chat/viewmodels/ai_chat_viewmodel.dart';
 import 'package:ssh_mobile/features/ai_chat/views/llm_chat_screen.dart';
+import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/client_health_advisor.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
@@ -25,6 +26,25 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
   });
 
+  Future<_PlanScreenHarness> createHarness(
+    WidgetTester tester, {
+    StorageService? storageService,
+  }) async {
+    final harness = await tester.runAsync(
+      () => _PlanScreenHarness.create(storageService: storageService),
+    );
+    if (harness == null) {
+      throw StateError('Plan screen harness creation did not complete');
+    }
+    return harness;
+  }
+
+  void registerHarnessCleanup(WidgetTester tester, _PlanScreenHarness harness) {
+    addTearDown(() async {
+      await tester.runAsync(harness.dispose);
+    });
+  }
+
   testWidgets('missing API key opens LLM settings exactly once', (
     tester,
   ) async {
@@ -32,11 +52,11 @@ void main() {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     late final _PlanScreenHarness harness;
     try {
-      harness = await _PlanScreenHarness.create();
+      harness = await createHarness(tester);
     } finally {
       debugDefaultTargetPlatformOverride = originalPlatform;
     }
-    addTearDown(harness.dispose);
+    registerHarnessCleanup(tester, harness);
     final createdAt = DateTime.utc(2026, 7, 13, 12);
     final planChat = AiChatRecord(
       id: 'plan-chat',
@@ -60,13 +80,13 @@ void main() {
         ),
       ],
     );
-    await harness.storageService.saveAiChat(planChat);
+    await tester.runAsync(() => harness.storageService.saveAiChat(planChat));
     final advisor = _HealthyAdvisor();
 
     await tester.pumpWidget(harness.app(advisor: advisor));
     await tester.pumpAndSettle();
     final viewModel = harness.viewModel!;
-    await viewModel.loadHistoryChatsIfNeeded();
+    await tester.runAsync(viewModel.loadHistoryChatsIfNeeded);
     viewModel.selectChat(planChat.id);
     await tester.pumpAndSettle();
 
@@ -90,20 +110,22 @@ void main() {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     late final _PlanScreenHarness harness;
     try {
-      harness = await _PlanScreenHarness.create();
+      harness = await createHarness(tester);
     } finally {
       debugDefaultTargetPlatformOverride = originalPlatform;
     }
-    addTearDown(harness.dispose);
+    registerHarnessCleanup(tester, harness);
     final first = _historyChat('first-chat', DateTime.utc(2026, 7, 13, 12));
     final second = _historyChat('second-chat', DateTime.utc(2026, 7, 13, 11));
-    await harness.storageService.saveAiChat(first);
-    await harness.storageService.saveAiChat(second);
+    await tester.runAsync(() async {
+      await harness.storageService.saveAiChat(first);
+      await harness.storageService.saveAiChat(second);
+    });
 
     await tester.pumpWidget(harness.app(advisor: _HealthyAdvisor()));
     await tester.pumpAndSettle();
     final viewModel = harness.viewModel!;
-    await viewModel.loadHistoryChatsIfNeeded();
+    await tester.runAsync(viewModel.loadHistoryChatsIfNeeded);
     viewModel.selectChat(first.id);
     await tester.pump();
 
@@ -140,11 +162,11 @@ void main() {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     late final _PlanScreenHarness harness;
     try {
-      harness = await _PlanScreenHarness.create();
+      harness = await createHarness(tester);
     } finally {
       debugDefaultTargetPlatformOverride = originalPlatform;
     }
-    addTearDown(harness.dispose);
+    registerHarnessCleanup(tester, harness);
 
     await tester.pumpWidget(
       harness.app(
@@ -169,21 +191,21 @@ void main() {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     late final _PlanScreenHarness harness;
     try {
-      harness = await _PlanScreenHarness.create();
+      harness = await createHarness(tester);
     } finally {
       debugDefaultTargetPlatformOverride = originalPlatform;
     }
-    addTearDown(harness.dispose);
+    registerHarnessCleanup(tester, harness);
     final history = _historyChat(
       'reachable-history',
       DateTime.utc(2026, 7, 13, 10),
     );
-    await harness.storageService.saveAiChat(history);
+    await tester.runAsync(() => harness.storageService.saveAiChat(history));
 
     await tester.pumpWidget(harness.app(advisor: _HealthyAdvisor()));
     await tester.pumpAndSettle();
     final viewModel = harness.viewModel!;
-    await viewModel.loadHistoryChatsIfNeeded();
+    await tester.runAsync(viewModel.loadHistoryChatsIfNeeded);
     final draft = viewModel.activeChat!;
     final input = find.byKey(const ValueKey<String>('chat-composer-input'));
     await tester.enterText(input, 'do not lose this draft');
@@ -208,7 +230,7 @@ void main() {
       'do not lose this draft',
     );
 
-    await viewModel.deleteChat(draft.id);
+    await tester.runAsync(() => viewModel.deleteChat(draft.id));
     await tester.pump();
     expect(viewModel.activeChatId, isNot(draft.id));
     expect(tester.widget<TextField>(input).controller!.text, isEmpty);
@@ -223,11 +245,11 @@ void main() {
     final storage = _GateNextSettingsLoadStorage();
     late final _PlanScreenHarness harness;
     try {
-      harness = await _PlanScreenHarness.create(storageService: storage);
+      harness = await createHarness(tester, storageService: storage);
     } finally {
       debugDefaultTargetPlatformOverride = originalPlatform;
     }
-    addTearDown(harness.dispose);
+    registerHarnessCleanup(tester, harness);
 
     await tester.pumpWidget(harness.app(advisor: _HealthyAdvisor()));
     await tester.pumpAndSettle();
@@ -263,11 +285,11 @@ void main() {
     final storage = _GateNextSettingsLoadStorage();
     late final _PlanScreenHarness harness;
     try {
-      harness = await _PlanScreenHarness.create(storageService: storage);
+      harness = await createHarness(tester, storageService: storage);
     } finally {
       debugDefaultTargetPlatformOverride = originalPlatform;
     }
-    addTearDown(harness.dispose);
+    registerHarnessCleanup(tester, harness);
 
     await tester.pumpWidget(harness.app(advisor: _HealthyAdvisor()));
     await tester.pumpAndSettle();
@@ -301,11 +323,11 @@ void main() {
     final storage = _GateNextSettingsLoadStorage();
     late final _PlanScreenHarness harness;
     try {
-      harness = await _PlanScreenHarness.create(storageService: storage);
+      harness = await createHarness(tester, storageService: storage);
     } finally {
       debugDefaultTargetPlatformOverride = originalPlatform;
     }
-    addTearDown(harness.dispose);
+    registerHarnessCleanup(tester, harness);
 
     await tester.pumpWidget(harness.app(advisor: _HealthyAdvisor()));
     await tester.pumpAndSettle();
@@ -318,17 +340,20 @@ void main() {
     await tester.pump();
     await storage.nextSettingsLoadStarted;
     storage.gateNextChatSave();
-    final stateWrite = viewModel.updateActiveChat(
-      originalChat.copyWith(title: 'Updated while New chat loads'),
-    );
-    await storage.nextChatSaveStarted;
+    late final Future<bool> stateWrite;
+    await tester.runAsync(() async {
+      stateWrite = viewModel.updateActiveChat(
+        originalChat.copyWith(title: 'Updated while New chat loads'),
+      );
+      await storage.nextChatSaveStarted;
+    });
     storage.releaseSettingsLoad();
     await tester.pumpAndSettle();
 
     expect(viewModel.activeChatId, originalChat.id);
     expect(find.text(strings.newChatBusy), findsOneWidget);
     storage.releaseChatSave();
-    expect(await stateWrite, isTrue);
+    expect(await tester.runAsync(() => stateWrite), isTrue);
     expect(tester.takeException(), isNull);
   });
 
@@ -343,35 +368,37 @@ void main() {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     late final _PlanScreenHarness harness;
     try {
-      harness = await _PlanScreenHarness.create();
+      harness = await createHarness(tester);
     } finally {
       debugDefaultTargetPlatformOverride = originalPlatform;
     }
-    addTearDown(harness.dispose);
-    await harness.appSettings.toggleLanguage();
+    registerHarnessCleanup(tester, harness);
+    await tester.runAsync(harness.appSettings.toggleLanguage);
     final createdAt = DateTime.utc(2026, 7, 13, 14);
-    await harness.storageService.saveAiChat(
-      AiChatRecord(
-        id: 'boundary-plan-chat',
-        title: 'Boundary plan',
-        model: 'test-model',
-        createdAt: createdAt,
-        updatedAt: createdAt,
-        messages: [
-          AiChatMessageRecord(
-            role: 'assistant',
-            text: 'Boundary plan',
-            createdAt: createdAt,
-            todoSteps: const [
-              AiTodoStep(
-                id: 'boundary-step',
-                name: 'Inspect nginx',
-                command: 'systemctl status nginx',
-                description: 'Read service status',
-              ),
-            ],
-          ),
-        ],
+    await tester.runAsync(
+      () => harness.storageService.saveAiChat(
+        AiChatRecord(
+          id: 'boundary-plan-chat',
+          title: 'Boundary plan',
+          model: 'test-model',
+          createdAt: createdAt,
+          updatedAt: createdAt,
+          messages: [
+            AiChatMessageRecord(
+              role: 'assistant',
+              text: 'Boundary plan',
+              createdAt: createdAt,
+              todoSteps: const [
+                AiTodoStep(
+                  id: 'boundary-step',
+                  name: 'Inspect nginx',
+                  command: 'systemctl status nginx',
+                  description: 'Read service status',
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
 
@@ -380,7 +407,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     final viewModel = harness.viewModel!;
-    await viewModel.loadHistoryChatsIfNeeded();
+    await tester.runAsync(viewModel.loadHistoryChatsIfNeeded);
     viewModel.selectChat('boundary-plan-chat');
     await tester.pumpAndSettle();
     expect(
@@ -427,34 +454,36 @@ void main() {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     late final _PlanScreenHarness harness;
     try {
-      harness = await _PlanScreenHarness.create();
+      harness = await createHarness(tester);
     } finally {
       debugDefaultTargetPlatformOverride = originalPlatform;
     }
-    addTearDown(harness.dispose);
+    registerHarnessCleanup(tester, harness);
     final createdAt = DateTime.utc(2026, 7, 13, 13);
-    await harness.storageService.saveAiChat(
-      AiChatRecord(
-        id: 'compact-plan-chat',
-        title: 'Compact plan',
-        model: 'test-model',
-        createdAt: createdAt,
-        updatedAt: createdAt,
-        messages: [
-          AiChatMessageRecord(
-            role: 'assistant',
-            text: 'Compact plan',
-            createdAt: createdAt,
-            todoSteps: const [
-              AiTodoStep(
-                id: 'compact-step',
-                name: 'Inspect nginx',
-                command: 'systemctl status nginx',
-                description: 'Read service status',
-              ),
-            ],
-          ),
-        ],
+    await tester.runAsync(
+      () => harness.storageService.saveAiChat(
+        AiChatRecord(
+          id: 'compact-plan-chat',
+          title: 'Compact plan',
+          model: 'test-model',
+          createdAt: createdAt,
+          updatedAt: createdAt,
+          messages: [
+            AiChatMessageRecord(
+              role: 'assistant',
+              text: 'Compact plan',
+              createdAt: createdAt,
+              todoSteps: const [
+                AiTodoStep(
+                  id: 'compact-step',
+                  name: 'Inspect nginx',
+                  command: 'systemctl status nginx',
+                  description: 'Read service status',
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
 
@@ -463,7 +492,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     final viewModel = harness.viewModel!;
-    await viewModel.loadHistoryChatsIfNeeded();
+    await tester.runAsync(viewModel.loadHistoryChatsIfNeeded);
     viewModel.selectChat('compact-plan-chat');
     await tester.pumpAndSettle();
 
@@ -478,9 +507,11 @@ void main() {
     expect(tester.takeException(), isNull);
 
     expect(
-      await viewModel.setPlanModeForActiveChat(
-        chatId: 'compact-plan-chat',
-        enabled: true,
+      await tester.runAsync(
+        () => viewModel.setPlanModeForActiveChat(
+          chatId: 'compact-plan-chat',
+          enabled: true,
+        ),
       ),
       SetPlanModeResult.updated,
     );
@@ -547,6 +578,9 @@ class _PlanScreenHarness {
   }) async {
     final resolvedStorageService = storageService ?? StorageService();
     await resolvedStorageService.init();
+    await AppLogService.instance.detachDatabase(
+      resolvedStorageService.appDatabase,
+    );
     final appSettings = AppSettings();
     await appSettings.init();
     final sshService = SshService(resolvedStorageService);
@@ -618,7 +652,14 @@ class _PlanScreenHarness {
     );
   }
 
-  void dispose() {
+  Future<void> dispose() async {
+    ragService.dispose();
+    playbookService.dispose();
+    performanceMonitorService.dispose();
+    sftpService.dispose();
+    sshService.dispose();
+    appSettings.dispose();
+    await storageService.shutdown();
     storageService.dispose();
   }
 }

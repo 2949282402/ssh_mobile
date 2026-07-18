@@ -107,6 +107,7 @@ class SftpService extends ChangeNotifier implements SftpClientAdapter {
   List<SftpEntry> get entries => _activeSession?.entries ?? const [];
   @override
   bool get isConnected => _activeSession?.sftp != null;
+  SftpClient? getSftpClientForConnection(String id) => _sessions[id]?.sftp;
   @override
   bool get isBusy =>
       state == SftpConnectionState.connecting ||

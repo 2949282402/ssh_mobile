@@ -73,6 +73,7 @@ void _registerDriftMigrationTests() {
           "WHERE id = 'idempotent-playbook'",
         )
         .getSingle();
+    await storage.shutdown();
     storage.dispose();
     await database.customStatement(
       "DELETE FROM migration_meta "
@@ -80,7 +81,7 @@ void _registerDriftMigrationTests() {
     );
 
     final restarted = StorageService(database: database);
-    addTearDown(restarted.dispose);
+    addTearDown(() => _shutdownAndDispose(restarted));
     await restarted.init();
 
     final afterMessage = await database
@@ -227,7 +228,7 @@ void _registerDriftMigrationTests() {
       );
 
       final storage = StorageService(database: database);
-      addTearDown(storage.dispose);
+      addTearDown(() => _shutdownAndDispose(storage));
       await storage.init();
       await storage.saveAiChat(
         AiChatRecord(
@@ -355,10 +356,11 @@ void _registerDriftMigrationTests() {
           'agentRunMetrics': [metric.toJson()],
         }),
       );
+      await storage.shutdown();
       storage.dispose();
 
       final restarted = StorageService(database: database);
-      addTearDown(restarted.dispose);
+      addTearDown(() => _shutdownAndDispose(restarted));
       await restarted.init();
 
       final metrics = await restarted.loadAgentRunMetrics();
@@ -460,14 +462,17 @@ void _registerDriftMigrationTests() {
       expect(connection['privateKey'], '');
       expect(aiSettings['apiKey'], '');
 
+      await storage.shutdown();
       storage.dispose();
+      await AppLogService.instance.pendingDbWrites;
+      AppLogService.instance.resetDatabaseForTesting();
       await database.close();
       SharedPreferences.setMockInitialValues({});
       FlutterSecureStorage.setMockInitialValues({});
       final importedDatabase = db.AppDatabase.forTesting();
       addTearDown(importedDatabase.close);
       final imported = StorageService(database: importedDatabase);
-      addTearDown(imported.dispose);
+      addTearDown(() => _shutdownAndDispose(imported));
       await imported.init();
       await imported.importAppDataJson(backup);
 
@@ -504,7 +509,7 @@ void _registerDriftMigrationTests() {
     final database = db.AppDatabase.forTesting();
     addTearDown(database.close);
     final storage = StorageService(database: database);
-    addTearDown(storage.dispose);
+    addTearDown(() => _shutdownAndDispose(storage));
     await storage.init();
 
     for (var i = 0; i < 85; i++) {
@@ -580,14 +585,17 @@ void _registerDriftMigrationTests() {
       expect(decoded['sftpRecentPaths'], isNotEmpty);
       expect(decoded['sftpFavoritePaths'], isNotEmpty);
 
+      await storage.shutdown();
       storage.dispose();
+      await AppLogService.instance.pendingDbWrites;
+      AppLogService.instance.resetDatabaseForTesting();
       await database.close();
       SharedPreferences.setMockInitialValues({});
       FlutterSecureStorage.setMockInitialValues({});
       final importedDatabase = db.AppDatabase.forTesting();
       addTearDown(importedDatabase.close);
       final imported = StorageService(database: importedDatabase);
-      addTearDown(imported.dispose);
+      addTearDown(() => _shutdownAndDispose(imported));
       await imported.init();
       await imported.importAppDataJson(backup);
 

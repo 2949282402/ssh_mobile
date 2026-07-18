@@ -63,13 +63,14 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
-  tearDown(() {
+  tearDown(() async {
     debugDefaultTargetPlatformOverride = null;
     sftpViewModel.dispose();
     connectionViewModel.dispose();
     performanceService.dispose();
     sftpService.dispose();
     sshService.dispose();
+    await storageService.shutdown();
     storageService.dispose();
     appSettings.dispose();
   });
@@ -476,6 +477,23 @@ class _FilePaneFakeSftpService extends SftpService {
 
   @override
   bool isConnectionOpen(String connectionId) => isConnected;
+
+  @override
+  Future<List<SftpRecentPathRecord>> loadRecentPaths(
+    String connectionId, {
+    int limit = 30,
+  }) async => const [];
+
+  @override
+  Future<List<SftpFavoritePathRecord>> loadFavoritePaths(
+    String connectionId,
+  ) async => const [];
+
+  @override
+  Future<SftpFavoritePathRecord?> findFavoritePath(
+    String connectionId,
+    String path,
+  ) async => null;
 
   @override
   Future<void> connect(String connectionId, {dynamic onUnknownHostKey}) async {

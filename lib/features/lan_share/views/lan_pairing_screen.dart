@@ -1,0 +1,548 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../../../services/app_settings.dart';
+import '../../../services/lan_share/lan_share_models.dart';
+import '../../../widgets/app_surface.dart';
+import '../viewmodels/lan_share_viewmodel.dart';
+import 'lan_chat_screen.dart';
+
+class LanPairingScreen extends StatefulWidget {
+  final String targetDeviceId;
+  final String initialAlias;
+  final String sessionId;
+  final bool isIncomingRequest;
+
+  const LanPairingScreen({
+    super.key,
+    required this.targetDeviceId,
+    required this.initialAlias,
+    required this.sessionId,
+    this.isIncomingRequest = false,
+  });
+
+  @override
+  State<LanPairingScreen> createState() => _LanPairingScreenState();
+}
+
+class _LanPairingScreenState extends State<LanPairingScreen>
+    with SingleTickerProviderStateMixin {
+  final TextEditingController _pinController = TextEditingController();
+  late AnimationController _radarController;
+
+  bool _isLoading = false;
+  String? _errorMessage;
+  String _localPin = '------';
+  int _pinCountdown = 60;
+  Timer? _countdownTimer;
+  bool _waitingForRemoteVerification = false;
+  bool _hasOpenedChat = false;
+  late bool _isIncomingRequest;
+  late String _targetDeviceId;
+  late String _targetAlias;
+  StreamSubscription? _handshakeSubscription;
+  StreamSubscription<LanPairingRequest>? _pairingRequestSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _isIncomingRequest = widget.isIncomingRequest;
+    _targetDeviceId = widget.targetDeviceId;
+    _targetAlias = widget.initialAlias;
+    _radarController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat();
+    // Load or generate the local PIN
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _refreshLocalPin();
+
+      final vm = context.read<LanShareViewModel>();
+      _handshakeSubscription = vm.transferService.handshakeSuccessStream.listen(
+        (device) {
+          if (device.id == _targetDeviceId && mounted) {
+            _openChat();
+          }
+        },
+      );
+      _pairingRequestSubscription = vm.pairingRequestStream.listen(
+        _handlePairingRequest,
+      );
+      final latestRequest = vm.pairingRequestForSession(widget.sessionId);
+      if (latestRequest != null) {
+        _handlePairingRequest(latestRequest);
+      }
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant LanPairingScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _targetDeviceId = widget.targetDeviceId;
+    _targetAlias = widget.initialAlias;
+    _isIncomingRequest = widget.isIncomingRequest;
+  }
+
+  void _handlePairingRequest(LanPairingRequest request) {
+    if (!mounted || request.isExpired) return;
+    final matchesSession = request.sessionId == widget.sessionId;
+    final matchesDevice = request.device.id == _targetDeviceId;
+    if (!matchesSession && !matchesDevice) return;
+
+    setState(() {
+      _targetDeviceId = request.device.id;
+      _targetAlias = request.device.alias;
+      if (request.isIncoming) {
+        _isIncomingRequest = true;
+      }
+    });
+  }
+
+  void _openChat() {
+    if (!mounted || _hasOpenedChat) return;
+    _hasOpenedChat = true;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => LanChatScreen(
+          targetDeviceId: _targetDeviceId,
+          initialAlias: _targetAlias,
+        ),
+      ),
+    );
+  }
+
+  void _refreshLocalPin() {
+    final vm = context.read<LanShareViewModel>();
+    final pin = vm.securityService.getOrGenerate6DigitPin();
+    if (!mounted) return;
+    setState(() {
+      _localPin = pin;
+      _pinCountdown = vm.securityService.pinSecondsRemaining;
+    });
+    _countdownTimer?.cancel();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      final remaining = context
+          .read<LanShareViewModel>()
+          .securityService
+          .pinSecondsRemaining;
+      setState(() => _pinCountdown = remaining);
+      if (remaining <= 0) {
+        _countdownTimer?.cancel();
+        if (_waitingForRemoteVerification) {
+          setState(() {
+            _waitingForRemoteVerification = false;
+            _errorMessage = '配对超时：您的PIN码已过期，请重新确认并发起连接。';
+          });
+          _refreshLocalPin();
+        } else {
+          _refreshLocalPin();
+        }
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _countdownTimer?.cancel();
+    _handshakeSubscription?.cancel();
+    _pairingRequestSubscription?.cancel();
+    _radarController.dispose();
+    _pinController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submitPin(LanShareViewModel vm, AppStrings strings) async {
+    final pin = _pinController.text.trim();
+    if (pin.length != 6) {
+      setState(() {
+        _errorMessage = '请输入完整的6位PIN码';
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    // Find the device in viewmodel
+    LanDevice? targetDevice;
+    for (final d in vm.devices) {
+      if (d.id == _targetDeviceId) {
+        targetDevice = d;
+        break;
+      }
+    }
+
+    if (targetDevice == null) {
+      setState(() {
+        _isLoading = false;
+        _errorMessage = strings.lanShareOffline;
+      });
+      return;
+    }
+
+    try {
+      final result = await vm.authenticateDevice(
+        targetDevice,
+        pin,
+        isInitiator: !_isIncomingRequest,
+      );
+      if (!mounted) return;
+      if (result.success) {
+        if (mounted) {
+          if (result.pendingRemote) {
+            setState(() {
+              _waitingForRemoteVerification = true;
+              _isLoading = false;
+            });
+          } else {
+            _openChat();
+          }
+        }
+      } else {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = strings.lanSharePinMismatch;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _errorMessage = '网络连接失败，请检查两端设备是否在同一 Wi-Fi。';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final vm = context.watch<LanShareViewModel>();
+    final settings = context.read<AppSettings>();
+    final strings = AppStrings(settings.language);
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(strings.lanSharePinPairing),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+      ),
+      body: AppPageSurface(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 24.0,
+              vertical: 16.0,
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // Beautiful Pulsing Radar Animation
+                SizedBox(
+                  width: 220,
+                  height: 220,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children:
+                        List.generate(3, (index) {
+                          return AnimatedBuilder(
+                            animation: _radarController,
+                            builder: (context, child) {
+                              final progress =
+                                  (_radarController.value + index / 3) % 1.0;
+                              return Container(
+                                width: 100 + (progress * 120),
+                                height: 100 + (progress * 120),
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: colors.primary.withValues(
+                                    alpha: (1.0 - progress) * 0.25,
+                                  ),
+                                ),
+                              );
+                            },
+                          );
+                        })..add(
+                          Container(
+                            width: 90,
+                            height: 90,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: colors.primaryContainer,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: colors.primary.withValues(alpha: 0.3),
+                                  blurRadius: 16,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
+                            child: Icon(
+                              Icons.security_rounded,
+                              size: 40,
+                              color: colors.onPrimaryContainer,
+                            ),
+                          ),
+                        ),
+                  ),
+                ),
+                const SizedBox(height: 48),
+
+                Text(
+                  _isIncomingRequest
+                      ? '安全配对请求'
+                      : (_waitingForRemoteVerification
+                            ? '等待安全确认'
+                            : '准备连接至$_targetAlias'),
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.0,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _isIncomingRequest
+                      ? '设备$_targetAlias请求与您配对连接…'
+                      : (_waitingForRemoteVerification
+                            ? '已成功验证对方PIN码。请在对方设备上输入您的PIN码以完成连接。'
+                            : '正在建立安全连接，请输入对方设备上显示的PIN码…'),
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: colors.onSurface.withValues(alpha: 0.6),
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                // Local PIN display card
+                Builder(
+                  builder: (context) {
+                    final isExpiring = _pinCountdown <= 10;
+                    final countdownColor = isExpiring
+                        ? colors.error
+                        : colors.primary;
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20.0,
+                        vertical: 14.0,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isExpiring
+                            ? colors.errorContainer.withValues(alpha: 0.25)
+                            : colors.primaryContainer.withValues(alpha: 0.35),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: countdownColor.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '本机PIN码',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: countdownColor.withValues(alpha: 0.75),
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0.8,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _localPin,
+                                style: theme.textTheme.headlineMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 10.0,
+                                  color: countdownColor,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(width: 20),
+                          // Circular countdown indicator
+                          GestureDetector(
+                            onTap: _refreshLocalPin,
+                            child: SizedBox(
+                              width: 44,
+                              height: 44,
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  CircularProgressIndicator(
+                                    value: _pinCountdown / 60.0,
+                                    strokeWidth: 3,
+                                    backgroundColor: countdownColor.withValues(
+                                      alpha: 0.15,
+                                    ),
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      countdownColor,
+                                    ),
+                                  ),
+                                  Text(
+                                    '$_pinCountdown',
+                                    style: theme.textTheme.labelSmall?.copyWith(
+                                      color: countdownColor,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 24),
+
+                // Glassmorphic Style PIN Form Container
+                Container(
+                  padding: const EdgeInsets.all(24.0),
+                  decoration: BoxDecoration(
+                    color: colors.surfaceContainerLowest.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(
+                      color: colors.outlineVariant.withValues(alpha: 0.4),
+                    ),
+                  ),
+                  child: _waitingForRemoteVerification
+                      ? const Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              SizedBox(
+                                width: 32,
+                                height: 32,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 3,
+                                ),
+                              ),
+                              SizedBox(height: 16),
+                              Text(
+                                '等待对方输入您的本机PIN码进行确认...',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      : Column(
+                          children: [
+                            Text(
+                              strings.lanSharePinPrompt,
+                              textAlign: TextAlign.center,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+
+                            // Custom 6-Digit PIN Field
+                            TextField(
+                              controller: _pinController,
+                              keyboardType: TextInputType.number,
+                              maxLength: 6,
+                              textAlign: TextAlign.center,
+                              style: theme.textTheme.headlineMedium?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 8.0,
+                              ),
+                              decoration: InputDecoration(
+                                hintText: '••••••',
+                                hintStyle: TextStyle(
+                                  color: colors.onSurfaceVariant.withValues(
+                                    alpha: 0.3,
+                                  ),
+                                  letterSpacing: 4.0,
+                                ),
+                                counterText: '',
+                                errorText: _errorMessage,
+                                errorMaxLines: 2,
+                                filled: true,
+                                fillColor: colors.surfaceContainer,
+                                contentPadding: const EdgeInsets.symmetric(
+                                  vertical: 16.0,
+                                  horizontal: 8.0,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                  borderSide: BorderSide.none,
+                                ),
+                              ),
+                              enabled: !_isLoading,
+                            ),
+                            const SizedBox(height: 24),
+
+                            // Submit Button
+                            SizedBox(
+                              width: double.infinity,
+                              height: 52,
+                              child: ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: colors.primary,
+                                  foregroundColor: colors.onPrimary,
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                ),
+                                onPressed: _isLoading
+                                    ? null
+                                    : () => _submitPin(vm, strings),
+                                child: _isLoading
+                                    ? const SizedBox(
+                                        width: 24,
+                                        height: 24,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2.5,
+                                          valueColor:
+                                              AlwaysStoppedAnimation<Color>(
+                                                Colors.white,
+                                              ),
+                                        ),
+                                      )
+                                    : const Text(
+                                        '确认配对',
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+                const SizedBox(height: 24),
+
+                // Cancel button
+                TextButton(
+                  onPressed: _isLoading ? null : () => Navigator.pop(context),
+                  child: Text(
+                    strings.cancel,
+                    style: TextStyle(
+                      color: colors.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

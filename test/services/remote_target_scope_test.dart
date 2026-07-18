@@ -134,7 +134,8 @@ void main() {
       await storage.init();
     });
 
-    tearDown(() {
+    tearDown(() async {
+      await storage.shutdown();
       storage.dispose();
     });
 
@@ -353,7 +354,8 @@ void main() {
       await storage.init();
     });
 
-    tearDown(() {
+    tearDown(() async {
+      await storage.shutdown();
       storage.dispose();
     });
 
@@ -398,7 +400,8 @@ void main() {
       await storage.init();
     });
 
-    tearDown(() {
+    tearDown(() async {
+      await storage.shutdown();
       storage.dispose();
     });
 

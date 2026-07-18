@@ -433,7 +433,7 @@ class _ChatComposerState extends State<_ChatComposer> {
     return Container(
       key: const ValueKey<String>('chat-composer-surface'),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.58),
+        color: Colors.transparent,
         borderRadius: BorderRadius.circular(26),
         border: Border.all(color: colorScheme.outline.withValues(alpha: 0.62)),
       ),
@@ -484,12 +484,18 @@ class _ChatComposerState extends State<_ChatComposer> {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.all(4),
+            padding: const EdgeInsets.only(
+              right: 8,
+              top: 6,
+              bottom: 6,
+              left: 4,
+            ),
             child: IconButton(
               key: const ValueKey<String>('chat-composer-send'),
               tooltip: sending ? strings.stop : strings.send,
               style: IconButton.styleFrom(
-                minimumSize: const Size.square(48),
+                minimumSize: const Size.square(38),
+                padding: EdgeInsets.zero,
                 foregroundColor: colorScheme.onPrimary,
                 backgroundColor: colorScheme.primary,
               ),

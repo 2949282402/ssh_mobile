@@ -208,11 +208,12 @@ void main() {
       focusNode = FocusNode();
     });
 
-    tearDown(() {
+    tearDown(() async {
       focusNode.dispose();
       inputController.dispose();
       shortcutService.dispose();
       sshService.dispose();
+      await storageService.shutdown();
       storageService.dispose();
       debugDefaultTargetPlatformOverride = null;
     });

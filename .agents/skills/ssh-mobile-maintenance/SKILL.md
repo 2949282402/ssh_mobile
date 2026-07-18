@@ -84,6 +84,11 @@ or maintenance lesson should be shared across Codex and Claude Code sessions.
   `drift_sensitive_fields_encrypted_v1` before considering storage migration
   complete. That startup re-encryption runs in small retryable batches, marks
   completion only after all batches succeed, and logs row counts only.
+  `StorageService.appDatabase` may be accessed before asynchronous `init()` by
+  root providers such as LAN Share. It must cache and own exactly one database
+  instance, `_initializeDriftStorage()` must reuse that instance, concurrent
+  `init()` calls must share one future, and log database binding must finish
+  before Drift initialization is reported complete.
 - Keep SSH Host Key checks centralized in `SshHostKeyPolicy`. UI-initiated
   first use may prompt for TOFU confirmation, but AI tools and background SSH
   service code must never auto-trust unknown or changed host keys.
@@ -233,6 +238,45 @@ its `views/` parts.
 - Keep the SFTP upload action on the active theme's secondary color; do not
   hardcode the former deep-purple action color.
 
+### LAN Quick Share
+
+Primary entry points are
+lib/features/lan_share/viewmodels/lan_share_viewmodel.dart,
+lib/features/lan_share/views/lan_pairing_navigation_host.dart,
+lib/features/lan_share/views/lan_pairing_screen.dart, and
+lib/services/lan_share/lan_transfer_service.dart.
+
+- Initialize the LAN receiver independently from the selected home tab so a
+  foreground peer invitation can open the pairing page from anywhere in the
+  app.
+- QR scans and device-list taps use the same short-lived pairing invitation
+  flow. QR URLs carry the stable device ID and native transfer port; never use
+  the Web Share HTTP port as the native pairing port.
+- Pairing invitations only request navigation and never establish trust.
+  Complete trust only after reciprocal PIN verification.
+- Merge simultaneous invitations for the same device into the active pairing
+  route. The active screen must accept its peer's incoming role transition so
+  two outgoing initiators cannot remain stuck in pending_remote.
+- Reciprocal verification is role-independent: either device may submit its
+  PIN first, and pairing completes only after both directions are verified.
+  Updating a reciprocal invitation must preserve PIN input already typed on
+  the active route.
+- Authenticate every post-pair native endpoint with the peer-specific bearer
+  token and pin the peer certificate fingerprint. Never accept a remote
+  `localPath`; receive files into the LAN sandbox and restrict recall cleanup
+  to files owned by that sandbox.
+- Bound pairing nonces, pending uploads, request bodies, names, sizes, and
+  preview decoding. A failed upload must clear its pending reservation, delete
+  partial data, and persist an incoming failed state rather than leaving the
+  history entry pending.
+- Web Share URLs use a short-lived random capability, and their APIs require
+  the matching request header. Keep restrictive response headers and avoid
+  permissive CORS.
+- Android discovery must hold a multicast lock while active. Apple targets
+  declare Bonjour/local-network access and network-server entitlement where
+  required. The Windows installer firewall rule is scoped to the application
+  and local subnet.
+- Never log pairing PIN values.
 ### Performance Monitor & System Administration
 
 Primary entry points are

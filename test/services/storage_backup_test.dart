@@ -23,7 +23,8 @@ void main() {
     FlutterSecureStorage.setMockInitialValues({});
   });
 
-  tearDown(() {
+  tearDown(() async {
+    await storage.shutdown();
     storage.dispose();
   });
 
@@ -752,6 +753,7 @@ void main() {
       expect(newAiSettings.maxImageSizeBytes, 5 * 1024 * 1024);
       expect(newAiSettings.maxFileSizeBytes, 50 * 1024 * 1024);
 
+      await newStorage.shutdown();
       newStorage.dispose();
     },
   );

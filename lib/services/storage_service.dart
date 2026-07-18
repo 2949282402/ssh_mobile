@@ -36,6 +36,7 @@ part 'storage/playbook_ops.dart';
 part 'storage/backup_ops.dart';
 part 'storage/buffered_write_ops.dart';
 part 'storage/drift_ops.dart';
+part 'storage/lifecycle_ops.dart';
 part '../data/repositories/drift_ai_chat_repository.dart';
 part '../data/repositories/drift_agent_metrics_repository.dart';
 part '../data/repositories/drift_agent_trace_repository.dart';
@@ -56,6 +57,9 @@ class StorageService extends ChangeNotifier
         SftpPathHistoryRepository,
         AppBackupRepository {
   final db.AppDatabase? _providedDatabase;
+  final db.AppDatabase Function()? _databaseFactory;
+  @visibleForTesting
+  final Future<void> Function()? initializationCheckpoint;
   Completer<void>? _aiSettingsOperation;
   Completer<void>? _aiSkillOperation;
   Completer<void>? _connectionOperation;
@@ -65,7 +69,13 @@ class StorageService extends ChangeNotifier
   static final Object _aiSkillOperationZoneKey = Object();
   static final Object _playbookOperationZoneKey = Object();
 
-  StorageService({db.AppDatabase? database}) : _providedDatabase = database;
+  StorageService({
+    db.AppDatabase? database,
+    db.AppDatabase Function()? databaseFactory,
+    @visibleForTesting this.initializationCheckpoint,
+  }) : assert(database == null || databaseFactory == null),
+       _providedDatabase = database,
+       _databaseFactory = databaseFactory;
 
   Future<T> _runExclusiveAiSettingsOperation<T>(
     Future<T> Function() operation,
@@ -588,6 +598,21 @@ class StorageService extends ChangeNotifier
   );
   final DataProtectionService _dataProtection = DataProtectionService.instance;
   db.AppDatabase? _database;
+  db.AppDatabase get appDatabase {
+    if (_disposed) {
+      throw StateError('StorageService has been shut down');
+    }
+
+    final existing = _database;
+    if (existing != null) return existing;
+
+    final database =
+        _providedDatabase ?? _databaseFactory?.call() ?? db.AppDatabase();
+    _database = database;
+    _ownsDatabase = _providedDatabase == null;
+    return database;
+  }
+
   bool _ownsDatabase = false;
   bool _driftReady = false;
   bool _driftAiChatsActive = false;
@@ -652,6 +677,9 @@ class StorageService extends ChangeNotifier
   List<RestorableTmuxSession>? _restorableTmuxSessionsCache;
   List<TerminalHistoryRecord>? _terminalHistoryRecordsCache;
   bool _initialized = false;
+  Future<void>? _initializationFuture;
+  Future<void>? _driftInitializationFuture;
+  Future<void>? _shutdownFuture;
   final Completer<void> _initCompleter = Completer<void>();
   Future<void> get initFuture => _initCompleter.future;
   final Completer<void> _driftInitCompleter = Completer<void>();
@@ -697,44 +725,12 @@ class StorageService extends ChangeNotifier
   bool get initialized => _initialized;
   bool get powerGuideSeen => _powerGuideSeen;
 
-  Future<void> init() async {
-    _initCalled = true;
-    try {
-      _prefs = await SharedPreferences.getInstance().timeout(
-        const Duration(seconds: 3),
-      );
-      _powerGuideSeen = _prefs?.getBool(_powerGuideSeenKey) ?? false;
-      await _loadSecretCacheSettings();
-      await _loadConnections();
-    } catch (e) {
-      AppLogService.instance.error(
-        'Failed to initialize storage service preferences',
-        error: e,
-      );
-      _connections = [];
-      _refreshConnectionsView();
-      _powerGuideSeen = false;
-    } finally {
-      _initialized = true;
-      if (!_initCompleter.isCompleted) {
-        _initCompleter.complete();
-      }
-      notifyListeners();
-
-      if (!kIsWeb && Platform.environment.containsKey('FLUTTER_TEST')) {
-        await _initializeDriftStorage();
-      } else {
-        // Asynchronously initialize Drift database in the background to not block cold start
-        unawaited(
-          _initializeDriftStorage().catchError((e) {
-            AppLogService.instance.error(
-              'Asynchronous Drift initialization failed',
-              error: e,
-            );
-          }),
-        );
-      }
+  Future<void> init() {
+    if (_disposed) {
+      return Future<void>.value();
     }
+    _initCalled = true;
+    return _initializationFuture ??= _initialize();
   }
 
   @override
@@ -964,6 +960,18 @@ class StorageService extends ChangeNotifier
   }
 
   bool _disposed = false;
+  bool _notifierDisposed = false;
+
+  /// Stops all storage initialization and closes the owned Drift database.
+  ///
+  /// Callers that need to create another [StorageService] in the same isolate
+  /// should await this method first. Flutter's synchronous provider disposal
+  /// delegates here without awaiting and this future remains available for
+  /// explicit lifecycle owners and tests.
+  Future<void> shutdown() {
+    _beginShutdown();
+    return _shutdownFuture ??= _shutdownStorage();
+  }
 
   @override
   void notifyListeners() {
@@ -974,14 +982,17 @@ class StorageService extends ChangeNotifier
 
   @override
   void dispose() {
-    _disposed = true;
-    for (final pending in _pendingProtectedPrefWrites.values) {
-      pending.timer?.cancel();
-    }
-    unawaited(flushPendingWrites());
-    if (_ownsDatabase) {
-      unawaited(_database?.close());
-    }
+    if (_notifierDisposed) return;
+    _notifierDisposed = true;
+    unawaited(
+      shutdown().catchError((Object error, StackTrace stackTrace) {
+        AppLogService.instance.error(
+          'Storage shutdown failed during provider disposal',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }),
+    );
     super.dispose();
   }
 }

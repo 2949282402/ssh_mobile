@@ -15,6 +15,12 @@ import 'features/startup/viewmodels/startup_viewmodel.dart';
 import 'features/performance/viewmodels/performance_viewmodel.dart';
 import 'features/sftp/viewmodels/sftp_viewmodel.dart';
 import 'features/system_admin/viewmodels/system_admin_viewmodel.dart';
+import 'features/lan_share/viewmodels/lan_share_viewmodel.dart';
+import 'features/lan_share/views/lan_pairing_navigation_host.dart';
+import 'services/lan_share/lan_discovery_service.dart';
+import 'services/lan_share/lan_security_service.dart';
+import 'services/lan_share/lan_storage_service.dart';
+import 'services/lan_share/lan_transfer_service.dart';
 import 'package:ssh_mobile/features/ai_skills/views/ai_skills_screen.dart';
 import 'package:ssh_mobile/features/ai_skills/views/ai_skill_edit_screen.dart';
 import 'package:ssh_mobile/features/home/views/home_screen.dart';
@@ -60,6 +66,11 @@ Future<void> main() async {
       unawaited(SharedPreferences.getInstance());
       unawaited(DisplayModeService.enableHighRefreshRate());
 
+      // LAN infrastructure requires a stable device identity before any root
+      // provider can start listening or advertising.
+      final appSettings = AppSettings();
+      await appSettings.init();
+
       // --- 服务装配与异步加载通过 MultiProvider 懒加载自动完成 ---
       runApp(
         MultiProvider(
@@ -70,11 +81,10 @@ Future<void> main() async {
             ),
             ChangeNotifierProvider(
               create: (context) {
-                final settings = AppSettings()..init();
                 context.read<StorageService>().registerOnImportCallback(() {
-                  unawaited(settings.init());
+                  unawaited(appSettings.init());
                 });
-                return settings;
+                return appSettings;
               },
             ),
             ChangeNotifierProvider(
@@ -168,6 +178,34 @@ Future<void> main() async {
                 storageService: context.read<StorageService>(),
               ),
             ),
+            ChangeNotifierProvider(
+              create: (context) {
+                final storage = context.read<StorageService>();
+                final db = storage.appDatabase;
+                final settings = context.read<AppSettings>();
+                final deviceId = settings.lanDeviceId;
+                final deviceAlias = settings.lanDeviceAlias;
+                final discoveryService = LanDiscoveryService(
+                  currentDeviceId: deviceId,
+                  currentDeviceAlias: deviceAlias,
+                );
+                final securityService = LanSecurityService();
+                final lanStorageService = LanStorageService();
+                final transferService = LanTransferService(
+                  currentDeviceId: deviceId,
+                  securityService: securityService,
+                  storageService: lanStorageService,
+                );
+                return LanShareViewModel(
+                  discoveryService: discoveryService,
+                  securityService: securityService,
+                  storageService: lanStorageService,
+                  transferService: transferService,
+                  historyDao: db.lanHistoryDao,
+                  appSettings: settings,
+                );
+              },
+            ),
           ],
           child: const SshMobileApp(),
         ),
@@ -207,6 +245,8 @@ class SshMobileApp extends StatefulWidget {
 
 class _SshMobileAppState extends State<SshMobileApp>
     with WidgetsBindingObserver {
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+
   static final Map<AppColorPalette, ThemeData> _lightThemes = {
     for (final palette in AppColorPalette.values)
       palette: AppTheme.lightThemeFor(palette: palette),
@@ -317,6 +357,7 @@ class _SshMobileAppState extends State<SshMobileApp>
             child: Builder(
               builder: (context) {
                 return MaterialApp(
+                  navigatorKey: _navigatorKey,
                   title: 'SSH Mobile',
                   debugShowCheckedModeBanner: false,
                   theme: _lightThemes[palette],
@@ -330,7 +371,10 @@ class _SshMobileAppState extends State<SshMobileApp>
                     final adaptedMediaQuery = adaptMobileMediaQuery(mediaQuery);
                     final visualDensity = mobileVisualDensityFor(mediaQuery);
                     final effectiveChild = child ?? const SizedBox.shrink();
-                    final shadChild = ShadAppBuilder(child: effectiveChild);
+                    final shadChild = LanPairingNavigationHost(
+                      navigatorKey: _navigatorKey,
+                      child: ShadAppBuilder(child: effectiveChild),
+                    );
 
                     final currentTheme = Theme.of(context);
                     if (identical(adaptedMediaQuery, mediaQuery) &&

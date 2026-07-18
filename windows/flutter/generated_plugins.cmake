@@ -3,7 +3,11 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  desktop_drop
+  disk_space_2
   flutter_secure_storage_windows
+  gal
+  nsd_windows
   permission_handler_windows
 )
 

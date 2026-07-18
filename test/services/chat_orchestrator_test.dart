@@ -70,6 +70,7 @@ void main() {
         'pending',
       );
 
+      await storage.shutdown();
       storage.dispose();
     },
   );
@@ -119,6 +120,7 @@ void main() {
         isTrue,
       );
 
+      await storage.shutdown();
       storage.dispose();
     },
   );
@@ -248,6 +250,7 @@ void main() {
       );
       expect(prepDisabled.assistantMessage.traces, isEmpty);
 
+      await storage.shutdown();
       storage.dispose();
     },
   );
@@ -304,6 +307,7 @@ void main() {
       expect(completion.assistantMessage.todoSteps.first.id, 'existing-1');
       expect(completion.assistantMessage.todoSteps.first.name, 'Existing Step');
 
+      await storage.shutdown();
       storage.dispose();
     },
   );
@@ -358,6 +362,7 @@ Second good block:
       expect(completion.assistantMessage.todoSteps, hasLength(1));
       expect(completion.assistantMessage.todoSteps.first.name, 'Good step');
 
+      await storage.shutdown();
       storage.dispose();
     },
   );
@@ -405,6 +410,7 @@ Second good block:
       expect(completion.shouldExitPlanMode, isFalse);
       expect(completion.assistantMessage.todoSteps, isEmpty);
 
+      await storage.shutdown();
       storage.dispose();
     },
   );

@@ -37,7 +37,10 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       addTearDown(tester.view.resetPadding);
 
-      final fixture = await _createFixture(language: AppLanguage.en);
+      late _StartupFixture fixture;
+      await tester.runAsync(() async {
+        fixture = await _createFixture(language: AppLanguage.en);
+      });
       addTearDown(fixture.dispose);
       await tester.pumpWidget(_guideHost(fixture.viewModel, textScale: 2));
       await tester.pumpAndSettle();
@@ -113,7 +116,10 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.view.resetPadding);
 
-    final fixture = await _createFixture(language: AppLanguage.zh);
+    late _StartupFixture fixture;
+    await tester.runAsync(() async {
+      fixture = await _createFixture(language: AppLanguage.zh);
+    });
     addTearDown(fixture.dispose);
     await tester.pumpWidget(_guideHost(fixture.viewModel));
     await tester.pumpAndSettle();
@@ -148,11 +154,14 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     final statusGate = Completer<bool>();
-    final fixture = await _createFixture(
-      language: AppLanguage.en,
-      checkStatus: false,
-      statusGate: statusGate,
-    );
+    late _StartupFixture fixture;
+    await tester.runAsync(() async {
+      fixture = await _createFixture(
+        language: AppLanguage.en,
+        checkStatus: false,
+        statusGate: statusGate,
+      );
+    });
     addTearDown(fixture.dispose);
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     try {
@@ -189,7 +198,10 @@ void main() {
     tester,
   ) async {
     final semantics = tester.ensureSemantics();
-    final fixture = await _createFixture(language: AppLanguage.en);
+    late _StartupFixture fixture;
+    await tester.runAsync(() async {
+      fixture = await _createFixture(language: AppLanguage.en);
+    });
     addTearDown(fixture.dispose);
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     try {
@@ -259,9 +271,10 @@ class _StartupFixture {
     required this.powerCalls,
   });
 
-  void dispose() {
+  Future<void> dispose() async {
     viewModel.dispose();
     appSettings.dispose();
+    await storageService.shutdown();
     storageService.dispose();
   }
 }

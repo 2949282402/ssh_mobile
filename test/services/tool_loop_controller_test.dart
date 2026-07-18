@@ -59,7 +59,8 @@ void main() {
       llm = LlmChatService(storageService: storage, toolService: tools);
     });
 
-    tearDown(() {
+    tearDown(() async {
+      await storage.shutdown();
       storage.dispose();
       debugDefaultTargetPlatformOverride = null;
     });

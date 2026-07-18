@@ -75,7 +75,18 @@ extension _SftpFilePaneActions on _FilePane {
       case 'delete':
         await _confirmDelete(context, entry);
         break;
+      case 'send_to_nearby':
+        await _sendToNearby(context, entry);
+        break;
     }
+  }
+
+  Future<void> _sendToNearby(BuildContext context, SftpEntry entry) async {
+    final settings = context.read<AppSettings>();
+    final strings = AppStrings(settings.language);
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(strings.lanShareSendToNearby)));
   }
 
   Future<void> _viewFile(BuildContext context, SftpEntry entry) async {

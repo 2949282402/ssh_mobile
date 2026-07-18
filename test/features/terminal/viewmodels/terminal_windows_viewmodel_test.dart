@@ -28,8 +28,11 @@ void main() {
     await appSettings.init();
   });
 
-  tearDown(() {
+  tearDown(() async {
     debugDefaultTargetPlatformOverride = null;
+    sshService.dispose();
+    appSettings.dispose();
+    await storageService.shutdown();
     storageService.dispose();
   });
 

@@ -709,3 +709,263 @@ class _BackupSettingsSection extends StatelessWidget {
     );
   }
 }
+
+class _DeveloperSettingsSection extends StatelessWidget {
+  final AppStrings strings;
+
+  const _DeveloperSettingsSection({required this.strings});
+
+  @override
+  Widget build(BuildContext context) {
+    return _SettingsSection(
+      title: strings.developerLogs,
+      children: [
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.bug_report_outlined, size: 20),
+          title: Text(
+            strings.developerLogs,
+            style: const TextStyle(fontSize: 13),
+          ),
+          trailing: const Icon(Icons.chevron_right_rounded, size: 18),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ChangeNotifierProvider(
+                  create: (context) => DeveloperLogViewModel(
+                    logService: context.read<AppLogService>(),
+                    appSettings: context.read<AppSettings>(),
+                  ),
+                  child: const DeveloperLogPage(),
+                ),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _LanShareSettingsSection extends StatefulWidget {
+  final AppStrings strings;
+  final SettingsViewModel settings;
+
+  const _LanShareSettingsSection({
+    required this.strings,
+    required this.settings,
+  });
+
+  @override
+  State<_LanShareSettingsSection> createState() =>
+      _LanShareSettingsSectionState();
+}
+
+class _LanShareSettingsSectionState extends State<_LanShareSettingsSection> {
+  bool _notificationGranted = false;
+  bool _cameraGranted = false;
+
+  bool get _supportsRuntimePermissions => supportsLanShareRuntimePermissions(
+    platform: defaultTargetPlatform,
+    isWeb: kIsWeb,
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _checkPermissions();
+  }
+
+  Future<void> _checkPermissions() async {
+    if (!_supportsRuntimePermissions) return;
+    final notificationStatus = await Permission.notification.status;
+    final cameraStatus = await Permission.camera.status;
+    if (mounted) {
+      setState(() {
+        _notificationGranted = notificationStatus.isGranted;
+        _cameraGranted = cameraStatus.isGranted;
+      });
+    }
+  }
+
+  Future<void> _requestNotification() async {
+    if (!_supportsRuntimePermissions) return;
+    final status = await Permission.notification.request();
+    if (!mounted) return;
+    setState(() {
+      _notificationGranted = status.isGranted;
+    });
+  }
+
+  Future<void> _requestCamera() async {
+    if (!_supportsRuntimePermissions) return;
+    final status = await Permission.camera.request();
+    if (!mounted) return;
+    setState(() {
+      _cameraGranted = status.isGranted;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final currentAlias = widget.settings.lanDeviceAlias;
+    final currentId = widget.settings.lanDeviceId;
+
+    return _SettingsSection(
+      title: widget.strings.lanShare,
+      children: [
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(
+            Icons.drive_file_rename_outline_rounded,
+            size: 20,
+          ),
+          title: Text(
+            widget.strings.isEnglish ? 'Device Alias / Name' : '设备昵称 / 名称',
+            style: const TextStyle(fontSize: 13),
+          ),
+          subtitle: Text(
+            currentAlias.isNotEmpty ? currentAlias : 'Unknown',
+            style: const TextStyle(fontSize: 11),
+          ),
+          trailing: const Icon(Icons.chevron_right_rounded, size: 20),
+          onTap: () => _showRenameDialog(context, currentAlias),
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.fingerprint_rounded, size: 20),
+          title: Text(
+            widget.strings.isEnglish
+                ? 'Persistent Device Identifier'
+                : '固定设备标识符',
+            style: const TextStyle(fontSize: 13),
+          ),
+          subtitle: Text(
+            currentId.isNotEmpty ? currentId : 'Generating...',
+            style: const TextStyle(fontSize: 10, fontFamily: 'monospace'),
+          ),
+          trailing: IconButton(
+            icon: const Icon(Icons.copy_rounded, size: 16),
+            onPressed: () {
+              if (currentId.isNotEmpty) {
+                Clipboard.setData(ClipboardData(text: currentId));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      widget.strings.isEnglish
+                          ? 'Device ID copied'
+                          : '设备标识符已复制',
+                    ),
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              }
+            },
+          ),
+        ),
+        // Dynamic permission checks
+        if (_supportsRuntimePermissions) ...[
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.notifications_active_outlined, size: 20),
+            title: Text(
+              widget.strings.isEnglish
+                  ? 'Background Notification Permission'
+                  : '后台通知权限',
+              style: const TextStyle(fontSize: 13),
+            ),
+            subtitle: Text(
+              _notificationGranted
+                  ? (widget.strings.isEnglish ? 'Granted' : '已授予')
+                  : (widget.strings.isEnglish
+                        ? 'Not granted (Tap to authorize)'
+                        : '未授予 (点击去授权)'),
+              style: TextStyle(
+                fontSize: 11,
+                color: _notificationGranted ? Colors.green : Colors.orange,
+              ),
+            ),
+            trailing: _notificationGranted
+                ? const Icon(
+                    Icons.check_circle_outline_rounded,
+                    color: Colors.green,
+                    size: 18,
+                  )
+                : null,
+            onTap: _notificationGranted ? null : _requestNotification,
+          ),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.camera_alt_outlined, size: 20),
+            title: Text(
+              widget.strings.isEnglish
+                  ? 'Camera Permission (Scan QR Code)'
+                  : '相机权限 (扫描二维码)',
+              style: const TextStyle(fontSize: 13),
+            ),
+            subtitle: Text(
+              _cameraGranted
+                  ? (widget.strings.isEnglish ? 'Granted' : '已授予')
+                  : (widget.strings.isEnglish
+                        ? 'Not granted (Tap to authorize)'
+                        : '未授予 (点击去授权)'),
+              style: TextStyle(
+                fontSize: 11,
+                color: _cameraGranted ? Colors.green : Colors.orange,
+              ),
+            ),
+            trailing: _cameraGranted
+                ? const Icon(
+                    Icons.check_circle_outline_rounded,
+                    color: Colors.green,
+                    size: 18,
+                  )
+                : null,
+            onTap: _cameraGranted ? null : _requestCamera,
+          ),
+        ],
+      ],
+    );
+  }
+
+  void _showRenameDialog(BuildContext context, String currentAlias) {
+    final controller = TextEditingController(text: currentAlias);
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(
+            widget.strings.isEnglish ? 'Rename Local Device' : '重命名此设备',
+          ),
+          content: TextField(
+            controller: controller,
+            maxLength: 32,
+            decoration: InputDecoration(
+              hintText: widget.strings.isEnglish
+                  ? 'Enter device name'
+                  : '输入设备昵称',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(widget.strings.isEnglish ? 'Cancel' : '取消'),
+            ),
+            TextButton(
+              onPressed: () async {
+                final name = controller.text.trim();
+                if (name.isNotEmpty) {
+                  final navigator = Navigator.of(context);
+                  await widget.settings.setLanDeviceAlias(name);
+                  navigator.pop();
+                }
+              },
+              child: Text(widget.strings.isEnglish ? 'Save' : '保存'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}

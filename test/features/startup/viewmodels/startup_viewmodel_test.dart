@@ -39,7 +39,7 @@ void main() {
     viewModels = [];
   });
 
-  tearDown(() {
+  tearDown(() async {
     debugDefaultTargetPlatformOverride = null;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(powerChannel, null);
@@ -47,6 +47,7 @@ void main() {
       viewModel.dispose();
     }
     appSettings.dispose();
+    await storageService.shutdown();
     storageService.dispose();
   });
 

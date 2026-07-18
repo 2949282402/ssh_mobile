@@ -31,36 +31,45 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.view.resetViewInsets);
 
-    SharedPreferences.setMockInitialValues({});
-    FlutterSecureStorage.setMockInitialValues({});
-    final settings = AppSettings();
-    await settings.init();
-    final storage = StorageService();
-    await storage.init();
-    final ssh = SshService(storage);
-    final sftp = SftpService(storage);
-    final performance = PerformanceMonitorService(ssh, storage);
-    final viewModel = ConnectionViewModel(
-      connectionRepository: storage,
-      sshService: ssh,
-      sftpService: sftp,
-      performanceService: performance,
-    );
-    await storage.addConnection(
-      ConnectionConfig(
-        id: 'server-1',
-        name: 'Production',
-        host: 'prod.example.com',
-        username: 'root',
-      ),
-    );
-    await viewModel.fetchConnections();
+    late AppSettings settings;
+    late StorageService storage;
+    late SshService ssh;
+    late SftpService sftp;
+    late PerformanceMonitorService performance;
+    late ConnectionViewModel viewModel;
+    await tester.runAsync(() async {
+      SharedPreferences.setMockInitialValues({});
+      FlutterSecureStorage.setMockInitialValues({});
+      settings = AppSettings();
+      await settings.init();
+      storage = StorageService();
+      await storage.init();
+      ssh = SshService(storage);
+      sftp = SftpService(storage);
+      performance = PerformanceMonitorService(ssh, storage);
+      viewModel = ConnectionViewModel(
+        connectionRepository: storage,
+        sshService: ssh,
+        sftpService: sftp,
+        performanceService: performance,
+      );
+      await storage.addConnection(
+        ConnectionConfig(
+          id: 'server-1',
+          name: 'Production',
+          host: 'prod.example.com',
+          username: 'root',
+        ),
+      );
+      await viewModel.fetchConnections();
+    });
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
-    addTearDown(() {
+    addTearDown(() async {
       viewModel.dispose();
       performance.dispose();
       sftp.dispose();
       ssh.dispose();
+      await storage.shutdown();
       storage.dispose();
       settings.dispose();
     });
