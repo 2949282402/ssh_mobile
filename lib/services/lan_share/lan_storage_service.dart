@@ -134,23 +134,13 @@ class LanStorageService {
 
     try {
       if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
-        final outputPath = await FilePicker.platform.saveFile(
+        final bytes = await file.readAsBytes();
+        final outputPath = await FilePicker.saveFile(
           dialogTitle: 'Save File',
           fileName: p.basename(localPath),
+          bytes: bytes,
         );
-        if (outputPath == null) return false;
-
-        var copied = false;
-        final target = File(outputPath);
-        try {
-          await file.openRead().pipe(target.openWrite());
-          copied = true;
-        } finally {
-          if (!copied && await target.exists()) {
-            await target.delete();
-          }
-        }
-        return copied;
+        return outputPath != null;
       }
 
       if (payloadType == LanPayloadType.image) {

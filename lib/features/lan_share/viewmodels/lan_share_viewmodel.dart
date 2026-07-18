@@ -535,6 +535,9 @@ class LanShareViewModel extends ChangeNotifier {
     for (final r in records) {
       final otherId = r.isIncoming ? r.senderId : r.receiverId;
       if (otherId == targetDeviceId) {
+        if (r.localPath != null && r.localPath!.isNotEmpty) {
+          await storageService.deleteSandboxFile(r.localPath!);
+        }
         await historyDao.deleteRecord(r.id);
       }
     }
