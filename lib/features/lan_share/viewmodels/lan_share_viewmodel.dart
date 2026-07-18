@@ -527,7 +527,6 @@ class LanShareViewModel extends ChangeNotifier {
 
   Future<void> forgetDevice(String deviceId) async {
     await securityService.unpairDevice(deviceId);
-    transferService.closeConnection(deviceId);
     if (!_disposed) notifyListeners();
   }
 
