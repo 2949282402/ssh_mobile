@@ -308,7 +308,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
       );
       if (multiAgentResult != null) {
         workingMessages.add({
-          'role': 'assistant',
+          'role': 'system',
           'content': multiAgentResult.memoryContent,
         });
         onTrace?.call(
@@ -497,7 +497,7 @@ extension LlmChatServiceStreamHandler on LlmChatService {
         if (response.toolCalls.isEmpty) {
           var answer = content.toString().trim().isNotEmpty
               ? content.toString()
-              : 'Done.';
+              : (language == AppLanguage.en ? 'Done.' : '已完成。');
 
           if (planMode) {
             final outcome = await _validateAndRepairPlanOutput(
