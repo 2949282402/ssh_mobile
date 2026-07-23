@@ -31,6 +31,8 @@ import 'package:ssh_mobile/features/terminal/views/terminal_history_screen.dart'
 import 'package:ssh_mobile/features/terminal/views/terminal_screen.dart';
 import 'package:ssh_mobile/features/terminal/views/terminal_windows_screen.dart';
 import 'package:ssh_mobile/features/rag/views/rag_knowledge_screen.dart';
+import 'package:ssh_mobile/features/mcp_console/views/mcp_console_screen.dart';
+import 'package:ssh_mobile/features/mcp_console/viewmodels/mcp_console_viewmodel.dart';
 import 'services/app_log_service.dart';
 import 'services/display_mode_service.dart';
 import 'services/background_service.dart';
@@ -132,6 +134,7 @@ Future<void> main() async {
             ChangeNotifierProvider(
               create: (context) => McpServerController(
                 appSettings: context.read<AppSettings>(),
+                activityRepository: context.read<StorageService>(),
                 toolServiceFactory: () => AiChatRuntimeFactory(
                   storageService: context.read<StorageService>(),
                   sshService: context.read<SshService>(),
@@ -492,6 +495,16 @@ class _SshMobileAppState extends State<SshMobileApp>
                               storageService: context.read<StorageService>(),
                             ),
                             child: const RagKnowledgeScreen(),
+                          ),
+                        );
+                      case '/mcp-console':
+                        return MaterialPageRoute(
+                          builder: (_) => ChangeNotifierProvider(
+                            create: (context) => McpConsoleViewModel(
+                              context.read<McpServerController>(),
+                              context.read<AppSettings>(),
+                            ),
+                            child: const McpConsoleScreen(),
                           ),
                         );
                       default:

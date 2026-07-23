@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/services/ai_tool_service.dart';
 import 'package:ssh_mobile/services/mcp/mcp_http_server.dart';
+import 'package:ssh_mobile/services/mcp/mcp_activity.dart';
 import 'package:ssh_mobile/services/mcp/mcp_json_rpc.dart';
 import 'package:ssh_mobile/services/mcp/mcp_lifecycle_handler.dart';
 import 'package:ssh_mobile/services/mcp/mcp_server_settings.dart';
@@ -14,9 +15,12 @@ void main() {
   group('McpHttpServer', () {
     late McpHttpServer server;
     late HttpClient client;
+    late _MemoryActivityRepository activityRepository;
 
     setUp(() async {
       client = HttpClient();
+      activityRepository = _MemoryActivityRepository();
+      final activityRecorder = McpActivityRecorder(activityRepository);
       final executor = _FakeToolExecutor();
       server = await McpHttpServer.bind(
         host: '127.0.0.1',
@@ -27,8 +31,10 @@ void main() {
           toolHandler: McpToolHandler(
             aiToolService: executor,
             settingsProvider: () => const McpServerSettings(token: 'secret'),
+            activityRecorder: activityRecorder,
           ),
         ),
+        activityRecorder: activityRecorder,
       );
     });
 
@@ -109,6 +115,14 @@ void main() {
       final result = response.body['result'] as Map;
       expect(result['isError'], isFalse);
       expect(result['content'][0]['text'], contains('"servers"'));
+
+      await Future<void>.delayed(Duration.zero);
+      final activity = activityRepository.records.last;
+      expect(activity.kind, McpActivityKind.tool);
+      expect(activity.method, 'tools/call');
+      expect(activity.toolName, 'list_servers');
+      expect(activity.outcome, McpActivityOutcome.success);
+      expect(activity.policyReason, isNull);
     });
 
     test('POST tools/call for write tool returns approval_required', () async {
@@ -126,6 +140,13 @@ void main() {
       final result = response.body['result'] as Map;
       expect(result['isError'], isTrue);
       expect(result['content'][0]['text'], contains('approval_required'));
+
+      await Future<void>.delayed(Duration.zero);
+      final activity = activityRepository.records.last;
+      expect(activity.kind, McpActivityKind.tool);
+      expect(activity.toolName, 'run_command');
+      expect(activity.outcome, McpActivityOutcome.denied);
+      expect(activity.policyReason, isNotEmpty);
     });
 
     test('GET /mcp returns 405', () async {
@@ -157,6 +178,12 @@ void main() {
       final response = await request.close();
 
       expect(response.statusCode, 401);
+      await Future<void>.delayed(Duration.zero);
+      final activity = activityRepository.records.last;
+      expect(activity.kind, McpActivityKind.security);
+      expect(activity.outcome, McpActivityOutcome.denied);
+      expect(activity.method, isNull);
+      expect(activity.toolName, isNull);
     });
   });
 }
@@ -171,6 +198,27 @@ class _JsonResponse {
     required this.rawBody,
     required this.body,
   });
+}
+
+class _MemoryActivityRepository implements McpActivityRepository {
+  final records = <McpActivityRecord>[];
+
+  @override
+  Future<void> clearMcpActivityRecords() async {
+    records.clear();
+  }
+
+  @override
+  Future<List<McpActivityRecord>> loadMcpActivityRecords({
+    int limit = 500,
+  }) async {
+    return records.reversed.take(limit).toList(growable: false);
+  }
+
+  @override
+  Future<void> recordMcpActivity(McpActivityRecord record) async {
+    records.add(record);
+  }
 }
 
 class _FakeToolExecutor implements AiToolExecutor {

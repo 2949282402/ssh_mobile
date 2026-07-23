@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -6,13 +7,65 @@ import 'package:flutter/foundation.dart';
 import '../ai_tool_service.dart';
 import '../app_log_service.dart';
 import '../app_settings.dart';
+import 'mcp_activity.dart';
+import 'mcp_ai_tool_adapter.dart';
 import 'mcp_http_server.dart';
 import 'mcp_json_rpc.dart';
 import 'mcp_lifecycle_handler.dart';
 import 'mcp_port_probe.dart';
 import 'mcp_tool_handler.dart';
+import 'mcp_tool_exposure_policy.dart';
 
 enum McpServerRunStatus { stopped, checkingPort, starting, running, failed }
+
+class McpToolPolicySnapshot {
+  final String name;
+  final bool readOnly;
+  final bool destructive;
+  final McpToolPolicyResult result;
+  final String reason;
+
+  const McpToolPolicySnapshot({
+    required this.name,
+    required this.readOnly,
+    required this.destructive,
+    required this.result,
+    required this.reason,
+  });
+}
+
+class McpSelfTestResult {
+  final bool serverReachable;
+  final bool authenticated;
+  final bool initialized;
+  final bool toolsListed;
+  final int durationMs;
+  final String? failureCode;
+
+  const McpSelfTestResult({
+    required this.serverReachable,
+    required this.authenticated,
+    required this.initialized,
+    required this.toolsListed,
+    required this.durationMs,
+    this.failureCode,
+  });
+
+  bool get succeeded =>
+      serverReachable && authenticated && initialized && toolsListed;
+}
+
+class _McpSelfTestRequestResult {
+  final bool reachable;
+  final int? statusCode;
+  final bool succeeded;
+
+  const _McpSelfTestRequestResult({
+    required this.reachable,
+    required this.statusCode,
+    required this.succeeded,
+  });
+}
 
 class McpServerStatusSnapshot {
   final bool enabled;
@@ -42,6 +95,7 @@ class McpServerController extends ChangeNotifier {
   final AppSettings appSettings;
   final AiToolExecutor Function() toolServiceFactory;
   final McpPortProbe portProbe;
+  final McpActivityRepository? activityRepository;
 
   McpHttpServer? _server;
   McpServerRunStatus _status = McpServerRunStatus.stopped;
@@ -56,12 +110,59 @@ class McpServerController extends ChangeNotifier {
     required this.appSettings,
     required this.toolServiceFactory,
     this.portProbe = const McpPortProbe(),
+    this.activityRepository,
   });
+
+  McpActivityRecorder? get _activityRecorder {
+    final repository = activityRepository;
+    return repository == null ? null : McpActivityRecorder(repository);
+  }
 
   bool get running => _server != null && _status == McpServerRunStatus.running;
   McpServerRunStatus get status => _status;
   String? get lastError => _lastError;
   McpPortProbeResult? get lastPortProbeResult => _lastPortProbeResult;
+
+  Future<List<McpActivityRecord>> loadRecentActivity({int limit = 500}) {
+    final repository = activityRepository;
+    return repository?.loadMcpActivityRecords(limit: limit) ??
+        Future.value(const []);
+  }
+
+  Future<void> clearRecentActivity() async {
+    await activityRepository?.clearMcpActivityRecords();
+    _notify();
+  }
+
+  Future<List<McpToolPolicySnapshot>> loadToolPolicySnapshot() async {
+    final service = toolServiceFactory();
+    final settings = appSettings.mcpSettings;
+    final hasChatSession =
+        service is AiToolService && service.clientWebViewSessionId != null;
+    const policy = McpToolExposurePolicy();
+    const adapter = McpAiToolAdapter();
+    final tools = await service.tools();
+    return List.unmodifiable(
+      [
+        for (final tool in tools)
+          () {
+            final decision = policy.evaluate(
+              tool,
+              settings: settings,
+              hasChatSession: hasChatSession,
+            );
+            final annotations = adapter.toMcpTool(tool)['annotations'] as Map;
+            return McpToolPolicySnapshot(
+              name: tool.name,
+              readOnly: annotations['readOnlyHint'] == true,
+              destructive: annotations['destructiveHint'] == true,
+              result: decision.result,
+              reason: decision.reason,
+            );
+          }(),
+      ]..sort((a, b) => a.name.compareTo(b.name)),
+    );
+  }
 
   McpServerStatusSnapshot get snapshot {
     final settings = appSettings.mcpSettings;
@@ -89,6 +190,15 @@ class McpServerController extends ChangeNotifier {
 
   Future<McpServerStatusSnapshot> start() async {
     if (running) return snapshot;
+
+    unawaited(
+      _activityRecorder?.record(
+            kind: McpActivityKind.lifecycle,
+            outcome: McpActivityOutcome.success,
+            policyReason: 'start_requested',
+          ) ??
+          Future.value(),
+    );
 
     var settings = appSettings.mcpSettings;
     if (!settings.hasValidHost || !settings.hasValidPort) {
@@ -135,6 +245,7 @@ class McpServerController extends ChangeNotifier {
         toolHandler: McpToolHandler(
           aiToolService: toolService,
           settingsProvider: () => appSettings.mcpSettings,
+          activityRecorder: _activityRecorder,
           hasChatSession: () {
             if (toolService is AiToolService) {
               return toolService.clientWebViewSessionId != null;
@@ -148,12 +259,21 @@ class McpServerController extends ChangeNotifier {
         port: settings.port,
         token: token,
         router: router,
+        activityRecorder: _activityRecorder,
       );
       _boundHost = settings.host;
       _boundPort = settings.port;
       _startedAt = DateTime.now();
       _lastError = null;
       _status = McpServerRunStatus.running;
+      unawaited(
+        _activityRecorder?.record(
+              kind: McpActivityKind.lifecycle,
+              outcome: McpActivityOutcome.success,
+              policyReason: 'server_started',
+            ) ??
+            Future.value(),
+      );
       AppLogService.instance.info(
         'MCP server started',
         details: 'url=http://${settings.host}:${settings.port}/mcp',
@@ -193,6 +313,14 @@ class McpServerController extends ChangeNotifier {
     }
     _status = McpServerRunStatus.stopped;
     _lastError = null;
+    unawaited(
+      _activityRecorder?.record(
+            kind: McpActivityKind.lifecycle,
+            outcome: McpActivityOutcome.success,
+            policyReason: 'server_stopped',
+          ) ??
+          Future.value(),
+    );
     _notify();
   }
 
@@ -225,9 +353,160 @@ class McpServerController extends ChangeNotifier {
     return result;
   }
 
+  Future<McpSelfTestResult> runSelfTest() async {
+    final watch = Stopwatch()..start();
+    if (!running) {
+      return _selfTestFailure(
+        watch,
+        'server_not_running',
+        serverReachable: false,
+        authenticated: false,
+      );
+    }
+    final token = await appSettings.ensureMcpServerToken();
+    final url = Uri.parse(snapshot.url);
+    final initialize = await _postJsonRpc(url, token, const {
+      'jsonrpc': '2.0',
+      'id': 1,
+      'method': 'initialize',
+      'params': {'protocolVersion': McpLifecycleHandler.protocolVersion},
+    });
+    if (!initialize.reachable) {
+      return _selfTestFailure(
+        watch,
+        'connection_failed',
+        serverReachable: false,
+        authenticated: false,
+      );
+    }
+    if (initialize.statusCode == HttpStatus.unauthorized ||
+        initialize.statusCode == HttpStatus.forbidden) {
+      return _selfTestFailure(
+        watch,
+        'authentication_failed',
+        serverReachable: true,
+        authenticated: false,
+      );
+    }
+    if (!initialize.succeeded) {
+      return _selfTestFailure(
+        watch,
+        'initialize_failed',
+        serverReachable: true,
+        authenticated: true,
+      );
+    }
+    final toolsListed = await _postJsonRpc(url, token, const {
+      'jsonrpc': '2.0',
+      'id': 2,
+      'method': 'tools/list',
+    });
+    if (!toolsListed.succeeded) {
+      return _selfTestFailure(
+        watch,
+        'tools_list_failed',
+        serverReachable: toolsListed.reachable,
+        authenticated: toolsListed.reachable,
+        initialized: true,
+      );
+    }
+    watch.stop();
+    final result = McpSelfTestResult(
+      serverReachable: true,
+      authenticated: true,
+      initialized: true,
+      toolsListed: true,
+      durationMs: watch.elapsedMilliseconds,
+    );
+    unawaited(
+      _activityRecorder?.record(
+            kind: McpActivityKind.protocol,
+            outcome: McpActivityOutcome.success,
+            method: 'self_test',
+            durationMs: result.durationMs,
+          ) ??
+          Future.value(),
+    );
+    return result;
+  }
+
+  Future<_McpSelfTestRequestResult> _postJsonRpc(
+    Uri url,
+    String token,
+    Map<String, dynamic> body,
+  ) async {
+    final client = HttpClient();
+    try {
+      final request = await client.postUrl(url);
+      request.headers.contentType = ContentType.json;
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+      request.write(jsonEncode(body));
+      final response = await request.close();
+      final responseText = await utf8.decoder.bind(response).join();
+      if (response.statusCode != HttpStatus.ok) {
+        return _McpSelfTestRequestResult(
+          reachable: true,
+          statusCode: response.statusCode,
+          succeeded: false,
+        );
+      }
+      final decoded = jsonDecode(responseText);
+      return _McpSelfTestRequestResult(
+        reachable: true,
+        statusCode: response.statusCode,
+        succeeded: decoded is Map && decoded['error'] == null,
+      );
+    } catch (_) {
+      return const _McpSelfTestRequestResult(
+        reachable: false,
+        statusCode: null,
+        succeeded: false,
+      );
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  McpSelfTestResult _selfTestFailure(
+    Stopwatch watch,
+    String code, {
+    required bool serverReachable,
+    required bool authenticated,
+    bool initialized = false,
+  }) {
+    watch.stop();
+    final result = McpSelfTestResult(
+      serverReachable: serverReachable,
+      authenticated: authenticated,
+      initialized: initialized,
+      toolsListed: false,
+      durationMs: watch.elapsedMilliseconds,
+      failureCode: code,
+    );
+    unawaited(
+      _activityRecorder?.record(
+            kind: McpActivityKind.protocol,
+            outcome: McpActivityOutcome.failed,
+            method: 'self_test',
+            policyReason: code,
+            durationMs: result.durationMs,
+          ) ??
+          Future.value(),
+    );
+    return result;
+  }
+
   void _setFailed(String error) {
     _status = McpServerRunStatus.failed;
     _lastError = error;
+    unawaited(
+      _activityRecorder?.record(
+            kind: McpActivityKind.lifecycle,
+            outcome: McpActivityOutcome.failed,
+            policyReason: 'server_start_failed',
+          ) ??
+          Future.value(),
+    );
     _notify();
   }
 

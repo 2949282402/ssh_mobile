@@ -326,6 +326,9 @@ class _McpSettingsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final supportsDesktopConsole =
+        defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.macOS;
 
     return _SettingsSection(
       title: strings.toolsAndAutomation,
@@ -480,6 +483,17 @@ class _McpSettingsSection extends StatelessWidget {
                       strings.mcpCopied,
                     ),
                   ),
+                  if (supportsDesktopConsole)
+                    FilledButton.icon(
+                      icon: const Icon(Icons.dashboard_outlined, size: 16),
+                      label: Text(
+                        strings.language == AppLanguage.en
+                            ? 'Open console'
+                            : '打开控制台',
+                      ),
+                      onPressed: () =>
+                          Navigator.pushNamed(context, '/mcp-console'),
+                    ),
                 ],
               ),
             ],

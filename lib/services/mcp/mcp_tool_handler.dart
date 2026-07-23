@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:async';
 
 import '../ai_tool_service.dart';
 import '../app_log_service.dart';
 import 'mcp_ai_tool_adapter.dart';
+import 'mcp_activity.dart';
 import 'mcp_json_rpc.dart';
 import 'mcp_server_settings.dart';
 import 'mcp_tool_exposure_policy.dart';
@@ -13,6 +15,7 @@ class McpToolHandler {
   final bool Function() hasChatSession;
   final McpAiToolAdapter adapter;
   final McpToolExposurePolicy exposurePolicy;
+  final McpActivityRecorder? activityRecorder;
 
   const McpToolHandler({
     required this.aiToolService,
@@ -20,6 +23,7 @@ class McpToolHandler {
     this.hasChatSession = _defaultNoChatSession,
     this.adapter = const McpAiToolAdapter(),
     this.exposurePolicy = const McpToolExposurePolicy(),
+    this.activityRecorder,
   });
 
   static bool _defaultNoChatSession() => false;
@@ -43,6 +47,7 @@ class McpToolHandler {
   }
 
   Future<Map<String, dynamic>> _listTools() async {
+    final watch = Stopwatch()..start();
     AppLogService.instance.info('MCP tools/list called');
     final settings = settingsProvider();
     final tools = await aiToolService.tools();
@@ -57,10 +62,18 @@ class McpToolHandler {
         exposed.add(adapter.toMcpTool(tool));
       }
     }
+    watch.stop();
+    _record(
+      kind: McpActivityKind.protocol,
+      outcome: McpActivityOutcome.success,
+      method: 'tools/list',
+      durationMs: watch.elapsedMilliseconds,
+    );
     return {'tools': exposed};
   }
 
   Future<Map<String, dynamic>> _callTool(Map<String, dynamic>? params) async {
+    final watch = Stopwatch()..start();
     AppLogService.instance.info('MCP tools/call called');
     if (params == null) {
       throw const McpJsonRpcException(
@@ -94,6 +107,15 @@ class McpToolHandler {
     final tools = await aiToolService.tools();
     final matches = tools.where((tool) => tool.name == name).toList();
     if (matches.isEmpty) {
+      watch.stop();
+      _record(
+        kind: McpActivityKind.tool,
+        outcome: McpActivityOutcome.denied,
+        method: 'tools/call',
+        toolName: name,
+        policyReason: 'unknown_tool',
+        durationMs: watch.elapsedMilliseconds,
+      );
       return _toolError({'error': 'unknown_tool', 'tool': name});
     }
 
@@ -110,6 +132,15 @@ class McpToolHandler {
         'MCP hidden tool blocked',
         details: 'tool=$name reason=${decision.reason}',
       );
+      watch.stop();
+      _record(
+        kind: McpActivityKind.tool,
+        outcome: McpActivityOutcome.denied,
+        method: 'tools/call',
+        toolName: name,
+        policyReason: decision.reason,
+        durationMs: watch.elapsedMilliseconds,
+      );
       return _toolError({
         'error': 'tool_not_available',
         'tool': name,
@@ -120,6 +151,15 @@ class McpToolHandler {
       AppLogService.instance.warning(
         'MCP dangerous tool blocked',
         details: 'tool=$name reason=${decision.reason}',
+      );
+      watch.stop();
+      _record(
+        kind: McpActivityKind.tool,
+        outcome: McpActivityOutcome.denied,
+        method: 'tools/call',
+        toolName: name,
+        policyReason: decision.reason,
+        durationMs: watch.elapsedMilliseconds,
       );
       return _approvalRequired(name, decision);
     }
@@ -133,6 +173,15 @@ class McpToolHandler {
         'MCP approval-aware tool blocked',
         details: 'tool=$name approvalType=${approvalRequest.approvalType}',
       );
+      watch.stop();
+      _record(
+        kind: McpActivityKind.tool,
+        outcome: McpActivityOutcome.denied,
+        method: 'tools/call',
+        toolName: name,
+        policyReason: approvalRequest.reason,
+        durationMs: watch.elapsedMilliseconds,
+      );
       return _toolError({
         'error': 'approval_required',
         'tool': name,
@@ -145,6 +194,17 @@ class McpToolHandler {
     try {
       final text = await aiToolService.execute(name, arguments);
       final isError = _looksLikeToolError(text);
+      watch.stop();
+      _record(
+        kind: McpActivityKind.tool,
+        outcome: isError
+            ? McpActivityOutcome.failed
+            : McpActivityOutcome.success,
+        method: 'tools/call',
+        toolName: name,
+        policyReason: isError ? 'tool_error' : null,
+        durationMs: watch.elapsedMilliseconds,
+      );
       return {
         'content': [
           {'type': 'text', 'text': text},
@@ -157,6 +217,15 @@ class McpToolHandler {
         error: e,
         stackTrace: stackTrace,
         details: 'tool=$name',
+      );
+      watch.stop();
+      _record(
+        kind: McpActivityKind.tool,
+        outcome: McpActivityOutcome.failed,
+        method: 'tools/call',
+        toolName: name,
+        policyReason: 'tool_execution_failed',
+        durationMs: watch.elapsedMilliseconds,
       );
       return _toolError({
         'error': 'tool_execution_failed',
@@ -195,5 +264,27 @@ class McpToolHandler {
     } catch (_) {
       return false;
     }
+  }
+
+  void _record({
+    required McpActivityKind kind,
+    required McpActivityOutcome outcome,
+    required String method,
+    String? toolName,
+    String? policyReason,
+    int? durationMs,
+  }) {
+    final recorder = activityRecorder;
+    if (recorder == null) return;
+    unawaited(
+      recorder.record(
+        kind: kind,
+        outcome: outcome,
+        method: method,
+        toolName: toolName,
+        policyReason: policyReason,
+        durationMs: durationMs,
+      ),
+    );
   }
 }

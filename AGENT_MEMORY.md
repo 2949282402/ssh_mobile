@@ -125,6 +125,16 @@ across sessions.
   `McpToolExposurePolicy`; write/destructive tools must not execute silently
   from external MCP clients and should return `approval_required` until an app
   approval queue exists.
+- 2026-07-23: The Windows/macOS `mcp_console` feature is a separate desktop
+  diagnostics page opened from MCP settings. It exposes loopback server state,
+  port checks, a token-authenticated `initialize` then `tools/list` self-test,
+  copied client templates, and read-only `McpToolExposurePolicy` snapshots.
+  `McpActivityRecord` persists at most 500 local Drift rows containing only
+  time, event kind, JSON-RPC method, tool name, outcome, policy reason, and
+  duration. Never add tokens, parameters, outputs, peer/origin data, remote
+  resource data, or raw exceptions; do not export these records in backups.
+  This console does not authorize external write tools: they remain
+  `approval_required`.
 - 2026-06-16: On keyboard-heavy mobile flows, avoid `MediaQuery.of(context)`
   in large server/file list rows when only size/density is needed. Prefer
   narrow helpers such as `MediaQuery.sizeOf` +

@@ -196,6 +196,12 @@ and its focused extensions, `lib/features/ai_chat/services/`,
   storage, and reuses `AiToolService` through `McpToolExposurePolicy`; external
   MCP clients must not silently execute write/destructive tools and should get
   `approval_required` until an app approval queue exists.
+- The Windows/macOS-only console is the `mcp_console` feature. Keep it
+  observational: status, port checks, loopback authenticated self-tests,
+  configuration copying, policy snapshots, and redacted local activity only.
+  MCP activity is capped at 500 Drift records and must never include tokens,
+  request arguments, tool output, peer/origin data, remote-resource details,
+  or raw exceptions; it is not a backup-export payload.
 
 ### SFTP
 

@@ -20,6 +20,7 @@ extension DriftOps on StorageService {
       _driftPlaybooksActive = await _migratePlaybooksToDrift();
       await _reencryptDriftSensitiveFieldsIfNeeded();
       _driftSftpHistoryActive = true;
+      _driftMcpActivityActive = true;
     } catch (e, stackTrace) {
       _driftReady = false;
       _driftAiChatsActive = false;
@@ -28,6 +29,7 @@ extension DriftOps on StorageService {
       _driftTerminalHistoryActive = false;
       _driftPlaybooksActive = false;
       _driftSftpHistoryActive = false;
+      _driftMcpActivityActive = false;
       AppLogService.instance.error(
         'Failed to initialize Drift storage',
         error: e,

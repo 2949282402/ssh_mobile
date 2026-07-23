@@ -162,6 +162,17 @@ http://127.0.0.1:<port>/mcp
 
 The MCP server uses a generated Bearer token, rejects unauthenticated and non-local requests, and keeps dangerous or write-capable tools behind the application approval boundary.
 
+On Windows and macOS, the MCP settings card can open the **Local MCP Console**.
+It provides loopback-only status, port checks, a three-step authenticated
+`initialize` / `tools/list` self-test, client configuration copy buttons, and
+the current exposure decision for every tool. The console records at most 500
+local activity entries containing only timestamp, event type, method, tool
+name, outcome, policy reason, and duration. It never stores tokens, request
+arguments, tool output, client addresses, origins, remote-resource details, or
+raw exception text, and activity is excluded from backup export. The console
+does not add an external write approval queue: write-capable MCP tools continue
+to return `approval_required`.
+
 ## Sample Data for a Demo Run
 
 No production credentials or secrets are included in this repository. The following placeholders describe the minimum data required for an end-to-end demonstration.

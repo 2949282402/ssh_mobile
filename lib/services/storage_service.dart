@@ -20,6 +20,7 @@ import '../core/services/data_protection_service.dart';
 import 'connection_target_binding.dart';
 import 'multi_agent_coordinator.dart';
 import 'llm_provider/llm_api_format.dart';
+import 'mcp/mcp_activity.dart';
 
 part 'storage/storage_models_ai_settings.dart';
 part 'storage/storage_models_ai_resources.dart';
@@ -43,6 +44,7 @@ part '../data/repositories/drift_agent_trace_repository.dart';
 part '../data/repositories/drift_terminal_history_repository.dart';
 part '../data/repositories/drift_playbook_repository.dart';
 part '../data/repositories/drift_sftp_history_repository.dart';
+part '../data/repositories/drift_mcp_activity_repository.dart';
 
 class StorageService extends ChangeNotifier
     implements
@@ -55,6 +57,7 @@ class StorageService extends ChangeNotifier
         TerminalHistoryRepository,
         PlaybookRepository,
         SftpPathHistoryRepository,
+        McpActivityRepository,
         AppBackupRepository {
   final db.AppDatabase? _providedDatabase;
   final db.AppDatabase Function()? _databaseFactory;
@@ -621,6 +624,7 @@ class StorageService extends ChangeNotifier
   bool _driftTerminalHistoryActive = false;
   bool _driftPlaybooksActive = false;
   bool _driftSftpHistoryActive = false;
+  bool _driftMcpActivityActive = false;
 
   Future<String?> _readSecure(String key) async {
     try {
@@ -926,6 +930,18 @@ class StorageService extends ChangeNotifier
   @override
   Future<void> removeTerminalHistoryRecord(String sessionId) =>
       _executeDrift(() => _removeTerminalHistoryRecord(sessionId));
+
+  @override
+  Future<List<McpActivityRecord>> loadMcpActivityRecords({int limit = 500}) =>
+      _executeDrift(() => _loadMcpActivityRecords(limit: limit));
+
+  @override
+  Future<void> recordMcpActivity(McpActivityRecord record) =>
+      _executeDrift(() => _recordMcpActivity(record));
+
+  @override
+  Future<void> clearMcpActivityRecords() =>
+      _executeDrift(_clearMcpActivityRecords);
 
   Future<void> markPowerGuideSeen() async {
     if (!_initialized) return;
