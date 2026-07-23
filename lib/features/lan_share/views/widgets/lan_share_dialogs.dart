@@ -190,22 +190,24 @@ extension _LanShareDialogActions on _LanShareScreenState {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(title),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(description, style: Theme.of(ctx).textTheme.bodyMedium),
-            const SizedBox(height: 16),
-            TextField(
-              controller: controller,
-              autofocus: true,
-              decoration: InputDecoration(
-                hintText: hint,
-                border: const OutlineInputBorder(),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(description, style: Theme.of(ctx).textTheme.bodyMedium),
+              const SizedBox(height: 16),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: hint,
+                  border: const OutlineInputBorder(),
+                ),
+                onSubmitted: (val) => Navigator.pop(ctx, val.trim()),
               ),
-              onSubmitted: (val) => Navigator.pop(ctx, val.trim()),
-            ),
-          ],
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -375,112 +377,118 @@ class _WebShareDialogContentState extends State<WebShareDialogContent> {
 
     return SizedBox(
       width: 280,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Horizontally scrollable hint text
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Text(
-              widget.strings.lanShareWebShareHint,
-              maxLines: 1,
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                httpsLabel,
-                style: Theme.of(
-                  context,
-                ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.bold),
-              ),
-              Switch(
-                value: widget.vm.webShareUseHttps,
-                onChanged: (val) async {
-                  await widget.vm.discoveryService.stopWebShareServer();
-                  widget.vm.setWebShareUseHttps(val);
-                  await widget.vm.discoveryService.startWebShareServer(
-                    useHttps: val,
-                    securityService: widget.vm.securityService,
-                    storageService: widget.vm.storageService,
-                    transferService: widget.vm.transferService,
-                  );
-                  if (mounted) {
-                    setState(() {});
-                  }
-                },
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          if (widget.vm.webShareUrl != null) ...[
-            QrImageView(
-              data: widget.vm.webShareUrl!,
-              version: QrVersions.auto,
-              size: 200.0,
-              backgroundColor: Colors.white,
-            ),
-            const SizedBox(height: 12),
-            SelectableText(
-              widget.vm.webShareUrl!,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.blue,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Horizontally scrollable hint text
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Text(
+                widget.strings.lanShareWebShareHint,
+                maxLines: 1,
+                style: Theme.of(context).textTheme.bodyMedium,
               ),
             ),
-          ],
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primaryContainer,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: CircularProgressIndicator(
-                        value: _secondsRemaining / 60.0,
-                        strokeWidth: 2.5,
-                        backgroundColor: Theme.of(
-                          context,
-                        ).colorScheme.primary.withValues(alpha: 0.15),
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          Theme.of(context).colorScheme.primary,
-                        ),
-                      ),
+                Flexible(
+                  child: Text(
+                    httpsLabel,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
                     ),
-                    Text(
-                      '$_secondsRemaining',
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        fontSize: 9,
-                        fontWeight: FontWeight.bold,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  '${widget.strings.lanSharePinPairing}: ${widget.vm.securityService.activePin ?? ""}',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onPrimaryContainer,
-                    fontWeight: FontWeight.bold,
                   ),
+                ),
+                Switch(
+                  value: widget.vm.webShareUseHttps,
+                  onChanged: (val) async {
+                    await widget.vm.discoveryService.stopWebShareServer();
+                    widget.vm.setWebShareUseHttps(val);
+                    await widget.vm.discoveryService.startWebShareServer(
+                      useHttps: val,
+                      securityService: widget.vm.securityService,
+                      storageService: widget.vm.storageService,
+                      transferService: widget.vm.transferService,
+                    );
+                    if (mounted) {
+                      setState(() {});
+                    }
+                  },
                 ),
               ],
             ),
-          ),
-        ],
+            const SizedBox(height: 8),
+            if (widget.vm.webShareUrl != null) ...[
+              QrImageView(
+                data: widget.vm.webShareUrl!,
+                version: QrVersions.auto,
+                size: 200.0,
+                backgroundColor: Colors.white,
+              ),
+              const SizedBox(height: 12),
+              SelectableText(
+                widget.vm.webShareUrl!,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.blue,
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          value: _secondsRemaining / 60.0,
+                          strokeWidth: 2.5,
+                          backgroundColor: Theme.of(
+                            context,
+                          ).colorScheme.primary.withValues(alpha: 0.15),
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '$_secondsRemaining',
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      '${widget.strings.lanSharePinPairing}: ${widget.vm.securityService.activePin ?? ""}',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onPrimaryContainer,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
