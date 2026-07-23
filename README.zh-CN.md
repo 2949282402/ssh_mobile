@@ -344,15 +344,30 @@ flowchart LR
 ### 项目结构
 
 - `lib/main.dart`：应用启动和依赖装配。
-- `lib/features/`：各 Feature 自有的 Model、ViewModel、Service 和 View。
-- `lib/services/`：SSH、SFTP、LLM、AI Tools、监控、存储和 MCP 基础设施。
+- `lib/features/`：各 Feature 自有的 Model、ViewModel、Service、View 和
+  Feature 内部 Widget。当前 Feature 根目录包括 `connection`、`terminal`、
+  `sftp`、`ai_chat`、`ai_skills`、`client_webview`、`performance`、
+  `system_admin`、`lan_share`、`playbook`、`rag`、`settings`、`startup`、
+  `home` 和 `developer_log`。
+- `lib/services/`：跨 Feature 的 SSH/SFTP/LLM/AI Tool、监控、存储、局域网
+  快传、MCP 和平台适配基础设施。
 - `lib/data/`：Drift 数据库、DAO 和 Repository 实现。
-- `lib/core/services/`：跨 Feature 的底层服务和工厂。
+- `lib/core/services/`：跨 Feature 的底层安全与协议工厂，包括 Host Key
+  策略和数据保护。
 - `lib/theme/`、`lib/widgets/`、`lib/utils/`：设计系统、复用组件和工具。
+- `lib/models/`：仅保留小型的历史兼容共享模型；新增 Feature 模型放在所属的
+  `lib/features/<feature>/models/`。
+- `lib/screens/`：历史兼容目录；不要继续在此新增应用 UI。
 - `test/`：单元测试和 Widget 测试。
 - `docs/`：架构、安全、性能、验证和发布文档。
 - `scripts/`、`tool/`：构建、生成、同步和质量检查脚本。
 - `third_party/xterm/`：仓库内维护的终端组件。
+
+`main.dart` 通过 `MultiProvider` 组合应用生命周期的服务和共享 ViewModel。
+路由或页面范围的 Feature 状态保持局部：例如 AI Chat 运行时由
+`AiChatRuntimeFactory` 创建并由聊天页提供，终端页创建聚焦的会话、历史和窗口
+ViewModel。View 只持有布局与短生命周期展示状态；校验、异步编排和 Repository
+协调由 ViewModel 与 Service 负责。
 
 ## AI Agent Runtime
 

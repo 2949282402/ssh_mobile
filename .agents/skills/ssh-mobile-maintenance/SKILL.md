@@ -105,16 +105,19 @@ or maintenance lesson should be shared across Codex and Claude Code sessions.
 Primary entry points are `lib/features/connection/models/connection.dart`,
 `lib/features/connection/viewmodels/connection_viewmodel.dart`,
 `lib/features/connection/views/add_edit_screen.dart`,
-`lib/features/terminal/viewmodels/terminal_viewmodel.dart`,
+`lib/features/terminal/viewmodels/terminal_session_viewmodel.dart`,
+`lib/features/terminal/viewmodels/terminal_history_viewmodel.dart`,
+`lib/features/terminal/viewmodels/terminal_windows_viewmodel.dart`,
 `lib/features/home/views/home_screen.dart` (along with its `widgets/` part files), and `lib/features/terminal/views/terminal_screen.dart` with
 their `widgets/` part files.
 
 - Keep saved-connection CRUD, validation, and verify-before-save flow in
   `ConnectionViewModel` plus repository/service seams rather than burying that
   logic in page widgets.
-- Terminal session orchestration belongs in `TerminalViewModel` and
-  `SshService`; keep screen state limited to layout, route args, and short-lived
-  UI affordances.
+- Terminal session, history, and window orchestration belongs respectively in
+  `TerminalSessionViewModel`, `TerminalHistoryViewModel`, and
+  `TerminalWindowsViewModel` with `SshService`; keep screen state limited to
+  layout, route args, and short-lived UI affordances.
 - Windows terminal input uses one shared multiline command draft across the
   inline composer and advanced keyboard. Preserve IME composition, local sent
   command history, empty-draft terminal key forwarding, and xterm bracketed

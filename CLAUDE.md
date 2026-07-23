@@ -35,38 +35,58 @@ The `third_party/` directory is excluded from analysis (`analysis_options.yaml`)
 
 ## Architecture
 
-**State management:** Provider (`MultiProvider` in `lib/main.dart`). All services extend `ChangeNotifier` and are injected at the app root.
+**State management:** Provider and `ChangeNotifier`. `lib/main.dart` composes
+application-lifetime infrastructure and shared feature ViewModels with
+`MultiProvider`; use `Selector` and `context.select` in hot UI paths. Do not
+add new application UI to `lib/screens/`: it is a legacy compatibility surface.
 
-**Core services** (all in `lib/services/`, all registered at app level in `main.dart`):
-- `storage_service.dart` — Central persistence layer. Uses `SharedPreferences` (encrypted via `DataProtectionService`) for config/list data and `flutter_secure_storage` for secrets (passwords, private keys, API keys). In-memory caches with debounced writes for high-frequency data (AI chats, skills, tmux sessions, terminal history). Some lists capped (AI chats: 80, terminal history: 200).
-- `ssh_service.dart` — Multi-session SSH management via `dartssh2`. Manages `SshSession` objects with per-session output streams, tmux integration, keep-alive, and reconnect.
-- `sftp_service.dart` — SFTP connections, caching, file operations.
-- `llm_chat_service.dart` — OpenAI-compatible chat API client. Handles streaming, tool calls, web search, thinking/reasoning for DeepSeek models. Uses `dart:io` `HttpClient` directly (not a package HTTP client).
-- `ai_tool_service.dart` — Function tool definitions and dispatching. Tools are defined as `AiTool` objects with name, description, JSON Schema properties, `required` fields, and a `handler` function. Server tools execute via one-shot SSH exec (never tmux). Client tools prefixed `client_`.
-- `background_service.dart` — Android/iOS foreground service, notifications, WakeLock, power optimization checks. Platform-specific via `MethodChannel`.
-- `app_settings.dart` — Theme mode, language (zh/en), font family, SFTP size limits. Uses `SharedPreferences` directly.
-- `app_log_service.dart` — Application-wide structured logging with source file/line info.
-- `performance_monitor_service.dart` — Server CPU/memory/disk/network/service status polling via SSH exec.
-- `shortcut_command_service.dart` — Terminal shortcut bar commands with user-defined order.
-- `server_status_probe.dart` — Read-only SSH exec probes for AI tools (performance, ports, applications, services).
-- `client_system_tool_service.dart` — Client-side tool implementations (time, device info, network, battery, clipboard, alarms).
+**Feature-first MVVM:** Feature-owned models, services, ViewModels, views, and
+feature-local widgets live in `lib/features/<feature>/`. Current roots are
+`connection`, `terminal`, `sftp`, `ai_chat`, `ai_skills`, `client_webview`,
+`performance`, `system_admin`, `lan_share`, `playbook`, `rag`, `settings`,
+`startup`, `home`, and `developer_log`. Shared UI belongs in `lib/widgets/` and
+`lib/theme/`; protocol, storage, security, and cross-feature orchestration
+belong in `lib/services/`, `lib/core/services/`, and `lib/data/`.
 
-**Main screens** (`lib/screens/`):
-- `home_screen.dart` — Bottom navigation hub (AI, Servers, SFTP, Monitor - with Performance, Ports, Apps, and Services tabs). Servers page includes embedded terminal window management.
-- `llm_chat_screen.dart` — AI chat with multi-session, streaming Markdown, tool approval, context management, branching.
-- `terminal_screen.dart` — Full-screen xterm terminal with shortcut bar, font scaling, tmux session binding.
-- `sftp_screen.dart` — Remote file browser with upload/download/delete/edit/preview.
+**Key ownership boundaries:**
+- `ConnectionViewModel` owns saved-server validation and CRUD.
+- `TerminalSessionViewModel`, `TerminalHistoryViewModel`, and
+  `TerminalWindowsViewModel` own focused terminal state; `SshService` owns
+  multi-session SSH/tmux transport.
+- `SftpViewModel` owns feature state; `SftpService` owns SFTP transport and
+  cache behavior.
+- `AiChatViewModel` is screen-scoped. `AiChatRuntimeFactory` composes its
+  `LlmChatService`, `AiToolService`, context, and generation collaborators.
+- `PerformanceMonitorViewModel` owns multi-server monitoring selection;
+  `SystemAdminViewModel` owns the single-server system-administration state.
+- `StorageService` is the compatibility facade. Drift repositories and DAOs
+  live under `lib/data/`; small preferences use SharedPreferences; passwords,
+  private keys, API keys, and MCP tokens use secure storage.
 
-**Models** (`lib/models/`): Only `connection.dart` — `ConnectionConfig` (server connection parameters, auth, platform, launch mode) plus enums (`ServerPlatform`, `TerminalLaunchMode`, `AuthMethod`). Other record types (`AiChatRecord`, `AiSkillRecord`, `RestorableTmuxSession`, `TerminalHistoryRecord`) are defined within `storage_service.dart`.
+**Core infrastructure:** `AppSettings`, `AppLogService`, `SshService`,
+`SftpService`, `PerformanceMonitorService`, `SystemAdminService`,
+`PlaybookService`, `RagService`, and `McpServerController` are composed in
+`main.dart`. `SshHostKeyPolicy` and `DataProtectionService` live in
+`lib/core/services/`. AI tool schemas/dispatch remain in `AiToolService` and
+its `lib/services/ai_tool/` modules; remote commands use one-shot SSH exec,
+and client tools are prefixed `client_`.
 
-**Routing:** Named routes via `onGenerateRoute` in `main.dart`: `/` (startup), `/terminal`, `/history`, `/sftp`, `/performance`, `/ai-skills`, `/add`, `/edit`.
+**Routes:** `onGenerateRoute` covers startup, terminal, terminal history and
+windows, SFTP, system administration, AI Skills, Playbooks, connection
+add/edit, and RAG knowledge. Additional feature state is created at the route
+or owning view instead of becoming a global provider by default.
 
 ## Key patterns
 
 - **Sensitive data:** Passwords, private keys, and API keys go to `flutter_secure_storage`, never `SharedPreferences`. Export/backup explicitly zeros out these fields.
-- **Language:** Chinese default. All UI strings are in `AppStrings` and `TerminalStrings` classes in `app_settings.dart`. When adding text, add both zh and en entries.
-- **Performance:** High-frequency writes (AI chats, tmux sessions, terminal history) are debounced (`_protectedPrefWriteDebounce` = 700ms) and flushed on app backgrounding. Caches are returned as `List.unmodifiable` to prevent accidental mutation.
+- **Language:** Chinese is the default. Keep UI text centralized in
+  `AppStrings`/`TerminalStrings` with Chinese and English entries.
+- **Performance:** Drift-backed writes are flushed on lifecycle transitions.
+  Keep large directory construction/sorting and remote-output parsing off the
+  UI isolate, and prefer narrow Provider subscriptions over whole-service
+  watches.
 - **SSH sessions are NOT reused for AI tools** — AI tool commands use one-shot SSH exec connections. tmux sessions are only for interactive terminal windows.
 - **Platform branching:** `ServerPlatform` enum drives OS-specific diagnostics (Linux uses `/proc`/`df`, Windows uses PowerShell). Windows + tmux combination is auto-corrected to plain SSH.
 - **Background lifecycle:** `SshMobileApp` listens to `WidgetsBindingObserver` and flushes pending writes on pause/inactive/detach. `BackgroundServiceManager` initializes foreground service on Android and iOS.
-- **Font handling:** App does NOT bundle font files. Font choices reference platform-installed fonts or open-source font family names.
+- **Typography:** Use the native system font on every supported platform; the
+  app no longer exposes an app-level font-family setting.

@@ -344,15 +344,33 @@ flowchart LR
 ### Project structure
 
 - `lib/main.dart`: application startup and dependency composition.
-- `lib/features/`: feature-owned models, ViewModels, services, and views.
-- `lib/services/`: SSH, SFTP, LLM, AI tools, monitoring, storage, and MCP infrastructure.
+- `lib/features/`: feature-owned models, ViewModels, services, views, and
+  feature-local widgets. Current feature roots are `connection`, `terminal`,
+  `sftp`, `ai_chat`, `ai_skills`, `client_webview`, `performance`,
+  `system_admin`, `lan_share`, `playbook`, `rag`, `settings`, `startup`,
+  `home`, and `developer_log`.
+- `lib/services/`: cross-feature SSH/SFTP/LLM/AI-tool, monitoring, storage,
+  LAN-share, MCP, and platform-adapter infrastructure.
 - `lib/data/`: Drift database, DAOs, and repository implementations.
-- `lib/core/services/`: lower-level cross-feature services and factories.
+- `lib/core/services/`: lower-level shared security and protocol factories,
+  including host-key policy and data protection.
 - `lib/theme/`, `lib/widgets/`, `lib/utils/`: design system, reusable widgets, and utilities.
+- `lib/models/`: small legacy-compatible shared model surface only; new
+  feature models belong to their owning `lib/features/<feature>/models/`.
+- `lib/screens/`: legacy compatibility surface; do not add new application UI
+  here.
 - `test/`: unit and widget tests.
 - `docs/`: architecture, security, performance, validation, and release documentation.
 - `scripts/`, `tool/`: build, generation, synchronization, and quality-check scripts.
 - `third_party/xterm/`: vendored terminal package.
+
+`main.dart` owns application-lifetime services and shared ViewModels through
+`MultiProvider`. Route- or screen-scoped feature state stays local: for example,
+the AI chat runtime is created by `AiChatRuntimeFactory` and provided by the
+chat view, while terminal screens create focused session/history/window
+ViewModels. Views keep layout and transient presentation state; validation,
+async orchestration, and repository coordination belong in ViewModels and
+services.
 
 ## AI Agent Runtime
 

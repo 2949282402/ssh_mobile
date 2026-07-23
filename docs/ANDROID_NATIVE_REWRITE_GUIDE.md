@@ -45,7 +45,9 @@ ssh-mobile-native/
 | `lib/features/connection/viewmodels/connection_viewmodel.dart` | 服务器列表、保存、删除、校验和 SSH 验证状态 |
 | `lib/features/connection/views/add_edit_screen.dart` | 服务器新增/编辑表单 |
 | `lib/features/settings/viewmodels/settings_viewmodel.dart` | 语言、主题、SFTP 限制和密钥缓存设置 |
-| `lib/features/terminal/viewmodels/terminal_viewmodel.dart` | 终端会话级状态与动作 |
+| `lib/features/terminal/viewmodels/terminal_session_viewmodel.dart` | 终端会话级状态与动作 |
+| `lib/features/terminal/viewmodels/terminal_history_viewmodel.dart` | 终端历史状态与动作 |
+| `lib/features/terminal/viewmodels/terminal_windows_viewmodel.dart` | 终端窗口总览与恢复状态 |
 | `lib/features/sftp/viewmodels/sftp_viewmodel.dart` | SFTP 连接、路径、目录项和文件操作状态 |
 | `lib/features/performance/viewmodels/performance_viewmodel.dart` | 监控页 tab、选中服务器和采样状态 |
 | `lib/features/ai_chat/viewmodels/ai_chat_viewmodel.dart` | AI 聊天会话、流式输出、审批和工具运行状态 |

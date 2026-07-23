@@ -249,9 +249,16 @@ across sessions.
   callbacks in `StorageService` (`registerOnImportCallback`) allow high-level
   ChangeNotifiers to automatically reload and refresh UI states post-import.
 - 2026-06-01: Modularized `LlmChatService` (split into `llm_chat_types.dart`, `llm_system_prompt.dart`, and `llm_context_compressor.dart`) and `LlmChatScreen` (split into `llm_settings_screen.dart`, `message_bubble.dart`, `history_panel.dart`, `chat_tools_bar.dart`, `tool_approval_panel.dart`, and `ai_strings.dart`) using Dart's native `part`/`part of` pattern. This dramatically reduced the massive single-file complexity (screen down from 5600 lines to 3000 lines; service down from 1350 lines to 800 lines) while maintaining full feature coverage, same private/package access, and passing 100% of unit tests.
-- 2026-06-02: Modularized `HomeScreen` (split into `home_settings_strings.dart` and `settings_panel.dart` under `lib/screens/home/`) using Dart's native `part`/`part of` pattern. This reduced the single-file complexity of the home page by over 800 lines (from ~2450 lines to ~1615 lines) while maintaining library-private access and passing all 118 unit and widget tests.
-- 2026-06-02: Modularized `ai_tool_service.dart` (schemas extracted to `lib/services/ai_tool/`), `sftp_screen.dart` (split into `sftp_server_pane.dart`, `sftp_file_pane.dart`, and `sftp_models.dart` under `lib/screens/sftp/`), and `terminal_screen.dart` (split into `terminal_dialogs.dart`, `terminal_windows_input.dart`, and `terminal_settings_models.dart` under `lib/screens/terminal/`) using Dart's native `part`/`part of` pattern. This decoupled complex schema aggregates, layout pane widgets, and session action dialogs, reducing single-file sizing and maintaining full test suite coverage (118/118 passing).
-- 2026-07-17: Current architecture documentation and the shared maintenance skill must mirror the pure feature-first MVVM layout. Cite feature-owned models, services, ViewModels, views, and widgets under `lib/features/*`; cite shared UI in `lib/widgets/`/`lib/theme/` and infrastructure in `lib/services/`, `lib/core/services/`, or `lib/data/`. The legacy `lib/screens/*` shell layout is no longer current.
+- 2026-07-23: The current architecture is pure feature-first MVVM. New UI and
+  feature state belong under `lib/features/<feature>/` (models, services,
+  viewmodels, views, and feature-local widgets); shared UI belongs in
+  `lib/widgets/` and `lib/theme/`; cross-feature infrastructure belongs in
+  `lib/services/`, `lib/core/services/`, and `lib/data/`. `lib/screens/` is
+  legacy compatibility only. `main.dart` composes application-lifetime
+  services/shared ViewModels, while the AI-chat runtime and terminal
+  session/history/window ViewModels are view-scoped. Keep README (both
+  languages), CLAUDE.md, the shared maintenance skill, and architecture docs
+  on these paths and ownership boundaries.
 - 2026-06-15: Keep `README.md` and the shared SSH Mobile maintenance skill concise and factual. Prefer current product shape over changelog-style "now added" notes, and keep monitor docs aligned with the four current tabs: Performance, Ports, Applications, and Services.
 - 2026-06-15: AI chat tool use now has per-run budget guardrails. Default budget is 20 tool calls, the first limit auto-extends by half, and every later extension requires an internal safety audit that may disable further tools and force a final no-tools summary. Keep this audit independent from the normal multi-agent toggle, and keep state-changing SSH session and terminal-history tools behind the generic approval UI.
 - 2026-06-16: 完成整个 SSH Mobile Flutter 客户端项目的 MVVM 架构重构，将 Connection、Settings、Performance 以及 SFTP 模块完全分离为 View-ViewModel-Repository 模式，全局通过 ChangeNotifier 和精度选择（Selector）降低 rebuild 消耗，保证了终端及采样热路径的高性能与 100% 单元测试通过率。
