@@ -73,6 +73,8 @@ class AppSettings extends ChangeNotifier {
   static const _serverListLayoutModeKey = 'server_list_layout_mode';
   static const _lanDeviceIdKey = 'lan_device_id';
   static const _lanDeviceAliasKey = 'lan_device_alias';
+  static const _developerModeKey = 'developer_mode';
+  static const _developerPanelFloatingKey = 'developer_panel_floating';
   static const int minSftpLimitBytes = 64 * 1024;
   static const int maxSftpLimitBytes = 2 * 1024 * 1024 * 1024;
   static const int defaultSftpDownloadLimitBytes = 512 * 1024 * 1024;
@@ -103,6 +105,8 @@ class AppSettings extends ChangeNotifier {
   String _serverListLayoutMode = 'list';
   String _lanDeviceId = '';
   String _lanDeviceAlias = '';
+  bool _developerMode = false;
+  bool _developerPanelFloating = false;
   bool _coreLoaded = false;
   bool _initialized = false;
   Future<void>? _coreLoadFuture;
@@ -146,6 +150,8 @@ class AppSettings extends ChangeNotifier {
   String get terminalThemeId => _terminalThemeId;
   String get terminalFontFamily => _terminalFontFamily;
   String get serverListLayoutMode => _serverListLayoutMode;
+  bool get developerMode => _developerMode;
+  bool get developerPanelFloating => _developerPanelFloating;
   McpServerSettings get mcpSettings => McpServerSettings(
     enabled: _mcpServerEnabled,
     host: _mcpServerHost,
@@ -216,6 +222,9 @@ class AppSettings extends ChangeNotifier {
       _terminalFontFamily = prefs.getString(_terminalFontFamilyKey) ?? '';
       _serverListLayoutMode =
           prefs.getString(_serverListLayoutModeKey) ?? 'list';
+      _developerMode = prefs.getBool(_developerModeKey) ?? false;
+      _developerPanelFloating =
+          prefs.getBool(_developerPanelFloatingKey) ?? false;
       _coreLoaded = true;
     } catch (e, stackTrace) {
       AppLogService.instance.error(
@@ -243,6 +252,8 @@ class AppSettings extends ChangeNotifier {
       _terminalThemeId = 'default';
       _terminalFontFamily = '';
       _serverListLayoutMode = 'list';
+      _developerMode = false;
+      _developerPanelFloating = false;
       _coreLoaded = true;
     } finally {
       _coreLoadFuture = null;
@@ -661,5 +672,29 @@ class AppSettings extends ChangeNotifier {
     await _secureStorage.write(key: _mcpServerTokenSecureKey, value: token);
     AppLogService.instance.info('MCP server token generated');
     return token;
+  }
+
+  Future<void> setDeveloperMode(bool value) async {
+    if (_developerMode == value) return;
+    _developerMode = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_developerModeKey, value);
+    AppLogService.instance.info(
+      'Developer mode updated',
+      details: 'developerMode=$value',
+    );
+  }
+
+  Future<void> setDeveloperPanelFloating(bool value) async {
+    if (_developerPanelFloating == value) return;
+    _developerPanelFloating = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_developerPanelFloatingKey, value);
+    AppLogService.instance.info(
+      'Developer panel floating updated',
+      details: 'developerPanelFloating=$value',
+    );
   }
 }

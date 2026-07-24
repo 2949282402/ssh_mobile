@@ -117,4 +117,17 @@ extension _HomeSettingsStrings on AppStrings {
       language == AppLanguage.en ? 'Export failed: $error' : '导出失败：$error';
   String importFailed(Object error) =>
       language == AppLanguage.en ? 'Import failed: $error' : '导入失败：$error';
+  String get developerMode =>
+      language == AppLanguage.en ? 'Developer Mode' : '开发者模式';
+  String get developerModeHint => language == AppLanguage.en
+      ? 'Show performance metrics and debugging information.'
+      : '显示性能指标和调试信息。';
+  String get developerPanel =>
+      language == AppLanguage.en ? 'Developer Panel' : '开发者面板';
+  String get developerPanelFloating => language == AppLanguage.en
+      ? 'Show as floating ball'
+      : '浮窗显示开发者面板';
+  String get developerPanelFloatingHint => language == AppLanguage.en
+      ? 'View the developer panel as a floating ball on every page.'
+      : '在各页面以悬浮球形式查看开发者面板。';
 }

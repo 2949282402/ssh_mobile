@@ -98,6 +98,8 @@ class SettingsViewModel extends ChangeNotifier {
   String get terminalThemeId => _appSettings.terminalThemeId;
   String get terminalFontFamily => _appSettings.terminalFontFamily;
   String get serverListLayoutMode => _appSettings.serverListLayoutMode;
+  bool get developerMode => _appSettings.developerMode;
+  bool get developerPanelFloating => _appSettings.developerPanelFloating;
 
   Future<void> setOledDark(bool value) async {
     await _appSettings.setOledDark(value);
@@ -117,6 +119,14 @@ class SettingsViewModel extends ChangeNotifier {
 
   Future<void> setServerListLayoutMode(String mode) async {
     await _appSettings.setServerListLayoutMode(mode);
+  }
+
+  Future<void> setDeveloperMode(bool value) async {
+    await _appSettings.setDeveloperMode(value);
+  }
+
+  Future<void> setDeveloperPanelFloating(bool value) async {
+    await _appSettings.setDeveloperPanelFloating(value);
   }
 
   Future<void> setSftpLimits({

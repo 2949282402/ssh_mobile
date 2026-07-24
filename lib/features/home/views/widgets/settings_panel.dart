@@ -339,7 +339,7 @@ class _SettingsPanelState extends State<_SettingsPanel> {
               onImport: widget.onImport,
             ),
             const SizedBox(height: 12),
-            _DeveloperSettingsSection(strings: strings),
+            _DeveloperSettingsSection(strings: strings, settings: settings),
           ],
         ),
       ),
@@ -360,6 +360,8 @@ class _SettingsAppSnapshot {
   final String terminalThemeId;
   final String terminalFontFamily;
   final String serverListLayoutMode;
+  final bool developerMode;
+  final bool developerPanelFloating;
 
   const _SettingsAppSnapshot({
     required this.language,
@@ -374,6 +376,8 @@ class _SettingsAppSnapshot {
     required this.terminalThemeId,
     required this.terminalFontFamily,
     required this.serverListLayoutMode,
+    required this.developerMode,
+    required this.developerPanelFloating,
   });
 
   factory _SettingsAppSnapshot.from(SettingsViewModel settings) {
@@ -390,6 +394,8 @@ class _SettingsAppSnapshot {
       terminalThemeId: settings.terminalThemeId,
       terminalFontFamily: settings.terminalFontFamily,
       serverListLayoutMode: settings.serverListLayoutMode,
+      developerMode: settings.developerMode,
+      developerPanelFloating: settings.developerPanelFloating,
     );
   }
 
@@ -407,7 +413,9 @@ class _SettingsAppSnapshot {
         other.colorPalette == colorPalette &&
         other.terminalThemeId == terminalThemeId &&
         other.terminalFontFamily == terminalFontFamily &&
-        other.serverListLayoutMode == serverListLayoutMode;
+        other.serverListLayoutMode == serverListLayoutMode &&
+        other.developerMode == developerMode &&
+        other.developerPanelFloating == developerPanelFloating;
   }
 
   @override
@@ -424,6 +432,8 @@ class _SettingsAppSnapshot {
     terminalThemeId,
     terminalFontFamily,
     serverListLayoutMode,
+    developerMode,
+    developerPanelFloating,
   );
 }
 

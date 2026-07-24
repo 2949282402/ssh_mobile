@@ -730,14 +730,69 @@ class _BackupSettingsSection extends StatelessWidget {
 
 class _DeveloperSettingsSection extends StatelessWidget {
   final AppStrings strings;
+  final SettingsViewModel settings;
 
-  const _DeveloperSettingsSection({required this.strings});
+  const _DeveloperSettingsSection({
+    required this.strings,
+    required this.settings,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final appSettings = context.read<AppSettings>();
     return _SettingsSection(
-      title: strings.developerLogs,
+      title: strings.developerMode,
       children: [
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(
+            strings.developerMode,
+            style: const TextStyle(fontSize: 13),
+          ),
+          subtitle: Text(
+            strings.developerModeHint,
+            style: const TextStyle(fontSize: 11),
+          ),
+          value: settings.developerMode,
+          onChanged: settings.setDeveloperMode,
+        ),
+        if (settings.developerMode) ...[
+          const Divider(height: 1),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(
+              strings.developerPanelFloating,
+              style: const TextStyle(fontSize: 13),
+            ),
+            subtitle: Text(
+              strings.developerPanelFloatingHint,
+              style: const TextStyle(fontSize: 11),
+            ),
+            value: settings.developerPanelFloating,
+            onChanged: settings.setDeveloperPanelFloating,
+          ),
+          const Divider(height: 1),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.dashboard_outlined, size: 20),
+            title: Text(
+              strings.developerPanel,
+              style: const TextStyle(fontSize: 13),
+            ),
+            trailing: const Icon(Icons.chevron_right_rounded, size: 18),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => ChangeNotifierProvider<AppSettings>.value(
+                    value: appSettings,
+                    child: const DeveloperPanelScreen(),
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
         ListTile(
           contentPadding: EdgeInsets.zero,
           leading: const Icon(Icons.bug_report_outlined, size: 20),

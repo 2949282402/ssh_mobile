@@ -28,6 +28,7 @@ import 'package:ssh_mobile/features/lan_share/views/lan_share_screen.dart';
 import 'package:ssh_mobile/features/lan_share/utils/lan_platform_capabilities.dart';
 import 'package:ssh_mobile/features/developer_log/views/developer_log_screen.dart';
 import 'package:ssh_mobile/features/developer_log/viewmodels/developer_log_viewmodel.dart';
+import 'package:ssh_mobile/features/developer_panel/views/developer_panel_screen.dart';
 import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/mcp/mcp_port_probe.dart';
