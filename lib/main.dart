@@ -12,15 +12,9 @@ import 'features/playbook/viewmodels/playbook_viewmodel.dart';
 import 'features/rag/viewmodels/rag_knowledge_viewmodel.dart';
 import 'features/ai_skills/viewmodels/ai_skills_viewmodel.dart';
 import 'features/startup/viewmodels/startup_viewmodel.dart';
-import 'features/performance/viewmodels/performance_viewmodel.dart';
-import 'features/sftp/viewmodels/sftp_viewmodel.dart';
-import 'features/system_admin/viewmodels/system_admin_viewmodel.dart';
-import 'features/lan_share/viewmodels/lan_share_viewmodel.dart';
+import 'features/sftp/sftp_feature_scope.dart';
+import 'features/lan_share/services/lan_receiver_coordinator.dart';
 import 'features/lan_share/views/lan_pairing_navigation_host.dart';
-import 'services/lan_share/lan_discovery_service.dart';
-import 'services/lan_share/lan_security_service.dart';
-import 'services/lan_share/lan_storage_service.dart';
-import 'services/lan_share/lan_transfer_service.dart';
 import 'package:ssh_mobile/features/ai_skills/views/ai_skills_screen.dart';
 import 'package:ssh_mobile/features/ai_skills/views/ai_skill_edit_screen.dart';
 import 'package:ssh_mobile/features/home/views/home_screen.dart';
@@ -35,7 +29,6 @@ import 'package:ssh_mobile/features/mcp_console/views/mcp_console_screen.dart';
 import 'package:ssh_mobile/features/mcp_console/viewmodels/mcp_console_viewmodel.dart';
 import 'services/app_log_service.dart';
 import 'services/display_mode_service.dart';
-import 'services/background_service.dart';
 import 'services/app_settings.dart';
 import 'services/performance_monitor_service.dart';
 import 'services/shortcut_command_service.dart';
@@ -44,9 +37,10 @@ import 'services/ssh_service.dart';
 import 'services/sftp_service.dart';
 import 'services/storage_service.dart';
 import 'services/rag_service.dart';
-import 'services/system_admin_service.dart';
 import 'services/mcp/mcp_server_controller.dart';
 import 'theme/app_theme.dart';
+import 'services/app_bootstrap_coordinator.dart';
+import 'utils/startup_instrumentation.dart';
 import 'utils/responsive.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
@@ -54,8 +48,7 @@ import 'package:shadcn_ui/shadcn_ui.dart';
 /// 并通过 MultiProvider 注入 Widget 树。
 ///
 /// 初始化顺序：依赖链从底向上。
-/// StorageService（持久化）→ SshService / SftpService / PerformanceMonitorService
-/// → AppSettings / ShortcutCommandService → runApp。
+/// AppBootstrapCoordinator 异步初始化核心设置与存储，避免阻塞首屏。
 Future<void> main() async {
   final appLogService = AppLogService();
 
@@ -63,46 +56,61 @@ Future<void> main() async {
   await runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      StartupInstrumentation.instance.recordMainStart();
       appLogService.install(); // 替换 debugPrint / FlutterError.onError 等全局钩子
       appLogService.info('Application bootstrap started');
       unawaited(SharedPreferences.getInstance());
       unawaited(DisplayModeService.enableHighRefreshRate());
 
-      // LAN infrastructure requires a stable device identity before any root
-      // provider can start listening or advertising.
       final appSettings = AppSettings();
-      await appSettings.init();
+      final storageService = StorageService();
+      final bootstrapCoordinator = AppBootstrapCoordinator(
+        appSettings: appSettings,
+        storageService: storageService,
+      );
+      unawaited(bootstrapCoordinator.ensureBootstrap());
+
+      storageService.registerOnImportCallback(appSettings.init);
+
+      StartupInstrumentation.instance.recordRunAppStart();
 
       // --- 服务装配与异步加载通过 MultiProvider 懒加载自动完成 ---
       runApp(
         MultiProvider(
           providers: [
             ChangeNotifierProvider.value(value: appLogService),
-            ChangeNotifierProvider(
-              create: (context) => StorageService()..init(),
-            ),
-            ChangeNotifierProvider(
-              create: (context) {
-                context.read<StorageService>().registerOnImportCallback(() {
-                  unawaited(appSettings.init());
-                });
-                return appSettings;
-              },
-            ),
+            ChangeNotifierProvider.value(value: storageService),
+            ChangeNotifierProvider.value(value: appSettings),
+            ChangeNotifierProvider.value(value: bootstrapCoordinator),
             ChangeNotifierProvider(
               create: (context) {
                 final service = ShortcutCommandService()..init();
-                context.read<StorageService>().registerOnImportCallback(() {
-                  unawaited(service.init());
-                });
+                context.read<StorageService>().registerOnImportCallback(
+                  service.init,
+                );
                 return service;
               },
             ),
             ChangeNotifierProvider(
-              create: (context) => SshService(
-                context.read<StorageService>(),
-                appSettings: context.read<AppSettings>(),
-              ),
+              create: (context) {
+                final service = SshService(
+                  context.read<StorageService>(),
+                  appSettings: context.read<AppSettings>(),
+                );
+                unawaited(
+                  service.ensureInitialized().catchError((
+                    Object error,
+                    StackTrace stackTrace,
+                  ) {
+                    appLogService.error(
+                      'SSH service initialization failed',
+                      error: error,
+                      stackTrace: stackTrace,
+                    );
+                  }),
+                );
+                return service;
+              },
             ),
             ChangeNotifierProvider(
               create: (context) => SftpService(context.read<StorageService>()),
@@ -126,7 +134,7 @@ Future<void> main() async {
                   storageService: context.read<StorageService>(),
                 );
                 context.read<StorageService>().registerOnImportCallback(() {
-                  unawaited(service.init(force: true));
+                  return service.init(force: true);
                 });
                 return service;
               },
@@ -148,15 +156,12 @@ Future<void> main() async {
               ),
             ),
             ChangeNotifierProvider(
-              create: (context) =>
-                  SystemAdminService(context.read<StorageService>()),
-            ),
-            ChangeNotifierProvider(
               create: (context) => ConnectionViewModel(
                 connectionRepository: context.read<StorageService>(),
-                sshService: context.read<SshService>(),
-                sftpService: context.read<SftpService>(),
-                performanceService: context.read<PerformanceMonitorService>(),
+                sshServiceFactory: () => context.read<SshService>(),
+                sftpServiceFactory: () => context.read<SftpService>(),
+                performanceServiceFactory: () =>
+                    context.read<PerformanceMonitorService>(),
               )..fetchConnections(),
             ),
             ChangeNotifierProvider(
@@ -167,66 +172,15 @@ Future<void> main() async {
               ),
             ),
             ChangeNotifierProvider(
-              create: (context) => PerformanceMonitorViewModel(
-                monitorService: context.read<PerformanceMonitorService>(),
-              ),
-            ),
-            ChangeNotifierProvider(
-              create: (context) =>
-                  SftpViewModel(sftpService: context.read<SftpService>()),
-            ),
-            ChangeNotifierProvider(
-              create: (context) => SystemAdminViewModel(
-                adminService: context.read<SystemAdminService>(),
+              create: (context) => LanReceiverCoordinator(
                 storageService: context.read<StorageService>(),
+                appSettings: context.read<AppSettings>(),
               ),
-            ),
-            ChangeNotifierProvider(
-              create: (context) {
-                final storage = context.read<StorageService>();
-                final db = storage.appDatabase;
-                final settings = context.read<AppSettings>();
-                final deviceId = settings.lanDeviceId;
-                final deviceAlias = settings.lanDeviceAlias;
-                final discoveryService = LanDiscoveryService(
-                  currentDeviceId: deviceId,
-                  currentDeviceAlias: deviceAlias,
-                );
-                final securityService = LanSecurityService();
-                final lanStorageService = LanStorageService();
-                final transferService = LanTransferService(
-                  currentDeviceId: deviceId,
-                  securityService: securityService,
-                  storageService: lanStorageService,
-                );
-                return LanShareViewModel(
-                  discoveryService: discoveryService,
-                  securityService: securityService,
-                  storageService: lanStorageService,
-                  transferService: transferService,
-                  historyDao: db.lanHistoryDao,
-                  appSettings: settings,
-                );
-              },
             ),
           ],
           child: const SshMobileApp(),
         ),
       );
-
-      // 首帧渲染完成后延迟预启动后台服务
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        Timer(const Duration(milliseconds: 900), () {
-          unawaited(
-            BackgroundServiceManager.prewarm().timeout(
-              const Duration(seconds: 2),
-              onTimeout: () {
-                appLogService.warning('Background service prewarm timed out');
-              },
-            ),
-          );
-        });
-      });
     },
     // 全局未捕获异常处理
     (error, stackTrace) {
@@ -442,7 +396,8 @@ class _SshMobileAppState extends State<SshMobileApp>
                         );
                       case '/sftp':
                         return MaterialPageRoute(
-                          builder: (_) => const SftpScreen(),
+                          builder: (_) =>
+                              const SftpFeatureScope(child: SftpScreen()),
                         );
                       case '/performance':
                         return MaterialPageRoute(

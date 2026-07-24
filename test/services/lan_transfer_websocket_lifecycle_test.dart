@@ -25,6 +25,15 @@ class _ControllableWebSocket extends Fake implements WebSocket {
     );
   }
 
+  Duration? _pingInterval;
+  @override
+  set pingInterval(Duration? value) {
+    _pingInterval = value;
+  }
+
+  @override
+  Duration? get pingInterval => _pingInterval;
+
   @override
   Future<void> close([int? closeCode, String? closeReason]) async {
     closeCalls++;

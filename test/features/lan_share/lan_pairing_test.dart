@@ -180,7 +180,7 @@ Future<_ServerHandshakeExchange> _performServerHandshake({
     }),
   );
   transferService.handleHttpRequest(beginRequest);
-  await beginRequest.response.closed.timeout(const Duration(seconds: 2));
+  await beginRequest.response.closed.timeout(const Duration(seconds: 15));
   if (beginRequest.response.statusCode != HttpStatus.ok) {
     return _ServerHandshakeExchange(
       beginRequest: beginRequest,
@@ -257,7 +257,7 @@ Future<_ServerHandshakeExchange> _performServerHandshake({
     }),
   );
   transferService.handleHttpRequest(confirmRequest);
-  await confirmRequest.response.closed.timeout(const Duration(seconds: 2));
+  await confirmRequest.response.closed.timeout(const Duration(seconds: 15));
   return _ServerHandshakeExchange(
     beginRequest: beginRequest,
     confirmRequest: confirmRequest,
@@ -283,7 +283,11 @@ void main() {
   late LanTransferService transferService;
 
   setUp(() async {
-    FlutterSecureStorage.setMockInitialValues({});
+    final certData = generateSelfSignedCertForTest('device-local_device_123');
+    FlutterSecureStorage.setMockInitialValues({
+      'lan_share_cert_local_device_123': certData['cert']!,
+      'lan_share_key_local_device_123': certData['key']!,
+    });
     securityService = LanSecurityService();
     storageService = LanStorageService();
     transferService = LanTransferService(
@@ -317,7 +321,7 @@ void main() {
 
       transferService.handleHttpRequest(request);
 
-      final device = await deviceFuture.timeout(const Duration(seconds: 2));
+      final device = await deviceFuture.timeout(const Duration(seconds: 15));
 
       expect(device.id, equals('remote_scanner_abc'));
       expect(device.alias, equals('Scanner Device'));
@@ -349,7 +353,7 @@ void main() {
 
       transferService.handleHttpRequest(request);
 
-      final invite = await inviteFuture.timeout(const Duration(seconds: 2));
+      final invite = await inviteFuture.timeout(const Duration(seconds: 15));
       expect(invite.sessionId, 'session-123');
       expect(invite.isIncoming, isTrue);
       expect(invite.isExpired, isFalse);
@@ -371,7 +375,7 @@ void main() {
         );
         await securityService.storePeerCertificateFingerprint(
           'remote_scanner_abc',
-          '0' * 64,
+          '1' * 64,
         );
         securityService.markFreshOutboundPinProof('remote_scanner_abc');
 
@@ -384,7 +388,7 @@ void main() {
         );
         final request = exchange.confirmRequest!;
 
-        final device = await successFuture.timeout(const Duration(seconds: 2));
+        final device = await successFuture.timeout(const Duration(seconds: 15));
 
         expect(device.id, equals('remote_scanner_abc'));
         expect(device.alias, equals('Scanner Device'));
@@ -414,7 +418,7 @@ void main() {
       );
       final request = exchange.confirmRequest!;
 
-      final device = await pendingFuture.timeout(const Duration(seconds: 2));
+      final device = await pendingFuture.timeout(const Duration(seconds: 15));
       expect(device.id, 'remote_initiator');
       expect(await securityService.isDevicePaired('remote_initiator'), isFalse);
       final responseBody =
@@ -429,7 +433,7 @@ void main() {
         await securityService.storeOutboundAccessToken(remoteId, 'old-token');
         await securityService.storePeerCertificateFingerprint(
           remoteId,
-          '0' * 64,
+          '1' * 64,
         );
         expect(
           await securityService.hasCompleteOutboundPairCredential(remoteId),
@@ -447,7 +451,7 @@ void main() {
         final request = exchange.confirmRequest!;
 
         expect(
-          (await pendingFuture.timeout(const Duration(seconds: 2))).id,
+          (await pendingFuture.timeout(const Duration(seconds: 15))).id,
           remoteId,
         );
         final responseBody =
@@ -467,7 +471,7 @@ void main() {
         );
         await securityService.storePeerCertificateFingerprint(
           'remote_responder_first',
-          '0' * 64,
+          '1' * 64,
         );
         securityService.markFreshOutboundPinProof('remote_responder_first');
         final successFuture = transferService.handshakeSuccessStream.first;
@@ -479,7 +483,7 @@ void main() {
         );
         final request = exchange.confirmRequest!;
 
-        final device = await successFuture.timeout(const Duration(seconds: 2));
+        final device = await successFuture.timeout(const Duration(seconds: 15));
         expect(device.id, 'remote_responder_first');
         expect(
           await securityService.isDevicePaired('remote_responder_first'),

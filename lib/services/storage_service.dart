@@ -703,14 +703,16 @@ class StorageService extends ChangeNotifier
   Duration _secretCacheTtl = const Duration(minutes: 15);
   final Map<String, _MemorySecret> _secretCache = {};
 
-  final List<VoidCallback> _onImportCallbacks = [];
+  final List<FutureOr<void> Function()> _onImportCallbacks = [];
 
-  void registerOnImportCallback(VoidCallback callback) {
-    addOnImportCallback(callback);
+  void registerOnImportCallback(FutureOr<void> Function() callback) {
+    if (!_onImportCallbacks.contains(callback)) {
+      _onImportCallbacks.add(callback);
+    }
   }
 
-  void unregisterOnImportCallback(VoidCallback callback) {
-    removeOnImportCallback(callback);
+  void unregisterOnImportCallback(FutureOr<void> Function() callback) {
+    _onImportCallbacks.remove(callback);
   }
 
   void notifyStorageListeners() {
@@ -916,6 +918,19 @@ class StorageService extends ChangeNotifier
   Future<void> importAppDataJson(String jsonText) async {
     await driftInitFuture;
     await _importAppDataJson(jsonText);
+    for (final callback in List<FutureOr<void> Function()>.from(
+      _onImportCallbacks,
+    )) {
+      try {
+        await callback();
+      } catch (e, stackTrace) {
+        AppLogService.instance.error(
+          'OnImportCallback failed',
+          error: e,
+          stackTrace: stackTrace,
+        );
+      }
+    }
     notifyListeners();
   }
 

@@ -18,6 +18,7 @@ import 'remote_target_scope.dart';
 import 'remote_command_decoder.dart';
 import 'storage_service.dart';
 import 'terminal_history_service.dart';
+import '../utils/startup_instrumentation.dart';
 
 part 'ssh/ssh_session.dart';
 part 'ssh/local_ssh_runtime.dart';
@@ -58,16 +59,39 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
   String? _lastSessionId;
   String? _lastErrorMessage;
   bool _restoredTmuxSessions = false;
+  bool _initialized = false;
+  Future<void>? _initFuture;
 
   SshService(this._storageService, {this._appSettings}) {
-    if (_usesBackgroundService) {
-      _listenToBackgroundService();
-    } else {
-      AppLogService.instance.info(
-        'Background SSH service disabled on this platform',
-      );
+    StartupInstrumentation.instance.recordServiceConstructed('SshService');
+  }
+
+  bool get initialized => _initialized;
+
+  Future<void> ensureInitialized() {
+    if (_initialized) return Future.value();
+    if (_initFuture != null) return _initFuture!;
+
+    _initFuture = _doInit();
+    return _initFuture!;
+  }
+
+  Future<void> _doInit() async {
+    try {
+      StartupInstrumentation.instance.recordServiceInitialized('SshService');
+      if (_usesBackgroundService) {
+        _listenToBackgroundService();
+      } else {
+        AppLogService.instance.info(
+          'Background SSH service disabled on this platform',
+        );
+      }
+      await restoreTmuxSessions();
+      _initialized = true;
+    } catch (e) {
+      _initFuture = null;
+      rethrow;
     }
-    unawaited(restoreTmuxSessions());
   }
 
   bool get _usesBackgroundService {
@@ -230,6 +254,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     String? displayName,
     SshHostKeyConfirmation? onUnknownHostKey,
   }) async {
+    await ensureInitialized();
     final sessionId = _createSessionId(connectionId);
     AppLogService.instance.info(
       'Opening SSH session',
@@ -259,6 +284,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
     String sessionId,
     String connectionId,
   ) async {
+    await ensureInitialized();
     final existing = _sessions[sessionId];
     if (existing == null || existing.connectionId != connectionId) {
       AppLogService.instance.warning(
@@ -635,7 +661,8 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
   }
 
   void _listenToBackgroundService() {
-    _backgroundService.on('sshStateChanged').listen((data) {
+    _cancelBackgroundSubscriptions();
+    _stateSub = _backgroundService.on('sshStateChanged').listen((data) {
       if (data == null) return;
       final String sessionId = data['sessionId'];
       final String stateName = data['state'];
@@ -665,7 +692,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
       }
     });
 
-    _backgroundService.on('sshDataReceived').listen((data) {
+    _outputSub = _backgroundService.on('sshDataReceived').listen((data) {
       if (data == null) return;
       final String sessionId = data['sessionId'];
       final String text = data['data'];
@@ -677,7 +704,7 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
       }
     });
 
-    _backgroundService.on('sshOverviewUpdated').listen((data) {
+    _keepAliveSub = _backgroundService.on('sshOverviewUpdated').listen((data) {
       if (data == null) return;
       final overviewMap = data['overview'] as Map;
       final windowCount = data['windowCount'] as int;
@@ -707,7 +734,20 @@ class SshService extends ChangeNotifier implements SshClientAdapter {
       notifyListeners();
     });
 
-    _backgroundService.on('sshLogReceived').listen(handleBackgroundLog);
+    _appLogSub = _backgroundService
+        .on('sshLogReceived')
+        .listen(handleBackgroundLog);
+  }
+
+  void _cancelBackgroundSubscriptions() {
+    _stateSub?.cancel();
+    _stateSub = null;
+    _outputSub?.cancel();
+    _outputSub = null;
+    _keepAliveSub?.cancel();
+    _keepAliveSub = null;
+    _appLogSub?.cancel();
+    _appLogSub = null;
   }
 
   @visibleForTesting

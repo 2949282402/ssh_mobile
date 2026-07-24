@@ -16,12 +16,12 @@ const int _maxPlaybookContentChars = 100000;
 const int _maxChatMessageChars = 50000;
 
 extension BackupOps on StorageService {
-  void addOnImportCallback(VoidCallback callback) {
-    _onImportCallbacks.add(callback);
+  void addOnImportCallback(FutureOr<void> Function() callback) {
+    registerOnImportCallback(callback);
   }
 
-  void removeOnImportCallback(VoidCallback callback) {
-    _onImportCallbacks.remove(callback);
+  void removeOnImportCallback(FutureOr<void> Function() callback) {
+    unregisterOnImportCallback(callback);
   }
 
   Future<String> _exportAppDataJson() async {
@@ -392,16 +392,6 @@ extension BackupOps on StorageService {
       details:
           'connections=${_connections.length} chats=${((decoded['aiChats'] as List<dynamic>?) ?? const []).length} skills=${((decoded['aiSkills'] as List<dynamic>?) ?? const []).length} playbooks=${((decoded['playbooks'] as List<dynamic>?) ?? const []).length} highRisk=${_backupHighRiskSections(decoded).join(',')}',
     );
-    for (final callback in _onImportCallbacks) {
-      try {
-        callback();
-      } catch (e) {
-        AppLogService.instance.error(
-          'Error invoking import callback',
-          error: e,
-        );
-      }
-    }
   }
 }
 

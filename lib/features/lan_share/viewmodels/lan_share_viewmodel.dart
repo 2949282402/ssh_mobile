@@ -23,6 +23,8 @@ class LanShareViewModel extends ChangeNotifier {
   final LanTransferService transferService;
   final LanHistoryDao historyDao;
   final AppSettings appSettings;
+  final bool ownsRuntime;
+  final ValueChanged<LanPairingRequest>? pairingRequestPublisher;
 
   List<LanDevice> _devices = [];
   List<LanMessage> _history = [];
@@ -61,6 +63,7 @@ class LanShareViewModel extends ChangeNotifier {
     _latestPairingRequests.removeWhere((_, value) => value.isExpired);
     _latestPairingRequests[request.sessionId] = request;
     _pairingRequestController.add(request);
+    pairingRequestPublisher?.call(request);
   }
 
   bool _isInitialized = false;
@@ -76,6 +79,8 @@ class LanShareViewModel extends ChangeNotifier {
     required this.transferService,
     required this.historyDao,
     required this.appSettings,
+    this.ownsRuntime = true,
+    this.pairingRequestPublisher,
   });
 
   List<LanDevice> get devices => _devices;
@@ -96,9 +101,7 @@ class LanShareViewModel extends ChangeNotifier {
   Future<void> _initialize() async {
     if (_isInitialized) return;
     final generation = _lifecycleGeneration;
-    if (!appSettings.initialized) {
-      await appSettings.initFuture;
-    }
+    await appSettings.ensureLanIdentity();
     if (_disposed || generation != _lifecycleGeneration) return;
     if (appSettings.lanDeviceId.trim().isEmpty ||
         discoveryService.currentDeviceId.trim().isEmpty ||
@@ -201,12 +204,14 @@ class LanShareViewModel extends ChangeNotifier {
       unawaited(storageService.perform7DayGarbageCollection());
 
       if (_disposed || generation != _lifecycleGeneration) return;
-      final boundPort = await transferService.startListening();
-      if (_disposed || generation != _lifecycleGeneration) {
-        await transferService.stopListening();
-        return;
+      if (ownsRuntime) {
+        final boundPort = await transferService.startListening();
+        if (_disposed || generation != _lifecycleGeneration) {
+          await transferService.stopListening();
+          return;
+        }
+        await discoveryService.startAdvertising(port: boundPort);
       }
-      await discoveryService.startAdvertising(port: boundPort);
 
       _isInitialized = true;
       _startKeepAliveTimer();
@@ -806,8 +811,10 @@ class LanShareViewModel extends ChangeNotifier {
     appSettings.removeListener(_onSettingsChanged);
     await _cancelRuntimeSubscriptions();
     await stopScanning();
-    await discoveryService.stopAdvertising();
-    await transferService.stopListening();
+    if (ownsRuntime) {
+      await discoveryService.stopAdvertising();
+      await transferService.stopListening();
+    }
 
     final initialization = _initializationFuture;
     if (initialization != null) {
@@ -815,9 +822,11 @@ class LanShareViewModel extends ChangeNotifier {
         await initialization;
       } catch (_) {}
     }
-    // startListening can finish concurrently with the first stop above.
-    await discoveryService.stopAdvertising();
-    await transferService.closeConnections();
+    if (ownsRuntime) {
+      // startListening can finish concurrently with the first stop above.
+      await discoveryService.stopAdvertising();
+      await transferService.closeConnections();
+    }
     _devices = [];
     _initializationFuture = null;
     _shutdownFuture = null;
@@ -830,8 +839,10 @@ class LanShareViewModel extends ChangeNotifier {
     _lifecycleGeneration++;
     unawaited(
       shutdown().whenComplete(() {
-        discoveryService.dispose();
-        transferService.dispose();
+        if (ownsRuntime) {
+          discoveryService.dispose();
+          transferService.dispose();
+        }
         _pairingRequestController.close();
       }),
     );

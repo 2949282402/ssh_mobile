@@ -36,7 +36,8 @@ class StartupViewModel extends ChangeNotifier {
 
   // Getters
   bool get storageInitialized => _storageService.initialized;
-  bool get settingsInitialized => _appSettings.initialized;
+  bool get settingsInitialized =>
+      _appSettings.coreLoaded || _appSettings.initialized;
   AppLanguage get language => _appSettings.language;
 
   bool get isAndroidTarget =>

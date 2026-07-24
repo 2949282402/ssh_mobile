@@ -10,11 +10,11 @@ import '../../../services/performance_monitor_service.dart';
 import '../models/connection.dart';
 import '../../../services/storage_service.dart';
 
+import '../services/connection_runtime_actions.dart';
+
 class ConnectionViewModel extends ChangeNotifier {
   final ConnectionRepository _connectionRepository;
-  final SshService _sshService;
-  final SftpService _sftpService;
-  final PerformanceMonitorService _performanceService;
+  final ConnectionRuntimeActions _runtimeActions;
 
   List<ConnectionConfig> _connections = [];
   bool _isLoading = false;
@@ -24,13 +24,27 @@ class ConnectionViewModel extends ChangeNotifier {
 
   ConnectionViewModel({
     required ConnectionRepository connectionRepository,
-    required SshService sshService,
-    required SftpService sftpService,
-    required PerformanceMonitorService performanceService,
+    SshService? sshService,
+    SftpService? sftpService,
+    PerformanceMonitorService? performanceService,
+    SshService Function()? sshServiceFactory,
+    SftpService Function()? sftpServiceFactory,
+    PerformanceMonitorService Function()? performanceServiceFactory,
+    ConnectionRuntimeActions? runtimeActions,
   }) : _connectionRepository = connectionRepository,
-       _sshService = sshService,
-       _sftpService = sftpService,
-       _performanceService = performanceService {
+       _runtimeActions =
+           runtimeActions ??
+           ConnectionRuntimeActions(
+             sshServiceFactory:
+                 sshServiceFactory ??
+                 (sshService != null ? () => sshService : null),
+             sftpServiceFactory:
+                 sftpServiceFactory ??
+                 (sftpService != null ? () => sftpService : null),
+             performanceServiceFactory:
+                 performanceServiceFactory ??
+                 (performanceService != null ? () => performanceService : null),
+           ) {
     if (_connectionRepository is ChangeNotifier) {
       (_connectionRepository as ChangeNotifier).addListener(
         _onRepositoryChanged,
@@ -188,7 +202,7 @@ class ConnectionViewModel extends ChangeNotifier {
       notifyListeners();
 
       final activeWindowCount = isEditing
-          ? _sshService.sessionCountForConnection(config.id)
+          ? await _runtimeActions.activeWindowCount(config.id)
           : 0;
       if (activeWindowCount > 0) {
         _isSaving = false;
@@ -204,7 +218,7 @@ class ConnectionViewModel extends ChangeNotifier {
       if (isEditing) {
         await _connectionRepository.updateConnection(config);
         if (activeWindowCount > 0) {
-          await _sshService.disconnectSessionsForConnection(config.id);
+          await _runtimeActions.disconnectSessionsForConnection(config.id);
         }
       } else {
         await _connectionRepository.addConnection(config);
@@ -242,13 +256,13 @@ class ConnectionViewModel extends ChangeNotifier {
     _errorMessage = null;
     notifyListeners();
     try {
-      final sessionId = await _sshService.openSession(
+      final sessionId = await _runtimeActions.openTerminalSession(
         connectionId,
-        displayName: windowName,
+        windowName,
         onUnknownHostKey: onUnknownHostKey,
       );
       if (sessionId == null) {
-        _errorMessage = _sshService.errorMessage;
+        _errorMessage = _runtimeActions.sshErrorMessage;
       }
       return sessionId;
     } catch (e) {
@@ -263,9 +277,7 @@ class ConnectionViewModel extends ChangeNotifier {
     _errorMessage = null;
     notifyListeners();
     try {
-      await _sshService.disconnectSessionsForConnection(connectionId);
-      await _sftpService.disconnectConnection(connectionId, forgetPath: true);
-      _performanceService.stopForConnection(connectionId);
+      await _runtimeActions.cleanupConnectionResources(connectionId);
       await _connectionRepository.deleteConnection(connectionId);
       _connections = _connectionRepository.connections;
     } catch (e) {
@@ -280,9 +292,7 @@ class ConnectionViewModel extends ChangeNotifier {
     notifyListeners();
     try {
       for (final id in connectionIds) {
-        await _sshService.disconnectSessionsForConnection(id);
-        await _sftpService.disconnectConnection(id, forgetPath: true);
-        _performanceService.stopForConnection(id);
+        await _runtimeActions.cleanupConnectionResources(id);
       }
       await _connectionRepository.deleteConnections(connectionIds);
       _connections = _connectionRepository.connections;

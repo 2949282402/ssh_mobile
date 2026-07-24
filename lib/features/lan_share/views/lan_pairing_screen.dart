@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../../../services/app_settings.dart';
 import '../../../services/lan_share/lan_share_models.dart';
 import '../../../widgets/app_surface.dart';
+import '../lan_share_feature_scope.dart';
 import '../viewmodels/lan_share_viewmodel.dart';
 import 'lan_chat_screen.dart';
 
@@ -106,9 +107,11 @@ class _LanPairingScreenState extends State<LanPairingScreen>
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-        builder: (_) => LanChatScreen(
-          targetDeviceId: _targetDeviceId,
-          initialAlias: _targetAlias,
+        builder: (_) => LanShareFeatureScope(
+          child: LanChatScreen(
+            targetDeviceId: _targetDeviceId,
+            initialAlias: _targetAlias,
+          ),
         ),
       ),
     );

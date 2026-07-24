@@ -140,6 +140,7 @@ void main() {
           'my_window',
         );
         expect(sessionId, isNull);
+        expect(viewModel.errorMessage, isNotNull);
       },
     );
   });

@@ -18,6 +18,15 @@ across sessions.
   context.
 
 ## Notes
+- 2026-07-24: Refactored startup and service initialization architecture for
+  on-demand loading (`AppBootstrapCoordinator`, `LazyAiToolExecutor`,
+  `ConnectionRuntimeActions`, `LanReceiverCoordinator`, feature scopes).
+  Core startup loads preferences and storage without blocking `runApp()`.
+  `LanReceiverCoordinator` owns one global receiver and lazily exposes one
+  shared `LanShareViewModel` through `LanShareFeatureScope`; all SSH session
+  entry points share `SshService.ensureInitialized()`, and storage import
+  callbacks run exactly once and are awaited.
+
 - 2026-07-17: LAN Quick Share pairing receivers initialize outside the
   deferred LAN page. QR scans and device-list taps emit the same short-lived
   invitation; QR URLs carry the stable device ID and native transfer port.

@@ -104,7 +104,9 @@ class AppSettings extends ChangeNotifier {
   String _serverListLayoutMode = 'list';
   String _lanDeviceId = '';
   String _lanDeviceAlias = '';
+  bool _coreLoaded = false;
   bool _initialized = false;
+  Future<void>? _coreLoadFuture;
   final Completer<void> _initCompleter = Completer<void>();
   Future<void> _themeWrite = Future.value();
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage(
@@ -120,6 +122,7 @@ class AppSettings extends ChangeNotifier {
     oledDark: _oledDark,
     colorPalette: _colorPalette,
   );
+  bool get coreLoaded => _coreLoaded;
   bool get initialized => _initialized;
   Future<void> get initFuture => _initCompleter.future;
   bool get isEnglish => _language == AppLanguage.en;
@@ -154,7 +157,13 @@ class AppSettings extends ChangeNotifier {
     enableSse: _mcpEnableSse,
   );
 
-  Future<void> init() async {
+  /// 仅加载核心偏好设置（语言、主题Mode、色板、SFTP限制等），不引发网络/SecureStorage/设备名查找
+  Future<void> ensureCoreLoaded() {
+    if (_coreLoaded) return Future<void>.value();
+    return _coreLoadFuture ??= _loadCoreSettings();
+  }
+
+  Future<void> _loadCoreSettings() async {
     try {
       final prefs = await SharedPreferences.getInstance().timeout(
         const Duration(seconds: 3),
@@ -197,7 +206,6 @@ class AppSettings extends ChangeNotifier {
       _mcpRequireApprovalForWriteTools =
           prefs.getBool(_mcpRequireApprovalForWriteToolsKey) ?? true;
       _mcpEnableSse = prefs.getBool(_mcpEnableSseKey) ?? false;
-      _mcpServerToken = await _readOrCreateMcpServerToken();
       _oledDark = prefs.getBool(_oledDarkKey) ?? false;
       final colorPaletteName = prefs.getString(_colorPaletteKey);
       _colorPalette = AppColorPalette.values.firstWhere(
@@ -208,8 +216,53 @@ class AppSettings extends ChangeNotifier {
       _terminalFontFamily = prefs.getString(_terminalFontFamilyKey) ?? '';
       _serverListLayoutMode =
           prefs.getString(_serverListLayoutModeKey) ?? 'list';
-      // Try loading device ID from secure storage first for maximum persistence,
-      // falling back to SharedPreferences, and generating if not found anywhere.
+      _coreLoaded = true;
+    } catch (e, stackTrace) {
+      AppLogService.instance.error(
+        'Failed to load core AppSettings',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      _language = AppLanguage.zh;
+      _themeMode = ThemeMode.light;
+      _sftpDownloadLimitBytes = defaultSftpDownloadLimitBytes;
+      _sftpTextPreviewLimitBytes = defaultSftpTextPreviewLimitBytes;
+      _sftpRichPreviewLimitBytes = defaultSftpRichPreviewLimitBytes;
+      _sftpTextEditLimitBytes = defaultSftpTextEditLimitBytes;
+      _ragEnabled = false;
+      _ragSearchMode = 'bm25';
+      _ragTopN = 3;
+      _showServerNamesInNotifications = false;
+      _mcpServerEnabled = false;
+      _mcpServerHost = McpServerSettings.defaultHost;
+      _mcpServerPort = McpServerSettings.defaultPort;
+      _mcpAllowWriteTools = false;
+      _mcpRequireApprovalForWriteTools = true;
+      _mcpEnableSse = false;
+      _oledDark = false;
+      _colorPalette = AppColorPalette.monochrome;
+      _terminalThemeId = 'default';
+      _terminalFontFamily = '';
+      _serverListLayoutMode = 'list';
+      _coreLoaded = true;
+    } finally {
+      _coreLoadFuture = null;
+      notifyListeners();
+    }
+  }
+
+  /// 按需读取或生成 MCP Token
+  Future<void> ensureMcpToken() async {
+    if (_mcpServerToken.isNotEmpty) return;
+    _mcpServerToken = await _readOrCreateMcpServerToken();
+  }
+
+  /// 按需读取或生成 LAN 设备 Identity 与设备名称
+  Future<void> ensureLanIdentity() async {
+    if (_lanDeviceId.isNotEmpty && _lanDeviceAlias.isNotEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+
+    if (_lanDeviceId.isEmpty) {
       String secureId = '';
       try {
         secureId = await _secureStorage.read(key: _lanDeviceIdKey) ?? '';
@@ -234,41 +287,22 @@ class AppSettings extends ChangeNotifier {
           await _secureStorage.write(key: _lanDeviceIdKey, value: _lanDeviceId);
         } catch (_) {}
       }
+    }
+
+    if (_lanDeviceAlias.isEmpty) {
       _lanDeviceAlias = prefs.getString(_lanDeviceAliasKey) ?? '';
       if (_lanDeviceAlias.isEmpty) {
         _lanDeviceAlias = await getDeviceName();
         await prefs.setString(_lanDeviceAliasKey, _lanDeviceAlias);
       }
-    } catch (e, stackTrace) {
-      AppLogService.instance.error(
-        'Failed to initialize AppSettings',
-        error: e,
-        stackTrace: stackTrace,
-      );
-      _language = AppLanguage.zh;
-      _themeMode = ThemeMode.light;
-      _sftpDownloadLimitBytes = defaultSftpDownloadLimitBytes;
-      _sftpTextPreviewLimitBytes = defaultSftpTextPreviewLimitBytes;
-      _sftpRichPreviewLimitBytes = defaultSftpRichPreviewLimitBytes;
-      _sftpTextEditLimitBytes = defaultSftpTextEditLimitBytes;
-      _ragEnabled = false;
-      _ragSearchMode = 'bm25';
-      _ragTopN = 3;
-      _showServerNamesInNotifications = false;
-      _mcpServerEnabled = false;
-      _mcpServerHost = McpServerSettings.defaultHost;
-      _mcpServerPort = McpServerSettings.defaultPort;
-      _mcpServerToken = '';
-      _mcpAllowWriteTools = false;
-      _mcpRequireApprovalForWriteTools = true;
-      _mcpEnableSse = false;
-      _oledDark = false;
-      _colorPalette = AppColorPalette.monochrome;
-      _terminalThemeId = 'default';
-      _terminalFontFamily = '';
-      _serverListLayoutMode = 'list';
-      _lanDeviceId = '';
-      _lanDeviceAlias = await getDeviceName();
+    }
+  }
+
+  Future<void> init() async {
+    try {
+      await ensureCoreLoaded();
+      await ensureMcpToken();
+      await ensureLanIdentity();
     } finally {
       _initialized = true;
       if (!_initCompleter.isCompleted) {

@@ -10,8 +10,6 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/features/connection/viewmodels/connection_viewmodel.dart';
 import 'package:ssh_mobile/features/settings/viewmodels/settings_viewmodel.dart';
-import 'package:ssh_mobile/features/system_admin/viewmodels/system_admin_viewmodel.dart';
-import 'package:ssh_mobile/features/sftp/viewmodels/sftp_viewmodel.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/ssh_service.dart';
 import 'package:ssh_mobile/utils/responsive.dart';
@@ -35,6 +33,9 @@ import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/mcp/mcp_port_probe.dart';
 import 'package:ssh_mobile/services/mcp/mcp_server_controller.dart';
 import 'package:ssh_mobile/services/mcp/mcp_server_settings.dart';
+import 'package:ssh_mobile/features/sftp/sftp_feature_scope.dart';
+import 'package:ssh_mobile/features/system_admin/system_admin_feature_scope.dart';
+import 'package:ssh_mobile/features/lan_share/lan_share_feature_scope.dart';
 import 'package:ssh_mobile/features/home/views/widgets/home_navigation_semantics.dart';
 
 part 'widgets/home_settings_strings.dart';
@@ -547,8 +548,6 @@ class _HomeScreenState extends State<HomeScreen> {
     _switchPage(index);
   }
 
-  String? _lastSynchronizedAdminConnectionId;
-
   void _switchPage(int index) {
     if (_selectedIndex == index) return;
     setState(() {
@@ -564,25 +563,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _onPageActive(int index) {
-    if (index == _sftpPage) {
-      final adminVm = context.read<SystemAdminViewModel>();
-      final sftpVm = context.read<SftpViewModel>();
-      final selectedId = adminVm.selectedConnectionId;
-      if (selectedId != null &&
-          (sftpVm.connectionId == null ||
-              selectedId != _lastSynchronizedAdminConnectionId)) {
-        _lastSynchronizedAdminConnectionId = selectedId;
-        if (sftpVm.connectionId != selectedId) {
-          unawaited(
-            sftpVm.connect(
-              selectedId,
-              onUnknownHostKey: (request) =>
-                  showSshHostKeyTrustDialog(context, request),
-            ),
-          );
-        }
-      }
-    }
+    // 各 Feature 自主管理连线与活跃状态，避免在切页时跨模块读取其他 ViewModels
   }
 
   String settingsLabelAi(BuildContext context) {
@@ -633,12 +614,12 @@ class _HomeScreenState extends State<HomeScreen> {
             case _serverPage:
               return const ServerListPane();
             case _sftpPage:
-              return const SftpScreen();
+              return const SftpFeatureScope(child: SftpScreen());
             case _adminPage:
-              return const SystemAdminScreen();
+              return const SystemAdminFeatureScope(child: SystemAdminScreen());
             case _logPage:
             default:
-              return const LanShareScreen();
+              return const LanShareFeatureScope(child: LanShareScreen());
           }
         },
       ),
@@ -770,8 +751,7 @@ class _DeferredNavPageState extends State<_DeferredNavPage> {
   void _scheduleActivation() {
     if (_ready || _activationScheduled) return;
     _activationScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await Future<void>.delayed(const Duration(milliseconds: 80));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !widget.active) return;
       setState(() {
         _activationScheduled = false;

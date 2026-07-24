@@ -713,14 +713,18 @@ void main() {
       final newStorage = await initializedStorage();
 
       // Register import callback
-      var callbackTriggered = false;
-      newStorage.registerOnImportCallback(() {
-        callbackTriggered = true;
+      var callbackCount = 0;
+      var asyncCallbackCompleted = false;
+      newStorage.registerOnImportCallback(() async {
+        callbackCount++;
+        await Future<void>.delayed(Duration.zero);
+        asyncCallbackCompleted = true;
       });
 
       await newStorage.importAppDataJson(jsonText);
 
-      expect(callbackTriggered, isTrue);
+      expect(callbackCount, 1);
+      expect(asyncCallbackCompleted, isTrue);
 
       // Verify imported values in new storage
       final newPrefs = await SharedPreferences.getInstance();

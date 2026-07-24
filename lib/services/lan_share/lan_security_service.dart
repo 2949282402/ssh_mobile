@@ -23,6 +23,10 @@ Map<String, String> _generateSelfSignedCertIsolate(String commonName) {
   return {'cert': certPem, 'key': keyPem};
 }
 
+@visibleForTesting
+Map<String, String> generateSelfSignedCertForTest(String commonName) =>
+    _generateSelfSignedCertIsolate(commonName);
+
 /// Service handling TLS certificate generation, PIN verification,
 /// ECDH key agreement, and trusted device storage.
 class LanSecurityService {
@@ -592,7 +596,9 @@ class LanSecurityService {
       localFingerprint: localFingerprint,
       accessToken: accessToken,
     );
-    final expiresAt = _freshOutboundPinProofExpiry.remove(proofKey);
+    final expiresAt =
+        _freshOutboundPinProofExpiry.remove(proofKey) ??
+        _freshOutboundPinProofExpiry.remove('legacy\u0000$deviceId');
     return expiresAt != null && DateTime.now().isBefore(expiresAt);
   }
 

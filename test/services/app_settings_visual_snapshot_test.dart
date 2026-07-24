@@ -9,6 +9,23 @@ import 'package:ssh_mobile/theme/app_theme.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('core preference loading notifies visual settings listeners', () async {
+    SharedPreferences.setMockInitialValues({
+      'theme_mode': 'dark',
+      'color_palette': 'ocean',
+    });
+    final settings = AppSettings();
+    var notifications = 0;
+    settings.addListener(() => notifications++);
+
+    await settings.ensureCoreLoaded();
+
+    expect(settings.themeMode, ThemeMode.dark);
+    expect(settings.colorPalette, AppColorPalette.ocean);
+    expect(notifications, 1);
+    settings.dispose();
+  });
+
   testWidgets('non-visual settings do not rebuild the app theme shell', (
     tester,
   ) async {

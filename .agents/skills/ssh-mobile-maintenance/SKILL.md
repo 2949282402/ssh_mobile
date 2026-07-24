@@ -250,6 +250,8 @@ its `views/` parts.
 ### LAN Quick Share
 
 Primary entry points are
+lib/features/lan_share/lan_share_feature_scope.dart,
+lib/features/lan_share/services/lan_receiver_coordinator.dart,
 lib/features/lan_share/viewmodels/lan_share_viewmodel.dart,
 lib/features/lan_share/views/lan_pairing_navigation_host.dart,
 lib/features/lan_share/views/lan_pairing_screen.dart, and
@@ -258,6 +260,9 @@ lib/services/lan_share/lan_transfer_service.dart.
 - Initialize the LAN receiver independently from the selected home tab so a
   foreground peer invitation can open the pairing page from anywhere in the
   app.
+- Keep one receiver-owned `LanShareViewModel` behind `LanShareFeatureScope`;
+  the LAN home page plus root pairing and chat routes must reuse that instance
+  instead of binding a second receiver or depending on a missing root provider.
 - QR scans and device-list taps use the same short-lived pairing invitation
   flow. QR URLs carry the stable device ID and native transfer port; never use
   the Web Share HTTP port as the native pairing port.

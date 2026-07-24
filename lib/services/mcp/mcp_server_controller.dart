@@ -15,6 +15,7 @@ import 'mcp_lifecycle_handler.dart';
 import 'mcp_port_probe.dart';
 import 'mcp_tool_handler.dart';
 import 'mcp_tool_exposure_policy.dart';
+import 'lazy_ai_tool_executor.dart';
 
 enum McpServerRunStatus { stopped, checkingPort, starting, running, failed }
 
@@ -182,7 +183,7 @@ class McpServerController extends ChangeNotifier {
   }
 
   Future<void> startIfEnabled() async {
-    await appSettings.initFuture;
+    await appSettings.ensureCoreLoaded();
     if (appSettings.mcpServerEnabled) {
       await start();
     }
@@ -206,7 +207,8 @@ class McpServerController extends ChangeNotifier {
       return snapshot;
     }
 
-    final token = await appSettings.ensureMcpServerToken();
+    await appSettings.ensureMcpToken();
+    final token = appSettings.mcpServerToken;
     settings = appSettings.mcpSettings.copyWith(token: token);
 
     _status = McpServerRunStatus.checkingPort;
@@ -239,17 +241,14 @@ class McpServerController extends ChangeNotifier {
     _status = McpServerRunStatus.starting;
     _notify();
     try {
-      final toolService = toolServiceFactory();
+      final lazyToolExecutor = LazyAiToolExecutor(toolServiceFactory);
       final router = McpJsonRpcRouter(
         lifecycleHandler: const McpLifecycleHandler(),
         toolHandler: McpToolHandler(
-          aiToolService: toolService,
+          aiToolService: lazyToolExecutor,
           settingsProvider: () => appSettings.mcpSettings,
           activityRecorder: _activityRecorder,
           hasChatSession: () {
-            if (toolService is AiToolService) {
-              return toolService.clientWebViewSessionId != null;
-            }
             return false;
           },
         ),

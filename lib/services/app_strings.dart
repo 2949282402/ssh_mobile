@@ -652,6 +652,8 @@ class AppStrings {
   String get lanShareNoDevicesRefreshHint => _en
       ? 'No devices found. Tap refresh icon to scan again.'
       : '未找到附近设备，请点击右上角图标重新刷新';
+  String get lanShareInitializationFailed =>
+      _en ? 'LAN Quick Share failed to initialize.' : '局域网快传初始化失败。';
   String get lanShareWebShare => _en ? 'Web Share' : '网页快传';
   String get lanShareWebShareHint => _en
       ? 'Scan QR code from any browser to transfer files'

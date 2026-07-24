@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../services/lan_share/lan_share_models.dart';
+import '../lan_share_feature_scope.dart';
+import '../services/lan_receiver_coordinator.dart';
 import '../viewmodels/lan_share_viewmodel.dart';
 import 'lan_pairing_screen.dart';
 
@@ -115,13 +117,40 @@ class _LanPairingNavigationHostState extends State<LanPairingNavigationHost> {
     if (_initialized) return;
     _initialized = true;
 
-    final viewModel = context.read<LanShareViewModel>();
-    _subscription = viewModel.pairingRequestStream.listen(_handleRequest);
-    unawaited(
-      viewModel.initialize().catchError((Object error, StackTrace stackTrace) {
-        debugPrint('[LanPairingNavigationHost] Initialization failed: $error');
-      }),
-    );
+    final coordinator = _findCoordinator(context);
+    _subscription = coordinator?.pairingRequestStream.listen(_handleRequest);
+    if (coordinator != null) {
+      unawaited(
+        _ensureCoordinatorInitialized(coordinator).catchError((
+          Object error,
+          StackTrace stackTrace,
+        ) {
+          debugPrint(
+            '[LanPairingNavigationHost] Initialization failed: $error',
+          );
+        }),
+      );
+    }
+  }
+
+  static dynamic _findCoordinator(BuildContext context) {
+    try {
+      return context.read<LanReceiverCoordinator>();
+    } catch (_) {
+      try {
+        return context.read<LanShareViewModel>();
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+
+  static Future<void> _ensureCoordinatorInitialized(dynamic coordinator) async {
+    if (coordinator is LanReceiverCoordinator) {
+      await coordinator.ensureInitialized();
+    } else if (coordinator is LanShareViewModel) {
+      await coordinator.initialize();
+    }
   }
 
   void _handleRequest(LanPairingRequest request) {
@@ -158,16 +187,18 @@ class _LanPairingNavigationHostState extends State<LanPairingNavigationHost> {
     navigator
         .push<void>(
           MaterialPageRoute(
-            builder: (_) => ValueListenableBuilder<LanPairingRequest>(
-              valueListenable: routeRequest,
-              builder: (_, currentRequest, _) => LanPairingScreen(
-                // Keep the State (and any PIN already typed) when a reciprocal
-                // invitation upgrades the active request's role or endpoint.
-                key: ValueKey(currentRequest.sessionId),
-                targetDeviceId: currentRequest.device.id,
-                initialAlias: currentRequest.device.alias,
-                sessionId: currentRequest.sessionId,
-                isIncomingRequest: currentRequest.isIncoming,
+            builder: (_) => LanShareFeatureScope(
+              child: ValueListenableBuilder<LanPairingRequest>(
+                valueListenable: routeRequest,
+                builder: (_, currentRequest, _) => LanPairingScreen(
+                  // Keep the State (and any PIN already typed) when a reciprocal
+                  // invitation upgrades the active request's role or endpoint.
+                  key: ValueKey(currentRequest.sessionId),
+                  targetDeviceId: currentRequest.device.id,
+                  initialAlias: currentRequest.device.alias,
+                  sessionId: currentRequest.sessionId,
+                  isIncomingRequest: currentRequest.isIncoming,
+                ),
               ),
             ),
           ),

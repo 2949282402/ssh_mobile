@@ -13,6 +13,7 @@ import 'package:ssh_mobile/features/lan_share/viewmodels/lan_share_viewmodel.dar
 import 'package:ssh_mobile/services/lan_share/lan_share_models.dart';
 import 'package:ssh_mobile/services/lan_share/lan_discovery_service.dart';
 import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
+import '../lan_share_feature_scope.dart';
 import 'lan_chat_screen.dart';
 import 'lan_qr_scanner_screen.dart';
 
@@ -626,9 +627,11 @@ class _LanShareScreenState extends State<LanShareScreen>
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => LanChatScreen(
-                      targetDeviceId: device.id,
-                      initialAlias: device.alias,
+                    builder: (_) => LanShareFeatureScope(
+                      child: LanChatScreen(
+                        targetDeviceId: device.id,
+                        initialAlias: device.alias,
+                      ),
                     ),
                   ),
                 );
@@ -727,9 +730,11 @@ class _LanShareScreenState extends State<LanShareScreen>
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => LanChatScreen(
-                      targetDeviceId: session.deviceId,
-                      initialAlias: session.alias,
+                    builder: (_) => LanShareFeatureScope(
+                      child: LanChatScreen(
+                        targetDeviceId: session.deviceId,
+                        initialAlias: session.alias,
+                      ),
                     ),
                   ),
                 );
