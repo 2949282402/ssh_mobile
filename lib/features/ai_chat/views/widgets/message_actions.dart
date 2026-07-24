@@ -22,7 +22,7 @@ class MessageActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final en = context.read<AppSettings>().language == AppLanguage.en;
+    final strings = AppStrings(context.read<AppSettings>().language);
     final colorScheme = Theme.of(context).colorScheme;
     final copyText = assistantText?.trim().isNotEmpty == true
         ? assistantText!.trim()
@@ -31,42 +31,43 @@ class MessageActions extends StatelessWidget {
       if (copyText != null)
         _actionButton(
           context,
-          tooltip: en ? 'Copy reply' : '复制回复',
+          tooltip: strings.copyReply,
           icon: Icons.content_copy_rounded,
-          onPressed: () => _copyAssistantText(context, copyText, en),
+          onPressed: () => _copyAssistantText(context, copyText, strings),
         ),
       if (copyText != null)
         _actionButton(
           context,
-          tooltip: en ? 'Select and copy' : '选择复制',
+          tooltip: strings.selectAndCopy,
           icon: Icons.select_all_rounded,
-          onPressed: () => _showSelectableCopySheet(context, copyText, en),
+          onPressed: () =>
+              _showSelectableCopySheet(context, copyText, strings),
         ),
       if (onEditUser != null)
         _actionButton(
           context,
-          tooltip: en ? 'Edit and resend' : '编辑并重发',
+          tooltip: strings.editAndResend,
           icon: Icons.edit_outlined,
           onPressed: onEditUser,
         ),
       if (onRegenerate != null)
         _actionButton(
           context,
-          tooltip: en ? 'Regenerate' : '重新生成',
+          tooltip: strings.regenerate,
           icon: Icons.refresh_rounded,
           onPressed: onRegenerate,
         ),
       if (onBranch != null)
         _actionButton(
           context,
-          tooltip: en ? 'Create branch' : '创建分支',
+          tooltip: strings.createBranch,
           icon: Icons.call_split_rounded,
           onPressed: onBranch,
         ),
       if (onContinueTimeout != null)
         _actionButton(
           context,
-          tooltip: en ? 'Continue' : '继续生成',
+          tooltip: strings.continue_,
           icon: Icons.play_arrow_rounded,
           onPressed: onContinueTimeout,
         ),
@@ -111,13 +112,13 @@ class MessageActions extends StatelessWidget {
   Future<void> _copyAssistantText(
     BuildContext context,
     String text,
-    bool en,
+    AppStrings strings,
   ) async {
     await Clipboard.setData(ClipboardData(text: text));
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(en ? 'Reply copied' : '已复制回复'),
+        content: Text(strings.replyCopied),
         duration: const Duration(seconds: 2),
       ),
     );
@@ -126,7 +127,7 @@ class MessageActions extends StatelessWidget {
   Future<void> _showSelectableCopySheet(
     BuildContext context,
     String text,
-    bool en,
+    AppStrings strings,
   ) async {
     await showModalBottomSheet<void>(
       context: context,
@@ -147,19 +148,19 @@ class MessageActions extends StatelessWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          en ? 'Select and copy' : '选择复制',
+                          strings.selectAndCopy,
                           style: Theme.of(sheetContext).textTheme.titleMedium
                               ?.copyWith(fontWeight: FontWeight.w800),
                         ),
                       ),
                       IconButton(
-                        tooltip: en ? 'Copy all' : '复制全文',
+                        tooltip: strings.copyAll,
                         icon: const Icon(Icons.content_copy_rounded),
                         onPressed: () =>
-                            _copyAssistantText(sheetContext, text, en),
+                            _copyAssistantText(sheetContext, text, strings),
                       ),
                       IconButton(
-                        tooltip: en ? 'Close' : '关闭',
+                        tooltip: strings.close,
                         icon: const Icon(Icons.close_rounded),
                         onPressed: () => Navigator.pop(sheetContext),
                       ),

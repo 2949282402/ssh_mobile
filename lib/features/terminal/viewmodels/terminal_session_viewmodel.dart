@@ -42,6 +42,7 @@ class TerminalSessionViewModel extends ChangeNotifier {
   bool _terminalWriteScheduled = false;
   DateTime _lastFlushTime = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _throttleTimer;
+  bool _disposed = false;
 
   static const double _minTerminalFontSize = SshSession.minTerminalFontSize;
   static const double _maxTerminalFontSize = SshSession.maxTerminalFontSize;
@@ -79,6 +80,7 @@ class TerminalSessionViewModel extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _sshService.removeListener(_onSshServiceChanged);
     _outputSubscription?.cancel();
     _throttleTimer?.cancel();
@@ -92,6 +94,7 @@ class TerminalSessionViewModel extends ChangeNotifier {
   }
 
   void _onSshServiceChanged() {
+    if (_disposed) return;
     final session = _sshService.getSession(sessionId);
     if (session?.isConnected == true) {
       _setupOutputStream();
@@ -311,7 +314,7 @@ class TerminalSessionViewModel extends ChangeNotifier {
   Future<void> reconnect() async {
     if (_reconnectInProgress) return;
     _reconnectInProgress = true;
-    notifyListeners();
+    if (!_disposed) notifyListeners();
 
     final connected = await _sshService.ensureSessionConnected(
       sessionId,
@@ -326,7 +329,7 @@ class TerminalSessionViewModel extends ChangeNotifier {
     }
 
     _reconnectInProgress = false;
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
 
   void _handleTerminalInput(String data) {
@@ -398,7 +401,7 @@ class TerminalSessionViewModel extends ChangeNotifier {
 
     if (!_loadedBufferedOutput && !_loadingBufferedOutput) {
       _loadingBufferedOutput = true;
-      notifyListeners();
+      if (!_disposed) notifyListeners();
       try {
         final bufferedOutput = s.outputText;
         final initialOutput = bufferedOutput.isNotEmpty
@@ -420,7 +423,7 @@ class TerminalSessionViewModel extends ChangeNotifier {
       } finally {
         if (identical(_subscribedSession, s)) {
           _loadingBufferedOutput = false;
-          notifyListeners();
+          if (!_disposed) notifyListeners();
         } else {
           _loadingBufferedOutput = false;
         }

@@ -4,7 +4,7 @@ import '../../../services/system_admin_service.dart';
 import '../../../services/storage_service.dart';
 import '../../../widgets/system_power_confirm_flow.dart';
 import '../../connection/models/connection.dart';
-import '../../../models/system_admin.dart';
+import '../models/system_admin.dart';
 
 class SystemAdminViewModel extends ChangeNotifier {
   final SystemAdminService _adminService;

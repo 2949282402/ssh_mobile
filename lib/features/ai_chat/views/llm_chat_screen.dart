@@ -823,8 +823,8 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
     final presentationEpoch = _settingsPresentationEpoch;
     setState(() => _settingsOpening = true);
     try {
-      late final AiChatViewModel viewModel;
-      late final _PendingAiSettings? nextSettings;
+      AiChatViewModel? viewModel;
+      _PendingAiSettings? nextSettings;
       try {
         viewModel = context.read<AiChatViewModel>();
         final settingsData = await viewModel.loadLlmSettingsData();
@@ -842,7 +842,7 @@ class _LlmChatScreenBodyState extends State<_LlmChatScreenBody>
           MaterialPageRoute(
             fullscreenDialog: true,
             builder: (_) => ChangeNotifierProvider<AiChatViewModel>.value(
-              value: viewModel,
+              value: viewModel!,
               child: LlmSettingsScreen(
                 initialSettings: settings,
                 initialModels: buildInitialModelOptions(

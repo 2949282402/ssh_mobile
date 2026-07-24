@@ -61,6 +61,76 @@ void main() {
       expect(decision.destructive, isTrue);
     });
 
+    test(
+      'non-destructive write tools always need approval regardless of toggle',
+      () {
+        for (final requireApproval in [true, false]) {
+          final decision = policy.evaluate(
+            AiTool(
+              name: 'ssh_rename_session',
+              description: 'Rename session.',
+              properties: const {},
+              executionMode: AiToolExecutionMode.stateChanging,
+              handler: (_) async => '{}',
+            ),
+            settings: McpServerSettings(
+              token: 'token',
+              allowWriteTools: true,
+              requireApprovalForWriteTools: requireApproval,
+            ),
+            hasChatSession: false,
+          );
+
+          expect(decision.result, McpToolPolicyResult.approvalRequired);
+          expect(decision.reason, 'write_tool_requires_approval');
+          expect(decision.destructive, isFalse);
+          expect(decision.canExecute, isFalse);
+        }
+      },
+    );
+
+    test('state-changing monitor tools need approval when approvals off', () {
+      final decision = policy.evaluate(
+        AiTool(
+          name: 'monitor_start',
+          description: 'Start monitor.',
+          properties: const {},
+          executionMode: AiToolExecutionMode.stateChanging,
+          handler: (_) async => '{}',
+        ),
+        settings: const McpServerSettings(
+          token: 'token',
+          allowWriteTools: true,
+          requireApprovalForWriteTools: false,
+        ),
+        hasChatSession: false,
+      );
+
+      expect(decision.result, McpToolPolicyResult.approvalRequired);
+      expect(decision.destructive, isFalse);
+      expect(decision.canExecute, isFalse);
+    });
+
+    test('still exposes read-only tools when write tools are allowed', () {
+      final decision = policy.evaluate(
+        AiTool(
+          name: 'list_servers',
+          description: 'List servers.',
+          properties: const {},
+          handler: (_) async => '{}',
+        ),
+        settings: const McpServerSettings(
+          token: 'token',
+          allowWriteTools: true,
+          requireApprovalForWriteTools: false,
+        ),
+        hasChatSession: false,
+      );
+
+      expect(decision.result, McpToolPolicyResult.exposed);
+      expect(decision.canExecute, isTrue);
+    });
+
     test('hides WebView tools without chat session', () {
       final decision = policy.evaluate(
         AiTool(

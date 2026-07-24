@@ -4,7 +4,7 @@ import '../../services/storage_service.dart';
 import '../../services/performance_monitor_service.dart';
 import '../../services/system_admin_service.dart';
 import 'viewmodels/system_admin_viewmodel.dart';
-import '../performance/viewmodels/performance_viewmodel.dart';
+import '../performance/performance.dart';
 
 class SystemAdminFeatureScope extends StatelessWidget {
   final Widget child;

@@ -104,10 +104,10 @@ extension AiChatViewModelApprovals on AiChatViewModel {
         approvedPlan: approvedPlan,
         updatedAt: approvedAt,
       );
-      final isEn = captured.turnInput.language == AppLanguage.en;
+      final strings = AppStrings(captured.turnInput.language);
       final sendResult = await _startTextGeneration(
         chat: approvedChat,
-        targetText: isEn ? 'Execute the approved plan.' : '执行已批准的计划。',
+        targetText: strings.executeApprovedPlan,
         runtimeConnection: runtimeConnection,
         approvedPlanRef: approvedPlan,
         turnInputSnapshot: captured.turnInput,

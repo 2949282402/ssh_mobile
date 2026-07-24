@@ -117,10 +117,10 @@ extension AiChatContextActions on AiChatViewModel {
 
   AiChatRecord _newChatRecord(String model) {
     final now = DateTime.now();
-    final isEn = _appSettings.language == AppLanguage.en;
+    final strings = AppStrings(_appSettings.language);
     return AiChatRecord(
       id: 'ai-${now.microsecondsSinceEpoch}',
-      title: isEn ? 'New chat' : '新对话',
+      title: strings.newChat,
       model: model,
       messages: const [],
       createdAt: now,
@@ -131,7 +131,7 @@ extension AiChatContextActions on AiChatViewModel {
   String _titleFrom(String text) {
     final cleaned = text.replaceAll(RegExp(r'\s+'), ' ').trim();
     if (cleaned.isEmpty) {
-      return _appSettings.language == AppLanguage.en ? 'New chat' : '新对话';
+      return AppStrings(_appSettings.language).newChat;
     }
     return cleaned.length > 22 ? '${cleaned.substring(0, 22)}...' : cleaned;
   }

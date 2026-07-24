@@ -7,11 +7,11 @@ import 'package:ssh_mobile/features/system_admin/views/system_admin_screen.dart'
 import 'package:ssh_mobile/core/services/ssh_host_key_policy.dart';
 import 'package:ssh_mobile/features/system_admin/viewmodels/system_admin_viewmodel.dart';
 import 'package:ssh_mobile/widgets/system_power_confirm_flow.dart';
-import 'package:ssh_mobile/features/performance/viewmodels/performance_viewmodel.dart';
+import 'package:ssh_mobile/features/performance/performance.dart';
 import 'package:ssh_mobile/services/performance_monitor_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/features/connection/models/connection.dart';
-import 'package:ssh_mobile/models/system_admin.dart';
+import 'package:ssh_mobile/features/system_admin/models/system_admin.dart';
 import 'package:ssh_mobile/services/server_status_probe.dart';
 
 part 'system_admin_snapshot_stubs.dart';

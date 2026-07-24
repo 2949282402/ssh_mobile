@@ -443,8 +443,12 @@ class _McpSettingsSection extends StatelessWidget {
                   strings.mcpRequireApproval,
                   style: const TextStyle(fontSize: 12),
                 ),
+                subtitle: Text(
+                  strings.mcpRequireApprovalHint,
+                  style: const TextStyle(fontSize: 11),
+                ),
                 value: settings.mcpRequireApprovalForWriteTools,
-                onChanged: settings.setMcpRequireApprovalForWriteTools,
+                onChanged: null,
               ),
               const SizedBox(height: 8),
               Wrap(

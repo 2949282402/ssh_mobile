@@ -9,8 +9,8 @@ import 'package:provider/provider.dart';
 
 import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/features/system_admin/viewmodels/system_admin_viewmodel.dart';
-import 'package:ssh_mobile/features/performance/viewmodels/performance_viewmodel.dart';
-import 'package:ssh_mobile/models/system_admin.dart';
+import 'package:ssh_mobile/features/performance/performance.dart';
+import 'package:ssh_mobile/features/system_admin/models/system_admin.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 import 'package:ssh_mobile/services/sftp_service.dart';
 import 'package:ssh_mobile/services/storage_service.dart';

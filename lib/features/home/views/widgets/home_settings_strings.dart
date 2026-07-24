@@ -28,10 +28,13 @@ extension _HomeSettingsStrings on AppStrings {
   String get mcpAllowWriteTools =>
       language == AppLanguage.en ? 'Expose Write Tools' : '暴露写入工具';
   String get mcpAllowWriteToolsHint => language == AppLanguage.en
-      ? 'Off by default. Exposes write capability.'
-      : '默认关闭。危险工具仍需审批。';
+      ? 'Off by default. Exposed write tools still require approval.'
+      : '默认关闭。暴露后，所有写入工具仍需审批。';
   String get mcpRequireApproval =>
-      language == AppLanguage.en ? 'Approve Write Actions' : '写入工具需要审批';
+      language == AppLanguage.en ? 'Write Approval Required' : '写入操作强制审批';
+  String get mcpRequireApprovalHint => language == AppLanguage.en
+      ? 'Cannot be disabled until an in-app approval queue is available.'
+      : '应用内审批队列可用前不可关闭。';
   String get mcpPortAvailable =>
       language == AppLanguage.en ? 'Port is available' : '端口可用';
   String get mcpPortOccupied => language == AppLanguage.en

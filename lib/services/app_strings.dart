@@ -736,6 +736,20 @@ class AppStrings {
   String get lanShareCameraPermissionDenied =>
       _en ? 'Camera permission denied' : '无法访问相机，请授予相机权限';
   String get lanShareDeviceList => _en ? 'Devices' : '设备列表';
+
+  // AI chat
+  String get newChat => _en ? 'New chat' : '新对话';
+  String get branch => _en ? 'Branch' : '分支';
+  String get executeApprovedPlan =>
+      _en ? 'Execute the approved plan.' : '执行已批准的计划。';
+  String get copyReply => _en ? 'Copy reply' : '复制回复';
+  String get selectAndCopy => _en ? 'Select and copy' : '选择复制';
+  String get editAndResend => _en ? 'Edit and resend' : '编辑并重发';
+  String get regenerate => _en ? 'Regenerate' : '重新生成';
+  String get createBranch => _en ? 'Create branch' : '创建分支';
+  String get continue_ => _en ? 'Continue' : '继续生成';
+  String get replyCopied => _en ? 'Reply copied' : '已复制回复';
+  String get copyAll => _en ? 'Copy all' : '复制全文';
 }
 
 class TerminalStrings {

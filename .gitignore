@@ -12,7 +12,7 @@
 .swiftpm/
 migrate_working_dir/
 .tmp
-.workbuddy
+.workbuddy/
 
 # IntelliJ related
 *.iml

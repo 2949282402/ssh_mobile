@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:dartssh2/dartssh2.dart';
-import '../models/system_admin.dart';
+import 'package:ssh_mobile/features/system_admin/models/system_admin.dart';
 import '../widgets/system_power_confirm_flow.dart';
 import 'ssh_service.dart';
 import '../core/services/ssh_client_factory.dart';

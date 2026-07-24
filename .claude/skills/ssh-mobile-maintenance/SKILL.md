@@ -195,7 +195,10 @@ and its focused extensions, `lib/features/ai_chat/services/`,
   Streamable HTTP JSON-RPC at `POST /mcp`, stores its Bearer token in secure
   storage, and reuses `AiToolService` through `McpToolExposurePolicy`; external
   MCP clients must not silently execute write/destructive tools and should get
-  `approval_required` until an app approval queue exists.
+  `approval_required` until an app approval queue exists. This boundary is not
+  user-disableable: settings show it as locked, legacy false preferences are
+  migrated to true, and the policy must still reject stale or injected false
+  values.
 - The Windows/macOS-only console is the `mcp_console` feature. Keep it
   observational: status, port checks, loopback authenticated self-tests,
   configuration copying, policy snapshots, and redacted local activity only.

@@ -106,16 +106,17 @@ class McpToolExposurePolicy {
           destructive: destructive,
         );
       }
-      if (settings.requireApprovalForWriteTools || destructive) {
-        return McpToolPolicyDecision(
-          result: McpToolPolicyResult.approvalRequired,
-          reason: destructive
-              ? 'destructive_tool_requires_approval'
-              : 'write_tool_requires_approval',
-          approvalType: _approvalTypeFor(tool),
-          destructive: destructive,
-        );
-      }
+      // Hard security boundary: external MCP write operations must never
+      // execute silently until an in-app approval queue exists. Ignore stale
+      // or injected settings that disable approval and require it here.
+      return McpToolPolicyDecision(
+        result: McpToolPolicyResult.approvalRequired,
+        reason: destructive
+            ? 'destructive_tool_requires_approval'
+            : 'write_tool_requires_approval',
+        approvalType: _approvalTypeFor(tool),
+        destructive: destructive,
+      );
     }
 
     return const McpToolPolicyDecision(

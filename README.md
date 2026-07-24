@@ -115,7 +115,7 @@ Important defaults:
 | Notification privacy | Hide server names | Prevents server names from appearing in background notifications by default. |
 | RAG | Disabled | Search mode defaults to BM25 with top-N set to 3. |
 | MCP server | Disabled | Binds only to loopback when enabled. |
-| MCP write tools | Disabled | Write operations remain approval-controlled. |
+| MCP write tools | Disabled | When exposed, every write operation remains approval-required; this cannot be disabled until an in-app approval queue exists. |
 | SFTP download limit | 512 MB | Configurable from 64 KB to 2 GB. |
 | Text preview limit | 2 MB | Files above the limit require download. |
 | Rich preview limit | 20 MB | Applies to supported images and rich previews. |
@@ -160,7 +160,7 @@ Desktop builds can expose:
 http://127.0.0.1:<port>/mcp
 ```
 
-The MCP server uses a generated Bearer token, rejects unauthenticated and non-local requests, and keeps dangerous or write-capable tools behind the application approval boundary.
+The MCP server uses a generated Bearer token, rejects unauthenticated and non-local requests, and keeps every write-capable tool behind the application approval boundary. This requirement is shown as locked in settings and cannot be disabled until an in-app approval queue exists.
 
 On Windows and macOS, the MCP settings card can open the **Local MCP Console**.
 It provides loopback-only status, port checks, a three-step authenticated

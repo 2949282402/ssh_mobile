@@ -133,7 +133,9 @@ across sessions.
   secure storage, and exposes existing `AiToolService` tools through
   `McpToolExposurePolicy`; write/destructive tools must not execute silently
   from external MCP clients and should return `approval_required` until an app
-  approval queue exists.
+  approval queue exists. Write approval is a locked security boundary rather
+  than a user-disableable preference: legacy false values migrate to true, and
+  policy evaluation still rejects stale or injected false settings.
 - 2026-07-23: The Windows/macOS `mcp_console` feature is a separate desktop
   diagnostics page opened from MCP settings. It exposes loopback server state,
   port checks, a token-authenticated `initialize` then `tools/list` self-test,

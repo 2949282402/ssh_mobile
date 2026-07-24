@@ -95,7 +95,6 @@ class AppSettings extends ChangeNotifier {
   int _mcpServerPort = McpServerSettings.defaultPort;
   String _mcpServerToken = '';
   bool _mcpAllowWriteTools = false;
-  bool _mcpRequireApprovalForWriteTools = true;
   bool _mcpEnableSse = false;
   bool _oledDark = false;
   AppColorPalette _colorPalette = AppColorPalette.monochrome;
@@ -140,7 +139,7 @@ class AppSettings extends ChangeNotifier {
   int get mcpServerPort => _mcpServerPort;
   String get mcpServerToken => _mcpServerToken;
   bool get mcpAllowWriteTools => _mcpAllowWriteTools;
-  bool get mcpRequireApprovalForWriteTools => _mcpRequireApprovalForWriteTools;
+  bool get mcpRequireApprovalForWriteTools => true;
   bool get mcpEnableSse => _mcpEnableSse;
   bool get oledDark => _oledDark;
   AppColorPalette get colorPalette => _colorPalette;
@@ -153,7 +152,7 @@ class AppSettings extends ChangeNotifier {
     port: _mcpServerPort,
     token: _mcpServerToken,
     allowWriteTools: _mcpAllowWriteTools,
-    requireApprovalForWriteTools: _mcpRequireApprovalForWriteTools,
+    requireApprovalForWriteTools: true,
     enableSse: _mcpEnableSse,
   );
 
@@ -203,8 +202,9 @@ class AppSettings extends ChangeNotifier {
         prefs.getInt(_mcpServerPortKey),
       );
       _mcpAllowWriteTools = prefs.getBool(_mcpAllowWriteToolsKey) ?? false;
-      _mcpRequireApprovalForWriteTools =
-          prefs.getBool(_mcpRequireApprovalForWriteToolsKey) ?? true;
+      if (prefs.getBool(_mcpRequireApprovalForWriteToolsKey) != true) {
+        await prefs.setBool(_mcpRequireApprovalForWriteToolsKey, true);
+      }
       _mcpEnableSse = prefs.getBool(_mcpEnableSseKey) ?? false;
       _oledDark = prefs.getBool(_oledDarkKey) ?? false;
       final colorPaletteName = prefs.getString(_colorPaletteKey);
@@ -237,7 +237,6 @@ class AppSettings extends ChangeNotifier {
       _mcpServerHost = McpServerSettings.defaultHost;
       _mcpServerPort = McpServerSettings.defaultPort;
       _mcpAllowWriteTools = false;
-      _mcpRequireApprovalForWriteTools = true;
       _mcpEnableSse = false;
       _oledDark = false;
       _colorPalette = AppColorPalette.monochrome;
@@ -440,18 +439,6 @@ class AppSettings extends ChangeNotifier {
     AppLogService.instance.info(
       'MCP write-tool setting updated',
       details: 'allowWriteTools=$value',
-    );
-  }
-
-  Future<void> setMcpRequireApprovalForWriteTools(bool value) async {
-    if (_mcpRequireApprovalForWriteTools == value) return;
-    _mcpRequireApprovalForWriteTools = value;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_mcpRequireApprovalForWriteToolsKey, value);
-    AppLogService.instance.info(
-      'MCP write-tool approval setting updated',
-      details: 'requireApproval=$value',
     );
   }
 

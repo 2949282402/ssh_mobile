@@ -270,7 +270,7 @@ class LanShareViewModel extends ChangeNotifier {
   void setWebShareUseHttps(bool value) {
     if (_webShareUseHttps == value) return;
     _webShareUseHttps = value;
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
 
   Future<void> toggleWebShare() async {
@@ -284,7 +284,7 @@ class LanShareViewModel extends ChangeNotifier {
         transferService: transferService,
       );
     }
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
 
   Future<bool> sendText(
@@ -523,7 +523,7 @@ class LanShareViewModel extends ChangeNotifier {
 
   Future<void> clearHistory() async {
     await historyDao.clearAllRecords();
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
 
   Future<void> deleteMessage(String messageId) async {
@@ -546,7 +546,7 @@ class LanShareViewModel extends ChangeNotifier {
         await historyDao.deleteRecord(r.id);
       }
     }
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
 
   LanPayloadType _guessPayloadType(String fileName) {
@@ -769,7 +769,7 @@ class LanShareViewModel extends ChangeNotifier {
   void _startKeepAliveTimer() {
     _keepAliveTimer?.cancel();
     _keepAliveTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
-      if (!_isInitialized) return;
+      if (_disposed || !_isInitialized) return;
       for (final device in _devices) {
         final paired = await isDevicePaired(device.id);
         if (paired) {
@@ -792,7 +792,7 @@ class LanShareViewModel extends ChangeNotifier {
 
   void setCustomIp(String? ip) {
     discoveryService.setCustomIp(ip);
-    notifyListeners();
+    if (!_disposed) notifyListeners();
   }
 
   void _onSettingsChanged() {
@@ -837,6 +837,8 @@ class LanShareViewModel extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _lifecycleGeneration++;
+    _keepAliveTimer?.cancel();
+    _keepAliveTimer = null;
     unawaited(
       shutdown().whenComplete(() {
         if (ownsRuntime) {

@@ -600,10 +600,10 @@ extension AiChatMessageActions on AiChatViewModel {
       if (target.role != 'assistant') return;
 
       final now = DateTime.now();
-      final isEn = _appSettings.language == AppLanguage.en;
+      final strings = AppStrings(_appSettings.language);
       final branch = AiChatRecord(
         id: 'ai-${now.microsecondsSinceEpoch}',
-        title: '${activeChat.title} ${isEn ? 'Branch' : '分支'}',
+        title: '${activeChat.title} ${strings.branch}',
         model: activeChat.model,
         messages: activeChat.messages.take(messageIndex + 1).toList(),
         createdAt: now,

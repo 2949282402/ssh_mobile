@@ -170,10 +170,6 @@ class SettingsViewModel extends ChangeNotifier {
     await _appSettings.setMcpAllowWriteTools(value);
   }
 
-  Future<void> setMcpRequireApprovalForWriteTools(bool value) async {
-    await _appSettings.setMcpRequireApprovalForWriteTools(value);
-  }
-
   Future<McpPortProbeResult?> checkMcpPort() async {
     return _mcpServerController?.checkPort();
   }
