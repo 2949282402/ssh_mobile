@@ -1,5 +1,7 @@
 # SSH Security Manual Regression Checklist
 
+> 最新更新时间：2026-07-26
+
 Use this checklist before a security-sensitive release. Record concrete device
 and server details, then mark each scenario pass/fail with notes.
 

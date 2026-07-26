@@ -1,5 +1,7 @@
 # Repository Guidelines
 
+> 最新更新时间：2026-07-26
+
 ## Project Structure & Module Organization
 
 This is a Flutter app for SSH, SFTP, server monitoring (including general metrics, port usage, process application performance, and service status), logs, LAN Quick Share, and OpenAI-compatible AI tools. Main Dart code uses feature-first MVVM under `lib/features/`: feature-owned models, services, ViewModels, views, and feature-local widgets live with their feature. Cross-feature SSH/SFTP/storage/LLM/MCP infrastructure lives in `lib/services/`; shared security/protocol helpers in `lib/core/services/`; Drift database and repositories in `lib/data/`; shared UI in `lib/theme/` and `lib/widgets/`; and common helpers in `lib/utils/`. `lib/models/` and `lib/screens/` are legacy compatibility surfaces, not destinations for new work. Platform projects are in `android/`, `ios/`, `macos/`, and `windows/`. Static files belong in `assets/`, tests in `test/`, packaging scripts in `scripts/`, installer files in `installer/`, and longer design docs in `docs/`. The vendored terminal package under `third_party/xterm/` is excluded from the root analyzer.
@@ -20,7 +22,7 @@ flowchart LR
   AI --> Safety[Approval and Secret Policies]
 ```
 
-- `lib/main.dart` owns application-lifetime services and shared ViewModels via `MultiProvider`. Route/screen-scoped feature state stays local — e.g. the AI chat runtime is created by `AiChatRuntimeFactory` and provided by the chat view; terminal screens create focused session/history/window ViewModels. Views hold layout and transient presentation state; validation, async orchestration, and repository coordination belong in ViewModels and services.
+- `lib/main.dart` composes application-lifetime services and shared ViewModels via `MultiProvider`; `AppBootstrapCoordinator` starts preference and storage setup without blocking `runApp()`, and feature scopes initialize SSH, SFTP, LAN receiver, System Administration, and AI tools only when needed. Route/screen-scoped state stays local — e.g. the AI chat runtime is created by `AiChatRuntimeFactory` and provided by the chat view; terminal screens create focused session/history/window ViewModels. Views hold layout and transient presentation state; validation, async orchestration, and repository coordination belong in ViewModels and services.
 - Current feature roots under `lib/features/`: `connection`, `terminal`, `sftp`, `ai_chat`, `ai_skills`, `client_webview`, `performance`, `system_admin`, `lan_share`, `playbook`, `rag`, `settings`, `startup`, `home`, `developer_log`, `developer_panel`, `mcp_console`. New UI belongs in the owning feature, never in `lib/screens/` (legacy) or `lib/models/` (legacy shared surface).
 - Cross-feature infrastructure in `lib/services/`: SSH/SFTP/LLM/AI-tool, monitoring, storage, LAN-share, MCP, and platform adapters. `lib/core/services/` holds lower-level shared security/protocol factories (host-key policy, data protection). `lib/data/` holds the Drift database, DAOs, and repositories.
 - Storage layering: Drift for growing structured data (AI chats, agent metrics, terminal-history metadata, playbooks, SFTP path records) with sensitive fields encrypted at rest; small preferences in SharedPreferences; passwords, private keys, API keys, and MCP tokens only in platform secure storage (`flutter_secure_storage`). A production DB failure must not silently fall back to an in-memory database.
@@ -78,6 +80,11 @@ Agent skill sync (run after editing shared skills):
 ## Coding Style & Naming Conventions
 
 Use standard Dart formatting and `flutter_lints`. Prefer two-space indentation, `lower_snake_case.dart` filenames, `UpperCamelCase` classes/widgets, and `lowerCamelCase` members. Keep UI text centralized in `AppStrings`/`TerminalStrings` with Chinese and English entries. Route logs through `AppLogService`; do not use ad hoc `print` calls for app diagnostics. Keep UI styling consistent with `lib/theme/app_theme.dart`.
+
+Every maintained Markdown document must place a `最新更新时间：YYYY-MM-DD` (or
+`Last updated: YYYY-MM-DD` for English-first documentation) marker at its
+beginning, immediately after YAML front matter when present. Update that marker
+whenever the document content changes.
 
 ## Testing Guidelines
 

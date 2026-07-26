@@ -1,5 +1,7 @@
 # Validation Report
 
+> 最新更新时间：2026-07-26
+
 - Latest source validation: 2026-07-17
 - Full build/coverage baseline: 2026-07-10
 - Host: Windows 10 x64

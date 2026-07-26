@@ -1,5 +1,7 @@
 # Release and Portfolio Checklist
 
+> 最新更新时间：2026-07-26
+
 This checklist separates repository work that can be automated from decisions
 that require the project owner's identity, signing credentials, devices, or
 legal choice. Never commit signing keys, passwords, API keys, or server data.

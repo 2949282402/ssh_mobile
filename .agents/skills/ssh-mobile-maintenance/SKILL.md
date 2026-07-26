@@ -3,6 +3,8 @@ name: ssh-mobile-maintenance
 description: Maintain and debug this SSH Mobile Flutter repository across feature-first MVVM UI, SSH/SFTP, monitoring, AI chat/tools, storage, security, platform builds, tests, documentation, and shared agent guidance. Use for project code, architecture, debugging, validation, or documentation changes.
 ---
 
+> 最新更新时间：2026-07-26
+
 # SSH Mobile Maintenance
 
 ## Quick Start
@@ -46,6 +48,9 @@ or maintenance lesson should be shared across Codex and Claude Code sessions.
 
 - Preserve user work in the git tree. Do not revert unrelated dirty files.
 - Keep source and docs in UTF-8 without BOM.
+- Every maintained Markdown document must carry a current `最新更新时间：YYYY-MM-DD`
+  or `Last updated: YYYY-MM-DD` marker at its beginning (after YAML front matter
+  when present); refresh it whenever the document changes.
 - Organize new code by feature and responsibility from the start. Put new
   functionality in a dedicated file under the owning feature's `models/`,
   `services/`, `viewmodels/`, `views/`, or `widgets/` directory, or in the

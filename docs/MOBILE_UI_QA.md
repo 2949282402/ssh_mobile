@@ -1,5 +1,7 @@
 # Mobile UI QA
 
+> 最新更新时间：2026-07-26
+
 This document records the Android visual test matrix used for SSH Mobile. It
 keeps high-density phone checks reproducible without storing machine-local SDK
 paths or emulator snapshots in the repository.

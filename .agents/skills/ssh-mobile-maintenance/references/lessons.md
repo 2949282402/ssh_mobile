@@ -1,5 +1,7 @@
 # SSH Mobile Lessons
 
+> 最新更新时间：2026-07-26
+
 ## Build and Environment
 
 - Resolve the Flutter SDK dynamically instead of recording machine-local paths:

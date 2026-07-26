@@ -1,5 +1,7 @@
 # 应用启动按需初始化架构 (On-demand Startup Initialization Architecture)
 
+> 最新更新时间：2026-07-26
+
 ## 概述
 为了大幅提升应用冷启动速度，降低 CPU/内存占用并减少未访问功能引起的后台 I/O 和网络开销，应用采用了**按需初始化架构（On-demand Initialization Architecture）**。
 

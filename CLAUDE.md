@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+> 最新更新时间：2026-07-26
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Skill And Memory

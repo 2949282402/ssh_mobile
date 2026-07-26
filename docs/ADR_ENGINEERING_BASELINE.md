@@ -1,5 +1,7 @@
 # Engineering Baseline ADR
 
+> 最新更新时间：2026-07-26
+
 Status: Accepted
 
 Updated: 2026-07-17

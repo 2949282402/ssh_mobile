@@ -1,5 +1,7 @@
 # SSH Mobile Android 原生复写零基础教程
 
+> 最新更新时间：2026-07-26
+
 这是一份从 0 开始复写 SSH Mobile 的 Android 原生教程。它假设你只学过传统 Java + XML Android 开发，现在想学习 Kotlin、Jetpack Compose 和 MVVM 架构，并用本项目已有功能做一个能投 Android 实习的作品。
 
 这份教程的目标不是一天写完所有功能，而是带你按阶段做出一个越来越完整的原生 Android SSH 工具：

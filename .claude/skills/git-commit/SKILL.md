@@ -3,6 +3,8 @@ name: git-commit
 description: Use when the user requests to commit changes, git commit, stage files, or asks "提交一下", "git 提交", "git提交一下", running formatting checks, generating standard commit messages, and committing changes in this repository (analysis and tests are already performed during the modification phase, so they are skipped here).
 ---
 
+> 最新更新时间：2026-07-26
+
 # Git Commit Skill
 
 This skill guides the process of checking, formatting, and committing changes to Git in this repository.

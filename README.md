@@ -1,3 +1,5 @@
+> Last updated: 2026-07-26
+
 <p align="center">
   <img src="assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
 </p>
@@ -30,7 +32,8 @@ The project began with a two-core server that had only 1 GB of memory. Running a
 - **LAN Quick Share** with mDNS/UDP discovery, QR and device-list pairing invitations, reciprocal PIN confirmation, and encrypted device-to-device transfers. Foreground invitations open the peer pairing page globally and simultaneous invitations merge into one pairing session.
 - **Server monitoring** for performance, ports, applications, services, users, and active sessions.
 - **AI chat and agent execution** with streaming output, Plan Mode, approval-controlled tools, persistent history, message branching, context compression, RAG, skills, and execution traces.
-- **Local MCP server** support on desktop platforms, including generated configuration for Codex, Claude Code, and Gemini CLI.
+- **Local MCP server** support on desktop platforms, including generated configuration for Codex, Claude Code, and Gemini CLI; its loopback-only safety boundary is always enforced and write-capable external tools return `approval_required`.
+- **Developer panel** with opt-in runtime, memory, FPS, frame-jank, build-mode, platform, and Dart-version diagnostics; its floating entry can be configured independently.
 - **Secure storage** using platform secure storage, encrypted Drift fields, encrypted preview caches, secret redaction, and immutable approval targets.
 - **Adaptive layouts** for phones, tablets, and desktop environments, including dedicated 1.5K and 2K Android QA profiles.
 - **Backup and restore** for servers, terminal history, AI settings, chats, playbooks, metrics, and path records without exporting passwords, private keys, or API keys.

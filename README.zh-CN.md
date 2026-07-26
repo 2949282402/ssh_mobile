@@ -1,3 +1,5 @@
+> 最新更新时间：2026-07-26
+
 <p align="center">
   <img src="assets/app_icon_1024.png" alt="SSH Mobile 图标" width="112" />
 </p>
@@ -30,7 +32,8 @@ SSH Mobile 是一个基于 Flutter 的跨平台 SSH / SFTP 客户端，覆盖 An
 - **局域网快传**：支持 mDNS/UDP 发现、扫码或设备列表发起配对邀请、双向 PIN 确认和加密设备间传输；应用在前台时可全局唤起对端配对页，并合并双方同时发起的邀请。
 - **服务器监控**：查看性能、端口、应用进程、服务、用户和活动会话。
 - **AI Chat 与 Agent 执行**：支持流式输出、Plan Mode、审批式工具调用、聊天历史、消息分支、上下文压缩、RAG、Skills 和执行 Trace。
-- **本地 MCP Server**：桌面端可生成 Codex、Claude Code 和 Gemini CLI 配置。
+- **本地 MCP Server**：桌面端可生成 Codex、Claude Code 和 Gemini CLI 配置；仅回环地址的安全边界始终启用，外部 MCP 客户端调用写入类工具会返回 `approval_required`。
+- **开发者面板**：可选显示运行时长、内存、FPS、掉帧、构建模式、平台和 Dart 版本，并可单独控制悬浮入口。
 - **安全存储**：使用平台 Secure Storage、加密 Drift 字段、加密预览缓存、敏感信息脱敏和不可变审批目标。
 - **自适应界面**：覆盖手机、平板和桌面环境，并提供专门的 1.5K 与 2K Android 测试配置。
 - **备份与恢复**：可导入导出服务器、终端历史、AI 设置、聊天、Playbook、运行指标和路径记录，但不会导出密码、私钥或 API Key。

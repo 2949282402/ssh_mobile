@@ -1,5 +1,7 @@
 # Agent Run Trace & Metrics Design Document
 
+> 最新更新时间：2026-07-26
+
 This document outlines the architecture, lifecycles, and measurement definitions for agent execution and tool looping in the `ssh_mobile` project.
 
 ---

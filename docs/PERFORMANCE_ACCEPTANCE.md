@@ -1,5 +1,7 @@
 # Performance Acceptance Scenarios
 
+> 最新更新时间：2026-07-26
+
 Use these scenarios before and after changes that touch rendering, storage,
 SSH/SFTP, AI streaming, or monitoring. Record device/emulator, build mode,
 commit, and observed regressions.

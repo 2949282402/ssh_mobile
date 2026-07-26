@@ -1,5 +1,7 @@
 # Agent Memory
 
+> 最新更新时间：2026-07-26
+
 This file is shared durable project memory for Codex and Claude Code. It is a
 repository file, not live model memory: both agents must read and update it when
 project-level decisions, recurring pitfalls, or maintenance notes should survive
@@ -18,6 +20,11 @@ across sessions.
   context.
 
 ## Notes
+- 2026-07-24: Developer Mode is a persisted setting. When enabled, the
+  Developer Panel provides runtime duration, RSS memory, rolling FPS/frame
+  statistics, jank count, build mode, platform, and Dart version; its floating
+  entry is controlled by a separate persisted preference.
+
 - 2026-07-24: Refactored startup and service initialization architecture for
   on-demand loading (`AppBootstrapCoordinator`, `LazyAiToolExecutor`,
   `ConnectionRuntimeActions`, `LanReceiverCoordinator`, feature scopes).
