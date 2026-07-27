@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../../services/app_log_service.dart';
 import '../../../services/mcp/mcp_server_controller.dart';
+import '../../../services/native_memory_service.dart';
 import '../../../services/performance_monitor_service.dart';
 import '../../../services/rag_service.dart';
 import '../../../services/ssh_service.dart';
@@ -96,8 +97,8 @@ class DeveloperPanelContent extends StatelessWidget {
     final fpsColor = fps >= 55
         ? Colors.green
         : fps >= 30
-            ? Colors.orange
-            : Colors.red;
+        ? Colors.orange
+        : Colors.red;
 
     final uptime = vm.uptime;
     final h = uptime.inHours;
@@ -128,8 +129,10 @@ class DeveloperPanelContent extends StatelessWidget {
                   ),
                 ),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: fpsColor.withAlpha(30),
                     borderRadius: BorderRadius.circular(12),
@@ -164,14 +167,15 @@ class DeveloperPanelContent extends StatelessWidget {
 
   Widget _buildMemoryCard(BuildContext context) {
     final memMB = vm.memoryMB;
-    final memText =
-        vm.memoryBytes >= 0 ? '${memMB.toStringAsFixed(1)} MB' : 'N/A (Web)';
+    final memText = vm.memoryBytes >= 0
+        ? '${memMB.toStringAsFixed(1)} MB'
+        : 'N/A (Web)';
     final memRatio = memMB > 0 ? (memMB / 512).clamp(0.0, 1.0) : 0.0;
     final memColor = memMB > 256
         ? Colors.red
         : memMB > 128
-            ? Colors.orange
-            : Colors.green;
+        ? Colors.orange
+        : Colors.green;
 
     return Card(
       child: Padding(
@@ -215,9 +219,9 @@ class DeveloperPanelContent extends StatelessWidget {
                 child: LinearProgressIndicator(
                   value: memRatio,
                   minHeight: 6,
-                  backgroundColor: Theme.of(context)
-                      .colorScheme
-                      .surfaceContainerHighest,
+                  backgroundColor: Theme.of(
+                    context,
+                  ).colorScheme.surfaceContainerHighest,
                   valueColor: AlwaysStoppedAnimation(memColor),
                 ),
               ),
@@ -233,9 +237,67 @@ class DeveloperPanelContent extends StatelessWidget {
                 ),
               ),
             ],
+            if (vm.nativeMemory != null) ...[
+              const SizedBox(height: 12),
+              _buildMemoryBreakdown(context, vm.nativeMemory!),
+            ],
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildMemoryBreakdown(BuildContext context, NativeMemorySnapshot m) {
+    final scheme = Theme.of(context).colorScheme;
+    Widget cell(String label, double mb) => Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '${mb.toStringAsFixed(0)} MB',
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              fontFamily: 'monospace',
+            ),
+          ),
+        ],
+      ),
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'OS 分类 (Android)',
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            cell('Java', m.javaHeapMB),
+            const SizedBox(width: 12),
+            cell('Native', m.nativeHeapMB),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            cell('Graphics', m.graphicsMB),
+            const SizedBox(width: 12),
+            cell('Code', m.codeMB),
+          ],
+        ),
+      ],
     );
   }
 
@@ -268,7 +330,11 @@ class DeveloperPanelContent extends StatelessWidget {
               children: [
                 Flexible(
                   flex: 1,
-                  child: _metricColumn(context, 'Total Frames', '${vm.frameCount}'),
+                  child: _metricColumn(
+                    context,
+                    'Total Frames',
+                    '${vm.frameCount}',
+                  ),
                 ),
                 Flexible(
                   flex: 1,
@@ -327,34 +393,38 @@ class DeveloperPanelContent extends StatelessWidget {
         ssh == null
             ? 'n/a'
             : '${ssh.sessions.length} session'
-                '${ssh.sessions.length == 1 ? '' : 's'}'
-                '${ssh.isConnected ? ' · connected' : ''}',
+                  '${ssh.sessions.length == 1 ? '' : 's'}'
+                  '${ssh.isConnected ? ' · connected' : ''}',
       ),
       (
         'RAG',
         rag == null
             ? 'n/a'
             : rag.isLoading
-                ? 'indexing…'
-                : rag.isInitialized
-                    ? 'index loaded'
-                    : 'idle',
+            ? 'indexing…'
+            : rag.isInitialized
+            ? 'index loaded'
+            : 'idle',
       ),
-      ('MCP Server', mcp == null ? 'n/a' : mcp.running ? 'running' : 'stopped'),
+      (
+        'MCP Server',
+        mcp == null
+            ? 'n/a'
+            : mcp.running
+            ? 'running'
+            : 'stopped',
+      ),
       (
         'Perf Monitor',
         perf == null
             ? 'n/a'
             : perf.isSampling
-                ? 'sampling'
-                : perf.isRunning
-                    ? 'running'
-                    : 'idle',
+            ? 'sampling'
+            : perf.isRunning
+            ? 'running'
+            : 'idle',
       ),
-      (
-        'Log Buffer',
-        logs == null ? 'n/a' : '${logs.entries.length} entries',
-      ),
+      ('Log Buffer', logs == null ? 'n/a' : '${logs.entries.length} entries'),
     ];
 
     return Card(
@@ -394,8 +464,7 @@ class DeveloperPanelContent extends StatelessWidget {
                         label,
                         style: TextStyle(
                           fontSize: 12,
-                          color:
-                              Theme.of(context).colorScheme.onSurfaceVariant,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                       ),
                     ),
@@ -466,10 +535,7 @@ class DeveloperPanelContent extends StatelessWidget {
           Expanded(
             child: Text(
               value,
-              style: const TextStyle(
-                fontSize: 12,
-                fontFamily: 'monospace',
-              ),
+              style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
             ),
           ),
         ],

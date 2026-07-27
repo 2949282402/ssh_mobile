@@ -9,6 +9,7 @@ import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Debug
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
@@ -22,6 +23,7 @@ class MainActivity : FlutterActivity() {
     private val channelName = "ssh_mobile/power"
     private val systemChannelName = "ssh_mobile/client_system"
     private val lanDiscoveryChannelName = "ssh_mobile/lan_discovery"
+    private val nativeMemoryChannelName = "ssh_mobile/native_memory"
 
     companion object {
         private const val LOCK_TIMEOUT_MS = 60 * 60 * 1000L
@@ -106,6 +108,37 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, nativeMemoryChannelName).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getMemoryStats" -> result.success(getNativeMemoryStats())
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    private fun getNativeMemoryStats(): Map<String, Any?> {
+        val memInfo = Debug.MemoryInfo()
+        Debug.getMemoryInfo(memInfo)
+        val useStats = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+        fun kb(key: String): Long? {
+            if (!useStats) return null
+            val raw = memInfo.getMemoryStat(key) ?: return null
+            return (raw.toLongOrNull() ?: 0L) * 1024L
+        }
+        val javaHeap = kb(Debug.MEMORY_INFO_JAVA_HEAP) ?: memInfo.javaSize.toLong() * 1024L
+        val nativeHeap = kb(Debug.MEMORY_INFO_NATIVE_SIZE) ?: memInfo.nativePss.toLong() * 1024L
+        val graphics = kb(Debug.MEMORY_INFO_GRAPHICS) ?: memInfo.graphicsMemory * 1024L
+        val code = kb(Debug.MEMORY_INFO_CODE) ?: 0L
+        val totalPss = memInfo.totalPss.toLong() * 1024L
+        return mapOf(
+            "available" to useStats,
+            "javaHeap" to javaHeap,
+            "nativeHeap" to nativeHeap,
+            "graphics" to graphics,
+            "code" to code,
+            "totalPss" to totalPss,
+        )
     }
 
     private fun acquireLocks() {

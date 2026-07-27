@@ -4,6 +4,8 @@ import 'dart:io' show Platform, ProcessInfo;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 
+import '../../../services/native_memory_service.dart';
+
 class DeveloperPanelViewModel extends ChangeNotifier {
   static final Stopwatch _globalUptime = Stopwatch()..start();
 
@@ -34,6 +36,11 @@ class DeveloperPanelViewModel extends ChangeNotifier {
   int get memoryBytes => _memoryBytes;
 
   double get memoryMB => _memoryBytes / (1024 * 1024);
+
+  /// OS-level memory category breakdown (Java/Native/Graphics/Code), or `null`
+  /// when unavailable (non-Android or no platform channel).
+  NativeMemorySnapshot? _nativeMemory;
+  NativeMemorySnapshot? get nativeMemory => _nativeMemory;
 
   Duration get uptime => _globalUptime.elapsed;
 
@@ -148,11 +155,16 @@ class DeveloperPanelViewModel extends ChangeNotifier {
     });
   }
 
-  void _readMemory() {
+  Future<void> _readMemory() async {
     try {
       _memoryBytes = ProcessInfo.currentRss;
     } catch (_) {
       _memoryBytes = -1; // not available (web or unsupported platform)
+    }
+    try {
+      _nativeMemory = await NativeMemoryService.instance.snapshot();
+    } catch (_) {
+      _nativeMemory = null;
     }
     notifyListeners();
   }
