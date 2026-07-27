@@ -20,6 +20,12 @@ across sessions.
   context.
 
 ## Notes
+- 2026-07-26: The optional `relay/` Go service is a memory-only WSS router for
+  explicit SFTP public-relay transfers. It must never persist frames, file
+  names, or file metadata. Flutter encrypts offers and 512 KiB data chunks
+  end-to-end; public relay transfers require a pinned peer X25519 key from an
+  authenticated LAN pairing and must never fall back to plaintext or LAN.
+
 - 2026-07-24: Developer Mode is a persisted setting. When enabled, the
   Developer Panel provides runtime duration, RSS memory, rolling FPS/frame
   statistics, jank count, build mode, platform, and Dart version; its floating

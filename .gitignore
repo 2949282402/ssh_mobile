@@ -56,7 +56,7 @@ app.*.map.json
 .claude/skills/apk-publish/
 scripts/build_and_publish.sh
 scripts/nginx_ssh_mobile.conf
-
-
+.env
+**/.env
 
 

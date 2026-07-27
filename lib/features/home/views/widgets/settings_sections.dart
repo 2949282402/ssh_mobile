@@ -884,6 +884,8 @@ class _LanShareSettingsSectionState extends State<_LanShareSettingsSection> {
   Widget build(BuildContext context) {
     final currentAlias = widget.settings.lanDeviceAlias;
     final currentId = widget.settings.lanDeviceId;
+    final relayHost = widget.settings.relayHost;
+    final relayPort = widget.settings.relayPort;
 
     return _SettingsSection(
       title: widget.strings.lanShare,
@@ -935,6 +937,28 @@ class _LanShareSettingsSectionState extends State<_LanShareSettingsSection> {
                 );
               }
             },
+          ),
+        ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.hub_outlined, size: 20),
+          title: Text(
+            widget.strings.isEnglish ? 'Public Relay Server' : '公网中继服务器',
+            style: const TextStyle(fontSize: 13),
+          ),
+          subtitle: Text(
+            relayHost.isEmpty
+                ? (widget.strings.isEnglish
+                      ? 'Not configured'
+                      : '未配置')
+                : '$relayHost:$relayPort',
+            style: const TextStyle(fontSize: 11),
+          ),
+          trailing: const Icon(Icons.chevron_right_rounded, size: 20),
+          onTap: () => _showRelayServerDialog(
+            context,
+            host: relayHost,
+            port: relayPort,
           ),
         ),
         // Dynamic permission checks
@@ -1040,5 +1064,93 @@ class _LanShareSettingsSectionState extends State<_LanShareSettingsSection> {
         );
       },
     );
+  }
+
+  void _showRelayServerDialog(
+    BuildContext context, {
+    required String host,
+    required int port,
+  }) {
+    final hostController = TextEditingController(text: host);
+    final portController = TextEditingController(text: '$port');
+    String? errorText;
+    showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(
+            widget.strings.isEnglish ? 'Public Relay Server' : '公网中继服务器',
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: hostController,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: widget.strings.isEnglish ? 'Host or IP' : '主机或 IP 地址',
+                  hintText: 'relay.example.com',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: portController,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: widget.strings.isEnglish ? 'HTTPS port' : 'HTTPS 端口',
+                  hintText: '443',
+                ),
+              ),
+              if (errorText != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  errorText!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: Text(widget.strings.isEnglish ? 'Cancel' : '取消'),
+            ),
+            TextButton(
+              onPressed: () async {
+                final value = int.tryParse(portController.text.trim());
+                if (hostController.text.trim().isEmpty ||
+                    value == null ||
+                    value < 1 ||
+                    value > 65535) {
+                  setDialogState(() {
+                    errorText = widget.strings.isEnglish
+                        ? 'Enter a host/IP and a port from 1 to 65535.'
+                        : '请输入主机/IP 地址以及 1 到 65535 的端口。';
+                  });
+                  return;
+                }
+                try {
+                  await widget.settings.setRelayServer(
+                    host: hostController.text,
+                    port: value,
+                  );
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                } on ArgumentError {
+                  setDialogState(() {
+                    errorText = widget.strings.isEnglish
+                        ? 'The relay address is invalid.'
+                        : '中继地址无效。';
+                  });
+                }
+              },
+              child: Text(widget.strings.isEnglish ? 'Save' : '保存'),
+            ),
+          ],
+        ),
+      ),
+    ).whenComplete(() {
+      hostController.dispose();
+      portController.dispose();
+    });
   }
 }

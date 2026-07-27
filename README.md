@@ -29,7 +29,7 @@ The project began with a two-core server that had only 1 GB of memory. Running a
 - **SSH connection management** with passwords, private keys, encrypted private keys, jump hosts, server platform selection, and SSH host-key trust-on-first-use verification.
 - **Multi-window terminals** that allow several fixed-name sessions per server and stable tmux session binding.
 - **SFTP file management** with browsing, recent and favorite paths, uploads, downloads, editing, previews, and explicit deletion confirmation. The upload action follows the active theme's secondary color instead of a fixed deep purple.
-- **LAN Quick Share** with mDNS/UDP discovery, QR and device-list pairing invitations, reciprocal PIN confirmation, and encrypted device-to-device transfers. Foreground invitations open the peer pairing page globally and simultaneous invitations merge into one pairing session.
+- **LAN Quick Share** with mDNS/UDP discovery, QR and device-list pairing invitations, reciprocal PIN confirmation, and encrypted device-to-device transfers. Foreground invitations open the peer pairing page globally and simultaneous invitations merge into one pairing session. An optional self-hosted public relay provides explicit, E2E-encrypted SFTP file forwarding without storing file data or names on the relay.
 - **Server monitoring** for performance, ports, applications, services, users, and active sessions.
 - **AI chat and agent execution** with streaming output, Plan Mode, approval-controlled tools, persistent history, message branching, context compression, RAG, skills, and execution traces.
 - **Local MCP server** support on desktop platforms, including generated configuration for Codex, Claude Code, and Gemini CLI; its loopback-only safety boundary is always enforced and write-capable external tools return `approval_required`.
@@ -74,6 +74,23 @@ flutter run -d chrome
 ```
 
 The application can launch without real server or AI credentials. A reachable SSH server is required for terminal, SFTP, and monitoring integration tests. An AI provider is required only for AI chat and agent execution.
+
+## Optional public relay
+
+The bundled `relay/` Go service provides memory-only E2E SFTP forwarding over
+HTTPS/WSS. Deploy it with Caddy using the [relay deployment guide](relay/README.md):
+
+```powershell
+cd relay
+Copy-Item .env.example .env
+# Set RELAY_PUBLIC_DOMAIN, secrets, and optionally RELAY_HTTPS_PORT.
+docker compose --env-file .env up --build -d
+```
+
+In SSH Mobile, open **Settings → LAN Quick Share → Public Relay Server** and
+enter the relay host/IP plus its HTTPS port (default `443`). Production use
+should use a DNS name with a valid TLS certificate; direct IP targets must also
+present a certificate valid for that IP.
 
 ### Platform builds
 

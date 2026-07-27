@@ -73,6 +73,7 @@ class AppSettings extends ChangeNotifier {
   static const _serverListLayoutModeKey = 'server_list_layout_mode';
   static const _lanDeviceIdKey = 'lan_device_id';
   static const _lanDeviceAliasKey = 'lan_device_alias';
+  static const _relayEndpointKey = 'relay_endpoint';
   static const _developerModeKey = 'developer_mode';
   static const _developerPanelFloatingKey = 'developer_panel_floating';
   static const int minSftpLimitBytes = 64 * 1024;
@@ -105,6 +106,7 @@ class AppSettings extends ChangeNotifier {
   String _serverListLayoutMode = 'list';
   String _lanDeviceId = '';
   String _lanDeviceAlias = '';
+  String _relayEndpoint = '';
   bool _developerMode = false;
   bool _developerPanelFloating = false;
   bool _coreLoaded = false;
@@ -120,6 +122,13 @@ class AppSettings extends ChangeNotifier {
   ThemeMode get themeMode => _themeMode;
   String get lanDeviceId => _lanDeviceId;
   String get lanDeviceAlias => _lanDeviceAlias;
+  String get relayEndpoint => _relayEndpoint;
+  String get relayHost => Uri.tryParse(_relayEndpoint)?.host ?? '';
+  int get relayPort {
+    final endpoint = Uri.tryParse(_relayEndpoint);
+    if (endpoint == null || endpoint.host.isEmpty) return 443;
+    return endpoint.hasPort ? endpoint.port : 443;
+  }
   AppVisualSettingsSnapshot get visualSettings => AppVisualSettingsSnapshot(
     themeMode: _themeMode,
     oledDark: _oledDark,
@@ -222,6 +231,7 @@ class AppSettings extends ChangeNotifier {
       _terminalFontFamily = prefs.getString(_terminalFontFamilyKey) ?? '';
       _serverListLayoutMode =
           prefs.getString(_serverListLayoutModeKey) ?? 'list';
+      _relayEndpoint = prefs.getString(_relayEndpointKey) ?? '';
       _developerMode = prefs.getBool(_developerModeKey) ?? false;
       _developerPanelFloating =
           prefs.getBool(_developerPanelFloatingKey) ?? false;
@@ -252,6 +262,7 @@ class AppSettings extends ChangeNotifier {
       _terminalThemeId = 'default';
       _terminalFontFamily = '';
       _serverListLayoutMode = 'list';
+      _relayEndpoint = '';
       _developerMode = false;
       _developerPanelFloating = false;
       _coreLoaded = true;
@@ -344,6 +355,49 @@ class AppSettings extends ChangeNotifier {
     AppLogService.instance.info(
       'LAN device alias updated',
       details: 'alias=$alias',
+    );
+  }
+
+  /// Public relay endpoints are configuration, never credentials. Enrollment
+  /// and relay device credentials remain in platform secure storage.
+  Future<void> setRelayEndpoint(String endpoint) async {
+    final normalized = endpoint.trim().replaceAll(RegExp(r'/+$'), '');
+    if (normalized.isNotEmpty) {
+      final uri = Uri.tryParse(normalized);
+      if (uri == null ||
+          (uri.scheme != 'https' && uri.scheme != 'http') ||
+          uri.host.isEmpty) {
+        throw ArgumentError.value(
+          endpoint,
+          'endpoint',
+          'must be an HTTP(S) relay URL',
+        );
+      }
+    }
+    if (_relayEndpoint == normalized) return;
+    _relayEndpoint = normalized;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_relayEndpointKey, normalized);
+    AppLogService.instance.info('Relay endpoint updated');
+  }
+
+  /// Persists a client relay target as HTTPS. [host] may be a DNS name, IPv4,
+  /// or IPv6 literal; credentials and enrollment secrets never enter prefs.
+  Future<void> setRelayServer({
+    required String host,
+    required int port,
+  }) async {
+    final normalizedHost = host.trim();
+    if (normalizedHost.isEmpty ||
+        normalizedHost.contains('://') ||
+        normalizedHost.contains('/') ||
+        port < 1 ||
+        port > 65535) {
+      throw ArgumentError('A host/IP and a port from 1 to 65535 are required.');
+    }
+    await setRelayEndpoint(
+      Uri(scheme: 'https', host: normalizedHost, port: port).toString(),
     );
   }
 

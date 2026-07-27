@@ -494,6 +494,12 @@ class LanShareViewModel extends ChangeNotifier {
             .toInt();
       }
       _recipientPubKeyCache[device.id] = Uint8List.fromList(pubKeyBytes);
+      if (await securityService.isDevicePaired(device.id)) {
+        await securityService.storePeerX25519PublicKey(
+          device.id,
+          _recipientPubKeyCache[device.id]!,
+        );
+      }
       return _recipientPubKeyCache[device.id];
     } catch (e) {
       debugPrint('[LanShareViewModel] E2E capabilities query failed: $e');

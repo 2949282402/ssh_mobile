@@ -34,6 +34,8 @@ class LanSecurityService {
   static const String _privateKeyPrefix = 'lan_share_key_';
   static const String _trustedDevicesStorageKey =
       'lan_share_trusted_fingerprints';
+  static const String _peerX25519KeysStorageKey =
+      'lan_share_peer_x25519_keys_v1';
 
   final FlutterSecureStorage _secureStorage;
   final Map<String, DateTime> _lastCheckTime = {};
@@ -221,6 +223,62 @@ class LanSecurityService {
     final kp = await _getOrCreateStaticX25519KeyPair();
     final pub = await kp.extractPublicKey();
     return Uint8List.fromList(pub.bytes);
+  }
+
+  /// Stores the E2E key observed over an already authenticated pairing channel.
+  /// Public relay transfers refuse peers that do not have this pinned key, so
+  /// legacy pairings must be refreshed instead of silently becoming plaintext.
+  Future<void> storePeerX25519PublicKey(
+    String deviceId,
+    Uint8List publicKey,
+  ) async {
+    if (deviceId.isEmpty ||
+        publicKey.length != 32 ||
+        !await isDevicePaired(deviceId)) {
+      throw ArgumentError(
+        'A paired device and a 32-byte public key are required.',
+      );
+    }
+    final values = await _readPeerX25519Keys();
+    values[deviceId] = base64UrlEncode(publicKey).replaceAll('=', '');
+    await _secureStorage.write(
+      key: _peerX25519KeysStorageKey,
+      value: jsonEncode(values),
+    );
+  }
+
+  Future<Uint8List?> getPeerX25519PublicKey(String deviceId) async {
+    if (!await isDevicePaired(deviceId)) return null;
+    final value = (await _readPeerX25519Keys())[deviceId];
+    if (value == null) return null;
+    try {
+      final bytes = base64Url.decode(base64Url.normalize(value));
+      return bytes.length == 32 ? Uint8List.fromList(bytes) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<Map<String, String>> _readPeerX25519Keys() async {
+    final raw = await _secureStorage.read(key: _peerX25519KeysStorageKey);
+    if (raw == null) return <String, String>{};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return <String, String>{};
+      return decoded.map((key, value) => MapEntry(key, value.toString()));
+    } catch (_) {
+      return <String, String>{};
+    }
+  }
+
+  Future<void> _removePeerX25519PublicKey(String deviceId) async {
+    final values = await _readPeerX25519Keys();
+    if (values.remove(deviceId) != null) {
+      await _secureStorage.write(
+        key: _peerX25519KeysStorageKey,
+        value: jsonEncode(values),
+      );
+    }
   }
 
   static const String _x25519PrivKeyStorageKey = 'lan_share_x25519_priv';
@@ -888,6 +946,7 @@ class LanSecurityService {
       value: jsonEncode(cache),
     );
     await _removePairAccessTokens(deviceId);
+    await _removePeerX25519PublicKey(deviceId);
   }
 
   /// Unpair all devices
@@ -901,6 +960,7 @@ class LanSecurityService {
       _secureStorage.delete(key: _inboundAccessTokensStorageKey),
       _secureStorage.delete(key: _outboundAccessTokensStorageKey),
       _secureStorage.delete(key: _peerCertificateFingerprintsStorageKey),
+      _secureStorage.delete(key: _peerX25519KeysStorageKey),
     ]);
   }
 

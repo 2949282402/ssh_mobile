@@ -8,6 +8,9 @@ import '../../../services/lan_share/lan_security_service.dart';
 import '../../../services/lan_share/lan_storage_service.dart';
 import '../../../services/lan_share/lan_transfer_service.dart';
 import '../../../services/lan_share/lan_share_models.dart';
+import '../../../services/relay/relay_client.dart';
+import '../../../services/relay/relay_models.dart';
+import '../../../services/relay/relay_transport.dart';
 import '../../../utils/startup_instrumentation.dart';
 import '../viewmodels/lan_share_viewmodel.dart';
 
@@ -21,6 +24,8 @@ class LanReceiverCoordinator extends ChangeNotifier {
   LanSecurityService? _securityService;
   LanStorageService? _lanStorageService;
   LanTransferService? _transferService;
+  RelayClient? _relayClient;
+  RelayTransport? _relayTransport;
 
   final StreamController<LanPairingRequest> _pairingRequestController =
       StreamController<LanPairingRequest>.broadcast();
@@ -45,6 +50,8 @@ class LanReceiverCoordinator extends ChangeNotifier {
   LanSecurityService? get securityService => _securityService;
   LanStorageService? get lanStorageService => _lanStorageService;
   LanTransferService? get transferService => _transferService;
+  RelayClient? get relayClient => _relayClient;
+  RelayTransport? get relayTransport => _relayTransport;
 
   Stream<LanPairingRequest> get pairingRequestStream =>
       _pairingRequestController.stream;
@@ -143,6 +150,10 @@ class LanReceiverCoordinator extends ChangeNotifier {
       );
       final security = LanSecurityService();
       final lanStorage = LanStorageService();
+      final relayClient = RelayClient(
+        currentDeviceId: deviceId,
+        securityService: security,
+      );
       transfer = LanTransferService(
         currentDeviceId: deviceId,
         securityService: security,
@@ -170,6 +181,19 @@ class LanReceiverCoordinator extends ChangeNotifier {
       _securityService = security;
       _lanStorageService = lanStorage;
       _transferService = transfer;
+      _relayClient = relayClient;
+      _relayTransport = RelayTransport(
+        client: relayClient,
+        securityService: security,
+      );
+      final relayEndpoint = Uri.tryParse(appSettings.relayEndpoint);
+      if (relayEndpoint != null && relayEndpoint.hasScheme) {
+        unawaited(
+          relayClient
+              .connect(RelaySettings(endpoint: relayEndpoint))
+              .catchError((_) {}),
+        );
+      }
       _initialized = true;
       notifyListeners();
     } catch (e) {
@@ -198,6 +222,7 @@ class LanReceiverCoordinator extends ChangeNotifier {
     unawaited(_cancelReceiverSubscriptions());
     _pairingRequestController.close();
     _transferService?.dispose();
+    unawaited(_relayClient?.dispose() ?? Future<void>.value());
     _discoveryService?.dispose();
     super.dispose();
   }

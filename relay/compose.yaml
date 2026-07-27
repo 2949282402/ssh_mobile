@@ -1,0 +1,41 @@
+services:
+  relay:
+    build: .
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      RELAY_ADDR: ":8080"
+      RELAY_ENROLLMENT_TOKEN: ${RELAY_ENROLLMENT_TOKEN:?set a one-time enrollment token}
+      RELAY_CREDENTIAL_KEY: ${RELAY_CREDENTIAL_KEY:?set a base64url 32-byte signing key}
+      RELAY_CREDENTIAL_TTL: "24h"
+      RELAY_SESSION_TTL: "15m"
+      RELAY_MAX_CONNECTIONS: "2048"
+    networks:
+      - relay_internal
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    depends_on:
+      - relay
+    ports:
+      - "${RELAY_HTTP_PORT:-80}:80"
+      - "${RELAY_HTTPS_PORT:-443}:443"
+    environment:
+      RELAY_PUBLIC_DOMAIN: ${RELAY_PUBLIC_DOMAIN:?set the public relay DNS name}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificate state only; the relay itself never gets a data volume.
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - relay_internal
+
+networks:
+  relay_internal:
+    internal: true
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -2,16 +2,19 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../../../services/lan_share/lan_share_models.dart';
 import '../../../services/lan_share/lan_transfer_service.dart';
+import '../../../services/relay/relay_transport.dart';
 import '../../../services/sftp_service.dart';
 
 /// Service responsible for zero-disk-footprint streaming relay from SFTP to LAN targets
 class SftpLanRelayService {
   final SftpService sftpService;
   final LanTransferService lanTransferService;
+  final RelayTransport? relayTransport;
 
   SftpLanRelayService({
     required this.sftpService,
     required this.lanTransferService,
+    this.relayTransport,
   });
 
   /// Relay an SFTP remote file directly to a LAN device without saving to local disk
@@ -82,6 +85,38 @@ class SftpLanRelayService {
       return success;
     } catch (e) {
       debugPrint('[SftpLanRelayService] Relay error: $e');
+      return false;
+    }
+  }
+
+  /// Explicit public-relay path. It never falls back to LAN transport and
+  /// refuses a paired device whose E2E key has not been pinned.
+  Future<bool> relayRemoteFileViaPublicRelay({
+    required String connectionId,
+    required SftpEntry entry,
+    required LanDevice targetDevice,
+    Function(int bytesSent)? onProgress,
+  }) async {
+    if (entry.isDirectory || relayTransport == null) {
+      return false;
+    }
+    final dynamic sftpClient = sftpService.getSftpClientForConnection(
+      connectionId,
+    );
+    if (sftpClient == null) return false;
+    try {
+      final dynamic remoteFile = await sftpClient.open(entry.path);
+      return relayTransport!.sendFileToPairedPeer(
+        target: targetDevice,
+        fileName: entry.name,
+        totalBytes: entry.size ?? 0,
+        stream: (remoteFile.read() as Stream).map<List<int>>(
+          (chunk) => List<int>.from(chunk as List),
+        ),
+        onProgress: onProgress,
+      );
+    } catch (error) {
+      debugPrint('[SftpLanRelayService] Public relay error: $error');
       return false;
     }
   }

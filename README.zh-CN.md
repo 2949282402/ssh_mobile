@@ -29,7 +29,7 @@ SSH Mobile 是一个基于 Flutter 的跨平台 SSH / SFTP 客户端，覆盖 An
 - **SSH 连接管理**：支持密码、私钥、私钥密码、跳板机、服务器平台选择和 SSH Host Key 首次信任校验。
 - **多终端窗口**：同一服务器可创建多个固定名称的终端窗口，并稳定绑定 tmux 会话。
 - **SFTP 文件管理**：支持目录浏览、最近与收藏路径、上传、下载、编辑、预览和输入完整名称确认删除。
-- **局域网快传**：支持 mDNS/UDP 发现、扫码或设备列表发起配对邀请、双向 PIN 确认和加密设备间传输；应用在前台时可全局唤起对端配对页，并合并双方同时发起的邀请。
+- **局域网快传**：支持 mDNS/UDP 发现、扫码或设备列表发起配对邀请、双向 PIN 确认和加密设备间传输；应用在前台时可全局唤起对端配对页，并合并双方同时发起的邀请。可选的自托管公网中继支持端到端加密的 SFTP 文件转发，服务端不会保存文件内容或文件名。
 - **服务器监控**：查看性能、端口、应用进程、服务、用户和活动会话。
 - **AI Chat 与 Agent 执行**：支持流式输出、Plan Mode、审批式工具调用、聊天历史、消息分支、上下文压缩、RAG、Skills 和执行 Trace。
 - **本地 MCP Server**：桌面端可生成 Codex、Claude Code 和 Gemini CLI 配置；仅回环地址的安全边界始终启用，外部 MCP 客户端调用写入类工具会返回 `approval_required`。
@@ -74,6 +74,19 @@ flutter run -d chrome
 ```
 
 应用在没有真实服务器或 AI 凭据时也可以启动。终端、SFTP 和监控的集成测试需要一台可访问的 SSH 服务器；只有 AI Chat 与 Agent 执行功能需要配置模型服务。
+
+## 可选公网中继
+
+仓库内的 `relay/` Go 服务提供基于 HTTPS/WSS 的内存中继，用于端到端加密的 SFTP 文件转发。请按照[中继部署说明](relay/README.md)使用 Caddy 部署：
+
+```powershell
+cd relay
+Copy-Item .env.example .env
+# 设置 RELAY_PUBLIC_DOMAIN、密钥，以及可选的 RELAY_HTTPS_PORT。
+docker compose --env-file .env up --build -d
+```
+
+在 SSH Mobile 中打开“设置 → 局域网快传 → 公网中继服务器”，填写中继主机/IP 和 HTTPS 端口（默认 `443`）。生产环境建议使用具有有效 TLS 证书的域名；直接填写 IP 时，服务器证书也必须对该 IP 有效。
 
 ### 各平台构建
 

@@ -39,10 +39,19 @@ class SettingsViewModel extends ChangeNotifier {
   ThemeMode get themeMode => _appSettings.themeMode;
   String get lanDeviceId => _appSettings.lanDeviceId;
   String get lanDeviceAlias => _appSettings.lanDeviceAlias;
+  String get relayEndpoint => _appSettings.relayEndpoint;
+  String get relayHost => _appSettings.relayHost;
+  int get relayPort => _appSettings.relayPort;
 
   Future<void> setLanDeviceAlias(String alias) async {
     await _appSettings.setLanDeviceAlias(alias);
   }
+
+  Future<void> setRelayEndpoint(String endpoint) =>
+      _appSettings.setRelayEndpoint(endpoint);
+
+  Future<void> setRelayServer({required String host, required int port}) =>
+      _appSettings.setRelayServer(host: host, port: port);
 
   int get sftpDownloadLimitBytes => _appSettings.sftpDownloadLimitBytes;
   int get sftpTextPreviewLimitBytes => _appSettings.sftpTextPreviewLimitBytes;
