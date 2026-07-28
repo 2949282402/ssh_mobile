@@ -281,28 +281,33 @@ class _LanShareScreenState extends State<LanShareScreen>
                         ),
                       ),
                     ),
-                    if (_selectedModeIndex == 0) ...[
-                      // Self device info bar
-                      _buildSelfInfoBar(context, vm, strings),
-                      TabBar(
+                    if (_selectedModeIndex == 1) ...[
+                      const Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 16.0,
+                          vertical: 4.0,
+                        ),
+                        child: VpnP2pServerConfigCard(),
+                      ),
+                    ],
+                    // Self device info bar
+                    _buildSelfInfoBar(context, vm, strings),
+                    TabBar(
+                      controller: _tabController,
+                      tabs: [
+                        Tab(text: strings.lanShareDeviceList),
+                        Tab(text: strings.lanShareTransferHistory),
+                      ],
+                    ),
+                    Expanded(
+                      child: TabBarView(
                         controller: _tabController,
-                        tabs: [
-                          Tab(text: strings.lanShareDeviceList),
-                          Tab(text: strings.lanShareTransferHistory),
+                        children: [
+                          _buildRadarView(context, strings, vm),
+                          _buildHistoryView(context, strings, vm),
                         ],
                       ),
-                      Expanded(
-                        child: TabBarView(
-                          controller: _tabController,
-                          children: [
-                            _buildRadarView(context, strings, vm),
-                            _buildHistoryView(context, strings, vm),
-                          ],
-                        ),
-                      ),
-                    ] else ...[
-                      const Expanded(child: VpnP2pShareView()),
-                    ],
+                    ),
                   ],
                 ),
               ),
