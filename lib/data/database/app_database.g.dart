@@ -6805,6 +6805,59 @@ class $LanTransferRecordsTable extends LanTransferRecords
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _transportMeta = const VerificationMeta(
+    'transport',
+  );
+  @override
+  late final GeneratedColumn<String> transport = GeneratedColumn<String>(
+    'transport',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _routeTypeMeta = const VerificationMeta(
+    'routeType',
+  );
+  @override
+  late final GeneratedColumn<String> routeType = GeneratedColumn<String>(
+    'route_type',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _avgRttMeta = const VerificationMeta('avgRtt');
+  @override
+  late final GeneratedColumn<int> avgRtt = GeneratedColumn<int>(
+    'avg_rtt',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _bytesTotalMeta = const VerificationMeta(
+    'bytesTotal',
+  );
+  @override
+  late final GeneratedColumn<int> bytesTotal = GeneratedColumn<int>(
+    'bytes_total',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _failureReasonMeta = const VerificationMeta(
+    'failureReason',
+  );
+  @override
+  late final GeneratedColumn<String> failureReason = GeneratedColumn<String>(
+    'failure_reason',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -6824,6 +6877,11 @@ class $LanTransferRecordsTable extends LanTransferRecords
     isRecalled,
     sftpServerId,
     sftpRemotePath,
+    transport,
+    routeType,
+    avgRtt,
+    bytesTotal,
+    failureReason,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -6971,6 +7029,39 @@ class $LanTransferRecordsTable extends LanTransferRecords
         ),
       );
     }
+    if (data.containsKey('transport')) {
+      context.handle(
+        _transportMeta,
+        transport.isAcceptableOrUnknown(data['transport']!, _transportMeta),
+      );
+    }
+    if (data.containsKey('route_type')) {
+      context.handle(
+        _routeTypeMeta,
+        routeType.isAcceptableOrUnknown(data['route_type']!, _routeTypeMeta),
+      );
+    }
+    if (data.containsKey('avg_rtt')) {
+      context.handle(
+        _avgRttMeta,
+        avgRtt.isAcceptableOrUnknown(data['avg_rtt']!, _avgRttMeta),
+      );
+    }
+    if (data.containsKey('bytes_total')) {
+      context.handle(
+        _bytesTotalMeta,
+        bytesTotal.isAcceptableOrUnknown(data['bytes_total']!, _bytesTotalMeta),
+      );
+    }
+    if (data.containsKey('failure_reason')) {
+      context.handle(
+        _failureReasonMeta,
+        failureReason.isAcceptableOrUnknown(
+          data['failure_reason']!,
+          _failureReasonMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -7048,6 +7139,26 @@ class $LanTransferRecordsTable extends LanTransferRecords
         DriftSqlType.string,
         data['${effectivePrefix}sftp_remote_path'],
       ),
+      transport: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}transport'],
+      ),
+      routeType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}route_type'],
+      ),
+      avgRtt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}avg_rtt'],
+      ),
+      bytesTotal: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}bytes_total'],
+      ),
+      failureReason: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}failure_reason'],
+      ),
     );
   }
 
@@ -7076,6 +7187,11 @@ class LanTransferRecord extends DataClass
   final bool isRecalled;
   final String? sftpServerId;
   final String? sftpRemotePath;
+  final String? transport;
+  final String? routeType;
+  final int? avgRtt;
+  final int? bytesTotal;
+  final String? failureReason;
   const LanTransferRecord({
     required this.id,
     required this.senderId,
@@ -7094,6 +7210,11 @@ class LanTransferRecord extends DataClass
     required this.isRecalled,
     this.sftpServerId,
     this.sftpRemotePath,
+    this.transport,
+    this.routeType,
+    this.avgRtt,
+    this.bytesTotal,
+    this.failureReason,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -7126,6 +7247,21 @@ class LanTransferRecord extends DataClass
     }
     if (!nullToAbsent || sftpRemotePath != null) {
       map['sftp_remote_path'] = Variable<String>(sftpRemotePath);
+    }
+    if (!nullToAbsent || transport != null) {
+      map['transport'] = Variable<String>(transport);
+    }
+    if (!nullToAbsent || routeType != null) {
+      map['route_type'] = Variable<String>(routeType);
+    }
+    if (!nullToAbsent || avgRtt != null) {
+      map['avg_rtt'] = Variable<int>(avgRtt);
+    }
+    if (!nullToAbsent || bytesTotal != null) {
+      map['bytes_total'] = Variable<int>(bytesTotal);
+    }
+    if (!nullToAbsent || failureReason != null) {
+      map['failure_reason'] = Variable<String>(failureReason);
     }
     return map;
   }
@@ -7161,6 +7297,21 @@ class LanTransferRecord extends DataClass
       sftpRemotePath: sftpRemotePath == null && nullToAbsent
           ? const Value.absent()
           : Value(sftpRemotePath),
+      transport: transport == null && nullToAbsent
+          ? const Value.absent()
+          : Value(transport),
+      routeType: routeType == null && nullToAbsent
+          ? const Value.absent()
+          : Value(routeType),
+      avgRtt: avgRtt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(avgRtt),
+      bytesTotal: bytesTotal == null && nullToAbsent
+          ? const Value.absent()
+          : Value(bytesTotal),
+      failureReason: failureReason == null && nullToAbsent
+          ? const Value.absent()
+          : Value(failureReason),
     );
   }
 
@@ -7187,6 +7338,11 @@ class LanTransferRecord extends DataClass
       isRecalled: serializer.fromJson<bool>(json['isRecalled']),
       sftpServerId: serializer.fromJson<String?>(json['sftpServerId']),
       sftpRemotePath: serializer.fromJson<String?>(json['sftpRemotePath']),
+      transport: serializer.fromJson<String?>(json['transport']),
+      routeType: serializer.fromJson<String?>(json['routeType']),
+      avgRtt: serializer.fromJson<int?>(json['avgRtt']),
+      bytesTotal: serializer.fromJson<int?>(json['bytesTotal']),
+      failureReason: serializer.fromJson<String?>(json['failureReason']),
     );
   }
   @override
@@ -7210,6 +7366,11 @@ class LanTransferRecord extends DataClass
       'isRecalled': serializer.toJson<bool>(isRecalled),
       'sftpServerId': serializer.toJson<String?>(sftpServerId),
       'sftpRemotePath': serializer.toJson<String?>(sftpRemotePath),
+      'transport': serializer.toJson<String?>(transport),
+      'routeType': serializer.toJson<String?>(routeType),
+      'avgRtt': serializer.toJson<int?>(avgRtt),
+      'bytesTotal': serializer.toJson<int?>(bytesTotal),
+      'failureReason': serializer.toJson<String?>(failureReason),
     };
   }
 
@@ -7231,6 +7392,11 @@ class LanTransferRecord extends DataClass
     bool? isRecalled,
     Value<String?> sftpServerId = const Value.absent(),
     Value<String?> sftpRemotePath = const Value.absent(),
+    Value<String?> transport = const Value.absent(),
+    Value<String?> routeType = const Value.absent(),
+    Value<int?> avgRtt = const Value.absent(),
+    Value<int?> bytesTotal = const Value.absent(),
+    Value<String?> failureReason = const Value.absent(),
   }) => LanTransferRecord(
     id: id ?? this.id,
     senderId: senderId ?? this.senderId,
@@ -7251,6 +7417,13 @@ class LanTransferRecord extends DataClass
     sftpRemotePath: sftpRemotePath.present
         ? sftpRemotePath.value
         : this.sftpRemotePath,
+    transport: transport.present ? transport.value : this.transport,
+    routeType: routeType.present ? routeType.value : this.routeType,
+    avgRtt: avgRtt.present ? avgRtt.value : this.avgRtt,
+    bytesTotal: bytesTotal.present ? bytesTotal.value : this.bytesTotal,
+    failureReason: failureReason.present
+        ? failureReason.value
+        : this.failureReason,
   );
   LanTransferRecord copyWithCompanion(LanTransferRecordsCompanion data) {
     return LanTransferRecord(
@@ -7291,6 +7464,15 @@ class LanTransferRecord extends DataClass
       sftpRemotePath: data.sftpRemotePath.present
           ? data.sftpRemotePath.value
           : this.sftpRemotePath,
+      transport: data.transport.present ? data.transport.value : this.transport,
+      routeType: data.routeType.present ? data.routeType.value : this.routeType,
+      avgRtt: data.avgRtt.present ? data.avgRtt.value : this.avgRtt,
+      bytesTotal: data.bytesTotal.present
+          ? data.bytesTotal.value
+          : this.bytesTotal,
+      failureReason: data.failureReason.present
+          ? data.failureReason.value
+          : this.failureReason,
     );
   }
 
@@ -7313,13 +7495,18 @@ class LanTransferRecord extends DataClass
           ..write('isIncoming: $isIncoming, ')
           ..write('isRecalled: $isRecalled, ')
           ..write('sftpServerId: $sftpServerId, ')
-          ..write('sftpRemotePath: $sftpRemotePath')
+          ..write('sftpRemotePath: $sftpRemotePath, ')
+          ..write('transport: $transport, ')
+          ..write('routeType: $routeType, ')
+          ..write('avgRtt: $avgRtt, ')
+          ..write('bytesTotal: $bytesTotal, ')
+          ..write('failureReason: $failureReason')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll([
     id,
     senderId,
     senderAlias,
@@ -7337,7 +7524,12 @@ class LanTransferRecord extends DataClass
     isRecalled,
     sftpServerId,
     sftpRemotePath,
-  );
+    transport,
+    routeType,
+    avgRtt,
+    bytesTotal,
+    failureReason,
+  ]);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -7358,7 +7550,12 @@ class LanTransferRecord extends DataClass
           other.isIncoming == this.isIncoming &&
           other.isRecalled == this.isRecalled &&
           other.sftpServerId == this.sftpServerId &&
-          other.sftpRemotePath == this.sftpRemotePath);
+          other.sftpRemotePath == this.sftpRemotePath &&
+          other.transport == this.transport &&
+          other.routeType == this.routeType &&
+          other.avgRtt == this.avgRtt &&
+          other.bytesTotal == this.bytesTotal &&
+          other.failureReason == this.failureReason);
 }
 
 class LanTransferRecordsCompanion extends UpdateCompanion<LanTransferRecord> {
@@ -7379,6 +7576,11 @@ class LanTransferRecordsCompanion extends UpdateCompanion<LanTransferRecord> {
   final Value<bool> isRecalled;
   final Value<String?> sftpServerId;
   final Value<String?> sftpRemotePath;
+  final Value<String?> transport;
+  final Value<String?> routeType;
+  final Value<int?> avgRtt;
+  final Value<int?> bytesTotal;
+  final Value<String?> failureReason;
   final Value<int> rowid;
   const LanTransferRecordsCompanion({
     this.id = const Value.absent(),
@@ -7398,6 +7600,11 @@ class LanTransferRecordsCompanion extends UpdateCompanion<LanTransferRecord> {
     this.isRecalled = const Value.absent(),
     this.sftpServerId = const Value.absent(),
     this.sftpRemotePath = const Value.absent(),
+    this.transport = const Value.absent(),
+    this.routeType = const Value.absent(),
+    this.avgRtt = const Value.absent(),
+    this.bytesTotal = const Value.absent(),
+    this.failureReason = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   LanTransferRecordsCompanion.insert({
@@ -7418,6 +7625,11 @@ class LanTransferRecordsCompanion extends UpdateCompanion<LanTransferRecord> {
     this.isRecalled = const Value.absent(),
     this.sftpServerId = const Value.absent(),
     this.sftpRemotePath = const Value.absent(),
+    this.transport = const Value.absent(),
+    this.routeType = const Value.absent(),
+    this.avgRtt = const Value.absent(),
+    this.bytesTotal = const Value.absent(),
+    this.failureReason = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        senderId = Value(senderId),
@@ -7444,6 +7656,11 @@ class LanTransferRecordsCompanion extends UpdateCompanion<LanTransferRecord> {
     Expression<bool>? isRecalled,
     Expression<String>? sftpServerId,
     Expression<String>? sftpRemotePath,
+    Expression<String>? transport,
+    Expression<String>? routeType,
+    Expression<int>? avgRtt,
+    Expression<int>? bytesTotal,
+    Expression<String>? failureReason,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -7464,6 +7681,11 @@ class LanTransferRecordsCompanion extends UpdateCompanion<LanTransferRecord> {
       if (isRecalled != null) 'is_recalled': isRecalled,
       if (sftpServerId != null) 'sftp_server_id': sftpServerId,
       if (sftpRemotePath != null) 'sftp_remote_path': sftpRemotePath,
+      if (transport != null) 'transport': transport,
+      if (routeType != null) 'route_type': routeType,
+      if (avgRtt != null) 'avg_rtt': avgRtt,
+      if (bytesTotal != null) 'bytes_total': bytesTotal,
+      if (failureReason != null) 'failure_reason': failureReason,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -7486,6 +7708,11 @@ class LanTransferRecordsCompanion extends UpdateCompanion<LanTransferRecord> {
     Value<bool>? isRecalled,
     Value<String?>? sftpServerId,
     Value<String?>? sftpRemotePath,
+    Value<String?>? transport,
+    Value<String?>? routeType,
+    Value<int?>? avgRtt,
+    Value<int?>? bytesTotal,
+    Value<String?>? failureReason,
     Value<int>? rowid,
   }) {
     return LanTransferRecordsCompanion(
@@ -7506,6 +7733,11 @@ class LanTransferRecordsCompanion extends UpdateCompanion<LanTransferRecord> {
       isRecalled: isRecalled ?? this.isRecalled,
       sftpServerId: sftpServerId ?? this.sftpServerId,
       sftpRemotePath: sftpRemotePath ?? this.sftpRemotePath,
+      transport: transport ?? this.transport,
+      routeType: routeType ?? this.routeType,
+      avgRtt: avgRtt ?? this.avgRtt,
+      bytesTotal: bytesTotal ?? this.bytesTotal,
+      failureReason: failureReason ?? this.failureReason,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -7564,6 +7796,21 @@ class LanTransferRecordsCompanion extends UpdateCompanion<LanTransferRecord> {
     if (sftpRemotePath.present) {
       map['sftp_remote_path'] = Variable<String>(sftpRemotePath.value);
     }
+    if (transport.present) {
+      map['transport'] = Variable<String>(transport.value);
+    }
+    if (routeType.present) {
+      map['route_type'] = Variable<String>(routeType.value);
+    }
+    if (avgRtt.present) {
+      map['avg_rtt'] = Variable<int>(avgRtt.value);
+    }
+    if (bytesTotal.present) {
+      map['bytes_total'] = Variable<int>(bytesTotal.value);
+    }
+    if (failureReason.present) {
+      map['failure_reason'] = Variable<String>(failureReason.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -7590,6 +7837,11 @@ class LanTransferRecordsCompanion extends UpdateCompanion<LanTransferRecord> {
           ..write('isRecalled: $isRecalled, ')
           ..write('sftpServerId: $sftpServerId, ')
           ..write('sftpRemotePath: $sftpRemotePath, ')
+          ..write('transport: $transport, ')
+          ..write('routeType: $routeType, ')
+          ..write('avgRtt: $avgRtt, ')
+          ..write('bytesTotal: $bytesTotal, ')
+          ..write('failureReason: $failureReason, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -12649,6 +12901,11 @@ typedef $$LanTransferRecordsTableCreateCompanionBuilder =
       Value<bool> isRecalled,
       Value<String?> sftpServerId,
       Value<String?> sftpRemotePath,
+      Value<String?> transport,
+      Value<String?> routeType,
+      Value<int?> avgRtt,
+      Value<int?> bytesTotal,
+      Value<String?> failureReason,
       Value<int> rowid,
     });
 typedef $$LanTransferRecordsTableUpdateCompanionBuilder =
@@ -12670,6 +12927,11 @@ typedef $$LanTransferRecordsTableUpdateCompanionBuilder =
       Value<bool> isRecalled,
       Value<String?> sftpServerId,
       Value<String?> sftpRemotePath,
+      Value<String?> transport,
+      Value<String?> routeType,
+      Value<int?> avgRtt,
+      Value<int?> bytesTotal,
+      Value<String?> failureReason,
       Value<int> rowid,
     });
 
@@ -12764,6 +13026,31 @@ class $$LanTransferRecordsTableFilterComposer
 
   ColumnFilters<String> get sftpRemotePath => $composableBuilder(
     column: $table.sftpRemotePath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get transport => $composableBuilder(
+    column: $table.transport,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get routeType => $composableBuilder(
+    column: $table.routeType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get avgRtt => $composableBuilder(
+    column: $table.avgRtt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get bytesTotal => $composableBuilder(
+    column: $table.bytesTotal,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get failureReason => $composableBuilder(
+    column: $table.failureReason,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -12861,6 +13148,31 @@ class $$LanTransferRecordsTableOrderingComposer
     column: $table.sftpRemotePath,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get transport => $composableBuilder(
+    column: $table.transport,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get routeType => $composableBuilder(
+    column: $table.routeType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get avgRtt => $composableBuilder(
+    column: $table.avgRtt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get bytesTotal => $composableBuilder(
+    column: $table.bytesTotal,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get failureReason => $composableBuilder(
+    column: $table.failureReason,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$LanTransferRecordsTableAnnotationComposer
@@ -12942,6 +13254,25 @@ class $$LanTransferRecordsTableAnnotationComposer
     column: $table.sftpRemotePath,
     builder: (column) => column,
   );
+
+  GeneratedColumn<String> get transport =>
+      $composableBuilder(column: $table.transport, builder: (column) => column);
+
+  GeneratedColumn<String> get routeType =>
+      $composableBuilder(column: $table.routeType, builder: (column) => column);
+
+  GeneratedColumn<int> get avgRtt =>
+      $composableBuilder(column: $table.avgRtt, builder: (column) => column);
+
+  GeneratedColumn<int> get bytesTotal => $composableBuilder(
+    column: $table.bytesTotal,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get failureReason => $composableBuilder(
+    column: $table.failureReason,
+    builder: (column) => column,
+  );
 }
 
 class $$LanTransferRecordsTableTableManager
@@ -13001,6 +13332,11 @@ class $$LanTransferRecordsTableTableManager
                 Value<bool> isRecalled = const Value.absent(),
                 Value<String?> sftpServerId = const Value.absent(),
                 Value<String?> sftpRemotePath = const Value.absent(),
+                Value<String?> transport = const Value.absent(),
+                Value<String?> routeType = const Value.absent(),
+                Value<int?> avgRtt = const Value.absent(),
+                Value<int?> bytesTotal = const Value.absent(),
+                Value<String?> failureReason = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => LanTransferRecordsCompanion(
                 id: id,
@@ -13020,6 +13356,11 @@ class $$LanTransferRecordsTableTableManager
                 isRecalled: isRecalled,
                 sftpServerId: sftpServerId,
                 sftpRemotePath: sftpRemotePath,
+                transport: transport,
+                routeType: routeType,
+                avgRtt: avgRtt,
+                bytesTotal: bytesTotal,
+                failureReason: failureReason,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -13041,6 +13382,11 @@ class $$LanTransferRecordsTableTableManager
                 Value<bool> isRecalled = const Value.absent(),
                 Value<String?> sftpServerId = const Value.absent(),
                 Value<String?> sftpRemotePath = const Value.absent(),
+                Value<String?> transport = const Value.absent(),
+                Value<String?> routeType = const Value.absent(),
+                Value<int?> avgRtt = const Value.absent(),
+                Value<int?> bytesTotal = const Value.absent(),
+                Value<String?> failureReason = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => LanTransferRecordsCompanion.insert(
                 id: id,
@@ -13060,6 +13406,11 @@ class $$LanTransferRecordsTableTableManager
                 isRecalled: isRecalled,
                 sftpServerId: sftpServerId,
                 sftpRemotePath: sftpRemotePath,
+                transport: transport,
+                routeType: routeType,
+                avgRtt: avgRtt,
+                bytesTotal: bytesTotal,
+                failureReason: failureReason,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0

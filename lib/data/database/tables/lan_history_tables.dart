@@ -19,6 +19,13 @@ class LanTransferRecords extends Table {
   TextColumn get sftpServerId => text().nullable()();
   TextColumn get sftpRemotePath => text().nullable()();
 
+  // Network Platform fields (Step 7.5)
+  TextColumn get transport => text().nullable()();
+  TextColumn get routeType => text().nullable()();
+  IntColumn get avgRtt => integer().nullable()();
+  IntColumn get bytesTotal => integer().nullable()();
+  TextColumn get failureReason => text().nullable()();
+
   @override
   Set<Column<Object>> get primaryKey => {id};
 

@@ -1,3 +1,5 @@
-//! WireGuard state management and platform backend abstraction.
+//! WireGuard virtual network controller and platform abstractions.
 
-pub trait WireGuardBackend {}
+pub mod backend;
+
+pub use backend::{PeerConfig, TunnelConfig, TunnelHandle, WireGuardBackend, WireGuardError};
