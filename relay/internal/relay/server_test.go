@@ -112,8 +112,43 @@ func TestDashboardAndApiStats(t *testing.T) {
 		t.Fatalf("dashboard missing expected HTML content")
 	}
 
-	// Test GET /api/stats JSON
+	// Test GET /api/stats JSON without auth (expected 401)
+	reqStatsUnauth := httptest.NewRequest("GET", "/api/stats", nil)
+	recStatsUnauth := httptest.NewRecorder()
+	mux.ServeHTTP(recStatsUnauth, reqStatsUnauth)
+	if recStatsUnauth.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401 for unauthenticated stats, got %d", recStatsUnauth.Code)
+	}
+
+	// Login
+	loginBody, _ := json.Marshal(map[string]string{
+		"username": "hejulian",
+		"password": "hejulian",
+	})
+	reqLogin := httptest.NewRequest("POST", "/api/login", bytes.NewReader(loginBody))
+	recLogin := httptest.NewRecorder()
+	mux.ServeHTTP(recLogin, reqLogin)
+	if recLogin.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for login, got %d", recLogin.Code)
+	}
+	cookie := recLogin.Result().Cookies()[0]
+
+	// Change password
+	changeBody, _ := json.Marshal(map[string]string{
+		"old_password": "hejulian",
+		"new_password": "newpassword123",
+	})
+	reqChange := httptest.NewRequest("POST", "/api/change-password", bytes.NewReader(changeBody))
+	reqChange.AddCookie(cookie)
+	recChange := httptest.NewRecorder()
+	mux.ServeHTTP(recChange, reqChange)
+	if recChange.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for change-password, got %d", recChange.Code)
+	}
+
+	// Test GET /api/stats JSON with auth
 	reqStats := httptest.NewRequest("GET", "/api/stats", nil)
+	reqStats.AddCookie(cookie)
 	recStats := httptest.NewRecorder()
 	mux.ServeHTTP(recStats, reqStats)
 

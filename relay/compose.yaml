@@ -34,7 +34,6 @@ services:
 
 networks:
   relay_internal:
-    internal: true
 
 volumes:
   caddy_data:

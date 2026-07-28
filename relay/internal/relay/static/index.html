@@ -19,9 +19,16 @@
           <p class="subtitle">Network Platform Control Plane & WSS Relay Dashboard</p>
         </div>
       </div>
-      <div class="status-badge">
-        <div class="pulse"></div>
-        <span>服务运行中 (ONLINE)</span>
+      <div style="display: flex; align-items: center; gap: 16px;">
+        <div id="userSection" class="user-badge" style="display: none;">
+          <span>👤 <strong id="adminUsername">hejulian</strong></span>
+          <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 12px;" onclick="openChangePasswordModal()">修改密码</button>
+          <button class="btn btn-danger" style="padding: 6px 12px; font-size: 12px;" onclick="logout()">退出</button>
+        </div>
+        <div class="status-badge">
+          <div class="pulse"></div>
+          <span>服务运行中 (ONLINE)</span>
+        </div>
       </div>
     </header>
 
@@ -80,6 +87,55 @@
         </tr>
       </tbody>
     </table>
+  </div>
+
+  <!-- 登录 Modal -->
+  <div id="loginModal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>🔒 管理员登录</h2>
+        <p>SSH Mobile 控制与中继管理面板</p>
+      </div>
+      <div id="loginError" class="auth-error"></div>
+      <form onsubmit="handleLogin(event)">
+        <div class="form-group">
+          <label for="loginUser">管理员账号</label>
+          <input type="text" id="loginUser" class="form-input" value="hejulian" required autocomplete="username">
+        </div>
+        <div class="form-group">
+          <label for="loginPass">管理员密码</label>
+          <input type="password" id="loginPass" class="form-input" placeholder="默认初始密码: hejulian" required autocomplete="current-password">
+        </div>
+        <button type="submit" class="btn" style="width: 100%; margin-top: 8px;">立即登录</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- 强制修改密码 Modal -->
+  <div id="changePasswordModal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>⚠️ 首次登录强制修改密码</h2>
+        <p>为了保障系统安全，请将初始密码修改为新密码。</p>
+      </div>
+      <div id="changePassNotice" class="auth-notice">提示：初始密码 [hejulian] 必须修改后方可解锁管理面板功能。</div>
+      <div id="changePassError" class="auth-error"></div>
+      <form onsubmit="handleChangePassword(event)">
+        <div class="form-group">
+          <label for="oldPass">当前/初始密码</label>
+          <input type="password" id="oldPass" class="form-input" value="hejulian" required>
+        </div>
+        <div class="form-group">
+          <label for="newPass">设置新密码 (最少 6 位)</label>
+          <input type="password" id="newPass" class="form-input" placeholder="请输入新密码" required minlength="6">
+        </div>
+        <div class="form-group">
+          <label for="confirmPass">确认新密码</label>
+          <input type="password" id="confirmPass" class="form-input" placeholder="再次输入新密码" required minlength="6">
+        </div>
+        <button type="submit" class="btn" style="width: 100%; margin-top: 8px;">保存新密码并进入</button>
+      </form>
+    </div>
   </div>
 
   <script src="/static/app.js"></script>

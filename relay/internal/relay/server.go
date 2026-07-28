@@ -22,11 +22,16 @@ type EnrolledDevice struct {
 }
 
 type Server struct {
-	config          Config
-	hub             *hub
-	upgrader        websocket.Upgrader
-	enrolledDevices map[string]*EnrolledDevice
-	devicesMutex    sync.Mutex
+	config             Config
+	hub                *hub
+	upgrader           websocket.Upgrader
+	enrolledDevices    map[string]*EnrolledDevice
+	devicesMutex       sync.Mutex
+	adminUser          string
+	adminPassword      string
+	mustChangePassword bool
+	sessions           map[string]time.Time
+	authMutex          sync.Mutex
 }
 
 type registrationRequest struct {
@@ -65,11 +70,26 @@ func NewServer(config Config) *Server {
 	if len(config.CredentialKey) == 0 {
 		config.CredentialKey = randomBytes(32)
 	}
+
+	adminUser := config.AdminUser
+	if adminUser == "" {
+		adminUser = "hejulian"
+	}
+	adminPassword := config.AdminPassword
+	if adminPassword == "" {
+		adminPassword = "hejulian"
+	}
+	mustChange := adminPassword == "hejulian"
+
 	return &Server{
-		config:          config,
-		hub:             newHub(config),
-		upgrader:        websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return false }},
-		enrolledDevices: make(map[string]*EnrolledDevice),
+		config:             config,
+		hub:                newHub(config),
+		upgrader:           websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return false }},
+		enrolledDevices:    make(map[string]*EnrolledDevice),
+		adminUser:          adminUser,
+		adminPassword:      adminPassword,
+		mustChangePassword: mustChange,
+		sessions:           make(map[string]time.Time),
 	}
 }
 
@@ -78,10 +98,20 @@ func (s *Server) Close() { s.hub.close() }
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /", s.dashboard)
 	mux.Handle("GET /static/", s.staticFileHandler())
-	mux.HandleFunc("GET /api/stats", s.apiStats)
-	mux.HandleFunc("POST /api/token/rotate", s.rotateToken)
-	mux.HandleFunc("POST /api/devices/revoke", s.revokeDevice)
 	mux.HandleFunc("GET /healthz", s.health)
+
+	// Admin Auth routes
+	mux.HandleFunc("POST /api/login", s.loginHandler)
+	mux.HandleFunc("POST /api/logout", s.logoutHandler)
+	mux.HandleFunc("GET /api/auth-status", s.authStatusHandler)
+	mux.HandleFunc("POST /api/change-password", s.changePasswordHandler)
+
+	// Admin Protected routes
+	mux.HandleFunc("GET /api/stats", s.authMiddleware(s.apiStats))
+	mux.HandleFunc("POST /api/token/rotate", s.authMiddleware(s.rotateToken))
+	mux.HandleFunc("POST /api/devices/revoke", s.authMiddleware(s.revokeDevice))
+
+	// Device protocol routes
 	mux.HandleFunc("POST /v1/devices/register", s.register)
 	mux.HandleFunc("POST /v1/devices/enroll", s.enroll)
 	mux.HandleFunc("GET /v1/connect", s.connect)
@@ -486,4 +516,197 @@ func (h *hub) prune() {
 			h.mutex.Unlock()
 		}
 	}
+}
+
+func (s *Server) createSession() string {
+	token := hex.EncodeToString(randomBytes(32))
+	s.authMutex.Lock()
+	defer s.authMutex.Unlock()
+	now := time.Now()
+	for t, exp := range s.sessions {
+		if now.After(exp) {
+			delete(s.sessions, t)
+		}
+	}
+	s.sessions[token] = now.Add(24 * time.Hour)
+	return token
+}
+
+func (s *Server) destroySession(token string) {
+	s.authMutex.Lock()
+	defer s.authMutex.Unlock()
+	delete(s.sessions, token)
+}
+
+func (s *Server) isAuthorized(r *http.Request) bool {
+	var token string
+	if cookie, err := r.Cookie("relay_session"); err == nil {
+		token = cookie.Value
+	} else {
+		token = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	}
+	if token == "" {
+		return false
+	}
+	s.authMutex.Lock()
+	defer s.authMutex.Unlock()
+	exp, found := s.sessions[token]
+	if !found || time.Now().After(exp) {
+		if found {
+			delete(s.sessions, token)
+		}
+		return false
+	}
+	return true
+}
+
+func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.isAuthorized(r) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+			return
+		}
+		s.authMutex.Lock()
+		mustChange := s.mustChangePassword
+		s.authMutex.Unlock()
+
+		if mustChange {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":                "must_change_password",
+				"must_change_password": true,
+			})
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil {
+		http.Error(w, "invalid login payload", http.StatusBadRequest)
+		return
+	}
+
+	s.authMutex.Lock()
+	valid := req.Username == s.adminUser && req.Password == s.adminPassword
+	mustChange := s.mustChangePassword
+	username := s.adminUser
+	s.authMutex.Unlock()
+
+	if !valid {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "账号或密码错误"})
+		return
+	}
+
+	token := s.createSession()
+	http.SetCookie(w, &http.Cookie{
+		Name:     "relay_session",
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   86400,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":              true,
+		"must_change_password": mustChange,
+		"username":             username,
+		"token":                token,
+	})
+}
+
+func (s *Server) logoutHandler(w http.ResponseWriter, r *http.Request) {
+	var token string
+	if cookie, err := r.Cookie("relay_session"); err == nil {
+		token = cookie.Value
+	}
+	if token != "" {
+		s.destroySession(token)
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "relay_session",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   -1,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+func (s *Server) authStatusHandler(w http.ResponseWriter, r *http.Request) {
+	authed := s.isAuthorized(r)
+	s.authMutex.Lock()
+	mustChange := s.mustChangePassword
+	username := s.adminUser
+	s.authMutex.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"authenticated":        authed,
+		"must_change_password": mustChange,
+		"username":             username,
+	})
+}
+
+func (s *Server) changePasswordHandler(w http.ResponseWriter, r *http.Request) {
+	if !s.isAuthorized(r) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	defer r.Body.Close()
+	var req struct {
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil {
+		http.Error(w, "invalid payload", http.StatusBadRequest)
+		return
+	}
+
+	s.authMutex.Lock()
+	defer s.authMutex.Unlock()
+
+	if req.OldPassword != s.adminPassword {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "旧密码输入不正确"})
+		return
+	}
+
+	if len(req.NewPassword) < 6 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "新密码长度不能少于 6 位"})
+		return
+	}
+
+	if req.NewPassword == s.adminPassword {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "新密码不能与原初始密码相同"})
+		return
+	}
+
+	s.adminPassword = req.NewPassword
+	s.mustChangePassword = false
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }

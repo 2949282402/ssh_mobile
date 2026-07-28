@@ -23,6 +23,8 @@ type Config struct {
 	CredentialTTL   time.Duration
 	SessionTTL      time.Duration
 	MaxConnections  int
+	AdminUser       string
+	AdminPassword   string
 }
 
 func ConfigFromEnvironment() (Config, error) {
@@ -45,6 +47,15 @@ func ConfigFromEnvironment() (Config, error) {
 		}
 	}
 
+	adminUser := os.Getenv("RELAY_ADMIN_USER")
+	if adminUser == "" {
+		adminUser = "hejulian"
+	}
+	adminPassword := os.Getenv("RELAY_ADMIN_PASSWORD")
+	if adminPassword == "" {
+		adminPassword = "hejulian"
+	}
+
 	return Config{
 		Address:         os.Getenv("RELAY_ADDR"),
 		EnrollmentToken: enrollment,
@@ -52,6 +63,8 @@ func ConfigFromEnvironment() (Config, error) {
 		CredentialTTL:   durationEnv("RELAY_CREDENTIAL_TTL", 24*time.Hour),
 		SessionTTL:      durationEnv("RELAY_SESSION_TTL", 15*time.Minute),
 		MaxConnections:  intEnv("RELAY_MAX_CONNECTIONS", 2048),
+		AdminUser:       adminUser,
+		AdminPassword:   adminPassword,
 	}, nil
 }
 
