@@ -59,6 +59,8 @@ func NewServer(config Config) *Server {
 func (s *Server) Close() { s.hub.close() }
 
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /", s.dashboard)
+	mux.HandleFunc("GET /api/stats", s.apiStats)
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("POST /v1/devices/register", s.register)
 	mux.HandleFunc("POST /v1/devices/enroll", s.enroll)

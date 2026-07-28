@@ -89,3 +89,39 @@ func TestEnrollDevice(t *testing.T) {
 		t.Fatalf("invalid enroll response: %+v", resp)
 	}
 }
+
+func TestDashboardAndApiStats(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte("01234567890123456789012345678901"),
+		EnrollmentToken: "test-token",
+	})
+	defer server.Close()
+
+	mux := http.NewServeMux()
+	server.RegisterRoutes(mux)
+
+	// Test GET / HTML dashboard
+	reqDash := httptest.NewRequest("GET", "/", nil)
+	recDash := httptest.NewRecorder()
+	mux.ServeHTTP(recDash, reqDash)
+
+	if recDash.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for dashboard, got %d", recDash.Code)
+	}
+	if !bytes.Contains(recDash.Body.Bytes(), []byte("SSH Mobile")) {
+		t.Fatalf("dashboard missing expected HTML content")
+	}
+
+	// Test GET /api/stats JSON
+	reqStats := httptest.NewRequest("GET", "/api/stats", nil)
+	recStats := httptest.NewRecorder()
+	mux.ServeHTTP(recStats, reqStats)
+
+	if recStats.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for stats, got %d", recStats.Code)
+	}
+	var stats statsResponse
+	if err := json.NewDecoder(recStats.Body).Decode(&stats); err != nil {
+		t.Fatalf("failed to decode stats JSON: %v", err)
+	}
+}
