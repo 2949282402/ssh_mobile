@@ -1,4 +1,7 @@
 import 'dart:ffi';
+import 'src/network_native_isolate.dart';
+export 'src/ssh_net_buffer.dart';
+export 'src/network_native_isolate.dart';
 
 /// C ABI FFI bindings for ssh_mobile_network_native.
 
@@ -26,4 +29,9 @@ class SshMobileNetworkNative {
   int getAbiVersion() => sshNetAbiVersionNative();
 
   int getSdkVersion() => sshNetSdkVersionNative();
+
+  NetworkNativeIsolate? createIsolate(Pointer<Void> handle) {
+    if (handle == nullptr) return null;
+    return NetworkNativeIsolate(handle);
+  }
 }
