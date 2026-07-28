@@ -13,10 +13,20 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+type EnrolledDevice struct {
+	DeviceID        string    `json:"device_id"`
+	PublicKey       string    `json:"public_key"`
+	Platform        string    `json:"platform"`
+	ProtocolVersion uint32    `json:"protocol_version"`
+	EnrolledAt      time.Time `json:"enrolled_at"`
+}
+
 type Server struct {
-	config   Config
-	hub      *hub
-	upgrader websocket.Upgrader
+	config          Config
+	hub             *hub
+	upgrader        websocket.Upgrader
+	enrolledDevices map[string]*EnrolledDevice
+	devicesMutex    sync.Mutex
 }
 
 type registrationRequest struct {
@@ -49,10 +59,17 @@ func NewServer(config Config) *Server {
 	if config.Address == "" {
 		config.Address = ":8080"
 	}
+	if config.EnrollmentToken == "" {
+		config.EnrollmentToken = hex.EncodeToString(randomBytes(16))
+	}
+	if len(config.CredentialKey) == 0 {
+		config.CredentialKey = randomBytes(32)
+	}
 	return &Server{
-		config:   config,
-		hub:      newHub(config),
-		upgrader: websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return false }},
+		config:          config,
+		hub:             newHub(config),
+		upgrader:        websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return false }},
+		enrolledDevices: make(map[string]*EnrolledDevice),
 	}
 }
 
@@ -60,7 +77,10 @@ func (s *Server) Close() { s.hub.close() }
 
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /", s.dashboard)
+	mux.Handle("GET /static/", s.staticFileHandler())
 	mux.HandleFunc("GET /api/stats", s.apiStats)
+	mux.HandleFunc("POST /api/token/rotate", s.rotateToken)
+	mux.HandleFunc("POST /api/devices/revoke", s.revokeDevice)
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("POST /v1/devices/register", s.register)
 	mux.HandleFunc("POST /v1/devices/enroll", s.enroll)
@@ -117,6 +137,16 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
+	s.devicesMutex.Lock()
+	s.enrolledDevices[request.DeviceID] = &EnrolledDevice{
+		DeviceID:        request.DeviceID,
+		PublicKey:       request.PublicKey,
+		Platform:        request.Platform,
+		ProtocolVersion: request.ProtocolVersion,
+		EnrolledAt:      now,
+	}
+	s.devicesMutex.Unlock()
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(enrollResponse{
 		Credential:      credential,
@@ -124,6 +154,43 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		ServerTime:      now.Unix(),
 		ProtocolVersion: 1,
 	})
+}
+
+func (s *Server) rotateToken(w http.ResponseWriter, _ *http.Request) {
+	newToken := hex.EncodeToString(randomBytes(16))
+	s.devicesMutex.Lock()
+	s.config.EnrollmentToken = newToken
+	s.devicesMutex.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"enrollment_token": newToken,
+	})
+}
+
+func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	var req struct {
+		DeviceID string `json:"device_id"`
+	}
+	if json.NewDecoder(r.Body).Decode(&req) != nil || req.DeviceID == "" {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	s.devicesMutex.Lock()
+	delete(s.enrolledDevices, req.DeviceID)
+	s.devicesMutex.Unlock()
+
+	s.hub.mutex.Lock()
+	p := s.hub.peers[req.DeviceID]
+	if p != nil && p.socket != nil {
+		go p.socket.Close()
+	}
+	s.hub.mutex.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
 func (s *Server) authenticatedRequest(r *http.Request) (credentialClaims, []byte, bool) {

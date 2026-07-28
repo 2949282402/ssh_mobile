@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SSH Mobile — 网络控制与中继管理面板</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="brand">
+        <div class="brand-icon">&#9889;</div>
+        <div>
+          <h1>SSH Mobile 控制与中继服务器</h1>
+          <p class="subtitle">Network Platform Control Plane & WSS Relay Dashboard</p>
+        </div>
+      </div>
+      <div class="status-badge">
+        <div class="pulse"></div>
+        <span>服务运行中 (ONLINE)</span>
+      </div>
+    </header>
+
+    <!-- 凭据安全卡片 -->
+    <div class="card card-margin">
+      <div class="card-title">&#128272; 注册授权凭据配置 (Enrollment Token)</div>
+      <div class="card-desc">
+        客户端注册时需填写的凭据口令。系统启动时若未设置，已自动生成安全的随机 Token。
+      </div>
+      <div class="token-box">
+        <input type="text" id="tokenInput" class="token-input" readonly value="加载中..." />
+        <button class="btn" onclick="copyToken()">复制 Token</button>
+        <button class="btn btn-danger" onclick="rotateToken()">重置/重新生成 Token</button>
+      </div>
+    </div>
+
+    <!-- 核心统计网格 -->
+    <div class="grid">
+      <div class="card">
+        <div class="card-title">已注册设备总数</div>
+        <div class="card-value" id="enrolledCount">0</div>
+        <div class="card-sub">Total Registered Devices</div>
+      </div>
+      <div class="card">
+        <div class="card-title">当前活动在线连接</div>
+        <div class="card-value" id="activePeers">0</div>
+        <div class="card-sub">WebSocket Live Sessions</div>
+      </div>
+      <div class="card">
+        <div class="card-title">服务运行时间</div>
+        <div class="card-value font-medium" id="uptime">00h 00m 00s</div>
+        <div class="card-sub">System Uptime</div>
+      </div>
+      <div class="card">
+        <div class="card-title">内存占用</div>
+        <div class="card-value font-medium" id="memAlloc">0 MB</div>
+        <div class="card-sub">Go Runtime Alloc</div>
+      </div>
+    </div>
+
+    <!-- 已注册设备可视化管理表格 -->
+    <div class="section-title">&#128241; 已注册设备可视化管理 (Enrolled Devices)</div>
+    <table>
+      <thead>
+        <tr>
+          <th>设备 ID (Device ID)</th>
+          <th>平台 (Platform)</th>
+          <th>注册时间 (Enrolled At)</th>
+          <th>当前状态 (Status)</th>
+          <th>操作 (Actions)</th>
+        </tr>
+      </thead>
+      <tbody id="enrolledTableBody">
+        <tr>
+          <td colspan="5" class="empty-state">暂无已注册设备</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

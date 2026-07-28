@@ -3,7 +3,9 @@ package relay
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
+	"log"
 	"os"
 	"strconv"
 	"time"
@@ -26,21 +28,30 @@ type Config struct {
 func ConfigFromEnvironment() (Config, error) {
 	enrollment := os.Getenv("RELAY_ENROLLMENT_TOKEN")
 	if enrollment == "" {
-		return Config{}, errors.New("RELAY_ENROLLMENT_TOKEN must be configured")
+		enrollment = hex.EncodeToString(randomBytes(16))
+		log.Printf("[Relay] RELAY_ENROLLMENT_TOKEN not set; auto-generated: %s", enrollment)
 	}
+
+	var decoded []byte
 	key := os.Getenv("RELAY_CREDENTIAL_KEY")
 	if key == "" {
-		return Config{}, errors.New("RELAY_CREDENTIAL_KEY must be configured")
+		decoded = randomBytes(32)
+		log.Printf("[Relay] RELAY_CREDENTIAL_KEY not set; auto-generated random 32-byte secret key")
+	} else {
+		var err error
+		decoded, err = base64.RawURLEncoding.DecodeString(key)
+		if err != nil || len(decoded) < 32 {
+			return Config{}, errors.New("RELAY_CREDENTIAL_KEY must be base64url encoded and at least 32 bytes")
+		}
 	}
-	decoded, err := base64.RawURLEncoding.DecodeString(key)
-	if err != nil || len(decoded) < 32 {
-		return Config{}, errors.New("RELAY_CREDENTIAL_KEY must be base64url encoded and at least 32 bytes")
-	}
+
 	return Config{
-		Address: os.Getenv("RELAY_ADDR"), EnrollmentToken: enrollment,
-		CredentialKey: decoded, CredentialTTL: durationEnv("RELAY_CREDENTIAL_TTL", 24*time.Hour),
-		SessionTTL:     durationEnv("RELAY_SESSION_TTL", 15*time.Minute),
-		MaxConnections: intEnv("RELAY_MAX_CONNECTIONS", 2048),
+		Address:         os.Getenv("RELAY_ADDR"),
+		EnrollmentToken: enrollment,
+		CredentialKey:   decoded,
+		CredentialTTL:   durationEnv("RELAY_CREDENTIAL_TTL", 24*time.Hour),
+		SessionTTL:      durationEnv("RELAY_SESSION_TTL", 15*time.Minute),
+		MaxConnections:  intEnv("RELAY_MAX_CONNECTIONS", 2048),
 	}, nil
 }
 
