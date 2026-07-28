@@ -3,7 +3,7 @@ name: ssh-mobile-maintenance
 description: Maintain and debug this SSH Mobile Flutter repository across feature-first MVVM UI, SSH/SFTP, monitoring, AI chat/tools, storage, security, platform builds, tests, documentation, and shared agent guidance. Use for project code, architecture, debugging, validation, or documentation changes.
 ---
 
-> 最新更新时间：2026-07-26
+> 最新更新时间：2026-07-28
 
 # SSH Mobile Maintenance
 

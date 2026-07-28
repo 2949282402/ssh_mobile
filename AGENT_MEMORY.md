@@ -1,6 +1,6 @@
 # Agent Memory
 
-> 最新更新时间：2026-07-26
+> 最新更新时间：2026-07-28
 
 This file is shared durable project memory for Codex and Claude Code. It is a
 repository file, not live model memory: both agents must read and update it when
@@ -20,6 +20,11 @@ across sessions.
   context.
 
 ## Notes
+- 2026-07-28: Implemented cross-platform P2P Network Platform (native Tokio runtime,
+  Protobuf FFI, STUN/NAT traversal, Quinn QUIC P2P, streaming file transfer with SHA-256
+  and atomic rename, WireGuard backend abstraction, Go control plane enroll/WSS endpoints,
+  and TransferTransport abstraction).
+
 - 2026-07-26: The optional `relay/` Go service is a memory-only WSS router for
   explicit SFTP public-relay transfers. It must never persist frames, file
   names, or file metadata. Flutter encrypts offers and 512 KiB data chunks

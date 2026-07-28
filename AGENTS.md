@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-> 最新更新时间：2026-07-26
+> 最新更新时间：2026-07-28
 
 ## Project Structure & Module Organization
 
