@@ -1,4 +1,4 @@
-> 最新更新时间：2026-07-26
+> 最新更新时间：2026-07-28
 
 <p align="center">
   <img src="assets/app_icon_1024.png" alt="SSH Mobile 图标" width="112" />
@@ -29,7 +29,7 @@ SSH Mobile 是一个基于 Flutter 的跨平台 SSH / SFTP 客户端，覆盖 An
 - **SSH 连接管理**：支持密码、私钥、私钥密码、跳板机、服务器平台选择和 SSH Host Key 首次信任校验。
 - **多终端窗口**：同一服务器可创建多个固定名称的终端窗口，并稳定绑定 tmux 会话。
 - **SFTP 文件管理**：支持目录浏览、最近与收藏路径、上传、下载、编辑、预览和输入完整名称确认删除。
-- **局域网快传**：支持 mDNS/UDP 发现、扫码或设备列表发起配对邀请、双向 PIN 确认和加密设备间传输；应用在前台时可全局唤起对端配对页，并合并双方同时发起的邀请。可选的自托管公网中继支持端到端加密的 SFTP 文件转发，服务端不会保存文件内容或文件名。
+- **局域网快传与网络传输**：支持 mDNS/UDP 发现、扫码或设备列表发起配对邀请、双向 PIN 确认和加密设备间传输；应用在前台时可全局唤起对端配对页，并合并双方同时发起的邀请。可选的自托管公网中继支持端到端加密的 SFTP 文件转发，服务端不会保存文件内容或文件名。
 - **服务器监控**：查看性能、端口、应用进程、服务、用户和活动会话。
 - **AI Chat 与 Agent 执行**：支持流式输出、Plan Mode、审批式工具调用、聊天历史、消息分支、上下文压缩、RAG、Skills 和执行 Trace。
 - **本地 MCP Server**：桌面端可生成 Codex、Claude Code 和 Gemini CLI 配置；仅回环地址的安全边界始终启用，外部 MCP 客户端调用写入类工具会返回 `approval_required`。
@@ -75,18 +75,46 @@ flutter run -d chrome
 
 应用在没有真实服务器或 AI 凭据时也可以启动。终端、SFTP 和监控的集成测试需要一台可访问的 SSH 服务器；只有 AI Chat 与 Agent 执行功能需要配置模型服务。
 
-## 可选公网中继
+## 控制平面与中继服务器启动说明
 
-仓库内的 `relay/` Go 服务提供基于 HTTPS/WSS 的内存中继，用于端到端加密的 SFTP 文件转发。请按照[中继部署说明](relay/README.md)使用 Caddy 部署：
+仓库内的 `relay/` Go 服务提供设备控制平面与基于 HTTPS/WSS 的内存中继，用于 P2P NAT 穿透与端到端加密文件转发。
+
+### 方式一：使用 Go 本地直接启动
+
+```bash
+cd relay
+# Windows PowerShell
+$env:RELAY_ADDRESS=":8080"
+go run ./cmd/relay
+
+# Linux / macOS Bash
+RELAY_ADDRESS=":8080" go run ./cmd/relay
+```
+
+### 方式二：使用 Docker Compose 生产部署
+
+请参考 [中继部署说明](relay/README.md) 使用 Caddy 进行 HTTPS/WSS 自动证书部署：
 
 ```powershell
 cd relay
 Copy-Item .env.example .env
-# 设置 RELAY_PUBLIC_DOMAIN、密钥，以及可选的 RELAY_HTTPS_PORT。
+# 设置 RELAY_PUBLIC_DOMAIN、RELAY_ENROLLMENT_TOKEN 与密钥。
 docker compose --env-file .env up --build -d
 ```
 
-在 SSH Mobile 中打开“设置 → 局域网快传 → 公网中继服务器”，填写中继主机/IP 和 HTTPS 端口（默认 `443`）。生产环境建议使用具有有效 TLS 证书的域名；直接填写 IP 时，服务器证书也必须对该 IP 有效。
+### 方式三：使用 Docker 容器独立运行
+
+```bash
+cd relay
+docker build -t ssh-mobile-relay .
+docker run --rm -p 8080:8080 \
+  -e RELAY_ENROLLMENT_TOKEN='your-enrollment-token' \
+  -e RELAY_CREDENTIAL_KEY='base64url-32-byte-secret' \
+  ssh-mobile-relay
+```
+
+在 SSH Mobile 中打开“网络传输 → VPN / P2P → 服务器配置”，填写控制与中继服务器地址（例如 `https://relay.example.com` 或 `http://<IP>:8080`）。
+
 
 ### 各平台构建
 

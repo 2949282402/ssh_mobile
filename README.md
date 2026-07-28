@@ -1,4 +1,4 @@
-> Last updated: 2026-07-26
+> Last updated: 2026-07-28
 
 <p align="center">
   <img src="assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
@@ -29,7 +29,7 @@ The project began with a two-core server that had only 1 GB of memory. Running a
 - **SSH connection management** with passwords, private keys, encrypted private keys, jump hosts, server platform selection, and SSH host-key trust-on-first-use verification.
 - **Multi-window terminals** that allow several fixed-name sessions per server and stable tmux session binding.
 - **SFTP file management** with browsing, recent and favorite paths, uploads, downloads, editing, previews, and explicit deletion confirmation. The upload action follows the active theme's secondary color instead of a fixed deep purple.
-- **LAN Quick Share** with mDNS/UDP discovery, QR and device-list pairing invitations, reciprocal PIN confirmation, and encrypted device-to-device transfers. Foreground invitations open the peer pairing page globally and simultaneous invitations merge into one pairing session. An optional self-hosted public relay provides explicit, E2E-encrypted SFTP file forwarding without storing file data or names on the relay.
+- **LAN Quick Share & Network Transfer** with mDNS/UDP discovery, QR and device-list pairing invitations, reciprocal PIN confirmation, and encrypted device-to-device transfers. Foreground invitations open the peer pairing page globally and simultaneous invitations merge into one pairing session. An optional self-hosted public relay provides explicit, E2E-encrypted SFTP file forwarding without storing file data or names on the relay.
 - **Server monitoring** for performance, ports, applications, services, users, and active sessions.
 - **AI chat and agent execution** with streaming output, Plan Mode, approval-controlled tools, persistent history, message branching, context compression, RAG, skills, and execution traces.
 - **Local MCP server** support on desktop platforms, including generated configuration for Codex, Claude Code, and Gemini CLI; its loopback-only safety boundary is always enforced and write-capable external tools return `approval_required`.
@@ -75,22 +75,42 @@ flutter run -d chrome
 
 The application can launch without real server or AI credentials. A reachable SSH server is required for terminal, SFTP, and monitoring integration tests. An AI provider is required only for AI chat and agent execution.
 
-## Optional public relay
+## Control Plane & Public Relay Server Startup
 
-The bundled `relay/` Go service provides memory-only E2E SFTP forwarding over
-HTTPS/WSS. Deploy it with Caddy using the [relay deployment guide](relay/README.md):
+The bundled `relay/` Go service provides memory-only E2E WSS relaying and device control plane capabilities for Network Transfer / P2P fallback.
+
+### Option 1: Direct Go execution
+
+```bash
+cd relay
+# Optional: set RELAY_ADDRESS environment variable (default is :8080)
+go run ./cmd/relay
+```
+
+### Option 2: Production deployment via Docker Compose
+
+Deploy with Caddy using the [relay deployment guide](relay/README.md):
 
 ```powershell
 cd relay
 Copy-Item .env.example .env
-# Set RELAY_PUBLIC_DOMAIN, secrets, and optionally RELAY_HTTPS_PORT.
+# Set RELAY_PUBLIC_DOMAIN, RELAY_ENROLLMENT_TOKEN, and secrets.
 docker compose --env-file .env up --build -d
 ```
 
-In SSH Mobile, open **Settings → LAN Quick Share → Public Relay Server** and
-enter the relay host/IP plus its HTTPS port (default `443`). Production use
-should use a DNS name with a valid TLS certificate; direct IP targets must also
-present a certificate valid for that IP.
+### Option 3: Standalone Docker container
+
+```bash
+cd relay
+docker build -t ssh-mobile-relay .
+docker run --rm -p 8080:8080 \
+  -e RELAY_ENROLLMENT_TOKEN='your-enrollment-token' \
+  -e RELAY_CREDENTIAL_KEY='base64url-32-byte-secret' \
+  ssh-mobile-relay
+```
+
+In SSH Mobile, open **Settings → Network Transfer → Control Server** and enter the relay server URL (e.g. `https://relay.example.com` or `http://<ip>:8080`).
+
 
 ### Platform builds
 
