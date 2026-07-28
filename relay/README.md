@@ -39,7 +39,9 @@ docker run --rm -p 8080:8080 \
 The supplied Compose deployment uses Caddy to terminate HTTPS/WSS and obtain a public TLS certificate automatically.
 
 1. Create a public DNS `A` or `AAAA` record for the relay host, then allow TCP port 80 and the configured HTTPS port through the firewall. Keep port 80 mapped for Caddy's ACME HTTP validation; set `RELAY_HTTPS_PORT` in `.env` when clients should use a non-default HTTPS/WSS port.
-2. Copy `.env.example` to `.env`; set the real DNS name and optional secrets.
+2. Copy `.env.example` to `.env`:
+   - Linux / macOS: `cp .env.example .env`
+   - Windows PowerShell: `Copy-Item .env.example .env`
 3. Start the service:
 
    ```sh
@@ -48,6 +50,37 @@ The supplied Compose deployment uses Caddy to terminate HTTPS/WSS and obtain a p
    ```
 
 The host exposes Caddy on ports 80/443; the Go relay stays on an internal Docker network. Caddy persists certificate state only. Do not add a relay data volume: sessions and relay frames are intentionally memory-only.
+
+## Detailed `.env` Configuration Guide
+
+### 1. How to Copy `.env`
+
+- **Linux / macOS Bash**:
+  ```bash
+  cd relay
+  cp .env.example .env
+  ```
+- **Windows PowerShell**:
+  ```powershell
+  cd relay
+  Copy-Item .env.example .env
+  ```
+
+### 2. Parameter Category Guide
+
+| Parameter Name | Requirement | Default / Example | Description |
+|---|---|---|---|
+| `RELAY_PUBLIC_DOMAIN` | **MUST Modify** | `relay.example.com` | Public DNS domain name mapped to your server. **Do NOT include `http://` or `https://` prefix**. Caddy uses this domain to automatically request and renew SSL/TLS certificates via ACME. |
+| `RELAY_ENROLLMENT_TOKEN` | **Optional** | (Auto-generated) | Admin secret required for new device enrollment. If left empty, a secure random token is generated at startup and shown in the Web Admin Dashboard. For production, set to your custom secret. |
+| `RELAY_CREDENTIAL_KEY` | **Optional** | (Auto-generated) | Master HMAC key used to sign client credentials. Must be a base64url random string of at least 32 bytes. If left empty, automatically generated. |
+| `RELAY_HTTPS_PORT` | **Optional** | `443` | External HTTPS / WSS port. If port 443 is already occupied on your host, change to another port (e.g., `8443`). |
+| `RELAY_HTTP_PORT` | **Optional** | `80` | External HTTP port used by Caddy for ACME HTTP validation. |
+
+### 3. Critical Rules & Guardrails (Do NOT Modify / Danger Zone)
+
+1. ❌ **Do NOT commit the real `.env` file to source control**: Contains your real domain and secrets. `.env` is ignored by `.gitignore`.
+2. ❌ **Do NOT add persistent data volumes to the relay container**: The relay is strictly **memory-only and stateless**. Persisting frames or logs to disk breaks security guarantees.
+3. ❌ **Do NOT expose the Go backend port directly to the public internet**: The Go server listens on internal port `:8080` behind Caddy, which handles SSL/TLS termination and reverse proxy protection.
 
 ## Web Admin Dashboard & Endpoints
 
