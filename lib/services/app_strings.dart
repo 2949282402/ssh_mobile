@@ -649,6 +649,9 @@ class AppStrings {
   String get networkTabVpn => _en ? 'VPN / P2P' : 'VPN';
   String get vpnServerConfigTitle => _en ? 'Control Server' : '服务器配置';
   String get vpnServerUrl => _en ? 'Server Address' : '服务器地址';
+  String get vpnServerHost => _en ? 'Host / IP / Domain' : '服务器主机 / 域名 / IP';
+  String get vpnServerPort => _en ? 'Port' : '端口';
+  String get vpnEnrollmentToken => _en ? 'Enrollment Token (Optional)' : '注册凭据 Token (可选)';
   String get vpnEnrollStatus => _en ? 'Enrollment Status' : '注册状态';
   String get vpnEnrollButton => _en ? 'Enroll Device' : '注册设备';
   String get vpnEnrolledBadge => _en ? 'Enrolled & Verified' : '已注册 (可信)';
