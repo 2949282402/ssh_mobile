@@ -22,10 +22,12 @@ void main() {
         ChangeNotifierProvider<AppSettings>.value(
           value: appSettings,
           child: MaterialApp(
-            home: DeveloperPanelFloatingHost(child: const ColoredBox(
-              color: Colors.black,
-              child: SizedBox.expand(),
-            )),
+            home: DeveloperPanelFloatingHost(
+              child: const ColoredBox(
+                color: Colors.black,
+                child: SizedBox.expand(),
+              ),
+            ),
           ),
         ),
       );
@@ -87,7 +89,9 @@ void main() {
       expect(find.byIcon(Icons.bug_report_outlined), findsNothing);
     });
 
-    testWidgets('shows ball after enabling floating at runtime', (tester) async {
+    testWidgets('shows ball after enabling floating at runtime', (
+      tester,
+    ) async {
       SharedPreferences.setMockInitialValues({});
       final appSettings = AppSettings();
       addTearDown(appSettings.dispose);

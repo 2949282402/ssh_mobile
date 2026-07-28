@@ -47,7 +47,9 @@ class _DeveloperPanelFloatingHostState
     // Initial mount: create the ViewModel if already enabled. Runtime toggles
     // are handled in build (via context.select), which re-runs and reconciles.
     final appSettings = context.read<AppSettings>();
-    _syncViewModel(appSettings.developerMode && appSettings.developerPanelFloating);
+    _syncViewModel(
+      appSettings.developerMode && appSettings.developerPanelFloating,
+    );
   }
 
   @override
@@ -58,19 +60,16 @@ class _DeveloperPanelFloatingHostState
   }
 
   Offset _defaultBallOffset(Size size, EdgeInsets insets) => Offset(
-        size.width - _ballSize - _margin,
-        size.height - insets.bottom - _ballSize - _margin,
-      );
+    size.width - _ballSize - _margin,
+    size.height - insets.bottom - _ballSize - _margin,
+  );
 
   Offset _clampBall(Offset offset, Size size, EdgeInsets insets) {
     final minX = _margin;
     final maxX = size.width - _ballSize - _margin;
     final minY = insets.top + _margin;
     final maxY = size.height - insets.bottom - _ballSize - _margin;
-    return Offset(
-      offset.dx.clamp(minX, maxX),
-      offset.dy.clamp(minY, maxY),
-    );
+    return Offset(offset.dx.clamp(minX, maxX), offset.dy.clamp(minY, maxY));
   }
 
   Offset _clampPanel(Offset offset, Size size, EdgeInsets insets, Size panel) {
@@ -78,10 +77,7 @@ class _DeveloperPanelFloatingHostState
     final maxX = size.width - panel.width - _margin;
     final minY = insets.top + _margin;
     final maxY = size.height - insets.bottom - panel.height - _margin;
-    return Offset(
-      offset.dx.clamp(minX, maxX),
-      offset.dy.clamp(minY, maxY),
-    );
+    return Offset(offset.dx.clamp(minX, maxX), offset.dy.clamp(minY, maxY));
   }
 
   @override
@@ -193,8 +189,10 @@ class _DeveloperPanelFloatingHostState
               final insets = MediaQuery.of(context).padding;
               final newOffset = _clampPanel(
                 (_panelOffset ??
-                        Offset(size.width - panelSize.width - 16,
-                            insets.top + 16)) +
+                        Offset(
+                          size.width - panelSize.width - 16,
+                          insets.top + 16,
+                        )) +
                     delta,
                 size,
                 insets,
@@ -222,10 +220,7 @@ class _PanelDragHandle extends StatelessWidget {
   final void Function(Offset delta) onPanUpdate;
   final VoidCallback onClose;
 
-  const _PanelDragHandle({
-    required this.onPanUpdate,
-    required this.onClose,
-  });
+  const _PanelDragHandle({required this.onPanUpdate, required this.onClose});
 
   @override
   Widget build(BuildContext context) {

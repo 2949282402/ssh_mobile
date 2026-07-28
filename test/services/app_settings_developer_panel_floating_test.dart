@@ -26,21 +26,23 @@ void main() {
     expect(preferences.getBool('developer_panel_floating'), isFalse);
   });
 
-  test('developerPanelFloating does not notify when value is unchanged',
-      () async {
-    SharedPreferences.setMockInitialValues({});
-    final settings = AppSettings();
-    addTearDown(settings.dispose);
+  test(
+    'developerPanelFloating does not notify when value is unchanged',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final settings = AppSettings();
+      addTearDown(settings.dispose);
 
-    await settings.ensureCoreLoaded();
+      await settings.ensureCoreLoaded();
 
-    var notifications = 0;
-    settings.addListener(() => notifications++);
+      var notifications = 0;
+      settings.addListener(() => notifications++);
 
-    await settings.setDeveloperPanelFloating(false);
-    expect(notifications, 0);
+      await settings.setDeveloperPanelFloating(false);
+      expect(notifications, 0);
 
-    await settings.setDeveloperPanelFloating(true);
-    expect(notifications, 1);
-  });
+      await settings.setDeveloperPanelFloating(true);
+      expect(notifications, 1);
+    },
+  );
 }

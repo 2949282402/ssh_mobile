@@ -262,7 +262,7 @@ class _BoundedReadSftpClient implements SftpClient {
   }
 
   @override
-  void close() {}
+  Future<void> close() async {}
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>

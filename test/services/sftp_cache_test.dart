@@ -437,7 +437,7 @@ class _FakeDartSftpClient implements SftpClient {
   }
 
   @override
-  void close() {}
+  Future<void> close() async {}
 
   Uint8List _read(String path) {
     _readCounts[path] = readCount(path) + 1;

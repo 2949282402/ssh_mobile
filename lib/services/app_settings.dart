@@ -129,6 +129,7 @@ class AppSettings extends ChangeNotifier {
     if (endpoint == null || endpoint.host.isEmpty) return 443;
     return endpoint.hasPort ? endpoint.port : 443;
   }
+
   AppVisualSettingsSnapshot get visualSettings => AppVisualSettingsSnapshot(
     themeMode: _themeMode,
     oledDark: _oledDark,
@@ -384,10 +385,7 @@ class AppSettings extends ChangeNotifier {
 
   /// Persists a client relay target as HTTPS. [host] may be a DNS name, IPv4,
   /// or IPv6 literal; credentials and enrollment secrets never enter prefs.
-  Future<void> setRelayServer({
-    required String host,
-    required int port,
-  }) async {
+  Future<void> setRelayServer({required String host, required int port}) async {
     final normalizedHost = host.trim();
     if (normalizedHost.isEmpty ||
         normalizedHost.contains('://') ||

@@ -948,18 +948,13 @@ class _LanShareSettingsSectionState extends State<_LanShareSettingsSection> {
           ),
           subtitle: Text(
             relayHost.isEmpty
-                ? (widget.strings.isEnglish
-                      ? 'Not configured'
-                      : '未配置')
+                ? (widget.strings.isEnglish ? 'Not configured' : '未配置')
                 : '$relayHost:$relayPort',
             style: const TextStyle(fontSize: 11),
           ),
           trailing: const Icon(Icons.chevron_right_rounded, size: 20),
-          onTap: () => _showRelayServerDialog(
-            context,
-            host: relayHost,
-            port: relayPort,
-          ),
+          onTap: () =>
+              _showRelayServerDialog(context, host: relayHost, port: relayPort),
         ),
         // Dynamic permission checks
         if (_supportsRuntimePermissions) ...[
@@ -1088,7 +1083,9 @@ class _LanShareSettingsSectionState extends State<_LanShareSettingsSection> {
                 controller: hostController,
                 autofocus: true,
                 decoration: InputDecoration(
-                  labelText: widget.strings.isEnglish ? 'Host or IP' : '主机或 IP 地址',
+                  labelText: widget.strings.isEnglish
+                      ? 'Host or IP'
+                      : '主机或 IP 地址',
                   hintText: 'relay.example.com',
                 ),
               ),
@@ -1097,7 +1094,9 @@ class _LanShareSettingsSectionState extends State<_LanShareSettingsSection> {
                 controller: portController,
                 keyboardType: TextInputType.number,
                 decoration: InputDecoration(
-                  labelText: widget.strings.isEnglish ? 'HTTPS port' : 'HTTPS 端口',
+                  labelText: widget.strings.isEnglish
+                      ? 'HTTPS port'
+                      : 'HTTPS 端口',
                   hintText: '443',
                 ),
               ),

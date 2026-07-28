@@ -40,8 +40,7 @@ class MessageActions extends StatelessWidget {
           context,
           tooltip: strings.selectAndCopy,
           icon: Icons.select_all_rounded,
-          onPressed: () =>
-              _showSelectableCopySheet(context, copyText, strings),
+          onPressed: () => _showSelectableCopySheet(context, copyText, strings),
         ),
       if (onEditUser != null)
         _actionButton(
