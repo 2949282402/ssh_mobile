@@ -15,6 +15,7 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
   late TextEditingController _tokenController;
   bool _isEnrolled = false;
   bool _isEnrolling = false;
+  bool _isExpanded = false; // Collapsed by default as requested
 
   @override
   void initState() {
@@ -84,6 +85,7 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
     setState(() {
       _isEnrolling = false;
       _isEnrolled = true;
+      _isExpanded = false; // Collapse after successful enrollment
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -102,6 +104,8 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
     final strings = AppStrings(settings.language);
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final currentHost = settings.relayHost.isNotEmpty ? settings.relayHost : 'relay.example.com';
+    final currentPort = settings.relayPort > 0 ? settings.relayPort : 443;
 
     return Card(
       elevation: 0,
@@ -113,120 +117,142 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
         ),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Icon(Icons.dns_rounded, color: colorScheme.primary),
-                const SizedBox(width: 8),
-                Text(
-                  strings.vpnServerConfigTitle,
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: _isEnrolled
-                        ? Colors.green.withValues(alpha: 0.15)
-                        : Colors.orange.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: _isEnrolled ? Colors.green : Colors.orange,
-                    ),
-                  ),
-                  child: Text(
-                    _isEnrolled
-                        ? strings.vpnEnrolledBadge
-                        : strings.vpnNotEnrolledBadge,
-                    style: TextStyle(
-                      fontSize: 12,
+            // Header bar (Tappable to expand / collapse)
+            InkWell(
+              onTap: () => setState(() => _isExpanded = !_isExpanded),
+              borderRadius: BorderRadius.circular(12),
+              child: Row(
+                children: [
+                  Icon(Icons.dns_rounded, color: colorScheme.primary, size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    strings.vpnServerConfigTitle,
+                    style: theme.textTheme.titleSmall?.copyWith(
                       fontWeight: FontWeight.bold,
-                      color: _isEnrolled ? Colors.green : Colors.orange,
                     ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            // Host & Port Row
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  flex: 3,
-                  child: TextField(
-                    controller: _hostController,
-                    decoration: InputDecoration(
-                      labelText: strings.vpnServerHost,
-                      hintText: 'relay.example.com',
-                      prefixIcon: const Icon(Icons.link_rounded),
-                      border: const OutlineInputBorder(),
+                  const SizedBox(width: 8),
+                  Text(
+                    '($currentHost:$currentPort)',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                      fontFamily: 'monospace',
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  flex: 1,
-                  child: TextField(
-                    controller: _portController,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      labelText: strings.vpnServerPort,
-                      hintText: '443',
-                      border: const OutlineInputBorder(),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _isEnrolled
+                          ? Colors.green.withValues(alpha: 0.15)
+                          : Colors.orange.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: _isEnrolled ? Colors.green : Colors.orange,
+                      ),
+                    ),
+                    child: Text(
+                      _isEnrolled
+                          ? strings.vpnEnrolledBadge
+                          : strings.vpnNotEnrolledBadge,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: _isEnrolled ? Colors.green : Colors.orange,
+                      ),
                     ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            // Enrollment Token (Optional)
-            TextField(
-              controller: _tokenController,
-              decoration: InputDecoration(
-                labelText: strings.vpnEnrollmentToken,
-                hintText: strings.isEnglish
-                    ? 'Auto-generated or custom token'
-                    : '服务器面板显示或自定义的 Token',
-                prefixIcon: const Icon(Icons.key_rounded),
-                border: const OutlineInputBorder(),
+                  const SizedBox(width: 4),
+                  Icon(
+                    _isExpanded
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Device ID: ${settings.lanDeviceId.isEmpty ? "dev_local_01" : settings.lanDeviceId}',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      fontFamily: 'monospace',
-                      color: colorScheme.onSurfaceVariant,
+            if (_isExpanded) ...[
+              const Divider(height: 20),
+              // Host & Port Row
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: TextField(
+                      controller: _hostController,
+                      decoration: InputDecoration(
+                        labelText: strings.vpnServerHost,
+                        hintText: 'relay.example.com',
+                        prefixIcon: const Icon(Icons.link_rounded),
+                        border: const OutlineInputBorder(),
+                      ),
                     ),
                   ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 1,
+                    child: TextField(
+                      controller: _portController,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: strings.vpnServerPort,
+                        hintText: '443',
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              // Enrollment Token (Optional)
+              TextField(
+                controller: _tokenController,
+                decoration: InputDecoration(
+                  labelText: strings.vpnEnrollmentToken,
+                  hintText: strings.isEnglish
+                      ? 'Auto-generated or custom token'
+                      : '服务器面板显示或自定义的 Token',
+                  prefixIcon: const Icon(Icons.key_rounded),
+                  border: const OutlineInputBorder(),
                 ),
-                ElevatedButton.icon(
-                  onPressed: _isEnrolling ? null : _handleEnroll,
-                  icon: _isEnrolling
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : const Icon(Icons.verified_user_rounded),
-                  label: Text(strings.vpnEnrollButton),
-                ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Device ID: ${settings.lanDeviceId.isEmpty ? "dev_local_01" : settings.lanDeviceId}',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontFamily: 'monospace',
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: _isEnrolling ? null : _handleEnroll,
+                    icon: _isEnrolling
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : const Icon(Icons.verified_user_rounded),
+                    label: Text(strings.vpnEnrollButton),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),

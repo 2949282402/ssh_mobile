@@ -385,12 +385,15 @@ class _LanShareScreenState extends State<LanShareScreen>
                     child: FutureBuilder<Map<String, String>>(
                       future: _localIpsFuture,
                       builder: (context, snapshot) {
+                        final isVpnMode = _selectedModeIndex == 1;
                         final ipMap = snapshot.data ?? {};
-                        final ips = ipMap.keys.toList();
-                        final customIp = vm.customIp;
+                        final ips = isVpnMode ? ['10.0.0.1'] : ipMap.keys.toList();
+                        final customIp = isVpnMode ? '10.0.0.1' : vm.customIp;
                         final List<InlineSpan> spans = [
                           TextSpan(
-                            text: label,
+                            text: isVpnMode
+                                ? (strings.isEnglish ? 'VPN Device: ' : 'VPN 本机设备：')
+                                : label,
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: colors.primary.withValues(alpha: 0.7),
                               fontWeight: FontWeight.w500,
@@ -420,7 +423,7 @@ class _LanShareScreenState extends State<LanShareScreen>
                           for (int i = 0; i < ips.length; i++) {
                             final ip = ips[i];
                             final isSelected =
-                                customIp == ip || (customIp == null && i == 0);
+                                isVpnMode || customIp == ip || (customIp == null && i == 0);
                             spans.add(
                               TextSpan(
                                 text: ip,
@@ -437,8 +440,9 @@ class _LanShareScreenState extends State<LanShareScreen>
                             if (isSelected) {
                               spans.add(
                                 TextSpan(
-                                  text:
-                                      '(${strings.isEnglish ? "active" : "使用中"})',
+                                  text: isVpnMode
+                                      ? '(${strings.isEnglish ? "VPN Force Bound" : "VPN 强制绑定"})'
+                                      : '(${strings.isEnglish ? "active" : "使用中"})',
                                   style: theme.textTheme.labelSmall?.copyWith(
                                     color: colors.primary,
                                     fontSize: 9,
