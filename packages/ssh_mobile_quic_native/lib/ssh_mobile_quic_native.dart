@@ -12,6 +12,11 @@ import 'dart:ffi';
 )
 external int sshQuicPingNative();
 
+@Native<Int32 Function()>(
+  symbol: 'ssh_quic_msquic_open_test',
+)
+external int sshQuicMsQuicOpenTestNative();
+
 
 ///
 /// Dart 业务层包装。
@@ -26,5 +31,20 @@ class SshMobileQuicNative {
 
   int ping() {
     return sshQuicPingNative();
+  }
+
+  int msquicOpenTest() {
+    return sshQuicMsQuicOpenTestNative();
+  }
+
+  void verifyMsQuic() {
+    final result =
+        msquicOpenTest();
+
+    if (result != 0) {
+      throw StateError(
+        'MsQuic initialization failed: $result',
+      );
+    }
   }
 }

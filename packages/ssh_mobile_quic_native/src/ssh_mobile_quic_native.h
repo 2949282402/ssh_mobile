@@ -31,6 +31,20 @@ extern "C" {
  */
 SSH_QUIC_EXPORT int32_t ssh_quic_ping(void);
 
+/*
+ * MsQuic runtime 测试。
+ *
+ * 返回：
+ *
+ * 0 = MsQuicOpen2 成功
+ * 1 = MsQuicOpen2 失败
+ * 2 = MsQuic 返回了空 API table
+ *
+ * 注意：
+ * 这里故意不直接把 QUIC_STATUS 暴露给 Dart。
+ */
+SSH_QUIC_EXPORT int32_t ssh_quic_msquic_open_test(void);
+
 #ifdef __cplusplus
 }
 #endif
