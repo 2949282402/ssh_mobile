@@ -77,19 +77,18 @@ flutter run -d chrome
 
 ## 控制平面与中继服务器启动说明
 
-仓库内的 `relay/` Go 服务提供设备控制平面与基于 HTTPS/WSS 的内存中继，用于 P2P NAT 穿透与端到端加密文件转发。
+仓库内的 `relay/` Go 服务提供设备控制平面、基于 HTTPS/WSS 的内存中继以及**内置可视化 Web 管理面板**，用于 P2P NAT 穿透与端到端加密文件转发。
 
-### 方式一：使用 Go 本地直接启动
+服务支持零配置开箱即用，启动时未设置的 Token 与密钥会自动生成并在 Web 管理面板中直观展示。
+
+### 方式一：使用 Go 本地直接启动（零配置）
 
 ```bash
 cd relay
-# Windows PowerShell
-$env:RELAY_ADDRESS=":8080"
 go run ./cmd/relay
-
-# Linux / macOS Bash
-RELAY_ADDRESS=":8080" go run ./cmd/relay
 ```
+
+在浏览器中打开 `http://localhost:8080` 即可进入**可视化 Web 管理面板**，直接查看与复制自动生成的 `Enrollment Token`，并可视化管理已注册设备。
 
 ### 方式二：使用 Docker Compose 生产部署
 
@@ -98,7 +97,7 @@ RELAY_ADDRESS=":8080" go run ./cmd/relay
 ```powershell
 cd relay
 Copy-Item .env.example .env
-# 设置 RELAY_PUBLIC_DOMAIN、RELAY_ENROLLMENT_TOKEN 与密钥。
+# 设置 RELAY_PUBLIC_DOMAIN、可选的 RELAY_ENROLLMENT_TOKEN 与密钥。
 docker compose --env-file .env up --build -d
 ```
 
@@ -107,10 +106,7 @@ docker compose --env-file .env up --build -d
 ```bash
 cd relay
 docker build -t ssh-mobile-relay .
-docker run --rm -p 8080:8080 \
-  -e RELAY_ENROLLMENT_TOKEN='your-enrollment-token' \
-  -e RELAY_CREDENTIAL_KEY='base64url-32-byte-secret' \
-  ssh-mobile-relay
+docker run --rm -p 8080:8080 ssh-mobile-relay
 ```
 
 在 SSH Mobile 中打开“网络传输 → VPN / P2P → 服务器配置”，填写控制与中继服务器地址（例如 `https://relay.example.com` 或 `http://<IP>:8080`）。

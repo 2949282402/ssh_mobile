@@ -77,15 +77,18 @@ The application can launch without real server or AI credentials. A reachable SS
 
 ## Control Plane & Public Relay Server Startup
 
-The bundled `relay/` Go service provides memory-only E2E WSS relaying and device control plane capabilities for Network Transfer / P2P fallback.
+The bundled `relay/` Go service provides memory-only E2E WSS relaying, device control plane, and a **built-in Web Admin Dashboard** for Network Transfer / P2P fallback.
 
-### Option 1: Direct Go execution
+It runs out of the box with zero required configuration. Missing tokens and secrets are automatically generated at startup and displayed in the Web Admin Dashboard.
+
+### Option 1: Direct Go execution (Zero Config)
 
 ```bash
 cd relay
-# Optional: set RELAY_ADDRESS environment variable (default is :8080)
 go run ./cmd/relay
 ```
+
+Open `http://localhost:8080` in your browser to view the **Web Admin Dashboard**, copy the auto-generated `Enrollment Token`, and manage registered devices.
 
 ### Option 2: Production deployment via Docker Compose
 
@@ -94,7 +97,7 @@ Deploy with Caddy using the [relay deployment guide](relay/README.md):
 ```powershell
 cd relay
 Copy-Item .env.example .env
-# Set RELAY_PUBLIC_DOMAIN, RELAY_ENROLLMENT_TOKEN, and secrets.
+# Set RELAY_PUBLIC_DOMAIN, optional RELAY_ENROLLMENT_TOKEN, and secrets.
 docker compose --env-file .env up --build -d
 ```
 
@@ -103,10 +106,7 @@ docker compose --env-file .env up --build -d
 ```bash
 cd relay
 docker build -t ssh-mobile-relay .
-docker run --rm -p 8080:8080 \
-  -e RELAY_ENROLLMENT_TOKEN='your-enrollment-token' \
-  -e RELAY_CREDENTIAL_KEY='base64url-32-byte-secret' \
-  ssh-mobile-relay
+docker run --rm -p 8080:8080 ssh-mobile-relay
 ```
 
 In SSH Mobile, open **Settings → Network Transfer → Control Server** and enter the relay server URL (e.g. `https://relay.example.com` or `http://<ip>:8080`).
