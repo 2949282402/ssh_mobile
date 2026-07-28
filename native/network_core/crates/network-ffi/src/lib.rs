@@ -5,7 +5,7 @@ use std::panic::catch_unwind;
 use std::slice;
 use prost::Message;
 use network_core::NetworkRuntime;
-use network_protocol::{NetworkCommand, NetworkEvent};
+use network_protocol::NetworkCommand;
 
 pub const SSH_NET_ABI_VERSION: u32 = 1;
 

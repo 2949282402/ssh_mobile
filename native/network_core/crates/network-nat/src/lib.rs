@@ -1,3 +1,13 @@
-//! NAT traversal, candidate probing, and PathManager.
+//! NAT traversal, STUN client, candidate gathering, and path selection.
 
-pub struct PathManager;
+pub mod candidate;
+pub mod discovery;
+pub mod hole_punch;
+pub mod path_manager;
+pub mod stun;
+
+pub use candidate::{Candidate, CandidateKind};
+pub use discovery::discover_candidates;
+pub use hole_punch::probe_candidate;
+pub use path_manager::PathManager;
+pub use stun::query_stun;
