@@ -2,6 +2,10 @@
 
 # SSH Mobile Control & Relay Server
 
+<p align="center">
+  <strong>English</strong> | <a href="./README.zh-CN.md">简体中文</a>
+</p>
+
 This service is a memory-only control plane and WebSocket relay for SSH Mobile's Network Transfer / P2P fallback. It does not persist transfer frames, filenames, or raw file contents. Devices receive signed credentials after enrollment; restarting the relay drops live sessions but does not expose file contents.
 
 ## Quick Start (Zero Config)
