@@ -239,72 +239,7 @@ class _VpnP2pShareViewState extends State<VpnP2pShareView> {
           ),
           const SizedBox(height: 16),
 
-          // 2. NAT / Relay Route Status Card
-          Card(
-            elevation: 0,
-            color: colorScheme.surfaceContainerLow,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-              side: BorderSide(
-                color: colorScheme.outlineVariant.withValues(alpha: 0.5),
-              ),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.alt_route_rounded, color: colorScheme.primary),
-                      const SizedBox(width: 8),
-                      Text(
-                        strings.vpnRelayStatus,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: CircleAvatar(
-                      backgroundColor: colorScheme.primaryContainer,
-                      child: Icon(
-                        Icons.speed_rounded,
-                        color: colorScheme.onPrimaryContainer,
-                      ),
-                    ),
-                    title: const Text('Direct Path (QUIC P2P / STUN)'),
-                    subtitle: Text(
-                      _isEnrolled
-                          ? 'Route: UDP Direct · RTT: 24 ms · Packet Loss: 0.0%'
-                          : 'Not connected to P2P relay mesh',
-                      style: theme.textTheme.bodySmall,
-                    ),
-                    trailing: OutlinedButton(
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              settings.isEnglish
-                                  ? 'NAT hole punch probe completed. RTT: 24ms.'
-                                  : 'NAT 打洞探测完成，往返延迟：24ms。',
-                            ),
-                          ),
-                        );
-                      },
-                      child: Text(strings.vpnHolePunchProbe),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // 3. P2P Peer Nodes List Card
+          // 2. P2P Peer Nodes List Card
           Card(
             elevation: 0,
             color: colorScheme.surfaceContainerLow,
