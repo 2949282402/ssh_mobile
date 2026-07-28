@@ -25,6 +25,8 @@ across sessions.
   and atomic rename, WireGuard backend abstraction, Go control plane enroll/WSS endpoints,
   and TransferTransport abstraction).
 
+- 2026-07-28: Go control plane and relay server (`relay/`) supports zero-config startup with auto-generated Enrollment Token and HMAC Credential Key. Web Admin Dashboard static assets (`index.html`, `style.css`, `app.js`) are decoupled in `relay/internal/relay/static/` and embedded via `//go:embed` for single-binary deployment. Relay documentation is maintained in both English (`relay/README.md`) and Chinese (`relay/README.zh-CN.md`).
+
 - 2026-07-26: The optional `relay/` Go service is a memory-only WSS router for
   explicit SFTP public-relay transfers. It must never persist frames, file
   names, or file metadata. Flutter encrypts offers and 512 KiB data chunks
