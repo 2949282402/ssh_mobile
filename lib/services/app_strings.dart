@@ -643,8 +643,20 @@ class AppStrings {
   String get notConnected => _en ? 'Not Connected' : '未连接';
   String get connectingEllipsis => _en ? 'Connecting...' : '连接中...';
 
-  // ── LAN Share ──
-  String get lanShare => _en ? 'LAN Share' : '局域网快传';
+  // ── Network Transfer (Formerly LAN Share) ──
+  String get lanShare => _en ? 'Network Transfer' : '网络传输';
+  String get networkTabLan => _en ? 'LAN' : '局域网';
+  String get networkTabVpn => _en ? 'VPN / P2P' : 'VPN';
+  String get vpnServerConfigTitle => _en ? 'Control Server' : '服务器配置';
+  String get vpnServerUrl => _en ? 'Server Address' : '服务器地址';
+  String get vpnEnrollStatus => _en ? 'Enrollment Status' : '注册状态';
+  String get vpnEnrollButton => _en ? 'Enroll Device' : '注册设备';
+  String get vpnEnrolledBadge => _en ? 'Enrolled & Verified' : '已注册 (可信)';
+  String get vpnNotEnrolledBadge => _en ? 'Not Enrolled' : '未注册';
+  String get vpnRelayStatus => _en ? 'NAT / Relay Route' : 'NAT / 中继线路';
+  String get vpnPeerNodes => _en ? 'P2P Nodes' : 'P2P 节点列表';
+  String get vpnNoPeers => _en ? 'No P2P nodes enrolled' : '暂无可用的 P2P 节点';
+  String get vpnHolePunchProbe => _en ? 'Probe NAT Hole Punch' : '探测 NAT 打洞';
   String get lanShareRadarHint =>
       _en ? 'Scanning nearby devices...' : '正在雷达扫描附近设备…';
   String get lanShareRadarStoppedHint => _en ? 'Scanning paused' : '扫描已暂停';

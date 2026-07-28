@@ -16,6 +16,7 @@ import 'package:ssh_mobile/widgets/overflow_scroll_text.dart';
 import '../lan_share_feature_scope.dart';
 import 'lan_chat_screen.dart';
 import 'lan_qr_scanner_screen.dart';
+import 'vpn_p2p_share_view.dart';
 
 part 'widgets/lan_share_dialogs.dart';
 
@@ -29,6 +30,7 @@ class LanShareScreen extends StatefulWidget {
 class _LanShareScreenState extends State<LanShareScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
+  int _selectedModeIndex = 0;
   bool _isDragging = false;
   StreamSubscription? _intentSubscription;
   String? _activeDeleteDeviceId;
@@ -251,24 +253,56 @@ class _LanShareScreenState extends State<LanShareScreen>
                         ),
                       ),
                     ),
-                    // Self device info bar
-                    _buildSelfInfoBar(context, vm, strings),
-                    TabBar(
-                      controller: _tabController,
-                      tabs: [
-                        Tab(text: strings.lanShareDeviceList),
-                        Tab(text: strings.lanShareTransferHistory),
-                      ],
-                    ),
-                    Expanded(
-                      child: TabBarView(
-                        controller: _tabController,
-                        children: [
-                          _buildRadarView(context, strings, vm),
-                          _buildHistoryView(context, strings, vm),
-                        ],
+                    // Mode segmented bar (局域网 / VPN)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16.0,
+                        vertical: 4.0,
+                      ),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: SegmentedButton<int>(
+                          segments: [
+                            ButtonSegment<int>(
+                              value: 0,
+                              label: Text(strings.networkTabLan),
+                              icon: const Icon(Icons.lan_rounded),
+                            ),
+                            ButtonSegment<int>(
+                              value: 1,
+                              label: Text(strings.networkTabVpn),
+                              icon: const Icon(Icons.vpn_lock_rounded),
+                            ),
+                          ],
+                          selected: {_selectedModeIndex},
+                          onSelectionChanged: (Set<int> selected) {
+                            setState(() => _selectedModeIndex = selected.first);
+                          },
+                        ),
                       ),
                     ),
+                    if (_selectedModeIndex == 0) ...[
+                      // Self device info bar
+                      _buildSelfInfoBar(context, vm, strings),
+                      TabBar(
+                        controller: _tabController,
+                        tabs: [
+                          Tab(text: strings.lanShareDeviceList),
+                          Tab(text: strings.lanShareTransferHistory),
+                        ],
+                      ),
+                      Expanded(
+                        child: TabBarView(
+                          controller: _tabController,
+                          children: [
+                            _buildRadarView(context, strings, vm),
+                            _buildHistoryView(context, strings, vm),
+                          ],
+                        ),
+                      ),
+                    ] else ...[
+                      const Expanded(child: VpnP2pShareView()),
+                    ],
                   ],
                 ),
               ),
