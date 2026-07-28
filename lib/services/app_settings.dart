@@ -232,7 +232,18 @@ class AppSettings extends ChangeNotifier {
       _terminalFontFamily = prefs.getString(_terminalFontFamilyKey) ?? '';
       _serverListLayoutMode =
           prefs.getString(_serverListLayoutModeKey) ?? 'list';
-      _relayEndpoint = prefs.getString(_relayEndpointKey) ?? '';
+      final storedRelayEndpoint = prefs.getString(_relayEndpointKey) ?? '';
+      final storedRelayUri = Uri.tryParse(storedRelayEndpoint);
+      _relayEndpoint =
+          storedRelayUri != null &&
+              storedRelayUri.scheme == 'https' &&
+              storedRelayUri.host.isNotEmpty &&
+              storedRelayUri.userInfo.isEmpty &&
+              storedRelayUri.query.isEmpty &&
+              storedRelayUri.fragment.isEmpty &&
+              (storedRelayUri.path.isEmpty || storedRelayUri.path == '/')
+          ? storedRelayEndpoint.replaceAll(RegExp(r'/+$'), '')
+          : '';
       _developerMode = prefs.getBool(_developerModeKey) ?? false;
       _developerPanelFloating =
           prefs.getBool(_developerPanelFloatingKey) ?? false;
@@ -366,12 +377,16 @@ class AppSettings extends ChangeNotifier {
     if (normalized.isNotEmpty) {
       final uri = Uri.tryParse(normalized);
       if (uri == null ||
-          (uri.scheme != 'https' && uri.scheme != 'http') ||
-          uri.host.isEmpty) {
+          uri.scheme != 'https' ||
+          uri.host.isEmpty ||
+          uri.userInfo.isNotEmpty ||
+          uri.query.isNotEmpty ||
+          uri.fragment.isNotEmpty ||
+          (uri.path.isNotEmpty && uri.path != '/')) {
         throw ArgumentError.value(
           endpoint,
           'endpoint',
-          'must be an HTTP(S) relay URL',
+          'must be an HTTPS relay origin',
         );
       }
     }

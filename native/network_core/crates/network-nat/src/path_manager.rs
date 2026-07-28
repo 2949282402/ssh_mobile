@@ -1,7 +1,7 @@
+use crate::candidate::Candidate;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
-use crate::candidate::Candidate;
 
 /// Manages candidate selection, path scoring, keepalives, and reprobing.
 pub struct PathManager {

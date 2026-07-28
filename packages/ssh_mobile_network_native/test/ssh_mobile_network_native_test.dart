@@ -1,4 +1,5 @@
 import 'dart:ffi';
+import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 import 'package:test/test.dart';
 import 'package:ssh_mobile_network_native/ssh_mobile_network_native.dart';
@@ -29,5 +30,23 @@ void main() {
     } finally {
       calloc.free(handlePtr);
     }
+  });
+
+  test('native runtime polls events on a helper isolate', () async {
+    final runtime = await native.createRuntime();
+    addTearDown(runtime.dispose);
+
+    final eventFuture = runtime.rawEvents.first.timeout(
+      const Duration(seconds: 2),
+    );
+    final command = Uint8List.fromList(<int>[
+      0x0a,
+      0x03,
+      ...'cmd'.codeUnits,
+      0x10,
+      0x01,
+    ]);
+    expect(runtime.sendCommand(command), 0);
+    expect(await eventFuture, isNotEmpty);
   });
 }

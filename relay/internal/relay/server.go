@@ -2,6 +2,8 @@ package relay
 
 import (
 	"crypto/ed25519"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -22,27 +24,18 @@ type EnrolledDevice struct {
 }
 
 type Server struct {
-	config             Config
-	hub                *hub
-	upgrader           websocket.Upgrader
-	enrolledDevices    map[string]*EnrolledDevice
-	devicesMutex       sync.Mutex
-	adminUser          string
-	adminPassword      string
-	mustChangePassword bool
-	sessions           map[string]time.Time
-	authMutex          sync.Mutex
-}
-
-type registrationRequest struct {
-	DeviceID        string `json:"device_id"`
-	PublicKey       string `json:"public_key"`
-	EnrollmentToken string `json:"enrollment_token"`
-}
-
-type registrationResponse struct {
-	Credential string `json:"credential"`
-	ExpiresAt  int64  `json:"expires_at"`
+	config            Config
+	hub               *hub
+	upgrader          websocket.Upgrader
+	enrolledDevices   map[string]*EnrolledDevice
+	revokedDevices    map[string]struct{}
+	proofNonces       map[string]map[string]time.Time
+	devicesMutex      sync.Mutex
+	adminUser         string
+	adminPasswordHash [sha256.Size]byte
+	adminConfigured   bool
+	sessions          map[string]time.Time
+	authMutex         sync.Mutex
 }
 
 type enrollRequest struct {
@@ -70,26 +63,31 @@ func NewServer(config Config) *Server {
 	if len(config.CredentialKey) == 0 {
 		config.CredentialKey = randomBytes(32)
 	}
+	if config.CredentialTTL <= 0 {
+		config.CredentialTTL = 24 * time.Hour
+	}
+	if config.SessionTTL <= 0 {
+		config.SessionTTL = 15 * time.Minute
+	}
+	if config.MaxConnections <= 0 {
+		config.MaxConnections = 2048
+	}
 
-	adminUser := config.AdminUser
-	if adminUser == "" {
-		adminUser = "hejulian"
-	}
-	adminPassword := config.AdminPassword
-	if adminPassword == "" {
-		adminPassword = "hejulian"
-	}
-	mustChange := adminPassword == "hejulian"
+	adminPasswordHash := passwordDigest(config.CredentialKey, config.AdminPassword)
+	adminConfigured := config.AdminUser != "" && len(config.AdminPassword) >= 12
+	config.AdminPassword = ""
 
 	return &Server{
-		config:             config,
-		hub:                newHub(config),
-		upgrader:           websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return false }},
-		enrolledDevices:    make(map[string]*EnrolledDevice),
-		adminUser:          adminUser,
-		adminPassword:      adminPassword,
-		mustChangePassword: mustChange,
-		sessions:           make(map[string]time.Time),
+		config:            config,
+		hub:               newHub(config),
+		upgrader:          websocket.Upgrader{},
+		enrolledDevices:   make(map[string]*EnrolledDevice),
+		revokedDevices:    make(map[string]struct{}),
+		proofNonces:       make(map[string]map[string]time.Time),
+		adminUser:         config.AdminUser,
+		adminPasswordHash: adminPasswordHash,
+		adminConfigured:   adminConfigured,
+		sessions:          make(map[string]time.Time),
 	}
 }
 
@@ -104,7 +102,6 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/login", s.loginHandler)
 	mux.HandleFunc("POST /api/logout", s.logoutHandler)
 	mux.HandleFunc("GET /api/auth-status", s.authStatusHandler)
-	mux.HandleFunc("POST /api/change-password", s.changePasswordHandler)
 
 	// Admin Protected routes
 	mux.HandleFunc("GET /api/stats", s.authMiddleware(s.apiStats))
@@ -112,7 +109,6 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/devices/revoke", s.authMiddleware(s.revokeDevice))
 
 	// Device protocol routes
-	mux.HandleFunc("POST /v1/devices/register", s.register)
 	mux.HandleFunc("POST /v1/devices/enroll", s.enroll)
 	mux.HandleFunc("GET /v1/connect", s.connect)
 	mux.HandleFunc("GET /v1/control", s.control)
@@ -123,38 +119,17 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) register(w http.ResponseWriter, r *http.Request) {
-	defer r.Body.Close()
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
-	var request registrationRequest
-	if json.NewDecoder(r.Body).Decode(&request) != nil || request.EnrollmentToken != s.config.EnrollmentToken || request.DeviceID == "" || len(request.DeviceID) > 128 {
-		http.Error(w, "invalid registration", http.StatusUnauthorized)
-		return
-	}
-	publicKey, err := base64.RawURLEncoding.DecodeString(request.PublicKey)
-	if err != nil || len(publicKey) != ed25519.PublicKeySize {
-		http.Error(w, "invalid public key", http.StatusBadRequest)
-		return
-	}
-	credential, err := issueCredential(s.config.CredentialKey, request.DeviceID, publicKey, s.config.CredentialTTL)
-	if err != nil {
-		http.Error(w, "credential issuance failed", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(registrationResponse{credential, time.Now().Add(s.config.CredentialTTL).Unix()})
-}
-
 func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	var request enrollRequest
-	if json.NewDecoder(r.Body).Decode(&request) != nil || request.EnrollmentToken != s.config.EnrollmentToken || request.DeviceID == "" || len(request.DeviceID) > 128 {
+	if json.NewDecoder(r.Body).Decode(&request) != nil || !s.validEnrollmentToken(request.EnrollmentToken) || request.DeviceID == "" || len(request.DeviceID) > 128 {
 		http.Error(w, "invalid enrollment request", http.StatusUnauthorized)
 		return
 	}
-	if request.ProtocolVersion == 0 {
-		request.ProtocolVersion = 1
+	if request.ProtocolVersion != 1 || len(request.Platform) > 64 {
+		http.Error(w, "unsupported protocol version or platform", http.StatusBadRequest)
+		return
 	}
 	publicKey, err := base64.RawURLEncoding.DecodeString(request.PublicKey)
 	if err != nil || len(publicKey) != ed25519.PublicKeySize {
@@ -167,22 +142,56 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
-	s.devicesMutex.Lock()
-	s.enrolledDevices[request.DeviceID] = &EnrolledDevice{
-		DeviceID:        request.DeviceID,
-		PublicKey:       request.PublicKey,
-		Platform:        request.Platform,
-		ProtocolVersion: request.ProtocolVersion,
-		EnrolledAt:      now,
-	}
-	s.devicesMutex.Unlock()
+	s.replaceEnrollment(
+		request.DeviceID,
+		request.PublicKey,
+		request.Platform,
+		request.ProtocolVersion,
+		now,
+	)
+	writeEnrollmentResponse(
+		w,
+		credential,
+		now,
+		s.config.CredentialTTL,
+		request.ProtocolVersion,
+	)
+}
 
+func (s *Server) replaceEnrollment(
+	deviceID string,
+	publicKey string,
+	platform string,
+	protocolVersion uint32,
+	enrolledAt time.Time,
+) {
+	s.devicesMutex.Lock()
+	s.enrolledDevices[deviceID] = &EnrolledDevice{
+		DeviceID:        deviceID,
+		PublicKey:       publicKey,
+		Platform:        platform,
+		ProtocolVersion: protocolVersion,
+		EnrolledAt:      enrolledAt,
+	}
+	delete(s.revokedDevices, deviceID)
+	delete(s.proofNonces, deviceID)
+	s.devicesMutex.Unlock()
+	s.hub.disconnectDevice(deviceID)
+}
+
+func writeEnrollmentResponse(
+	w http.ResponseWriter,
+	credential string,
+	serverTime time.Time,
+	ttl time.Duration,
+	protocolVersion uint32,
+) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(enrollResponse{
 		Credential:      credential,
-		ExpiresAt:       now.Add(s.config.CredentialTTL).Unix(),
-		ServerTime:      now.Unix(),
-		ProtocolVersion: 1,
+		ExpiresAt:       serverTime.Add(ttl).Unix(),
+		ServerTime:      serverTime.Unix(),
+		ProtocolVersion: protocolVersion,
 	})
 }
 
@@ -200,6 +209,7 @@ func (s *Server) rotateToken(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	var req struct {
 		DeviceID string `json:"device_id"`
 	}
@@ -210,14 +220,11 @@ func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 
 	s.devicesMutex.Lock()
 	delete(s.enrolledDevices, req.DeviceID)
+	s.revokedDevices[req.DeviceID] = struct{}{}
+	delete(s.proofNonces, req.DeviceID)
 	s.devicesMutex.Unlock()
 
-	s.hub.mutex.Lock()
-	p := s.hub.peers[req.DeviceID]
-	if p != nil && p.socket != nil {
-		go p.socket.Close()
-	}
-	s.hub.mutex.Unlock()
+	s.hub.disconnectDevice(req.DeviceID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
@@ -229,29 +236,74 @@ func (s *Server) authenticatedRequest(r *http.Request) (credentialClaims, []byte
 	if err != nil {
 		return credentialClaims{}, nil, false
 	}
-	if err := verifyDeviceProof(publicKey, r.Header.Get("X-Relay-Nonce"), r.Header.Get("X-Relay-Signature")); err != nil {
+	nonce := r.Header.Get("X-Relay-Nonce")
+	nonceBytes, err := base64.RawURLEncoding.DecodeString(nonce)
+	if err != nil || len(nonceBytes) != 32 {
+		return credentialClaims{}, nil, false
+	}
+	signature := r.Header.Get("X-Relay-Signature")
+	proofPayload := r.Method + "\n" + r.URL.Path + "\n" + nonce
+	if err := verifyDeviceProof(publicKey, proofPayload, signature); err != nil {
+		return credentialClaims{}, nil, false
+	}
+	s.devicesMutex.Lock()
+	_, revoked := s.revokedDevices[claims.DeviceID]
+	device, enrolled := s.enrolledDevices[claims.DeviceID]
+	keyMatches := enrolled &&
+		device.PublicKey == base64.RawURLEncoding.EncodeToString(publicKey)
+	replayed := false
+	if !revoked && keyMatches {
+		replayed = s.consumeProofNonceLocked(
+			claims.DeviceID,
+			nonce,
+			time.Unix(claims.ExpiresAt, 0),
+		)
+	}
+	s.devicesMutex.Unlock()
+	if revoked || !keyMatches || replayed {
 		return credentialClaims{}, nil, false
 	}
 	return claims, publicKey, true
 }
 
+func (s *Server) consumeProofNonceLocked(deviceID, nonce string, expiresAt time.Time) bool {
+	now := time.Now()
+	deviceNonces := s.proofNonces[deviceID]
+	if deviceNonces == nil {
+		deviceNonces = make(map[string]time.Time)
+		s.proofNonces[deviceID] = deviceNonces
+	}
+	for value, expiry := range deviceNonces {
+		if now.After(expiry) {
+			delete(deviceNonces, value)
+		}
+	}
+	if _, exists := deviceNonces[nonce]; exists {
+		return true
+	}
+	if len(deviceNonces) >= 128 {
+		return true
+	}
+	deviceNonces[nonce] = expiresAt
+	return false
+}
+
+func (s *Server) validEnrollmentToken(token string) bool {
+	s.devicesMutex.Lock()
+	expected := s.config.EnrollmentToken
+	s.devicesMutex.Unlock()
+	return token != "" && hmac.Equal([]byte(token), []byte(expected))
+}
+
 func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
-	claims, _, ok := s.authenticatedRequest(r)
-	if !ok {
-		http.Error(w, "authentication failed", http.StatusUnauthorized)
-		return
-	}
-	connection, err := s.upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-	if !s.hub.add(&peer{deviceID: claims.DeviceID, socket: connection, outbound: make(chan outboundFrame, 32)}) {
-		connection.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "connection limit"), time.Now().Add(time.Second))
-		connection.Close()
-	}
+	s.upgradeDevice(w, r)
 }
 
 func (s *Server) control(w http.ResponseWriter, r *http.Request) {
+	s.upgradeDevice(w, r)
+}
+
+func (s *Server) upgradeDevice(w http.ResponseWriter, r *http.Request) {
 	claims, _, ok := s.authenticatedRequest(r)
 	if !ok {
 		http.Error(w, "authentication failed", http.StatusUnauthorized)
@@ -261,9 +313,25 @@ func (s *Server) control(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	if !s.hub.add(&peer{deviceID: claims.DeviceID, socket: connection, outbound: make(chan outboundFrame, 32)}) {
+	peer := &peer{
+		deviceID: claims.DeviceID,
+		socket:   connection,
+		outbound: make(chan outboundFrame, 32),
+		done:     make(chan struct{}),
+	}
+	if !s.hub.add(peer) {
 		connection.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "connection limit"), time.Now().Add(time.Second))
 		connection.Close()
+		return
+	}
+	ready, _ := json.Marshal(controlFrame{
+		Type:            "ready",
+		DeviceID:        claims.DeviceID,
+		Timestamp:       time.Now().UnixMilli(),
+		ProtocolVersion: 1,
+	})
+	if !peer.enqueue(outboundFrame{websocket.TextMessage, ready}) {
+		s.hub.remove(peer)
 	}
 }
 
@@ -276,6 +344,7 @@ type peer struct {
 	deviceID        string
 	socket          *websocket.Conn
 	outbound        chan outboundFrame
+	done            chan struct{}
 	once            sync.Once
 	windowStartedAt time.Time
 	framesInWindow  int
@@ -286,15 +355,20 @@ type session struct {
 	sender    string
 	receiver  string
 	expiresAt time.Time
+	accepted  bool
+	completed bool
 }
 
 type controlFrame struct {
-	Type      string `json:"type"`
-	SessionID string `json:"session_id,omitempty"`
-	TargetID  string `json:"target_id,omitempty"`
-	Payload   string `json:"payload,omitempty"`
-	Timestamp int64  `json:"timestamp,omitempty"`
-	Online    bool   `json:"online,omitempty"`
+	Type            string `json:"type"`
+	SessionID       string `json:"session_id,omitempty"`
+	TargetID        string `json:"target_id,omitempty"`
+	SenderID        string `json:"sender_id,omitempty"`
+	DeviceID        string `json:"device_id,omitempty"`
+	Payload         string `json:"payload,omitempty"`
+	Timestamp       int64  `json:"timestamp,omitempty"`
+	ProtocolVersion uint32 `json:"protocol_version,omitempty"`
+	Online          *bool  `json:"online,omitempty"`
 }
 
 type hub struct {
@@ -314,26 +388,30 @@ func newHub(config Config) *hub {
 func (h *hub) close() {
 	close(h.stop)
 	h.mutex.Lock()
-	defer h.mutex.Unlock()
-	for _, peer := range h.peers {
-		peer.socket.Close()
+	peers := make([]*peer, 0, len(h.peers))
+	for _, value := range h.peers {
+		peers = append(peers, value)
 	}
 	h.peers = map[string]*peer{}
 	h.sessions = map[string]session{}
+	h.mutex.Unlock()
+	for _, peer := range peers {
+		closePeer(peer)
+	}
 }
 
 func (h *hub) add(peer *peer) bool {
 	peer.lastSeen = time.Now()
 	h.mutex.Lock()
-	if len(h.peers) >= h.config.MaxConnections {
+	previous := h.peers[peer.deviceID]
+	if previous == nil && len(h.peers) >= h.config.MaxConnections {
 		h.mutex.Unlock()
 		return false
 	}
-	previous := h.peers[peer.deviceID]
 	h.peers[peer.deviceID] = peer
 	h.mutex.Unlock()
 	if previous != nil {
-		previous.socket.Close()
+		closePeer(previous)
 	}
 	go h.write(peer)
 	go h.read(peer)
@@ -341,22 +419,49 @@ func (h *hub) add(peer *peer) bool {
 }
 
 func (h *hub) remove(peer *peer) {
+	h.mutex.Lock()
+	if h.peers[peer.deviceID] == peer {
+		delete(h.peers, peer.deviceID)
+	}
+	h.mutex.Unlock()
+	closePeer(peer)
+}
+
+func closePeer(peer *peer) {
 	peer.once.Do(func() {
-		h.mutex.Lock()
-		if h.peers[peer.deviceID] == peer {
-			delete(h.peers, peer.deviceID)
-		}
-		h.mutex.Unlock()
+		close(peer.done)
 		peer.socket.Close()
 	})
 }
 
+func (h *hub) disconnectDevice(deviceID string) {
+	h.mutex.Lock()
+	peer := h.peers[deviceID]
+	if peer != nil {
+		delete(h.peers, deviceID)
+	}
+	for sessionID, current := range h.sessions {
+		if current.sender == deviceID || current.receiver == deviceID {
+			delete(h.sessions, sessionID)
+		}
+	}
+	h.mutex.Unlock()
+	if peer != nil {
+		closePeer(peer)
+	}
+}
+
 func (h *hub) write(peer *peer) {
 	defer h.remove(peer)
-	for frame := range peer.outbound {
-		peer.socket.SetWriteDeadline(time.Now().Add(15 * time.Second))
-		if err := peer.socket.WriteMessage(frame.messageType, frame.data); err != nil {
+	for {
+		select {
+		case <-peer.done:
 			return
+		case frame := <-peer.outbound:
+			peer.socket.SetWriteDeadline(time.Now().Add(15 * time.Second))
+			if err := peer.socket.WriteMessage(frame.messageType, frame.data); err != nil {
+				return
+			}
 		}
 	}
 }
@@ -369,7 +474,9 @@ func (h *hub) read(peer *peer) {
 		if err != nil {
 			return
 		}
+		h.mutex.Lock()
 		peer.lastSeen = time.Now()
+		h.mutex.Unlock()
 		if kind == websocket.TextMessage {
 			h.routeControl(peer, data)
 		} else if kind == websocket.BinaryMessage {
@@ -380,8 +487,30 @@ func (h *hub) read(peer *peer) {
 	}
 }
 
+func (p *peer) enqueue(frame outboundFrame) bool {
+	select {
+	case <-p.done:
+		return false
+	default:
+	}
+	select {
+	case <-p.done:
+		return false
+	case p.outbound <- frame:
+		return true
+	default:
+		return false
+	}
+}
+
 func (h *hub) routeControl(sender *peer, data []byte) {
 	if !sender.allowFrame() || len(data) > maxControlFrameBytes {
+		return
+	}
+	h.mutex.Lock()
+	isCurrent := h.peers[sender.deviceID] == sender
+	h.mutex.Unlock()
+	if !isCurrent {
 		return
 	}
 	var frame controlFrame
@@ -395,9 +524,8 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 			Type:      "heartbeat_ack",
 			Timestamp: time.Now().UnixMilli(),
 		})
-		select {
-		case sender.outbound <- outboundFrame{websocket.TextMessage, resp}:
-		default:
+		if !sender.enqueue(outboundFrame{websocket.TextMessage, resp}) {
+			go sender.socket.Close()
 		}
 		return
 	}
@@ -411,16 +539,23 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 		resp, _ := json.Marshal(controlFrame{
 			Type:     "lookup_response",
 			TargetID: frame.TargetID,
-			Online:   isOnline,
+			Online:   &isOnline,
 		})
-		select {
-		case sender.outbound <- outboundFrame{websocket.TextMessage, resp}:
-		default:
+		if !sender.enqueue(outboundFrame{websocket.TextMessage, resp}) {
+			go sender.socket.Close()
 		}
 		return
 	}
 
+	switch frame.Type {
+	case "offer", "accept", "resume", "complete", "complete_ack", "cancel":
+	default:
+		return
+	}
 	if len(frame.SessionID) != 32 {
+		return
+	}
+	if frame.SessionID != strings.ToLower(frame.SessionID) {
 		return
 	}
 	if _, err := hex.DecodeString(frame.SessionID); err != nil {
@@ -430,15 +565,60 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
 	if frame.Type == "offer" {
-		if frame.TargetID == "" || frame.TargetID == sender.deviceID || h.peers[frame.TargetID] == nil {
+		if frame.TargetID == "" ||
+			frame.TargetID == sender.deviceID ||
+			frame.Payload == "" ||
+			h.peers[frame.TargetID] == nil {
 			return
 		}
-		h.sessions[frame.SessionID] = session{sender.deviceID, frame.TargetID, time.Now().Add(h.config.SessionTTL)}
+		if _, err := base64.RawURLEncoding.DecodeString(frame.Payload); err != nil {
+			return
+		}
+		if _, exists := h.sessions[frame.SessionID]; exists {
+			return
+		}
+		h.sessions[frame.SessionID] = session{
+			sender:    sender.deviceID,
+			receiver:  frame.TargetID,
+			expiresAt: time.Now().Add(h.config.SessionTTL),
+		}
 	} else {
 		current, exists := h.sessions[frame.SessionID]
-		if !exists || (current.sender != sender.deviceID && current.receiver != sender.deviceID) {
+		if !exists ||
+			time.Now().After(current.expiresAt) ||
+			(current.sender != sender.deviceID && current.receiver != sender.deviceID) {
+			if exists && time.Now().After(current.expiresAt) {
+				delete(h.sessions, frame.SessionID)
+			}
 			return
 		}
+		switch frame.Type {
+		case "accept":
+			if current.receiver != sender.deviceID || current.accepted || current.completed {
+				return
+			}
+			current.accepted = true
+		case "resume":
+			if current.receiver != sender.deviceID || current.completed {
+				return
+			}
+			current.accepted = true
+		case "complete":
+			if current.sender != sender.deviceID || !current.accepted || current.completed {
+				return
+			}
+			current.completed = true
+		case "complete_ack":
+			if current.receiver != sender.deviceID || !current.completed {
+				return
+			}
+		case "cancel":
+			// Either participant may cancel.
+		default:
+			return
+		}
+		current.expiresAt = time.Now().Add(h.config.SessionTTL)
+		h.sessions[frame.SessionID] = current
 	}
 	current, ok := h.sessions[frame.SessionID]
 	if !ok {
@@ -450,41 +630,57 @@ func (h *hub) routeControl(sender *peer, data []byte) {
 	}
 	target := h.peers[targetID]
 	if target != nil {
-		select {
-		case target.outbound <- outboundFrame{websocket.TextMessage, data}:
-		default:
+		forwarded, err := json.Marshal(controlFrame{
+			Type:      frame.Type,
+			SessionID: frame.SessionID,
+			SenderID:  sender.deviceID,
+			Payload:   frame.Payload,
+		})
+		if err != nil || !target.enqueue(outboundFrame{websocket.TextMessage, forwarded}) {
 			go target.socket.Close()
 		}
 	}
-	if frame.Type == "cancel" {
+	if frame.Type == "cancel" || frame.Type == "complete_ack" {
 		delete(h.sessions, frame.SessionID)
 	}
 }
 
 func (h *hub) routeBinary(sender *peer, data []byte) {
-	if !sender.allowFrame() || len(data) < 25 || len(data) > maxBinaryFrameBytes {
+	if !sender.allowFrame() ||
+		len(data) < 25 ||
+		len(data) > maxBinaryFrameBytes ||
+		data[0] != 0x10 {
+		return
+	}
+	h.mutex.Lock()
+	isCurrent := h.peers[sender.deviceID] == sender
+	h.mutex.Unlock()
+	if !isCurrent {
 		return
 	}
 	sessionID := hex.EncodeToString(data[1:17])
 	h.mutex.Lock()
 	current, ok := h.sessions[sessionID]
-	if !ok || (current.sender != sender.deviceID && current.receiver != sender.deviceID) || time.Now().After(current.expiresAt) {
+	if !ok ||
+		current.sender != sender.deviceID ||
+		!current.accepted ||
+		current.completed ||
+		time.Now().After(current.expiresAt) {
+		if ok && time.Now().After(current.expiresAt) {
+			delete(h.sessions, sessionID)
+		}
 		h.mutex.Unlock()
 		return
 	}
-	targetID := current.receiver
-	if sender.deviceID == current.receiver {
-		targetID = current.sender
-	}
-	target := h.peers[targetID]
+	current.expiresAt = time.Now().Add(h.config.SessionTTL)
+	h.sessions[sessionID] = current
+	target := h.peers[current.receiver]
 	h.mutex.Unlock()
 	if target == nil {
 		return
 	}
 	copyData := append([]byte(nil), data...)
-	select {
-	case target.outbound <- outboundFrame{websocket.BinaryMessage, copyData}:
-	default:
+	if !target.enqueue(outboundFrame{websocket.BinaryMessage, copyData}) {
 		go target.socket.Close()
 	}
 }
@@ -568,25 +764,13 @@ func (s *Server) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
 			return
 		}
-		s.authMutex.Lock()
-		mustChange := s.mustChangePassword
-		s.authMutex.Unlock()
-
-		if mustChange {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error":                "must_change_password",
-				"must_change_password": true,
-			})
-			return
-		}
 		next(w, r)
 	}
 }
 
 func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -597,8 +781,10 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.authMutex.Lock()
-	valid := req.Username == s.adminUser && req.Password == s.adminPassword
-	mustChange := s.mustChangePassword
+	candidatePasswordHash := passwordDigest(s.config.CredentialKey, req.Password)
+	valid := s.adminConfigured &&
+		hmac.Equal([]byte(req.Username), []byte(s.adminUser)) &&
+		hmac.Equal(candidatePasswordHash[:], s.adminPasswordHash[:])
 	username := s.adminUser
 	s.authMutex.Unlock()
 
@@ -615,16 +801,15 @@ func (s *Server) loginHandler(w http.ResponseWriter, r *http.Request) {
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   requestUsesTLS(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   86400,
 	})
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":              true,
-		"must_change_password": mustChange,
-		"username":             username,
-		"token":                token,
+		"success":  true,
+		"username": username,
 	})
 }
 
@@ -650,63 +835,27 @@ func (s *Server) logoutHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) authStatusHandler(w http.ResponseWriter, r *http.Request) {
 	authed := s.isAuthorized(r)
 	s.authMutex.Lock()
-	mustChange := s.mustChangePassword
 	username := s.adminUser
 	s.authMutex.Unlock()
+	if !authed {
+		username = ""
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"authenticated":        authed,
-		"must_change_password": mustChange,
-		"username":             username,
+		"authenticated": authed,
+		"username":      username,
 	})
 }
 
-func (s *Server) changePasswordHandler(w http.ResponseWriter, r *http.Request) {
-	if !s.isAuthorized(r) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
-		return
-	}
+func passwordDigest(key []byte, password string) [sha256.Size]byte {
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(password))
+	var digest [sha256.Size]byte
+	copy(digest[:], mac.Sum(nil))
+	return digest
+}
 
-	defer r.Body.Close()
-	var req struct {
-		OldPassword string `json:"old_password"`
-		NewPassword string `json:"new_password"`
-	}
-	if json.NewDecoder(r.Body).Decode(&req) != nil {
-		http.Error(w, "invalid payload", http.StatusBadRequest)
-		return
-	}
-
-	s.authMutex.Lock()
-	defer s.authMutex.Unlock()
-
-	if req.OldPassword != s.adminPassword {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "旧密码输入不正确"})
-		return
-	}
-
-	if len(req.NewPassword) < 6 {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "新密码长度不能少于 6 位"})
-		return
-	}
-
-	if req.NewPassword == s.adminPassword {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "新密码不能与原初始密码相同"})
-		return
-	}
-
-	s.adminPassword = req.NewPassword
-	s.mustChangePassword = false
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+func requestUsesTLS(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }

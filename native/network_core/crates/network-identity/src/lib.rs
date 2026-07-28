@@ -15,12 +15,26 @@ impl DeviceIdentity {
     pub fn generate(device_id: String) -> Self {
         let mut csprng = OsRng;
         let identity_key = SigningKey::generate(&mut csprng);
-        let e2e_key = StaticSecret::random_from_rng(&mut csprng);
+        let e2e_key = StaticSecret::random_from_rng(csprng);
 
         Self {
             device_id,
             identity_key,
             e2e_key,
+        }
+    }
+
+    /// Restores the two independent long-lived device keys supplied by the
+    /// platform secure-storage layer.
+    pub fn from_private_keys(
+        device_id: String,
+        identity_private_key: [u8; 32],
+        e2e_private_key: [u8; 32],
+    ) -> Self {
+        Self {
+            device_id,
+            identity_key: SigningKey::from_bytes(&identity_private_key),
+            e2e_key: StaticSecret::from(e2e_private_key),
         }
     }
 

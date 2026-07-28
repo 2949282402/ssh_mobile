@@ -20,12 +20,37 @@ across sessions.
   context.
 
 ## Notes
-- 2026-07-28: Implemented cross-platform P2P Network Platform (native Tokio runtime,
-  Protobuf FFI, STUN/NAT traversal, Quinn QUIC P2P, streaming file transfer with SHA-256
-  and atomic rename, WireGuard backend abstraction, Go control plane enroll/WSS endpoints,
-  and TransferTransport abstraction).
+- 2026-07-28: The cross-platform network foundation includes the native Tokio
+  runtime, versioned Protobuf FFI, same-socket STUN discovery, authenticated
+  hole-punch packets, peer-identity-bound Quinn handshakes, verified streaming
+  file transfer, a Go enroll/WSS relay, and the Flutter transport abstraction.
+  Native command dispatch now executes configuration, peer registration,
+  PathManager selection, QUIC connect/send/cancel/approval, and current-protocol
+  Relay send/receive. `LanShareViewModel` file sends must use the injected
+  `TransferTransport`; do not restore the old HTTPS file-send fallback.
 
-- 2026-07-28: Go control plane and relay server (`relay/`) supports zero-config startup with auto-generated Enrollment Token and HMAC Credential Key. Web Admin Dashboard static assets (`index.html`, `style.css`, `app.js`) are decoupled in `relay/internal/relay/static/` and embedded via `//go:embed` for single-binary deployment. Relay documentation is maintained in both English (`relay/README.md`) and Chinese (`relay/README.zh-CN.md`).
+- 2026-07-28: Native Relay configuration is a separate current-protocol command
+  sent after enrollment. The coordinator gives the Rust runtime the in-memory
+  credential and Ed25519 seed, and only one Relay socket may own a device ID.
+  Incoming QUIC and Relay offers require root-level explicit approval; Relay
+  bytes remain AES-GCM ciphertext at the Go service and completion is reported
+  only after receiver persistence plus `complete_ack`.
+
+- 2026-07-28: The memory-only Go relay requires explicit enrollment, credential
+  signing, and dashboard admin secrets and rejects weak/missing configuration.
+  Device credentials are accepted only while the matching enrollment exists in
+  the current process; restart requires re-enrollment. A client is connected
+  only after validating `ready` protocol v1. Forwarded transfer controls bind
+  the authenticated `sender_id`, roles are enforced per session, and success
+  requires the receiver's `complete_ack`. Re-enrollment and revocation close
+  the old socket and purge its sessions. Dashboard data must use safe DOM APIs,
+  authenticated HttpOnly-cookie sessions, and no inline script.
+
+- 2026-07-28: During active development the Drift database uses one current
+  schema (`schemaVersion = 1`) with no upgrade/migration machinery. Schema
+  changes require deleting the local development database and regenerating
+  `app_database.g.dart`; do not add compatibility migrations until release
+  requirements explicitly change.
 
 - 2026-07-26: The optional `relay/` Go service is a memory-only WSS router for
   explicit SFTP public-relay transfers. It must never persist frames, file
@@ -325,23 +350,15 @@ across sessions.
 - 2026-06-20: Execution Mode step-by-step reliability. Mutating remote tools are gated by the current step status during execution mode: pending tasks must be marked running first, failed tasks block subsequent execution, and skipped tasks require reasons. Added dedicated `client_task_retry` and `client_task_skip` tools and UI buttons in message bubble.
 - 2026-06-21: Execution Mode step-scoped remote tools gate. Gating now covers all server/ssh/sftp/monitor tools, including read-only diagnostics such as detect_os and sftp_read_text, to enforce proper step update workflows. Skipping running steps directly is disallowed; skipping a step from AI triggers a plan_task_change approval request.
 - 2026-06-21: Execution Mode step gate trace and approval-aware handler boundary. Plan execution gate traces include step-scoped metadata for easier debugging. Approval-aware tools such as client_task_skip must execute through AiToolService.execute/provider.execute so approvedWrite is propagated; direct handlers must not bypass approval.
-- 2026-06-21: Drift is now the persistence backend for growth-oriented
-  structured data: AI chats/messages, AgentRunMetrics, terminal history
-  metadata, Playbooks, and SFTP recent/favorite paths. Keep `StorageService` as
-  the compatibility facade, keep small settings in SharedPreferences, keep
-  credentials/API keys in secure storage, and leave legacy protected-pref data
-  in place for rollback during the migration window.
-- 2026-06-21: Drift security hardening: production database open failures must
-  surface to `StorageService` and fall back to legacy protected-pref paths, not
-  `NativeDatabase.memory()`. AI chat message text/context/attachments/traces/
-  todoSteps and Playbook `content_json` are field-encrypted in Drift; plaintext
-  legacy rows remain readable for compatibility.
-- 2026-06-21: Legacy plaintext Drift sensitive fields are re-encrypted during
-  storage startup under migration marker
-  `drift_sensitive_fields_encrypted_v1`. Keep the migration idempotent,
-  batch retryable, and marker-gated: each batch may commit independently, but
-  mark complete only after every batch succeeds. Logs may report row counts
-  only; never log field values.
+- 2026-06-21: Drift is the persistence backend for growth-oriented structured
+  data: AI chats/messages, AgentRunMetrics, terminal-history metadata,
+  Playbooks, and SFTP recent/favorite paths. Keep `StorageService` as the
+  facade, small settings in SharedPreferences, and credentials/API keys in
+  secure storage.
+- 2026-06-21: Production database open failures must surface through
+  `StorageService`; never hide them with `NativeDatabase.memory()` or a legacy
+  preference fallback. AI chat message text/context/attachments/traces/
+  todoSteps and Playbook `content_json` are field-encrypted before Drift writes.
 - 2026-07-18: `StorageService.appDatabase` can be read by root providers before
   asynchronous storage initialization starts. Keep database creation cached and
   single-owner, make concurrent `init()` calls share one future, reuse the same

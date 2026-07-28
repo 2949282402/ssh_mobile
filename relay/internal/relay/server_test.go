@@ -5,11 +5,16 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestCredentialBindsDeviceAndKey(t *testing.T) {
@@ -90,10 +95,138 @@ func TestEnrollDevice(t *testing.T) {
 	}
 }
 
+func TestDeviceProofRejectsReplayAndRevocation(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(Config{
+		CredentialKey:   []byte("01234567890123456789012345678901"),
+		EnrollmentToken: "test-enrollment-token",
+		CredentialTTL:   time.Hour,
+	})
+	defer server.Close()
+
+	credential, err := issueCredential(
+		server.config.CredentialKey,
+		"device-a",
+		publicKey,
+		time.Hour,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.enrolledDevices["device-a"] = &EnrolledDevice{
+		DeviceID:        "device-a",
+		PublicKey:       base64.RawURLEncoding.EncodeToString(publicKey),
+		ProtocolVersion: 1,
+		EnrolledAt:      time.Now(),
+	}
+	authenticatedRequest := func(nonceValue byte) *http.Request {
+		nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{nonceValue}, 32))
+		request := httptest.NewRequest("GET", "/v1/connect", nil)
+		request.Header.Set("Authorization", "Bearer "+credential)
+		request.Header.Set("X-Relay-Nonce", nonce)
+		request.Header.Set(
+			"X-Relay-Signature",
+			base64.RawURLEncoding.EncodeToString(
+				ed25519.Sign(privateKey, []byte("GET\n/v1/connect\n"+nonce)),
+			),
+		)
+		return request
+	}
+
+	first := authenticatedRequest(1)
+	if _, _, ok := server.authenticatedRequest(first); !ok {
+		t.Fatal("valid device proof was rejected")
+	}
+	if _, _, ok := server.authenticatedRequest(first); ok {
+		t.Fatal("replayed device proof was accepted")
+	}
+
+	const activeSession = "00112233445566778899aabbccddeeff"
+	server.hub.mutex.Lock()
+	server.hub.sessions[activeSession] = session{
+		sender:    "device-a",
+		receiver:  "device-b",
+		expiresAt: time.Now().Add(time.Minute),
+	}
+	server.hub.mutex.Unlock()
+	revokeBody, _ := json.Marshal(map[string]string{"device_id": "device-a"})
+	revokeRequest := httptest.NewRequest("POST", "/api/devices/revoke", bytes.NewReader(revokeBody))
+	revokeResponse := httptest.NewRecorder()
+	server.revokeDevice(revokeResponse, revokeRequest)
+	if revokeResponse.Code != http.StatusOK {
+		t.Fatalf("expected revoke status 200, got %d", revokeResponse.Code)
+	}
+	if _, _, ok := server.authenticatedRequest(authenticatedRequest(2)); ok {
+		t.Fatal("revoked device credential was accepted")
+	}
+	server.hub.mutex.Lock()
+	_, retained := server.hub.sessions[activeSession]
+	server.hub.mutex.Unlock()
+	if retained {
+		t.Fatal("revocation retained an active device session")
+	}
+}
+
+func TestCredentialRequiresCurrentEnrollment(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(Config{
+		CredentialKey: []byte("01234567890123456789012345678901"),
+		CredentialTTL: time.Hour,
+	})
+	defer server.Close()
+	credential, err := issueCredential(
+		server.config.CredentialKey,
+		"device-from-previous-process",
+		publicKey,
+		time.Hour,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{3}, 32))
+	request := httptest.NewRequest("GET", "/v1/connect", nil)
+	request.Header.Set("Authorization", "Bearer "+credential)
+	request.Header.Set("X-Relay-Nonce", nonce)
+	request.Header.Set(
+		"X-Relay-Signature",
+		base64.RawURLEncoding.EncodeToString(
+			ed25519.Sign(privateKey, []byte("GET\n/v1/connect\n"+nonce)),
+		),
+	)
+	if _, _, ok := server.authenticatedRequest(request); ok {
+		t.Fatal("credential from an unregistered relay process was accepted")
+	}
+}
+
+func TestDashboardContainsNoInlineHandlersOrDynamicInnerHTML(t *testing.T) {
+	index, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script, err := staticFS.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(index, []byte("onclick=")) || bytes.Contains(index, []byte("onsubmit=")) {
+		t.Fatal("dashboard contains inline event handlers")
+	}
+	if bytes.Contains(script, []byte("innerHTML")) {
+		t.Fatal("dashboard renders server data through innerHTML")
+	}
+}
+
 func TestDashboardAndApiStats(t *testing.T) {
 	server := NewServer(Config{
 		CredentialKey:   []byte("01234567890123456789012345678901"),
 		EnrollmentToken: "test-token",
+		AdminUser:       "test-admin",
+		AdminPassword:   "test-password-123",
 	})
 	defer server.Close()
 
@@ -122,8 +255,8 @@ func TestDashboardAndApiStats(t *testing.T) {
 
 	// Login
 	loginBody, _ := json.Marshal(map[string]string{
-		"username": "hejulian",
-		"password": "hejulian",
+		"username": "test-admin",
+		"password": "test-password-123",
 	})
 	reqLogin := httptest.NewRequest("POST", "/api/login", bytes.NewReader(loginBody))
 	recLogin := httptest.NewRecorder()
@@ -132,19 +265,6 @@ func TestDashboardAndApiStats(t *testing.T) {
 		t.Fatalf("expected status 200 for login, got %d", recLogin.Code)
 	}
 	cookie := recLogin.Result().Cookies()[0]
-
-	// Change password
-	changeBody, _ := json.Marshal(map[string]string{
-		"old_password": "hejulian",
-		"new_password": "newpassword123",
-	})
-	reqChange := httptest.NewRequest("POST", "/api/change-password", bytes.NewReader(changeBody))
-	reqChange.AddCookie(cookie)
-	recChange := httptest.NewRecorder()
-	mux.ServeHTTP(recChange, reqChange)
-	if recChange.Code != http.StatusOK {
-		t.Fatalf("expected status 200 for change-password, got %d", recChange.Code)
-	}
 
 	// Test GET /api/stats JSON with auth
 	reqStats := httptest.NewRequest("GET", "/api/stats", nil)
@@ -158,5 +278,206 @@ func TestDashboardAndApiStats(t *testing.T) {
 	var stats statsResponse
 	if err := json.NewDecoder(recStats.Body).Decode(&stats); err != nil {
 		t.Fatalf("failed to decode stats JSON: %v", err)
+	}
+}
+
+func TestDartWireContractEndToEnd(t *testing.T) {
+	server := NewServer(Config{
+		CredentialKey:   []byte("01234567890123456789012345678901"),
+		EnrollmentToken: "0123456789abcdef",
+		CredentialTTL:   time.Hour,
+		SessionTTL:      time.Minute,
+		MaxConnections:  2,
+	})
+	defer server.Close()
+	mux := http.NewServeMux()
+	server.RegisterRoutes(mux)
+	httpServer := httptest.NewServer(mux)
+	defer httpServer.Close()
+
+	connectDevice := func(deviceID string, nonceByte byte) *websocket.Conn {
+		t.Helper()
+		publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		enrollmentBody, _ := json.Marshal(enrollRequest{
+			DeviceID:        deviceID,
+			PublicKey:       base64.RawURLEncoding.EncodeToString(publicKey),
+			EnrollmentToken: "0123456789abcdef",
+			ProtocolVersion: 1,
+			Platform:        "windows",
+		})
+		response, err := http.Post(
+			httpServer.URL+"/v1/devices/enroll",
+			"application/json",
+			bytes.NewReader(enrollmentBody),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		var enrollment enrollResponse
+		if response.StatusCode != http.StatusOK || json.NewDecoder(response.Body).Decode(&enrollment) != nil {
+			t.Fatalf("device enrollment failed with status %d", response.StatusCode)
+		}
+
+		nonce := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{nonceByte}, 32))
+		headers := http.Header{}
+		headers.Set("Authorization", "Bearer "+enrollment.Credential)
+		headers.Set("X-Relay-Nonce", nonce)
+		headers.Set(
+			"X-Relay-Signature",
+			base64.RawURLEncoding.EncodeToString(
+				ed25519.Sign(privateKey, []byte("GET\n/v1/connect\n"+nonce)),
+			),
+		)
+		relayURL, err := url.Parse(httpServer.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		relayURL.Scheme = "ws"
+		relayURL.Path = "/v1/connect"
+		connection, response, err := websocket.DefaultDialer.Dial(relayURL.String(), headers)
+		if err != nil {
+			status := 0
+			if response != nil {
+				status = response.StatusCode
+			}
+			t.Fatalf("websocket connect failed with status %d: %v", status, err)
+		}
+		var ready controlFrame
+		if connection.ReadJSON(&ready) != nil ||
+			ready.Type != "ready" ||
+			ready.DeviceID != deviceID ||
+			ready.ProtocolVersion != 1 {
+			t.Fatalf("invalid ready frame: %+v", ready)
+		}
+		return connection
+	}
+
+	deviceA := connectDevice("device-a", 1)
+	defer deviceA.Close()
+	deviceB := connectDevice("device-b", 2)
+	defer deviceB.Close()
+
+	if err := deviceA.WriteJSON(controlFrame{
+		Type:     "lookup",
+		TargetID: "offline-device",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var offlineLookup controlFrame
+	if err := deviceA.ReadJSON(&offlineLookup); err != nil ||
+		offlineLookup.Type != "lookup_response" ||
+		offlineLookup.TargetID != "offline-device" ||
+		offlineLookup.Online == nil ||
+		*offlineLookup.Online {
+		t.Fatalf("invalid offline lookup response: %+v (%v)", offlineLookup, err)
+	}
+
+	if err := deviceA.WriteJSON(controlFrame{
+		Type:     "lookup",
+		TargetID: "device-b",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var onlineLookup controlFrame
+	if err := deviceA.ReadJSON(&onlineLookup); err != nil ||
+		onlineLookup.Type != "lookup_response" ||
+		onlineLookup.TargetID != "device-b" ||
+		onlineLookup.Online == nil ||
+		!*onlineLookup.Online {
+		t.Fatalf("invalid online lookup response: %+v (%v)", onlineLookup, err)
+	}
+
+	const sessionID = "00112233445566778899aabbccddeeff"
+	opaquePayload := base64.RawURLEncoding.EncodeToString([]byte("opaque-offer"))
+	if err := deviceA.WriteJSON(controlFrame{
+		Type:      "offer",
+		SessionID: sessionID,
+		TargetID:  "device-b",
+		Payload:   opaquePayload,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var offer controlFrame
+	if err := deviceB.ReadJSON(&offer); err != nil {
+		t.Fatal(err)
+	}
+	if offer.Type != "offer" ||
+		offer.SessionID != sessionID ||
+		offer.SenderID != "device-a" ||
+		offer.TargetID != "" ||
+		offer.Payload != opaquePayload {
+		t.Fatalf("server and Dart offer contract diverged: %+v", offer)
+	}
+
+	if err := deviceB.WriteJSON(controlFrame{Type: "complete_ack", SessionID: sessionID}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	server.hub.mutex.Lock()
+	prematureAckSession, prematureAckRetained := server.hub.sessions[sessionID]
+	server.hub.mutex.Unlock()
+	if !prematureAckRetained || prematureAckSession.completed {
+		t.Fatal("receiver acknowledged a transfer before sender completion")
+	}
+
+	if err := deviceB.WriteJSON(controlFrame{Type: "accept", SessionID: sessionID}); err != nil {
+		t.Fatal(err)
+	}
+	var accepted controlFrame
+	if err := deviceA.ReadJSON(&accepted); err != nil ||
+		accepted.Type != "accept" ||
+		accepted.SenderID != "device-b" {
+		t.Fatalf("invalid accept frame: %+v (%v)", accepted, err)
+	}
+
+	binaryFrame := make([]byte, 25+4)
+	binaryFrame[0] = 0x10
+	sessionBytes, _ := hex.DecodeString(sessionID)
+	copy(binaryFrame[1:17], sessionBytes)
+	copy(binaryFrame[25:], []byte{1, 2, 3, 4})
+	if err := deviceA.WriteMessage(websocket.BinaryMessage, binaryFrame); err != nil {
+		t.Fatal(err)
+	}
+	kind, forwardedBinary, err := deviceB.ReadMessage()
+	if err != nil || kind != websocket.BinaryMessage || !bytes.Equal(binaryFrame, forwardedBinary) {
+		t.Fatalf("binary contract diverged: kind=%d err=%v", kind, err)
+	}
+
+	if err := deviceA.WriteJSON(controlFrame{Type: "complete", SessionID: sessionID}); err != nil {
+		t.Fatal(err)
+	}
+	var complete controlFrame
+	if err := deviceB.ReadJSON(&complete); err != nil ||
+		complete.Type != "complete" ||
+		complete.SenderID != "device-a" {
+		t.Fatalf("invalid complete frame: %+v (%v)", complete, err)
+	}
+	if err := deviceB.WriteJSON(controlFrame{Type: "complete_ack", SessionID: sessionID}); err != nil {
+		t.Fatal(err)
+	}
+	var completeAck controlFrame
+	if err := deviceA.ReadJSON(&completeAck); err != nil ||
+		completeAck.Type != "complete_ack" ||
+		completeAck.SenderID != "device-b" {
+		t.Fatalf("invalid completion acknowledgement: %+v (%v)", completeAck, err)
+	}
+
+	server.hub.mutex.Lock()
+	_, sessionExists := server.hub.sessions[sessionID]
+	server.hub.mutex.Unlock()
+	if sessionExists {
+		t.Fatal("completed Relay session was not removed")
+	}
+
+	if err := deviceA.WriteJSON(controlFrame{Type: "heartbeat", Timestamp: time.Now().UnixMilli()}); err != nil {
+		t.Fatal(err)
+	}
+	var heartbeat controlFrame
+	if err := deviceA.ReadJSON(&heartbeat); err != nil || heartbeat.Type != "heartbeat_ack" {
+		t.Fatal(fmt.Errorf("invalid heartbeat acknowledgement: %+v (%v)", heartbeat, err))
 	}
 }

@@ -2,9 +2,35 @@
 
 > 最新更新时间：2026-07-28
 
-**Status:** Proposed  
-**Target Repository:** `hejulian2004/ssh_mobile`  
+**Status:** In progress
+**Target Repository:** `hejulian2004/ssh_mobile`
 **Plan Type:** Architecture + Implementation + Protocol + Engineering Specification
+
+---
+
+# 当前实施状态（2026-07-28）
+
+本文件同时保留完整目标架构与后续阶段；以下状态只描述已经接入生产调用链的部分：
+
+- 已完成 Rust Tokio runtime、版本化 Protobuf command/event FFI 和 Dart
+  helper-isolate 生命周期。
+- 已完成 Quinn 直连、固定 Ed25519 peer 身份握手、显式接收审批、512 KiB
+  有界流式传输、SHA-256 校验、临时文件提交、接收端持久化完成确认、取消和进度事件。
+- `LanShareViewModel` 的文件发送只通过 `TransferTransport`；生产协调器注入
+  `AdaptiveTransferTransport`，不再保留旧 HTTPS 文件发送兼容分支。
+- peer 公布的当前端点会进入每 peer `PathManager` 并由选择结果驱动 QUIC；
+  多 candidate 交换、持续 RTT/loss 探测和网络切换重探仍属于 Phase 4/10 后续工作。
+- Rust Relay 已实现当前协议的 WSS 认证、opaque offer、AES-GCM chunk、
+  complete/complete_ack、取消、接收入站审批及安全落盘；Flutter 注册后把内存中的
+  credential 和 Ed25519 seed 交给同一 native runtime，直连不可用时由 runtime
+  选择 Relay。
+- Go Relay 只支持当前 `/v1/devices/enroll`、`/v1/connect` 与内存 session；
+  开发阶段不保留旧注册接口、协议降级或旧客户端兼容。
+- WireGuard、完整公网 candidate 协调、路径迁移和 Phase 11 RTC 尚未完成，不能因
+  上述文件传输闭环而标记为已交付。
+
+开发阶段 Drift 只维护 `schemaVersion = 1` 的当前 schema；字段变化后删除本地
+开发数据库并重新生成代码，不编写迁移或旧数据导入逻辑。
 
 ---
 
@@ -189,7 +215,7 @@ relay/
 Go Relay 已实现：
 
 ```text
-POST /v1/devices/register
+POST /v1/devices/enroll
 GET  /v1/connect
 GET  /healthz
 ```
@@ -226,16 +252,12 @@ server/
 当前仓库已经加入：
 
 ```text
-packages/ssh_mobile_quic_native/
+packages/ssh_mobile_network_native/
 ```
 
-但当前 native 实际代码仍然只有最基本的 `ping()` FFI smoke test。
-
-也就是说：
-
-> 现在正处于修改 native SDK 架构成本最低的阶段。
-
-还不存在大量业务代码依赖现有 ABI。
+当前 native package 已经管理真实 `NetworkRuntime`，通过 command/event FFI
+执行 QUIC、文件传输和 Relay 数据路径；`ssh_net_sdk_version()` 仅保留为 ABI
+smoke test，不能代表业务命令成功。
 
 ---
 
@@ -1215,8 +1237,8 @@ TransferTransport
       ↓
  ┌───────────────┐
  │               │
-LAN HTTPS      Rust QUIC
-legacy         preferred
+ Rust QUIC      Rust Relay
+ direct         fallback
 ```
 
 定义：
@@ -1231,7 +1253,8 @@ abstract interface class TransferTransport {
 }
 ```
 
-迁移期间保留 Legacy Transport，直到 QUIC 的 Windows / Android / LAN / WAN / Relay 全部验证。
+当前开发版本不保留 Legacy 文件 Transport。无法建立当前协议的 direct/Relay
+路径时必须返回失败，不得转入旧 HTTPS 文件发送流程。
 
 ---
 
@@ -1736,27 +1759,18 @@ Stream<NetworkEvent>
 
 ## Step 3.1
 
-保留现有：
-
-```text
-/v1/devices/register
-/v1/connect
-```
-
-作为兼容接口。
-
-## Step 3.2
-
-新增：
+当前开发协议只保留：
 
 ```text
 /v1/devices/enroll
-/v1/control
+/v1/connect
 ```
+
+不提供 `/v1/devices/register` 或旧 proof transcript。
 
 ## Step 3.3
 
-实现 protocol version negotiation。
+严格校验 protocol v1；不支持的版本直接拒绝。
 
 ## Step 3.4
 
@@ -1985,11 +1999,7 @@ TransferTransport
 
 ## Step 7.2
 
-现有 HTTPS：
-
-```text
-LegacyLanTransferTransport
-```
+旧 HTTPS 文件发送路径从当前开发版本移除。
 
 ## Step 7.3
 
@@ -2002,6 +2012,9 @@ QuicTransferTransport
 ## Step 7.4
 
 `LanShareViewModel` 不知道 QUIC / HTTPS / Relay，只知道 `TransferTransport`。
+
+当前实现中 ViewModel 不再直接调用 `LanTransferService.sendFileStream()`；实际
+session 的 direct/relay 路由、总字节数和失败原因写入 LAN history。
 
 ## Step 7.5
 
@@ -2392,7 +2405,7 @@ Major mismatch
 → reject
 
 Minor capability missing
-→ graceful downgrade
+→ reject the unsupported operation
 ```
 
 不能用客户端版本字符串猜协议兼容性。
@@ -2413,7 +2426,8 @@ supports_resume
 supports_webrtc
 ```
 
-旧客户端继续使用 legacy HTTPS LAN / relay。
+当前开发阶段不接收旧客户端协议；capability 只决定当前协议内是否允许某项操作，
+不触发旧 HTTPS/Relay 降级。
 
 ---
 

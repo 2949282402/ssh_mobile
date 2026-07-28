@@ -3,9 +3,7 @@ package relay
 import (
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
-	"log"
 	"os"
 	"strconv"
 	"time"
@@ -28,17 +26,19 @@ type Config struct {
 }
 
 func ConfigFromEnvironment() (Config, error) {
+	address := os.Getenv("RELAY_ADDR")
+	if address == "" {
+		address = ":8080"
+	}
 	enrollment := os.Getenv("RELAY_ENROLLMENT_TOKEN")
-	if enrollment == "" {
-		enrollment = hex.EncodeToString(randomBytes(16))
-		log.Printf("[Relay] RELAY_ENROLLMENT_TOKEN not set; auto-generated: %s", enrollment)
+	if len(enrollment) < 16 {
+		return Config{}, errors.New("RELAY_ENROLLMENT_TOKEN must be set and contain at least 16 characters")
 	}
 
 	var decoded []byte
 	key := os.Getenv("RELAY_CREDENTIAL_KEY")
 	if key == "" {
-		decoded = randomBytes(32)
-		log.Printf("[Relay] RELAY_CREDENTIAL_KEY not set; auto-generated random 32-byte secret key")
+		return Config{}, errors.New("RELAY_CREDENTIAL_KEY must be set")
 	} else {
 		var err error
 		decoded, err = base64.RawURLEncoding.DecodeString(key)
@@ -49,15 +49,15 @@ func ConfigFromEnvironment() (Config, error) {
 
 	adminUser := os.Getenv("RELAY_ADMIN_USER")
 	if adminUser == "" {
-		adminUser = "hejulian"
+		return Config{}, errors.New("RELAY_ADMIN_USER must be set")
 	}
 	adminPassword := os.Getenv("RELAY_ADMIN_PASSWORD")
-	if adminPassword == "" {
-		adminPassword = "hejulian"
+	if len(adminPassword) < 12 {
+		return Config{}, errors.New("RELAY_ADMIN_PASSWORD must be set and contain at least 12 characters")
 	}
 
 	return Config{
-		Address:         os.Getenv("RELAY_ADDR"),
+		Address:         address,
 		EnrollmentToken: enrollment,
 		CredentialKey:   decoded,
 		CredentialTTL:   durationEnv("RELAY_CREDENTIAL_TTL", 24*time.Hour),

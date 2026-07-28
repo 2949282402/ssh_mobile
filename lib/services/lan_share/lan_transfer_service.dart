@@ -56,6 +56,7 @@ class LanTransferService {
   final String currentDeviceId;
   final LanSecurityService securityService;
   final LanStorageService storageService;
+  final Future<Uint8List> Function()? networkIdentityPublicKeyProvider;
   late final LanTransferProtocolGuard _protocolGuard;
 
   HttpServer? _server;
@@ -85,6 +86,7 @@ class LanTransferService {
     required this.currentDeviceId,
     required this.securityService,
     required this.storageService,
+    this.networkIdentityPublicKeyProvider,
   }) {
     _protocolGuard = LanTransferProtocolGuard(
       currentDeviceId: currentDeviceId,
@@ -220,12 +222,17 @@ class LanTransferService {
   Future<void> _handleCapabilitiesRequest(HttpRequest request) async {
     await _protocolGuard.authorize(request);
     final pubKeyBytes = await securityService.getStaticX25519PublicKeyBytes();
+    final networkIdentityKey = await networkIdentityPublicKeyProvider?.call();
     request.response.statusCode = HttpStatus.ok;
     request.response.headers.contentType = ContentType.json;
     request.response.write(
       jsonEncode({
         'e2eEncryption': LanSecurityService.supportsE2EEncryption,
         'x25519PubKey': base64.encode(pubKeyBytes),
+        if (networkIdentityKey != null)
+          'networkIdentityPubKey': base64.encode(networkIdentityKey),
+        if (networkIdentityKey != null) 'quicFileTransfer': true,
+        if (networkIdentityKey != null) 'quicPort': activePort,
         'maxEncryptedFileBytes':
             LanTransferProtocolGuard.maxEncryptedUploadBytes,
       }),

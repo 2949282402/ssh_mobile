@@ -4,9 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-network-core = { path = "../network-core" }
-network-protocol = { path = "../network-protocol" }
 tokio = { version = "1.38", features = ["full"] }
 tracing = "0.1"
 thiserror = "1.0"
 rand = "0.8"
+local-ip-address = "0.6"
+hmac = "0.12"
+sha2 = "0.10"

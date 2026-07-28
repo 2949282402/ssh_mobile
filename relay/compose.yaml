@@ -11,6 +11,8 @@ services:
       RELAY_CREDENTIAL_TTL: "24h"
       RELAY_SESSION_TTL: "15m"
       RELAY_MAX_CONNECTIONS: "2048"
+      RELAY_ADMIN_USER: ${RELAY_ADMIN_USER:?set the dashboard administrator username}
+      RELAY_ADMIN_PASSWORD: ${RELAY_ADMIN_PASSWORD:?set a dashboard password with at least 12 characters}
     networks:
       - relay_internal
 

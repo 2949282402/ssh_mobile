@@ -9,7 +9,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../data/database/app_database.dart' as db;
-import '../data/database/migrations.dart';
 import '../features/ai_chat/models/agent_trace_event.dart';
 import '../features/connection/models/connection.dart';
 import '../features/playbook/models/playbook.dart';
@@ -535,7 +534,6 @@ class StorageService extends ChangeNotifier
   static const _connectionsKey = 'ssh_connections';
   static const _powerGuideSeenKey = 'power_guide_seen';
   static const _restorableTmuxSessionsKey = 'restorable_tmux_sessions';
-  static const _terminalHistoryRecordsKey = 'terminal_history_records';
   static const _aiBaseUrlKey = 'ai_base_url';
   static const _aiApiFormatKey = 'ai_api_format';
   static const _aiBaseUrlHistoryKey = 'ai_base_url_history';
@@ -574,18 +572,7 @@ class StorageService extends ChangeNotifier
   static const _aiSelectedApiKeyIdKey = 'ai_selected_api_key_id';
   static const _aiApiKeyKey = 'ai_api_key';
   static const _aiApiKeyEntryPrefix = 'ai_api_key_entry_';
-  static const _aiChatsKey = 'ai_chats';
   static const _aiSkillsKey = 'ai_skills';
-  static const _agentRunMetricsKey = 'agent_run_metrics';
-  static const _playbooksKey = 'custom_playbooks';
-  static const _driftAiChatsMigratedKey = 'drift_ai_chats_migrated_v1';
-  static const _driftAgentMetricsMigratedKey =
-      'drift_agent_metrics_migrated_v1';
-  static const _driftTerminalHistoryMigratedKey =
-      'drift_terminal_history_migrated_v1';
-  static const _driftPlaybooksMigratedKey = 'drift_playbooks_migrated_v1';
-  static const _driftSensitiveFieldsEncryptedKey =
-      'drift_sensitive_fields_encrypted_v1';
   static const _secretCacheEnabledKey = 'secret_cache_enabled';
   static const _secretCacheTtlSecondsKey = 'secret_cache_ttl_seconds';
   static const _defaultSecretCacheTtl = Duration(minutes: 15);

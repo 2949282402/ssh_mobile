@@ -1,11 +1,12 @@
 //! C ABI FFI bindings for network-core.
+#![allow(linker_messages)]
 
+use network_core::NetworkRuntime;
+use network_protocol::NetworkCommand;
+use prost::Message;
 use std::ffi::c_void;
 use std::panic::catch_unwind;
 use std::slice;
-use prost::Message;
-use network_core::NetworkRuntime;
-use network_protocol::NetworkCommand;
 
 pub const SSH_NET_ABI_VERSION: u32 = 1;
 
@@ -42,18 +43,16 @@ pub unsafe extern "C" fn ssh_net_runtime_create(out_handle: *mut SshNetRuntimeHa
         return -1;
     }
 
-    let result = catch_unwind(|| {
-        match NetworkRuntime::new() {
-            Ok(runtime) => {
-                let boxed = Box::new(runtime);
-                let raw = Box::into_raw(boxed) as SshNetRuntimeHandle;
-                unsafe {
-                    *out_handle = raw;
-                }
-                0
+    let result = catch_unwind(|| match NetworkRuntime::new() {
+        Ok(runtime) => {
+            let boxed = Box::new(runtime);
+            let raw = Box::into_raw(boxed) as SshNetRuntimeHandle;
+            unsafe {
+                *out_handle = raw;
             }
-            Err(_) => -2,
+            0
         }
+        Err(_) => -2,
     });
 
     result.unwrap_or(-99)

@@ -55,10 +55,59 @@ pub struct CancelTransferCommand {
 }
 
 #[derive(Clone, PartialEq, Message)]
+pub struct ConfigureRuntimeCommand {
+    #[prost(string, tag = "1")]
+    pub device_id: String,
+    #[prost(bytes = "vec", tag = "2")]
+    pub identity_private_key: Vec<u8>,
+    #[prost(bytes = "vec", tag = "3")]
+    pub e2e_private_key: Vec<u8>,
+    #[prost(string, tag = "4")]
+    pub listen_address: String,
+    #[prost(string, tag = "5")]
+    pub receive_directory: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct UpsertPeerCommand {
+    #[prost(string, tag = "1")]
+    pub peer_id: String,
+    #[prost(string, tag = "2")]
+    pub endpoint_address: String,
+    #[prost(bytes = "vec", tag = "3")]
+    pub identity_public_key: Vec<u8>,
+    #[prost(bytes = "vec", tag = "4")]
+    pub e2e_public_key: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct RespondIncomingTransferCommand {
+    #[prost(string, tag = "1")]
+    pub transfer_id: String,
+    #[prost(bool, tag = "2")]
+    pub accept: bool,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct ConfigureRelayCommand {
+    #[prost(string, tag = "1")]
+    pub relay_url: String,
+    #[prost(string, tag = "2")]
+    pub relay_credential: String,
+    #[prost(bytes = "vec", tag = "3")]
+    pub relay_signing_seed: Vec<u8>,
+}
+
+#[derive(Clone, PartialEq, Message)]
 pub struct NetworkCommand {
     #[prost(string, tag = "1")]
     pub command_id: String,
-    #[prost(oneof = "network_command::Payload", tags = "10, 11, 12")]
+    #[prost(uint32, tag = "2")]
+    pub protocol_version: u32,
+    #[prost(
+        oneof = "network_command::Payload",
+        tags = "10, 11, 12, 13, 14, 15, 16"
+    )]
     pub payload: Option<network_command::Payload>,
 }
 
@@ -73,6 +122,14 @@ pub mod network_command {
         SendFile(SendFileCommand),
         #[prost(message, tag = "12")]
         CancelTransfer(CancelTransferCommand),
+        #[prost(message, tag = "13")]
+        ConfigureRuntime(ConfigureRuntimeCommand),
+        #[prost(message, tag = "14")]
+        UpsertPeer(UpsertPeerCommand),
+        #[prost(message, tag = "15")]
+        RespondIncomingTransfer(RespondIncomingTransferCommand),
+        #[prost(message, tag = "16")]
+        ConfigureRelay(ConfigureRelayCommand),
     }
 }
 
@@ -97,12 +154,44 @@ pub struct TransferProgressEvent {
 }
 
 #[derive(Clone, PartialEq, Message)]
+pub struct CommandResultEvent {
+    #[prost(string, tag = "1")]
+    pub command_id: String,
+    #[prost(bool, tag = "2")]
+    pub accepted: bool,
+    #[prost(message, optional, tag = "3")]
+    pub error: Option<NetworkError>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct IncomingTransferOfferEvent {
+    #[prost(string, tag = "1")]
+    pub transfer_id: String,
+    #[prost(string, tag = "2")]
+    pub peer_id: String,
+    #[prost(string, tag = "3")]
+    pub file_name: String,
+    #[prost(uint64, tag = "4")]
+    pub file_size: u64,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct TransferCompletedEvent {
+    #[prost(string, tag = "1")]
+    pub transfer_id: String,
+    #[prost(string, tag = "2")]
+    pub local_path: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
 pub struct NetworkEvent {
     #[prost(string, tag = "1")]
     pub event_id: String,
     #[prost(int64, tag = "2")]
     pub timestamp_ms: i64,
-    #[prost(oneof = "network_event::Payload", tags = "10, 11, 12")]
+    #[prost(uint32, tag = "3")]
+    pub protocol_version: u32,
+    #[prost(oneof = "network_event::Payload", tags = "10, 11, 12, 13, 14, 15")]
     pub payload: Option<network_event::Payload>,
 }
 
@@ -117,5 +206,11 @@ pub mod network_event {
         TransferProgress(TransferProgressEvent),
         #[prost(message, tag = "12")]
         Error(NetworkError),
+        #[prost(message, tag = "13")]
+        CommandResult(CommandResultEvent),
+        #[prost(message, tag = "14")]
+        IncomingTransferOffer(IncomingTransferOfferEvent),
+        #[prost(message, tag = "15")]
+        TransferCompleted(TransferCompletedEvent),
     }
 }

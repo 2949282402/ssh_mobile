@@ -9,18 +9,21 @@ import 'package:uuid/uuid.dart';
 import '../../../data/database/app_database.dart';
 import '../../../core/services/data_protection_service.dart';
 import '../../../services/app_settings.dart';
+import '../../../services/app_log_service.dart';
 import '../../../services/lan_share/lan_discovery_service.dart';
 import '../../../services/lan_share/lan_security_service.dart';
 import '../../../services/lan_share/lan_share_models.dart';
 import '../../../services/lan_share/lan_storage_service.dart';
 import '../../../services/lan_share/lan_transfer_protocol.dart';
 import '../../../services/lan_share/lan_transfer_service.dart';
+import '../../../services/network/transfer_transport.dart';
 
 class LanShareViewModel extends ChangeNotifier {
   final LanDiscoveryService discoveryService;
   final LanSecurityService securityService;
   final LanStorageService storageService;
   final LanTransferService transferService;
+  final TransferTransport? fileTransferTransport;
   final LanHistoryDao historyDao;
   final AppSettings appSettings;
   final bool ownsRuntime;
@@ -31,6 +34,7 @@ class LanShareViewModel extends ChangeNotifier {
   StreamSubscription? _devicesSubscription;
   StreamSubscription? _incomingMessageSubscription;
   StreamSubscription? _progressSubscription;
+  StreamSubscription<TransferEvent>? _networkProgressSubscription;
   StreamSubscription? _recallSubscription;
   StreamSubscription? _historyDbSubscription;
   StreamSubscription? _announcedDeviceSubscription;
@@ -45,6 +49,7 @@ class LanShareViewModel extends ChangeNotifier {
 
   /// Cache of X25519 public keys keyed by device ID (in-memory only).
   final Map<String, Uint8List> _recipientPubKeyCache = {};
+  final Map<String, Uint8List> _recipientNetworkIdentityKeyCache = {};
   final Map<String, int> _recipientEncryptedFileLimit = {};
   final _pairingRequestController =
       StreamController<LanPairingRequest>.broadcast();
@@ -77,6 +82,7 @@ class LanShareViewModel extends ChangeNotifier {
     required this.securityService,
     required this.storageService,
     required this.transferService,
+    this.fileTransferTransport,
     required this.historyDao,
     required this.appSettings,
     this.ownsRuntime = true,
@@ -148,6 +154,7 @@ class LanShareViewModel extends ChangeNotifier {
     _handshakeSuccessSubscription = transferService.handshakeSuccessStream
         .listen((device) {
           registerManualDevice(device);
+          unawaited(_prepareFileTransferPeer(device));
         });
     _progressSubscription = transferService.messageProgressStream.listen((
       msg,
@@ -159,6 +166,34 @@ class LanShareViewModel extends ChangeNotifier {
           msg.status.toJson(),
           bytesTransferred: msg.bytesTransferred,
           localPath: msg.localPath,
+        ),
+      );
+    });
+    _networkProgressSubscription = fileTransferTransport?.events.listen((
+      event,
+    ) {
+      final status = event.error != null
+          ? LanTransferStatus.failed
+          : event.completed
+          ? LanTransferStatus.completed
+          : LanTransferStatus.transferring;
+      unawaited(
+        _enqueueMessagePersistence(
+          event.transferId,
+          () => historyDao.updateRecordStatus(
+            event.transferId,
+            status.toJson(),
+            bytesTransferred: event.bytesTransferred,
+            localPath: event.localPath,
+            transport: event.transport?.name,
+            routeType: switch (event.transport) {
+              TransportKind.quicDirect => 'direct',
+              TransportKind.relayFallback => 'relay',
+              null => null,
+            },
+            bytesTotal: event.totalBytes > 0 ? event.totalBytes : null,
+            failureReason: event.error,
+          ),
         ),
       );
     });
@@ -228,6 +263,7 @@ class LanShareViewModel extends ChangeNotifier {
       _devicesSubscription,
       _incomingMessageSubscription,
       _progressSubscription,
+      _networkProgressSubscription,
       _recallSubscription,
       _historyDbSubscription,
       _announcedDeviceSubscription,
@@ -242,6 +278,7 @@ class LanShareViewModel extends ChangeNotifier {
     _devicesSubscription = null;
     _incomingMessageSubscription = null;
     _progressSubscription = null;
+    _networkProgressSubscription = null;
     _recallSubscription = null;
     _historyDbSubscription = null;
     _announcedDeviceSubscription = null;
@@ -415,50 +452,63 @@ class LanShareViewModel extends ChangeNotifier {
       return false;
     }
 
-    final accepted = await transferService.sendMeta(
-      device,
-      msg,
-      recipientPubKeyBytes: pubKey,
-    );
-    if (!accepted) {
+    final fileTransport = fileTransferTransport;
+    if (fileTransport == null) {
       await historyDao.updateRecordStatus(
         msg.id,
         LanTransferStatus.failed.toJson(),
       );
       return false;
     }
-
-    final success = await transferService.sendFileStream(
-      device: device,
-      message: msg,
-      fileStream: file.openRead(),
-      totalBytes: fileSize,
-      recipientPubKeyBytes: pubKey,
-      onProgress: (bytesSent) {
-        unawaited(
-          _enqueueMessagePersistence(
-            msg.id,
-            () => historyDao.updateRecordStatus(
-              msg.id,
-              LanTransferStatus.transferring.toJson(),
-              bytesTransferred: bytesSent,
-            ),
-          ),
+    try {
+      final recipientE2eKey =
+          pubKey ?? await fetchRecipientE2ECapabilities(device);
+      final identityKey = _recipientNetworkIdentityKeyCache[device.id];
+      if (recipientE2eKey == null || identityKey == null) {
+        throw StateError('Peer does not expose current network identity.');
+      }
+      if (fileTransport
+          case final PeerConfigurableTransferTransport peerTransport) {
+        final endpoint = device.ip.contains(':')
+            ? '[${device.ip}]:${device.port}'
+            : '${device.ip}:${device.port}';
+        await peerTransport.registerAndConnectPeer(
+          peerId: device.id,
+          endpointAddress: endpoint,
+          identityPublicKey: identityKey,
+          e2ePublicKey: recipientE2eKey,
         );
-      },
-    );
-
-    await _enqueueMessagePersistence(
-      msg.id,
-      () => historyDao.updateRecordStatus(
+      }
+      final session = await fileTransport.send(
+        transferId: msg.id,
+        peerId: device.id,
+        filePath: file.absolute.path,
+      );
+      await _enqueueMessagePersistence(
         msg.id,
-        success
-            ? LanTransferStatus.completed.toJson()
-            : LanTransferStatus.failed.toJson(),
-        bytesTransferred: success ? fileSize : 0,
-      ),
-    );
-    return success;
+        () => historyDao.updateRecordStatus(
+          msg.id,
+          LanTransferStatus.completed.toJson(),
+          bytesTransferred: fileSize,
+          transport: session.transport.name,
+          routeType: session.transport == TransportKind.quicDirect
+              ? 'direct'
+              : 'relay',
+          bytesTotal: fileSize,
+        ),
+      );
+      return true;
+    } on Object catch (error) {
+      await _enqueueMessagePersistence(
+        msg.id,
+        () => historyDao.updateRecordStatus(
+          msg.id,
+          LanTransferStatus.failed.toJson(),
+          failureReason: error.toString(),
+        ),
+      );
+      return false;
+    }
   }
 
   /// Query the remote device's E2E capabilities.
@@ -466,6 +516,16 @@ class LanShareViewModel extends ChangeNotifier {
   Future<Uint8List?> fetchRecipientE2ECapabilities(LanDevice device) async {
     if (_recipientPubKeyCache.containsKey(device.id)) {
       return _recipientPubKeyCache[device.id];
+    }
+    final pinnedE2eKey = await securityService.getPeerX25519PublicKey(
+      device.id,
+    );
+    final pinnedIdentityKey = await securityService
+        .getPeerNetworkIdentityPublicKey(device.id);
+    if (pinnedE2eKey != null && pinnedIdentityKey != null) {
+      _recipientPubKeyCache[device.id] = pinnedE2eKey;
+      _recipientNetworkIdentityKeyCache[device.id] = pinnedIdentityKey;
+      return pinnedE2eKey;
     }
     final client = await transferService.createHttpClientForPeer(device.id);
     try {
@@ -487,6 +547,15 @@ class LanShareViewModel extends ChangeNotifier {
       if (pubKeyB64 == null) return null;
       final pubKeyBytes = base64.decode(pubKeyB64);
       if (pubKeyBytes.length != 32) return null;
+      final identityKeyValue = json['networkIdentityPubKey'] as String?;
+      if (identityKeyValue != null && json['quicFileTransfer'] == true) {
+        final identityKey = base64.decode(identityKeyValue);
+        if (identityKey.length == 32) {
+          _recipientNetworkIdentityKeyCache[device.id] = Uint8List.fromList(
+            identityKey,
+          );
+        }
+      }
       final remoteLimit = (json['maxEncryptedFileBytes'] as num?)?.toInt();
       if (remoteLimit != null && remoteLimit > 0) {
         _recipientEncryptedFileLimit[device.id] = remoteLimit
@@ -499,6 +568,13 @@ class LanShareViewModel extends ChangeNotifier {
           device.id,
           _recipientPubKeyCache[device.id]!,
         );
+        final identityKey = _recipientNetworkIdentityKeyCache[device.id];
+        if (identityKey != null) {
+          await securityService.storePeerNetworkIdentityPublicKey(
+            device.id,
+            identityKey,
+          );
+        }
       }
       return _recipientPubKeyCache[device.id];
     } catch (e) {
@@ -512,6 +588,30 @@ class LanShareViewModel extends ChangeNotifier {
   /// Internal: get (and cache) recipient pub key; null if not supported.
   Future<Uint8List?> _getRecipientPubKey(LanDevice device) =>
       fetchRecipientE2ECapabilities(device);
+
+  Future<void> _prepareFileTransferPeer(LanDevice device) async {
+    final transport = fileTransferTransport;
+    if (transport is! PeerConfigurableTransferTransport) return;
+    try {
+      final e2eKey = await fetchRecipientE2ECapabilities(device);
+      final identityKey = _recipientNetworkIdentityKeyCache[device.id];
+      if (e2eKey == null || identityKey == null) return;
+      final endpoint = device.ip.contains(':')
+          ? '[${device.ip}]:${device.port}'
+          : '${device.ip}:${device.port}';
+      await transport.registerAndConnectPeer(
+        peerId: device.id,
+        endpointAddress: endpoint,
+        identityPublicKey: identityKey,
+        e2ePublicKey: e2eKey,
+      );
+    } on Object catch (error, stackTrace) {
+      AppLogService.instance.warning(
+        'Native peer preparation failed',
+        details: '$error\n$stackTrace',
+      );
+    }
+  }
 
   Future<void> recallMessage(LanMessage message, LanDevice? device) async {
     if (device != null) {
@@ -538,6 +638,9 @@ class LanShareViewModel extends ChangeNotifier {
 
   Future<void> forgetDevice(String deviceId) async {
     await securityService.unpairDevice(deviceId);
+    _recipientPubKeyCache.remove(deviceId);
+    _recipientNetworkIdentityKeyCache.remove(deviceId);
+    _recipientEncryptedFileLimit.remove(deviceId);
     if (!_disposed) notifyListeners();
   }
 
@@ -601,6 +704,7 @@ class LanShareViewModel extends ChangeNotifier {
         isRecalled: Value(msg.isRecalled),
         sftpServerId: Value(msg.sftpServerId),
         sftpRemotePath: Value(await _encryptSensitive(msg.sftpRemotePath)),
+        bytesTotal: Value(msg.fileSize),
       ),
     );
   }

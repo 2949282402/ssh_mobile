@@ -45,6 +45,7 @@ class _WebShareFixture {
     securityService = LanSecurityService();
     storageService = LanStorageService(
       sandboxDirectoryProvider: () async => sandbox,
+      freeDiskSpaceMbProvider: () async => 1024,
     );
     transferService = LanTransferService(
       currentDeviceId: 'local-device',

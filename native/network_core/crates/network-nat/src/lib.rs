@@ -8,6 +8,6 @@ pub mod stun;
 
 pub use candidate::{Candidate, CandidateKind};
 pub use discovery::discover_candidates;
-pub use hole_punch::probe_candidate;
+pub use hole_punch::{probe_candidate, respond_to_probe};
 pub use path_manager::PathManager;
 pub use stun::query_stun;

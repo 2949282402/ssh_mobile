@@ -29,7 +29,7 @@ The project began with a two-core server that had only 1 GB of memory. Running a
 - **SSH connection management** with passwords, private keys, encrypted private keys, jump hosts, server platform selection, and SSH host-key trust-on-first-use verification.
 - **Multi-window terminals** that allow several fixed-name sessions per server and stable tmux session binding.
 - **SFTP file management** with browsing, recent and favorite paths, uploads, downloads, editing, previews, and explicit deletion confirmation. The upload action follows the active theme's secondary color instead of a fixed deep purple.
-- **LAN Quick Share & Network Transfer** with mDNS/UDP discovery, QR and device-list pairing invitations, reciprocal PIN confirmation, and encrypted device-to-device transfers. Foreground invitations open the peer pairing page globally and simultaneous invitations merge into one pairing session. An optional self-hosted public relay provides explicit, E2E-encrypted SFTP file forwarding without storing file data or names on the relay.
+- **LAN Quick Share & Network Transfer** with mDNS/UDP discovery, QR and device-list pairing invitations, reciprocal PIN confirmation, and encrypted device-to-device transfers. File sends run through the Rust network runtime: pinned-identity Quinn direct paths are selected first and the current WSS Relay path carries only AES-GCM ciphertext when direct reachability is unavailable. Incoming direct and Relay offers require a global explicit approval, verified data is committed in the app sandbox, and success is reported only after receiver persistence and acknowledgement. The active development build does not retain the old HTTPS file-send fallback.
 - **Server monitoring** for performance, ports, applications, services, users, and active sessions.
 - **AI chat and agent execution** with streaming output, Plan Mode, approval-controlled tools, persistent history, message branching, context compression, RAG, skills, and execution traces.
 - **Local MCP server** support on desktop platforms, including generated configuration for Codex, Claude Code, and Gemini CLI; its loopback-only safety boundary is always enforced and write-capable external tools return `approval_required`.
@@ -77,18 +77,20 @@ The application can launch without real server or AI credentials. A reachable SS
 
 ## Control Plane & Public Relay Server Startup
 
-The bundled `relay/` Go service provides memory-only E2E WSS relaying, device control plane, and a **built-in Web Admin Dashboard** for Network Transfer / P2P fallback.
+The bundled `relay/` Go service provides a memory-only WSS relay, device control plane, and a **built-in Web Admin Dashboard** for Network Transfer / P2P fallback. Enrollment and dashboard credentials must be configured explicitly; the service refuses to start with missing or weak secrets.
 
-It runs out of the box with zero required configuration. Missing tokens and secrets are automatically generated at startup and displayed in the Web Admin Dashboard.
-
-### Option 1: Direct Go execution (Zero Config)
+### Option 1: Direct Go execution
 
 ```bash
 cd relay
+export RELAY_ENROLLMENT_TOKEN='replace-with-at-least-16-random-characters'
+export RELAY_CREDENTIAL_KEY="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
+export RELAY_ADMIN_USER='relay-admin'
+export RELAY_ADMIN_PASSWORD='replace-with-a-random-password'
 go run ./cmd/relay
 ```
 
-Open `http://localhost:8080` in your browser to view the **Web Admin Dashboard**, copy the auto-generated `Enrollment Token`, and manage registered devices.
+Open `http://localhost:8080` and sign in to the **Web Admin Dashboard** to view or rotate the configured enrollment token and manage devices. Restarting the memory-only relay invalidates existing device enrollment, so clients must enroll again.
 
 ### Option 2: Production deployment via Docker Compose
 
@@ -97,7 +99,7 @@ Deploy with Caddy using the [relay deployment guide](relay/README.md):
 ```powershell
 cd relay
 Copy-Item .env.example .env
-# Set RELAY_PUBLIC_DOMAIN, optional RELAY_ENROLLMENT_TOKEN, and secrets.
+# Set the public domain plus every required token, key, and admin credential.
 docker compose --env-file .env up --build -d
 ```
 
@@ -106,10 +108,10 @@ docker compose --env-file .env up --build -d
 ```bash
 cd relay
 docker build -t ssh-mobile-relay .
-docker run --rm -p 8080:8080 ssh-mobile-relay
+docker run --rm -p 8080:8080 --env-file .env ssh-mobile-relay
 ```
 
-In SSH Mobile, open **Settings → Network Transfer → Control Server** and enter the relay server URL (e.g. `https://relay.example.com` or `http://<ip>:8080`).
+In SSH Mobile, open **Network Transfer → VPN / P2P → Server Configuration** and enter the HTTPS relay host, port, and enrollment token. Production clients require a valid TLS certificate.
 
 
 ### Platform builds
@@ -423,6 +425,13 @@ ViewModels. Views keep layout and transient presentation state; validation,
 async orchestration, and repository coordination belong in ViewModels and
 services.
 
+LAN file transfer follows `LanShareViewModel → TransferTransport → Rust
+NetworkRuntime`. The runtime owns per-peer path selection, authenticated QUIC,
+streaming file verification, and native Relay send/receive; Flutter owns
+pairing, approval UI, history, and presentation state. The Go Relay remains a
+memory-only current-protocol router and never receives plaintext file metadata
+or bytes.
+
 ## AI Agent Runtime
 
 The AI agent runs on the client rather than on the managed server. SSH Mobile builds the model context, calls the configured provider, controls the tool loop, and accesses remote systems through SSH and SFTP.
@@ -481,7 +490,7 @@ Linux monitoring reads sources such as `/proc` and `df -P`. Windows monitoring u
 
 Growing structured data such as AI chats, agent metrics, terminal-history metadata, playbooks, and SFTP path records is stored with Drift. Small preferences remain in SharedPreferences. Passwords, private keys, API keys, and MCP tokens remain in platform secure storage.
 
-Sensitive Drift fields—including AI message bodies, context, attachments, tool traces, TODO steps, and playbook content—are encrypted before being written to SQLite. Startup migrations re-encrypt historical sensitive fields in retryable batches and log row counts without logging field values.
+Sensitive Drift fields—including AI message bodies, context, attachments, tool traces, TODO steps, and playbook content—are encrypted before being written to SQLite. During active development, Drift uses one current version-1 schema without upgrade or legacy-import code; after a schema change, delete the local development database and regenerate the checked-in Drift output.
 
 A production database failure does not silently fall back to an in-memory database, preventing apparently successful writes from disappearing after restart.
 

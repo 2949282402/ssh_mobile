@@ -54,6 +54,16 @@ class FakeSshService extends SshService {
   }
 }
 
+class _DelayedPlaybookStorage extends StorageService {
+  final Completer<void> releaseLoad = Completer<void>();
+
+  @override
+  Future<List<Playbook>> loadPlaybooks() async {
+    await releaseLoad.future;
+    return const [];
+  }
+}
+
 class _GatedBoundSshService extends FakeSshService {
   final Completer<void> firstCommandStarted = Completer<void>();
   final Completer<void> releaseFirstCommand = Completer<void>();
@@ -215,6 +225,22 @@ void main() {
       expect(decoded.lastConnectionId, 'conn1');
     });
   });
+
+  test(
+    'PlaybookService ignores an initial load completed after disposal',
+    () async {
+      final storage = _DelayedPlaybookStorage();
+      final ssh = FakeSshService(storage);
+      final service = PlaybookService(storageService: storage, sshService: ssh);
+
+      service.dispose();
+      storage.releaseLoad.complete();
+      await Future<void>.delayed(Duration.zero);
+
+      ssh.dispose();
+      storage.dispose();
+    },
+  );
 
   group('Playbook Service and Execution Tests', () {
     late StorageService storage;

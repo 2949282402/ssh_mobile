@@ -12,10 +12,15 @@ import 'relay_models.dart';
 /// E2E SFTP relay sender. The caller owns the SFTP stream and explicitly
 /// chooses this transport; it never falls back to a LAN connection.
 class RelayTransport {
-  RelayTransport({required this.client, required this.securityService});
+  RelayTransport({
+    required this.client,
+    required this.securityService,
+    this.responseTimeout = const Duration(seconds: 30),
+  });
 
   final RelayClient client;
   final LanSecurityService securityService;
+  final Duration responseTimeout;
 
   /// Decodes an opaque offer locally. Callers should show the returned metadata
   /// and only call [accept] after explicit user approval.
@@ -32,12 +37,19 @@ class RelayTransport {
       final size = (value['file_size'] as num?)?.toInt();
       final key = value['content_key'] as String?;
       final prefix = value['nonce_prefix'] as String?;
+      final sessionId = value['session_id'] as String?;
+      final senderId = value['sender_id'] as String?;
+      final receiverId = value['receiver_id'] as String?;
       if (value['v'] != 1 ||
           name == null ||
+          !_isSafeRelayFileName(name) ||
           size == null ||
           size < 0 ||
           key == null ||
-          prefix == null) {
+          prefix == null ||
+          sessionId != frame.sessionId ||
+          senderId != frame.peerId ||
+          receiverId != client.currentDeviceId) {
         return null;
       }
       final keyBytes = base64Url.decode(base64Url.normalize(key));
@@ -45,6 +57,7 @@ class RelayTransport {
       if (keyBytes.length != 32 || prefixBytes.length != 4) return null;
       return RelayIncomingOffer(
         sessionId: frame.sessionId,
+        senderId: senderId!,
         fileName: name,
         totalBytes: size,
         cipher: RelayChunkCipher(
@@ -64,6 +77,22 @@ class RelayTransport {
     ),
   );
 
+  Future<void> acknowledgeComplete(RelayIncomingOffer offer) async {
+    if (!offer.isComplete) {
+      throw StateError('Relay transfer is incomplete.');
+    }
+    await client.sendControl(
+      RelayControlFrame(
+        type: RelayControlType.completeAck,
+        sessionId: offer.sessionId,
+      ),
+    );
+  }
+
+  /// Rejects or aborts an active transfer using the current Relay protocol.
+  /// Cancellation is best-effort because the server also expires sessions.
+  Future<void> cancel(String sessionId) => _cancelSession(sessionId);
+
   /// Uses only the X25519 key pinned during reciprocal LAN pairing. A missing
   /// key means the peer must be re-paired before a public transfer is allowed.
   Future<bool> sendFileToPairedPeer({
@@ -72,6 +101,7 @@ class RelayTransport {
     required int totalBytes,
     required Stream<List<int>> stream,
     void Function(int bytesSent)? onProgress,
+    String? sessionId,
   }) async {
     final peerPublicKey = await securityService.getPeerX25519PublicKey(
       target.id,
@@ -84,6 +114,7 @@ class RelayTransport {
       stream: stream,
       peerPublicKey: peerPublicKey,
       onProgress: onProgress,
+      sessionId: sessionId,
     );
   }
 
@@ -94,11 +125,14 @@ class RelayTransport {
     required Stream<List<int>> stream,
     required Uint8List peerPublicKey,
     void Function(int bytesSent)? onProgress,
+    String? sessionId,
   }) async {
     if (!client.isConnected || totalBytes < 0 || peerPublicKey.length != 32) {
       return false;
     }
-    final sessionId = _newSessionId();
+    if (!_isSafeRelayFileName(fileName)) return false;
+    final effectiveSessionId = sessionId ?? _newSessionId();
+    if (!RegExp(r'^[0-9a-f]{32}$').hasMatch(effectiveSessionId)) return false;
     final contentKey = _randomBytes(32);
     final noncePrefix = _randomBytes(4);
     final encryptedOffer = await securityService.encryptE2EFor(
@@ -106,6 +140,9 @@ class RelayTransport {
         utf8.encode(
           jsonEncode({
             'v': 1,
+            'session_id': effectiveSessionId,
+            'sender_id': client.currentDeviceId,
+            'receiver_id': target.id,
             'file_name': fileName,
             'file_size': totalBytes,
             'content_key': base64UrlEncode(contentKey).replaceAll('=', ''),
@@ -116,31 +153,36 @@ class RelayTransport {
       peerPublicKey,
     );
     final acceptance = Completer<bool>();
+    final completion = Completer<bool>();
     final subscription = client.controls.listen((frame) {
-      if (frame.sessionId != sessionId || acceptance.isCompleted) return;
-      if (frame.type == RelayControlType.accept) {
+      if (frame.sessionId != effectiveSessionId || frame.peerId != target.id) {
+        return;
+      }
+      if (frame.type == RelayControlType.accept && !acceptance.isCompleted) {
         acceptance.complete(true);
       } else if (frame.type == RelayControlType.cancel) {
-        acceptance.complete(false);
+        if (!acceptance.isCompleted) acceptance.complete(false);
+        if (!completion.isCompleted) completion.complete(false);
+      } else if (frame.type == RelayControlType.completeAck &&
+          !completion.isCompleted) {
+        completion.complete(true);
       }
     });
     await client.sendControl(
       RelayControlFrame(
         type: RelayControlType.offer,
-        sessionId: sessionId,
+        sessionId: effectiveSessionId,
         targetId: target.id,
         payload: encryptedOffer,
       ),
     );
     final accepted = await acceptance.future.timeout(
-      const Duration(seconds: 30),
+      responseTimeout,
       onTimeout: () => false,
     );
-    await subscription.cancel();
     if (!accepted) {
-      await client.sendControl(
-        RelayControlFrame(type: RelayControlType.cancel, sessionId: sessionId),
-      );
+      await subscription.cancel();
+      await _cancelSession(effectiveSessionId);
       return false;
     }
     final cipher = RelayChunkCipher(key: contentKey, baseNonce: noncePrefix);
@@ -156,14 +198,14 @@ class RelayTransport {
           return false;
         }
         final encrypted = await cipher.encrypt(
-          sessionId: sessionId,
+          sessionId: effectiveSessionId,
           sequence: sequence++,
           plaintext: Uint8List.fromList(chunk),
         );
         client.sendBinary(
           RelayBinaryFrame(
             kind: 0x10,
-            sessionId: sessionId,
+            sessionId: effectiveSessionId,
             sequence: sequence - 1,
             payload: encrypted,
           ),
@@ -171,11 +213,29 @@ class RelayTransport {
         sent += chunk.length;
         onProgress?.call(sent);
       }
-      return sent == totalBytes;
+      if (sent != totalBytes) return false;
+      await client.sendControl(
+        RelayControlFrame(
+          type: RelayControlType.complete,
+          sessionId: effectiveSessionId,
+        ),
+      );
+      return completion.future.timeout(responseTimeout, onTimeout: () => false);
     } finally {
+      await subscription.cancel();
+      await _cancelSession(effectiveSessionId);
+    }
+  }
+
+  Future<void> _cancelSession(String sessionId) async {
+    if (!client.isConnected) return;
+    try {
       await client.sendControl(
         RelayControlFrame(type: RelayControlType.cancel, sessionId: sessionId),
       );
+    } on Object {
+      // The socket may close between isConnected and sendControl. Cancellation
+      // is best-effort because the server also expires all in-memory sessions.
     }
   }
 }
@@ -185,16 +245,22 @@ class RelayTransport {
 class RelayIncomingOffer {
   RelayIncomingOffer({
     required this.sessionId,
+    required this.senderId,
     required this.fileName,
     required this.totalBytes,
     required this.cipher,
   });
 
   final String sessionId;
+  final String senderId;
   final String fileName;
   final int totalBytes;
   final RelayChunkCipher cipher;
   int _nextSequence = 0;
+  int _receivedBytes = 0;
+
+  int get receivedBytes => _receivedBytes;
+  bool get isComplete => _receivedBytes == totalBytes;
 
   Future<Uint8List> decryptNext(RelayBinaryFrame frame) async {
     if (frame.kind != 0x10 ||
@@ -209,7 +275,14 @@ class RelayIncomingOffer {
       sequence: frame.sequence,
       ciphertext: frame.payload,
     );
+    if (plaintext.isEmpty) {
+      throw StateError('Relay chunks must not be empty.');
+    }
+    if (_receivedBytes + plaintext.length > totalBytes) {
+      throw StateError('Relay transfer exceeds its declared size.');
+    }
     _nextSequence++;
+    _receivedBytes += plaintext.length;
     return plaintext;
   }
 }
@@ -221,3 +294,12 @@ String _newSessionId() => List<int>.generate(
 Uint8List _randomBytes(int length) => Uint8List.fromList(
   List<int>.generate(length, (_) => Random.secure().nextInt(256)),
 );
+
+bool _isSafeRelayFileName(String value) =>
+    value.isNotEmpty &&
+    value.length <= 255 &&
+    value != '.' &&
+    value != '..' &&
+    !value.contains('/') &&
+    !value.contains(r'\') &&
+    !value.contains('\u0000');

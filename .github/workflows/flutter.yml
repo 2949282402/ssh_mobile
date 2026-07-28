@@ -15,10 +15,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  native-network-quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: native/network_core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Test Rust workspace
+        run: cargo test --workspace --locked
+      - name: Lint Rust workspace
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  relay-quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: relay
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache-dependency-path: relay/go.sum
+      - name: Check Go formatting
+        run: |
+          go fmt ./...
+          git diff --exit-code -- .
+      - name: Test relay
+        run: go test ./...
+
   analyze-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.44.2'
@@ -56,6 +94,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.44.2'
@@ -73,6 +114,9 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin, aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.44.2'

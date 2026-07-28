@@ -8,16 +8,12 @@ const Uuid _traceUuid = Uuid();
 /// |---|---|---|
 /// | SSH 密码、私钥、API Key | FlutterSecureStorage | 平台原生加密 |
 /// | 主题、语言、字体、小设置 | SharedPreferences | 明文 |
-/// | 未迁移的兼容数据 | SharedPreferences + DataProtection | AES-256-GCM |
 /// | 增长型结构化数据 | Drift SQLite | metadata 明文，敏感正文字段级加密 |
 ///
 /// 不要把凭据写入 Drift；AI message、tool trace、todoSteps 和 Playbook
 /// content 等敏感正文不得以明文 Drift column 保存。生产环境数据库打开失败时
-/// 不得 fallback 到内存数据库，调用方应退回旧 protected-pref 兼容路径。
-///
-/// 旧 protected-pref 写入仍使用 700ms 防抖；Drift-backed 数据通过 DAO
-/// transaction 持久化。历史 Drift 明文敏感字段由
-/// drift_sensitive_fields_encrypted_v1 启动迁移重加密。
+/// 不得 fallback 到内存数据库。Drift-backed 数据通过 DAO transaction
+/// 持久化；当前处于开发阶段，仅维护最新数据库基线，不执行旧库迁移。
 abstract interface class ConnectionRepository {
   List<ConnectionConfig> get connections;
   Future<void> addConnection(ConnectionConfig config);

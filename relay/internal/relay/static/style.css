@@ -212,6 +212,11 @@ input.token-input {
   color: #fff;
 }
 
+.compact-action {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;

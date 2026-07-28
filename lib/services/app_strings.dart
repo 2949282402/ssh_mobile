@@ -651,12 +651,24 @@ class AppStrings {
   String get vpnServerUrl => _en ? 'Server Address' : '服务器地址';
   String get vpnServerHost => _en ? 'Host / IP / Domain' : '服务器主机 / 域名 / IP';
   String get vpnServerPort => _en ? 'Port' : '端口';
-  String get vpnEnrollmentToken => _en ? 'Enrollment Token (Optional)' : '注册凭据 Token (可选)';
+  String get vpnEnrollmentToken =>
+      _en ? 'Enrollment Token (Required)' : '注册凭据 Token（必填）';
   String get vpnEnrollStatus => _en ? 'Enrollment Status' : '注册状态';
   String get vpnEnrollButton => _en ? 'Enroll Device' : '注册设备';
   String get vpnEnrolledBadge => _en ? 'Enrolled & Verified' : '已注册 (可信)';
   String get vpnNotEnrolledBadge => _en ? 'Not Enrolled' : '未注册';
   String get vpnRelayStatus => _en ? 'NAT / Relay Route' : 'NAT / 中继线路';
+  String get networkIncomingTransferTitle =>
+      _en ? 'Incoming network transfer' : '收到网络传输请求';
+  String networkIncomingTransferDescription(
+    String senderId,
+    String fileName,
+    String fileSize,
+  ) => _en
+      ? '$senderId wants to send “$fileName” ($fileSize). Accept this file?'
+      : '设备 $senderId 希望发送“$fileName”（$fileSize）。是否接收？';
+  String get accept => _en ? 'Accept' : '接收';
+  String get reject => _en ? 'Reject' : '拒绝';
   String get vpnPeerNodes => _en ? 'P2P Nodes' : 'P2P 节点列表';
   String get vpnNoPeers => _en ? 'No P2P nodes enrolled' : '暂无可用的 P2P 节点';
   String get vpnHolePunchProbe => _en ? 'Probe NAT Hole Punch' : '探测 NAT 打洞';

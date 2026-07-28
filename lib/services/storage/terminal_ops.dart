@@ -63,66 +63,24 @@ extension TerminalOps on StorageService {
   }
 
   Future<List<TerminalHistoryRecord>> _loadTerminalHistoryRecords() async {
-    if (!_initialized || _prefs == null) return [];
-    if (_driftTerminalHistoryActive) {
-      final cached = _terminalHistoryRecordsCache;
-      if (cached != null) return cached;
-      return _loadDriftTerminalHistoryRecords();
-    }
+    if (!_initialized || _prefs == null) return const [];
+    _requireDriftStorage(_driftTerminalHistoryActive, 'terminal history');
     final cached = _terminalHistoryRecordsCache;
     if (cached != null) return cached;
-    final jsonStr = await _readProtectedPref(
-      StorageService._terminalHistoryRecordsKey,
-    );
-    if (jsonStr == null || jsonStr.isEmpty) {
-      return _terminalHistoryRecordsCache = const [];
-    }
-
-    try {
-      final list = jsonDecode(jsonStr) as List<dynamic>;
-      final records =
-          list
-              .map(
-                (item) => TerminalHistoryRecord.fromJson(
-                  item as Map<String, dynamic>,
-                ),
-              )
-              .toList()
-            ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-      return _terminalHistoryRecordsCache = List.unmodifiable(records);
-    } catch (e) {
-      AppLogService.instance.error(
-        'Failed to load terminal history records',
-        error: e,
-      );
-      return _terminalHistoryRecordsCache = const [];
-    }
+    return _loadDriftTerminalHistoryRecords();
   }
 
   Future<void> _saveTerminalHistoryRecord(TerminalHistoryRecord record) async {
     if (!_initialized || _prefs == null) return;
-    if (_driftTerminalHistoryActive) {
-      await _saveDriftTerminalHistoryRecord(record);
-      notifyStorageListeners();
-      return;
-    }
-    final records = [...await loadTerminalHistoryRecords()];
-    records.removeWhere((item) => item.sessionId == record.sessionId);
-    records.insert(0, record);
-    await _saveTerminalHistoryRecords(records.take(200).toList());
+    _requireDriftStorage(_driftTerminalHistoryActive, 'terminal history');
+    await _saveDriftTerminalHistoryRecord(record);
     notifyStorageListeners();
   }
 
   Future<void> _removeTerminalHistoryRecord(String sessionId) async {
     if (!_initialized || _prefs == null) return;
-    if (_driftTerminalHistoryActive) {
-      await _removeDriftTerminalHistoryRecord(sessionId);
-      notifyStorageListeners();
-      return;
-    }
-    final records = [...await loadTerminalHistoryRecords()];
-    records.removeWhere((item) => item.sessionId == sessionId);
-    await _saveTerminalHistoryRecords(records);
+    _requireDriftStorage(_driftTerminalHistoryActive, 'terminal history');
+    await _removeDriftTerminalHistoryRecord(sessionId);
     notifyStorageListeners();
   }
 
@@ -146,15 +104,7 @@ extension TerminalOps on StorageService {
     final sorted = [...records]
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     _terminalHistoryRecordsCache = List.unmodifiable(sorted);
-    if (_driftTerminalHistoryActive) {
-      await _replaceDriftTerminalHistoryRecords(sorted);
-      return;
-    }
-    final jsonStr = jsonEncode(sorted.map((item) => item.toJson()).toList());
-    await _writeProtectedPrefBuffered(
-      StorageService._terminalHistoryRecordsKey,
-      jsonStr,
-      immediate: immediate,
-    );
+    _requireDriftStorage(_driftTerminalHistoryActive, 'terminal history');
+    await _replaceDriftTerminalHistoryRecords(sorted);
   }
 }

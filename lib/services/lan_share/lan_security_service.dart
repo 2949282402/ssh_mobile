@@ -36,6 +36,8 @@ class LanSecurityService {
       'lan_share_trusted_fingerprints';
   static const String _peerX25519KeysStorageKey =
       'lan_share_peer_x25519_keys_v1';
+  static const String _peerNetworkIdentityKeysStorageKey =
+      'lan_share_peer_network_identity_keys_v1';
 
   final FlutterSecureStorage _secureStorage;
   final Map<String, DateTime> _lastCheckTime = {};
@@ -225,9 +227,16 @@ class LanSecurityService {
     return Uint8List.fromList(pub.bytes);
   }
 
+  /// Returns the persistent X25519 seed for handoff to the in-process native
+  /// network runtime. Callers must keep it memory-only.
+  Future<Uint8List> getStaticX25519PrivateKeyBytes() async {
+    final keyPair = await _getOrCreateStaticX25519KeyPair();
+    return Uint8List.fromList(await keyPair.extractPrivateKeyBytes());
+  }
+
   /// Stores the E2E key observed over an already authenticated pairing channel.
   /// Public relay transfers refuse peers that do not have this pinned key, so
-  /// legacy pairings must be refreshed instead of silently becoming plaintext.
+  /// pairings missing the key must be refreshed instead of becoming plaintext.
   Future<void> storePeerX25519PublicKey(
     String deviceId,
     Uint8List publicKey,
@@ -240,7 +249,14 @@ class LanSecurityService {
       );
     }
     final values = await _readPeerX25519Keys();
-    values[deviceId] = base64UrlEncode(publicKey).replaceAll('=', '');
+    final encoded = base64UrlEncode(publicKey).replaceAll('=', '');
+    final existing = values[deviceId];
+    if (existing != null && existing != encoded) {
+      throw StateError(
+        'LAN peer X25519 key changed; unpair before pairing again.',
+      );
+    }
+    values[deviceId] = encoded;
     await _secureStorage.write(
       key: _peerX25519KeysStorageKey,
       value: jsonEncode(values),
@@ -276,6 +292,70 @@ class LanSecurityService {
     if (values.remove(deviceId) != null) {
       await _secureStorage.write(
         key: _peerX25519KeysStorageKey,
+        value: jsonEncode(values),
+      );
+    }
+  }
+
+  /// Stores the Ed25519 identity used by the native QUIC handshake. The key is
+  /// pinned to the pairing and cannot rotate until the peer is unpaired.
+  Future<void> storePeerNetworkIdentityPublicKey(
+    String deviceId,
+    Uint8List publicKey,
+  ) async {
+    if (deviceId.isEmpty ||
+        publicKey.length != 32 ||
+        !await isDevicePaired(deviceId)) {
+      throw ArgumentError(
+        'A paired device and a 32-byte network identity key are required.',
+      );
+    }
+    final values = await _readPeerNetworkIdentityKeys();
+    final encoded = base64UrlEncode(publicKey).replaceAll('=', '');
+    final existing = values[deviceId];
+    if (existing != null && existing != encoded) {
+      throw StateError(
+        'LAN peer network identity changed; unpair before pairing again.',
+      );
+    }
+    values[deviceId] = encoded;
+    await _secureStorage.write(
+      key: _peerNetworkIdentityKeysStorageKey,
+      value: jsonEncode(values),
+    );
+  }
+
+  Future<Uint8List?> getPeerNetworkIdentityPublicKey(String deviceId) async {
+    if (!await isDevicePaired(deviceId)) return null;
+    final value = (await _readPeerNetworkIdentityKeys())[deviceId];
+    if (value == null) return null;
+    try {
+      final bytes = base64Url.decode(base64Url.normalize(value));
+      return bytes.length == 32 ? Uint8List.fromList(bytes) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<Map<String, String>> _readPeerNetworkIdentityKeys() async {
+    final raw = await _secureStorage.read(
+      key: _peerNetworkIdentityKeysStorageKey,
+    );
+    if (raw == null) return <String, String>{};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return <String, String>{};
+      return decoded.map((key, value) => MapEntry(key, value.toString()));
+    } catch (_) {
+      return <String, String>{};
+    }
+  }
+
+  Future<void> _removePeerNetworkIdentityPublicKey(String deviceId) async {
+    final values = await _readPeerNetworkIdentityKeys();
+    if (values.remove(deviceId) != null) {
+      await _secureStorage.write(
+        key: _peerNetworkIdentityKeysStorageKey,
         value: jsonEncode(values),
       );
     }
@@ -947,6 +1027,7 @@ class LanSecurityService {
     );
     await _removePairAccessTokens(deviceId);
     await _removePeerX25519PublicKey(deviceId);
+    await _removePeerNetworkIdentityPublicKey(deviceId);
   }
 
   /// Unpair all devices
@@ -961,6 +1042,7 @@ class LanSecurityService {
       _secureStorage.delete(key: _outboundAccessTokensStorageKey),
       _secureStorage.delete(key: _peerCertificateFingerprintsStorageKey),
       _secureStorage.delete(key: _peerX25519KeysStorageKey),
+      _secureStorage.delete(key: _peerNetworkIdentityKeysStorageKey),
     ]);
   }
 

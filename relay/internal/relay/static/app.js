@@ -5,25 +5,16 @@ function checkAuth() {
     .then(function(res) { return res.json(); })
     .then(function(data) {
       var loginModal = document.getElementById('loginModal');
-      var changePasswordModal = document.getElementById('changePasswordModal');
       var userSection = document.getElementById('userSection');
 
       if (!data.authenticated) {
         loginModal.style.display = 'flex';
-        changePasswordModal.style.display = 'none';
         userSection.style.display = 'none';
-        if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
-      } else if (data.must_change_password) {
-        loginModal.style.display = 'none';
-        changePasswordModal.style.display = 'flex';
-        userSection.style.display = 'flex';
-        document.getElementById('adminUsername').innerText = data.username || 'hejulian';
         if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
       } else {
         loginModal.style.display = 'none';
-        changePasswordModal.style.display = 'none';
         userSection.style.display = 'flex';
-        document.getElementById('adminUsername').innerText = data.username || 'hejulian';
+        document.getElementById('adminUsername').innerText = data.username || '';
         updateStats();
         if (!statsTimer) {
           statsTimer = setInterval(updateStats, 3000);
@@ -56,48 +47,6 @@ function handleLogin(e) {
     });
   })
   .then(function() {
-    checkAuth();
-  })
-  .catch(function(err) {
-    errDiv.innerText = err.message;
-    errDiv.style.display = 'block';
-  });
-}
-
-function openChangePasswordModal() {
-  document.getElementById('changePassError').style.display = 'none';
-  document.getElementById('changePasswordModal').style.display = 'flex';
-}
-
-function handleChangePassword(e) {
-  e.preventDefault();
-  var oldPass = document.getElementById('oldPass').value;
-  var newPass = document.getElementById('newPass').value;
-  var confirmPass = document.getElementById('confirmPass').value;
-  var errDiv = document.getElementById('changePassError');
-  errDiv.style.display = 'none';
-
-  if (newPass !== confirmPass) {
-    errDiv.innerText = '两次输入的新密码不一致！';
-    errDiv.style.display = 'block';
-    return;
-  }
-
-  fetch('/api/change-password', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ old_password: oldPass, new_password: newPass })
-  })
-  .then(function(res) {
-    return res.json().then(function(data) {
-      if (!res.ok) {
-        throw new Error(data.error || '修改密码失败');
-      }
-      return data;
-    });
-  })
-  .then(function() {
-    alert('密码修改成功！管理面板已解锁。');
     checkAuth();
   })
   .catch(function(err) {
@@ -139,30 +88,54 @@ function updateStats() {
       }
 
       var tbody = document.getElementById('enrolledTableBody');
+      tbody.replaceChildren();
       if (!data.enrolled_devices || data.enrolled_devices.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">暂无已注册设备</td></tr>';
+        var emptyRow = document.createElement('tr');
+        var emptyCell = document.createElement('td');
+        emptyCell.colSpan = 5;
+        emptyCell.className = 'empty-state';
+        emptyCell.textContent = '暂无已注册设备';
+        emptyRow.appendChild(emptyCell);
+        tbody.appendChild(emptyRow);
       } else {
-        var rows = '';
         for (var j = 0; j < data.enrolled_devices.length; j++) {
           var dev = data.enrolled_devices[j];
           var isOnline = activeDeviceSet[dev.device_id];
-          var statusBadge = isOnline ? '<span class="badge-online">&#9679; 在线 (Online)</span>' : '<span class="badge-offline">&#9675; 离线 (Offline)</span>';
           var enrolledTime = dev.enrolled_at ? new Date(dev.enrolled_at).toLocaleString() : '-';
 
-          rows += '<tr>' +
-            '<td class="mono">' + dev.device_id + '</td>' +
-            '<td>' + (dev.platform || 'unknown') + '</td>' +
-            '<td>' + enrolledTime + '</td>' +
-            '<td>' + statusBadge + '</td>' +
-            '<td><button class="btn btn-danger" style="padding: 4px 10px; font-size: 12px;" onclick="revokeDevice(\'' + dev.device_id + '\')">撤销注册</button></td>' +
-            '</tr>';
+          var row = document.createElement('tr');
+          row.appendChild(textCell(dev.device_id, 'mono'));
+          row.appendChild(textCell(dev.platform || 'unknown'));
+          row.appendChild(textCell(enrolledTime));
+
+          var statusCell = document.createElement('td');
+          var statusBadge = document.createElement('span');
+          statusBadge.className = isOnline ? 'badge-online' : 'badge-offline';
+          statusBadge.textContent = isOnline ? '● 在线 (Online)' : '○ 离线 (Offline)';
+          statusCell.appendChild(statusBadge);
+          row.appendChild(statusCell);
+
+          var actionCell = document.createElement('td');
+          var revokeButton = document.createElement('button');
+          revokeButton.className = 'btn btn-danger compact-action';
+          revokeButton.textContent = '撤销注册';
+          revokeButton.addEventListener('click', revokeDevice.bind(null, dev.device_id));
+          actionCell.appendChild(revokeButton);
+          row.appendChild(actionCell);
+          tbody.appendChild(row);
         }
-        tbody.innerHTML = rows;
       }
     })
     .catch(function(err) {
       console.error('Failed to fetch stats:', err);
     });
+}
+
+function textCell(value, className) {
+  var cell = document.createElement('td');
+  if (className) cell.className = className;
+  cell.textContent = value == null ? '' : String(value);
+  return cell;
 }
 
 function copyToken() {
@@ -210,5 +183,9 @@ function revokeDevice(deviceId) {
   });
 }
 
-// Start auth check on page load
+document.getElementById('loginForm').addEventListener('submit', handleLogin);
+document.getElementById('logoutButton').addEventListener('click', logout);
+document.getElementById('copyTokenButton').addEventListener('click', copyToken);
+document.getElementById('rotateTokenButton').addEventListener('click', rotateToken);
+
 checkAuth();

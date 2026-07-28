@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:ssh_mobile/features/lan_share/services/lan_receiver_coordinator.dart';
+import 'package:ssh_mobile/services/app_log_service.dart';
 import 'package:ssh_mobile/services/app_settings.dart';
 
 class VpnP2pServerConfigCard extends StatefulWidget {
@@ -13,7 +15,7 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
   late TextEditingController _hostController;
   late TextEditingController _portController;
   late TextEditingController _tokenController;
-  bool _isEnrolled = false;
+  bool? _isEnrolled;
   bool _isEnrolling = false;
   bool _isExpanded = false; // Collapsed by default as requested
 
@@ -21,13 +23,14 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
   void initState() {
     super.initState();
     final settings = context.read<AppSettings>();
-    final host = settings.relayHost.isNotEmpty ? settings.relayHost : 'relay.example.com';
+    final host = settings.relayHost;
     final port = settings.relayPort > 0 ? settings.relayPort : 443;
     _hostController = TextEditingController(text: host);
     _portController = TextEditingController(text: '$port');
     _tokenController = TextEditingController();
 
     _hostController.addListener(_onHostChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refreshEnrollment());
   }
 
   void _onHostChanged() {
@@ -76,24 +79,83 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
       return;
     }
 
-    setState(() => _isEnrolling = true);
-    final settings = context.read<AppSettings>();
-    await settings.setRelayServer(host: host, port: portVal);
+    final token = _tokenController.text.trim();
+    if (token.length < 16) {
+      _showError(
+        context.read<AppSettings>().isEnglish
+            ? 'Enrollment Token must contain at least 16 characters.'
+            : '注册 Token 至少需要 16 个字符。',
+      );
+      return;
+    }
 
-    await Future.delayed(const Duration(milliseconds: 800));
-    if (!mounted) return;
-    setState(() {
-      _isEnrolling = false;
-      _isEnrolled = true;
-      _isExpanded = false; // Collapse after successful enrollment
-    });
+    final settings = context.read<AppSettings>();
+    final endpoint = Uri(scheme: 'https', host: host, port: portVal);
+    final coordinator = context.read<LanReceiverCoordinator>();
+    setState(() => _isEnrolling = true);
+    try {
+      await settings.ensureLanIdentity();
+      await coordinator.enrollRelay(endpoint: endpoint, enrollmentToken: token);
+      _tokenController.clear();
+      if (!mounted) return;
+      setState(() {
+        _isEnrolling = false;
+        _isEnrolled = true;
+        _isExpanded = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            settings.isEnglish
+                ? 'Device enrollment and authentication succeeded.'
+                : '设备注册与身份验证成功。',
+          ),
+        ),
+      );
+    } catch (error, stackTrace) {
+      AppLogService.instance.warning(
+        'Relay enrollment failed',
+        details: '$error\n$stackTrace',
+      );
+      if (!mounted) return;
+      setState(() {
+        _isEnrolling = false;
+        _isEnrolled = false;
+      });
+      _showError(
+        settings.isEnglish
+            ? 'Enrollment failed. Check the server, TLS certificate, and token.'
+            : '注册失败，请检查服务器、TLS 证书和 Token。',
+      );
+    }
+  }
+
+  Future<void> _refreshEnrollment() async {
+    final settings = context.read<AppSettings>();
+    await settings.ensureLanIdentity();
+    if (!mounted || settings.relayEndpoint.isEmpty) {
+      if (mounted) setState(() => _isEnrolled = false);
+      return;
+    }
+    try {
+      final enrolled = await context
+          .read<LanReceiverCoordinator>()
+          .connectConfiguredRelay();
+      if (mounted) setState(() => _isEnrolled = enrolled);
+    } catch (error, stackTrace) {
+      AppLogService.instance.warning(
+        'Relay connection verification failed',
+        details: '$error\n$stackTrace',
+      );
+      if (mounted) setState(() => _isEnrolled = false);
+    }
+  }
+
+  void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          settings.isEnglish
-              ? 'Device enrolled successfully with control server ($host:$portVal).'
-              : '设备已成功在控制服务器 ($host:$portVal) 注册。',
-        ),
+        content: Text(message),
+        backgroundColor: Theme.of(context).colorScheme.error,
       ),
     );
   }
@@ -104,7 +166,7 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
     final strings = AppStrings(settings.language);
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final currentHost = settings.relayHost.isNotEmpty ? settings.relayHost : 'relay.example.com';
+    final currentHost = settings.relayHost;
     final currentPort = settings.relayPort > 0 ? settings.relayPort : 443;
 
     return Card(
@@ -137,7 +199,9 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    '($currentHost:$currentPort)',
+                    currentHost.isEmpty
+                        ? (strings.isEnglish ? '(Not configured)' : '（未配置）')
+                        : '($currentHost:$currentPort)',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: colorScheme.onSurfaceVariant,
                       fontFamily: 'monospace',
@@ -150,22 +214,26 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
                       vertical: 3,
                     ),
                     decoration: BoxDecoration(
-                      color: _isEnrolled
+                      color: _isEnrolled == true
                           ? Colors.green.withValues(alpha: 0.15)
                           : Colors.orange.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                        color: _isEnrolled ? Colors.green : Colors.orange,
+                        color: _isEnrolled == true
+                            ? Colors.green
+                            : Colors.orange,
                       ),
                     ),
                     child: Text(
-                      _isEnrolled
+                      _isEnrolled == true
                           ? strings.vpnEnrolledBadge
                           : strings.vpnNotEnrolledBadge,
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.bold,
-                        color: _isEnrolled ? Colors.green : Colors.orange,
+                        color: _isEnrolled == true
+                            ? Colors.green
+                            : Colors.orange,
                       ),
                     ),
                   ),
@@ -213,14 +281,13 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
                 ],
               ),
               const SizedBox(height: 12),
-              // Enrollment Token (Optional)
               TextField(
                 controller: _tokenController,
                 decoration: InputDecoration(
                   labelText: strings.vpnEnrollmentToken,
                   hintText: strings.isEnglish
-                      ? 'Auto-generated or custom token'
-                      : '服务器面板显示或自定义的 Token',
+                      ? 'Required token from the relay dashboard'
+                      : '必填：中继管理面板显示的 Token',
                   prefixIcon: const Icon(Icons.key_rounded),
                   border: const OutlineInputBorder(),
                 ),
@@ -243,9 +310,7 @@ class _VpnP2pServerConfigCardState extends State<VpnP2pServerConfigCard> {
                         ? const SizedBox(
                             width: 16,
                             height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                            ),
+                            child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : const Icon(Icons.verified_user_rounded),
                     label: Text(strings.vpnEnrollButton),

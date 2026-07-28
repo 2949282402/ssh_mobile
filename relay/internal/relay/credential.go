@@ -18,7 +18,11 @@ type credentialClaims struct {
 }
 
 func issueCredential(key []byte, deviceID string, publicKey []byte, ttl time.Duration) (string, error) {
-	claims, err := json.Marshal(credentialClaims{deviceID, base64.RawURLEncoding.EncodeToString(publicKey), time.Now().Add(ttl).Unix()})
+	claims, err := json.Marshal(credentialClaims{
+		DeviceID:  deviceID,
+		PublicKey: base64.RawURLEncoding.EncodeToString(publicKey),
+		ExpiresAt: time.Now().Add(ttl).Unix(),
+	})
 	if err != nil {
 		return "", err
 	}
@@ -56,9 +60,9 @@ func verifyCredential(key []byte, token string) (credentialClaims, []byte, error
 	return claims, publicKey, nil
 }
 
-func verifyDeviceProof(publicKey []byte, nonce, encodedSignature string) error {
+func verifyDeviceProof(publicKey []byte, payload, encodedSignature string) error {
 	signature, err := base64.RawURLEncoding.DecodeString(encodedSignature)
-	if err != nil || nonce == "" || !ed25519.Verify(ed25519.PublicKey(publicKey), []byte(nonce), signature) {
+	if err != nil || payload == "" || !ed25519.Verify(ed25519.PublicKey(publicKey), []byte(payload), signature) {
 		return errors.New("device signature is invalid")
 	}
 	return nil

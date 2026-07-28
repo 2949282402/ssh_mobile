@@ -29,7 +29,7 @@ SSH Mobile 是一个基于 Flutter 的跨平台 SSH / SFTP 客户端，覆盖 An
 - **SSH 连接管理**：支持密码、私钥、私钥密码、跳板机、服务器平台选择和 SSH Host Key 首次信任校验。
 - **多终端窗口**：同一服务器可创建多个固定名称的终端窗口，并稳定绑定 tmux 会话。
 - **SFTP 文件管理**：支持目录浏览、最近与收藏路径、上传、下载、编辑、预览和输入完整名称确认删除。
-- **局域网快传与网络传输**：支持 mDNS/UDP 发现、扫码或设备列表发起配对邀请、双向 PIN 确认和加密设备间传输；应用在前台时可全局唤起对端配对页，并合并双方同时发起的邀请。可选的自托管公网中继支持端到端加密的 SFTP 文件转发，服务端不会保存文件内容或文件名。
+- **局域网快传与网络传输**：支持 mDNS/UDP 发现、扫码或设备列表发起配对邀请、双向 PIN 确认和加密设备间传输；文件发送统一进入 Rust 网络运行时，优先使用固定身份的 Quinn 直连，无法直达时由当前 WSS Relay 路径转发 AES-GCM 密文。直连和中继的入站文件都通过全局弹窗显式审批，校验后才提交到应用沙箱，并在接收端持久化和确认后报告成功。当前开发版本不保留旧 HTTPS 文件发送降级路径。
 - **服务器监控**：查看性能、端口、应用进程、服务、用户和活动会话。
 - **AI Chat 与 Agent 执行**：支持流式输出、Plan Mode、审批式工具调用、聊天历史、消息分支、上下文压缩、RAG、Skills 和执行 Trace。
 - **本地 MCP Server**：桌面端可生成 Codex、Claude Code 和 Gemini CLI 配置；仅回环地址的安全边界始终启用，外部 MCP 客户端调用写入类工具会返回 `approval_required`。
@@ -77,18 +77,20 @@ flutter run -d chrome
 
 ## 控制平面与中继服务器启动说明
 
-仓库内的 `relay/` Go 服务提供设备控制平面、基于 HTTPS/WSS 的内存中继以及**内置可视化 Web 管理面板**，用于 P2P NAT 穿透与端到端加密文件转发。
+仓库内的 `relay/` Go 服务提供设备控制平面、基于 HTTPS/WSS 的内存中继以及**内置可视化 Web 管理面板**，用于网络传输与 P2P 备用链路。注册凭据与管理凭据必须显式配置；缺少密钥或使用弱口令时，服务会拒绝启动。
 
-服务支持零配置开箱即用，启动时未设置的 Token 与密钥会自动生成并在 Web 管理面板中直观展示。
-
-### 方式一：使用 Go 本地直接启动（零配置）
+### 方式一：使用 Go 本地直接启动
 
 ```bash
 cd relay
+export RELAY_ENROLLMENT_TOKEN='replace-with-at-least-16-random-characters'
+export RELAY_CREDENTIAL_KEY="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
+export RELAY_ADMIN_USER='relay-admin'
+export RELAY_ADMIN_PASSWORD='replace-with-a-random-password'
 go run ./cmd/relay
 ```
 
-在浏览器中打开 `http://localhost:8080` 即可进入**可视化 Web 管理面板**，直接查看与复制自动生成的 `Enrollment Token`，并可视化管理已注册设备。
+在浏览器中打开 `http://localhost:8080`，登录**可视化 Web 管理面板**后可查看或轮换注册 Token，并管理已注册设备。中继状态仅驻留内存；服务重启后，客户端需要重新注册。
 
 ### 方式二：使用 Docker Compose 生产部署
 
@@ -97,7 +99,7 @@ go run ./cmd/relay
 ```powershell
 cd relay
 Copy-Item .env.example .env
-# 设置 RELAY_PUBLIC_DOMAIN、可选的 RELAY_ENROLLMENT_TOKEN 与密钥。
+# 设置公网域名，以及所有必填 Token、签名密钥和管理员凭据。
 docker compose --env-file .env up --build -d
 ```
 
@@ -106,10 +108,10 @@ docker compose --env-file .env up --build -d
 ```bash
 cd relay
 docker build -t ssh-mobile-relay .
-docker run --rm -p 8080:8080 ssh-mobile-relay
+docker run --rm -p 8080:8080 --env-file .env ssh-mobile-relay
 ```
 
-在 SSH Mobile 中打开“网络传输 → VPN / P2P → 服务器配置”，填写控制与中继服务器地址（例如 `https://relay.example.com` 或 `http://<IP>:8080`）。
+在 SSH Mobile 中打开“网络传输 → VPN / P2P → 服务器配置”，填写具备有效 TLS 证书的 HTTPS 中继主机、端口和注册 Token。
 
 
 ### 各平台构建
@@ -417,6 +419,11 @@ flowchart LR
 ViewModel。View 只持有布局与短生命周期展示状态；校验、异步编排和 Repository
 协调由 ViewModel 与 Service 负责。
 
+LAN 文件数据路径为 `LanShareViewModel → TransferTransport → Rust
+NetworkRuntime`。Rust 负责每 peer 路径选择、身份认证 QUIC、流式文件校验以及
+原生 Relay 收发；Flutter 负责配对、审批 UI、历史记录和展示状态。Go Relay
+只作为当前协议的内存路由器，不接触文件明文元数据或明文字节。
+
 ## AI Agent Runtime
 
 AI Agent 运行在客户端，而不是被管理服务器上。SSH Mobile 负责构建模型上下文、调用已配置的模型服务、控制工具循环，并通过 SSH 和 SFTP 访问远程系统。
@@ -473,7 +480,7 @@ Linux 监控读取 `/proc`、`df -P` 等数据；Windows 监控使用 PowerShell
 
 AI 聊天、Agent 指标、终端历史元数据、Playbook 和 SFTP 路径记录等持续增长的结构化数据存储在 Drift 中；小型偏好设置仍使用 SharedPreferences；密码、私钥、API Key 和 MCP Token 只保存在平台 Secure Storage 中。
 
-AI 消息正文、上下文、附件、工具 Trace、TODO Steps 和 Playbook 内容等敏感 Drift 字段会在写入 SQLite 前加密。启动迁移会按可重试批次重加密历史敏感字段，并且只记录行数，不记录字段内容。
+AI 消息正文、上下文、附件、工具 Trace、TODO Steps 和 Playbook 内容等敏感 Drift 字段会在写入 SQLite 前加密。当前开发阶段只维护一套版本号为 1 的最新 Drift Schema，不保留升级或旧数据导入逻辑；Schema 变化后应删除本地开发数据库并重新生成已提交的 Drift 代码。
 
 生产数据库打开失败时不会静默回退到内存数据库，避免看似写入成功的数据在应用重启后消失。
 

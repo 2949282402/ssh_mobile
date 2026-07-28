@@ -368,6 +368,7 @@ class _LanShareScreenState extends State<LanShareScreen>
             Expanded(
               child: InkWell(
                 onTap: () async {
+                  if (_selectedModeIndex == 1) return;
                   final ipMap = await _localIpsFuture;
                   if (ipMap.isEmpty) return;
                   if (context.mounted) {
@@ -386,14 +387,51 @@ class _LanShareScreenState extends State<LanShareScreen>
                       future: _localIpsFuture,
                       builder: (context, snapshot) {
                         final isVpnMode = _selectedModeIndex == 1;
+                        if (isVpnMode) {
+                          final endpoint = vm.appSettings.relayEndpoint;
+                          return RichText(
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            text: TextSpan(
+                              children: [
+                                TextSpan(
+                                  text: strings.isEnglish
+                                      ? 'Relay identity: '
+                                      : '中继身份：',
+                                  style: theme.textTheme.labelSmall?.copyWith(
+                                    color: colors.primary.withValues(
+                                      alpha: 0.7,
+                                    ),
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                TextSpan(
+                                  text: alias,
+                                  style: theme.textTheme.labelMedium?.copyWith(
+                                    color: colors.onSurface,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                TextSpan(
+                                  text: endpoint.isEmpty
+                                      ? (strings.isEnglish
+                                            ? '  · Not configured'
+                                            : '  · 未配置')
+                                      : '  · $endpoint',
+                                  style: theme.textTheme.labelSmall?.copyWith(
+                                    color: colors.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
                         final ipMap = snapshot.data ?? {};
-                        final ips = isVpnMode ? ['10.0.0.1'] : ipMap.keys.toList();
-                        final customIp = isVpnMode ? '10.0.0.1' : vm.customIp;
+                        final ips = ipMap.keys.toList();
+                        final customIp = vm.customIp;
                         final List<InlineSpan> spans = [
                           TextSpan(
-                            text: isVpnMode
-                                ? (strings.isEnglish ? 'VPN Device: ' : 'VPN 本机设备：')
-                                : label,
+                            text: label,
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: colors.primary.withValues(alpha: 0.7),
                               fontWeight: FontWeight.w500,
@@ -423,7 +461,7 @@ class _LanShareScreenState extends State<LanShareScreen>
                           for (int i = 0; i < ips.length; i++) {
                             final ip = ips[i];
                             final isSelected =
-                                isVpnMode || customIp == ip || (customIp == null && i == 0);
+                                customIp == ip || (customIp == null && i == 0);
                             spans.add(
                               TextSpan(
                                 text: ip,
@@ -440,9 +478,8 @@ class _LanShareScreenState extends State<LanShareScreen>
                             if (isSelected) {
                               spans.add(
                                 TextSpan(
-                                  text: isVpnMode
-                                      ? '(${strings.isEnglish ? "VPN Force Bound" : "VPN 强制绑定"})'
-                                      : '(${strings.isEnglish ? "active" : "使用中"})',
+                                  text:
+                                      '(${strings.isEnglish ? "active" : "使用中"})',
                                   style: theme.textTheme.labelSmall?.copyWith(
                                     color: colors.primary,
                                     fontSize: 9,
@@ -476,39 +513,40 @@ class _LanShareScreenState extends State<LanShareScreen>
               ),
             ),
             const SizedBox(width: 4),
-            InkWell(
-              onTap: _isRefreshingIps
-                  ? null
-                  : () async {
-                      setState(() {
-                        _isRefreshingIps = true;
-                        _localIpsFuture =
-                            LanDiscoveryService.getLocalIpInterfaces();
-                      });
-                      await _localIpsFuture;
-                      if (mounted) setState(() => _isRefreshingIps = false);
-                    },
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: const EdgeInsets.all(6),
-                child: _isRefreshingIps
-                    ? SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 1.5,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            colors.primary.withValues(alpha: 0.7),
+            if (_selectedModeIndex == 0)
+              InkWell(
+                onTap: _isRefreshingIps
+                    ? null
+                    : () async {
+                        setState(() {
+                          _isRefreshingIps = true;
+                          _localIpsFuture =
+                              LanDiscoveryService.getLocalIpInterfaces();
+                        });
+                        await _localIpsFuture;
+                        if (mounted) setState(() => _isRefreshingIps = false);
+                      },
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.all(6),
+                  child: _isRefreshingIps
+                      ? SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 1.5,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              colors.primary.withValues(alpha: 0.7),
+                            ),
                           ),
+                        )
+                      : Icon(
+                          Icons.refresh_rounded,
+                          size: 16,
+                          color: colors.primary.withValues(alpha: 0.6),
                         ),
-                      )
-                    : Icon(
-                        Icons.refresh_rounded,
-                        size: 16,
-                        color: colors.primary.withValues(alpha: 0.6),
-                      ),
+                ),
               ),
-            ),
           ],
         ),
       ),

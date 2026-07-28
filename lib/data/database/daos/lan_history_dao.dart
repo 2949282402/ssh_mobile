@@ -54,6 +54,11 @@ class LanHistoryDao extends DatabaseAccessor<AppDatabase>
     int? bytesTransferred,
     bool? isRecalled,
     String? localPath,
+    String? transport,
+    String? routeType,
+    int? avgRtt,
+    int? bytesTotal,
+    String? failureReason,
   }) async {
     final count =
         await (update(lanTransferRecords)..where((t) => t.id.equals(id))).write(
@@ -67,6 +72,19 @@ class LanHistoryDao extends DatabaseAccessor<AppDatabase>
                 : const Value.absent(),
             localPath: localPath != null
                 ? Value(localPath)
+                : const Value.absent(),
+            transport: transport != null
+                ? Value(transport)
+                : const Value.absent(),
+            routeType: routeType != null
+                ? Value(routeType)
+                : const Value.absent(),
+            avgRtt: avgRtt != null ? Value(avgRtt) : const Value.absent(),
+            bytesTotal: bytesTotal != null
+                ? Value(bytesTotal)
+                : const Value.absent(),
+            failureReason: failureReason != null
+                ? Value(failureReason)
                 : const Value.absent(),
           ),
         );

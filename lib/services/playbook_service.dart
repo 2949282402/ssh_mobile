@@ -20,6 +20,7 @@ class PlaybookService extends ChangeNotifier {
   _PlaybookExecutionRun? _activeRun;
   Completer<void>? _runStateOperation;
   Completer<void>? _commandInFlight;
+  bool _disposed = false;
 
   String? _pendingDiagnosticPrompt;
 
@@ -31,7 +32,7 @@ class PlaybookService extends ChangeNotifier {
 
   set pendingDiagnosticPrompt(String? value) {
     _pendingDiagnosticPrompt = value;
-    notifyListeners();
+    _notifyListeners();
   }
 
   List<Playbook> get playbooks => List.unmodifiable(_playbooks);
@@ -42,8 +43,10 @@ class PlaybookService extends ChangeNotifier {
   String? get activeConnectionId => _activeConnectionId;
 
   Future<void> _loadPlaybooksFromStorage() async {
-    _playbooks = await _storageService.loadPlaybooks();
-    notifyListeners();
+    final playbooks = await _storageService.loadPlaybooks();
+    if (_disposed) return;
+    _playbooks = playbooks;
+    _notifyListeners();
   }
 
   Future<void> createPlaybook(Playbook playbook) async {
@@ -79,7 +82,7 @@ class PlaybookService extends ChangeNotifier {
       _isRunning = false;
       _isPaused = false;
       _invalidateActiveRun();
-      notifyListeners();
+      _notifyListeners();
     } catch (e) {
       AppLogService.instance.error('Playbook not found: $playbookId');
     }
@@ -207,7 +210,7 @@ class PlaybookService extends ChangeNotifier {
     _activeConnectionId = run.connectionId;
     _isRunning = true;
     _isPaused = false;
-    notifyListeners();
+    _notifyListeners();
 
     unawaited(_executeLoop(run, _copyPlaybook(playbook), _currentStepIndex));
   }
@@ -220,7 +223,7 @@ class PlaybookService extends ChangeNotifier {
     }
     _isRunning = false;
     _isPaused = true;
-    notifyListeners();
+    _notifyListeners();
   }
 
   Future<void> skipCurrentStep(String connectionId) async {
@@ -469,7 +472,7 @@ class PlaybookService extends ChangeNotifier {
             _isRunning = false;
             _isPaused = false;
           }
-          notifyListeners();
+          _notifyListeners();
         }
         return false;
       }
@@ -595,7 +598,7 @@ class PlaybookService extends ChangeNotifier {
     _currentStepIndex = stepIndex;
     _isRunning = isRunning;
     _isPaused = isPaused;
-    notifyListeners();
+    _notifyListeners();
     return true;
   }
 
@@ -603,13 +606,24 @@ class PlaybookService extends ChangeNotifier {
     if (!_isCurrentRun(run)) return;
     _isRunning = false;
     _isPaused = paused;
-    notifyListeners();
+    _notifyListeners();
   }
 
   bool _isCurrentRun(_PlaybookExecutionRun run) => identical(_activeRun, run);
 
   void _invalidateActiveRun() {
     _activeRun = null;
+  }
+
+  void _notifyListeners() {
+    if (!_disposed) notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _invalidateActiveRun();
+    super.dispose();
   }
 
   static Playbook _copyPlaybook(Playbook playbook) =>

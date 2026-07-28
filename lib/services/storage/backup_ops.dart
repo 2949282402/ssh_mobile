@@ -356,16 +356,8 @@ extension BackupOps on StorageService {
             .whereType<Map<String, dynamic>>()
             .map(AgentRunMetrics.fromJson)
             .toList();
-    if (_driftAgentMetricsActive) {
-      await _replaceDriftAgentRunMetrics(importedMetrics);
-    } else {
-      _agentRunMetricsCache = List.unmodifiable(importedMetrics);
-      await _writeProtectedPrefBuffered(
-        StorageService._agentRunMetricsKey,
-        jsonEncode(importedMetrics.map((item) => item.toJson()).toList()),
-        immediate: true,
-      );
-    }
+    _requireDriftStorage(_driftAgentMetricsActive, 'agent metrics');
+    await _replaceDriftAgentRunMetrics(importedMetrics);
     final importedPlaybooks =
         ((decoded['playbooks'] as List<dynamic>?) ?? const [])
             .whereType<Map<String, dynamic>>()

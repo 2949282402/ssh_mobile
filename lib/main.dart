@@ -15,6 +15,7 @@ import 'features/startup/viewmodels/startup_viewmodel.dart';
 import 'features/sftp/sftp_feature_scope.dart';
 import 'features/lan_share/services/lan_receiver_coordinator.dart';
 import 'features/lan_share/views/lan_pairing_navigation_host.dart';
+import 'features/lan_share/views/network_incoming_transfer_host.dart';
 import 'features/developer_panel/views/developer_panel_floating.dart';
 import 'package:ssh_mobile/features/ai_skills/views/ai_skills_screen.dart';
 import 'package:ssh_mobile/features/ai_skills/views/ai_skill_edit_screen.dart';
@@ -330,9 +331,11 @@ class _SshMobileAppState extends State<SshMobileApp>
                     final visualDensity = mobileVisualDensityFor(mediaQuery);
                     final effectiveChild = child ?? const SizedBox.shrink();
                     final shadChild = DeveloperPanelFloatingHost(
-                      child: LanPairingNavigationHost(
-                        navigatorKey: _navigatorKey,
-                        child: ShadAppBuilder(child: effectiveChild),
+                      child: NetworkIncomingTransferHost(
+                        child: LanPairingNavigationHost(
+                          navigatorKey: _navigatorKey,
+                          child: ShadAppBuilder(child: effectiveChild),
+                        ),
                       ),
                     );
 

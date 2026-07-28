@@ -307,10 +307,12 @@ void main() {
         final storageA = LanStorageService(
           sandboxDirectoryProvider: () async =>
               Directory('${sandbox.path}${Platform.pathSeparator}a'),
+          freeDiskSpaceMbProvider: () async => 1024,
         );
         final storageB = LanStorageService(
           sandboxDirectoryProvider: () async =>
               Directory('${sandbox.path}${Platform.pathSeparator}b'),
+          freeDiskSpaceMbProvider: () async => 1024,
         );
         final securityA = LanSecurityService(
           secureStorage: FakeSecureStorage(),

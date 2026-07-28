@@ -1,49 +1,47 @@
-# ssh_mobile_quic_native
+> Last updated: 2026-07-28
 
-A new Dart FFI package project.
+# SSH Mobile Network Native
 
-## Getting Started
+This Dart FFI package builds and bundles the repository's Rust
+`network-ffi` crate. It exposes a managed `NativeNetworkRuntime` that sends
+versioned Protobuf commands and streams raw Protobuf events back to Dart.
 
-This project is a starting point for a Flutter
-[FFI package](https://flutter.dev/to/ffi-package),
-a specialized package that includes native code directly invoked with Dart FFI.
+Native event polling runs on a helper isolate because the Rust poll call may
+block. Runtime disposal first asks that isolate to stop, waits for its exit,
+and only then destroys the Rust handle.
 
-## Project structure
+The current runtime handles peer registration with pinned Ed25519/X25519 keys,
+per-peer `PathManager` selection, authenticated Quinn sessions, approved and
+verified file receive, cancellation, progress/completion events, and the
+current-protocol WSS Relay data path. Relay is configured after enrollment with
+memory-only credential/signing material; unsupported commands and routes return
+explicit errors rather than synthetic success.
 
-This template uses the following structure:
+## Supported build targets
 
-* `src`: Contains the native source code, and a CmakeFile.txt file for building
-  that source code into a dynamic library.
+- Windows: x64 and arm64
+- Android: arm64, x64, and armv7
+- iOS: arm64 device, arm64 simulator, and x64 simulator
+- macOS: arm64 and x64
+- Linux: arm64 and x64
 
-* `lib`: Contains the Dart code that defines the API of the plugin, and which
-  calls into the native code using `dart:ffi`.
+The build hook invokes Cargo with `--locked`. Cargo and the requested Rust
+target must be installed. Android builds also require an installed NDK
+discoverable through the standard Android SDK or NDK environment variables.
 
-* `bin`: Contains the `build.dart` that performs the external native builds.
+## Validation
 
-## Building and bundling native code
+From this package directory:
 
-`build.dart` does the building of native components.
+```sh
+dart analyze
+dart test
+```
 
-Bundling is done by Flutter based on the output from `build.dart`.
+From `native/network_core`:
 
-## Binding to native code
-
-To use the native code, bindings in Dart are needed.
-To avoid writing these by hand, they are generated from the header file
-(`src/ssh_mobile_quic_native.h`) by `package:ffigen`.
-Regenerate the bindings by running `dart run ffigen --config ffigen.yaml`.
-
-## Invoking native code
-
-Very short-running native functions can be directly invoked from any isolate.
-For example, see `sum` in `lib/ssh_mobile_quic_native.dart`.
-
-Longer-running functions should be invoked on a helper isolate to avoid
-dropping frames in Flutter applications.
-For example, see `sumAsync` in `lib/ssh_mobile_quic_native.dart`.
-
-## Flutter help
-
-For help getting started with Flutter, view our
-[online documentation](https://docs.flutter.dev), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```sh
+cargo fmt --all -- --check
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+```

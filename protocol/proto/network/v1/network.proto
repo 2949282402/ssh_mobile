@@ -37,12 +37,43 @@ message CancelTransferCommand {
   string transfer_id = 1;
 }
 
+message ConfigureRuntimeCommand {
+  string device_id = 1;
+  bytes identity_private_key = 2;
+  bytes e2e_private_key = 3;
+  string listen_address = 4;
+  string receive_directory = 5;
+}
+
+message UpsertPeerCommand {
+  string peer_id = 1;
+  string endpoint_address = 2;
+  bytes identity_public_key = 3;
+  bytes e2e_public_key = 4;
+}
+
+message RespondIncomingTransferCommand {
+  string transfer_id = 1;
+  bool accept = 2;
+}
+
+message ConfigureRelayCommand {
+  string relay_url = 1;
+  string relay_credential = 2;
+  bytes relay_signing_seed = 3;
+}
+
 message NetworkCommand {
   string command_id = 1;
+  uint32 protocol_version = 2;
   oneof payload {
     ConnectPeerCommand connect_peer = 10;
     SendFileCommand send_file = 11;
     CancelTransferCommand cancel_transfer = 12;
+    ConfigureRuntimeCommand configure_runtime = 13;
+    UpsertPeerCommand upsert_peer = 14;
+    RespondIncomingTransferCommand respond_incoming_transfer = 15;
+    ConfigureRelayCommand configure_relay = 16;
   }
 }
 
@@ -58,12 +89,34 @@ message TransferProgressEvent {
   uint64 total_bytes = 3;
 }
 
+message CommandResultEvent {
+  string command_id = 1;
+  bool accepted = 2;
+  NetworkError error = 3;
+}
+
+message IncomingTransferOfferEvent {
+  string transfer_id = 1;
+  string peer_id = 2;
+  string file_name = 3;
+  uint64 file_size = 4;
+}
+
+message TransferCompletedEvent {
+  string transfer_id = 1;
+  string local_path = 2;
+}
+
 message NetworkEvent {
   string event_id = 1;
   int64 timestamp_ms = 2;
+  uint32 protocol_version = 3;
   oneof payload {
     PeerStateChangedEvent peer_state = 10;
     TransferProgressEvent transfer_progress = 11;
     NetworkError error = 12;
+    CommandResultEvent command_result = 13;
+    IncomingTransferOfferEvent incoming_transfer_offer = 14;
+    TransferCompletedEvent transfer_completed = 15;
   }
 }

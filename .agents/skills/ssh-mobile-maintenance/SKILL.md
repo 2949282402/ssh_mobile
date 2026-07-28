@@ -84,11 +84,10 @@ or maintenance lesson should be shared across Codex and Claude Code sessions.
   Drift metadata may be plaintext for query/sort needs, but sensitive AI
   message content, context, attachments, traces, todoSteps, and Playbook content
   must be field-encrypted before SQLite writes. Production database open
-  failures must not silently fall back to an in-memory database. Legacy
-  plaintext Drift rows from the initial migration must be re-encrypted by
-  `drift_sensitive_fields_encrypted_v1` before considering storage migration
-  complete. That startup re-encryption runs in small retryable batches, marks
-  completion only after all batches succeed, and logs row counts only.
+  failures must not silently fall back to an in-memory database. While the app
+  is still in active development, Drift uses one current schema at version 1
+  with no upgrade or legacy-import machinery; schema changes require deleting
+  the local development database and regenerating `app_database.g.dart`.
   `StorageService.appDatabase` may be accessed before asynchronous `init()` by
   root providers such as LAN Share. It must cache and own exactly one database
   instance, `_initializeDriftStorage()` must reuse that instance, concurrent
@@ -299,6 +298,48 @@ lib/services/lan_share/lan_transfer_service.dart.
   required. The Windows installer firewall rule is scoped to the application
   and local subnet.
 - Never log pairing PIN values.
+
+### Network Platform and Public Relay
+
+Primary entry points are `native/network_core/`,
+`packages/ssh_mobile_network_native/`, `lib/services/network/`,
+`lib/services/relay/`, `lib/features/lan_share/views/vpn_p2p_share_view.dart`,
+and `relay/`.
+
+- Version every Dart/Rust FFI command and event. Unsupported versions must
+  produce an explicit error; an unimplemented native route must return
+  `NoRoute` and must never be presented as transfer success.
+- Production LAN file sends go through the coordinator-injected
+  `TransferTransport`; do not add an HTTPS/legacy file fallback during active
+  development. Persist the actual direct/relay route and failure in LAN history.
+- Register peer endpoints and pinned Ed25519/X25519 keys before connect.
+  `PathManager` selection must drive the endpoint used by Quinn.
+- Run blocking native event polling on a helper isolate. Stop the isolate and
+  wait for its exit before destroying the Rust runtime handle.
+- QUIC peer handshakes must bind the expected device identity and public key,
+  protocol version, both fresh nonces, and both transcript signatures.
+- Discover STUN candidates from the same bound UDP socket later handed to
+  Quinn. Never advertise unspecified or loopback addresses as peer candidates.
+- Authenticate hole-punch request/response packets with a session key and fresh
+  nonce; reject reflected requests and unauthenticated datagrams.
+- File manifests require a single safe filename plus a mandatory SHA-256.
+  Resume only from an exact partial-file length, reject early EOF and final-file
+  overwrite, and atomically rename only after size and hash verification.
+- The Go relay requires explicit strong enrollment, credential-signing, and
+  dashboard admin secrets. Device proofs sign method, path, and a one-use nonce;
+  credentials are valid only for matching enrollment in the current process.
+- Relay WebSockets are connected only after a protocol-v1 `ready` frame.
+  Forwarded transfer controls carry the server-bound authenticated `sender_id`;
+  enforce sender/receiver roles and report transfer success only after the
+  receiver returns `complete_ack`.
+- Configure native Relay only after runtime identity and explicit enrollment
+  exist. Keep a single Relay socket per device ID, consume incoming native
+  offer/chunk/control events, require explicit approval, and delete partial
+  files on rejection, cancellation, expiry, or authentication failure.
+- Keep relay frames and device state memory-only. Dashboard sessions use
+  HttpOnly cookies, dynamic values use safe DOM APIs, and production clients
+  connect through HTTPS/WSS with a valid certificate.
+
 ### Performance Monitor & System Administration
 
 Primary entry points are

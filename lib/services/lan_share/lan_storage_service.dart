@@ -6,6 +6,7 @@ import 'package:gal/gal.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
+import '../app_log_service.dart';
 import 'lan_share_models.dart';
 
 /// Service responsible for sandbox storage management, disk space pre-flight checks,
@@ -13,8 +14,12 @@ import 'lan_share_models.dart';
 class LanStorageService {
   static const String _cacheFolderName = 'lan_share_cache';
   final Future<Directory> Function()? sandboxDirectoryProvider;
+  final Future<double?> Function()? freeDiskSpaceMbProvider;
 
-  LanStorageService({this.sandboxDirectoryProvider});
+  LanStorageService({
+    this.sandboxDirectoryProvider,
+    this.freeDiskSpaceMbProvider,
+  });
 
   /// Get or create internal app sandbox cache directory
   Future<Directory> getSandboxDirectory() async {
@@ -95,7 +100,10 @@ class LanStorageService {
   Future<bool> hasSufficientSpace(int requiredBytes) async {
     try {
       double freeMb = 0.0;
-      if (Platform.isMacOS) {
+      final provided = freeDiskSpaceMbProvider;
+      if (provided != null) {
+        freeMb = await provided() ?? 0.0;
+      } else if (Platform.isMacOS) {
         // macOS fallback via df -k
         final result = await Process.run('df', ['-k', '/']);
         if (result.exitCode == 0) {
@@ -119,8 +127,11 @@ class LanStorageService {
       // Keep 100MB safety buffer
       return (freeMb - requiredMb) > 100.0;
     } catch (e) {
-      debugPrint('[LanStorageService] Disk space check error: $e');
-      return true; // Optimistic fallback if check fails
+      AppLogService.instance.warning(
+        'LAN storage space check failed',
+        details: '$e',
+      );
+      return false;
     }
   }
 

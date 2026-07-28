@@ -1,6 +1,24 @@
 import 'dart:typed_data';
 
-enum RelayControlType { offer, accept, resume, cancel }
+enum RelayControlType {
+  offer('offer'),
+  accept('accept'),
+  resume('resume'),
+  complete('complete'),
+  completeAck('complete_ack'),
+  cancel('cancel');
+
+  const RelayControlType(this.wireName);
+
+  final String wireName;
+
+  static RelayControlType? fromWireName(String value) {
+    for (final type in values) {
+      if (type.wireName == value) return type;
+    }
+    return null;
+  }
+}
 
 class RelaySettings {
   const RelaySettings({required this.endpoint});
@@ -33,12 +51,14 @@ class RelayControlFrame {
     required this.type,
     required this.sessionId,
     this.targetId,
+    this.peerId,
     this.payload,
   });
 
   final RelayControlType type;
   final String sessionId;
   final String? targetId;
+  final String? peerId;
   final Uint8List? payload;
 }
 
