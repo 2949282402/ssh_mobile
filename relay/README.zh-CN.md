@@ -1,4 +1,4 @@
-> 最新更新时间：2026-07-28
+> 最新更新时间：2026-07-29
 
 # SSH Mobile 控制与中继服务器
 
@@ -27,27 +27,10 @@
 
 请使用密码学安全随机数生成器分别创建这些密钥，绝对不要提交真实 `.env`。
 
-## 本地直接运行
-
-```sh
-cd relay
-export RELAY_ENROLLMENT_TOKEN='replace-with-at-least-16-random-characters'
-export RELAY_CREDENTIAL_KEY="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
-export RELAY_ADMIN_USER='relay-admin'
-export RELAY_ADMIN_PASSWORD='replace-with-a-random-password'
-go run ./cmd/relay
-```
-
-打开 `http://localhost:8080` 并登录管理面板。面板可查看当前内存状态、轮换注册
-Token 和撤销设备。登录状态仅使用 HttpOnly Cookie，登录 JSON 不返回会话密钥。
-
-直接 HTTP 仅用于本地开发。生产环境中的移动端注册必须通过具备有效证书的
-HTTPS/WSS。
-
 ## Docker Compose 生产部署
 
-仓库提供的 Compose 配置将 Go 服务保留在内部网络，由 Caddy 负责 HTTPS/WSS
-证书和反向代理。
+Docker Compose 是唯一支持的部署方式。仓库提供的 Compose 配置将 Go 服务
+保留在内部网络，由 Caddy 负责 HTTPS/WSS 证书和反向代理。
 
 1. 将公网 DNS `A` 或 `AAAA` 记录指向主机，并开放 80/443 端口。
 2. 复制 `.env.example` 为 `.env`，替换其中每个占位值：
@@ -62,24 +45,17 @@ HTTPS/WSS。
    Copy-Item .env.example .env
    ```
 
-3. 启动并查看日志：
+3. 构建、启动并持续查看部署日志：
 
    ```sh
-   docker compose --env-file .env up --build -d
-   docker compose logs -f caddy relay
+   docker compose --env-file .env up --build
    ```
+
+   `compose.yaml` 只有 `caddy` 和 `relay` 两项服务，因此这一条命令会持续显示
+   两者的合并日志。
 
 Caddy 只持久化证书状态。不要为中继容器添加数据卷，也不要把内部 Go 端口直接
 暴露到公网。
-
-## 独立 Docker 容器
-
-先创建包含四项必填服务凭据的 `.env`，再运行：
-
-```sh
-docker build -t ssh-mobile-relay .
-docker run --rm -p 8080:8080 --env-file .env ssh-mobile-relay
-```
 
 ## 安全模型
 

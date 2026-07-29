@@ -1,6 +1,6 @@
 # Agent Memory
 
-> 最新更新时间：2026-07-28
+> 最新更新时间：2026-07-29
 
 This file is shared durable project memory for Codex and Claude Code. It is a
 repository file, not live model memory: both agents must read and update it when
@@ -20,6 +20,12 @@ across sessions.
   context.
 
 ## Notes
+- 2026-07-29: The supported Relay production deployment is
+  `relay/compose.yaml` with Caddy. Documentation exposes one attached
+  `docker compose --env-file .env up --build` command so startup and the
+  combined `relay`/`caddy` logs share one invocation; do not restore direct Go
+  or standalone `docker run` deployment instructions.
+
 - 2026-07-28: The cross-platform network foundation includes the native Tokio
   runtime, versioned Protobuf FFI, same-socket STUN discovery, authenticated
   hole-punch packets, peer-identity-bound Quinn handshakes, verified streaming

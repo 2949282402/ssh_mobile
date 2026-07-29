@@ -1,4 +1,4 @@
-> 最新更新时间：2026-07-28
+> 最新更新时间：2026-07-29
 
 <p align="center">
   <img src="assets/app_icon_1024.png" alt="SSH Mobile 图标" width="112" />
@@ -75,41 +75,20 @@ flutter run -d chrome
 
 应用在没有真实服务器或 AI 凭据时也可以启动。终端、SFTP 和监控的集成测试需要一台可访问的 SSH 服务器；只有 AI Chat 与 Agent 执行功能需要配置模型服务。
 
-## 控制平面与中继服务器启动说明
+## 控制平面与中继服务器生产部署
 
 仓库内的 `relay/` Go 服务提供设备控制平面、基于 HTTPS/WSS 的内存中继以及**内置可视化 Web 管理面板**，用于网络传输与 P2P 备用链路。注册凭据与管理凭据必须显式配置；缺少密钥或使用弱口令时，服务会拒绝启动。
 
-### 方式一：使用 Go 本地直接启动
-
-```bash
-cd relay
-export RELAY_ENROLLMENT_TOKEN='replace-with-at-least-16-random-characters'
-export RELAY_CREDENTIAL_KEY="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
-export RELAY_ADMIN_USER='relay-admin'
-export RELAY_ADMIN_PASSWORD='replace-with-a-random-password'
-go run ./cmd/relay
-```
-
-在浏览器中打开 `http://localhost:8080`，登录**可视化 Web 管理面板**后可查看或轮换注册 Token，并管理已注册设备。中继状态仅驻留内存；服务重启后，客户端需要重新注册。
-
-### 方式二：使用 Docker Compose 生产部署
-
-请参考 [中继部署说明](relay/README.md) 使用 Caddy 进行 HTTPS/WSS 自动证书部署：
+仅支持使用 Docker Compose 与 Caddy 进行生产部署。按照[中继部署说明](relay/README.zh-CN.md)完成配置后运行：
 
 ```powershell
 cd relay
 Copy-Item .env.example .env
 # 设置公网域名，以及所有必填 Token、签名密钥和管理员凭据。
-docker compose --env-file .env up --build -d
+docker compose --env-file .env up --build
 ```
 
-### 方式三：使用 Docker 容器独立运行
-
-```bash
-cd relay
-docker build -t ssh-mobile-relay .
-docker run --rm -p 8080:8080 --env-file .env ssh-mobile-relay
-```
+这一条命令会构建并启动 `relay` 与 `caddy`，随后持续显示两者的合并日志。中继状态仅驻留内存；服务重启后，客户端需要重新注册。
 
 在 SSH Mobile 中打开“网络传输 → VPN / P2P → 服务器配置”，填写具备有效 TLS 证书的 HTTPS 中继主机、端口和注册 Token。
 

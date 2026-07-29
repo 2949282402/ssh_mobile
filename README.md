@@ -1,4 +1,4 @@
-> Last updated: 2026-07-28
+> Last updated: 2026-07-29
 
 <p align="center">
   <img src="assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
@@ -75,41 +75,20 @@ flutter run -d chrome
 
 The application can launch without real server or AI credentials. A reachable SSH server is required for terminal, SFTP, and monitoring integration tests. An AI provider is required only for AI chat and agent execution.
 
-## Control Plane & Public Relay Server Startup
+## Control Plane & Public Relay Production Deployment
 
 The bundled `relay/` Go service provides a memory-only WSS relay, device control plane, and a **built-in Web Admin Dashboard** for Network Transfer / P2P fallback. Enrollment and dashboard credentials must be configured explicitly; the service refuses to start with missing or weak secrets.
 
-### Option 1: Direct Go execution
-
-```bash
-cd relay
-export RELAY_ENROLLMENT_TOKEN='replace-with-at-least-16-random-characters'
-export RELAY_CREDENTIAL_KEY="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
-export RELAY_ADMIN_USER='relay-admin'
-export RELAY_ADMIN_PASSWORD='replace-with-a-random-password'
-go run ./cmd/relay
-```
-
-Open `http://localhost:8080` and sign in to the **Web Admin Dashboard** to view or rotate the configured enrollment token and manage devices. Restarting the memory-only relay invalidates existing device enrollment, so clients must enroll again.
-
-### Option 2: Production deployment via Docker Compose
-
-Deploy with Caddy using the [relay deployment guide](relay/README.md):
+Docker Compose with Caddy is the supported production deployment path. Follow the [relay deployment guide](relay/README.md), then run:
 
 ```powershell
 cd relay
 Copy-Item .env.example .env
 # Set the public domain plus every required token, key, and admin credential.
-docker compose --env-file .env up --build -d
+docker compose --env-file .env up --build
 ```
 
-### Option 3: Standalone Docker container
-
-```bash
-cd relay
-docker build -t ssh-mobile-relay .
-docker run --rm -p 8080:8080 --env-file .env ssh-mobile-relay
-```
+This single command builds and starts `relay` and `caddy`, then keeps their combined logs attached. Restarting the memory-only relay invalidates existing device enrollment, so clients must enroll again.
 
 In SSH Mobile, open **Network Transfer → VPN / P2P → Server Configuration** and enter the HTTPS relay host, port, and enrollment token. Production clients require a valid TLS certificate.
 

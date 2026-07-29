@@ -1,4 +1,4 @@
-> Last updated: 2026-07-28
+> Last updated: 2026-07-29
 
 # SSH Mobile Control and Relay Server
 
@@ -29,29 +29,11 @@ and `RELAY_MAX_CONNECTIONS` (default `2048`).
 Never commit real values. Generate independent secrets with a
 cryptographically secure generator.
 
-## Direct development run
-
-```sh
-cd relay
-export RELAY_ENROLLMENT_TOKEN='replace-with-at-least-16-random-characters'
-export RELAY_CREDENTIAL_KEY="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
-export RELAY_ADMIN_USER='relay-admin'
-export RELAY_ADMIN_PASSWORD='replace-with-a-random-password'
-go run ./cmd/relay
-```
-
-Open `http://localhost:8080` and sign in. The dashboard can inspect current
-in-memory state, rotate the enrollment token, and revoke a device. The
-dashboard uses an HttpOnly session cookie; credentials are not returned in
-login JSON.
-
-Direct HTTP is for local development only. Mobile enrollment uses HTTPS and
-must be served with a valid certificate in production.
-
 ## Docker Compose production deployment
 
-The supplied Compose deployment keeps the Go service on an internal network
-and uses Caddy for HTTPS/WSS termination.
+Docker Compose is the only supported deployment path. The supplied topology
+keeps the Go service on an internal network and uses Caddy for HTTPS/WSS
+termination.
 
 1. Point a public DNS `A` or `AAAA` record at the host and allow ports 80/443.
 2. Copy `.env.example` to `.env` and replace every placeholder:
@@ -66,24 +48,17 @@ and uses Caddy for HTTPS/WSS termination.
    Copy-Item .env.example .env
    ```
 
-3. Start and inspect the deployment:
+3. Build, start, and follow the deployment logs:
 
    ```sh
-   docker compose --env-file .env up --build -d
-   docker compose logs -f caddy relay
+   docker compose --env-file .env up --build
    ```
+
+   This single command attaches the combined `caddy` and `relay` logs because
+   those are the only services in `compose.yaml`.
 
 Caddy persists certificate state only. Do not add a relay data volume or
 publish the internal Go port directly to the public internet.
-
-## Standalone Docker
-
-Create a `.env` containing all four required service credentials, then run:
-
-```sh
-docker build -t ssh-mobile-relay .
-docker run --rm -p 8080:8080 --env-file .env ssh-mobile-relay
-```
 
 ## Security model
 

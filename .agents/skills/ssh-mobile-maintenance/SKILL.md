@@ -3,7 +3,7 @@ name: ssh-mobile-maintenance
 description: Maintain and debug this SSH Mobile Flutter repository across feature-first MVVM UI, SSH/SFTP, monitoring, AI chat/tools, storage, security, platform builds, tests, documentation, and shared agent guidance. Use for project code, architecture, debugging, validation, or documentation changes.
 ---
 
-> 最新更新时间：2026-07-28
+> 最新更新时间：2026-07-29
 
 # SSH Mobile Maintenance
 
@@ -328,6 +328,11 @@ and `relay/`.
 - The Go relay requires explicit strong enrollment, credential-signing, and
   dashboard admin secrets. Device proofs sign method, path, and a one-use nonce;
   credentials are valid only for matching enrollment in the current process.
+- Treat `relay/compose.yaml` with Caddy as the only supported and documented
+  Relay production deployment. Use one attached
+  `docker compose --env-file .env up --build` invocation for startup and
+  combined service logs; do not restore direct Go or standalone `docker run`
+  deployment instructions.
 - Relay WebSockets are connected only after a protocol-v1 `ready` frame.
   Forwarded transfer controls carry the server-bound authenticated `sender_id`;
   enforce sender/receiver roles and report transfer success only after the
