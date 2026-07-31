@@ -33,7 +33,7 @@ dependencies:
   webview_flutter: ^4.14.0
   fl_chart: ^1.2.0
   animations: ^2.2.0
-  drift: ^2.34.0
+  drift: ^2.34.3
   drift_flutter: ^0.3.0
   shadcn_ui: ^0.55.0
   flutter_animate: ^4.5.2
