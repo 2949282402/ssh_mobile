@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -91,6 +92,29 @@ void main() {
     expect(viewModel.approvalMode, McpApprovalMode.trustedAgent);
     expect(find.text('已启用自动执行'), findsOneWidget);
     expect(find.text('需要二次审核的 Tools'), findsNothing);
+  });
+
+  testWidgets('Windows layout keeps fields separated and avoids overflow', (
+    tester,
+  ) async {
+    final originalPlatform = debugDefaultTargetPlatformOverride;
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    tester.view.physicalSize = const Size(1600, 900);
+    tester.view.devicePixelRatio = 1;
+    try {
+      await appSettings.setMcpApprovalMode(McpApprovalMode.trustedAgent);
+      await tester.pumpWidget(buildSubject());
+      await tester.pumpAndSettle();
+
+      final host = tester.getRect(find.text('主机: 127.0.0.1'));
+      final portField = tester.getRect(find.byType(TextField));
+      expect(portField.top - host.bottom, greaterThanOrEqualTo(8));
+      expect(tester.takeException(), isNull);
+    } finally {
+      debugDefaultTargetPlatformOverride = originalPlatform;
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    }
   });
 }
 

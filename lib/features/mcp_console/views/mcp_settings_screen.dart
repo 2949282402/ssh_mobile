@@ -65,24 +65,37 @@ class _McpSettingsScreenState extends State<McpSettingsScreen> {
               AppSectionCard(
                 title: strings.mcpServer,
                 subtitle: strings.mcpServerHint,
+                contentGap: 12,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      minTileHeight: 52,
+                      visualDensity: const VisualDensity(
+                        horizontal: -1,
+                        vertical: -1,
+                      ),
                       title: Text(strings.mcpServer),
                       subtitle: Text(_statusText(vm, strings)),
                       value: vm.settings.enabled,
                       onChanged: vm.setEnabled,
                     ),
+                    const SizedBox(height: 10),
                     Text('${strings.mcpHost}: ${vm.settings.host}'),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 10),
                     TextField(
                       controller: _portController,
                       focusNode: _portFocusNode,
                       keyboardType: TextInputType.number,
                       decoration: InputDecoration(
                         labelText: strings.mcpPort,
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 13,
+                        ),
                         border: const OutlineInputBorder(),
                         suffixIcon: _checkingPort
                             ? const Padding(
@@ -103,7 +116,7 @@ class _McpSettingsScreenState extends State<McpSettingsScreen> {
                       onChanged: _onPortChanged,
                     ),
                     if (_portMessage != null) ...[
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 8),
                       Text(
                         _portMessage!,
                         style: TextStyle(
@@ -114,6 +127,7 @@ class _McpSettingsScreenState extends State<McpSettingsScreen> {
                       ),
                     ],
                     _approvalModeSection(vm, strings),
+                    const SizedBox(height: 14),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
@@ -139,7 +153,7 @@ class _McpSettingsScreenState extends State<McpSettingsScreen> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 10),
                     Text('${strings.mcpServerToken}: ${vm.maskedToken}'),
                   ],
                 ),
@@ -147,9 +161,11 @@ class _McpSettingsScreenState extends State<McpSettingsScreen> {
               const SizedBox(height: 14),
               AppSectionCard(
                 title: strings.mcpClientConfiguration,
+                contentGap: 10,
                 child: Wrap(
                   spacing: 8,
-                  runSpacing: 8,
+                  runSpacing: 10,
+                  alignment: WrapAlignment.start,
                   children: [
                     _CopyButton(
                       label: strings.mcpCopyCodex,
@@ -188,11 +204,12 @@ class _McpSettingsScreenState extends State<McpSettingsScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SizedBox(height: 12),
+        const SizedBox(height: 2),
         Text(
           strings.mcpApprovalMode,
           style: const TextStyle(fontWeight: FontWeight.w600),
         ),
+        const SizedBox(height: 6),
         RadioGroup<McpApprovalMode>(
           groupValue: vm.approvalMode,
           onChanged: (mode) {
@@ -207,12 +224,24 @@ class _McpSettingsScreenState extends State<McpSettingsScreen> {
             children: [
               RadioListTile<McpApprovalMode>(
                 contentPadding: EdgeInsets.zero,
+                dense: true,
+                minTileHeight: 58,
+                visualDensity: const VisualDensity(
+                  horizontal: -1,
+                  vertical: -1,
+                ),
                 value: McpApprovalMode.reviewConfiguredTools,
                 title: Text(strings.mcpReviewConfiguredTools),
                 subtitle: Text(strings.mcpReviewConfiguredToolsHint),
               ),
               RadioListTile<McpApprovalMode>(
                 contentPadding: EdgeInsets.zero,
+                dense: true,
+                minTileHeight: 58,
+                visualDensity: const VisualDensity(
+                  horizontal: -1,
+                  vertical: -1,
+                ),
                 value: McpApprovalMode.trustedAgent,
                 title: Text(strings.mcpTrustedAgent),
                 subtitle: Text(strings.mcpTrustedAgentHint),
@@ -222,24 +251,33 @@ class _McpSettingsScreenState extends State<McpSettingsScreen> {
         ),
         if (!reviewMode)
           AppSectionCard(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            contentGap: 6,
             title: strings.mcpTrustedAgentActive,
             subtitle: strings.mcpTrustedAgentActiveHint,
             child: Text(strings.mcpTrustedAgentSafetyBoundary),
           )
         else ...[
-          const SizedBox(height: 4),
+          const SizedBox(height: 8),
           Text(
             strings.mcpSecondaryReviewTools,
             style: const TextStyle(fontWeight: FontWeight.w600),
           ),
+          const SizedBox(height: 3),
           Text(strings.mcpSecondaryReviewToolsHint),
-          const SizedBox(height: 4),
+          const SizedBox(height: 8),
           if (vm.secondaryReviewToolOptions.isEmpty)
             Text(strings.mcpNoReviewTools)
           else
             for (final tool in vm.secondaryReviewToolOptions)
               CheckboxListTile(
                 contentPadding: EdgeInsets.zero,
+                dense: true,
+                minTileHeight: 58,
+                visualDensity: const VisualDensity(
+                  horizontal: -1,
+                  vertical: -1,
+                ),
                 value: vm.secondaryReviewTools.contains(tool.name),
                 title: Text(tool.name),
                 subtitle: Text(
@@ -393,6 +431,10 @@ class _CopyButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return OutlinedButton.icon(
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(148, 48),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+      ),
       onPressed: () async {
         await Clipboard.setData(ClipboardData(text: text));
         if (context.mounted) {
