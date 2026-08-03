@@ -5,6 +5,7 @@ import '../ai_tool_service.dart';
 import '../app_log_service.dart';
 import 'mcp_ai_tool_adapter.dart';
 import 'mcp_activity.dart';
+import 'mcp_approval_queue.dart';
 import 'mcp_json_rpc.dart';
 import 'mcp_server_settings.dart';
 import 'mcp_tool_exposure_policy.dart';
@@ -16,6 +17,7 @@ class McpToolHandler {
   final McpAiToolAdapter adapter;
   final McpToolExposurePolicy exposurePolicy;
   final McpActivityRecorder? activityRecorder;
+  final McpApprovalQueue? approvalQueue;
 
   const McpToolHandler({
     required this.aiToolService,
@@ -24,6 +26,7 @@ class McpToolHandler {
     this.adapter = const McpAiToolAdapter(),
     this.exposurePolicy = const McpToolExposurePolicy(),
     this.activityRecorder,
+    this.approvalQueue,
   });
 
   static bool _defaultNoChatSession() => false;
@@ -147,48 +150,77 @@ class McpToolHandler {
         'reason': decision.reason,
       });
     }
-    if (decision.result == McpToolPolicyResult.approvalRequired) {
-      AppLogService.instance.warning(
-        'MCP dangerous tool blocked',
-        details: 'tool=$name reason=${decision.reason}',
-      );
-      watch.stop();
-      _record(
-        kind: McpActivityKind.tool,
-        outcome: McpActivityOutcome.denied,
-        method: 'tools/call',
-        toolName: name,
-        policyReason: decision.reason,
-        durationMs: watch.elapsedMilliseconds,
-      );
-      return _approvalRequired(name, decision);
-    }
-
     final approvalRequest = await aiToolService.approvalRequestFor(
       name,
       arguments,
     );
-    if (approvalRequest != null) {
+    if (decision.result == McpToolPolicyResult.approvalRequired ||
+        approvalRequest != null) {
+      if (approvalRequest == null) {
+        AppLogService.instance.warning(
+          'MCP approval request could not be built',
+          details: 'tool=$name reason=${decision.reason}',
+        );
+        watch.stop();
+        _record(
+          kind: McpActivityKind.tool,
+          outcome: McpActivityOutcome.denied,
+          method: 'tools/call',
+          toolName: name,
+          policyReason: decision.reason,
+          durationMs: watch.elapsedMilliseconds,
+        );
+        return _approvalRequired(name, decision);
+      }
+
+      final queue = approvalQueue;
+      final approvalGuard = aiToolService is AiToolApprovalTargetGuard
+          ? aiToolService as AiToolApprovalTargetGuard
+          : null;
+      if (queue == null || approvalGuard == null) {
+        AppLogService.instance.warning(
+          'MCP approval queue unavailable',
+          details: 'tool=$name approvalType=${approvalRequest.approvalType}',
+        );
+        watch.stop();
+        _record(
+          kind: McpActivityKind.tool,
+          outcome: McpActivityOutcome.denied,
+          method: 'tools/call',
+          toolName: name,
+          policyReason: 'approval_queue_unavailable',
+          durationMs: watch.elapsedMilliseconds,
+        );
+        return _approvalRequired(name, decision);
+      }
+
       AppLogService.instance.warning(
-        'MCP approval-aware tool blocked',
+        'MCP tool waiting for app approval',
         details: 'tool=$name approvalType=${approvalRequest.approvalType}',
       );
+      final text = await queue.enqueue(
+        request: approvalRequest,
+        executeApproved: () =>
+            approvalGuard.executeApproved(approvalRequest, arguments),
+      );
+      final isError = _looksLikeToolError(text);
       watch.stop();
       _record(
         kind: McpActivityKind.tool,
-        outcome: McpActivityOutcome.denied,
+        outcome: isError
+            ? McpActivityOutcome.failed
+            : McpActivityOutcome.success,
         method: 'tools/call',
         toolName: name,
-        policyReason: approvalRequest.reason,
+        policyReason: isError ? 'tool_error' : null,
         durationMs: watch.elapsedMilliseconds,
       );
-      return _toolError({
-        'error': 'approval_required',
-        'tool': name,
-        'reason': approvalRequest.reason,
-        'approvalType': approvalRequest.approvalType,
-        'destructive': approvalRequest.destructive,
-      });
+      return {
+        'content': [
+          {'type': 'text', 'text': text},
+        ],
+        'isError': isError,
+      };
     }
 
     try {

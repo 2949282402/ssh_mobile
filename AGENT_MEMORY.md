@@ -1,6 +1,6 @@
 # Agent Memory
 
-> 最新更新时间：2026-07-29
+> 最新更新时间：2026-08-03
 
 This file is shared durable project memory for Codex and Claude Code. It is a
 repository file, not live model memory: both agents must read and update it when
@@ -178,25 +178,22 @@ across sessions.
   selected state; keep icon/text descendants excluded to avoid duplicate
   screen-reader announcements.
 - 2026-07-04: Fixed Windows compilation error in GitHub Actions (due to deprecation of C++ experimental coroutines in newer MSVC toolsets) by adding `_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS` to the global CMake definitions in [windows/CMakeLists.txt](file:///home/ubuntu/Documents/coding/ssh_mobile/windows/CMakeLists.txt).
-- 2026-07-01: Local MCP Server is implemented in Flutter/Dart under
+- 2026-08-03: Local MCP Server is implemented in Flutter/Dart under
   `lib/services/mcp/`, not native runners. It binds only to local hosts,
   serves Streamable HTTP JSON-RPC at `POST /mcp`, stores its Bearer token in
   secure storage, and exposes existing `AiToolService` tools through
-  `McpToolExposurePolicy`; write/destructive tools must not execute silently
-  from external MCP clients and should return `approval_required` until an app
-  approval queue exists. Write approval is a locked security boundary rather
-  than a user-disableable preference: legacy false values migrate to true, and
-  policy evaluation still rejects stale or injected false settings.
-- 2026-07-23: The Windows/macOS `mcp_console` feature is a separate desktop
+  `McpToolExposurePolicy`. External write/destructive tools enter the
+  in-memory `McpApprovalQueue` and pause until the user approves or rejects
+  them in the local MCP Console. The queue is cleared when the MCP server
+  stops, is never persisted, and still enforces the immutable target binding
+  in `AiToolService.executeApproved`.
+- 2026-08-03: The Windows/macOS `mcp_console` feature is a separate desktop
   diagnostics page opened from MCP settings. It exposes loopback server state,
   port checks, a token-authenticated `initialize` then `tools/list` self-test,
-  copied client templates, and read-only `McpToolExposurePolicy` snapshots.
-  `McpActivityRecord` persists at most 500 local Drift rows containing only
-  time, event kind, JSON-RPC method, tool name, outcome, policy reason, and
-  duration. Never add tokens, parameters, outputs, peer/origin data, remote
-  resource data, or raw exceptions; do not export these records in backups.
-  This console does not authorize external write tools: they remain
-  `approval_required`.
+  copied client templates, `McpToolExposurePolicy` snapshots, redacted local
+  activity, and a dedicated approval queue navigation page. The queue page
+  must render only `AiToolApprovalRequest` previews; never expose raw MCP
+  arguments or persist approval callbacks.
 - 2026-06-16: On keyboard-heavy mobile flows, avoid `MediaQuery.of(context)`
   in large server/file list rows when only size/density is needed. Prefer
   narrow helpers such as `MediaQuery.sizeOf` +

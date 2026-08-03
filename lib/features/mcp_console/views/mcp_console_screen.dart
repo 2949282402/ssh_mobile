@@ -6,6 +6,7 @@ import '../../../services/mcp/mcp_activity.dart';
 import '../../../services/mcp/mcp_server_controller.dart';
 import '../../../services/mcp/mcp_tool_exposure_policy.dart';
 import '../../../widgets/app_surface.dart';
+import 'mcp_approval_queue_screen.dart';
 import '../viewmodels/mcp_console_viewmodel.dart';
 
 class McpConsoleScreen extends StatelessWidget {
@@ -62,6 +63,22 @@ class _Header extends StatelessWidget {
                   ? 'Desktop diagnostics and safe observability'
                   : '桌面诊断与安全可观测性',
               icon: Icons.hub_outlined,
+            ),
+          ),
+          Badge(
+            isLabelVisible: viewModel.approvals.isNotEmpty,
+            label: Text('${viewModel.approvals.length}'),
+            child: IconButton(
+              tooltip: english ? 'Approval queue' : '审批队列',
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => ChangeNotifierProvider.value(
+                    value: viewModel,
+                    child: const McpApprovalQueueScreen(),
+                  ),
+                ),
+              ),
+              icon: const Icon(Icons.pending_actions_rounded),
             ),
           ),
           IconButton(

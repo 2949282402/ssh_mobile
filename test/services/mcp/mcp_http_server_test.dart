@@ -6,6 +6,7 @@ import 'package:ssh_mobile/features/connection/models/connection.dart';
 import 'package:ssh_mobile/services/ai_tool_service.dart';
 import 'package:ssh_mobile/services/mcp/mcp_http_server.dart';
 import 'package:ssh_mobile/services/mcp/mcp_activity.dart';
+import 'package:ssh_mobile/services/mcp/mcp_approval_queue.dart';
 import 'package:ssh_mobile/services/mcp/mcp_json_rpc.dart';
 import 'package:ssh_mobile/services/mcp/mcp_lifecycle_handler.dart';
 import 'package:ssh_mobile/services/mcp/mcp_server_settings.dart';
@@ -149,6 +150,42 @@ void main() {
       expect(activity.policyReason, isNotEmpty);
     });
 
+    test(
+      'MCP write tool waits for console approval before executing',
+      () async {
+        final queue = McpApprovalQueue();
+        final executor = _FakeToolExecutor();
+        final handler = McpToolHandler(
+          aiToolService: executor,
+          settingsProvider: () => const McpServerSettings(token: 'secret'),
+          approvalQueue: queue,
+        );
+
+        final responseFuture = handler.handle(
+          const McpJsonRpcRequest(
+            id: 'approval-test',
+            hasId: true,
+            method: 'tools/call',
+            params: {
+              'name': 'run_command',
+              'arguments': {'connectionId': 'server-1', 'command': 'uptime'},
+            },
+          ),
+        );
+
+        await _waitFor(() => queue.pending.isNotEmpty);
+        expect(queue.pending.single.request.toolName, 'run_command');
+        await queue.approve(queue.pending.single.id);
+
+        final response = await responseFuture;
+        expect(response.result, isA<Map>());
+        final result = response.result! as Map;
+        expect(result['isError'], isFalse);
+        expect(executor.executedTools, contains('run_command'));
+        queue.dispose();
+      },
+    );
+
     test('GET /mcp returns 405', () async {
       final request = await client.getUrl(
         Uri.parse('http://127.0.0.1:${server.port}/mcp'),
@@ -221,7 +258,7 @@ class _MemoryActivityRepository implements McpActivityRepository {
   }
 }
 
-class _FakeToolExecutor implements AiToolExecutor {
+class _FakeToolExecutor implements AiToolExecutor, AiToolApprovalTargetGuard {
   var executedTools = <String>[];
 
   @override
@@ -257,7 +294,15 @@ class _FakeToolExecutor implements AiToolExecutor {
     String name,
     Map<String, dynamic> arguments,
   ) async {
-    return null;
+    if (name != 'run_command') return null;
+    return const AiToolApprovalRequest(
+      toolName: 'run_command',
+      approvalType: 'remote_write',
+      connectionId: 'server-1',
+      connectionName: 'Test server',
+      command: 'RUN uptime',
+      reason: 'The command changes remote state.',
+    );
   }
 
   @override
@@ -274,4 +319,25 @@ class _FakeToolExecutor implements AiToolExecutor {
   AiCommandReview reviewCommand(String command, {ServerPlatform? platform}) {
     return const AiCommandReview.readOnly();
   }
+
+  @override
+  Future<bool> isApprovalTargetCurrent(AiToolApprovalRequest request) async {
+    return true;
+  }
+
+  @override
+  Future<String> executeApproved(
+    AiToolApprovalRequest request,
+    Map<String, dynamic> arguments,
+  ) {
+    return execute(request.toolName, arguments, approvedWrite: true);
+  }
+}
+
+Future<void> _waitFor(bool Function() condition) async {
+  for (var attempt = 0; attempt < 100; attempt++) {
+    if (condition()) return;
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+  }
+  fail('Timed out waiting for MCP approval queue update.');
 }

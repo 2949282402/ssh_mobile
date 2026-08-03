@@ -3,7 +3,7 @@ name: ssh-mobile-maintenance
 description: Maintain and debug this SSH Mobile Flutter repository across feature-first MVVM UI, SSH/SFTP, monitoring, AI chat/tools, storage, security, platform builds, tests, documentation, and shared agent guidance. Use for project code, architecture, debugging, validation, or documentation changes.
 ---
 
-> 最新更新时间：2026-07-29
+> 最新更新时间：2026-08-03
 
 # SSH Mobile Maintenance
 
@@ -198,17 +198,20 @@ and its focused extensions, `lib/features/ai_chat/services/`,
   Flutter/Dart, not native runners. It binds only to local hosts, serves
   Streamable HTTP JSON-RPC at `POST /mcp`, stores its Bearer token in secure
   storage, and reuses `AiToolService` through `McpToolExposurePolicy`; external
-  MCP clients must not silently execute write/destructive tools and should get
-  `approval_required` until an app approval queue exists. This boundary is not
-  user-disableable: settings show it as locked, legacy false preferences are
-  migrated to true, and the policy must still reject stale or injected false
-  values.
-- The Windows/macOS-only console is the `mcp_console` feature. Keep it
-  observational: status, port checks, loopback authenticated self-tests,
-  configuration copying, policy snapshots, and redacted local activity only.
-  MCP activity is capped at 500 Drift records and must never include tokens,
-  request arguments, tool output, peer/origin data, remote-resource details,
-  or raw exceptions; it is not a backup-export payload.
+  MCP clients must not silently execute write/destructive tools. They enter the
+  in-memory `McpApprovalQueue` and wait for approval from the local MCP Console;
+  the queue is cleared when the MCP server stops and is never persisted. This
+  boundary is not user-disableable: settings show it as locked, legacy false
+  preferences are migrated to true, and the policy must still reject stale or
+  injected false values.
+- The Windows/macOS-only console is the `mcp_console` feature. Keep status, port
+  checks, loopback authenticated self-tests, configuration copying, policy
+  snapshots, redacted local activity, and the dedicated approval queue page
+  under this feature. MCP activity is capped at 500 Drift records and must
+  never include tokens, request arguments, tool output, peer/origin data,
+  remote-resource details, or raw exceptions; it is not a backup-export
+  payload. Approval previews must use the existing `AiToolApprovalRequest`
+  redaction path and must not expose raw tool arguments.
 
 ### SFTP
 

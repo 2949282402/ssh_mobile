@@ -4,12 +4,14 @@ import 'package:flutter/foundation.dart';
 
 import '../../../services/app_settings.dart';
 import '../../../services/mcp/mcp_activity.dart';
+import '../../../services/mcp/mcp_approval_queue.dart';
 import '../../../services/mcp/mcp_config_templates.dart';
 import '../../../services/mcp/mcp_server_controller.dart';
 
 class McpConsoleViewModel extends ChangeNotifier {
   final McpServerController _controller;
   final AppSettings _appSettings;
+  final McpApprovalQueue _approvalQueue;
 
   List<McpActivityRecord> _activities = const [];
   List<McpToolPolicySnapshot> _tools = const [];
@@ -19,14 +21,17 @@ class McpConsoleViewModel extends ChangeNotifier {
   bool _runningAction = false;
   String? _errorCode;
 
-  McpConsoleViewModel(this._controller, this._appSettings) {
+  McpConsoleViewModel(this._controller, this._appSettings)
+    : _approvalQueue = _controller.approvalQueue {
     _controller.addListener(_onControllerChanged);
+    _approvalQueue.addListener(_onApprovalQueueChanged);
     unawaited(refresh());
   }
 
   @override
   void dispose() {
     _controller.removeListener(_onControllerChanged);
+    _approvalQueue.removeListener(_onApprovalQueueChanged);
     super.dispose();
   }
 
@@ -39,6 +44,7 @@ class McpConsoleViewModel extends ChangeNotifier {
   McpSelfTestResult? get lastSelfTest => _lastSelfTest;
   McpActivityOutcome? get selectedOutcome => _selectedOutcome;
   List<McpToolPolicySnapshot> get tools => _tools;
+  List<McpApprovalSnapshot> get approvals => _approvalQueue.pending;
   List<McpActivityRecord> get activities => _selectedOutcome == null
       ? _activities
       : _activities
@@ -94,6 +100,10 @@ class McpConsoleViewModel extends ChangeNotifier {
 
   Future<void> clearActivities() => _runAction(_controller.clearRecentActivity);
 
+  Future<void> approve(String id) => _approvalQueue.approve(id);
+
+  void reject(String id) => _approvalQueue.reject(id);
+
   Future<void> _runAction(Future<dynamic> Function() action) async {
     if (_runningAction) return;
     _runningAction = true;
@@ -112,6 +122,10 @@ class McpConsoleViewModel extends ChangeNotifier {
   }
 
   void _onControllerChanged() {
+    notifyListeners();
+  }
+
+  void _onApprovalQueueChanged() {
     notifyListeners();
   }
 }

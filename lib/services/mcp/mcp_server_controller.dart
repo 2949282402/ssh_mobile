@@ -9,6 +9,7 @@ import '../app_log_service.dart';
 import '../app_settings.dart';
 import 'mcp_activity.dart';
 import 'mcp_ai_tool_adapter.dart';
+import 'mcp_approval_queue.dart';
 import 'mcp_http_server.dart';
 import 'mcp_json_rpc.dart';
 import 'mcp_lifecycle_handler.dart';
@@ -97,6 +98,7 @@ class McpServerController extends ChangeNotifier {
   final AiToolExecutor Function() toolServiceFactory;
   final McpPortProbe portProbe;
   final McpActivityRepository? activityRepository;
+  final McpApprovalQueue approvalQueue;
 
   McpHttpServer? _server;
   McpServerRunStatus _status = McpServerRunStatus.stopped;
@@ -112,7 +114,8 @@ class McpServerController extends ChangeNotifier {
     required this.toolServiceFactory,
     this.portProbe = const McpPortProbe(),
     this.activityRepository,
-  });
+    McpApprovalQueue? approvalQueue,
+  }) : approvalQueue = approvalQueue ?? McpApprovalQueue();
 
   McpActivityRecorder? get _activityRecorder {
     final repository = activityRepository;
@@ -248,6 +251,7 @@ class McpServerController extends ChangeNotifier {
           aiToolService: lazyToolExecutor,
           settingsProvider: () => appSettings.mcpSettings,
           activityRecorder: _activityRecorder,
+          approvalQueue: approvalQueue,
           hasChatSession: () {
             return false;
           },
@@ -301,6 +305,7 @@ class McpServerController extends ChangeNotifier {
   }
 
   Future<void> stop() async {
+    approvalQueue.rejectAll();
     final server = _server;
     _server = null;
     _boundHost = null;
@@ -518,6 +523,8 @@ class McpServerController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    approvalQueue.rejectAll();
+    approvalQueue.dispose();
     unawaited(_server?.close());
     super.dispose();
   }

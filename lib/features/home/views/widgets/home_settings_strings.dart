@@ -33,8 +33,8 @@ extension _HomeSettingsStrings on AppStrings {
   String get mcpRequireApproval =>
       language == AppLanguage.en ? 'Write Approval Required' : '写入操作强制审批';
   String get mcpRequireApprovalHint => language == AppLanguage.en
-      ? 'Cannot be disabled until an in-app approval queue is available.'
-      : '应用内审批队列可用前不可关闭。';
+      ? 'Review pending requests in the Local MCP Console approval queue.'
+      : '待处理请求请在本地 MCP 控制台的审批队列中审核。';
   String get mcpPortAvailable =>
       language == AppLanguage.en ? 'Port is available' : '端口可用';
   String get mcpPortOccupied => language == AppLanguage.en

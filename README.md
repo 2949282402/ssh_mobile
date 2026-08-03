@@ -1,4 +1,4 @@
-> Last updated: 2026-07-29
+> Last updated: 2026-08-03
 
 <p align="center">
   <img src="assets/app_icon_1024.png" alt="SSH Mobile icon" width="112" />
@@ -136,7 +136,7 @@ Important defaults:
 | Notification privacy | Hide server names | Prevents server names from appearing in background notifications by default. |
 | RAG | Disabled | Search mode defaults to BM25 with top-N set to 3. |
 | MCP server | Disabled | Binds only to loopback when enabled. |
-| MCP write tools | Disabled | When exposed, every write operation remains approval-required; this cannot be disabled until an in-app approval queue exists. |
+| MCP write tools | Approval queue | Every write operation enters the local MCP Console approval queue before execution. |
 | SFTP download limit | 512 MB | Configurable from 64 KB to 2 GB. |
 | Text preview limit | 2 MB | Files above the limit require download. |
 | Rich preview limit | 20 MB | Applies to supported images and rich previews. |
@@ -181,7 +181,7 @@ Desktop builds can expose:
 http://127.0.0.1:<port>/mcp
 ```
 
-The MCP server uses a generated Bearer token, rejects unauthenticated and non-local requests, and keeps every write-capable tool behind the application approval boundary. This requirement is shown as locked in settings and cannot be disabled until an in-app approval queue exists.
+The MCP server uses a generated Bearer token, rejects unauthenticated and non-local requests, and keeps every write-capable tool behind the application approval boundary. The local MCP Console header opens a dedicated approval queue page where users can review and approve or reject pending external MCP actions. Requests and approval callbacks remain in memory, are cleared when the MCP server stops, and are never persisted.
 
 On Windows and macOS, the MCP settings card can open the **Local MCP Console**.
 It provides loopback-only status, port checks, a three-step authenticated
@@ -190,9 +190,10 @@ the current exposure decision for every tool. The console records at most 500
 local activity entries containing only timestamp, event type, method, tool
 name, outcome, policy reason, and duration. It never stores tokens, request
 arguments, tool output, client addresses, origins, remote-resource details, or
-raw exception text, and activity is excluded from backup export. The console
-does not add an external write approval queue: write-capable MCP tools continue
-to return `approval_required`.
+raw exception text, and activity is excluded from backup export. Write-capable
+MCP tools pause the MCP request until the user resolves the corresponding
+approval queue item. If the queue is unavailable or full, the tool returns
+`approval_required` or `approval_queue_full` without executing the operation.
 
 ## Sample Data for a Demo Run
 
@@ -434,7 +435,7 @@ The runtime includes:
 - Environment-variable dumps, cloud metadata endpoints, and sensitive filesystem paths are restricted.
 - `.ssh`, `.env`, private keys, tokens, cloud credentials, and other sensitive content are excluded from preview caches.
 - Tool arguments, results, and traces are filtered or blocked by `ToolSecretPolicy`.
-- Dangerous MCP tools return `approval_required` and cannot bypass the application approval interface.
+- Dangerous MCP tools enter the local MCP Console approval queue and cannot bypass the application approval interface.
 - SSH session changes, tmux restoration, terminal-history deletion, log clearing, and monitoring state changes remain inside the same approval boundary.
 - An approved action is rejected if its provider, server, resource, or selected-server snapshot is no longer current.
 
