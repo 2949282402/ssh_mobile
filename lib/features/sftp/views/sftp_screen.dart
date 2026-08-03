@@ -21,6 +21,7 @@ import 'package:ssh_mobile/widgets/ssh_host_key_trust_dialog.dart';
 import 'package:ssh_mobile/widgets/server_selector.dart';
 import 'package:ssh_mobile/features/sftp/views/sftp_editor_screen.dart';
 import 'package:ssh_mobile/features/sftp/views/sftp_file_viewer_screen.dart';
+import 'package:ssh_mobile/features/sftp/views/sftp_settings_screen.dart';
 
 part 'sftp_server_pane.dart';
 part 'sftp_file_pane.dart';

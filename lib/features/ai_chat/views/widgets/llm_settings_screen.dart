@@ -502,6 +502,7 @@ class _LlmSettingsScreenState extends State<LlmSettingsScreen> {
       (settings) => settings.language,
     );
     final strings = AiStrings(language);
+    final appStrings = AppStrings(language);
     if (_showUnsupportedFormatWarning) {
       _showUnsupportedFormatWarning = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -765,6 +766,38 @@ class _LlmSettingsScreenState extends State<LlmSettingsScreen> {
                               setState(() => _maxFileSizeBytes = value);
                             }
                           },
+                        ),
+                        const SizedBox(height: 14),
+                        AppSectionCard(
+                          title: appStrings.toolsAndAutomation,
+                          child: Column(
+                            children: [
+                              ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                leading: const Icon(Icons.auto_awesome),
+                                title: Text(appStrings.openAiSkills),
+                                subtitle: Text(appStrings.aiSkillsHint),
+                                trailing: const Icon(
+                                  Icons.chevron_right_rounded,
+                                ),
+                                onTap: () =>
+                                    Navigator.pushNamed(context, '/ai-skills'),
+                              ),
+                              ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                leading: const Icon(Icons.hub_outlined),
+                                title: Text(appStrings.openMcpSettings),
+                                subtitle: Text(appStrings.mcpServerHint),
+                                trailing: const Icon(
+                                  Icons.chevron_right_rounded,
+                                ),
+                                onTap: () => Navigator.pushNamed(
+                                  context,
+                                  '/mcp-settings',
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ],
                     ),

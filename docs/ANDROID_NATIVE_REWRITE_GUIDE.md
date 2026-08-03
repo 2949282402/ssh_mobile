@@ -1,6 +1,6 @@
 # SSH Mobile Android 原生复写零基础教程
 
-> 最新更新时间：2026-07-26
+> 最新更新时间：2026-08-03
 
 这是一份从 0 开始复写 SSH Mobile 的 Android 原生教程。它假设你只学过传统 Java + XML Android 开发，现在想学习 Kotlin、Jetpack Compose 和 MVVM 架构，并用本项目已有功能做一个能投 Android 实习的作品。
 
@@ -46,7 +46,7 @@ ssh-mobile-native/
 | `lib/features/connection/models/connection.dart` | 服务器配置模型 |
 | `lib/features/connection/viewmodels/connection_viewmodel.dart` | 服务器列表、保存、删除、校验和 SSH 验证状态 |
 | `lib/features/connection/views/add_edit_screen.dart` | 服务器新增/编辑表单 |
-| `lib/features/settings/viewmodels/settings_viewmodel.dart` | 语言、主题、SFTP 限制和密钥缓存设置 |
+| `lib/features/settings/viewmodels/settings_viewmodel.dart` | 语言、主题、安全/隐私、备份和开发者设置 |
 | `lib/features/terminal/viewmodels/terminal_session_viewmodel.dart` | 终端会话级状态与动作 |
 | `lib/features/terminal/viewmodels/terminal_history_viewmodel.dart` | 终端历史状态与动作 |
 | `lib/features/terminal/viewmodels/terminal_windows_viewmodel.dart` | 终端窗口总览与恢复状态 |

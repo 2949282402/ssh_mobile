@@ -28,6 +28,9 @@ class _FilePane extends StatelessWidget {
           onRefresh: sftp.refresh,
           onUpload: () => _uploadFile(context),
           onDisconnect: sftp.disconnect,
+          onSettings: () => Navigator.of(
+            context,
+          ).push(MaterialPageRoute(builder: (_) => const SftpSettingsScreen())),
         ),
         if (snapshot.isBusy && snapshot.activeTransfer == null)
           Semantics(

@@ -17,6 +17,7 @@ import '../lan_share_feature_scope.dart';
 import 'lan_chat_screen.dart';
 import 'lan_qr_scanner_screen.dart';
 import 'vpn_p2p_share_view.dart';
+import 'lan_share_settings_screen.dart';
 
 part 'widgets/lan_share_dialogs.dart';
 
@@ -234,20 +235,43 @@ class _LanShareScreenState extends State<LanShareScreen>
                               onPressed: () =>
                                   _toggleWebShareDialog(context, strings, vm),
                             ),
-                            IconButton(
+                            PopupMenuButton<String>(
+                              tooltip: strings.moreActions,
                               icon: Icon(
                                 vm.isScanning
                                     ? Icons.sync_rounded
                                     : Icons.sync_disabled_rounded,
                               ),
-                              tooltip: vm.isScanning ? 'Scanning' : 'Scan',
-                              onPressed: () {
-                                if (vm.isScanning) {
-                                  vm.stopScanning();
-                                } else {
-                                  vm.startScanning();
+                              onSelected: (value) {
+                                if (value == 'scan') {
+                                  if (vm.isScanning) {
+                                    vm.stopScanning();
+                                  } else {
+                                    vm.startScanning();
+                                  }
+                                } else if (value == 'settings') {
+                                  Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          const LanShareSettingsScreen(),
+                                    ),
+                                  );
                                 }
                               },
+                              itemBuilder: (context) => [
+                                PopupMenuItem(
+                                  value: 'scan',
+                                  child: Text(
+                                    vm.isScanning
+                                        ? strings.lanShareRadarStoppedHint
+                                        : strings.lanShareRadarHint,
+                                  ),
+                                ),
+                                PopupMenuItem(
+                                  value: 'settings',
+                                  child: Text(strings.lanShareSettings),
+                                ),
+                              ],
                             ),
                           ],
                         ),

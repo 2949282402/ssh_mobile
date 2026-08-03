@@ -413,30 +413,65 @@ class _ServerListPaneState extends State<ServerListPane> {
         : '已保存 $activeCount 台服务器';
     final desktop = isDesktopLayout(context);
     final showDesktopAdd = desktop && activeCount > 0;
+    final layoutMode = context.select<AppSettings, String>(
+      (settings) => settings.serverListLayoutMode,
+    );
+    final layoutMenu = PopupMenuButton<String>(
+      tooltip: strings.serverListLayout,
+      icon: Icon(
+        layoutMode == 'grid' ? Icons.grid_view_rounded : Icons.list_rounded,
+      ),
+      onSelected: (value) =>
+          context.read<AppSettings>().setServerListLayoutMode(value),
+      itemBuilder: (context) => [
+        CheckedPopupMenuItem<String>(
+          value: 'list',
+          checked: layoutMode == 'list',
+          child: Text(strings.layoutList),
+        ),
+        CheckedPopupMenuItem<String>(
+          value: 'grid',
+          checked: layoutMode == 'grid',
+          child: Text(strings.layoutGrid),
+        ),
+      ],
+    );
 
     final Widget? trailing;
     if (_serverSelectionMode) {
       trailing = null;
     } else if (showDesktopAdd) {
-      trailing = FilledButton.icon(
-        onPressed: () => Navigator.pushNamed(context, '/add'),
-        icon: const Icon(Icons.add_rounded),
-        label: Text(strings.addConnection),
+      trailing = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          layoutMenu,
+          FilledButton.icon(
+            onPressed: () => Navigator.pushNamed(context, '/add'),
+            icon: const Icon(Icons.add_rounded),
+            label: Text(strings.addConnection),
+          ),
+        ],
       );
     } else if (!desktop) {
-      trailing = IconButton.filledTonal(
-        onPressed: () => const OpenSettingsNotification().dispatch(context),
-        tooltip: strings.settings,
-        style: IconButton.styleFrom(
-          minimumSize: const Size.square(48),
-          maximumSize: const Size.square(48),
-          foregroundColor: colorScheme.primary,
-          backgroundColor: colorScheme.primary.withValues(alpha: 0.1),
-        ),
-        icon: const Icon(Icons.settings_outlined),
+      trailing = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          layoutMenu,
+          IconButton.filledTonal(
+            onPressed: () => const OpenSettingsNotification().dispatch(context),
+            tooltip: strings.settings,
+            style: IconButton.styleFrom(
+              minimumSize: const Size.square(48),
+              maximumSize: const Size.square(48),
+              foregroundColor: colorScheme.primary,
+              backgroundColor: colorScheme.primary.withValues(alpha: 0.1),
+            ),
+            icon: const Icon(Icons.settings_outlined),
+          ),
+        ],
       );
     } else {
-      trailing = null;
+      trailing = layoutMenu;
     }
 
     return AppPageHeader(

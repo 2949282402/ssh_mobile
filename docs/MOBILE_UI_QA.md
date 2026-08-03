@@ -1,6 +1,6 @@
 # Mobile UI QA
 
-> 最新更新时间：2026-07-26
+> 最新更新时间：2026-08-03
 
 This document records the Android visual test matrix used for SSH Mobile. It
 keeps high-density phone checks reproducible without storing machine-local SDK
@@ -57,12 +57,13 @@ uses an app-specific 720 dp minimum before rendering the denser Servers grid.
 - Both landscape profiles exceed 840 dp width but remain below 480 dp height,
   so they consistently use the icon-only compact rail. All five destinations
   plus Settings remain visible with no RenderFlex overflow on either AVD.
-- The Settings drawer stays within both portrait viewports and removes the
-  duplicate in-panel page header. Language exposes one semantic button with
-  its current value, the list/grid control remains on one line in Chinese and
-  English, cache timeout displays its value only once, and the final import row
-  clears the gesture inset. App text follows native system fonts; there is no
-  user-selectable application font setting to verify.
+- The Settings drawer stays within both portrait viewports and removes feature-
+  specific controls. Language exposes one semantic button with its current
+  value, cache timeout displays its value only once, and the final import row
+  clears the gesture inset. Servers keeps the 48 dp settings action plus a
+  view-layout menu; terminal, SFTP, LAN Share, and MCP settings open from their
+  owning feature pages. App text follows native system fonts; terminal font is
+  configured only from terminal settings.
 - The connection form uses shared icon-led section cards on both profiles. Its
   collapsible jump-host and advanced headers expose full-width semantic button
   targets, the password visibility action is labeled, and focusing an input

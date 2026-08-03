@@ -21,6 +21,7 @@ import 'terminal_connection_overlay.dart';
 import 'terminal_copy_screen.dart';
 import 'terminal_shortcut_panel.dart';
 import 'terminal_view_area.dart';
+import 'terminal_settings_screen.dart';
 
 part 'terminal_settings_models.dart';
 part 'terminal_windows_input.dart';
@@ -437,6 +438,13 @@ class _TerminalScreenState extends State<TerminalScreen>
               reconnectInProgress: viewModel.reconnectInProgress,
               onReconnect: viewModel.reconnect,
               onToggleTheme: context.read<AppSettings>().toggleTheme,
+              onOpenSettings: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const TerminalSettingsScreen(),
+                  ),
+                );
+              },
               onSwitchWindow: () => _showSessionSwitcher(context),
               onCloseWindow: () => _confirmDisconnect(context),
               onOpenSiblingSession: () => _openSiblingSession(context),

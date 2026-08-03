@@ -16,6 +16,7 @@ class TerminalScreenAppBar extends StatelessWidget
   final bool reconnectInProgress;
   final VoidCallback onReconnect;
   final VoidCallback onToggleTheme;
+  final VoidCallback? onOpenSettings;
   final VoidCallback onSwitchWindow;
   final VoidCallback onCloseWindow;
   final VoidCallback onOpenSiblingSession;
@@ -33,6 +34,7 @@ class TerminalScreenAppBar extends StatelessWidget
     required this.reconnectInProgress,
     required this.onReconnect,
     required this.onToggleTheme,
+    this.onOpenSettings,
     required this.onSwitchWindow,
     required this.onCloseWindow,
     required this.onOpenSiblingSession,
@@ -86,6 +88,9 @@ class TerminalScreenAppBar extends StatelessWidget
               case 'toggle_theme':
                 onToggleTheme();
                 break;
+              case 'terminal_settings':
+                onOpenSettings?.call();
+                break;
               case 'reconnect':
                 onReconnect();
                 break;
@@ -116,6 +121,13 @@ class TerminalScreenAppBar extends StatelessWidget
                     : strings.switchToDarkMode,
                 style: fontStyle,
               ),
+              if (onOpenSettings != null)
+                _menuItem(
+                  value: 'terminal_settings',
+                  icon: Icons.tune_rounded,
+                  label: strings.terminalAppearance,
+                  style: fontStyle,
+                ),
               _menuItem(
                 value: 'smaller_font',
                 icon: Icons.text_decrease_rounded,

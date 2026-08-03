@@ -29,6 +29,8 @@ import 'package:ssh_mobile/features/terminal/views/terminal_windows_screen.dart'
 import 'package:ssh_mobile/features/rag/views/rag_knowledge_screen.dart';
 import 'package:ssh_mobile/features/mcp_console/views/mcp_console_screen.dart';
 import 'package:ssh_mobile/features/mcp_console/viewmodels/mcp_console_viewmodel.dart';
+import 'package:ssh_mobile/features/mcp_console/views/mcp_settings_screen.dart';
+import 'package:ssh_mobile/features/mcp_console/viewmodels/mcp_settings_viewmodel.dart';
 import 'services/app_log_service.dart';
 import 'services/display_mode_service.dart';
 import 'services/app_settings.dart';
@@ -170,7 +172,6 @@ Future<void> main() async {
               create: (context) => SettingsViewModel(
                 appSettings: context.read<AppSettings>(),
                 storageService: context.read<StorageService>(),
-                mcpServerController: context.read<McpServerController>(),
               ),
             ),
             ChangeNotifierProvider(
@@ -466,6 +467,16 @@ class _SshMobileAppState extends State<SshMobileApp>
                               context.read<AppSettings>(),
                             ),
                             child: const McpConsoleScreen(),
+                          ),
+                        );
+                      case '/mcp-settings':
+                        return MaterialPageRoute(
+                          builder: (context) => ChangeNotifierProvider(
+                            create: (_) => McpSettingsViewModel(
+                              appSettings: context.read<AppSettings>(),
+                              controller: context.read<McpServerController>(),
+                            ),
+                            child: const McpSettingsScreen(),
                           ),
                         );
                       default:

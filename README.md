@@ -124,7 +124,7 @@ SSH Mobile separates application settings, server credentials, and LLM settings 
 
 ### 1. Application settings
 
-On desktop, open application settings from the bottom of the navigation rail. On mobile, open them from the Servers page. The AI page settings button opens LLM settings instead of application settings.
+On desktop, open application settings from the bottom of the navigation rail. On mobile, open them from the Servers page. The AI page settings button opens LLM settings instead of application settings. Feature-specific settings now live with their feature: server list layout is in the Servers header, terminal appearance is in the terminal more menu, SFTP limits are in SFTP settings, LAN identity and relay options are in LAN Share settings, and AI Skills/MCP settings are in the AI LLM settings page.
 
 Important defaults:
 
@@ -132,15 +132,20 @@ Important defaults:
 | --- | --- | --- |
 | Language | Chinese | Chinese and English are supported. |
 | Theme | Light with Monochrome palette | Dark and OLED dark themes are available. Monochrome, Indigo, Ocean, Emerald, Rose, and Amber palettes persist across launches and backups. |
-| Server list | List | Grid is enabled only when the viewport is wide enough. |
+| Server list | List | Change from the Servers header view menu; grid is enabled only when the viewport is wide enough. |
 | Notification privacy | Hide server names | Prevents server names from appearing in background notifications by default. |
 | RAG | Disabled | Search mode defaults to BM25 with top-N set to 3. |
-| MCP server | Disabled | Binds only to loopback when enabled. |
+| MCP server | Disabled | Configure from AI → LLM settings → Tools & Automation; binds only to loopback when enabled. |
 | MCP write tools | Approval queue | Every write operation enters the local MCP Console approval queue before execution. |
-| SFTP download limit | 512 MB | Configurable from 64 KB to 2 GB. |
+| SFTP download limit | 512 MB | Configure from the SFTP page; valid range is 64 KB to 2 GB. |
 | Text preview limit | 2 MB | Files above the limit require download. |
 | Rich preview limit | 20 MB | Applies to supported images and rich previews. |
 | Text edit limit | 512 KB | Prevents large remote files from exhausting mobile memory. |
+
+Terminal theme/font and LAN Share device identity, relay, and runtime permissions
+are also edited from their respective feature pages. Application-level language,
+theme, security/privacy, backup, and developer controls remain in application
+settings.
 
 ### 2. SSH server profile
 
@@ -183,7 +188,8 @@ http://127.0.0.1:<port>/mcp
 
 The MCP server uses a generated Bearer token, rejects unauthenticated and non-local requests, and keeps every write-capable tool behind the application approval boundary. The local MCP Console header opens a dedicated approval queue page where users can review and approve or reject pending external MCP actions. Requests and approval callbacks remain in memory, are cleared when the MCP server stops, and are never persisted.
 
-On Windows and macOS, the MCP settings card can open the **Local MCP Console**.
+From AI → LLM settings → Tools & Automation, open **MCP settings**. On Windows
+and macOS, that page can open the **Local MCP Console**.
 It provides loopback-only status, port checks, a three-step authenticated
 `initialize` / `tools/list` self-test, client configuration copy buttons, and
 the current exposure decision for every tool. The console records at most 500

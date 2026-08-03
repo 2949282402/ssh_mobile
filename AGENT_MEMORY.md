@@ -94,6 +94,11 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   `_SettingsSection`; retain settings rows and their existing state/storage
   callbacks, and use the shared card instead of reintroducing local Material
   card styling.
+- 2026-08-03: Global settings retain only application appearance,
+  security/privacy, backup, and developer controls. Terminal appearance,
+  server list layout, SFTP limits, LAN identity/relay/permissions, and MCP
+  lifecycle settings belong to their feature pages; AI Skills and MCP are
+  linked from the AI LLM settings page.
 - 2026-07-15: Developer Log uses the shared page surface and switches its
   header actions below the title on narrow or high-text layouts; keep all
   selection/copy/delete behavior in `DeveloperLogViewModel`. The AI chat shell

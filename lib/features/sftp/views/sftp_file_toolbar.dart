@@ -10,6 +10,7 @@ class _SftpFileToolbar extends StatelessWidget {
     required this.onRefresh,
     required this.onUpload,
     required this.onDisconnect,
+    required this.onSettings,
   });
 
   final AppStrings strings;
@@ -20,6 +21,7 @@ class _SftpFileToolbar extends StatelessWidget {
   final VoidCallback onRefresh;
   final VoidCallback onUpload;
   final VoidCallback onDisconnect;
+  final VoidCallback onSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -66,6 +68,11 @@ class _SftpFileToolbar extends StatelessWidget {
             icon: Icons.link_off_rounded,
             color: colors.error,
             onPressed: onDisconnect,
+          );
+          final settings = _SftpToolbarIconButton(
+            tooltip: strings.sftpSettings,
+            icon: Icons.settings_outlined,
+            onPressed: onSettings,
           );
           final upload = ConstrainedBox(
             constraints: const BoxConstraints(minHeight: 48),
@@ -122,6 +129,8 @@ class _SftpFileToolbar extends StatelessWidget {
                       const SizedBox(width: 8),
                       upload,
                       const SizedBox(width: 4),
+                      settings,
+                      const SizedBox(width: 4),
                       disconnect,
                     ],
                   )
@@ -138,7 +147,33 @@ class _SftpFileToolbar extends StatelessWidget {
                           const SizedBox(width: 4),
                           compactUpload,
                           const SizedBox(width: 4),
-                          disconnect,
+                          PopupMenuButton<String>(
+                            key: const ValueKey('sftp-disconnect'),
+                            tooltip: strings.moreActions,
+                            onSelected: (value) {
+                              if (value == 'history') onPath();
+                              if (value == 'settings') onSettings();
+                              if (value == 'disconnect') onDisconnect();
+                            },
+                            itemBuilder: (context) => [
+                              PopupMenuItem(
+                                value: 'history',
+                                child: Text(strings.pathHistory),
+                              ),
+                              PopupMenuItem(
+                                value: 'settings',
+                                child: Text(strings.sftpSettings),
+                              ),
+                              PopupMenuItem(
+                                value: 'disconnect',
+                                child: Text(strings.disconnect),
+                              ),
+                            ],
+                            child: const SizedBox.square(
+                              dimension: 48,
+                              child: Icon(Icons.more_vert_rounded),
+                            ),
+                          ),
                         ],
                       ),
                     ],

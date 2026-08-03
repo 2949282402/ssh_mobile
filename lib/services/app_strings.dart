@@ -777,6 +777,120 @@ class AppStrings {
   String get continue_ => _en ? 'Continue' : '继续生成';
   String get replyCopied => _en ? 'Reply copied' : '已复制回复';
   String get copyAll => _en ? 'Copy all' : '复制全文';
+
+  // Settings and feature configuration
+  String get appearance => _en ? 'Appearance' : '外观';
+  String get toolsAndAutomation => _en ? 'Tools & Automation' : '工具与自动化';
+  String get aiSkillsHint => _en
+      ? 'Manage custom AI prompts, workflows, and references'
+      : '管理自定义 AI 提示词、工作流及规则说明';
+  String get mcpServer => _en ? 'MCP Server' : 'MCP Server';
+  String get mcpServerHint => _en
+      ? 'Streamable HTTP server for CLI agent integrations.'
+      : '供 Codex、Claude Code、Gemini CLI 使用的本地 Streamable HTTP 端点。';
+  String get mcpHost => _en ? 'Host' : '主机';
+  String get mcpPort => _en ? 'Port' : '端口';
+  String get mcpServerToken => _en ? 'Token' : 'Token';
+  String get mcpClientConfiguration => _en ? 'Client configuration' : '客户端配置';
+  String get mcpCheckPort => _en ? 'Check port' : '检查端口';
+  String get mcpRestart => _en ? 'Restart Server' : '重启 MCP Server';
+  String get mcpRegenerateToken => _en ? 'Regenerate Token' : '重新生成 Token';
+  String get mcpCopyCodex => _en ? 'Copy Codex' : '复制 Codex 配置';
+  String get mcpCopyClaude => _en ? 'Copy Claude' : '复制 Claude 命令';
+  String get mcpCopyGemini => _en ? 'Copy Gemini' : '复制 Gemini 配置';
+  String get mcpAllowWriteTools => _en ? 'Expose Write Tools' : '暴露写入工具';
+  String get mcpAllowWriteToolsHint => _en
+      ? 'Off by default. Exposed write tools still require approval.'
+      : '默认关闭。暴露后，所有写入工具仍需审批。';
+  String get mcpRequireApproval => _en ? 'Write Approval Required' : '写入操作强制审批';
+  String get mcpRequireApprovalHint => _en
+      ? 'Review pending requests in the Local MCP Console approval queue.'
+      : '待处理请求请在本地 MCP 控制台的审批队列中审核。';
+  String get mcpPortAvailable => _en ? 'Port is available' : '端口可用';
+  String get mcpPortOccupied =>
+      _en ? 'Port in use. Choose another.' : '端口已被占用，请选择其他端口。';
+  String get mcpPortInvalidMessage =>
+      _en ? 'Port must be between 1024 and 65535.' : '端口必须在 1024 到 65535 之间。';
+  String get mcpPortRestartNeeded =>
+      _en ? 'Port changes require restart.' : '端口变更需要重启 MCP Server。';
+  String get mcpStopped => _en ? 'MCP Server stopped' : 'MCP Server 已停止';
+  String get mcpCheckingPort => _en ? 'Checking port...' : '正在检查端口...';
+  String get mcpStarting =>
+      _en ? 'Starting MCP Server...' : '正在启动 MCP Server...';
+  String mcpRunningAt(String url) => _en ? 'Running at $url' : '运行中：$url';
+  String get mcpFailed => _en ? 'MCP Server failed' : 'MCP Server 启动失败';
+  String get mcpTokenRegenerated =>
+      _en ? 'MCP token regenerated' : 'MCP Token 已重新生成';
+  String get mcpCopied => _en ? 'MCP config copied' : 'MCP 配置已复制';
+  String get security => _en ? 'Security & privacy' : '安全与隐私';
+  String get credentialCache => _en ? 'Cache SSH credentials' : '缓存 SSH 凭证到内存';
+  String get credentialCacheHint => _en
+      ? 'Cache credentials this session to reduce keychain prompts.'
+      : '在本次会话内缓存密码、私钥和 API Key，可减少重复的密钥链弹窗。';
+  String get credentialCacheTimeout => _en ? 'Cache timeout' : '缓存时长';
+  String get notificationServerNames =>
+      _en ? 'Show server names in background notifications' : '后台通知显示服务器名';
+  String get notificationServerNamesHint => _en
+      ? 'Off by default to prevent server exposure on lock screen.'
+      : '默认关闭。保持关闭可避免在锁屏通知中暴露服务器名称。';
+  String get dataBackup => _en ? 'Data backup' : '数据备份';
+  String get sftpLimits => _en ? 'SFTP file limits' : 'SFTP 文件限制';
+  String get sftpSettings => _en ? 'SFTP settings' : 'SFTP 设置';
+  String get sftpLimitsHint => _en
+      ? 'Client limits for file download, preview, and edit.'
+      : '用于客户端下载、预览和编辑的内存保护限制。';
+  String get sftpDownloadLimit => _en ? 'Download Limit' : '下载限制';
+  String get sftpTextPreviewLimit => _en ? 'Text Preview' : '文本预览限制';
+  String get sftpRichPreviewLimit => _en ? 'Image/PDF Preview' : '图片/PDF 预览限制';
+  String get sftpEditLimit => _en ? 'Text Edit' : '文本编辑限制';
+  String get sftpLimitDialogHint => _en
+      ? 'Enter a size in MB. Decimal values are allowed.'
+      : '请输入 MB 单位大小，支持小数。';
+  String get sftpLimitInvalid =>
+      _en ? 'Enter a value greater than 0.' : '请输入大于 0 的数值。';
+  String sftpLimitRange(String min, String max) =>
+      _en ? 'Allowed range: $min - $max' : '允许范围：$min - $max';
+  String get terminalAppearance => _en ? 'Terminal appearance' : '终端外观';
+  String get terminalAppearanceHint =>
+      _en ? 'Theme and font used by terminal sessions.' : '终端会话使用的配色和字体。';
+  String get lanShareSettings => _en ? 'LAN Share Settings' : '局域网共享设置';
+  String get lanDeviceAlias => _en ? 'Device alias / name' : '设备昵称 / 名称';
+  String get lanDeviceId => _en ? 'Persistent device identifier' : '固定设备标识符';
+  String get lanRelayServer => _en ? 'Public relay server' : '公网中继服务器';
+  String get lanPermissions => _en ? 'Permissions' : '权限';
+  String get lanNotificationPermission =>
+      _en ? 'Background notification permission' : '后台通知权限';
+  String get lanCameraPermission =>
+      _en ? 'Camera permission (scan QR code)' : '相机权限（扫描二维码）';
+  String get openMcpSettings => _en ? 'MCP settings' : 'MCP 设置';
+  String get openMcpConsole => _en ? 'Open console' : '打开控制台';
+  String get openAiSkills => _en ? 'AI Skills' : 'AI Skills';
+  String get moreActions => _en ? 'More actions' : '更多操作';
+  String get exportAppData => _en ? 'Export app data' : '导出应用数据';
+  String get importAppData => _en ? 'Import app data' : '导入应用数据';
+  String get exportComplete => _en ? 'Export complete' : '导出完成';
+  String get importComplete => _en ? 'Import complete' : '导入完成';
+  String get importAction => _en ? 'Import' : '导入';
+  String get importAppDataWarning => _en
+      ? 'Importing replaces servers, window history, AI chats, settings, and skills. Keys must be reconfigured. Continue?'
+      : '导入会替换当前设备上的服务器、窗口历史、AI 聊天、AI 设置和自定义 Skills。密码、私钥和 API Key 需要重新配置。是否继续？';
+  String get backupContainsSecrets => _en
+      ? 'Passwords, keys, and API tokens are not exported. Reconfigure after import.'
+      : '密码、私钥和 API Key 不会导出，导入后需要重新配置。';
+  String exportFailed(Object error) =>
+      _en ? 'Export failed: $error' : '导出失败：$error';
+  String importFailed(Object error) =>
+      _en ? 'Import failed: $error' : '导入失败：$error';
+  String get developerMode => _en ? 'Developer Mode' : '开发者模式';
+  String get developerModeHint => _en
+      ? 'Show performance metrics and debugging information.'
+      : '显示性能指标和调试信息。';
+  String get developerPanel => _en ? 'Developer Panel' : '开发者面板';
+  String get developerPanelFloating =>
+      _en ? 'Show as floating ball' : '浮窗显示开发者面板';
+  String get developerPanelFloatingHint => _en
+      ? 'View the developer panel as a floating ball on every page.'
+      : '在各页面以悬浮球形式查看开发者面板。';
 }
 
 class TerminalStrings {
@@ -916,6 +1030,7 @@ class TerminalStrings {
   }
 
   String get moreActions => _en ? 'More Actions' : '更多操作';
+  String get terminalAppearance => _en ? 'Terminal appearance' : '终端外观';
   String get navigationShell => _en ? 'Navigation' : '导航与 Shell';
   String get editControl => _en ? 'Edit/Control' : '编辑与控制';
   String get functionKeys => _en ? 'Function Keys' : '功能键';
