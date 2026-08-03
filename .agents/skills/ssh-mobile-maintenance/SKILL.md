@@ -80,7 +80,6 @@ Read only the rows relevant to the task.
 
 ## Validation
 
-<<<<<<< HEAD
 ### LLM Chat and Tools
 
 Primary entry points are `lib/features/ai_chat/viewmodels/ai_chat_viewmodel.dart`
@@ -418,7 +417,6 @@ was already built.
   needs to change. When citing entry points, prefer the current
   `lib/features/*` ViewModel/view path plus the coordinating screen/service over
   older screen-only descriptions.
-=======
 - Format changed Dart files and run targeted `flutter analyze` plus the closest
   tests during the edit loop.
 - Broaden to the full gate in `AGENTS.md` when changing shared infrastructure,
@@ -431,4 +429,3 @@ was already built.
 - After editing this skill, run
   `powershell -ExecutionPolicy Bypass -File .\scripts\sync_agent_skills.ps1 -Mode Check`.
   Use a restore mode only when the check reports a missing or divergent copy.
->>>>>>> 48c06d47d96beeaa989fc2e41c8fb085bab717c0

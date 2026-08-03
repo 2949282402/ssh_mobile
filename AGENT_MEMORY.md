@@ -59,7 +59,6 @@ file. It is not a changelog, architecture guide, test report, or feature list.
 
 ### UI and performance
 
-<<<<<<< HEAD
 - 2026-07-17: LAN Quick Share pairing receivers initialize outside the
   deferred LAN page. QR scans and device-list taps emit the same short-lived
   invitation; QR URLs carry the stable device ID and native transfer port.
@@ -404,7 +403,6 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   its SFTP client is closed, but refreshes the current path when the session is
   still open. Keep UI retries on this state-aware path so connection failures
   do not silently call the no-op directory refresh path.
-=======
 - Primary workspaces reuse `AppPageSurface`, `AppPageHeader`, `AppSectionCard`,
   `AppEmptyState`, and the shared server selector. `MobileUiMetrics` and
   `AppBreakpoints` remain the sources for adaptive density and thresholds;
@@ -413,4 +411,3 @@ file. It is not a changelog, architecture guide, test report, or feature list.
   advanced keyboard. Preserve IME composition, bracketed-paste submission,
   local command recall, direct terminal-key forwarding for an empty draft, and
   non-scrolling keyboard rows that fit available width.
->>>>>>> 48c06d47d96beeaa989fc2e41c8fb085bab717c0
